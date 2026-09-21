@@ -107,6 +107,40 @@ private struct DeviceOriginalRelinkRow: View {
     }
 }
 
+/// `needsAttention` copy and retry-affordance rules, pulled out of `DeviceRenderStatusCard`
+/// so they're unit-testable (mirrors `DeviceRenderButtonTitle`'s split in `DeviceRenderSessions.swift`).
+enum DeviceRenderAttentionCopy {
+    /// `reason_code`-keyed copy for a `needsAttention` phase. Falls back to a
+    /// short server `reason` string, then a generic line, so an unrecognized
+    /// or missing code never blanks the row.
+    static let reasonMessage: [String: String] = [
+        "export_failed": "The render couldn’t finish on this iPhone. Your project is saved.",
+        "insufficient_storage": "This iPhone is low on storage. Free up space, then try again.",
+        "thermal": "This iPhone needs to cool down before rendering again.",
+        // Structural, not transient: retrying compiles the same recipe again and fails the
+        // same way, so the "Try again" button is hidden for this reason (see `showsRetryButton`).
+        "unsupported_recipe": "This edit uses something this iPhone can’t render yet. Start a new edit with a different style instead — trying again won’t change the result.",
+        "cancelled_by_user": "Rendering was stopped. Your project is saved.",
+    ]
+
+    static func message(phase: DeviceRenderPhase, reasonCode: String?, fallback: String?) -> String? {
+        guard phase == .needsAttention else { return fallback }
+        if let reasonCode, let mapped = reasonMessage[reasonCode] { return mapped }
+        if let fallback, fallback.count <= 160 { return fallback }
+        return "Your project is saved. You can wait and try again."
+    }
+
+    /// `unsupported_recipe` means the compiled recipe itself is outside what this
+    /// renderer can produce, not a transient device condition -- a blind retry
+    /// would recompile the identical recipe and fail identically, so the button
+    /// is hidden rather than offered. Every other `needsAttention` reason
+    /// (thermal, storage, export failure) is transient and stays retryable.
+    static func showsRetryButton(phase: DeviceRenderPhase, reasonCode: String?) -> Bool {
+        guard [.needsAttention, .cancelled, .localReady].contains(phase) else { return false }
+        return !(phase == .needsAttention && reasonCode == "unsupported_recipe")
+    }
+}
+
 struct DeviceRenderStatusCard: View {
     let presentation: DeviceRenderPresentation
     let retry: () -> Void
@@ -142,7 +176,7 @@ struct DeviceRenderStatusCard: View {
                         .accessibilityIdentifier("device-render-save-message")
                 }
             }
-            if [.needsAttention, .cancelled, .localReady].contains(presentation.phase) {
+            if DeviceRenderAttentionCopy.showsRetryButton(phase: presentation.phase, reasonCode: presentation.reasonCode) {
                 Button(presentation.localFile == nil ? "Try again" : "Retry sync") {
                     guard presentation.phase == .needsAttention, let retryNeedsAttention else {
                         retry(); return
@@ -202,22 +236,8 @@ struct DeviceRenderStatusCard: View {
         }
     }
 
-    /// `reason_code`-keyed copy for a `needsAttention` phase. Falls back to a
-    /// short server `reason` string, then a generic line, so an unrecognized
-    /// or missing code never blanks the row.
-    private static let needsAttentionReasonCopy: [String: String] = [
-        "export_failed": "The render couldn’t finish on this iPhone. Your project is saved.",
-        "insufficient_storage": "This iPhone is low on storage. Free up space, then try again.",
-        "thermal": "This iPhone needs to cool down before rendering again.",
-        "unsupported_recipe": "This edit isn’t supported for iPhone rendering yet.",
-        "cancelled_by_user": "Rendering was stopped. Your project is saved.",
-    ]
-
     private var needsAttentionAwareMessage: String? {
-        guard presentation.phase == .needsAttention else { return presentation.message }
-        if let code = presentation.reasonCode, let mapped = Self.needsAttentionReasonCopy[code] { return mapped }
-        if let reason = presentation.message, reason.count <= 160 { return reason }
-        return "Your project is saved. You can wait and try again."
+        DeviceRenderAttentionCopy.message(phase: presentation.phase, reasonCode: presentation.reasonCode, fallback: presentation.message)
     }
 
     private var title: String {

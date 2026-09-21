@@ -3855,6 +3855,75 @@ def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
     )
 
 
+def _resolve_phone_voiceover_bed(job_id: str, decision: GenerativeVariantDecision) -> Any:
+    """Bridge the sync worker to a fresh, pinned voiceover asset for a
+    montage-family phone job's recorded narration (KRI-132).
+
+    Mirrors `_resolve_phone_music_bed`: re-reads the owning `PlanItem`'s
+    CURRENT `voiceover_gcs_path`/`voiceover_generation`/`voiceover_duration_s`
+    in a sync session -- never trusting `decision.extras["voiceover_gcs_path"]`
+    alone, since that was captured at the start of decide-phase prework and a
+    concurrent edit could have replaced or cleared the voiceover since. Then
+    `app.services.phone_voiceover.inspect_voiceover_asset` (mirrors
+    `inspect_library_asset`'s pin-then-hash pattern) pins the exact
+    generation + fingerprint. Unlike the library catalog grant,
+    `app.routes.device_render.download_device_asset` does NOT re-hash this
+    asset on every device fetch -- it only re-checks the job's own `PlanItem`
+    still carries this exact `(path, generation)` before signing; the DEVICE
+    re-hashes the downloaded bytes against the pinned SHA-256 itself.
+
+    Returns None when the decision has no voiceover (no narration bed
+    needed). Raises `UnsupportedPhonePlan` (capability="narrationAudio")
+    when the item's voiceover is missing, was replaced, or its bytes can no
+    longer be read -- a phone job must never bake in a stale or mismatched
+    voiceover receipt.
+    """
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import PhoneNarrationBed  # noqa: PLC0415
+    from app.services.phone_voiceover import inspect_voiceover_asset  # noqa: PLC0415
+
+    voiceover_gcs_path = decision.extras.get("voiceover_gcs_path")
+    if not voiceover_gcs_path:
+        return None
+    with _sync_session() as db:
+        from app.models import PlanItem  # noqa: PLC0415
+
+        job = db.get(Job, uuid.UUID(job_id))
+        item_id = job.content_plan_item_id if job is not None else None
+        item = db.get(PlanItem, item_id) if item_id is not None else None
+        usable = bool(
+            item is not None
+            and getattr(item, "audio_mode", None) == "voiceover"
+            and item.voiceover_gcs_path == voiceover_gcs_path
+            and item.voiceover_generation
+            and item.voiceover_duration_s
+            and float(item.voiceover_duration_s) > 0
+        )
+        if not usable:
+            raise UnsupportedPhonePlan(
+                "recorded voiceover is no longer available for phone rendering",
+                capability="narrationAudio",
+            )
+        path = str(item.voiceover_gcs_path)
+        plan_item_id = str(item.id)
+        duration_s = float(item.voiceover_duration_s)
+    try:
+        asset = inspect_voiceover_asset(
+            path, asset_id=f"voiceover-{plan_item_id}", plan_item_id=plan_item_id
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise UnsupportedPhonePlan(
+            "recorded voiceover is no longer available for phone rendering",
+            capability="narrationAudio",
+        ) from exc
+    return PhoneNarrationBed(
+        plan_item_id=plan_item_id,
+        generation=asset.generation,
+        fingerprint=asset.fingerprint,
+        duration_s=duration_s,
+    )
+
+
 def _run_phone_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -3920,7 +3989,13 @@ def _run_phone_montage_job(
     clip_paths_gcs: list[str] = list(all_candidates.get("clip_paths") or [])
     if not clip_paths_gcs:
         raise ValueError("Phone rendering requires clip paths")
-    if all_candidates.get("voiceover_gcs_path"):
+    has_voiceover = bool(all_candidates.get("voiceover_gcs_path"))
+    # KRI-132: the dispatch gate (`content_plan_build._dispatch_item_render`)
+    # already fails closed before a Job is even minted when the flag is off
+    # or narrationAudio isn't verified -- this is defense-in-depth against a
+    # job queued before the flag flipped, or a redelivered/stale message.
+    # Flag off: byte-identical to pre-KRI-132 (unconditional reject).
+    if has_voiceover and not settings.phone_narration_rendering_enabled:
         raise ValueError("Phone rendering does not yet support voiceover edits")
     edit_format = coerce_edit_format(all_candidates.get("edit_format"))
     if edit_format not in GUIDED_EDIT_FORMATS:
@@ -4005,19 +4080,31 @@ def _run_phone_montage_job(
             footage_type_bias: list[str] = list(
                 (user_style.get("footage_type_bias") or []) if user_style else []
             )
+            voiceover_gcs_path = all_candidates.get("voiceover_gcs_path") if has_voiceover else None
             archetype, _spine, _fallback_reason = _resolve_archetype(
                 edit_format,
                 clip_metas,
                 clip_id_to_local,
                 job_id=job_id,
-                voiceover_gcs_path=None,
+                voiceover_gcs_path=voiceover_gcs_path,
                 filming_guide=filming_guide_candidates,
                 footage_type_bias=footage_type_bias,
                 clip_durations_s=clip_durations_s,
                 prefer_narrated_voiceover=False,
                 narrative_shot_count=narrative_shot_count,
             )
-            if archetype not in GUIDED_EDIT_FORMATS:
+            # `_resolve_archetype` returns "voiceover" (never "narrated") for
+            # any montage-family edit_format with a recorded voiceover --
+            # see its docstring. A local allowlist, NOT a widening of
+            # `GUIDED_EDIT_FORMATS`/`PHONE_RENDER_SUPPORTED_FORMATS`: those
+            # stay the declared-edit_format vocabulary; "voiceover" is a
+            # RESOLVED archetype that only this phone worker needs to accept.
+            # `narrated`/`narrated_*` archetypes are impossible here (the
+            # dispatch gate only ever reaches this worker for a declared
+            # montage/day_vlog/single_hero edit_format) but are never added
+            # to this allowlist regardless -- side-chain-ducked original-audio
+            # beds stay cloud-only.
+            if archetype not in (GUIDED_EDIT_FORMATS | {"voiceover"}):
                 raise UnsupportedPhonePlan(
                     f"phone montage compiler cannot render archetype={archetype!r}"
                 )
@@ -4025,7 +4112,7 @@ def _run_phone_montage_job(
             specs = _specs_for_archetype(
                 archetype,
                 best_track,
-                voiceover_gcs_path=None,
+                voiceover_gcs_path=voiceover_gcs_path,
                 voiceover_bed_level=None,
                 voiceover_caption_style=None,
                 variant_policy=variant_policy,
@@ -4077,7 +4164,10 @@ def _run_phone_montage_job(
             )
 
             music = _resolve_phone_music_bed(decision)
-            recipe = compile_phone_montage_plan(decision, bindings, music=music)
+            narration = _resolve_phone_voiceover_bed(job_id, decision)
+            recipe = compile_phone_montage_plan(
+                decision, bindings, music=music, narration=narration
+            )
 
     validate_phone_pilot_recipe(recipe)
     request = make_device_request(

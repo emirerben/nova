@@ -594,6 +594,125 @@ def test_visual_download_requires_phone_rendering_for_the_user(fixture, monkeypa
     signer.assert_not_called()
 
 
+def voiceover_recipe(fixture, monkeypatch, *, item_id=None):
+    """Pin a recipe whose only asset is the job owner's own plan-item voiceover."""
+    from app.kria.recipes_v2 import EditRecipeV2
+    from app.kria.render_assets import VoiceoverRenderAsset
+    from app.models import PlanItem
+
+    item_id = item_id or uuid.uuid4()
+    fixture.job.content_plan_item_id = item_id
+    voiceover_path = f"voiceover-uploads/direct/{fixture.user.id}/{uuid.uuid4()}/voice.mp3"
+    item = SimpleNamespace(
+        id=item_id,
+        audio_mode="voiceover",
+        voiceover_gcs_path=voiceover_path,
+        voiceover_generation="42",
+    )
+    asset = VoiceoverRenderAsset(
+        id=f"voiceover-{item_id}",
+        plan_item_id=str(item_id),
+        generation="42",
+        fingerprint={"sha256": "a" * 64, "byte_count": 12},
+    )
+    value = fixture.request.recipe.model_dump(mode="json")
+    value.update(
+        schema_version=2,
+        renderer_version="kria-ios-2",
+        asset_manifest={"assets": [asset.model_dump()]},
+    )
+    value["assets"][0].update(
+        id=asset.id,
+        relative_path=asset.id,
+        fingerprint={"algorithm": "sha256", "hex": "a" * 64, "byte_count": 12},
+    )
+    value["tracks"][0]["clips"][0]["source_asset_id"] = asset.id
+    fixture.request = make_device_request(
+        job_id=fixture.job.id,
+        variant_id="first",
+        revision=2,
+        recipe=EditRecipeV2.model_validate(value),
+    )
+    pin_device_request(fixture.job, fixture.request, base_generation="approved")
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+
+    async def get(model, key, **kwargs):
+        assert model is PlanItem
+        return item if key == item.id else None
+
+    fixture.db.get.side_effect = get
+    signer = MagicMock(return_value="https://storage.example/pinned")
+    monkeypatch.setattr(routes.storage, "signed_get_url_for_generation", signer)
+    return asset, item, signer
+
+
+def test_voiceover_download_signs_exactly_the_pinned_generation(fixture, monkeypatch):
+    asset, item, signer = voiceover_recipe(fixture, monkeypatch)
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with(item.voiceover_gcs_path, generation="42")
+    assert response.json()["asset_id"] == asset.id
+    assert response.json()["download_url"] == "https://storage.example/pinned"
+    fixture.db.rollback.assert_awaited_once()
+
+
+@pytest.mark.parametrize("mutation", ["other_item", "no_item"])
+def test_voiceover_download_hides_voiceovers_outside_the_jobs_own_item(
+    fixture, monkeypatch, mutation
+):
+    """Unlike a Visuals-pool asset (whose id the device sends and the route
+    parses as a UUID), a voiceover asset is looked up by the JOB's OWN
+    `content_plan_item_id`, never by parsing the recipe-carried
+    `plan_item_id` string -- so there is no "bad id fails to parse" case to
+    cover here, only "the job's own item no longer matches"."""
+    asset, _item, signer = voiceover_recipe(fixture, monkeypatch)
+    if mutation == "other_item":
+        fixture.job.content_plan_item_id = uuid.uuid4()
+    else:
+        fixture.job.content_plan_item_id = None
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == "Voiceover unavailable"
+    signer.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "row_missing",
+        "audio_mode",
+        "generation",
+        "no_path",
+        "no_generation",
+        "removed",
+        "unsignable",
+    ],
+)
+def test_voiceover_download_rejects_changed_voiceovers(fixture, monkeypatch, mutation):
+    asset, item, signer = voiceover_recipe(fixture, monkeypatch)
+    if mutation == "row_missing":
+        # The job's content_plan_item_id no longer resolves to a PlanItem row
+        # at all (e.g. deleted) -- a conflict (refresh the recipe), the same
+        # as any other post-pin drift, not a bare 404.
+        item.id = uuid.uuid4()
+    elif mutation == "audio_mode":
+        item.audio_mode = "kria"
+    elif mutation == "generation":
+        item.voiceover_generation = "43"
+    elif mutation == "no_path":
+        item.voiceover_gcs_path = None
+    elif mutation == "no_generation":
+        item.voiceover_generation = None
+    elif mutation == "removed":
+        signer.side_effect = FileNotFoundError()
+    else:
+        signer.side_effect = ValueError("unsigned")
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Voiceover changed; refresh the recipe"
+    assert signer.call_count == int(mutation in {"removed", "unsignable"})
+
+
 def test_published_phone_export_edits_pin_next_device_revision(fixture, monkeypatch):
     from app.routes import generative_jobs as gj
     from tests.routes.test_phone_editor_commit import phone_job, save

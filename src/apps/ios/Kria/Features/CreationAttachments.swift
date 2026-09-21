@@ -94,7 +94,10 @@ struct AttachmentSheet: View {
                         FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, attachedMediaIDs: attachedMediaIDs, role: role, itemID: itemID, limit: limit, destination: uploadDestination)
                             .id(role)
                     }
-                    if role == .voiceover && uploadDestination == .cloud {
+                    // KRI-132: available on `.cloud` (always) and on `.phone` once the
+                    // device has verified `narrationAudio` -- `uploadDestination.resolve`
+                    // only ever returns `.phone` for the voiceover role in that case.
+                    if role == .voiceover && uploadDestination.canUpload {
                         if recorder.isRecording {
                             Button("Stop recording") { Task { await finishRecording() } }.buttonStyle(CanonicalPrimaryButtonStyle())
                         } else if recorder.hasRecording {

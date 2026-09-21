@@ -133,12 +133,21 @@ class AudioMixRecipe(_RecipeModel):
     fade_out: float = Field(default=0, ge=0, le=60)
     duck_original_during_music: bool = False
     mute_windows: list[AudioMuteWindow] = Field(default_factory=list, max_length=100)
+    # Recorded-voiceover asset id (KRI-132). Additive/optional so schema v2
+    # decodes unchanged for every recipe that predates it; a phone compiler
+    # that emits a narration audio track sets this to that track's asset,
+    # mirroring `music_asset_id`'s reference-only role (the actual per-clip
+    # gain lives on the narration `TimelineTrack`'s clip `volume`, exactly
+    # like the music bed).
+    narration_asset_id: str | None = Field(default=None, max_length=160)
 
     @model_serializer(mode="wrap")
     def preserve_legacy_shape(self, handler):
         payload = handler(self)
         if not self.mute_windows:
             payload.pop("mute_windows", None)
+        if self.narration_asset_id is None:
+            payload.pop("narration_asset_id", None)
         return payload
 
 
@@ -254,6 +263,8 @@ class EditRecipeV1(_RecipeModel):
         if any(clip.source_asset_id not in ids for clip in clips):
             raise ValueError("timeline clip references an unknown asset")
         if self.audio.music_asset_id and self.audio.music_asset_id not in ids:
+            raise ValueError("audio references an unknown asset")
+        if self.audio.narration_asset_id and self.audio.narration_asset_id not in ids:
             raise ValueError("audio references an unknown asset")
         return self
 

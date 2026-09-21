@@ -64,8 +64,11 @@ struct FootagePickerView: View {
     /// it renders in the cloud. Fixed by the project's destination, not something the user picks per
     /// upload. Agreement to share media with Kria's AI providers is given once, at account level
     /// (`AIConsentView` gates the whole workspace), so there is no per-upload consent screen.
+    /// A voiceover always uploads through the existing cloud contract (KRI-132): `destination` can be
+    /// `.phone` for this role once `narrationAudio` is verified, but that only unlocks the recorder/
+    /// picker UI -- the bytes themselves never become a phone analysis proxy.
     private var uploadPurpose: UploadPurpose {
-        destination == .phone ? .analysisProxy : .cloudRenderSource
+        role == .voiceover ? .cloudRenderSource : (destination == .phone ? .analysisProxy : .cloudRenderSource)
     }
 
     /// Non-blocking disclosure of what is uploaded, shown where the per-upload consent screen used to be.
