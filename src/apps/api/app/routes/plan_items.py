@@ -481,6 +481,8 @@ def _edit_proposal_response(item: PlanItem) -> dict | None:
     # surfaced to end users. See ProposalFailure.detail / _exc_detail().
     if isinstance(payload.get("failure"), dict):
         payload["failure"].pop("detail", None)
+    # Same rule for the planner-fallback marker (KRI-126): admin debug only.
+    payload["planner_fallback"] = None
     attempt = proposal.conversation_attempt
     if attempt is not None:
         from app.services.edit_proposals import (  # noqa: PLC0415

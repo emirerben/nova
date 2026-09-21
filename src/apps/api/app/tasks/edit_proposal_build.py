@@ -37,6 +37,7 @@ from app.schemas.edit_proposal import (
     MediaRef,
     NarrationTrack,
     ProposalFailure,
+    ProposalPlannerFallback,
     StoryBeat,
     canonical_media_digest,
     parse_edit_proposal,
@@ -1638,6 +1639,7 @@ def _run_draft_attempt(
             for ref in media
         ]
         fallback_used = False
+        fallback_reason = ""
         try:
             output = EditProposalAgent(default_client()).run(
                 EditProposalAgentInput(
@@ -1678,6 +1680,7 @@ def _run_draft_attempt(
             ):
                 raise
             fallback_used = True
+            fallback_reason = str(exc)[:500]
             output = None
             log.warning(
                 "edit_proposal.deterministic_fallback",
@@ -1948,6 +1951,27 @@ def _run_draft_attempt(
                 expected_version=current.proposal_version,
                 snapshot=snapshot,
             )
+            # KRI-126: make a silent deterministic-fallback draft visible to
+            # admin/debug (never to end users -- EditProposalResponse redacts
+            # this field). A later successful, non-fallback draft clears it
+            # in the same write. Set directly on the already-locked row
+            # rather than emitting a log/pipeline event here (record_pipeline_
+            # event-while-FOR-UPDATE is a known self-deadlock trap in this
+            # codebase; see agents/DECISIONS.md).
+            drafted = drafted.model_copy(
+                update={
+                    "planner_fallback": (
+                        ProposalPlannerFallback(
+                            reason=fallback_reason or "unknown planner failure",
+                            direction=brief.direction,
+                            at=datetime.now(UTC),
+                        )
+                        if fallback_used
+                        else None
+                    )
+                }
+            )
+            item.edit_proposal = drafted.model_dump(mode="json")
             if auto_finalize:
                 # Dispatch happens in _dispatch_after_auto_design, called by
                 # draft_edit_proposal only after this function returns and
