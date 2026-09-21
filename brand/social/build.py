@@ -29,6 +29,7 @@ import verify  # noqa: E402
 from kria_brand import (  # noqa: E402
     BUTTER, alpha_bbox, FPS, H, INK, PAPER, SKY, TEXT_SAFE, W,
     draw_rgba, ease_out_cubic, font, hex_to_color, save_png, shadow_filter,
+    to_image,
     soft_shadow,
     wordmark, wrap,
 )
@@ -487,6 +488,136 @@ def _sheet(composite: np.ndarray, variant: str, bg: str,
 
 
 # =============================================================================
+# gray watermark exploration
+# =============================================================================
+
+# A tonal ladder for the "subtle gray" treatment, from near-white to slate.
+# Tone is the variable; every candidate carries the same faint shadow so the
+# comparison isn't confounded, except `bare`, which is the control that shows
+# what dropping the shadow costs. Greys are taken from the warm-ink scale in
+# DESIGN.md where one exists, so this stays inside the palette.
+# name: (mark hex, mark opacity, faint shadow?, scrim hex, scrim opacity)
+GrayCandidate = tuple[str, float, bool, str | None, float]
+GRAY_CANDIDATES: dict[str, GrayCandidate] = {
+    # --- unaided tonal ladder, light to dark ---------------------------------
+    "frost":  ("#FFFFFF", 0.55, True,  None, 0.0),      # near-white
+    "mist":   ("#CAD2DB", 0.72, True,  None, 0.0),      # brand divider grey
+    "ash":    ("#A1A1AA", 0.78, True,  None, 0.0),      # brand ink-4
+    "smoke":  ("#8A8F96", 0.85, True,  None, 0.0),      # neutral mid
+    "slate":  ("#677587", 0.85, True,  None, 0.0),      # brand ink-3
+    "bare":   ("#8A8F96", 0.85, False, None, 0.0),      # control: no shadow
+    # --- light chip ----------------------------------------------------------
+    # None of the unaided greys hold on busy mid-tone footage: the mark and the
+    # background keep landing on the same luminance. A dark-grey mark on a soft
+    # light chip fixes that and suits a paper-light brand better than a dark
+    # scrim would. `veil` is the lightest touch; `chip` is the one that clears
+    # the 3:1 floor on every frame tested.
+    "veil":   ("#677587", 0.92, False, "#FFFFFF", 0.70),
+    "chip":   ("#526071", 0.90, False, "#FFFFFF", 0.62),
+}
+
+GRAY_SHADOW = dict(dy=2, sigma=7, opacity=0.30)
+
+
+def build_gray(name: str, width: int) -> np.ndarray:
+    fill, opacity, shadowed, scrim_hex, scrim = GRAY_CANDIDATES[name]
+    mark = wordmark(width, fill=fill)
+    mw, mh = mark.size
+    pad = SHADOW_PAD
+    surface = skia.Surface(mw + pad * 2, mh + pad * 2)
+    with surface as canvas:
+        canvas.clear(skia.ColorTRANSPARENT)
+        if scrim_hex is not None:
+            sp = skia.Paint(AntiAlias=True, Color=hex_to_color(scrim_hex, scrim))
+            sp.setImageFilter(skia.ImageFilters.Blur(PLATE_FEATHER, PLATE_FEATHER))
+            canvas.drawRoundRect(
+                skia.Rect.MakeLTRB(pad - PLATE_PAD_X, pad - PLATE_PAD_Y,
+                                   pad + mw + PLATE_PAD_X, pad + mh + PLATE_PAD_Y),
+                PLATE_RADIUS, PLATE_RADIUS, sp)
+        paint = (soft_shadow(**GRAY_SHADOW) if shadowed
+                 else skia.Paint(AntiAlias=True))
+        draw_rgba(canvas, mark.full, pad, pad, paint, opacity)
+    return np.array(surface.makeImageSnapshot().toarray())
+
+
+def context_sheet(video: Path, at: float, names: list[str],
+                  size: str) -> skia.Surface:
+    """Full frames, side by side. A 1:1 crop makes every mark look shouty."""
+    width = WATERMARK_SIZES[size]
+    bg = load_frame(video, at)
+    scale = 0.34
+    fw, fh = int(W * scale), int(H * scale)
+    surface = skia.Surface(fw * len(names), fh + 56)
+    with surface as canvas:
+        canvas.clear(hex_to_color("#14171A"))
+        for col, name in enumerate(names):
+            composite = verify.over(
+                _overlay_rgba(build_gray(name, width), *WATERMARK_HOME), bg)
+            rgba = np.dstack([composite.astype(np.uint8),
+                              np.full((H, W, 1), 255, np.uint8)])
+            img = to_image(rgba).resize(
+                fw, fh, skia.SamplingOptions(skia.CubicResampler.Mitchell()))
+            canvas.drawImage(img, col * fw, 0)
+            canvas.drawString(name, col * fw + 16, fh + 38, font("Inter-Bold", 28),
+                              skia.Paint(AntiAlias=True, Color=hex_to_color(PAPER)))
+    return surface
+
+
+# The crop shown per cell: the watermark plus enough footage around it to judge
+# whether the mark is subtle or shouting.
+_CELL = (0, 130, 620, 390)
+
+
+def compare_grays(video: Path, times: list[float], size: str) -> tuple[skia.Surface, dict]:
+    width = WATERMARK_SIZES[size]
+    names = list(GRAY_CANDIDATES)
+    cx0, cy0, cx1, cy1 = _CELL
+    cw, ch = cx1 - cx0, cy1 - cy0
+    label_h, head_h = 54, 64
+
+    frames = [(t, load_frame(video, t)) for t in times]
+    scores: dict = {}
+
+    surface = skia.Surface(cw * len(frames), head_h + len(names) * (ch + label_h))
+    with surface as canvas:
+        canvas.clear(hex_to_color("#14171A"))
+        head = font("Inter-Bold", 30)
+        for col, (t, bg) in enumerate(frames):
+            lum = float(np.median(verify.luminance(bg[cy0:cy1, 30:270])))
+            canvas.drawString(f"t={t:g}s   corner luminance {lum:.2f}",
+                              col * cw + 18, 42, head,
+                              skia.Paint(AntiAlias=True, Color=hex_to_color(PAPER)))
+
+        for row, name in enumerate(names):
+            tile = build_gray(name, width)
+            bare = wordmark(width, fill=GRAY_CANDIDATES[name][0])
+            ink = _overlay_rgba(_pad(bare.full, SHADOW_PAD), *WATERMARK_HOME)
+            y = head_h + row * (ch + label_h)
+
+            for col, (t, bg) in enumerate(frames):
+                composite = verify.over(_overlay_rgba(tile, *WATERMARK_HOME), bg)
+                res = verify.contrast(ink, composite)
+                scores[f"{name}@{t:g}s"] = res.as_dict()
+
+                rgba = np.dstack([composite.astype(np.uint8),
+                                  np.full((H, W, 1), 255, np.uint8)])
+                cell = np.ascontiguousarray(rgba[cy0:cy1, cx0:cx1])
+                draw_rgba(canvas, cell, col * cw, y)
+
+                hexcode, opacity, shadowed, scrim_hex, scrim = GRAY_CANDIDATES[name]
+                label = (f"{name}  {hexcode} @{opacity:.0%}"
+                         f"{'  +shadow' if shadowed else ''}"
+                         f"{f'  on {scrim_hex} {scrim:.0%}' if scrim_hex else ''}")
+                canvas.drawString(
+                    f"{label}   {res.worst_tile:.1f}:1",
+                    col * cw + 18, y + ch + 36, font("Inter-Medium", 26),
+                    skia.Paint(AntiAlias=True,
+                               Color=hex_to_color(PAPER if res.worst_tile >= 2.0
+                                                  else "#E8846F")))
+    return surface, scores
+
+
+# =============================================================================
 # pick: which variant does this actual shot need?
 # =============================================================================
 
@@ -571,6 +702,16 @@ def main() -> int:
     pick.add_argument("--slot", choices=["top-left", "bottom-left"], default="top-left")
     pick.add_argument("--size", choices=list(WATERMARK_SIZES), default="standard")
 
+    cmp_ = sub.add_parser(
+        "compare", help="render the grey watermark ladder over a real clip")
+    cmp_.add_argument("video", type=Path)
+    cmp_.add_argument("--at", default="1,6,10",
+                      help="comma-separated seek times")
+    cmp_.add_argument("--size", choices=list(WATERMARK_SIZES), default="standard")
+    cmp_.add_argument("--context", default="mist,slate,veil",
+                      help="candidates to show full-frame, comma-separated")
+    cmp_.add_argument("--out", type=Path, default=Path("gray-compare.png"))
+
     card = sub.add_parser("card", help="render one template card")
     card.add_argument("--kind", choices=["hook", "step"], required=True)
     card.add_argument("--text", required=True)
@@ -578,6 +719,17 @@ def main() -> int:
     card.add_argument("--number", type=int, default=1)
     card.add_argument("--out", type=Path, default=Path("card.png"))
     args = ap.parse_args()
+
+    if args.cmd == "compare":
+        times = [float(x) for x in args.at.split(",")]
+        surface, scores = compare_grays(args.video, times, args.size)
+        save_png(surface, args.out)
+        args.out.with_suffix(".json").write_text(json.dumps(scores, indent=2) + "\n")
+        ctx = args.out.with_name(args.out.stem + "-in-context.png")
+        save_png(context_sheet(args.video, times[0],
+                               args.context.split(","), args.size), ctx)
+        print(f"wrote {args.out}\nwrote {ctx}")
+        return 0
 
     if args.cmd == "pick":
         slot = WATERMARK_HOME if args.slot == "top-left" else WATERMARK_ALT
