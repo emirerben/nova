@@ -35,7 +35,7 @@ final class LiveAudioMixTests: XCTestCase {
         XCTAssertTrue(item === preview.preview.playerItem)
         XCTAssertTrue(source === item.asset)
         let output = directory.appendingPathComponent("mix.mp4")
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
             .export(recipe: recipe, assetURLs: urls, outputURL: output)
         var levels: [Double] = []
         for (asset, mix) in [(source, item.audioMix), (AVURLAsset(url: output) as AVAsset, nil)] {

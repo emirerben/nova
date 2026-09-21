@@ -76,7 +76,7 @@ public protocol DeviceRenderPublishing: Sendable {
     /// Must authorize and compare the exact current server revision, including after retries.
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool
     /// Reserve/upload/verify/publish idempotently by attempt ID. Never uploads source media.
-    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID) async throws -> DevicePublication
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication
 }
 public protocol DeviceSourceResolving: Sendable {
     func resolve(for recipe: EditRecipe) async throws -> [String: URL]
@@ -233,7 +233,7 @@ public actor DeviceRenderCoordinator {
             guard current(attempt) else { return }
             guard stillCurrent else { try update(attempt, phase: .superseded); return }
             try update(attempt, phase: .syncing)
-            let result = try await publisher.publish(file: output, identity: saved.request.identity, attemptID: attempt)
+            let result = try await publisher.publish(file: output, identity: saved.request.identity, attemptID: attempt, brandTail: exporter.brandTail)
             guard current(attempt) else { return }
             try update(attempt, phase: result == .published ? .synced : .superseded)
         } catch is CancellationError {

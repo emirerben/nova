@@ -191,7 +191,10 @@ private final class DeviceEffectsSession {
                     tracks: [TimelineTrack(id: "video", kind: .video, clips: [
                         TimelineClip(id: "prepare", sourceAssetID: "footage", sourceDuration: 3)
                     ])])
-                _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("source-state")))
+                // Unbranded: this is an intermediate source that the look
+                // export below re-encodes. Branding it would bake a watermark
+                // into the input and leave an outro in the middle of the cut.
+                _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("source-state")), branding: .none)
                     .export(recipe: sourceRecipe, assetURLs: urls, outputURL: normalized)
             }
             urls["footage"] = normalized
@@ -264,7 +267,9 @@ private final class DeviceEffectsSession {
         // into this one's report.
         RenderProfiler.reset()
         let start = Date()
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
+        // Unbranded: this harness measures render cost and compares frames
+        // against references; brand furniture is not part of what it tests.
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
             .export(recipe: value.0, assetURLs: value.1, outputURL: destination, progress: { [weak self] value in
                 Task { @MainActor in self?.exportProgress = value; self?.saveReport() }
             })

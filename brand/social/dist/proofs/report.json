@@ -1,0 +1,280 @@
+{
+  "placements": {
+    "watermark/compact/bottom-left": {
+      "rect": [
+        60,
+        1426,
+        169,
+        1475
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "watermark/compact/top-left": {
+      "rect": [
+        60,
+        210,
+        169,
+        259
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "watermark/standard/bottom-left": {
+      "rect": [
+        60,
+        1416,
+        193,
+        1475
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "watermark/standard/top-left": {
+      "rect": [
+        60,
+        210,
+        193,
+        269
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "watermark/demo/bottom-left": {
+      "rect": [
+        60,
+        1401,
+        226,
+        1475
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "watermark/demo/top-left": {
+      "rect": [
+        60,
+        210,
+        226,
+        284
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "template/hook-example-1.png": {
+      "rect": [
+        45,
+        255,
+        892,
+        698
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "template/hook-example-2.png": {
+      "rect": [
+        46,
+        304,
+        750,
+        520
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "template/step-example-1.png": {
+      "rect": [
+        60,
+        1294,
+        685,
+        1400
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "template/step-example-2.png": {
+      "rect": [
+        60,
+        1294,
+        686,
+        1400
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "safe-rectangle": {
+      "rect": [
+        60,
+        200,
+        890,
+        1520
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    }
+  },
+  "legibility": {
+    "mist/bright": {
+      "median": 1.16,
+      "worst_tile": 1.16,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "meets_reference": false
+    },
+    "graphite/bright": {
+      "median": 2.66,
+      "worst_tile": 2.66,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": true,
+      "meets_reference": true
+    },
+    "sky/bright": {
+      "median": 1.54,
+      "worst_tile": 1.54,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "meets_reference": false
+    },
+    "mist/dark": {
+      "median": 2.98,
+      "worst_tile": 2.98,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": true,
+      "meets_reference": true
+    },
+    "graphite/dark": {
+      "median": 1.71,
+      "worst_tile": 1.71,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "meets_reference": false
+    },
+    "sky/dark": {
+      "median": 9.2,
+      "worst_tile": 9.2,
+      "passes_floor": true,
+      "meets_target": true,
+      "recommended_pairing": false,
+      "meets_reference": true
+    },
+    "mist/mid": {
+      "median": 1.53,
+      "worst_tile": 1.53,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": true,
+      "meets_reference": false
+    },
+    "graphite/mid": {
+      "median": 1.35,
+      "worst_tile": 1.35,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "meets_reference": false
+    },
+    "sky/mid": {
+      "median": 2.31,
+      "worst_tile": 2.31,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "meets_reference": true
+    },
+    "mist/warm": {
+      "median": 1.37,
+      "worst_tile": 1.37,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": true,
+      "meets_reference": false
+    },
+    "graphite/warm": {
+      "median": 1.55,
+      "worst_tile": 1.55,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "meets_reference": false
+    },
+    "sky/warm": {
+      "median": 1.87,
+      "worst_tile": 1.87,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "meets_reference": false
+    },
+    "mist/busy": {
+      "median": 1.61,
+      "worst_tile": 1.54,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": true,
+      "meets_reference": false
+    },
+    "graphite/busy": {
+      "median": 1.31,
+      "worst_tile": 1.25,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "meets_reference": false
+    },
+    "sky/busy": {
+      "median": 2.23,
+      "worst_tile": 2.13,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "meets_reference": true
+    }
+  }
+}

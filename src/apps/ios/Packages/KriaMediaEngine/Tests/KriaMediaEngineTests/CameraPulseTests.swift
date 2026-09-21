@@ -36,7 +36,7 @@ final class CameraPulseTests: XCTestCase {
             cameraPulses: [CameraPulse(id: "pulse", start: 0.5, end: 1.5, intensity: 0.08)])
         let preview = try await LivePreviewComposition(recipe: recipe, assetURLs: ["photo": photo])
         let output = directory.appendingPathComponent("camera.mp4")
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
             .export(recipe: recipe, assetURLs: ["photo": photo], outputURL: output)
         let native = AVAssetImageGenerator(asset: preview.preview.playerItem.asset)
         native.videoComposition = preview.preview.playerItem.videoComposition

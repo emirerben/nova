@@ -28,7 +28,7 @@ final class SourceAudioOverlapParityTests: XCTestCase {
             audio: AudioMixRecipe(originalVolume: 0.4))
         let preview = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
         let output = directory.appendingPathComponent("overlap.mp4")
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
             .export(recipe: recipe, assetURLs: urls, outputURL: output)
         let firstPCM = try await decode(AVURLAsset(url: first), nil)
         let secondPCM = try await decode(AVURLAsset(url: second), nil)

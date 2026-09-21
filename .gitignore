@@ -81,3 +81,10 @@ src/apps/ios/Packages/*/.swiftpm/
 
 # CI test timing artifacts
 /test-results/
+
+# Kria social kit. The repo-wide `dist/` rule above would swallow the whole
+# exported kit, and the point of that directory is that it ships. Re-include
+# it, but keep the regenerable ProRes master out (`build.py --prores`).
+!brand/social/dist/
+!brand/social/dist/**
+brand/social/dist/**/*.mov
