@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.106.0] - 2026-09-21
+
+### Changed
+- fix(ios-branding): a missing branding resource fails the export instead of silently over-declaring brand_tail (KRI-52 follow-up) (#1121) <!-- release-pr: 1121 -->
+
 ## [0.76.105.0] - 2026-09-21
 
 ### Changed
