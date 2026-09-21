@@ -214,7 +214,7 @@ def main() -> None:
         "crossfade-c0": ("blue", 523),
         "crossfade-c1": ("yellow", 587),
         "music-c0": ("cyan", 659),
-        "music-c1": ("magenta", 698),
+        "music-c1": ("white", 698),
         "narration-c0": ("orange", 349),
         "narration-c1": ("purple", 392),
     }
@@ -382,7 +382,7 @@ def main() -> None:
                 "expects_music_audio": True,
                 "samples": [
                     {"name": "c0", "t": 1.5, "x": 540, "y": 960, "rgb": [0, 255, 255]},
-                    {"name": "c1", "t": 4.5, "x": 540, "y": 960, "rgb": [255, 0, 255]},
+                    {"name": "c1", "t": 4.5, "x": 540, "y": 960, "rgb": [255, 255, 255]},
                 ],
             },
             "crossfade": {

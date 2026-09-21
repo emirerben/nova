@@ -69,8 +69,8 @@ public enum VisualVideoFile {
 /// `app/routes/music_jobs.py`) accepts mp3/m4a/wav/webm/ogg/aac, but
 /// AVFoundation has no built-in Vorbis/Opus-in-Ogg or Opus-in-WebM decoder --
 /// those two fail closed with `unsupportedCapability` instead of a crash.
-enum PlayableAudioFile {
-    static func prepare(source: URL, fingerprint: RenderFingerprint, directory: URL) throws -> URL {
+public enum PlayableAudioFile {
+    public static func prepare(source: URL, fingerprint: RenderFingerprint, directory: URL) throws -> URL {
         try PlayableMediaFile.prepare(source: source, fingerprint: fingerprint, directory: directory, extensionOf: fileExtension)
     }
 
