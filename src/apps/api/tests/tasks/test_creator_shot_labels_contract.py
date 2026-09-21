@@ -12,6 +12,7 @@ Main Creator grounding -> brief -> planner parse -> fallback -> renderer.
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -213,11 +214,15 @@ def test_planner_allows_unlabeled_beats_only_as_title_holds() -> None:
         agent.parse(json.dumps(middle_gap), _agent_input(shot_labels=LABELS[:5]))
 
 
-def test_planner_without_labels_keeps_the_five_beat_cap() -> None:
+def test_planner_without_labels_accepts_six_beats() -> None:
+    # KRI-129: the old LEGACY_GUIDED_DRAFT_BEATS=5 cap on an unlabeled draft
+    # is gone -- the real ceiling is the persisted snapshot's limit (20).
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     payload = _labeled_output([f"Stone detail {index} catches the light." for index in range(6)])
-    with pytest.raises(SchemaError, match="at most 5 items"):
-        agent.parse(json.dumps(payload), _agent_input(shot_labels=None, closing_title=None))
+
+    output = agent.parse(json.dumps(payload), _agent_input(shot_labels=None, closing_title=None))  # type: ignore[arg-type]
+
+    assert len(output.story_beats) == 6
 
 
 def test_prompt_carries_labels_as_a_contract() -> None:
@@ -865,13 +870,20 @@ def test_planner_accepts_requested_shot_seconds_plus_title_hold(declared_s: floa
     assert [beat.duration_s for beat in output.story_beats] == LEGENDS_DRAFT_SECONDS
 
 
-def test_planner_still_rejects_labeled_beats_far_from_the_target() -> None:
+def test_planner_repairs_labeled_beats_far_from_the_target() -> None:
+    # KRI-129: a labeled draft whose declared beat weights sum far from the
+    # target is now rescaled to the target instead of rejected -- the
+    # creator's labels and their order still survive untouched.
     draft = _legends_draft(30)
     for beat in draft["story_beats"]:
         beat["duration_s"] = 12
 
-    with pytest.raises(SchemaError, match="too far from the creator's target"):
-        EditProposalAgent(None).parse(json.dumps(draft), _legends_input())  # type: ignore[arg-type]
+    output = EditProposalAgent(None).parse(json.dumps(draft), _legends_input())  # type: ignore[arg-type]
+
+    assert output.duration_s == 30
+    assert [beat.thought for beat in output.story_beats] == LEGENDS_LABELS
+    assert math.isclose(sum(beat.duration_s for beat in output.story_beats), 30, abs_tol=0.01)
+    assert "scaled_durations" in output.repairs
 
 
 # Production regression (KRI-115, plan item 5016d555, job e0aab96d): the live
@@ -890,15 +902,51 @@ LEGENDS_AVOIDABLE_REPEAT_GROUPS = [
     ["photo-gaudi", "clip-towers"],
     ["photo-stadium"],
 ]
+# Same avoidable Messi repeat as above, but with every required source
+# (including photo-blocks, missing above) covered somewhere in the plan --
+# isolates the repeat-while-unused-source behavior from the separate
+# required-coverage guard.
+LEGENDS_FULL_COVERAGE_REPEAT_GROUPS = [
+    ["photo-messi"],
+    ["photo-cerda", "photo-blocks"],
+    ["photo-picasso", "clip-batllo"],
+    ["clip-camp-nou", "clip-basilica-wide"],
+    ["photo-messi"],
+    ["photo-gaudi", "clip-towers"],
+    ["photo-stadium", "clip-quatre-gats"],
+]
 
 
-def test_planner_rejects_photo_reuse_while_an_unused_source_remains() -> None:
+def test_planner_rejects_photo_reuse_that_also_drops_required_coverage() -> None:
+    # LEGENDS_AVOIDABLE_REPEAT_GROUPS never places photo-blocks anywhere, so
+    # this still-live guard (required coverage under media_scope="all") is
+    # what actually fires now -- the KRI-129 removal of the photo-repeat
+    # rejection itself is covered by the next test.
     draft = _legends_draft(30)
     for beat, media_ids in zip(draft["story_beats"], LEGENDS_AVOIDABLE_REPEAT_GROUPS, strict=True):
         beat["media_ids"] = media_ids
 
-    with pytest.raises(SchemaError, match="photo repeated while an unused source"):
+    with pytest.raises(SchemaError, match="requested media coverage was dropped"):
         EditProposalAgent(None).parse(json.dumps(draft), _legends_input())  # type: ignore[arg-type]
+
+
+def test_planner_accepts_photo_reuse_while_an_unused_source_remains() -> None:
+    # KRI-129: "photo repeated while an unused source was available" is
+    # removed -- this repeat (photo-messi shown again in the closing chapter
+    # while photo-stadium/photo-gaudi/clip-towers/clip-quatre-gats are still
+    # unused at that point) is now accepted, with every required source
+    # still covered somewhere in the plan.
+    draft = _legends_draft(30)
+    for beat, media_ids in zip(
+        draft["story_beats"], LEGENDS_FULL_COVERAGE_REPEAT_GROUPS, strict=True
+    ):
+        beat["media_ids"] = media_ids
+
+    output = EditProposalAgent(None).parse(json.dumps(draft), _legends_input())  # type: ignore[arg-type]
+
+    used = [media_id for beat in output.story_beats for media_id in beat.media_ids]
+    assert used.count("photo-messi") == 2
+    assert set(used) == {media_id for media_id, *_rest in LEGENDS_MEDIA}
 
 
 def test_planner_still_allows_photo_reuse_as_a_genuine_last_resort() -> None:
@@ -975,7 +1023,6 @@ def test_labeled_fallback_covers_every_required_source() -> None:
 
 def test_labeled_fallback_stays_inside_a_selected_source_set() -> None:
     from app.services.edit_direction_planner import (
-        CreatorTextInfeasibleError,
         deterministic_labeled_beats,
     )
 
@@ -995,13 +1042,17 @@ def test_labeled_fallback_stays_inside_a_selected_source_set() -> None:
         kind="video",
         duration_s=0.9,
     )
-    with pytest.raises(CreatorTextInfeasibleError):
-        deterministic_labeled_beats(
-            [*refs, too_short],
-            12,
-            shot_labels=LEGENDS_LABELS[:2],
-            required_media_ids=[*selected, "clip-flash"],
-        )
+    # A short clip is never left out for being short (KRI-129): it used to make
+    # the whole labeled plan infeasible, it is now simply part of the story.
+    with_short = deterministic_labeled_beats(
+        [*refs, too_short],
+        12,
+        shot_labels=LEGENDS_LABELS[:2],
+        required_media_ids=[*selected, "clip-flash"],
+    )
+    assert sorted(media_id for beat in with_short for media_id in beat.media_ids) == sorted(
+        [*selected, "clip-flash"]
+    )
 
 
 @pytest.mark.parametrize("planner", ["live_draft_shape", "planner_failure"])

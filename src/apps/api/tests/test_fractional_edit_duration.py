@@ -5,7 +5,6 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from app.agents._runtime import SchemaError
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.agents.edit_guide import EditGuideRevision
 from app.agents.edit_proposal import (
@@ -315,6 +314,11 @@ def test_fractional_source_precision_allows_subframe_beat_sum_drift() -> None:
         beat["duration_s"] = duration
     output = EditProposalAgent(None).parse(json.dumps(response), _input(12.7))
     assert output.duration_s == 12.7
+    assert "scaled_durations" not in output.repairs
+    # A full frame of drift used to discard the authored plan ("beat durations
+    # do not fit"). It is now scaled back onto the declared total (KRI-129).
     response["story_beats"][0]["duration_s"] += 1 / 30
-    with pytest.raises(SchemaError, match="beat durations do not fit"):
-        EditProposalAgent(None).parse(json.dumps(response), _input(12.7))
+    repaired = EditProposalAgent(None).parse(json.dumps(response), _input(12.7))
+    assert repaired.duration_s == 12.7
+    assert sum(beat.duration_s for beat in repaired.story_beats) == pytest.approx(12.7, abs=0.002)
+    assert "scaled_durations" in repaired.repairs

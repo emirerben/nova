@@ -6276,6 +6276,87 @@ def test_negated_text_saying_does_not_add_title(monkeypatch):
     assert strategy.opening_title is None
 
 
+# --- KRI-129 part E: closing/ending titles must never be mis-assigned to
+# opening_title (and vice versa), and a font-name cue must survive "for the
+# font" phrasing. No regression test shipped with the original fix. ---------
+
+
+def test_closing_title_cue_sets_closing_not_opening(monkeypatch):
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        'closing title "Thanks for watching"',
+        manifest=_manifest(monkeypatch),
+    )
+    assert strategy.closing_title == "Thanks for watching"
+    assert strategy.opening_title is None
+
+
+def test_end_title_cue_sets_closing_not_opening(monkeypatch):
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        'end title should say "Thanks for watching"',
+        manifest=_manifest(monkeypatch),
+    )
+    assert strategy.closing_title == "Thanks for watching"
+    assert strategy.opening_title is None
+
+
+def test_intro_title_cue_sets_opening(monkeypatch):
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        'Add an intro title saying "Emir Olympics London Edition"',
+        manifest=_manifest(monkeypatch),
+    )
+    assert strategy.opening_title == "Emir Olympics London Edition"
+    assert strategy.closing_title is None
+
+
+def test_outro_music_title_cue_belongs_to_a_different_clause(monkeypatch):
+    """ "outro" precedes a separate clause (before the comma) and must not be
+    read as a closing-title cue for the "title" mention that follows it."""
+
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        'outro music, title "A"',
+        manifest=_manifest(monkeypatch),
+    )
+    assert strategy.opening_title == "A"
+    assert strategy.closing_title is None
+
+
+def test_negated_closing_title_adds_no_title(monkeypatch):
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        "do not add a closing title",
+        manifest=_manifest(monkeypatch),
+    )
+    assert strategy.opening_title is None
+    assert strategy.closing_title is None
+
+
+def test_use_font_name_for_the_font_phrasing(monkeypatch):
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        "Use Anton for the font",
+        manifest=_manifest(monkeypatch),
+    )
+    assert strategy.font_family == "Anton"
+
+
+def test_two_quoted_titles_in_one_message_set_both_ends(monkeypatch):
+    """Known gap fixed: a message classifying two distinct quoted title
+    mentions -- one opening, one closing -- by their own clause prefixes must
+    set BOTH, never lose the second to the first `re.search` hit."""
+
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        'title "A", closing title "B"',
+        manifest=_manifest(monkeypatch),
+    )
+    assert strategy.opening_title == "A"
+    assert strategy.closing_title == "B"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("compile_fails_once", [False, True])
 @pytest.mark.parametrize("semantic_plan", [False, True])

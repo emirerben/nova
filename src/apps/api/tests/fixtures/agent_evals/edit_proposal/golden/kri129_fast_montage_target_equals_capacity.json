@@ -1,0 +1,208 @@
+{
+ "agent": "nova.plan.edit_proposal",
+ "prompt_version": "1.12.0",
+ "input": {
+  "idea": "",
+  "theme": "",
+  "direction": "fast_montage",
+  "goal": "Intro with title 'Emir Olympics London Edition' over park videos of individuals not playing sports; Montage of everyone playing, grouped by sport, with sport labels on screen; Include the creator talking to the camera, preserving the speech audio; End with the pub videos grouped together, styled with the theme 'post match pub'",
+  "creator_request": "Continue with 16 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say “post match pub”. Add an intro title saying “Emir Olympics London Edition”. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech Keep 60 seconds and include everything with faster pacing",
+  "pace": "balanced",
+  "target_duration_s": 60,
+  "video_reuse_policy": "once",
+  "media_scope": "all",
+  "selected_media_ids": [
+   "clip-01.mp4",
+   "clip-02.mp4",
+   "clip-03.mp4",
+   "clip-04.mp4",
+   "clip-05.mp4",
+   "clip-06.mp4",
+   "clip-07.mp4",
+   "clip-08.mp4",
+   "clip-09.mp4",
+   "clip-10.mp4",
+   "clip-11.mp4",
+   "clip-12.mp4",
+   "clip-13.mp4",
+   "clip-14.mp4",
+   "clip-15.mp4",
+   "clip-16.mp4"
+  ],
+  "opening_title": "Emir Olympics London Edition",
+  "closing_title": null,
+  "montage_audio": {
+   "preserve_source_audio": true,
+   "preview_source_beds": false,
+   "source_media_ids": []
+  },
+  "media": [
+   {
+    "media_id": "clip-01.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 8.933333,
+    "subject": "group of people talking at a table",
+    "description": "woman smiles while speaking man gestures while speaking woman listens intently",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-02.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 8.0,
+    "subject": "woman talking at outdoor cafe",
+    "description": "woman smiling and gesturing 'don't call me' woman puts hands together and looks away",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-03.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 4.533333,
+    "subject": "man using phone",
+    "description": "man speaking while looking at phone man contemplating phone content",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-04.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 1.266667,
+    "subject": "man waving",
+    "description": "man walking and waving",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-05.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 10.3,
+    "subject": "pedestrians and traffic on street",
+    "description": "woman walks past camera second woman walks past cars drive past green light",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-06.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 3.766667,
+    "subject": "two people talking at an outdoor restaurant",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-07.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 2.566667,
+    "subject": "man speaking at a restaurant table",
+    "description": "help to somewhere to move like ten minutes",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-08.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 1.666667,
+    "subject": "young man in jersey at outdoor cafe",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-09.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 1.433333,
+    "subject": "woman smiling at outdoor cafe",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-10.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 2.166667,
+    "subject": "woman making funny faces",
+    "description": "woman's wide-eyed expression",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-11.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 1.866667,
+    "subject": "man speaking at table",
+    "description": "man looking up and speaking",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-12.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 2.0,
+    "subject": "man in cardigan sitting at table",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-13.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 7.866667,
+    "subject": "two men sitting at a table talking",
+    "description": "man speaking about topic woman interjecting thought man smiling at question",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-14.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 6.3,
+    "subject": "two people outdoors",
+    "description": "man expressing happiness woman waving goodbye",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-15.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 5.0,
+    "subject": "group walking across field",
+    "description": "group walks across field group continues walking",
+    "on_screen_text": "",
+    "best_moments": []
+   },
+   {
+    "media_id": "clip-16.mp4",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 9.033333,
+    "subject": "people playing beach volleyball",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": []
+   }
+  ]
+ },
+ "raw_text": "{\"title\": \"Emir Olympics London Edition\", \"duration_s\": 60, \"story_beats\": [], \"fast_cuts\": [{\"cut_id\": \"cut-1\", \"media_id\": \"clip-01.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 3.0, \"output_duration_s\": 3.0, \"role\": \"hook\"}, {\"cut_id\": \"cut-2\", \"media_id\": \"clip-02.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 3.0, \"output_duration_s\": 3.0, \"role\": \"build\"}, {\"cut_id\": \"cut-3\", \"media_id\": \"clip-03.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 3.0, \"output_duration_s\": 3.0, \"role\": \"build\"}, {\"cut_id\": \"cut-4\", \"media_id\": \"clip-04.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 1.217, \"output_duration_s\": 1.217, \"role\": \"build\"}, {\"cut_id\": \"cut-5\", \"media_id\": \"clip-05.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 3.0, \"output_duration_s\": 3.0, \"role\": \"build\"}, {\"cut_id\": \"cut-6\", \"media_id\": \"clip-06.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 3.0, \"output_duration_s\": 3.0, \"role\": \"build\"}, {\"cut_id\": \"cut-7\", \"media_id\": \"clip-07.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 2.517, \"output_duration_s\": 2.517, \"role\": \"build\"}, {\"cut_id\": \"cut-8\", \"media_id\": \"clip-08.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 1.617, \"output_duration_s\": 1.617, \"role\": \"build\"}, {\"cut_id\": \"cut-9\", \"media_id\": \"clip-09.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 1.383, \"output_duration_s\": 1.383, \"role\": \"build\"}, {\"cut_id\": \"cut-10\", \"media_id\": \"clip-10.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 2.117, \"output_duration_s\": 2.117, \"role\": \"build\"}, {\"cut_id\": \"cut-11\", \"media_id\": \"clip-11.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 1.817, \"output_duration_s\": 1.817, \"role\": \"build\"}, {\"cut_id\": \"cut-12\", \"media_id\": \"clip-12.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 1.95, \"output_duration_s\": 1.95, \"role\": \"build\"}, {\"cut_id\": \"cut-13\", \"media_id\": \"clip-13.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 3.0, \"output_duration_s\": 3.0, \"role\": \"build\"}, {\"cut_id\": \"cut-14\", \"media_id\": \"clip-14.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 3.0, \"output_duration_s\": 3.0, \"role\": \"build\"}, {\"cut_id\": \"cut-15\", \"media_id\": \"clip-15.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 3.0, \"output_duration_s\": 3.0, \"role\": \"build\"}, {\"cut_id\": \"cut-16\", \"media_id\": \"clip-16.mp4\", \"source_start_s\": 0.0, \"source_end_s\": 3.0, \"output_duration_s\": 3.0, \"role\": \"payoff\"}], \"mixed_media_timing\": null, \"montage_text_bindings\": [], \"montage_audio\": {\"preserve_source_audio\": true, \"preview_source_beds\": false, \"source_media_ids\": []}}",
+ "meta": {
+  "source": "hand_authored_golden",
+  "case": "KRI-129: 16-clip once-only fast montage whose 60 s target equals total source capacity (redacted prod input, job 1fffa9f6)",
+  "contract": "an authored montage that uses every required clip but lands short of the target is accepted at its authored total instead of being rejected with 'fast montage duration cannot fit the server target' and replaced by the request-blind fallback"
+ }
+}

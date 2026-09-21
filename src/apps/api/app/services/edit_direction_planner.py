@@ -7,7 +7,7 @@ import re
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import structlog
 
@@ -44,8 +44,10 @@ log = structlog.get_logger()
 
 # These are the specialist output limits, not a product preference.  Keep the
 # all-media preflight aligned with DraftStoryBeat.media_ids (max_length=4) and
-# EditProposalAgentOutput.story_beats (max_length=10).
-GUIDED_STORY_MAX_BEATS = 10
+# the persisted EditProposalSnapshot.story_beats ceiling (max_length=20,
+# KRI-129: MAX_GUIDED_DRAFT_BEATS in app.agents.edit_proposal must stay
+# `<=` this constant).
+GUIDED_STORY_MAX_BEATS = 20
 GUIDED_STORY_MAX_MEDIA_PER_BEAT = 4
 GUIDED_STORY_MAX_MEDIA = GUIDED_STORY_MAX_BEATS * GUIDED_STORY_MAX_MEDIA_PER_BEAT
 FAST_MONTAGE_NORMAL_MIN_CUT_FRAMES = int(round(0.8 * 30))
@@ -70,6 +72,17 @@ class AllMediaCapacity:
     reason: str | None = None
 
 
+def guided_source_floor_s(ref: Any, min_moment_s: float = GUIDED_STORY_MIN_MOMENT_S) -> float:
+    """Screen time one source needs in a story: the minimum moment, or the
+    clip's own length when it is shorter. A short clip is never excluded for
+    being short -- it plays in full (KRI-129). Mirrors the renderer's
+    `guided_story.guided_moment_floor_s`."""
+
+    if ref.kind == "image" or ref.duration_s is None:
+        return min_moment_s
+    return min(min_moment_s, max(0.0, float(ref.duration_s)))
+
+
 def assess_all_media_capacity(
     media: Sequence[CadenceCapacityMedia],
     target_duration_s: int | float,
@@ -79,7 +92,7 @@ def assess_all_media_capacity(
 ) -> AllMediaCapacity:
     """Assess all-source coverage using the same source floors as the renderer.
 
-    Guided output is structurally limited to ten beats of four sources and
+    Guided output is structurally limited to GUIDED_STORY_MAX_MEDIA sources and
     each source needs the guided-story minimum moment.  The fast alternative
     uses the ordinary 0.8s montage floor in 30fps frames (a genuinely short
     source may use the schema's 0.4s absolute floor), then rounds the display
@@ -89,19 +102,15 @@ def assess_all_media_capacity(
     refs = list(media)
     if not refs:
         return AllMediaCapacity(False, False, False, None, "no_media")
-    guided_feasible = (
-        len(refs) <= GUIDED_STORY_MAX_MEDIA
-        and float(target_duration_s) + 0.001 >= len(refs) * story_min_moment_s
-        and all(
-            ref.kind == "image"
-            or (ref.duration_s is not None and float(ref.duration_s) >= story_min_moment_s)
-            for ref in refs
-        )
-    )
+    guided_feasible = len(refs) <= GUIDED_STORY_MAX_MEDIA and float(
+        target_duration_s
+    ) + 0.001 >= sum(guided_source_floor_s(ref, story_min_moment_s) for ref in refs)
     minimum_frames = 0
     maximum_frames = 0
     quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
-    absolute_minimum_frames = int(round((0.1 if quick_mixed_timing else 0.4) * 30))
+    # A short video is never left out for being short: any clip the cut schema
+    # can express (0.1 s) is usable, and it plays for its own length.
+    absolute_minimum_frames = int(round(0.1 * 30))
     for ref in refs:
         if quick_mixed_timing:
             bounds = mixed_media_hold_bounds(ref.kind, mixed_media_timing)
@@ -533,7 +542,9 @@ def deterministic_fast_cuts(
         return deterministic_round_robin_cuts(media, duration_s, montage_cadence)
 
     quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
-    minimum_video_s = 0.1 if quick_mixed_timing else 0.4
+    # Eligibility is "the cut schema can express it" (0.1 s); a clip shorter
+    # than the ordinary 0.4 s cut floor plays for its own length.
+    minimum_video_s = 0.1
     eligible = [
         ref
         for ref in media
@@ -653,6 +664,8 @@ def deterministic_fast_cuts(
                     * fps
                 )
                 if quick_mixed_timing
+                else min(int(round(0.4 * fps)), source_capacity_frames.get(ref.media_id, 0))
+                if ref.kind == "video"
                 else int(round(0.4 * fps))
             )
         ]
@@ -806,7 +819,8 @@ def _guided_fallback_order(media: list[MediaRef]) -> list[MediaRef]:
     eligible = [
         ref
         for ref in media
-        if ref.kind == "image" or float(ref.duration_s or 0.0) >= GUIDED_STORY_MIN_MOMENT_S
+        # Any video with frames to show is renderable; short ones play in full.
+        if ref.kind == "image" or float(ref.duration_s or 0.0) > 0.0
     ]
     images = [ref for ref in eligible if ref.kind == "image"]
     videos = sorted(
@@ -897,7 +911,7 @@ def deterministic_labeled_beats(
     if not ordered:
         raise CreatorTextInfeasibleError("guided story fallback found no usable media")
     target_s = float(max(3, min(MAX_PROPOSAL_DURATION_S, duration_s)))
-    if required_ids and target_s + 0.001 < len(ordered) * GUIDED_STORY_MIN_MOMENT_S:
+    if required_ids and target_s + 0.001 < sum(guided_source_floor_s(ref) for ref in ordered):
         raise CreatorTextInfeasibleError(
             f"{len(ordered)} required sources need at least {GUIDED_STORY_MIN_MOMENT_S:g}s each"
         )
@@ -1201,7 +1215,7 @@ def deterministic_guided_beats(
         )
     if len(selected) > GUIDED_STORY_MAX_MEDIA:
         raise ValueError("guided story fallback exceeds specialist media capacity")
-    floor_s = GUIDED_STORY_MIN_MOMENT_S * len(selected)
+    floor_s = sum(guided_source_floor_s(ref) for ref in selected)
     if target_s + 0.001 < floor_s:
         raise ValueError("guided story fallback cannot fit every required source")
 
@@ -1237,7 +1251,7 @@ def deterministic_guided_beats(
     for index, capacity in enumerate(per_ref_capacity_s):
         beat_capacity_s[index % beat_count] += capacity
 
-    durations = [round(GUIDED_STORY_MIN_MOMENT_S * len(group), 3) for group in groups]
+    durations = [round(sum(guided_source_floor_s(ref) for ref in group), 3) for group in groups]
     remaining = round(target_s - sum(durations), 3)
     index = 0
     while remaining > 0.001:
@@ -1271,7 +1285,10 @@ def deterministic_guided_beats(
     return [
         StoryBeat(
             beat_id=f"fallback-beat-{beat_index + 1}",
-            topic=topics[beat_index],
+            # KRI-129: GUIDED_STORY_MAX_BEATS raised beyond len(topics); fall
+            # back to a plain numbered label past the hand-written list
+            # rather than index-erroring. Still never rendered.
+            topic=topics[beat_index] if beat_index < len(topics) else f"Chapter {beat_index + 1}",
             thought="",
             thought_source="ai_draft",
             media_ids=[ref.media_id for ref in group],

@@ -159,3 +159,58 @@ def test_planner_fallback_never_reaches_the_public_response_model() -> None:
     # -- an admin-only diagnostic that can carry model output -- must never
     # reach a public/OpenAPI-visible payload.
     assert "the guided specialist crashed" not in json.dumps(response.model_dump(mode="json"))
+
+
+def test_authored_plan_the_renderer_cannot_allocate_recovers_at_planning_time(monkeypatch) -> None:
+    """KRI-129: the planner repairs instead of rejecting, so every authored
+    draft is dry-run through the compiler. One that cannot be allocated must
+    become a visible, marked recovery now, not a render failure after approval."""
+
+    from app.pipeline import guided_story  # noqa: PLC0415
+
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+
+    def _run(agent, agent_input, ctx=None):  # noqa: ANN001, ARG001
+        return agent.parse(
+            json.dumps(
+                {
+                    "title": "The Acropolis",
+                    "duration_s": 6,
+                    "story_beats": [
+                        {
+                            "topic": "Architecture",
+                            "thought": "The Acropolis",
+                            "media_ids": [str(_PROD_CLIP_ASSIGNMENT["media_id"])],
+                            "duration_s": 6,
+                        }
+                    ],
+                }
+            ),
+            agent_input,
+        )
+
+    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run)
+    calls = {"count": 0}
+    real = guided_story.validate_proposal_compiles
+
+    def _first_draft_cannot_compile(snapshot):  # noqa: ANN001
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise guided_story.GuidedStoryError(
+                "guided_story_duration_impossible", "too short to show all approved media"
+            )
+        return real(snapshot)
+
+    monkeypatch.setattr(guided_story, "validate_proposal_compiles", _first_draft_cannot_compile)
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=False
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "draft"
+    assert persisted.planner_fallback is not None
+    assert "render dry run" in persisted.planner_fallback.reason
+    assert persisted.draft is not None
+    assert persisted.draft.story_beats[0].beat_id.startswith("fallback-beat-")

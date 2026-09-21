@@ -342,7 +342,13 @@ def resolve_video_reuse_policy(
         r"\b(?:repeat|reuse|loop|replay|duplicate)\s+(?:the\s+|my\s+|these\s+|those\s+|this\s+)?"
         r"(?:(?:first|second|third|last|opening|ending|\d+)\s+)?"
         r"(?:videos?|clips?|footage|sources?|shots?|it|them)\b|"
-        r"\b(?:videos?|clips?|footage|shots?)\b.{0,24}\b(?:again|twice|loop|repeat)\b|"
+        r"\b(?:videos?|clips?|footage|shots?)\b.{0,24}\b(?:twice|loop|repeat|again and again)\b|"
+        # A bare "again" only grants reuse after a usage verb ("use the last
+        # shot again"). "Render the clips again" / "do it again with these
+        # videos" asks to redo the EDIT, and reading it as permission to
+        # repeat footage silently turned the request into a looping montage.
+        r"\b(?:use|show|play|include|bring\s+back|put)\b.{0,32}"
+        r"\b(?:videos?|clips?|footage|shots?)\b.{0,24}\bagain\b|"
         r"\b(?:loop|repeat)\s+(?:it|them)\b|"
         r"\b(?:make|put)\s+(?:it|them|the video|the clips?)\s+(?:on\s+)?(?:a\s+)?(?:loop|repeat)\b",
         normalized,
@@ -1012,6 +1018,10 @@ class EditProposalSnapshot(BaseModel):
                     image_ids.add(ref.media_id)
                     continue
                 minimum_video_s = 0.1 if quick_mixed_timing else 0.4
+                if ref.duration_s is not None:
+                    # A short video is never left out for being short: a cut may
+                    # be shorter than the floor when it shows the whole clip.
+                    minimum_video_s = min(minimum_video_s, float(ref.duration_s))
                 if cut.output_duration_s < minimum_video_s - 0.001:
                     raise ValueError(
                         f"fast montage video cuts must be at least {minimum_video_s:g}s"

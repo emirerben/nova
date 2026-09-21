@@ -2635,11 +2635,11 @@ def test_compiler_rejects_selected_video_without_duration() -> None:
     assert exc.value.code == "guided_story_duration_impossible"
 
 
-def test_compiler_rejects_video_too_short_after_transition_overlap() -> None:
-    # Pinned to v3 for the same reason as test_compiler_rejects_selected_
-    # video_without_duration above -- the specific message is a v3-scoped
-    # guarantee; v4 still rejects this, just via the generic beat-floor
-    # message.
+def test_video_shorter_than_the_minimum_moment_plays_for_its_own_length() -> None:
+    # A short clip is never left out for being short (KRI-129). 1.45 s minus
+    # the 0.12 s crossfade leaves 1.33 s, under the 1.4 s guided minimum: it
+    # used to be rejected as "too short to show clearly"; it now plays in full
+    # and the rest of the story absorbs the remaining time.
     raw = _guided_snapshot()
     proposal = raw["approved_proposal"]
     coast = next(row for row in proposal["media"] if row["media_id"] == "coast-video")
@@ -2664,10 +2664,12 @@ def test_compiler_rejects_video_too_short_after_transition_overlap() -> None:
         },
     ]
 
-    with pytest.raises(GuidedStoryError, match="too short to show clearly") as exc:
-        _compile_execution_plan_version(raw, track=None, compiler_version=3)
+    plan = compile_execution_plan(raw, track=None)
 
-    assert exc.value.code == "guided_story_duration_impossible"
+    short = next(row for row in plan["story_timeline"] if row["media_id"] == "coast-video")
+    assert 1.2 <= short["duration_s"] <= 1.45
+    assert short["source_end_s"] <= 1.45 + 0.001
+    assert plan["resolved_duration_s"] == pytest.approx(10, abs=0.001)
 
 
 def test_compiler_rejects_all_video_beat_without_enough_total_footage() -> None:

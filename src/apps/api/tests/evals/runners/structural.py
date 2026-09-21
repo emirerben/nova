@@ -42,7 +42,6 @@ from app.agents.creative_direction import CreativeDirectionOutput
 from app.agents.edit_copilot import _MAX_OPS as _EDIT_COPILOT_MAX_OPS
 from app.agents.edit_copilot import EditCopilotOutput
 from app.agents.edit_director import EditDirectorInput, EditDirectorOutput
-from app.agents.edit_proposal import minimum_required_sources
 from app.agents.idea_expander import IdeaExpanderInput, IdeaExpanderOutput
 from app.agents.intro_writer import (
     _MAX_WORDS as INTRO_MAX_WORDS,
@@ -2872,6 +2871,12 @@ def run_structural(
     if agent_name == "nova.compose.overlay_format_matcher":
         return check_overlay_format_matcher(output)
     if agent_name == "nova.plan.edit_proposal":
+        # KRI-129: the distinct-source floor, the both-photos-and-videos
+        # requirement, the minimum-beat-count floor, and the empty-thought
+        # rejection were removed from EditProposalAgent.parse() itself (the
+        # creator's request outranks these taste rules) -- re-asserting them
+        # here would fail a legitimately repaired plan the agent's own tests
+        # now accept. See tests/agents/test_kri129_prompt_wins.py.
         known = {media.media_id for media in input.media}
         if input.direction == "fast_montage":
             used = {cut.media_id for cut in output.fast_cuts or []}
@@ -2880,17 +2885,6 @@ def run_structural(
         failures: list[str] = []
         if not used <= known:
             failures.append("story references unknown media")
-        if len(used) < minimum_required_sources(len(known)):
-            failures.append("story does not use enough distinct sources")
-        input_kinds = {media.kind for media in input.media}
-        used_kinds = {media.kind for media in input.media if media.media_id in used}
-        if len(input_kinds) > 1 and used_kinds != input_kinds:
-            failures.append("story does not use both photos and videos")
-        if input.direction in {"guided_story", "text_explainer"}:
-            if len(output.story_beats) < min(3, len(input.media)):
-                failures.append("guided story has fewer than three beats")
-            if any(not beat.thought.strip() for beat in output.story_beats):
-                failures.append("guided story has an empty thought")
         for index, beat in enumerate(output.story_beats):
             if len(beat.thought.split()) > 18:
                 failures.append(f"beat {index}: thought exceeds 18 words")

@@ -1,5 +1,8 @@
 """Pure Main Creator render-policy helpers shared by agent and compiler."""
 
+import re
+from typing import Any
+
 from app.agents._schemas.creator_agent import (
     CreativeStrategy,
     CreatorMediaRef,
@@ -13,6 +16,102 @@ from app.agents._schemas.edit_format import (
 from app.schemas.edit_proposal import MontageAudioPlan
 
 MAX_MAIN_CREATOR_SELECTED_MEDIA = 12
+
+# Mirrors app.routes.creator_agent._MEDIA_COUNT_NOUN. Kept as a separate copy
+# rather than a shared import: the route also uses it inline in its own
+# negative/positive scope regexes, and threading a single regex-string
+# constant back and forth across the route <-> agent boundary is not worth
+# the coupling. Keep both copies identical if the noun list ever changes.
+_MEDIA_COUNT_NOUN = r"(?:clips?|videos?|photos?|images?|pictures?|stills?|media|footage)"
+_MEDIA_COUNT_TIME_SUFFIX = r"(?:s|secs?|seconds?|ms|milliseconds?|mins?|minutes?|hrs?|hours?)"
+
+# A stated count only names the whole manifest when nothing else in the
+# message narrows it: "I uploaded 30 clips, pick the best 5" and "30 clips is
+# too many" both mention the manifest size while asking for LESS than all of
+# it. Any reduction cue, or a second media count, keeps the legacy default --
+# a missed "all" is recoverable, a forced "all" overrides the creator.
+_STATED_COUNT_REDUCTION_CUE = (
+    r"\b(?:too many|fewer|less|pick|choose|best|top|strongest|favou?rites?|only|just|"
+    r"some of|leave out|left out|exclude|excluding|except|skip|remove|drop|cut out|"
+    r"without|not all)\b"
+)
+
+
+def _stated_media_count(normalized: str) -> int | None:
+    """Extract a creator-stated media quantity; never a duration or timestamp."""
+
+    match = re.search(
+        rf"\b(\d{{1,4}})\s+(?:of\s+(?:the|my|your)\s+)?{_MEDIA_COUNT_NOUN}\b",
+        normalized,
+    )
+    if match:
+        return int(match.group(1))
+    # "all 30" without a trailing noun still names the whole manifest, as long
+    # as the number is not immediately a duration ("all 30 seconds").
+    match = re.search(
+        rf"\ball\s+(\d{{1,4}})\b(?!\s*{_MEDIA_COUNT_TIME_SUFFIX}\b)",
+        normalized,
+    )
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _attached_media_count(manifest: Any) -> int:
+    """Count of non-asset media (video/image) attached to this manifest."""
+
+    return sum(
+        1
+        for ref in getattr(manifest, "media", None) or ()
+        if getattr(ref, "kind", None) in {"video", "image"}
+    )
+
+
+def _stated_count_matches_manifest(normalized: str, manifest: Any | None) -> bool:
+    if manifest is None:
+        return False
+    if re.search(_STATED_COUNT_REDUCTION_CUE, normalized):
+        return False
+    counts = set(
+        re.findall(
+            rf"\b(\d{{1,4}})\s+(?:of\s+(?:the|my|your)\s+)?{_MEDIA_COUNT_NOUN}\b", normalized
+        )
+    )
+    if len(counts) > 1:
+        return False
+    stated_count = _stated_media_count(normalized)
+    return stated_count is not None and stated_count == _attached_media_count(manifest)
+
+
+def explicit_scope_from_stated_media_count(request: str, manifest: Any | None) -> bool:
+    """True when a creator's stated clip count names their whole manifest.
+
+    "Continue with 16 clips" naming an unambiguous manifest size, with no
+    narrowing cue ("pick the best 5"), means "all" just as much as literally
+    saying "all". Shared by the creator-agent route (post-model regex fence,
+    KRI-129 part A/C) and the Main Creator agent's own parse-time scope
+    resolution (KRI-129 part C) so both apply the same rule; kept here rather
+    than in either module to avoid a route <-> agent import cycle.
+    """
+
+    normalized = " ".join(str(request or "").casefold().split())
+    return _stated_count_matches_manifest(normalized, manifest)
+
+
+def states_explicit_media_narrowing_cue(request: str) -> bool:
+    """True when the message itself asks for LESS than the whole manifest.
+
+    Shares ``_STATED_COUNT_REDUCTION_CUE`` (the same wording that keeps a
+    stated clip count from being read as "all") so the creator-agent route
+    can also use it to decide whether the creator's newest message overrides
+    a stale historical answer (KRI-129 part 1): the newest explicit words
+    must always win over a prior turn's recorded preference.
+    """
+
+    normalized = " ".join(str(request or "").casefold().split())
+    return bool(re.search(_STATED_COUNT_REDUCTION_CUE, normalized))
+
+
 CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 CAPABILITY_GUIDED_VOICEOVER = "guided_voiceover"
 GUIDED_VOICEOVER_EXECUTION_CONTRACT = "guided_voiceover_v1"
@@ -402,14 +501,28 @@ def normalize_creator_strategy_media(
             selected_media_ids = native_ids[:MAX_MAIN_CREATOR_SELECTED_MEDIA]
         if not selected_media_ids:
             raise ValueError("native rendering requires at least one attached clip")
+    elif effective_program == "guided" and strategy.media_scope == "selected":
+        # KRI-129: this branch used to fall straight through to the "guided
+        # takes every manifest media" default below, silently discarding the
+        # creator's explicit subset for every non-native program. Unknown ids
+        # are already rejected above unless repair_model_output is set, so
+        # filtering to manifest_ids here is a bound, not a new trust
+        # boundary. An empty result (e.g. every id was unknown and got
+        # repaired away) intentionally falls back to today's "all" behavior.
+        selected_media_ids = list(
+            dict.fromkeys(
+                media_id for media_id in strategy.selected_media_ids if media_id in manifest_ids
+            )
+        )
     # A confirmation must not promise more source time than a once-only
     # video montage can supply. Photos and recorded narration have separate
     # duration contracts; unknown video durations must be resolved downstream.
     duration_s = strategy.target_duration_s
+    guided_takes_everything = effective_program == "guided" and not selected_media_ids
     selected = [
         media
         for media in manifest.media
-        if effective_program == "guided" or media.media_id in selected_media_ids
+        if guided_takes_everything or media.media_id in selected_media_ids
     ]
     if (
         strategy.video_reuse_policy == "once"
@@ -440,5 +553,7 @@ __all__ = [
     "PhoneFormatUnavailableError",
     "PhoneMediaUnavailableError",
     "effective_render_program",
+    "explicit_scope_from_stated_media_count",
     "normalize_creator_strategy_media",
+    "states_explicit_media_narrowing_cue",
 ]

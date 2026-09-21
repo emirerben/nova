@@ -54,7 +54,9 @@ from app.agents._schemas.creator_policy import (
     MontageCadenceUnavailableError,
     PhoneFormatUnavailableError,
     PhoneMediaUnavailableError,
+    explicit_scope_from_stated_media_count,
     normalize_creator_strategy_media,
+    states_explicit_media_narrowing_cue,
 )
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.auth import CurrentUser
@@ -129,7 +131,11 @@ from app.services.creator_sessions import (
     rollout_eligible,
     serialize_session,
 )
-from app.services.edit_direction_planner import assess_all_media_capacity, round_robin_capacity_s
+from app.services.edit_direction_planner import (
+    GUIDED_STORY_MAX_MEDIA,
+    assess_all_media_capacity,
+    round_robin_capacity_s,
+)
 from app.services.job_phases import mark_reattempt
 from app.services.job_status import (
     PLAN_ITEM_JOB_FAILED,
@@ -579,66 +585,11 @@ def _apply_refresh_pin_if_needed(
 # A creator can name the whole manifest by an exact count instead of the word
 # "all" ("continue with 30 clips", "use the 30 videos"). The noun anchor keeps
 # a duration ("30 seconds", "in 30s") from ever being read as a media count.
+# The count-matching logic itself (_stated_media_count / _attached_media_count
+# / _stated_count_matches_manifest) lives in creator_policy.py as the public
+# ``explicit_scope_from_stated_media_count`` so main_creator.py can apply the
+# identical rule without importing this route module (KRI-129 part C).
 _MEDIA_COUNT_NOUN = r"(?:clips?|videos?|photos?|images?|pictures?|stills?|media|footage)"
-_MEDIA_COUNT_TIME_SUFFIX = r"(?:s|secs?|seconds?|ms|milliseconds?|mins?|minutes?|hrs?|hours?)"
-
-
-def _stated_media_count(normalized: str) -> int | None:
-    """Extract a creator-stated media quantity; never a duration or timestamp."""
-
-    match = re.search(
-        rf"\b(\d{{1,4}})\s+(?:of\s+(?:the|my|your)\s+)?{_MEDIA_COUNT_NOUN}\b",
-        normalized,
-    )
-    if match:
-        return int(match.group(1))
-    # "all 30" without a trailing noun still names the whole manifest, as long
-    # as the number is not immediately a duration ("all 30 seconds").
-    match = re.search(
-        rf"\ball\s+(\d{{1,4}})\b(?!\s*{_MEDIA_COUNT_TIME_SUFFIX}\b)",
-        normalized,
-    )
-    if match:
-        return int(match.group(1))
-    return None
-
-
-def _attached_media_count(manifest: Any) -> int:
-    """Count of non-asset media (video/image) attached to this manifest."""
-
-    return sum(
-        1
-        for ref in getattr(manifest, "media", None) or ()
-        if getattr(ref, "kind", None) in {"video", "image"}
-    )
-
-
-# A stated count only names the whole manifest when nothing else in the
-# message narrows it: "I uploaded 30 clips, pick the best 5" and "30 clips is
-# too many" both mention the manifest size while asking for LESS than all of
-# it. Any reduction cue, or a second media count, keeps the legacy default --
-# a missed "all" is recoverable, a forced "all" overrides the creator.
-_STATED_COUNT_REDUCTION_CUE = (
-    r"\b(?:too many|fewer|less|pick|choose|best|top|strongest|favou?rites?|only|just|"
-    r"some of|leave out|left out|exclude|excluding|except|skip|remove|drop|cut out|"
-    r"without|not all)\b"
-)
-
-
-def _stated_count_matches_manifest(normalized: str, manifest: Any | None) -> bool:
-    if manifest is None:
-        return False
-    if re.search(_STATED_COUNT_REDUCTION_CUE, normalized):
-        return False
-    counts = set(
-        re.findall(
-            rf"\b(\d{{1,4}})\s+(?:of\s+(?:the|my|your)\s+)?{_MEDIA_COUNT_NOUN}\b", normalized
-        )
-    )
-    if len(counts) > 1:
-        return False
-    stated_count = _stated_media_count(normalized)
-    return stated_count is not None and stated_count == _attached_media_count(manifest)
 
 
 def _explicit_media_scope(request: str, manifest: Any | None = None) -> Literal["all", "selected"]:
@@ -660,7 +611,7 @@ def _explicit_media_scope(request: str, manifest: Any | None = None) -> Literal[
         normalized,
     ):
         return "all"
-    if _stated_count_matches_manifest(normalized, manifest):
+    if explicit_scope_from_stated_media_count(request, manifest):
         return "all"
     if re.search(
         r"\b(?:only|just)\s+(?:the\s+)?(?:selected|specified|chosen|listed)\b"
@@ -686,7 +637,7 @@ def _has_explicit_media_scope(request: str, manifest: Any | None = None) -> bool
         normalized,
     ):
         return True
-    return _stated_count_matches_manifest(normalized, manifest)
+    return explicit_scope_from_stated_media_count(request, manifest)
 
 
 def _explicit_guided_voiceover_request(request: str, manifest: Any) -> bool:
@@ -903,61 +854,91 @@ def _apply_explicit_render_intent(
             "semantics": "funny_moments",
             "max_placements": 6,
         }
+
     # Creators use both ``title 'Emir Olympics'`` and the equally natural
     # ``'Emir Olympics' title``. Keep the quoted text bounded and require the
     # title noun next to it so unrelated quoted direction never reaches pixels.
-    title_match = re.search(
-        r"[\"'“‘](.{1,280}?)[\"'”’]\s+(?:opening\s+)?(?:title|intro|hook|text)\b",
-        request,
-        re.IGNORECASE,
-    )
-    if title_match is None:
-        title_match = re.search(
+    #
+    # KRI-129 part E: a single message can name BOTH ends of the video
+    # ("title 'A', closing title 'B'"). The old code took only the first
+    # `re.search` hit across the whole request, so the second title mention
+    # was silently lost. Each tier below now uses `finditer` to collect every
+    # mention that tier's grammar matches, classifies EACH one by its own
+    # clause prefix (negated clauses are skipped one at a time, never nulling
+    # out the whole tier), and the first opening-classified match wins
+    # opening_title while the first closing-classified match wins
+    # closing_title. Tiers are still tried in the same priority order as
+    # before, falling through only when a tier produces no usable match at
+    # all -- once a tier classifies anything, later (more permissive) tiers
+    # are never consulted, exactly like the old single-match fallback chain.
+    def _classify_title_matches(
+        pattern: re.Pattern[str],
+    ) -> tuple[str | None, str | None]:
+        opening_text: str | None = None
+        closing_text: str | None = None
+        for match in pattern.finditer(request):
+            text = match.group(1).strip()
+            if not text:
+                continue
+            clause_start = max(
+                request.rfind(delimiter, 0, match.start())
+                for delimiter in (".", "!", "?", ";", ",")
+            )
+            clause_prefix = request[clause_start + 1 : match.start()]
+            if re.search(r"\b(?:do\s+not|don't|dont|without|no)\b", clause_prefix, re.IGNORECASE):
+                continue
+            if re.search(r"\b(?:closing|ending|end|outro)\s*$", clause_prefix, re.IGNORECASE):
+                if closing_text is None:
+                    closing_text = text
+            elif opening_text is None:
+                opening_text = text
+        return opening_text, closing_text
+
+    _title_patterns = (
+        re.compile(
+            r"[\"'“‘](.{1,280}?)[\"'”’]\s+(?:opening\s+)?(?:title|intro|hook|text)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
             r"\b(?:opening\s+)?(?:title|intro|hook|text)(?!\s+(?:texts|copies)\b)"
             r"\s*(?:text|copy)?\b\s*"
             r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)?\s*"
             r"[\"'“‘](.{1,280}?)[\"'”’]",
-            request,
             re.IGNORECASE,
-        )
-    if title_match is None:
+        ),
         # Chat-first users commonly omit quoting for a short title. Stop at
         # the first comma or style qualifier so the rest of the request can
         # never become on-screen copy. Unlike quoted copy, an unquoted title
         # needs an explicit connector ("is", "should say", or a colon); a
         # bare "add intro text" is a treatment directive, not literal pixels.
-        title_match = re.search(
+        re.compile(
             r"\b(?:opening\s+)?(?:title|intro|hook)(?!\s+(?:texts|copies)\b)"
             r"\s*(?:text|copy)?\b\s*"
             r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)\s*"
             r"([A-Za-z0-9][^,\n]{0,279}?)(?=\s*(?:,|$)|\s+(?:using|with|font|colou?r)\b"
             r"|\s+(?:use|make|set)\b(?=[^.]{0,80}\b(?:font|text|colou?r)\b))",
-            request,
             re.IGNORECASE,
-        )
-    if title_match is None:
+        ),
         # The legacy title grammar permits multi-sentence literal copy. Keep
         # that contract intact; the newer unquoted "text saying" fallback
         # stops at punctuation before a following style sentence.
-        title_match = re.search(
+        re.compile(
             r"\b(?:opening\s+)?(?:text)(?!\s+(?:texts|copies)\b)"
             r"\s*(?:text|copy)?\b\s*"
             r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)\s*"
             r"([A-Za-z0-9][^,.;!?\n]{0,279}?)(?=\s*(?:[,.;!?]|$)|\s+(?:using|with|font|colou?r)\b"
             r"|\s+(?:use|make|set)\b(?=[^.]{0,80}\b(?:font|text|colou?r)\b))",
-            request,
             re.IGNORECASE,
-        )
-    if title_match is not None:
-        clause_start = max(
-            request.rfind(delimiter, 0, title_match.start())
-            for delimiter in (".", "!", "?", ";", ",")
-        )
-        clause_prefix = request[clause_start + 1 : title_match.start()]
-        if re.search(r"\b(?:do\s+not|don't|dont|without|no)\b", clause_prefix, re.IGNORECASE):
-            title_match = None
-    if title_match and title_match.group(1).strip():
-        updates["opening_title"] = title_match.group(1).strip()
+        ),
+    )
+    for pattern in _title_patterns:
+        opening_title_text, closing_title_text = _classify_title_matches(pattern)
+        if opening_title_text is not None or closing_title_text is not None:
+            if opening_title_text is not None:
+                updates["opening_title"] = opening_title_text
+            if closing_title_text is not None:
+                updates["closing_title"] = closing_title_text
+            break
 
     from app.agents._schemas.text_element import _ALLOWED_FONTS  # noqa: PLC0415
 
@@ -968,6 +949,10 @@ def _apply_explicit_render_intent(
         if re.search(
             rf"(?<!\w){escaped}(?!\w)\s+font\b|"
             rf"\b(?:font|typeface)\s*(?:is|to|:)?\s*{escaped}(?!\w)|"
+            # KRI-129 part D: "use Impact for the font" was previously
+            # dropped -- the name and the word "font" are both present but
+            # neither of the two patterns above is adjacent-word shaped.
+            rf"(?<!\w){escaped}(?!\w)\s+for\s+(?:the\s+)?(?:font|typeface)\b|"
             rf"(?<!\w){escaped}(?!\w)(?=\s*(?:[,.;!?]|$))",
             request,
             re.IGNORECASE,
@@ -1279,7 +1264,7 @@ def _strongest_guided_subset_ids(
 ) -> list[str]:
     """Pick a stable renderable subset for the capacity recommendation."""
 
-    limit = min(40, max(1, math.floor(float(target_duration_s) / min_moment_s)))
+    limit = min(GUIDED_STORY_MAX_MEDIA, max(1, math.floor(float(target_duration_s) / min_moment_s)))
 
     def energy(ref: Any) -> float:
         values = [
@@ -1289,11 +1274,12 @@ def _strongest_guided_subset_ids(
         ]
         return max(values, default=0.0)
 
-    eligible = [
-        ref
-        for ref in manifest.media
-        if ref.kind == "image" or (ref.duration_s is not None and ref.duration_s >= min_moment_s)
-    ]
+    # A short clip is renderable at its own length (it is not "unusable"); it
+    # must never be excluded from the strength-ranked recommendation for
+    # being short. Ranking by strength is fine, excluding for shortness is
+    # not. Allowlist kinds the way `_attached_media_count` does rather than
+    # `kind != "image"`, so e.g. "audio" media never enters this ranking.
+    eligible = [ref for ref in manifest.media if ref.kind in {"video", "image"}]
     return [
         ref.media_id
         for _index, ref in sorted(enumerate(eligible), key=lambda row: (-energy(row[1]), row[0]))[
@@ -1325,6 +1311,14 @@ def _all_media_capacity_question(
         else capacity.guided_feasible
     )
     if current_strategy_feasible:
+        return None
+    if any(
+        ref.kind == "video" and ref.duration_s is None
+        for ref in getattr(manifest, "media", None) or ()
+    ):
+        # A clip whose length is not known yet (registered, analysis still
+        # running) makes capacity UNDECIDABLE, not infeasible. Asking here told
+        # creators "all 2 clips cannot fit" a 20-second edit, which was false.
         return None
     # The creator agent chose this duration from the footage. Capacity math may
     # decide whether that editorial choice is renderable, but it must never
@@ -1397,11 +1391,87 @@ def _all_media_capacity_question(
             "requested_duration_s": (
                 strategy.target_duration_s if requested_duration_is_explicit else None
             ),
-            "guided_max_media": 40,
+            "guided_max_media": GUIDED_STORY_MAX_MEDIA,
             "required_fast_duration_s": capacity.required_fast_duration_s,
             "option_mappings": mappings,
         },
     }
+
+
+HistoricalCapacityChoiceKind = Literal["keep_everything", "strongest_subset"]
+
+
+def _historical_all_media_capacity_choice_kind(
+    events: list[CreatorAgentEvent], manifest: Any
+) -> HistoricalCapacityChoiceKind | None:
+    """Classify the creator's last real answer to an all-media capacity ask.
+
+    ``_latest_all_media_capacity_question`` only resolves a choice when the
+    pending question is still the newest event -- once another turn moves
+    the conversation on, that lookup goes dark. By the time the question
+    budget is exhausted, the creator has very likely already answered this
+    exact question earlier in the session, and that answer must still hold
+    rather than being silently replaced by a "strongest clips" default.
+
+    KRI-129: this used to return the historical answer's full
+    ``CreativeStrategy`` -- including ITS OWN ``target_duration_s``,
+    ``direction``, and ``selected_media_ids`` -- verbatim. Those values were
+    recorded against a possibly stale question (a different requested
+    duration, an earlier manifest state) and a newer, explicit instruction in
+    the same turn ("actually keep it at 6 seconds") would be silently
+    discarded in favor of the OLD ones. History can only tell us WHICH KIND
+    of option the creator prefers -- "keep everything" (the include-
+    everything / faster-pacing mapping) or "strongest subset" (the
+    strength-ranked cut) -- never the values. The caller re-applies that kind
+    against the mapping computed fresh for the CURRENT turn.
+    """
+
+    ordered = sorted(events, key=lambda value: value.sequence)
+    latest_kind: HistoricalCapacityChoiceKind | None = None
+    for index, event in enumerate(ordered):
+        if event.event_type != "assistant_question":
+            continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if payload.get("reason_code") != "all_media_capacity":
+            continue
+        context = payload.get("all_media_capacity")
+        if not isinstance(context, dict):
+            continue
+        reply = next((later for later in ordered[index + 1 :] if later.role == "user"), None)
+        if reply is None:
+            continue
+        reply_payload = reply.payload if isinstance(reply.payload, dict) else {}
+        message = str(reply_payload.get("message") or "")
+        choice = _all_media_capacity_choice(context, message, manifest)
+        if choice is None:
+            continue
+        latest_kind = (
+            "keep_everything"
+            if choice.media_scope == "all" and choice.direction == "fast_montage"
+            else "strongest_subset"
+        )
+    return latest_kind
+
+
+def _latest_message_narrows_media_scope(user_message: str, manifest: Any) -> bool:
+    """True when the creator's NEWEST words themselves narrow the scope.
+
+    A historical "keep everything"/"strongest subset" preference must never
+    override an explicit, newer instruction that says otherwise (KRI-129 part
+    1): e.g. history says "keep everything", but the latest message says
+    "just use the best ones" or explicitly asks for a selected subset. The
+    newest explicit words always win. Deliberately checked against
+    ``user_message`` alone (this turn's literal words), never the
+    turn-accumulating ``creator_request``, which would make yesterday's
+    narrowing cue "contradict" history forever.
+    """
+
+    if states_explicit_media_narrowing_cue(user_message):
+        return True
+    return (
+        _has_explicit_media_scope(user_message, manifest)
+        and _explicit_media_scope(user_message, manifest) == "selected"
+    )
 
 
 def _latest_planned_cadence(
@@ -2025,6 +2095,16 @@ async def _run_planning_turn(
     previous_strategy = (
         _previous_accepted_strategy(previous_active_plan) if is_refresh_retry else None
     )
+    # KRI-129 part 3: unlike `previous_strategy` above (only populated for a
+    # refresh/retry, to pin specific fields), this is populated on every
+    # turn. `creator_request` re-accumulates every past user message, so a
+    # resolution keyed off it (e.g. an explicit "all" scope) can legitimately
+    # re-fire turn after turn even when nothing changed; without this, its
+    # explanatory sentence would be re-appended to the summary every single
+    # turn ("make the intro title red" would still say "I left out 1 clip").
+    # Used only to suppress a sentence whose resolved OUTCOME (scope, ids,
+    # duration) is unchanged from what was already communicated last turn.
+    previous_turn_strategy = _previous_accepted_strategy(previous_active_plan)
     if is_refresh_retry:
         # Never let the canned "keep the same plan" affordance itself read as
         # the creator's intent — to the model, to the specialist brief, or to
@@ -2463,6 +2543,7 @@ async def _run_planning_turn(
                     action.render_intent_evidence if isinstance(action, ProposeStrategy) else None
                 ),
             )
+            pre_normalize_target_duration_s = strategy.target_duration_s
             try:
                 strategy = normalize_creator_strategy_media(
                     planning_manifest, strategy, repair_model_output=True
@@ -2476,6 +2557,23 @@ async def _run_planning_turn(
                         edit_format=strategy.edit_format,
                     ) from exc
                 raise CreatorStrategyError(str(exc), edit_format=strategy.edit_format) from exc
+            # KRI-129 part 6: a genuine `media_scope == "selected"` subset
+            # whose combined source duration can't cover the once-only
+            # `video_reuse_policy` target gets that target quietly lowered by
+            # `normalize_creator_strategy_media` (never changing that math
+            # here) -- say so, since this is the caller with both the before
+            # and after duration and the summary string.
+            capacity_capped_sentence: str | None = None
+            if (
+                all_media_capacity_choice is None
+                and strategy.media_scope == "selected"
+                and pre_normalize_target_duration_s is not None
+                and strategy.target_duration_s < pre_normalize_target_duration_s
+            ):
+                capacity_capped_sentence = (
+                    f"Your selected clips add up to {strategy.target_duration_s:g} seconds, "
+                    f"so I made the edit {strategy.target_duration_s:g} seconds long."
+                )
             if all_media_capacity_choice is not None:
                 strategy = normalize_creator_strategy_media(
                     planning_manifest,
@@ -2491,6 +2589,13 @@ async def _run_planning_turn(
                 # content-aware rationale instead of presenting a schema
                 # default or arithmetic floor as user intent.
                 summary = strategy.rationale or summary
+            # KRI-129: a short clip is renderable at its own length -- it is
+            # never "unusable" and must never be silently dropped from an
+            # explicit "all" scope. Nothing pre-filters `strategy` by clip
+            # duration here; the only remaining explanatory sentences are the
+            # budget-exhausted-history ones below and the selected-scope
+            # duration-cap note.
+            left_out_sentence: str | None = None
             capacity_question = _all_media_capacity_question(
                 planning_manifest,
                 strategy,
@@ -2507,16 +2612,107 @@ async def _run_planning_turn(
                         payload=capacity_question,
                     )
                     return await _response(db, locked)
-                # The session cannot ask another question.  Apply the same
-                # recommended mapping the UI shows, rather than emitting an
-                # unrenderable all-media proposal.
+                # The session cannot ask another question. An explicit "all"
+                # must never be silently swapped for a mapping the creator
+                # did not choose: reuse a real answer already given earlier
+                # in this session when one exists; otherwise prefer keeping
+                # every clip (faster pacing) over dropping clips, and always
+                # tell the creator what was applied instead of asking.
+                mappings = capacity_question["all_media_capacity"]["option_mappings"]
+                # mappings[0] is always the strength-ranked subset mapping;
+                # the keep-everything mapping is only present when the fast
+                # target is feasible this turn (see
+                # `_all_media_capacity_question`).
+                strongest_subset_mapping = mappings[0]
+                keep_all_mapping = next(
+                    (
+                        mapping
+                        for mapping in mappings
+                        if mapping["strategy"].get("media_scope") == "all"
+                    ),
+                    None,
+                )
+                # KRI-129: history only ever tells us WHICH KIND of option the
+                # creator prefers, never the VALUES recorded against a
+                # possibly-stale earlier question. The kind is re-applied
+                # against the mapping computed fresh for THIS turn's strategy
+                # (current target duration, direction, manifest) -- never the
+                # historical strategy object itself. A newer, explicit
+                # narrowing instruction in the creator's latest message
+                # always overrides a "keep everything"/"strongest subset"
+                # history, never the other way around.
+                historical_kind = (
+                    None
+                    if _latest_message_narrows_media_scope(user_message, planning_manifest)
+                    else _historical_all_media_capacity_choice_kind(
+                        session.events, planning_manifest
+                    )
+                )
+                total_clips = len(planning_manifest.media)
+                target_s = strategy.target_duration_s
+                chosen_mapping: dict[str, Any] | None = None
+                if historical_kind == "keep_everything" and keep_all_mapping is not None:
+                    chosen_mapping = keep_all_mapping
+                    left_out_sentence = (
+                        "I used your earlier choice to keep everything with faster pacing."
+                    )
+                elif historical_kind == "strongest_subset":
+                    chosen_mapping = strongest_subset_mapping
+                    left_out_sentence = "I used your earlier choice to keep the strongest clips."
+                if chosen_mapping is None:
+                    # No usable history (none recorded, or the current
+                    # question has no mapping of that kind): fall back to the
+                    # existing preference order -- keep everything (faster
+                    # pacing) before dropping clips.
+                    if keep_all_mapping is not None:
+                        chosen_mapping = keep_all_mapping
+                        left_out_sentence = (
+                            f"All {total_clips} clips don't fit a {target_s:g}-second story, "
+                            "so I kept everything and used faster pacing."
+                        )
+                    else:
+                        chosen_mapping = strongest_subset_mapping
+                        left_out_sentence = (
+                            f"All {total_clips} clips don't fit a {target_s:g}-second story "
+                            "even with faster pacing, so I kept the strongest clips."
+                        )
+                chosen_strategy = CreativeStrategy.model_validate(chosen_mapping["strategy"])
                 strategy = normalize_creator_strategy_media(
                     planning_manifest,
-                    CreativeStrategy.model_validate(
-                        capacity_question["all_media_capacity"]["option_mappings"][0]["strategy"]
-                    ),
+                    chosen_strategy,
                     repair_model_output=True,
                 )
+            # KRI-129 part 3: a resolution keyed off the (turn-accumulating)
+            # creator_request or off a policy that recomputes the same way
+            # every turn can legitimately re-fire on a later, unrelated turn.
+            # Only surface an explanatory sentence once -- when it actually
+            # changes what was previously communicated, never on every turn
+            # after. `previous_turn_strategy` is None on the very first turn
+            # a resolution applies, so it is never suppressed there.
+            explanatory_sentences = [
+                sentence for sentence in (left_out_sentence, capacity_capped_sentence) if sentence
+            ]
+            if explanatory_sentences and previous_turn_strategy is not None:
+                # `selected_media_ids` is only meaningful (and populated) for
+                # an actual `media_scope == "selected"` strategy -- a guided
+                # "all" scope always resets it to `[]` (it takes every
+                # manifest media by construction, see
+                # `normalize_creator_strategy_media`), so comparing it
+                # unconditionally would report a false mismatch between an
+                # "all" strategy and its own persisted-and-reloaded copy.
+                same_outcome = (
+                    previous_turn_strategy.media_scope == strategy.media_scope
+                    and previous_turn_strategy.target_duration_s == strategy.target_duration_s
+                    and (
+                        strategy.media_scope != "selected"
+                        or set(previous_turn_strategy.selected_media_ids or [])
+                        == set(strategy.selected_media_ids or [])
+                    )
+                )
+                if same_outcome:
+                    explanatory_sentences = []
+            for sentence in explanatory_sentences:
+                summary = f"{summary.rstrip()} {sentence}" if summary else sentence
             strategy = _apply_refresh_pin_if_needed(
                 strategy,
                 previous_strategy=previous_strategy,
@@ -3174,9 +3370,24 @@ def _seed_guided_specialist_brief(
     # them by field name keeps this route compatible with legacy snapshots
     # while allowing the shared typed intent to reach the specialist.
     narration_identity = creator_narration_identity(item)
+    # KRI-129: an explicit "selected" scope used to be dropped here (only
+    # "all" was forwarded), so the guided specialist received
+    # required_media_ids=None and could pick any media it liked, silently
+    # discarding a creator's explicit subset (see normalize_creator_strategy_media
+    # in creator_policy.py, which now preserves selected_media_ids for guided
+    # programs). A "selected" scope with no ids left (fully repaired away)
+    # falls back to today's behavior of not constraining the specialist.
+    guided_selected_scope = plan.strategy.media_scope == "selected" and bool(
+        plan.strategy.selected_media_ids
+    )
     optional_values = {
         "execution_contract": plan.strategy.execution_contract,
-        "media_scope": plan.strategy.media_scope if plan.strategy.media_scope == "all" else None,
+        "media_scope": (
+            plan.strategy.media_scope
+            if plan.strategy.media_scope == "all" or guided_selected_scope
+            else None
+        ),
+        "selected_media_ids": (plan.strategy.selected_media_ids if guided_selected_scope else None),
         "participant_labels": plan.strategy.participant_labels,
         "score_labels": plan.strategy.score_labels,
         "sport_labels": plan.strategy.sport_labels,

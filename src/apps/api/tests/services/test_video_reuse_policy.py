@@ -27,6 +27,13 @@ from app.services import edit_direction_planner as planner
         ("Please repeat the first clip at the end", None, "allow_repeat"),
         ("Make it loop", None, "allow_repeat"),
         ("Use the last shot again", None, "allow_repeat"),
+        ("Show the goal clip again at the end", None, "allow_repeat"),
+        ("Play the clips again and again", None, "allow_repeat"),
+        # Redoing the edit is not permission to repeat footage (KRI-129).
+        ("Render the clips again", None, "once"),
+        ("Do it again using all the videos", None, "once"),
+        ("Generate the video again with these clips", None, "once"),
+        ("Try the clips again but shorter", "once", "once"),
         ("Alternate video clips using different portions", None, "distinct_windows"),
         ('Add the title "Repeat the video"', None, "once"),
         ("Loop the music", None, "once"),
