@@ -1,4 +1,5 @@
 import AVFoundation
+import KriaMediaEngine
 import UIKit
 import XCTest
 @testable import Kria
@@ -466,8 +467,15 @@ final class NativeEditorSessionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: exported.cleanupURL) }
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: exported.fileURL.path))
+        // This is the file the user saves to Photos, so it is a published
+        // video and carries the brand outro after the edit. `session.duration`
+        // is the editor's own timeline, which deliberately does not include it
+        // — branding is added by the exporter, not by the composition the
+        // creator scrubs.
+        let outroURL = try XCTUnwrap(KriaBranding.outroURL())
+        let outro = try await AVURLAsset(url: outroURL).load(.duration).seconds
         let duration = try await AVURLAsset(url: exported.fileURL).load(.duration).seconds
-        XCTAssertEqual(duration, session.duration, accuracy: 0.05)
+        XCTAssertEqual(duration, session.duration + outro, accuracy: 0.1)
     }
 
     func testProjectSessionUsesFreshPlaybackHandoffBeforeHydration() throws {
@@ -2528,7 +2536,9 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { throw APIError.unsupported }
     func playbackURL(jobID: UUID) async throws -> URL { throw APIError.unsupported }
-    func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe { throw APIError.unsupported }
+    // Qualified: this file now imports KriaMediaEngine, which has its own
+    // `EditRecipe` (the render recipe). The API client returns Kria's DTO.
+    func editRecipe(jobID: UUID, variantID: String?) async throws -> Kria.EditRecipe { throw APIError.unsupported }
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation {
         guard let reserveUploadResult else { throw APIError.unsupported }
         return reserveUploadResult

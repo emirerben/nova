@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.104.0] - 2026-09-21
+
+### Changed
+- KRI-52: Kria outro, watermark and social templates — applied to every iOS export (#1117) <!-- release-pr: 1117 -->
+
 ## [0.76.103.0] - 2026-09-21
 
 ### Changed

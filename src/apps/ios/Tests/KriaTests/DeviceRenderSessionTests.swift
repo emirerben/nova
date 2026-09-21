@@ -36,7 +36,7 @@ private actor SessionPublisher: DeviceRenderPublishing {
     var shouldFail = false
     func fail(_ value: Bool) { shouldFail = value }
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
-    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID) async throws -> DevicePublication {
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
         if shouldFail { throw APIError.requestFailed(status: 503) }
         return .published
     }

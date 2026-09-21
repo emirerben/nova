@@ -120,7 +120,8 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true)
         let movie = frames.appendingPathComponent("\(output).mp4")
         try? FileManager.default.removeItem(at: movie)
-        let checkpoint = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: project.root.appendingPathComponent("state")))
+        // Unbranded: asserts the renderer reproduces the recipe exactly.
+        let checkpoint = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: project.root.appendingPathComponent("state")), branding: .none)
             .export(recipe: recipe, assetURLs: urls, outputURL: movie)
         XCTAssertEqual(checkpoint.status, .completed)
 

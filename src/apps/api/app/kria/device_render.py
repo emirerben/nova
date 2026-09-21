@@ -71,11 +71,28 @@ class DeviceAssetDownloadOut(_DeviceModel):
     expires_at: datetime
 
 
+# Brand furniture the phone appends to an export before uploading it.
+#
+# The phone declares WHICH tail it applied, never how long that tail is. The
+# server owns the durations, so a tampered client cannot pad an upload with
+# arbitrary trailing footage and still satisfy `_verify_export`'s duration gate
+# — the worst it can do is claim the one length we already ship.
+BrandTail = Literal["none", "standard"]
+
+# Seconds each declared tail adds on top of the recipe's own duration.
+# "standard" is the shipped outro (kria-outro-paper.mp4, 48 frames at 30fps).
+# `tests/kria/test_brand_tail_contract.py` probes the checked-in asset and
+# fails if this number drifts away from it.
+BRAND_TAIL_SECONDS: dict[str, float] = {"none": 0.0, "standard": 1.6}
+
+
 class DeviceExportReservationBody(_DeviceModel):
     identity: DeviceRenderIdentity
     attempt_id: uuid.UUID
     file_size_bytes: int = Field(gt=0, le=1024 * 1024 * 1024)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    # Defaulted so a phone build that predates branding keeps publishing.
+    brand_tail: BrandTail = "none"
 
 
 class DeviceExportReservationOut(_DeviceModel):
