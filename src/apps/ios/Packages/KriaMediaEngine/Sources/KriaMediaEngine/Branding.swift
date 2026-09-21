@@ -67,10 +67,23 @@ public enum KriaBranding {
         /// thing the server checks, so the watermark deliberately does not
         /// affect this value. The server owns the seconds each identifier is
         /// worth — see `BRAND_TAIL_SECONDS` in app/kria/device_render.py.
+        ///
+        /// This is computed from what was REQUESTED, and it is only honest
+        /// because a requested tail that cannot be composited is fatal rather
+        /// than skipped — see `preflight(_:)`. Let any branch drop the outro
+        /// silently and this string starts over-declaring, which the creator
+        /// meets as an opaque "export duration mismatch" when the finished
+        /// file is rejected on upload, long after the real cause.
         public var contractTail: String { outro ? "standard" : "none" }
     }
 
     static let outroResourceName = "kria-outro-paper"
+
+    /// Bundle file names, in one place, because they are what the error for a
+    /// missing resource reports — a failure the creator forwards should name
+    /// the file to go looking for.
+    static var outroFileName: String { "\(outroResourceName).mp4" }
+    static func watermarkFileName(_ variant: Variant) -> String { "\(variant.resourceName).png" }
 
     public static func outroURL() -> URL? {
         Bundle.module.url(forResource: outroResourceName, withExtension: "mp4")
@@ -78,6 +91,33 @@ public enum KriaBranding {
 
     public static func watermarkURL(_ variant: Variant) -> URL? {
         Bundle.module.url(forResource: variant.resourceName, withExtension: "png")
+    }
+
+    /// Fail before compositing when a resource `options` asks for is not in
+    /// the bundle, instead of quietly exporting without it.
+    ///
+    /// Branding is meant to be on every file that leaves the phone, so a
+    /// missing asset is a build defect, not a condition to degrade through:
+    /// dropping the watermark ships an unbranded edit, and dropping the outro
+    /// makes `Options.contractTail` over-declare and the upload is rejected
+    /// for a duration mismatch that names nothing useful.
+    ///
+    /// Reachable without a code change: an incremental `xcodebuild` can leave
+    /// a stale `KriaMediaEngine_KriaMediaEngine.bundle` inside `Kria.app` that
+    /// predates these assets while the freshly built top-level bundle carries
+    /// them (hit 2026-09-22; deleting `Kria.app` and rebuilding cleared it).
+    ///
+    /// The lookups are parameters only so a test can exercise the missing case
+    /// without tampering with `Bundle.module`.
+    static func preflight(_ options: Options,
+                          resolveWatermark: (Variant) -> URL? = KriaBranding.watermarkURL,
+                          resolveOutro: () -> URL? = KriaBranding.outroURL) throws {
+        if options.watermark, resolveWatermark(options.variant) == nil {
+            throw MediaEngineError.missingBrandingResource(watermarkFileName(options.variant))
+        }
+        if options.outro, resolveOutro() == nil {
+            throw MediaEngineError.missingBrandingResource(outroFileName)
+        }
     }
 
 #if canImport(AVFoundation)
@@ -101,10 +141,15 @@ public enum KriaBranding {
                                              y: (markBottomInset - tilePad) * scale))
     }
 
+    /// - Returns: nil only for an empty time range. A PNG that is absent or
+    ///   unreadable throws instead, because silently dropping the mark ships
+    ///   an unbranded export — see `preflight(_:)`.
     static func watermarkLayer(canvas: CGSize, start: Double, end: Double,
-                               variant: Variant) -> RecipeVideoLayer? {
-        guard end > start, let url = watermarkURL(variant),
-              let image = CIImage(contentsOf: url) else { return nil }
+                               variant: Variant) throws -> RecipeVideoLayer? {
+        guard end > start else { return nil }
+        guard let url = watermarkURL(variant), let image = CIImage(contentsOf: url) else {
+            throw MediaEngineError.missingBrandingResource(watermarkFileName(variant))
+        }
         // Drawn above text so the mark is never buried by a caption, and with
         // its alpha preserved so the shadow stays soft instead of matting to a
         // black box.

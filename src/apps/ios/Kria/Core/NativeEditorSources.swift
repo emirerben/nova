@@ -454,6 +454,12 @@ enum NativePreviewDiagnostics {
             switch engine {
             case .unsupportedCapability: fields["engineCase"] = "unsupportedCapability"
             case .missingAsset: fields["engineCase"] = "missingAsset"
+            // Named rather than folded into "other": this one means the app
+            // BUILD is missing a bundled branding file, so the diagnostic
+            // should point at the install, not at the creator's edit.
+            case .missingBrandingResource(let file):
+                fields["engineCase"] = "missingBrandingResource"
+                fields["brandingResource"] = file
             default: fields["engineCase"] = "other"
             }
         }

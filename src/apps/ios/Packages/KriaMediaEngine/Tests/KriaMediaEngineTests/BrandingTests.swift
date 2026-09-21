@@ -90,6 +90,74 @@ final class BrandingTests: XCTestCase {
         XCTAssertEqual(markOrigin.y, 222.5, accuracy: 1.0)
     }
 
+    /// Every branding file the engine ships resolves out of the LIBRARY's
+    /// bundle. Unconditional on purpose: `testBundledAssetsMatchTheBrandKit`
+    /// skips when the brand kit is not in the checkout, but "is the file in
+    /// the bundle at all" is the part that has actually broken in the field —
+    /// an incremental `xcodebuild` leaving `Kria.app` with a stale
+    /// `KriaMediaEngine_KriaMediaEngine.bundle` (2026-09-22). A miswired
+    /// `resources:` in Package.swift lands here the same way.
+    func testBrandingResourcesResolveFromTheLibraryBundle() throws {
+        var bundled: [(String, URL)] = [
+            (KriaBranding.outroFileName, try XCTUnwrap(KriaBranding.outroURL(),
+                                                       "\(KriaBranding.outroFileName) is not in Bundle.module"))
+        ]
+        for variant in KriaBranding.Variant.allCases {
+            let name = KriaBranding.watermarkFileName(variant)
+            bundled.append((name, try XCTUnwrap(KriaBranding.watermarkURL(variant),
+                                                "\(name) is not in Bundle.module")))
+        }
+        for (name, url) in bundled {
+            XCTAssertGreaterThan(try Data(contentsOf: url).count, 0, "\(name) is bundled but empty")
+        }
+    }
+
+    /// A requested tail that cannot be composited must fail the export rather
+    /// than drop out of it. `Options.contractTail` is declared to the server
+    /// from the REQUEST, so a silently missing outro reaches the creator as an
+    /// "export duration mismatch" rejection on upload instead of a local error
+    /// naming the file.
+    func testPreflightFailsOnAMissingOutro() {
+        XCTAssertThrowsError(try KriaBranding.preflight(.standard, resolveOutro: { nil })) { error in
+            XCTAssertEqual(error as? MediaEngineError,
+                           .missingBrandingResource(KriaBranding.outroFileName))
+        }
+    }
+
+    /// The watermark does not move the duration, so a miss here is invisible
+    /// to the server's check — it just ships an unbranded export, which is
+    /// the bug branding was added to prevent.
+    func testPreflightFailsOnAMissingWatermark() {
+        let options = KriaBranding.Options(variant: .graphite)
+        XCTAssertThrowsError(try KriaBranding.preflight(options, resolveWatermark: { _ in nil })) { error in
+            XCTAssertEqual(error as? MediaEngineError,
+                           .missingBrandingResource(KriaBranding.watermarkFileName(.graphite)))
+        }
+    }
+
+    /// An unbranded export must not be gated on assets it will never read.
+    func testPreflightIgnoresResourcesUnbrandedOptionsNeverRead() {
+        XCTAssertNoThrow(try KriaBranding.preflight(.none, resolveWatermark: { _ in nil },
+                                                    resolveOutro: { nil }))
+    }
+
+    /// ...and the options the app actually ships pass against the real bundle.
+    func testPreflightPassesForTheShippedOptions() {
+        XCTAssertNoThrow(try KriaBranding.preflight(.standard))
+    }
+
+    /// The creator-facing consequence of the classification. `export_failed`
+    /// says the render did not finish and the project is saved; the wrong
+    /// neighbour, `unsupported_recipe`, tells them to start a different edit
+    /// and that retrying cannot help — the opposite of true for a build that
+    /// only needs reinstalling.
+    func testMissingBrandingResourceReportsAsAnExportFailure() {
+        XCTAssertEqual(
+            DeviceRenderFailureReasonCode.forRenderFailure(
+                MediaEngineError.missingBrandingResource(KriaBranding.outroFileName)),
+            .exportFailed)
+    }
+
     #if canImport(AVFoundation)
     /// Bright pixels inside `rect`, measured from the visual top-left.
     @MainActor private func brightPixels(in image: CGImage, rect: CGRect,
