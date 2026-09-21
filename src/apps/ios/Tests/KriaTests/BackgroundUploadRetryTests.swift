@@ -474,9 +474,9 @@ private let reservationResponse = Data(#"[{"media_id":"clip-1","upload_url":"htt
     }
 
     @discardableResult
-    func select(_ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil, debounce: Duration = .zero, attached: Set<String> = []) throws -> URL {
+    func select(_ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil, debounce: Duration = .zero, attached: Set<String> = [], contents: Data? = nil) throws -> URL {
         let file = FileManager.default.temporaryDirectory.appending(path: "pick-\(UUID().uuidString).mp4")
-        try Data("clip \(identifier)".utf8).write(to: file)
+        try (contents ?? Data("clip \(identifier)".utf8)).write(to: file)
         coordinator.select(.init(assetIdentifier: identifier, projectID: projectID, role: role, purpose: .cloudRenderSource, itemID: itemID, limit: nil, attachedMediaIDs: attached), debounce: debounce) { file }
         return file
     }
@@ -738,6 +738,26 @@ extension BackgroundUploadRetryTests {
         XCTAssertEqual(h.coordinator.inFlight.count, 1)
         XCTAssertEqual(h.received, 1, "the queued clip never reached the server")
         h.answerPending(1)   // let the running one finish so nothing lingers past the test
+    }
+
+    /// The headline of KRI-125: the user sees each pick land. A thumbnail used to exist only after the clip
+    /// had fully uploaded and attached; everything still in flight was a bare filename.
+    func testAChosenClipHasAThumbnailAndAFilenameBeforeItHasUploaded() async throws {
+        let video = try Data(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")))
+        let h = harness(answerImmediately: false)   // hold the reservation: the clip never gets an upload record
+        let file = try h.select("asset-1", contents: video)
+
+        let appeared = await waitUntil { h.coordinator.previewVersion > 0 }
+
+        XCTAssertTrue(appeared, "a thumbnail is written as soon as the clip is chosen")
+        XCTAssertTrue(h.coordinator.records.isEmpty, "…while it is still being prepared, not yet an upload")
+        let inFlight = try XCTUnwrap(h.coordinator.inFlight.first)
+        XCTAssertEqual(inFlight.value.filename, file.lastPathComponent, "and it can be listed by name")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: CreationMediaPreview.url(recordID: inFlight.key).path))
+
+        _ = await h.deselect("asset-1")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: CreationMediaPreview.url(recordID: inFlight.key).path),
+                       "un-choosing it must not leave its thumbnail behind")
     }
 
     func testUnchoosingAnAssetTheCoordinatorNeverHeardOfIsHarmless() async {

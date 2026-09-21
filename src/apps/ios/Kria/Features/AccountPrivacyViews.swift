@@ -48,7 +48,7 @@ struct AIConsentView: View {
                         .accessibilityAddTraits(.isHeader)
                     Text("Kria uses AI to plan edits and create captions from your instructions and footage.")
                     Text("Your messages and selected media, including faces, voices, and transcripts, are sent to Google Gemini and OpenAI for analysis, transcription, and editing. Kria stores your projects and finished videos in your account.")
-                    Text("Each upload asks whether to share originals for cloud editing or smaller copies for analysis. Nothing is uploaded from your camera roll until you choose it.")
+                    Text("Kria only uploads what you choose. Depending on how a project renders, that is either full-quality originals for cloud editing or smaller copies for analysis. Nothing is uploaded from your camera roll until you choose it.")
                     Text("If you don’t agree, you can sign out or manage and delete your account. AI editing won’t start.")
                         .foregroundStyle(KriaColor.mutedInk)
                     Link("Read the Privacy Policy", destination: KriaLegal.privacyURL)

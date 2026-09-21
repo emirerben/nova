@@ -14,21 +14,15 @@ struct NativeEditorAddClipSheet: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var showingPhotosPicker = false
     @State private var showingFileImporter = false
-    @State private var pendingConsent: PendingConsentSource?
-
-    private struct PendingConsentSource: Identifiable {
-        let id = UUID()
-        let source: UploadSource
-    }
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Adds to the end of your edit.")
+                Text("Adds to the end of your edit. Kria uploads the full-quality original.")
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.mutedInk)
 
-                Button { pendingConsent = PendingConsentSource(source: .photos) } label: {
+                Button { showingPhotosPicker = true } label: {
                     Label("Choose from Photos", systemImage: "photo.on.rectangle")
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
@@ -41,7 +35,7 @@ struct NativeEditorAddClipSheet: View {
                 }
                 .accessibilityIdentifier("native-editor-add-clip-photos")
 
-                Button { pendingConsent = PendingConsentSource(source: .files) } label: {
+                Button { showingFileImporter = true } label: {
                     Label("Choose from Files or iCloud", systemImage: "folder")
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
@@ -62,14 +56,6 @@ struct NativeEditorAddClipSheet: View {
                 Spacer()
             }
             .padding(20)
-            .sheet(item: $pendingConsent) { pending in
-                CloudUploadConsentView(onConsent: {
-                    switch pending.source {
-                    case .photos: showingPhotosPicker = true
-                    default: showingFileImporter = true
-                    }
-                })
-            }
             .navigationTitle("Add clip or photo")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }

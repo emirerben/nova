@@ -190,7 +190,14 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     struct InFlightUpload: Equatable, Sendable {
         let projectID: UUID
         let role: CreationMediaRole
+        /// Shown while the clip is still being prepared and has no upload record to name it yet.
+        var filename: String? = nil
+        var startedAt = Date()
     }
+
+    /// Bumped whenever a thumbnail file is written, so views that read previews from disk re-render.
+    /// (A view whose inputs haven't changed won't re-evaluate on its own when a file appears.)
+    @Published private(set) var previewVersion = 0
 
     private let api: KriaAPIClient
     private let defaultsKey: String
@@ -267,7 +274,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         var preparedToDiscard: (URL, MediaAsset?)?
         // Counts against the project's clip limit for the whole prepare/reserve window, then hands
         // over to `records` (appended by `startTask` before this returns) with no gap in between.
-        inFlight[recordID] = InFlightUpload(projectID: projectID, role: role)
+        inFlight[recordID] = InFlightUpload(projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), startedAt: inFlight[recordID]?.startedAt ?? Date())
         defer { inFlight[recordID] = nil }
         var holdsSlot = false
         let gate = purpose == .analysisProxy ? proxyGate : cloudGate
@@ -282,6 +289,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 if let recoveryCopy { try? FileManager.default.removeItem(at: recoveryCopy) }
                 if staged { Self.clearPreparingUpload(id: recordID, key: defaultsKey, deleteLocalFile: true) }
                 if let preparedToDiscard { Self.discardPrepared(preparedToDiscard.0, asset: preparedToDiscard.1, project: projectID) }
+                CreationMediaPreview.discard(recordID: recordID)
             }
         }
         // Keeps the `prepare()`/reservation window below alive if the app is
@@ -299,6 +307,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         }
         do {
             try UploadCoordinator().validate(source: source, purpose: purpose, consentGiven: consentGiven)
+            // A thumbnail from the moment the asset is chosen, not after it has uploaded and attached.
+            // (Clips are done just below from the staged copy; visuals aren't staged, so from the file.)
+            if role == .visual { startEarlyPreview(of: fileURL, recordID: recordID) }
             // `fileURL` (from PhotosPicker/fileImporter) is transient and may not
             // survive an app relaunch; `prepare()` below (import + proxy transcode
             // for `.clip`) can run for many seconds on a large clip. Stage a durable
@@ -309,6 +320,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             if role == .clip {
                 let copy = try Self.stageIntoRecoveryDirectory(fileURL)
                 stagedURL = copy
+                startEarlyPreview(of: copy, recordID: recordID)
                 Self.persistPreparingUpload(PreparingUpload(id: recordID, projectID: projectID, localFilePath: copy.path,
                     filename: fileURL.lastPathComponent, source: source, purpose: purpose, role: role, itemID: itemID, launchToken: launchToken), key: defaultsKey)
                 staged = true
@@ -387,6 +399,15 @@ struct PreparingUpload: Codable, Sendable, Equatable {
               UUID(uuidString: String(name.prefix(36))) != nil,
               name[name.index(name.startIndex, offsetBy: 36)] == "-" else { return name }
         return String(name.dropFirst(37))
+    }
+
+    /// Writes a thumbnail keyed by the upload's own id as soon as there is a file to read, so the clip
+    /// can be shown while it is still being prepared and uploaded. Best-effort: on failure there is
+    /// simply no thumbnail yet, and the attach step tries again.
+    private func startEarlyPreview(of file: URL, recordID: UUID) {
+        Task { @MainActor [weak self] in
+            if await CreationMediaPreview.saveEarly(localURL: file, recordID: recordID) { self?.previewVersion += 1 }
+        }
     }
 
     /// Wipes the global error line. Called once per batch by the picker, in place of every
@@ -589,8 +610,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 
     /// Reserves a slot for a clip whose file is still being fetched, so the limit is honored
     /// while it loads. Undone by `enqueue` (which owns `inFlight` from then on) or `clearInFlight`.
-    func markInFlight(_ recordID: UUID, projectID: UUID, role: CreationMediaRole) {
-        inFlight[recordID] = InFlightUpload(projectID: projectID, role: role)
+    func markInFlight(_ recordID: UUID, projectID: UUID, role: CreationMediaRole, filename: String? = nil) {
+        inFlight[recordID] = InFlightUpload(projectID: projectID, role: role, filename: filename)
     }
 
     func clearInFlight(_ recordID: UUID) { inFlight[recordID] = nil }
@@ -679,6 +700,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             try? await api.cancelUpload(reservationID: reservationID)
         }
         releaseSelection(recordID: recordID, projectID: record.projectID)
+        CreationMediaPreview.discard(recordID: recordID)
         remove(recordID, deleteLocalFile: true)
     }
 
@@ -788,6 +810,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         // attempt, a definitive one drops everything), it just shouldn't leak.
         var recoveryCopy: URL?
         var preparedToDiscard: (URL, MediaAsset?)?
+        // A resumed upload was chosen in a previous launch; give it its thumbnail back straight away.
+        if !FileManager.default.fileExists(atPath: CreationMediaPreview.url(recordID: recordID).path) {
+            startEarlyPreview(of: stagedURL, recordID: recordID)
+        }
         do {
             let prepared = try await prepare(fileURL: stagedURL, projectID: entry.projectID, purpose: entry.purpose, recordID: recordID)
             preparedToDiscard = (prepared.0, prepared.1)
@@ -1068,6 +1094,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 _ = try await api.registerVisual(itemID: itemID, reservationID: reservationID, gcsPath: path, contentType: contentType, filename: record.filename)
                 attachedThreads[record.projectID] = try await api.project(threadID: record.projectID)
                 bindSelection(recordID: record.id, projectID: record.projectID, mediaID: reservationID)
+                CreationMediaPreview.discard(recordID: record.id)   // visuals show the server's own preview
                 remove(record.id, deleteLocalFile: true)
             } catch { lastError = error.localizedDescription }
             return
@@ -1096,7 +1123,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 // Publish the authoritative media_count before removing the
                 // pending record so clip capacity never briefly reopens.
                 if record.role == .clip {
-                    await CreationMediaPreview.save(localURL: URL(fileURLWithPath: record.localFilePath), mediaID: mediaID)
+                    // Reuse the thumbnail made when the clip was chosen; only generate one here if that
+                    // never happened (or failed), so a clip can't end up attached without a thumbnail.
+                    await CreationMediaPreview.finalize(recordID: record.id, localURL: URL(fileURLWithPath: record.localFilePath), mediaID: mediaID)
+                    previewVersion += 1
                 }
                 attachedThreads[record.projectID] = attachedThread
                 // Hand the asset's identity from the (about to be deleted) record to the ledger, so
@@ -1313,18 +1343,84 @@ enum CreationUploadError: LocalizedError {
     }
 }
 
+/// Thumbnails for media the user has chosen. Keyed two ways: by the upload's own id from the moment a
+/// clip is chosen (the server has not given it a media id yet), then handed to the media id at attach.
+/// Before this, a thumbnail only existed after the clip had fully uploaded and attached, so anything
+/// still in flight was a bare filename.
 @MainActor enum CreationMediaPreview {
+    private static var directory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appending(path: "KriaMediaPreviews", directoryHint: .isDirectory)
+    }
+
     static func url(mediaID: String) -> URL {
         let safeID = Data(mediaID.utf8).base64EncodedString().replacingOccurrences(of: "/", with: "_")
-        return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appending(path: "KriaMediaPreviews/\(safeID).jpg")
+        return directory.appending(path: "\(safeID).jpg")
     }
+
+    static func url(recordID: UUID) -> URL {
+        directory.appending(path: "rec-\(recordID.uuidString).jpg")
+    }
+
+    /// Generates a thumbnail from the local file as soon as it exists. Returns whether one was written.
+    @discardableResult
+    static func saveEarly(localURL: URL, recordID: UUID) async -> Bool {
+        guard let data = await jpegData(for: localURL) else { return false }
+        return write(data, to: url(recordID: recordID))
+    }
+
+    /// Makes the thumbnail available under the media id: reuses the early one, or generates it now.
+    static func finalize(recordID: UUID, localURL: URL, mediaID: String) async {
+        let early = url(recordID: recordID), final = url(mediaID: mediaID)
+        if FileManager.default.fileExists(atPath: early.path) {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: final)
+            if (try? FileManager.default.moveItem(at: early, to: final)) != nil { return }
+        }
+        await save(localURL: localURL, mediaID: mediaID)
+    }
+
     static func save(localURL: URL, mediaID: String) async {
+        guard let data = await jpegData(for: localURL) else { return }
+        write(data, to: url(mediaID: mediaID))
+    }
+
+    static func discard(recordID: UUID) {
+        try? FileManager.default.removeItem(at: url(recordID: recordID))
+    }
+
+    @discardableResult
+    private static func write(_ data: Data, to destination: URL) -> Bool {
+        do {
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: destination, options: .atomic)
+            return true
+        } catch { return false }
+    }
+
+    /// A small JPEG of the media: a downscaled image for a photo, a frame for a video.
+    static func jpegData(for localURL: URL) async -> Data? {
+        let maximum: CGFloat = 320
+        if let type = UTType(filenameExtension: localURL.pathExtension), type.conforms(to: .image) {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maximum,
+            ]
+            guard let source = CGImageSourceCreateWithURL(localURL as CFURL, nil),
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            return UIImage(cgImage: image).jpegData(compressionQuality: 0.8)
+        }
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: localURL))
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 320, height: 320)
-        guard let frame = try? await generator.image(at: .zero), let data = UIImage(cgImage: frame.image).jpegData(compressionQuality: 0.8) else { return }
-        let destination = url(mediaID: mediaID)
-        try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: destination, options: .atomic)
+        generator.maximumSize = CGSize(width: maximum, height: maximum)
+        // Zero tolerance (the default) fails outright when no frame sits at exactly the requested time.
+        generator.requestedTimeToleranceBefore = .positiveInfinity
+        generator.requestedTimeToleranceAfter = .positiveInfinity
+        // The very first frame is occasionally unreadable or blank; a moment later is a fine thumbnail.
+        for seconds in [0.0, 0.5, 1.0, 2.0] {
+            if let frame = try? await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)),
+               let data = UIImage(cgImage: frame.image).jpegData(compressionQuality: 0.8) { return data }
+        }
+        return nil
     }
 }

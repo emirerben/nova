@@ -700,30 +700,3 @@ private struct ApprovalCard: View {
         }.padding(16).background(Color.white.opacity(0.8)).clipShape(RoundedRectangle(cornerRadius: 18))
     }
 }
-
-struct CloudUploadConsentView: View {
-    let onConsent: () -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var consent = false
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    Text("Upload your originals.").font(KriaFont.display(30))
-                    Text("Kria will upload the full-quality originals you select and keep them with this project so it can render in the cloud. Delete the project to remove its uploaded footage. You can cancel while an upload is in progress.").foregroundStyle(KriaColor.mutedInk)
-                    Text("Selected media, including faces and voices, may be shared with Google Gemini and OpenAI for analysis, transcription, and editing.")
-                        .foregroundStyle(KriaColor.mutedInk)
-                    Link("Privacy Policy", destination: KriaLegal.privacyURL).frame(minHeight: 44)
-                    Toggle("I agree to share these originals with Kria, Google Gemini, and OpenAI for this edit", isOn: $consent)
-                }.padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity)
-            }
-            .safeAreaInset(edge: .bottom) {
-                Button("Continue") { onConsent(); dismiss() }
-                    .buttonStyle(CanonicalPrimaryButtonStyle()).disabled(!consent)
-                    .padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity).background(KriaColor.paper)
-            }
-            .navigationTitle("Upload consent").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-        }
-    }
-}

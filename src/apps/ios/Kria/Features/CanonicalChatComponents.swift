@@ -330,6 +330,8 @@ struct FootageStage: View {
     /// Clips still being prepared or chosen. They are not in `uploads` yet, but Continue must wait
     /// for them or it would proceed with fewer clips than the user picked.
     var preparingCount = 0
+    /// `BackgroundUploadCoordinator.previewVersion`, so thumbnails re-read from disk as they appear.
+    var previewVersion = 0
     let progress: [UUID: Double]
     let addFootage: () -> Void
     let continueWithFootage: () -> Void
@@ -425,6 +427,21 @@ struct FootageStage: View {
                 Button("Continue with \(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips")", action: continueWithFootage)
                     .buttonStyle(CanonicalPrimaryButtonStyle())
                 .disabled(isBusy || !readiness.canContinue)
+            }
+
+            // Each clip on its way, with its thumbnail, from the moment it is chosen.
+            if !uploads.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(uploads) { record in
+                        HStack(spacing: 10) {
+                            CreationRecordThumbnail(recordID: record.id, version: previewVersion)
+                            Text(BackgroundUploadCoordinator.displayFilename(record.filename)).font(KriaFont.body(12)).lineLimit(1)
+                            Spacer()
+                            ProgressView(value: progress[record.id] ?? 0).tint(KriaColor.ink).frame(width: 60)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("footage-uploading-clips")
             }
 
             if readiness.pendingCount > 0 {

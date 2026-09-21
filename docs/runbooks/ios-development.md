@@ -136,7 +136,7 @@ authenticated, count-only device check, launch Debug with
 Project actions reuse the authenticated creation-thread PATCH/DELETE contracts,
 including revision checks and rename idempotency. Deletion is confirmed and
 blocked during rendering or pending uploads. Microphone chat input is deferred.
-Native system authentication, Photos, upload consent, and share sheets remain native.
+Native system authentication, Photos, AI consent, and share sheets remain native. Agreement to share media with Kria's AI providers is given once per account (`AIConsentView` gates the workspace); there is no per-upload consent screen, only a short caption in the picker saying what is uploaded.
 
 Native footage controls persist `playback_rate` and normalized `source_crop` in the editor document. Retiming keeps each timeline window fixed: slow motion consumes less source, while footage that ends early holds its last frame. Still images retain their placement duration, and held video tails do not stretch source audio. Crop coordinates use the decoded source with a top-left origin; rendering and selection geometry must agree for rotated footage. The controls participate in document undo and save.
 
@@ -146,7 +146,7 @@ Download follows the video currently shown in the editor. A ready source preview
 
 For repeatable visual review, a Debug build accepts `-ui-testing-brand` with
 `KRIA_BRAND_STATE` set to `format`, `footage`, `direction`, `rendering`, `ready`,
-`editor`, `projects`, `gallery`, `signin`, `account`, `consent`, or `recovery`.
+`editor`, `projects`, `gallery`, `signin`, `account`, or `recovery`.
 These fixtures compose the real components; they never enter Release navigation.
 Use `-ui-testing-chat` for interactive navigation and the existing editor fixtures
 for edit/save/export verification.
@@ -167,8 +167,8 @@ Creation attachments keep three roles separate: primary footage uses thread
 media uploads, narration uses the same contract with `kind=audio`, and supporting
 visuals use the existing PlanItem asset-pool reservation/registration routes.
 Visuals are offered when the server advertises the existing autoplace or guided
-edit capability. Voice recording is available for Narrated and requires both
-microphone permission and cloud-upload consent. Legacy upload recovery records
+edit capability. Voice recording is available for Narrated and requires
+microphone permission (the account's AI consent already covers voices). Legacy upload recovery records
 without a role remain primary clips. Pending records block generation, and failed
 attachments retry without uploading the original again.
 

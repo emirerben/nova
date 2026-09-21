@@ -31,8 +31,6 @@ struct FootagePickerView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showingPhotosPicker = false
     @State private var showingFileImporter = false
-    @State private var consentSelection: UploadConsentSelection?
-    @State private var consentedPurpose: UploadPurpose = .cloudRenderSource
     @State private var libraryAuthorized = false
     /// How many of the chosen assets the library can still show. Fetched when the set changes, not
     /// per render: the picker's limit must count what it will actually display.
@@ -59,6 +57,24 @@ struct FootagePickerView: View {
         self.maximumClipCount = max(0, maximumClipCount)
         self.attachedClipCount = max(0, attachedClipCount)
         self.attachedMediaIDs = attachedMediaIDs
+    }
+
+    /// What this project uploads: smaller analysis copies when it renders on the phone, originals when
+    /// it renders in the cloud. Fixed by the project's destination, not something the user picks per
+    /// upload. Agreement to share media with Kria's AI providers is given once, at account level
+    /// (`AIConsentView` gates the whole workspace), so there is no per-upload consent screen.
+    private var uploadPurpose: UploadPurpose {
+        destination == .phone ? .analysisProxy : .cloudRenderSource
+    }
+
+    /// Non-blocking disclosure of what is uploaded, shown where the per-upload consent screen used to be.
+    private var uploadDisclosure: String? {
+        guard role != .voiceover else { return nil }
+        switch destination {
+        case .phone: return "Kria uploads a smaller copy of each video to plan your edit. Full-quality originals stay on this iPhone."
+        case .cloud: return "Kria uploads the full-quality originals you choose and keeps them with this project."
+        default: return nil
+        }
     }
 
     private var preselectedIdentifiers: [String] {
@@ -103,11 +119,20 @@ struct FootagePickerView: View {
         uploads.failures.filter { $0.projectID == projectID && $0.role == role }
     }
 
+    /// Chosen clips that have no upload record yet (still importing or waiting for a slot), oldest first.
+    private var preparingUploads: [(id: UUID, filename: String?)] {
+        let recorded = Set(uploads.records.map(\.id))
+        return uploads.inFlight
+            .filter { $0.value.projectID == projectID && $0.value.role == role && !recorded.contains($0.key) }
+            .sorted { $0.value.startedAt < $1.value.startedAt }
+            .map { (id: $0.key, filename: $0.value.filename) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             KriaSectionLabel(title: "Add \(role.title.lowercased())")
             if role != .voiceover {
-            Button { requestConsent(source: .photos) } label: {
+            Button { beginImport(source: .photos) } label: {
                 Label("Choose from Photos", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity, minHeight: 48)
             }
             .buttonStyle(KriaSecondaryButtonStyle())
@@ -121,7 +146,7 @@ struct FootagePickerView: View {
             ))
             .onChange(of: photoItems) { _, items in reconcile(items) }
             }
-            Button { requestConsent(source: .files) } label: {
+            Button { beginImport(source: .files) } label: {
                 Label("Choose from Files or iCloud", systemImage: "folder").frame(maxWidth: .infinity, minHeight: 48)
             }
             .buttonStyle(KriaSecondaryButtonStyle())
@@ -132,15 +157,10 @@ struct FootagePickerView: View {
                 allowsMultipleSelection: selectionCapacity.remaining > 1,
                 onCompletion: importFiles
             )
-            .sheet(item: $consentSelection) { selection in
-                if selection.purpose == .analysisProxy {
-                    AnalysisUploadConsentView { beginImport(selection) }
-                } else {
-                    CloudUploadConsentView { beginImport(selection) }
-                }
-            }
             if let message = destination.message {
                 Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            } else if let disclosure = uploadDisclosure {
+                Text(disclosure).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
             }
             if selectionCapacity.remaining == 0 {
                 Text("You’ve reached the limit for \(role.title.lowercased()).")
@@ -151,20 +171,36 @@ struct FootagePickerView: View {
                     .font(KriaFont.body(12))
                     .foregroundStyle(KriaColor.zinc)
             }
+            // Clips still being prepared: not yet an upload record, but already chosen. Shown at once, with
+            // their thumbnail, so the user sees each pick land instead of waiting for it to finish uploading.
+            ForEach(preparingUploads, id: \.id) { item in
+                HStack(spacing: 12) {
+                    CreationRecordThumbnail(recordID: item.id, version: uploads.previewVersion)
+                    Text(item.filename ?? "Preparing…").lineLimit(1)
+                    Spacer()
+                    ProgressView()
+                }
+            }
             ForEach(uploads.records.filter { $0.projectID == projectID && $0.role == role }) { record in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(record.filename).lineLimit(1)
-                        Spacer()
-                        if record.uploadCompleted == true {
-                            Button("Retry attach") { Task { await uploads.retryAttachment(recordID: record.id) } }
-                        } else {
-                            Button("Retry") { Task { await uploads.retryUpload(recordID: record.id) } }
-                            Button("Cancel") { Task { await uploads.cancel(recordID: record.id) } }
+                HStack(alignment: .top, spacing: 12) {
+                    CreationRecordThumbnail(recordID: record.id, version: uploads.previewVersion)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(BackgroundUploadCoordinator.displayFilename(record.filename)).lineLimit(1)
+                            Spacer()
+                            if record.uploadCompleted == true {
+                                Button("Retry attach") { Task { await uploads.retryAttachment(recordID: record.id) } }
+                            } else {
+                                Button("Retry") { Task { await uploads.retryUpload(recordID: record.id) } }
+                            }
+                            // Also for a clip that finished uploading but could not attach. It used to have
+                            // only "Retry attach", so a clip the server kept rejecting could never be
+                            // removed: it sat in the list forever, keeping Continue disabled.
+                            Button(record.uploadCompleted == true ? "Remove" : "Cancel") { Task { await uploads.cancel(recordID: record.id) } }
                         }
+                        ProgressView(value: uploads.progress[record.id] ?? 0).tint(KriaColor.ink)
+                        if let deadline = record.retentionExpiresAt { Text("Temporary source removed by \(deadline.formatted(date: .abbreviated, time: .shortened)).").font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc) }
                     }
-                    ProgressView(value: uploads.progress[record.id] ?? 0).tint(KriaColor.ink)
-                    if let deadline = record.retentionExpiresAt { Text("Temporary source removed by \(deadline.formatted(date: .abbreviated, time: .shortened)).").font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc) }
                 }
             }
             // A failed clip is reported next to the ones that worked. One shared line can't do that:
@@ -186,25 +222,18 @@ struct FootagePickerView: View {
         .onChange(of: preselectedIdentifiers) { _, _ in refreshShowablePreselected() }
     }
 
-    private func requestConsent(source: UploadSource) {
+    private func beginImport(source: UploadSource) {
         guard destination.canUpload else { return }
-        consentSelection = UploadConsentSelection(source: source, purpose: destination == .phone ? .analysisProxy : .cloudRenderSource)
-    }
-
-    private func beginImport(_ selection: UploadConsentSelection) {
-        consentedPurpose = selection.purpose
         uploads.clearLastError()
         // A new batch starts clean: earlier failures were already shown, and one for a clip the user is
         // now adding again would otherwise sit there forever after the retry succeeds.
         uploads.clearFailures(projectID: projectID, role: role)
         selectionMessage = nil
-        if selection.source == .photos { Task { await presentPhotosPicker() } }
+        if source == .photos { Task { await presentPhotosPicker() } }
         else { showingFileImporter = true }
     }
 
-    /// The permission prompt comes here — after the consent sheet has dismissed, and only when the
-    /// user actually asks for Photos. Stacking a system alert on a live `.sheet` in the same
-    /// gesture is a known SwiftUI dismissal race.
+    /// The Photos permission prompt comes here, only when the user actually asks for Photos.
     private func presentPhotosPicker() async {
         let wasAuthorized = libraryAuthorized
         libraryAuthorized = await Self.photoLibraryAuthorized()
@@ -242,7 +271,7 @@ struct FootagePickerView: View {
         let byIdentifier = Dictionary(items.compactMap { item in item.itemIdentifier.map { ($0, item) } }, uniquingKeysWith: { first, _ in first })
         for identifier in diff.added {
             guard let item = byIdentifier[identifier] else { continue }
-            uploads.select(.init(assetIdentifier: identifier, projectID: projectID, role: role, purpose: consentedPurpose, itemID: itemID, limit: limit, attachedMediaIDs: attachedMediaIDs)) {
+            uploads.select(.init(assetIdentifier: identifier, projectID: projectID, role: role, purpose: uploadPurpose, itemID: itemID, limit: limit, attachedMediaIDs: attachedMediaIDs)) {
                 guard let media = try await item.loadTransferable(type: ImportedMedia.self) else { throw UnreadablePhoto() }
                 return media.url
             }
@@ -277,7 +306,7 @@ struct FootagePickerView: View {
     /// No-Photos-access path: today's commit-on-Done behavior, minus the one-at-a-time wait.
     private func importUnidentified(_ items: [PhotosPickerItem]) {
         guard !items.isEmpty else { return }
-        let purpose = consentedPurpose
+        let purpose = uploadPurpose
         let acceptedCount = selectionCapacity.acceptedCount(requested: items.count)
         if acceptedCount < items.count {
             selectionMessage = "Only \(acceptedCount) more \(acceptedCount == 1 ? "clip" : "clips") can be added in this format."
@@ -304,14 +333,14 @@ struct FootagePickerView: View {
     /// would only thrash the disk.
     private func importFiles(_ result: Result<[URL], any Error>) {
         guard case .success(let urls) = result else { return }
-        let purpose = consentedPurpose
+        let purpose = uploadPurpose
         let acceptedCount = selectionCapacity.acceptedCount(requested: urls.count)
         if acceptedCount < urls.count {
             selectionMessage = "Only \(acceptedCount) more \(acceptedCount == 1 ? "clip" : "clips") can be added in this format."
         }
         let chosen = Array(urls.prefix(acceptedCount))
         let ids = chosen.map { _ in UUID() }
-        for id in ids { uploads.markInFlight(id, projectID: projectID, role: role) }
+        for (url, id) in zip(chosen, ids) { uploads.markInFlight(id, projectID: projectID, role: role, filename: url.lastPathComponent) }
         Task {
             for (url, id) in zip(chosen, ids) {
                 _ = await uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: purpose, role: role, itemID: itemID, limit: limit, recordID: id)
@@ -340,12 +369,6 @@ private struct FootagePhotosPicker: ViewModifier {
             content.photosPicker(isPresented: $isPresented, selection: $selection, maxSelectionCount: limit, matching: filter)
         }
     }
-}
-
-private struct UploadConsentSelection: Identifiable {
-    let id = UUID()
-    let source: UploadSource
-    let purpose: UploadPurpose
 }
 
 struct ClipSelectionCapacity: Equatable, Sendable {
