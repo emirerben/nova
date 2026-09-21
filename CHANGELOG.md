@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.101.0] - 2026-09-21
+
+### Changed
+- feat(creator): match any creator request to clips with a model step and grounded on-screen labels, behind CLIP_INTENTS_ENABLED (KRI-127, part 2) (#1113) <!-- release-pr: 1113 -->
+
 ## [0.76.100.0] - 2026-09-21
 
 ### Changed
