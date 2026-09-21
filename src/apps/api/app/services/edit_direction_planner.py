@@ -1251,23 +1251,28 @@ def deterministic_guided_beats(
         if index > beat_count * 2 and remaining > 0.001:
             raise ValueError("guided story fallback cannot allocate target duration")
 
-    copy = [
-        ("Opening", "A few moments, together."),
-        ("Details", "Details worth noticing."),
-        ("Closing", "One last look."),
-        ("Another view", "A different angle on the moment."),
-        ("Final frame", "A final frame to remember."),
-        ("Next chapter", "The story moves into another moment."),
-        ("More detail", "Another detail adds to the sequence."),
-        ("Later moment", "A later moment keeps the story moving."),
-        ("Before the close", "One more view sets up the ending."),
-        ("Last moment", "The final moment brings the story together."),
+    # `topic` is internal bookkeeping only (distinct-topic checks, debugging)
+    # and is never rendered. `thought` IS rendered as on-screen text by
+    # `guided_story._text_elements`, so this metadata-free recovery path must
+    # never invent generic captions ("A few moments, together.", ...) the
+    # creator never asked for -- leave it blank (KRI-126, job 506d2993).
+    topics = [
+        "Opening",
+        "Details",
+        "Closing",
+        "Another view",
+        "Final frame",
+        "Next chapter",
+        "More detail",
+        "Later moment",
+        "Before the close",
+        "Last moment",
     ]
     return [
         StoryBeat(
             beat_id=f"fallback-beat-{beat_index + 1}",
-            topic=copy[beat_index][0],
-            thought=copy[beat_index][1],
+            topic=topics[beat_index],
+            thought="",
             thought_source="ai_draft",
             media_ids=[ref.media_id for ref in group],
             layout="fullscreen",

@@ -1,4 +1,5 @@
 import Foundation
+import KriaMediaEngine
 
 struct CreationCapabilities: Codable, Equatable, Sendable {
     let formats: [CreationFormatCapability]
@@ -169,30 +170,74 @@ struct CreationAttachedMedia: Identifiable {
     }
 }
 
+/// Where the next attachment goes. `.phone` uploads a small analysis proxy and
+/// keeps the original on this iPhone; `.cloud` uploads the full original.
+/// Accounts that render on iPhone keep every project on iPhone (KRI-121):
+/// Visuals upload in full to the plan item's pool (`.phoneVisuals`), limited to
+/// the kinds this iPhone is verified to draw, and the iPhone downloads them
+/// again to render. Nothing in Visuals can pull a project to the cloud.
 enum ProjectUploadDestination: Equatable {
-    case phone, cloud, paused, mixed, unsupportedRole
-    var canUpload: Bool { self == .phone || self == .cloud }
+    case phone, cloud, phoneVisuals(Set<VisualMediaKind>), checking, paused, mixed, visualsUnavailableOnPhone, voiceoverUnavailableOnPhone
+    var canUpload: Bool {
+        switch self {
+        case .phone, .cloud, .phoneVisuals: true
+        case .checking, .paused, .mixed, .visualsUnavailableOnPhone, .voiceoverUnavailableOnPhone: false
+        }
+    }
+    /// Visuals kinds the pickers may offer; nil means every kind (cloud projects).
+    var visualKinds: Set<VisualMediaKind>? { if case .phoneVisuals(let kinds) = self { kinds } else { nil } }
     var message: String? {
         switch self {
         case .phone, .cloud: nil
+        case .phoneVisuals(let kinds):
+            kinds == [.image] ? "Add photos here, and videos in Footage. Kria renders your video on this iPhone."
+                : kinds == [.video] ? "Add supporting videos here. Kria renders your video on this iPhone."
+                : "Add photos or supporting videos here. Kria renders your video on this iPhone."
+        case .checking: "Checking how this project renders…"
         case .paused: "Rendering on iPhone is temporarily unavailable. Your project is saved; try again later."
         case .mixed: "This project has sources from different rendering destinations. Keep the project and reconnect its original footage before continuing."
-        case .unsupportedRole: "This attachment type is not yet available for rendering on iPhone. Your project is saved."
+        case .visualsUnavailableOnPhone: "Visuals aren’t available yet for videos rendered on iPhone. Continue with your footage; Kria renders it on this iPhone."
+        case .voiceoverUnavailableOnPhone: "Voiceover isn’t available yet for videos rendered on iPhone. Your project is saved."
         }
     }
-    static func resolve(capabilities: PhoneRenderingCapabilities?, sourcePurposes: [String], role: CreationMediaRole) -> Self {
+
+    /// Photos render on iPhone once the server verifies `stillImages`, Visuals
+    /// videos once it verifies `visualVideos`. Until the account's capabilities
+    /// have loaded nothing uploads: guessing `.cloud` would send full originals
+    /// to the cloud and lock an iPhone account's project there.
+    static func resolve(capabilities: PhoneRenderingCapabilities?, capabilitiesLoaded: Bool = true, sourcePurposes: [String], role: CreationMediaRole) -> Self {
         let known = Set(sourcePurposes)
         let phone = UploadPurpose.analysisProxy.rawValue, cloud = UploadPurpose.cloudRenderSource.rawValue
         guard known.isSubset(of: [phone, cloud]), known.count <= 1 else { return .mixed }
         if known.contains(cloud) { return .cloud }
+        guard capabilitiesLoaded else { return .checking }
         let minimum = Set(["basicComposition", "positionedText", "audioMix", "local1080Export"])
+        let verified = Set(capabilities?.verifiedFeatures ?? [])
         let available = capabilities?.enabled == true && capabilities?.recipeVersions.contains(2) == true
-            && minimum.isSubset(of: Set(capabilities?.verifiedFeatures ?? []))
+            && minimum.isSubset(of: verified)
         if known.contains(phone) {
             guard available else { return .paused }
-            return role == .clip ? .phone : .unsupportedRole
+        } else if !available {
+            return .cloud
         }
-        return available && role == .clip ? .phone : .cloud
+        switch role {
+        case .clip: return .phone
+        case .visual:
+            var kinds: Set<VisualMediaKind> = []
+            if verified.contains(MediaCapability.stillImages.rawValue) { kinds.insert(.image) }
+            if verified.contains(MediaCapability.visualVideos.rawValue) { kinds.insert(.video) }
+            return kinds.isEmpty ? .visualsUnavailableOnPhone : .phoneVisuals(kinds)
+        // Narration has no on-device path yet, and this account renders on
+        // iPhone: say so rather than start a project the cloud would render.
+        case .voiceover: return .voiceoverUnavailableOnPhone
+        }
+    }
+
+    /// Footage and voiceover are project media; Visuals live in the pool and never
+    /// decide the destination, so a pending Visuals upload can neither make a
+    /// phone project `.mixed` nor pull an empty project to the cloud.
+    static func sourcePurposes(media: [CreationAttachedMedia], records: [UploadRecoveryRecord], projectID: UUID) -> [String] {
+        media.map(\.uploadPurpose) + records.filter { $0.projectID == projectID && $0.role != .visual }.map(\.purpose.rawValue)
     }
 }
 

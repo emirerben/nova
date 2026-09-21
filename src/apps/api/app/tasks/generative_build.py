@@ -3670,17 +3670,21 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
         pin_device_request,
     )
     from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
-    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+    from app.services.phone_sources import (  # noqa: PLC0415
+        PHONE_SOURCES_FIELD,
+        PHONE_VISUALS_FIELD,
+        PhoneSourceBinding,
+    )
+    from app.services.phone_visuals import bind_phone_visuals  # noqa: PLC0415
 
     generation = snapshot.get("creator_generation_id")
     guided = snapshot.get("guided_edit")
     if not isinstance(generation, str) or not generation or not isinstance(guided, dict):
         raise ValueError("Phone rendering requires an immutable approved guided plan")
+    # May be empty: a project with no footage renders from pinned Visuals alone.
     bindings = tuple(
         PhoneSourceBinding.model_validate(row) for row in snapshot[PHONE_SOURCES_FIELD]
     )
-    if not bindings:
-        raise ValueError("Phone rendering requires original source bindings")
     existing = (snapshot.get(DEVICE_RENDER_FIELD) or {}).get("guided_story")
     if existing is not None and existing.get("base_generation") == generation:
         return  # A delivery cannot rewrite an already issued device revision.
@@ -3689,8 +3693,26 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
             "Phone rendering is currently unavailable; originals remain on the device."
         )
     raw_plan, _track = _guided_execution_plan(job_id, guided)
-    recipe = compile_phone_guided_plan(GuidedStoryExecutionPlan.model_validate(raw_plan), bindings)
+    plan = GuidedStoryExecutionPlan.model_validate(raw_plan)
+    # Visuals-pool photos and videos bind only while their feature is verified;
+    # otherwise such a moment keeps failing closed in the compiler as before.
+    visual_kinds = frozenset(
+        kind
+        for kind, feature in (("image", "stillImages"), ("video", "visualVideos"))
+        if feature in settings.phone_render_verified_features
+    )
+    visuals = (
+        bind_phone_visuals(
+            _sync_session, job_id=job_id, story_timeline=plan.story_timeline, kinds=visual_kinds
+        )
+        if visual_kinds
+        else ()
+    )
+    if not bindings and not visuals:
+        raise ValueError("Phone rendering requires original source bindings or pinned visuals")
+    recipe = compile_phone_guided_plan(plan, bindings, visuals=visuals)
     validate_phone_pilot_recipe(recipe)
+    visual_rows = [visual.model_dump(mode="json") for visual in visuals]
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id="guided_story", revision=1, recipe=recipe
     )
@@ -3706,6 +3728,9 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
             current.get(field) != snapshot.get(field)
             for field in ("creator_generation_id", "guided_edit", PHONE_SOURCES_FIELD)
         ):
+            return
+        # Absent-or-equal: never overwrite photo receipts another run pinned.
+        if current.get(PHONE_VISUALS_FIELD, visual_rows) != visual_rows:
             return
         prior = (current.get(DEVICE_RENDER_FIELD) or {}).get("guided_story")
         if prior is not None and prior.get("base_generation") == generation:
@@ -3739,6 +3764,10 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
                 "ok": False,
             }
         ]
+        if visual_rows:
+            # Private receipts the editor recompiles from; each row keeps
+            # gcs_path so pool deletion still sees the photo as referenced.
+            current[PHONE_VISUALS_FIELD] = visual_rows
         job.assembly_plan = current
         pin_device_request(job, request, base_generation=generation)
         job.status = "awaiting_device"

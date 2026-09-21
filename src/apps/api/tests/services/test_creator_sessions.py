@@ -1149,3 +1149,72 @@ async def test_context_keeps_visuals_in_manifest_while_their_analysis_is_pending
     assert "plan_item_assets.status IN ('uploaded', 'queued', 'analyzing', 'ready')" in compiled
     assert "plan_item_assets.status = 'ready'" not in compiled
     assert "deduplicated_to_asset_id IS NULL" in compiled
+
+
+# --- KRI-121 round 2: a project holding only Visuals plans for the iPhone ----
+
+
+def _rows(values: list) -> MagicMock:
+    result = MagicMock()
+    result.scalars.return_value = values
+    return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case", ["native_photos", "native_pool_video", "web_thread", "voiceover", "talking_head"]
+)
+async def test_visuals_only_context_plans_for_the_phone_only_when_the_rule_holds(
+    monkeypatch, case
+) -> None:
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.services.creator_capabilities import compile_strategy_to_plan
+    from app.services.phone_destination import DEVICE_INTENT_KEY
+
+    owner = uuid.uuid4()
+    kind = "video" if case == "native_pool_video" else "image"
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        edit_format="talking_head" if case == "talking_head" else "montage",
+        audio_mode="voiceover" if case == "voiceover" else "kria",
+        voiceover_gcs_path="users/u/voice.m4a" if case == "voiceover" else None,
+        voiceover_generation=None,
+        voiceover_duration_s=None,
+        current_job_id=None,
+        clip_gcs_paths=[],
+        clip_assignments=[],
+    )
+    asset = SimpleNamespace(
+        id=uuid.uuid4(), kind=kind, duration_s=None, user_context=None, analysis=None
+    )
+    monkeypatch.setattr(creator_sessions.settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(creator_sessions.settings, "phone_render_user_ids", [owner])
+    monkeypatch.setattr(
+        creator_sessions.settings,
+        "phone_render_verified_features",
+        ["stillImages", "visualVideos"],
+    )
+    state = {"media": []} if case == "web_thread" else {DEVICE_INTENT_KEY: "device"}
+    db = AsyncMock()
+    # A voiceover stops the rule before it reads anything; a thread without the
+    # stamp stops it before the pool read.
+    rule_reads = {"voiceover": [], "web_thread": [_rows([state])]}.get(
+        case, [_rows([state]), _rows([kind])]
+    )
+    db.execute.side_effect = [*rule_reads, _rows([asset]), _rows([]), _rows([])]
+
+    manifest, _ = await creator_sessions.resolve_item_creator_context(
+        db,
+        item,
+        persona=SimpleNamespace(user_id=owner),
+        guided_capability_enabled=True,
+    )
+
+    on_phone = case in {"native_photos", "native_pool_video"}
+    assert ("phone_source_audio" in manifest.capabilities) is on_phone
+    if on_phone:
+        assert manifest.capabilities["phone_source_audio"].available
+        assert manifest.capabilities["dispatch_render"].available
+        plan = compile_strategy_to_plan(manifest, CreativeStrategy(media_scope="all"))
+        assert plan.strategy.render_program == "guided"
+        assert plan.strategy.selected_media_ids == [f"asset-{asset.id}"]

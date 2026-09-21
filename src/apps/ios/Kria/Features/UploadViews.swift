@@ -3,6 +3,7 @@ import Photos
 import PhotosUI
 import UniformTypeIdentifiers
 import CoreTransferable
+import KriaMediaEngine
 
 /// Picks footage, visuals or a voiceover and hands each file to `BackgroundUploadCoordinator`.
 ///
@@ -73,6 +74,10 @@ struct FootagePickerView: View {
         switch destination {
         case .phone: return "Kria uploads a smaller copy of each video to plan your edit. Full-quality originals stay on this iPhone."
         case .cloud: return "Kria uploads the full-quality originals you choose and keeps them with this project."
+        // A phone-rendered project still uploads Visuals at full quality (so the AI can plan around them)
+        // and downloads them again to render. That is the disclosure the per-upload screen carried for
+        // this case, so it must not be lost with the screen.
+        case .phoneVisuals: return "Kria uploads the full-quality visuals you choose and keeps them with this project so its AI can plan your edit. When your video renders on this iPhone, it downloads them again."
         default: return nil
         }
     }
@@ -141,7 +146,7 @@ struct FootagePickerView: View {
                 isPresented: $showingPhotosPicker,
                 selection: $photoItems,
                 limit: selectionCapacity.pickerSelectionLimit,
-                filter: role == .visual ? .any(of: [.videos, .images]) : .videos,
+                filter: role == .visual ? visualPickerFilter : .videos,
                 libraryBacked: libraryAuthorized
             ))
             .onChange(of: photoItems) { _, items in reconcile(items) }
@@ -153,13 +158,14 @@ struct FootagePickerView: View {
             .disabled(selectionCapacity.remaining == 0 || !destination.canUpload)
             .fileImporter(
                 isPresented: $showingFileImporter,
-                allowedContentTypes: role == .voiceover ? [.audio] : role == .visual ? [.movie, .image] : [.movie],
+                allowedContentTypes: role == .voiceover ? [.audio] : role == .visual ? visualContentTypes : [.movie],
                 allowsMultipleSelection: selectionCapacity.remaining > 1,
                 onCompletion: importFiles
             )
             if let message = destination.message {
                 Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
-            } else if let disclosure = uploadDisclosure {
+            }
+            if let disclosure = uploadDisclosure {
                 Text(disclosure).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
             }
             if selectionCapacity.remaining == 0 {
@@ -220,6 +226,21 @@ struct FootagePickerView: View {
             refreshShowablePreselected()
         }
         .onChange(of: preselectedIdentifiers) { _, _ in refreshShowablePreselected() }
+    }
+    /// An iPhone-rendered project only takes the Visuals kinds this iPhone can draw.
+    private var visualPickerFilter: PHPickerFilter {
+        switch destination.visualKinds {
+        case [.image]: .images
+        case [.video]: .videos
+        default: .any(of: [.videos, .images])
+        }
+    }
+    private var visualContentTypes: [UTType] {
+        switch destination.visualKinds {
+        case [.image]: [.image]
+        case [.video]: [.movie]
+        default: [.movie, .image]
+        }
     }
 
     private func beginImport(source: UploadSource) {

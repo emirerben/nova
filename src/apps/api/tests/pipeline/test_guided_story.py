@@ -2825,15 +2825,46 @@ def test_selected_heic_is_normalized_without_changing_source_receipt(tmp_path, m
     assert receipts[0]["sha256"] == hashlib.sha256(source_bytes).hexdigest()
 
 
-def test_selected_transparent_image_preserves_alpha_and_source_receipt(
-    tmp_path, monkeypatch
+def _save_transparent_rgba_webp(path: Path) -> None:
+    from PIL import Image
+
+    image = Image.new("RGBA", (80, 120), (24, 120, 180, 255))
+    # Hidden white under full transparency: FFmpeg's fullscreen graph used to
+    # expose it, so the matte must win over whatever RGB the file carries.
+    image.putpixel((0, 0), (255, 255, 255, 0))
+    image.putpixel((1, 0), (255, 0, 0, 128))
+    # exact=True keeps the RGB under alpha 0 instead of letting WebP zero it.
+    image.save(path, format="WEBP", lossless=True, exact=True)
+
+
+def _save_transparent_palette_png(path: Path) -> None:
+    from PIL import Image
+
+    image = Image.new("P", (80, 120), 1)
+    image.putpalette([255, 255, 255, 24, 120, 180, 255, 0, 0])
+    image.putpixel((0, 0), 0)
+    image.putpixel((1, 0), 2)
+    # tRNS chunk: per-index alpha, so the file has no "A" band at all.
+    image.save(path, format="PNG", transparency=bytes([0, 255, 128]))
+
+
+@pytest.mark.parametrize(
+    ("filename", "save_source", "source_mode"),
+    [
+        ("uploaded.webp", _save_transparent_rgba_webp, "RGBA"),
+        ("uploaded.png", _save_transparent_palette_png, "P"),
+    ],
+    ids=["rgba-webp", "palette-png"],
+)
+def test_selected_transparent_image_is_matted_over_black_with_source_receipt(
+    tmp_path, monkeypatch, filename, save_source, source_mode
 ) -> None:
     from PIL import Image
 
-    source = tmp_path / "uploaded.webp"
-    image = Image.new("RGBA", (80, 120), (24, 120, 180, 255))
-    image.putpixel((0, 0), (24, 120, 180, 0))
-    image.save(source, format="WEBP", lossless=True)
+    source = tmp_path / filename
+    save_source(source)
+    with Image.open(source) as uploaded:
+        assert uploaded.mode == source_mode
     source_bytes = source.read_bytes()
 
     def download(_path: str, local: str, *, generation: str) -> None:
@@ -2846,7 +2877,7 @@ def test_selected_transparent_image_preserves_alpha_and_source_receipt(
         "story_timeline": [
             {
                 "media_id": "transparent-card",
-                "gcs_path": "users/u/card.webp",
+                "gcs_path": f"users/u/card{source.suffix}",
                 "generation": "13",
                 "kind": "image",
             }
@@ -2856,10 +2887,17 @@ def test_selected_transparent_image_preserves_alpha_and_source_receipt(
     local_by_id, receipts = _download_selected(plan, str(tmp_path))
 
     render_source = Path(local_by_id["transparent-card"])
-    assert render_source.suffix == ".png"
+    assert render_source.name.endswith("_render.png")
     with Image.open(render_source) as normalized:
         assert normalized.format == "PNG"
-        assert normalized.getchannel("A").getextrema() == (0, 255)
+        # Same literals as the iPhone engine's StillFrame tests: the matte is
+        # the cloud half of the cloud/phone parity contract.
+        assert normalized.mode == "RGB"
+        assert "transparency" not in normalized.info
+        assert normalized.size == (80, 120)
+        assert normalized.getpixel((0, 0)) == (0, 0, 0)
+        assert normalized.getpixel((1, 0)) == (128, 0, 0)
+        assert normalized.getpixel((40, 60)) == (24, 120, 180)
     assert receipts[0]["bytes"] == len(source_bytes)
     assert receipts[0]["sha256"] == hashlib.sha256(source_bytes).hexdigest()
 

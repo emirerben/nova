@@ -6083,7 +6083,60 @@ def _validate_carousel_moment_patch(raw: dict, variant: dict) -> dict:
     return cleaned_moment
 
 
+_PHONE_EDIT_UNSUPPORTED_REASON = "phone_edit_unsupported"
+# Edits the phone compiler (app/pipeline/phone_guided_plan.py) fails closed on.
+# A device variant never falls back to a cloud render, so advertising one only
+# buys the creator a 422 `unsupported_phone_edit` at Save. Looks are closed
+# entirely for now: golden_hour compiles only on exact-canvas, unrotated
+# sources, which most real phone footage is not.
+_PHONE_UNSUPPORTED_CLIP_OPERATIONS = (
+    "add",
+    "looks",
+    "edit_wide_looks",
+    "source_crop",
+    "playback_rate",
+)
+_PHONE_UNSUPPORTED_LANES = ("sfx", "overlays", "visual_blocks", "motion_scenes")
+
+
+def _clamp_phone_editor_capabilities(capabilities: dict) -> dict:
+    """Close every control a device-rendered variant cannot save, shape-preserving."""
+    clamped = dict(capabilities)
+    for group, names in (
+        ("clips", _PHONE_UNSUPPORTED_CLIP_OPERATIONS),
+        ("lanes", _PHONE_UNSUPPORTED_LANES),
+        # Media source controls only act on overlay/visual-block media.
+        ("media_source_controls", None),
+    ):
+        operations = clamped.get(group)
+        if isinstance(operations, dict):
+            clamped[group] = {
+                name: (
+                    {"editable": False, "reason": _PHONE_EDIT_UNSUPPORTED_REASON}
+                    if names is None or name in names
+                    else value
+                )
+                for name, value in operations.items()
+            }
+    for lane in _PHONE_UNSUPPORTED_LANES:
+        # Legacy top-level booleans carry their reason in a `<lane>_reason` sibling.
+        if lane in clamped:
+            clamped[lane] = False
+            clamped[f"{lane}_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
+    if "visual_editor_style" in clamped:
+        clamped["visual_editor_style"] = False
+    return clamped
+
+
 def _editor_capabilities(job: Job, variant: dict) -> dict:
+    """Editor capability map for one variant, clamped to what its renderer can save."""
+    capabilities = _base_editor_capabilities(job, variant)
+    if variant.get("render_destination") == "device":
+        return _clamp_phone_editor_capabilities(capabilities)
+    return capabilities
+
+
+def _base_editor_capabilities(job: Job, variant: dict) -> dict:
     """E4: server-derived editor capability map for one variant (kills FE 404-probing).
 
     Cheap by design — flag reads, string checks, and the already-persisted
@@ -11207,6 +11260,18 @@ async def add_clip(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cancelled videos cannot be edited.",
         )
+    from app.kria.media_sources import require_cloud_render_job  # noqa: PLC0415
+
+    # A phone job renders only the originals bound when it was planned, and
+    # those stay on the iPhone. A cloud path in its pool has no phone binding,
+    # so the next Save would 422 — refuse before claiming the reservation.
+    try:
+        require_cloud_render_job(job)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "phone_editor_required"},
+        ) from exc
 
     path = req.gcs_path
     user_id = str(current_user.id)

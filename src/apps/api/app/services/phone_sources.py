@@ -6,16 +6,26 @@ The binding is private job state; portable recipes expose only original identiti
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from typing import Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from app.kria.media_sources import (
     MediaUploadContract,
     OriginalMediaDescriptor,
     is_analysis_proxy_path,
 )
-from app.kria.render_assets import OriginalRenderAsset, RenderFingerprint
+from app.kria.render_assets import OriginalRenderAsset, RenderFingerprint, VisualRenderAsset
 
 PHONE_SOURCES_FIELD = "_phone_sources_v1"
+PHONE_VISUALS_FIELD = "_phone_visuals_v1"
 
 
 class PhoneSourceBinding(BaseModel):
@@ -102,4 +112,70 @@ def require_bound_moment(
     ]
     if len(matches) != 1:
         raise ValueError("approved moment does not match its immutable phone source")
+    return matches[0]
+
+
+class PhoneVisualBinding(BaseModel):
+    """One approved Visuals-pool photo or video hashed at its pinned generation
+    (KRI-121).
+
+    Visuals always upload their full original to the plan item's pool, so the
+    phone renders them from those bytes rather than from a device original.
+    Private job state like ``PhoneSourceBinding``: recipes expose only the
+    ``VisualRenderAsset`` identity, and the device-render grant re-checks the
+    ``PlanItemAsset`` row before signing the exact generation. A video also
+    carries what the worker probed from those bytes, the same facts a device
+    original's descriptor supplies for bound footage.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    media_id: str = Field(min_length=1, max_length=150, pattern=r"^\S+$")
+    gcs_path: str = Field(min_length=1)
+    generation: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    byte_count: int = Field(gt=0, le=16 * 1024**3)
+    kind: Literal["image", "video"] = "image"
+    duration_s: float | None = Field(default=None, gt=0)
+    width: int | None = Field(default=None, gt=0)
+    height: int | None = Field(default=None, gt=0)
+    orientation_degrees: int = 0
+
+    @model_validator(mode="after")
+    def require_video_probe(self) -> PhoneVisualBinding:
+        if self.kind == "video" and None in (self.duration_s, self.width, self.height):
+            raise ValueError("a pool video requires its probed duration and size")
+        if self.orientation_degrees not in {0, 90, 180, 270}:
+            raise ValueError("pool video rotation must be a right angle")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _photo_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
+        # Photo receipts keep the shape earlier jobs persisted.
+        payload = handler(self)
+        if self.kind == "image":
+            for key in ("kind", "duration_s", "width", "height", "orientation_degrees"):
+                payload.pop(key, None)
+        return payload
+
+    def render_asset(self) -> VisualRenderAsset:
+        return VisualRenderAsset(
+            id=f"visual-{self.media_id}",
+            visual_id=self.media_id,
+            generation=self.generation,
+            media_kind=self.kind,
+            fingerprint=RenderFingerprint(sha256=self.sha256, byte_count=self.byte_count),
+        )
+
+
+def require_bound_visual(
+    visuals: tuple[PhoneVisualBinding, ...], *, media_id: str, path: str, generation: str
+) -> PhoneVisualBinding:
+    matches = [
+        visual
+        for visual in visuals
+        if (visual.media_id, visual.gcs_path, visual.generation) == (media_id, path, generation)
+    ]
+    if len(matches) != 1:
+        raise ValueError("approved media does not match its pinned visual")
     return matches[0]

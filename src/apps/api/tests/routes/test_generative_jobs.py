@@ -4167,6 +4167,8 @@ def _add_clip_job(*, clip_paths: list[str] | None = None, status: str = "variant
     return SimpleNamespace(
         id=uuid.uuid4(),
         status=status,
+        # A cloud-rendered variant: the phone fence must leave these jobs alone.
+        assembly_plan={"variants": [{"variant_id": "song_text", "render_status": "ready"}]},
         all_candidates={"clip_paths": list(clip_paths or [])},
     )
 
@@ -4299,3 +4301,49 @@ async def test_add_clip_rejects_cancelled_job(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await add_clip(str(job.id), AddClipRequest(gcs_path=path), user, db)
     assert exc.value.status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("assembly_plan", "pooled_name"),
+    [
+        ({"_phone_sources_v1": []}, "clip.mp4"),
+        ({"_device_render_v1": {}}, "clip.mp4"),
+        (
+            {"variants": [{"variant_id": "guided_story", "render_destination": "device"}]},
+            "clip.mp4",
+        ),
+        # Proxy-sourced footage whose phone receipts never landed is still not cloud-renderable.
+        ({}, "analysis-proxy-clip.mp4"),
+    ],
+    ids=["phone_sources", "device_render", "device_variant", "proxy_pool"],
+)
+@pytest.mark.asyncio
+async def test_add_clip_rejects_phone_job_before_claiming_the_upload(
+    monkeypatch, assembly_plan, pooled_name
+):
+    # The iPhone keeps a phone job's originals; a cloud path in its pool has no
+    # phone binding, so the editor could never save the edit that placed it.
+    user = SimpleNamespace(id=uuid.uuid4())
+    path = f"users/{user.id}/generative/abc123def456/clip.mp4"
+    pool = [f"users/{user.id}/generative/aaa111aaa111/{pooled_name}"]
+    job = _add_clip_job(clip_paths=pool)
+    job.assembly_plan = assembly_plan
+    consume = AsyncMock()
+    metadata = MagicMock()
+    monkeypatch.setattr(
+        "app.routes.generative_jobs._load_generative_job", AsyncMock(return_value=job)
+    )
+    monkeypatch.setattr("app.routes.generative_jobs._consume_project_upload_reservations", consume)
+    monkeypatch.setattr("app.routes.generative_jobs.storage.object_metadata", metadata)
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+
+    with pytest.raises(HTTPException) as exc:
+        await add_clip(str(job.id), AddClipRequest(gcs_path=path), user, db)
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {"code": "phone_editor_required"}
+    assert job.all_candidates["clip_paths"] == pool
+    consume.assert_not_awaited()
+    metadata.assert_not_called()
+    db.execute.assert_not_awaited()
+    db.commit.assert_not_awaited()

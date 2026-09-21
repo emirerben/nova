@@ -1389,6 +1389,119 @@ def test_guided_v2_capabilities_keep_legacy_lane_booleans_and_honest_reasons(
     assert caps["caption_editor_style"] is True
 
 
+_PHONE_CLOSED = {"editable": False, "reason": "phone_edit_unsupported"}
+
+
+def _arm_every_editor_lane(monkeypatch) -> None:
+    _arm(monkeypatch)
+    from app.config import settings
+
+    for flag in (
+        "guided_story_editor_v2_enabled",
+        "sound_effects_enabled",
+        "media_overlays_enabled",
+        "visual_blocks_enabled",
+        "motion_scenes_enabled",
+        "edit_wide_looks_enabled",
+        "edit_transitions_enabled",
+    ):
+        monkeypatch.setattr(settings, flag, True, raising=False)
+
+
+def test_guided_v2_device_variant_closes_every_edit_the_phone_compiler_rejects(
+    monkeypatch,
+) -> None:
+    _arm_every_editor_lane(monkeypatch)
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: {"revision_number": 1})
+    job = _job(resolved_archetype="guided_story")
+    variant = job.assembly_plan["variants"][0]
+
+    cloud = gj._editor_capabilities(job, variant)
+    device = gj._editor_capabilities(job, {**variant, "render_destination": "device"})
+
+    # The fixture must offer everything first, or the clamp proves nothing.
+    assert cloud["clips"]["add"] == {"editable": True, "reason": None}
+    assert cloud["lanes"]["visual_blocks"] == {"editable": True, "reason": None}
+    assert cloud["visual_editor_style"] is True
+
+    closed_clip_operations = {"add", "looks", "edit_wide_looks", "source_crop", "playback_rate"}
+    assert set(cloud["clips"]) - closed_clip_operations == {
+        "remove",
+        "reorder",
+        "split",
+        "trim",
+        "transitions",
+    }
+    for operation, capability in cloud["clips"].items():
+        expected = _PHONE_CLOSED if operation in closed_clip_operations else capability
+        assert device["clips"][operation] == expected
+    assert device["clips"]["transitions"] == {"editable": True, "reason": None}
+
+    for lane in ("sfx", "overlays", "visual_blocks", "motion_scenes"):
+        assert cloud[lane] is True
+        assert device[lane] is False
+        assert device[f"{lane}_reason"] == "phone_edit_unsupported"
+        assert device["lanes"][lane] == _PHONE_CLOSED
+    assert device["lanes"]["text"] == cloud["lanes"]["text"]
+    assert device["lanes"]["orientation"] == cloud["lanes"]["orientation"]
+    assert device["media_source_controls"] == {
+        "source_crop": _PHONE_CLOSED,
+        "playback_rate": _PHONE_CLOSED,
+    }
+    assert device["visual_editor_style"] is False
+
+    # Same keys (the iOS/web decoders see one shape) and nothing else moved:
+    # text, trim/reorder/split/remove, orientation and music stay as the cloud map.
+    assert device.keys() == cloud.keys()
+    assert {key for key in cloud if device[key] != cloud[key]} == {
+        "clips",
+        "lanes",
+        "media_source_controls",
+        "visual_editor_style",
+        *("sfx", "overlays", "visual_blocks", "motion_scenes"),
+        *("sfx_reason", "overlays_reason", "visual_blocks_reason", "motion_scenes_reason"),
+    }
+
+
+def test_montage_device_variant_closes_legacy_lane_booleans_only(monkeypatch) -> None:
+    _arm_every_editor_lane(monkeypatch)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+
+    cloud = gj._editor_capabilities(job, variant)
+    device = gj._editor_capabilities(job, {**variant, "render_destination": "device"})
+
+    assert cloud["sfx"] is True and cloud["overlays"] is True
+    for lane in ("sfx", "overlays", "visual_blocks", "motion_scenes"):
+        assert device[lane] is False
+        assert device[f"{lane}_reason"] == "phone_edit_unsupported"
+    assert device["visual_editor_style"] is False
+    # Legacy maps carry no operation groups; the clamp must not invent them.
+    assert device.keys() == cloud.keys()
+    assert "clips" not in device and "lanes" not in device
+    for untouched in ("text_elements", "timeline", "split_clips", "mix", "orientation"):
+        assert device[untouched] == cloud[untouched]
+
+
+@pytest.mark.parametrize("render_destination", [None, "cloud"])
+@pytest.mark.parametrize("archetype", [None, "guided_story"])
+def test_cloud_variant_capabilities_are_never_clamped(
+    monkeypatch, archetype, render_destination
+) -> None:
+    _arm_every_editor_lane(monkeypatch)
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: {"revision_number": 1})
+    extra = {"resolved_archetype": archetype} if archetype else {}
+    if render_destination:
+        extra["render_destination"] = render_destination
+    job = _job(**extra)
+    variant = job.assembly_plan["variants"][0]
+
+    capabilities = gj._editor_capabilities(job, variant)
+
+    assert capabilities == gj._base_editor_capabilities(job, variant)
+    assert "phone_edit_unsupported" not in json.dumps(capabilities)
+
+
 def _commit_req(**kw) -> gj.EditorCommitRequest:
     kw.setdefault("base_generation", "2026-07-01T00:00:00Z")
     return gj.EditorCommitRequest(**kw)

@@ -22,6 +22,7 @@ from app.schemas.edit_proposal import (
     EditConversationTurn,
     EditProposal,
     EditProposalSnapshot,
+    MediaRef,
     ProposalBrief,
     ProposalFailure,
     ProposalGuidance,
@@ -373,6 +374,101 @@ def expire_proposal_attempt(item: PlanItem, *, generation_attempt_id: str) -> bo
     return True
 
 
+def renders_on_phone(
+    media: list[MediaRef], owner_id: object, *, visuals_only_device: bool = False
+) -> bool:
+    """Proxy sources mark a phone item exactly as the render dispatch gate does.
+
+    ``visuals_only_device`` is phone_destination's decision for the item: a
+    project with no footage has no proxy to mark it. It only ever applies to
+    media with no clip-lane source, the same fence the dispatch gate keeps.
+    """
+
+    from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+
+    if not settings.phone_rendering_for(owner_id):
+        return False
+    if any(is_analysis_proxy_path(ref.gcs_path) for ref in media):
+        return True
+    return visuals_only_device and not any(ref.lane == "clip" for ref in media)
+
+
+def phone_renderable_media(
+    media: list[MediaRef], owner_id: object, *, visuals_only_device: bool = False
+) -> list[MediaRef]:
+    """Keep a phone item's plan to media the iPhone can draw (KRI-121).
+
+    Pool photos need ``stillImages`` and pool videos need ``visualVideos``.
+    Planning around an unverified kind would only fail the device render, so
+    leave it out of the plan; a creator who explicitly asks for it is still told
+    why at the policy boundary (``PhoneMediaUnavailableError``). A pool video
+    whose analysis records a codec the engine can't compose, or a length past
+    the device's 30-minute source bound, is left out the same way. Every digest
+    over a phone item's media applies this same filter so approvals stay
+    consistent.
+    """
+
+    from app.services.phone_visuals import (  # noqa: PLC0415
+        MAX_PHONE_VISUAL_VIDEO_S,
+        phone_composable_video,
+    )
+
+    if not renders_on_phone(media, owner_id, visuals_only_device=visuals_only_device):
+        return media
+    verified = settings.phone_render_verified_features
+    drawable = {
+        kind
+        for kind, feature in (("image", "stillImages"), ("video", "visualVideos"))
+        if feature in verified
+    }
+
+    def drawn(ref: MediaRef) -> bool:
+        if ref.lane != "asset":
+            return True
+        if ref.kind not in drawable:
+            return False
+        if ref.kind != "video":
+            return True
+        # Facts an older analysis never recorded pass; binding re-checks the bytes.
+        codec = ref.analysis.get("video_codec")
+        pix_fmt = ref.analysis.get("pix_fmt")
+        return (ref.duration_s or 0) <= MAX_PHONE_VISUAL_VIDEO_S and phone_composable_video(
+            None if codec is None else str(codec), None if pix_fmt is None else str(pix_fmt)
+        )
+
+    return [ref for ref in media if drawn(ref)]
+
+
+def phone_story_layouts(
+    snapshot: EditProposalSnapshot, owner_id: object, *, visuals_only_device: bool = False
+) -> EditProposalSnapshot:
+    """Keep a phone item's video moments fullscreen, the only way the iPhone draws video.
+
+    compile_phone_guided_plan fails the whole job on a ``supporting_card``
+    video moment, and layout is per beat, so every beat holding a video goes
+    fullscreen. Photos may be cards on the phone: a photo-only beat is left
+    alone, and a photo sharing a beat with a video still follows
+    ``snapshot.image_layout`` (the creator's own "don't crop my photos" choice),
+    which outranks beat layout for every image moment. Only a specialist's
+    unrequested card styling on such a mixed beat is lost; splitting the beat
+    would change the approved story's timing and text instead.
+    """
+
+    if not renders_on_phone(snapshot.media, owner_id, visuals_only_device=visuals_only_device):
+        return snapshot
+    images = {ref.media_id for ref in snapshot.media if ref.kind == "image"}
+    beats = [
+        beat.model_copy(update={"layout": "fullscreen"})
+        if beat.layout != "fullscreen"
+        and any(media_id not in images for media_id in beat.media_ids)
+        else beat
+        for beat in snapshot.story_beats
+    ]
+    if all(new is old for new, old in zip(beats, snapshot.story_beats, strict=True)):
+        return snapshot
+    return snapshot.model_copy(update={"story_beats": beats})
+
+
 def direction_guidance_fingerprint(item: PlanItem, media_digest: str) -> str:
     """Fingerprint the analyzed source identity used by a direction hypothesis."""
 
@@ -459,6 +555,10 @@ def save_proposal_draft(
         "status": "draft",
         "draft": snapshot,
         "failure": None,
+        # Every new draft starts unmarked; only the build task re-marks the
+        # one it produced through the deterministic fallback (KRI-126). This
+        # keeps a creator's manual correction from inheriting a stale marker.
+        "planner_fallback": None,
     }
     if clear_approval_mode:
         update["approval_mode"] = None

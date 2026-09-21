@@ -210,6 +210,93 @@ def test_unadvertised_capability_cannot_issue_a_device_recipe(monkeypatch):
     validate_phone_pilot_recipe(recipe)
 
 
+def test_pool_photo_recipe_needs_still_images_verified(monkeypatch):
+    # PHONE_RENDER_VERIFIED_FEATURES is the only per-deploy switch for pool
+    # stills; a device must never receive a photo it has not qualified.
+    from tests.pipeline.test_phone_guided_plan import photo_fixture
+
+    plan, sources, visuals = photo_fixture()
+    recipe = compile_phone_guided_plan(plan, sources, visuals)
+    assert "stillImages" in recipe.required_capabilities
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        list(recipe.required_capabilities - {"stillImages"}),
+    )
+    with pytest.raises(ValueError, match="capability"):
+        validate_phone_pilot_recipe(recipe)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+
+
+def test_pool_video_recipe_needs_visual_videos_verified(monkeypatch):
+    # stillImages qualifies only the photo path; a pool video has its own switch.
+    from tests.pipeline.test_phone_guided_plan import pool_video_fixture
+
+    recipe = compile_phone_guided_plan(*pool_video_fixture())
+    assert "visualVideos" in recipe.required_capabilities
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        list(recipe.required_capabilities - {"visualVideos"} | {"stillImages"}),
+    )
+    with pytest.raises(ValueError, match="capability"):
+        validate_phone_pilot_recipe(recipe)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+
+
+def test_photo_and_pool_video_recipe_needs_both_features_verified(monkeypatch):
+    from tests.pipeline.test_phone_guided_plan import (
+        append_pool_video,
+        photo_fixture,
+        pool_video,
+    )
+
+    plan, sources, photos = photo_fixture()
+    video = pool_video()
+    append_pool_video(plan, video)
+    recipe = compile_phone_guided_plan(plan, sources, (*photos, video))
+    for missing in ("stillImages", "visualVideos"):
+        monkeypatch.setattr(
+            settings,
+            "phone_render_verified_features",
+            list(recipe.required_capabilities - {missing}),
+        )
+        with pytest.raises(ValueError, match="capability"):
+            validate_phone_pilot_recipe(recipe)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+
+
+def test_supporting_card_recipe_passes_the_pilot_gate_with_still_images(monkeypatch):
+    # The card is a layout of an already-qualified pool still: it must not trip
+    # the editor-media / visual-block gates or ask for another capability.
+    from tests.pipeline.test_phone_guided_plan import photo_fixture
+
+    fullscreen = compile_phone_guided_plan(*photo_fixture())
+    recipe = compile_phone_guided_plan(*photo_fixture(layout="supporting_card"))
+    assert recipe.tracks[0].clips[1].still_layout == "supporting_card"
+    assert recipe.required_capabilities == fullscreen.required_capabilities
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(fullscreen.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        list(recipe.required_capabilities - {"stillImages"}),
+    )
+    with pytest.raises(ValueError, match="capability"):
+        validate_phone_pilot_recipe(recipe)
+
+
 def test_slow_giant_handwriting_stays_blocked_with_animated_text_enabled(monkeypatch):
     plan, sources = fixture()
     recipe = compile_phone_guided_plan(plan, sources)

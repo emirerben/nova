@@ -135,6 +135,13 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 throw RecipeError.invalidTimeline
             }
             try clip.sourceCrop?.validate()
+            if clip.stillLayout != nil {
+                guard schemaVersion == 2, tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: { $0.id == clip.id }) }),
+                      clip.rate == 1, clip.look == nil, clip.holdDuration == nil, clip.sourceCrop == nil, clip.transform == .identity,
+                      assetManifest?.assets.contains(where: { if case .visual(_, _, .image) = $0.source { $0.id == clip.sourceAssetID } else { false } }) == true else {
+                    throw RecipeError.invalidTimeline
+                }
+            }
             if let transition = clip.transition {
                 guard transition.duration.isFinite, transition.duration > 0,
                       transition.duration <= min(10, clip.duration) else { throw RecipeError.invalidTimeline }
@@ -169,6 +176,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if motionScenes != nil { result.insert(.motionScenes) }
         if !audio.muteWindows.isEmpty || !visualFills.isEmpty || clips.contains(where: { $0.visualPlacement != nil }) { result.insert(.visualBlocks) }
         if !cameraPulses.isEmpty { result.insert(.cameraEffects) }
+        for asset in assetManifest?.assets ?? [] {
+            if case .visual(_, _, let mediaKind) = asset.source { result.insert(mediaKind == .video ? .visualVideos : .stillImages) }
+        }
         if textLayers.contains(where: { $0.runs.contains(where: { !$0.fontVariations.isEmpty }) || $0.animationPhases != nil || $0.background != nil || $0.effect == .captionPop || $0.karaoke?.activeOnly != nil }) { result.insert(.authoredText) }
         if textLayers.contains(where: { $0.effect != .static && $0.effect != .none }) { result.insert(.animatedText) }
         if clips.contains(where: { $0.text != nil }) { result.insert(.animatedText) }
@@ -290,18 +300,22 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     /// A normalized rectangle in the decoded source. It is applied before
     /// placement so preview and export crop the same pixels.
     public var sourceCrop: NormalizedSourceRect?
+    /// A Visuals photo shown whole inside a card over a blurred cover of itself.
+    public var stillLayout: StillLayout?
     public var volume: Double
     public var duration: TimeInterval { sourceDuration / rate + (holdDuration ?? 0) }
     // Use Swift's acronym-normalized spelling so convertToSnakeCase/convertFromSnakeCase agree.
-    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop }
+    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout }
     public init(id: String, sourceAssetID: String, sourceStart: TimeInterval = 0, sourceDuration: TimeInterval,
                 timelineStart: TimeInterval = 0, rate: Double = 1, transform: MediaTransform = .identity,
-                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil) {
+                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil) {
         self.id = id; self.sourceAssetID = sourceAssetID; self.sourceStart = sourceStart; self.sourceDuration = sourceDuration
         self.timelineStart = timelineStart; self.rate = rate; self.transform = transform; self.transition = transition; self.text = text; self.volume = volume
-        self.look = look; self.holdDuration = holdDuration; self.overlayAboveText = overlayAboveText; self.overlayPopIn = overlayPopIn; self.overlayPreserveAlpha = overlayPreserveAlpha; self.visualPlacement = visualPlacement; self.overlayDissolveSeed = overlayDissolveSeed; self.sourceCrop = sourceCrop
+        self.look = look; self.holdDuration = holdDuration; self.overlayAboveText = overlayAboveText; self.overlayPopIn = overlayPopIn; self.overlayPreserveAlpha = overlayPreserveAlpha; self.visualPlacement = visualPlacement; self.overlayDissolveSeed = overlayDissolveSeed; self.sourceCrop = sourceCrop; self.stillLayout = stillLayout
     }
 }
+
+public enum StillLayout: String, Codable, Sendable { case supportingCard = "supporting_card" }
 
 public struct NormalizedSourceRect: Codable, Equatable, Sendable {
     public var x: Double; public var y: Double; public var width: Double; public var height: Double
@@ -383,7 +397,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          animatedText, authoredText, crossfade, clipTransitions, goldenHourLook, audioMix,
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
-         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed
+         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, stillImages, visualVideos
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

@@ -33,6 +33,7 @@ import uuid
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
@@ -778,7 +779,26 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
 # display_height/rotation_degrees) — probe_video returns CODED pixels and
 # ignores the container Display Matrix, so a -90 iPhone portrait clip was
 # read as 1920x1080 (landscape).
-ANALYSIS_VERSION = 6
+# v7 (KRI-126): `_analyze_video` read each Gemini best_moment with
+# `getattr(m, "start_s"/"end_s"/"energy"/"description", default)`, but
+# `ClipMeta.best_moments` is `list[dict]` (Moment.model_dump()) — getattr on a
+# dict always misses and silently returns the default, so EVERY real video
+# analysis persisted all-zero moments. The top-level `"description"` read
+# (`getattr(meta, "description", "")`) was worse: ClipMeta has no such field
+# at all, so it was always "". Both now go through `_moment_field` (dict-or-
+# attribute) and a description built from the real moment/hook_text fields.
+# Video-only fix — image_metadata.py was never affected, so image analyses at
+# v6 stay fresh (see `_MIN_FRESH_ANALYSIS_VERSION_BY_KIND`); only videos are
+# re-analyzed by the self-healing backfill.
+ANALYSIS_VERSION = 7
+
+# Per-kind freshness floor. Most version bumps fix/add a field for BOTH kinds,
+# so the common case (a kind missing here, or no kind passed) just compares
+# against the global ANALYSIS_VERSION above. v7 (KRI-126) is video-only, so
+# image analyses only need to clear v6 to stay fresh — without this, every
+# already-correct photo analysis would get needlessly re-queued for Gemini
+# spend on the next matcher run.
+_MIN_FRESH_ANALYSIS_VERSION_BY_KIND: dict[str, int] = {"image": 6}
 _MAX_POOL_IMAGE_PIXELS = 50_000_000
 _AI_ANALYSIS_IMAGE_MAX_DIM = 1_536
 
@@ -821,7 +841,12 @@ def display_dims(width: int, height: int, rotation: int) -> tuple[int, int]:
 def analysis_is_stale(analysis: dict | None, *, kind: str | None = None) -> bool:
     """True for pre-006 REAL analyses (no best_moments persisted). Stubs are
     never stale — re-analyzing them on a keyless machine yields another stub
-    (the infinite-loop class the outside voice flagged, plan 006 finding 2)."""
+    (the infinite-loop class the outside voice flagged, plan 006 finding 2).
+
+    `kind` scopes the freshness floor via `_MIN_FRESH_ANALYSIS_VERSION_BY_KIND`
+    for version bumps that only fixed one media kind (v7/KRI-126: video-only)
+    — omit it (or pass an unrecognized kind) to fall back to the global
+    ANALYSIS_VERSION, the common case where a bump touches both kinds."""
     a = analysis or {}
     if a.get("source") == "stub":
         return False
@@ -829,7 +854,8 @@ def analysis_is_stale(analysis: dict | None, *, kind: str | None = None) -> bool
         version = int(a.get("analysis_version") or 1)
     except (TypeError, ValueError):
         return True
-    if version >= ANALYSIS_VERSION:
+    required = _MIN_FRESH_ANALYSIS_VERSION_BY_KIND.get(kind or "", ANALYSIS_VERSION)
+    if version >= required:
         return False
     return True
 
@@ -1037,6 +1063,19 @@ def _analyze_image(
         raise AnalysisTemporarilyUnavailableError("image analysis provider failed") from exc
 
 
+def _moment_field(moment: Any, key: str, default: Any = None) -> Any:
+    """Read a best-moment field from EITHER a dict (the real shape --
+    `ClipMeta.best_moments` is `list[dict]` via `Moment.model_dump()`) or an
+    attribute-bearing object (a duck-typed stand-in some callers/tests pass).
+
+    A bare `getattr(dict, key, default)` always misses on a dict -- it always
+    returns `default` -- which is how every real video analysis persisted
+    all-zero `best_moments` in prod (KRI-126)."""
+    if isinstance(moment, dict):
+        return moment.get(key, default)
+    return getattr(moment, key, default)
+
+
 def _analyze_video(
     local_path: str,
     *,
@@ -1105,25 +1144,56 @@ def _analyze_video(
             raise AnalysisTemporarilyUnavailableError("video analysis provider failed")
         # Persist the content map the trim rule needs (plan 006 §1): every
         # best_moment, clamped later at USE time (pick_trim_window) against the
-        # PROBED duration — Gemini timing is never trusted raw.
+        # PROBED duration — Gemini timing is never trusted raw. Moments are
+        # read via `_moment_field` (dict-or-attribute, KRI-126) and any
+        # malformed/inverted/zero-length one is dropped here rather than
+        # persisted — pick_trim_window and template_matcher both assume a
+        # well-formed (end_s > start_s) window.
         best_moments = []
+        moment_descriptions: list[str] = []
         for m in getattr(meta, "best_moments", None) or []:
             try:
-                best_moments.append(
-                    {
-                        "start_s": round(float(getattr(m, "start_s", 0.0)), 3),
-                        "end_s": round(float(getattr(m, "end_s", 0.0)), 3),
-                        "energy": float(getattr(m, "energy", 0.0)),
-                        "description": str(getattr(m, "description", "") or "")[:160],
-                    }
-                )
+                start_s = round(float(_moment_field(m, "start_s", 0.0)), 3)
+                end_s = round(float(_moment_field(m, "end_s", 0.0)), 3)
+                energy = float(_moment_field(m, "energy", 0.0))
             except (TypeError, ValueError):
                 continue
+            if end_s <= start_s:
+                continue
+            desc = str(_moment_field(m, "description", "") or "").strip()[:160]
+            if desc:
+                moment_descriptions.append(desc)
+            best_moments.append(
+                {
+                    "start_s": start_s,
+                    "end_s": end_s,
+                    "energy": energy,
+                    "description": desc,
+                }
+            )
+        # ClipMeta has no top-level `description` field — it never has (only
+        # `hook_text`/`detected_subject`/`transcript`) — so the previous
+        # `getattr(meta, "description", "")` always fell through to "" for
+        # every real video (KRI-126). Build a real one from fields that
+        # actually exist: the moments' own descriptions (deduped, in the
+        # order Gemini returned them), falling back to hook_text.
+        seen_descriptions: set[str] = set()
+        deduped_descriptions = []
+        for d in moment_descriptions:
+            if d not in seen_descriptions:
+                seen_descriptions.add(d)
+                deduped_descriptions.append(d)
+        description = " ".join(deduped_descriptions) or str(getattr(meta, "hook_text", "") or "")
         analysis = {
             "subject": str(getattr(meta, "detected_subject", "") or "")[:200],
-            "description": str(getattr(meta, "description", "") or "")[:400],
+            "description": description[:400],
             "on_screen_text": str(getattr(meta, "transcript", "") or "")[:400],
-            "kind_hint": "screenshot",
+            # No `kind_hint` here (unlike the image path): the image vocabulary
+            # ("screenshot"/"photo"/"diagram"/"document"/"other", see
+            # image_metadata.py) has no video-shaped value, and nothing reads
+            # `kind_hint` off a video analysis downstream -- hardcoding
+            # "screenshot" (pre-KRI-126) was actively misleading in the admin
+            # job-debug view for every real video.
             "source": "clip_metadata",
             "best_moments": best_moments,
             "brands": list(getattr(meta, "brands", None) or [])[:10],
@@ -1132,6 +1202,10 @@ def _analyze_video(
             "rotation_degrees": rotation,
             "display_width": dims[0],
             "display_height": dims[1],
+            # Phone plans leave out a pool video the iPhone can't compose
+            # (edit_proposals.phone_renderable_media); binding re-checks the bytes.
+            "video_codec": probe.codec,
+            "pix_fmt": probe.pix_fmt,
         }
         return analysis, aspect, duration, dims
     except SoftTimeLimitExceeded:

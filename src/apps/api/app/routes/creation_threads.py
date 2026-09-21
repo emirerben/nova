@@ -25,8 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app import storage
-from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
-from app.auth import CurrentUser
+from app.agents._schemas.edit_format import (
+    NARRATED_EDIT_FORMATS,
+    PHONE_RENDER_SUPPORTED_FORMATS,
+)
+from app.auth import CurrentUser, NativeClient
 from app.config import settings
 from app.database import get_db
 from app.db_locks import acquire_locked_rows
@@ -88,6 +91,11 @@ from app.services.job_storage_paths import (
     job_output_path,
     normalize_job_storage_path,
     owned_job_output_path,
+)
+from app.services.phone_destination import (
+    has_device_intent,
+    item_visuals_only_on_device,
+    with_device_intent,
 )
 
 log = structlog.get_logger()
@@ -541,6 +549,30 @@ async def _require_creation_thread_authentication(user: CurrentUser) -> None:
     _ = user
 
 
+def _stamp_device_intent(thread: CreationThread, user: Any, native_client: bool) -> None:
+    """Cover projects created before the stamp existed (or first made on the web).
+
+    Callers hold the thread row lock and have not copied ``thread.state`` yet.
+    """
+
+    if not native_client:
+        return
+    stamped = with_device_intent(thread.state, native_client=True, user_id=user.id)
+    if stamped is not None:
+        thread.state = stamped
+
+
+async def _renders_visuals_on_device(db: AsyncSession, thread: CreationThread, user: Any) -> bool:
+    """Whether this project's Visuals are its sources (no footage, renders on the iPhone)."""
+
+    if not has_device_intent(thread.state) or not thread.active_plan_item_id:
+        return False
+    item = await db.get(PlanItem, thread.active_plan_item_id)
+    return item is not None and await item_visuals_only_on_device(
+        db, item, user.id, thread_state=thread.state
+    )
+
+
 _RUNTIME_V2_SHARED_ACTIONS = frozenset(
     {"select_format", "select_edit_format", "remove_media", "select_variant"}
 )
@@ -598,7 +630,42 @@ def _media_path(user_id: uuid.UUID, thread_id: uuid.UUID, media_id: str) -> str:
     return f"users/{user_id}/creation-threads/{thread_id}/{_client_id(media_id)}"
 
 
-def _media_capabilities(*, item: PlanItem, clip_count: int, visual_count: int) -> dict[str, Any]:
+async def _device_ready_visual_count(
+    db: AsyncSession, item_id: uuid.UUID, creator_id: uuid.UUID
+) -> int:
+    """Visuals the iPhone can render from right now (KRI-121).
+
+    ``visuals.current`` is the upload quota: it also counts failed rows, live
+    reservations and kinds the phone can't draw. The app offers "Continue with
+    N visuals" from this count instead. Ready rows only, because the phone
+    worker binds only ready Visuals.
+    """
+
+    from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
+
+    drawable_kinds = phone_drawable_visual_kinds()
+    if not settings.phone_rendering_for(creator_id) or not drawable_kinds:
+        return 0
+    return int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item_id,
+                    PlanItemAsset.user_id == creator_id,
+                    PlanItemAsset.status == "ready",
+                    PlanItemAsset.deduplicated_to_asset_id.is_(None),
+                    PlanItemAsset.kind.in_(sorted(drawable_kinds)),
+                )
+            )
+        ).scalar_one()
+    )
+
+
+def _media_capabilities(
+    *, item: PlanItem, clip_count: int, visual_count: int, device_ready_visual_count: int = 0
+) -> dict[str, Any]:
     """Project the existing PlanItem upload contract for chat clients."""
 
     return {
@@ -612,6 +679,7 @@ def _media_capabilities(*, item: PlanItem, clip_count: int, visual_count: int) -
         },
         "visuals": {
             "current": visual_count,
+            "device_ready": device_ready_visual_count,
             "max": _MAX_POOL_ASSETS,
             "max_file_bytes": {
                 "image": _MAX_POOL_IMAGE_BYTES,
@@ -2354,6 +2422,9 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
             item=item,
             clip_count=len(item.clip_gcs_paths or []),
             visual_count=visual_count,
+            device_ready_visual_count=await _device_ready_visual_count(
+                db, item.id, thread.creator_id
+            ),
         )
     public_state = dict(thread.state or {})
     # Older rollout builds briefly placed a redacted direction snapshot in the
@@ -2585,10 +2656,22 @@ async def _agent_message(
 
 
 @router.get("/capabilities", response_model=CreationCapabilitiesOut)
-async def capabilities(user: CurrentUser) -> dict[str, Any]:
+async def capabilities(user: CurrentUser, native_client: NativeClient = False) -> dict[str, Any]:
     phone_enabled = settings.phone_rendering_for(user.id)
+    formats = _available_formats()
+    if phone_enabled and native_client:
+        # The app on a pilot account renders every project on the iPhone, and
+        # only these formats can; offering the others would end in a refusal
+        # after the creator has already uploaded footage. The web keeps them all.
+        formats = {
+            key: value for key, value in formats.items() if value in PHONE_RENDER_SUPPORTED_FORMATS
+        }
     return {
-        "runtime_versions": [1, 2] if settings.kria_runtime_v2_enabled else [1],
+        # Runtime v2 cannot create a guided phone job at all, so a pilot account
+        # offered v2 would never get its render on the iPhone.
+        "runtime_versions": (
+            [1, 2] if settings.kria_runtime_v2_enabled and not phone_enabled else [1]
+        ),
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
             recipe_versions=[2] if phone_enabled else [],
@@ -2603,7 +2686,7 @@ async def capabilities(user: CurrentUser) -> dict[str, Any]:
                 "edit_format": value,
                 "max_clips": _format_clip_limit(value),
             }
-            for key, value in _available_formats().items()
+            for key, value in formats.items()
         ],
         "media": {
             "clips": {
@@ -2640,6 +2723,7 @@ async def create_thread(
     body: CreateBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
 ) -> CreationThreadOut | JSONResponse:
     if body.runtime_version == 2:
         if body.message is not None:
@@ -2688,17 +2772,20 @@ async def create_thread(
                 raise HTTPException(status_code=409, detail="Idempotency key reused")
             return await _response(db, existing)
     plan, item = await _project(db, user)
+    state: dict[str, Any] = {
+        "media": [],
+        "media_count": 0,
+        **({"title_source": "first_prompt"} if body.message else {}),
+    }
     thread = CreationThread(
         creator_id=user.id,
         runtime_version=body.runtime_version,
         content_plan_id=plan.id,
         active_plan_item_id=item.id,
         title=(body.message[:_MAX_TITLE_LENGTH] if body.message else _DEFAULT_TITLE),
-        state={
-            "media": [],
-            "media_count": 0,
-            **({"title_source": "first_prompt"} if body.message else {}),
-        },
+        # A project made in the iPhone app on a pilot account renders there
+        # even when it never gets device footage (Visuals only, KRI-121).
+        state=with_device_intent(state, native_client=native_client, user_id=user.id) or state,
     )
     db.add(thread)
     await db.flush()
@@ -3095,6 +3182,7 @@ async def message_thread(
     body: MessageBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
 ) -> CreationThreadOut:
     # Explicit creator-memory admission uses the account mutation boundary.
     # Keep the global lock order user -> thread, matching project overrides,
@@ -3131,6 +3219,7 @@ async def message_thread(
             raise
         return await _response(db, thread)
 
+    _stamp_device_intent(thread, user, native_client)
     await _append(
         db,
         thread,
@@ -3275,7 +3364,11 @@ async def message_thread(
         await db.commit()
         await db.refresh(thread)
         return await _response(db, thread)
-    if int(state.get("media_count", 0) or 0) <= 0:
+    # Visuals never enter the thread's media list. A project the iPhone renders
+    # from its Visuals alone has sources even though it has no footage.
+    if int(state.get("media_count", 0) or 0) <= 0 and not await _renders_visuals_on_device(
+        db, thread, user
+    ):
         await _append(
             db,
             thread,
@@ -3350,6 +3443,7 @@ async def action_thread(
     body: ActionBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
 ) -> CreationThreadOut:
     owner_id = user.id
     thread = await _load(thread_id, user, db, lock=True, creator_id=owner_id)
@@ -3387,6 +3481,7 @@ async def action_thread(
         return await _response(db, await _load(thread_id, user, db))
     if thread.revision != body.expected_revision:
         raise HTTPException(status_code=409, detail="Creation thread changed")
+    _stamp_device_intent(thread, user, native_client)
     state = dict(thread.state or {})
     delete_path: str | None = None
     enqueue_variant_retry: tuple[str, str, str] | None = None

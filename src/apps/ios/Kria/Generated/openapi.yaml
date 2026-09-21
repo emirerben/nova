@@ -1679,6 +1679,8 @@
                 "hevcDecode",
                 "hdr",
                 "local1080Export",
+                "stillImages",
+                "visualVideos",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -1787,6 +1789,8 @@
                 "hevcDecode",
                 "hdr",
                 "local1080Export",
+                "stillImages",
+                "visualVideos",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -5058,7 +5062,8 @@
               "discriminator": {
                 "mapping": {
                   "library": "#/components/schemas/LibraryRenderAsset",
-                  "original": "#/components/schemas/OriginalRenderAsset"
+                  "original": "#/components/schemas/OriginalRenderAsset",
+                  "visual": "#/components/schemas/VisualRenderAsset"
                 },
                 "propertyName": "kind"
               },
@@ -5068,6 +5073,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/LibraryRenderAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/VisualRenderAsset"
                 }
               ]
             },
@@ -6241,6 +6249,15 @@
             "title": "Source Start",
             "type": "number"
           },
+          "still_layout": {
+            "default": null,
+            "enum": [
+              "supporting_card"
+            ],
+            "nullable": true,
+            "title": "Still Layout",
+            "type": "string"
+          },
           "text": {
             "$ref": "#/components/schemas/TextTreatment",
             "default": null,
@@ -6924,6 +6941,61 @@
           "window_end"
         ],
         "title": "VisualMediaPlacement",
+        "type": "object"
+      },
+      "VisualRenderAsset": {
+        "additionalProperties": false,
+        "description": "A photo or video from the job owner's Visuals pool (``PlanItemAsset``),\npinned to one storage generation. The grant re-checks ownership, kind and\nthe generation; the device re-hashes the downloaded bytes against\n``fingerprint``.",
+        "properties": {
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "visual",
+            "enum": [
+              "visual"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_kind": {
+            "default": "image",
+            "enum": [
+              "image",
+              "video"
+            ],
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "visual_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Visual Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "visual_id",
+          "generation",
+          "fingerprint"
+        ],
+        "title": "VisualRenderAsset",
         "type": "object"
       },
       "VisualShot": {

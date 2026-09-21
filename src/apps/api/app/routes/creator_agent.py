@@ -46,10 +46,13 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents._schemas.creator_policy import (
     CAPABILITY_GUIDED_VOICEOVER,
+    CAPABILITY_PHONE_SOURCE_AUDIO,
     GUIDED_VOICEOVER_EXECUTION_CONTRACT,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
+    PhoneFormatUnavailableError,
+    PhoneMediaUnavailableError,
     normalize_creator_strategy_media,
 )
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
@@ -565,13 +568,79 @@ def _apply_refresh_pin_if_needed(
     return pinned
 
 
-def _explicit_media_scope(request: str) -> Literal["all", "selected"]:
+# A creator can name the whole manifest by an exact count instead of the word
+# "all" ("continue with 30 clips", "use the 30 videos"). The noun anchor keeps
+# a duration ("30 seconds", "in 30s") from ever being read as a media count.
+_MEDIA_COUNT_NOUN = r"(?:clips?|videos?|photos?|images?|pictures?|stills?|media|footage)"
+_MEDIA_COUNT_TIME_SUFFIX = r"(?:s|secs?|seconds?|ms|milliseconds?|mins?|minutes?|hrs?|hours?)"
+
+
+def _stated_media_count(normalized: str) -> int | None:
+    """Extract a creator-stated media quantity; never a duration or timestamp."""
+
+    match = re.search(
+        rf"\b(\d{{1,4}})\s+(?:of\s+(?:the|my|your)\s+)?{_MEDIA_COUNT_NOUN}\b",
+        normalized,
+    )
+    if match:
+        return int(match.group(1))
+    # "all 30" without a trailing noun still names the whole manifest, as long
+    # as the number is not immediately a duration ("all 30 seconds").
+    match = re.search(
+        rf"\ball\s+(\d{{1,4}})\b(?!\s*{_MEDIA_COUNT_TIME_SUFFIX}\b)",
+        normalized,
+    )
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _attached_media_count(manifest: Any) -> int:
+    """Count of non-asset media (video/image) attached to this manifest."""
+
+    return sum(
+        1
+        for ref in getattr(manifest, "media", None) or ()
+        if getattr(ref, "kind", None) in {"video", "image"}
+    )
+
+
+# A stated count only names the whole manifest when nothing else in the
+# message narrows it: "I uploaded 30 clips, pick the best 5" and "30 clips is
+# too many" both mention the manifest size while asking for LESS than all of
+# it. Any reduction cue, or a second media count, keeps the legacy default --
+# a missed "all" is recoverable, a forced "all" overrides the creator.
+_STATED_COUNT_REDUCTION_CUE = (
+    r"\b(?:too many|fewer|less|pick|choose|best|top|strongest|favou?rites?|only|just|"
+    r"some of|leave out|left out|exclude|excluding|except|skip|remove|drop|cut out|"
+    r"without|not all)\b"
+)
+
+
+def _stated_count_matches_manifest(normalized: str, manifest: Any | None) -> bool:
+    if manifest is None:
+        return False
+    if re.search(_STATED_COUNT_REDUCTION_CUE, normalized):
+        return False
+    counts = set(
+        re.findall(
+            rf"\b(\d{{1,4}})\s+(?:of\s+(?:the|my|your)\s+)?{_MEDIA_COUNT_NOUN}\b", normalized
+        )
+    )
+    if len(counts) > 1:
+        return False
+    stated_count = _stated_media_count(normalized)
+    return stated_count is not None and stated_count == _attached_media_count(manifest)
+
+
+def _explicit_media_scope(request: str, manifest: Any | None = None) -> Literal["all", "selected"]:
     """Resolve only an explicit all-media request; preserve the legacy default."""
 
     normalized = " ".join(str(request or "").casefold().split())
     if re.search(
         r"\b(?:do not|don't|dont|never|without|no)\b.{0,40}"
-        r"\b(?:use|include|keep|select)\b.{0,20}\b(?:all|everything|every)\b"
+        r"\b(?:use|include|keep|select)\b.{0,20}"
+        rf"\b(?:all|everything|every|\d{{1,4}}\s+{_MEDIA_COUNT_NOUN})\b"
         r"|\b(?:all|everything|every)\b.{0,20}\b(?:not|excluded|omit)\b",
         normalized,
     ):
@@ -583,6 +652,8 @@ def _explicit_media_scope(request: str) -> Literal["all", "selected"]:
         normalized,
     ):
         return "all"
+    if _stated_count_matches_manifest(normalized, manifest):
+        return "all"
     if re.search(
         r"\b(?:only|just)\s+(?:the\s+)?(?:selected|specified|chosen|listed)\b"
         r"|\bselected\s+(?:media|files?|clips?)\b",
@@ -592,21 +663,22 @@ def _explicit_media_scope(request: str) -> Literal["all", "selected"]:
     return "selected"
 
 
-def _has_explicit_media_scope(request: str) -> bool:
+def _has_explicit_media_scope(request: str, manifest: Any | None = None) -> bool:
     normalized = " ".join(str(request or "").casefold().split())
-    return bool(
-        re.search(
-            r"\b(?:all|every|each)\s+(?:the\s+)?(?:images?|photos?|videos?|clips?|media|footage)\b"
-            r"|\buse\s+(?:all|everything)\b"
-            r"|\b(?:all|every)\s+(?:uploaded|provided)\s+(?:media|files?|images?|photos?|videos?)\b"
-            r"|\b(?:do not|don't|dont|never|without|no)\b.{0,40}"
-            r"\b(?:use|include|keep|select)\b.{0,20}\b(?:all|everything|every)\b"
-            r"|\b(?:all|everything|every)\b.{0,20}\b(?:not|excluded|omit)\b"
-            r"|\b(?:only|just)\s+(?:the\s+)?(?:selected|specified|chosen|listed)\b"
-            r"|\bselected\s+(?:media|files?|clips?)\b",
-            normalized,
-        )
-    )
+    if re.search(
+        r"\b(?:all|every|each)\s+(?:the\s+)?(?:images?|photos?|videos?|clips?|media|footage)\b"
+        r"|\buse\s+(?:all|everything)\b"
+        r"|\b(?:all|every)\s+(?:uploaded|provided)\s+(?:media|files?|images?|photos?|videos?)\b"
+        r"|\b(?:do not|don't|dont|never|without|no)\b.{0,40}"
+        r"\b(?:use|include|keep|select)\b.{0,20}"
+        rf"\b(?:all|everything|every|\d{{1,4}}\s+{_MEDIA_COUNT_NOUN})\b"
+        r"|\b(?:all|everything|every)\b.{0,20}\b(?:not|excluded|omit)\b"
+        r"|\b(?:only|just)\s+(?:the\s+)?(?:selected|specified|chosen|listed)\b"
+        r"|\bselected\s+(?:media|files?|clips?)\b",
+        normalized,
+    ):
+        return True
+    return _stated_count_matches_manifest(normalized, manifest)
 
 
 def _explicit_guided_voiceover_request(request: str, manifest: Any) -> bool:
@@ -614,7 +686,7 @@ def _explicit_guided_voiceover_request(request: str, manifest: Any) -> bool:
         manifest.has_voiceover
         and (
             recognize_mixed_media_timing(request) is not None
-            or _explicit_media_scope(request) == "all"
+            or _explicit_media_scope(request, manifest) == "all"
         )
     )
 
@@ -788,8 +860,8 @@ def _apply_explicit_render_intent(
         "licensed_sfx": None,
         "execution_contract": strategy.execution_contract,
         "media_scope": (
-            _explicit_media_scope(creator_request)
-            if _has_explicit_media_scope(creator_request)
+            _explicit_media_scope(creator_request, manifest)
+            if _has_explicit_media_scope(creator_request, manifest)
             else strategy.media_scope
         ),
         "participant_labels": strategy.participant_labels,
@@ -1019,8 +1091,8 @@ def _apply_explicit_render_intent(
                 boundary_style="cut",
             )
     updates["mixed_media_timing"] = mixed_media_timing
-    if latest and _has_explicit_media_scope(latest):
-        updates["media_scope"] = _explicit_media_scope(latest)
+    if latest and _has_explicit_media_scope(latest, manifest):
+        updates["media_scope"] = _explicit_media_scope(latest, manifest)
     if manifest is not None and _explicit_guided_voiceover_request(creator_request, manifest):
         guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
         if guided_voiceover is not None and guided_voiceover.available:
@@ -1401,6 +1473,95 @@ async def _record_cadence_unavailable(
     )
 
 
+_PHONE_VOICEOVER_UNAVAILABLE_MESSAGE = (
+    "A voiceover can't render on your iPhone yet, and this project's videos render "
+    "on this iPhone. Ask for this edit without a voiceover. No fallback edit was rendered."
+)
+
+
+def _phone_media_unavailable_message(exc: PhoneMediaUnavailableError) -> str:
+    """Name only the limits that still apply for the verified Visuals kinds."""
+
+    if exc.still_images_available and exc.visual_videos_available:
+        limit = (
+            "It can use photos and videos from Visuals, but a photo can't supply "
+            "sound or cut timing."
+        )
+    elif exc.still_images_available:
+        limit = (
+            "It can show photos from Visuals, but videos from Visuals can't be used, "
+            "and a photo can't supply sound or cut timing."
+        )
+    elif exc.visual_videos_available:
+        limit = "It can use videos from Visuals, but photos from Visuals can't be used."
+    else:
+        limit = (
+            "It can only use the videos attached to this project, not photos or "
+            "videos from Visuals."
+        )
+    return f"This edit renders on your iPhone. {limit} No fallback edit was rendered."
+
+
+async def _record_media_unavailable(
+    db: AsyncSession,
+    session: CreatorAgentSession,
+    exc: MixedMediaTimingUnavailableError,
+) -> None:
+    """Fail the turn with honest copy when no renderer can honor the media or format."""
+
+    # The phone subclasses are checked before their mixed-media parent: the
+    # iPhone refusing Visuals media, a format or a voiceover is not a
+    # photo/video timing outage.
+    if isinstance(exc, PhoneMediaUnavailableError):
+        code = "phone_media_unavailable"
+        message = _phone_media_unavailable_message(exc)
+    elif isinstance(exc, PhoneFormatUnavailableError):
+        code = "phone_voiceover_unavailable" if exc.voiceover else "phone_format_unavailable"
+        message = (
+            _PHONE_VOICEOVER_UNAVAILABLE_MESSAGE
+            if exc.voiceover
+            else "Only Montage videos can render on your iPhone right now, "
+            "not talking or narrated ones. Choose Montage to render on this "
+            "iPhone. No fallback edit was rendered."
+        )
+    else:
+        code = "mixed_media_timing_unavailable"
+        message = (
+            "Mixed photo and video timing is temporarily unavailable. "
+            "No fallback edit was rendered."
+        )
+    session.status = "failed"
+    session.last_error = {"code": code, "message": str(exc)[:300]}
+    await append_event(
+        db,
+        session,
+        event_type="assistant_error",
+        payload={"message": message, "code": code},
+    )
+
+
+def _dispatch_unavailable_message(manifest: Any) -> str:
+    """A phone project that cannot dispatch is not missing a clip; say why."""
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if phone is None or phone.available:
+        return "Add at least one clip first, then I can design the edit around it."
+    if phone.reason_code == "unsupported_phone_audio":
+        return (
+            "A voiceover can't render on your iPhone yet, and this project's videos "
+            "render on this iPhone. Remove the voiceover and I can design the edit."
+        )
+    if phone.reason_code == "unverified_phone_sources":
+        return (
+            "I couldn't verify this project's iPhone footage, so it can't render on "
+            "this iPhone yet. Reconnect its original footage, then try again."
+        )
+    return (
+        "Rendering on your iPhone is temporarily unavailable, and this project's "
+        "videos render there. Your project is saved; try again later."
+    )
+
+
 def _enqueue_creator_clip_metadata(item: PlanItem, plan: ContentPlan) -> None:
     """Best-effort metadata extraction; creator planning never waits on it."""
 
@@ -1631,7 +1792,9 @@ def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStra
     safe_format = current_format if current_available and current_available.available else "montage"
     mixed_media_timing = recognize_mixed_media_timing(user_message)
     media_scope = (
-        _explicit_media_scope(user_message) if _has_explicit_media_scope(user_message) else None
+        _explicit_media_scope(user_message, manifest)
+        if _has_explicit_media_scope(user_message, manifest)
+        else None
     )
     guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
     guided_draft = manifest.capabilities.get("draft_guided_proposal")
@@ -1773,9 +1936,7 @@ async def _run_planning_turn(
             locked,
             event_type="assistant_question",
             role="assistant",
-            payload={
-                "message": "Add at least one clip first, then I can design the edit around it."
-            },
+            payload={"message": _dispatch_unavailable_message(manifest)},
         )
         return await _response(db, locked)
 
@@ -2116,6 +2277,12 @@ async def _run_planning_turn(
             except MontageCadenceUnavailableError as exc:
                 await _record_cadence_unavailable(db, locked, exc)
                 return await _response(db, locked)
+            except MixedMediaTimingUnavailableError as exc:
+                # A cadence over sources the phone can't draw (a Visuals video
+                # before visualVideos is verified) is refused the same way the
+                # planning path below refuses it, never left mid-turn.
+                await _record_media_unavailable(db, locked, exc)
+                return await _response(db, locked)
             cycle_s = cadence.cut_duration_s * len(cadence.source_media_ids)
             capacity_s = round_robin_capacity_s(manifest.media, cadence)
             requested_s = strategy.target_duration_s
@@ -2358,23 +2525,7 @@ async def _run_planning_turn(
                 await _record_cadence_unavailable(db, locked, exc)
                 return await _response(db, locked)
             if isinstance(exc, MixedMediaTimingUnavailableError):
-                locked.status = "failed"
-                locked.last_error = {
-                    "code": "mixed_media_timing_unavailable",
-                    "message": str(exc)[:300],
-                }
-                await append_event(
-                    db,
-                    locked,
-                    event_type="assistant_error",
-                    payload={
-                        "message": (
-                            "Mixed photo and video timing is temporarily unavailable. "
-                            "No fallback edit was rendered."
-                        ),
-                        "code": "mixed_media_timing_unavailable",
-                    },
-                )
+                await _record_media_unavailable(db, locked, exc)
                 return await _response(db, locked)
             if _strict_creator_format(strategy.edit_format):
                 # Any real format-availability failure is classified above as

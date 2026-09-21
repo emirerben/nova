@@ -699,6 +699,21 @@ def _resolve_model_media_references(
                 )
                 if media_id is not None and media_id not in resolved_sources:
                     resolved_sources.append(media_id)
+            if (
+                input.direction != "fast_montage"
+                and input.montage_audio is not None
+                and not input.montage_audio.source_media_ids
+            ):
+                # Story-beat directions author montage_audio identity
+                # server-side: when the creator requested no specific audio
+                # sources, the model sometimes echoes the clips its timeline
+                # used instead of the (empty) requested list. That both
+                # invents an unrequested contract and can exceed the
+                # <=12-item schema ceiling on a large upload (KRI-126: a
+                # 30-clip guided_story echoed 17-23 used clips here). Coerce
+                # back to the requested list; a genuine source mismatch when
+                # specific sources WERE requested still raises below.
+                resolved_sources = []
             raw_audio["source_media_ids"] = resolved_sources
         raw_audio["preserve_source_audio"] = bool(raw_audio.get("preserve_source_audio", True))
         raw_audio["preview_source_beds"] = bool(raw_audio.get("preview_source_beds", False))
@@ -729,6 +744,8 @@ LEGACY_GUIDED_DRAFT_BEATS = 5
 # each server-burned opening/closing title. Must not exceed the specialist's
 # 10-beat output limit (GUIDED_STORY_MAX_BEATS in edit_direction_planner).
 MAX_GUIDED_DRAFT_BEATS = MAX_CREATOR_SHOT_LABELS + 2
+# Mirrors DraftStoryBeat.media_ids's own max_length above -- keep them equal.
+GUIDED_DRAFT_MEDIA_PER_BEAT = 4
 
 
 class EditProposalAgentOutput(BaseModel):
@@ -743,6 +760,33 @@ class EditProposalAgentOutput(BaseModel):
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_text_bindings: list[MontageTextBinding] = Field(default_factory=list, max_length=12)
     montage_audio: MontageAudioPlan | None = None
+
+
+def _guided_beat_ceiling(input: EditProposalAgentInput) -> int:  # noqa: A002
+    """Ordinary story-beat plans top out at LEGACY_GUIDED_DRAFT_BEATS (5).
+
+    Raise the ceiling, up to MAX_GUIDED_DRAFT_BEATS, only when the upload is
+    larger than 5 beats holding GUIDED_DRAFT_MEDIA_PER_BEAT media each can
+    address. That is measured on the sources the plan MUST cover when a scope
+    requires them, and otherwise on the sources available to it: a creator
+    who uploads 30 clips and names six chapters (KRI-126: park, football,
+    volleyball, field sports, speech, pub) was rejected at 5 beats on a live
+    replay even though no scope was set, which dropped the whole plan to the
+    request-blind deterministic fallback.
+    """
+
+    count = _guided_beat_ceiling_source_count(input)
+    if count <= LEGACY_GUIDED_DRAFT_BEATS * GUIDED_DRAFT_MEDIA_PER_BEAT:
+        return LEGACY_GUIDED_DRAFT_BEATS
+    return min(MAX_GUIDED_DRAFT_BEATS, math.ceil(count / GUIDED_DRAFT_MEDIA_PER_BEAT))
+
+
+def _guided_beat_ceiling_source_count(input: EditProposalAgentInput) -> int:  # noqa: A002
+    required_ids = _required_media_ids(input)
+    if required_ids:
+        return len(required_ids)
+    prompt_media, _alias_to_id, _id_to_alias = _prompt_media(input)
+    return len(prompt_media)
 
 
 class _RawFastMontageCut(BaseModel):
@@ -1165,7 +1209,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.10.0",
+        prompt_version="1.11.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -1178,6 +1222,21 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
 
     def required_fields(self) -> list[str]:
         return ["title", "story_beats"]
+
+    def schema_clarification(self) -> str:
+        # The base clarification carries no error context (KRI-126: two
+        # different schema failures both retried with the same generic
+        # nudge and repeated the same mistake). Cover the failure classes
+        # this agent actually hits on retry.
+        return super().schema_clarification() + (
+            " Also: for guided_story/text_explainer, every beat has 1-4 media_ids -- a HARD "
+            "cap the schema rejects if exceeded, so spread sources evenly across beats "
+            "instead of overloading one; story_beats must be non-empty and fast_cuts must "
+            "be null; use at least the required distinct sources noted above. "
+            "montage_audio.source_media_ids must equal exactly the requested audio source "
+            "IDs — an empty request means an empty list, never every clip your story_beats "
+            "use."
+        )
 
     def render_prompt(self, input: EditProposalAgentInput) -> str:  # noqa: A002
         prompt_media, _alias_to_id, id_to_alias = _prompt_media(input)
@@ -1249,7 +1308,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "return the exact typed profile instead of null."
             )
         montage_note = ""
-        if input.montage_audio is not None:
+        if input.montage_audio is not None and input.direction == "fast_montage":
             source_ids = (
                 ", ".join(input.montage_audio.source_media_ids)
                 or "the sources used by the timeline"
@@ -1265,6 +1324,30 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "persistent source-specific text when the request calls for it. Return exactly "
                 "preserve_source_audio, preview_source_beds, and source_media_ids in that "
                 "object; do not add provider-specific mixer fields."
+            )
+        elif input.montage_audio is not None:
+            # Story-beat directions (guided_story, text_explainer): the edit
+            # is authored in story_beats, never fast_cuts, so montage_audio
+            # carries only the audio-source *selection*, not a record of
+            # which clips the timeline used (KRI-126: a model that listed
+            # every used clip here both invented an unrequested contract and
+            # exceeded the <=12-item schema ceiling on a large upload).
+            requested_source_ids = (
+                ", ".join(input.montage_audio.source_media_ids)
+                if input.montage_audio.source_media_ids
+                else "none requested — return an empty list"
+            )
+            montage_note = (
+                "SOURCE AUDIO: this edit is authored in story_beats (chapters that group "
+                "related media); leave fast_cuts null for this direction. Return montage_audio "
+                "with exactly these three fields and these exact values: "
+                f"preserve_source_audio={str(input.montage_audio.preserve_source_audio).lower()} "
+                "(do not change it), "
+                f"preview_source_beds={str(input.montage_audio.preview_source_beds).lower()}, "
+                "and source_media_ids equal to exactly the requested audio source IDs: "
+                f"{requested_source_ids}. Never list the media_ids your story_beats use "
+                "there — it is an audio-source selection, not a record of the timeline. "
+                "montage_text_bindings does not apply to this direction; leave it empty."
             )
         if input.montage_cadence is not None:
             cadence = input.montage_cadence
@@ -1290,24 +1373,45 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "The explicit photo duration still applies exactly. Transcript: "
                 f"{json.dumps(input.narration_words, ensure_ascii=False)}"
             )
-        montage_note += (
-            " VIDEO REUSE POLICY: "
-            + input.video_reuse_policy
-            + ". "
-            + (
-                "Each video must appear in exactly one contiguous cut at most. Never split "
-                "a video and return to it later. Use longer continuous video cuts when needed "
-                "to meet the target; the generic 1.2s ceiling does not apply. "
-                if input.video_reuse_policy == "once"
-                else "The creator explicitly permits returning to video sources. "
+        if input.direction == "fast_montage":
+            montage_note += (
+                " VIDEO REUSE POLICY: "
+                + input.video_reuse_policy
+                + ". "
                 + (
-                    "Overlapping source windows and adjacent repeats are permitted. "
-                    "A short final loop may be 0.4s or longer to fit the exact target. "
-                    if input.video_reuse_policy == "allow_repeat"
-                    else "Use distinct non-overlapping windows only. "
+                    "Each video must appear in exactly one contiguous cut at most. Never split "
+                    "a video and return to it later. Use longer continuous video cuts when "
+                    "needed to meet the target; the generic 1.2s ceiling does not apply. "
+                    if input.video_reuse_policy == "once"
+                    else "The creator explicitly permits returning to video sources. "
+                    + (
+                        "Overlapping source windows and adjacent repeats are permitted. "
+                        "A short final loop may be 0.4s or longer to fit the exact target. "
+                        if input.video_reuse_policy == "allow_repeat"
+                        else "Use distinct non-overlapping windows only. "
+                    )
                 )
             )
-        )
+        else:
+            # Story-beat directions have no cuts or a 1.2s ceiling -- phrase
+            # reuse in terms of the story_beats contract instead (KRI-126).
+            montage_note += (
+                " VIDEO REUSE POLICY: "
+                + input.video_reuse_policy
+                + ". "
+                + (
+                    "Each video may appear in only one story beat at most. Never place the "
+                    "same video across two beats. "
+                    if input.video_reuse_policy == "once"
+                    else "The creator explicitly permits returning to video sources across "
+                    "beats. "
+                    + (
+                        "Overlapping source windows and adjacent repeats are permitted. "
+                        if input.video_reuse_policy == "allow_repeat"
+                        else "Use distinct non-overlapping windows only. "
+                    )
+                )
+            )
         if input.direction == "fast_montage" and input.video_reuse_policy == "once":
             once_video_total_s = sum(
                 float(media.duration_s or 0.0) for media in prompt_media if media.kind == "video"
@@ -1350,8 +1454,18 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             "SCHEMA SOURCE FLOOR: This response must reference at least "
             f"{source_floor} distinct AVAILABLE MEDIA aliases across story_beats or fast_cuts. "
             "Count them before returning JSON. A fullscreen story beat may list multiple "
-            "distinct aliases: if the required source count exceeds your beat count, assign "
-            "multiple sources to some beats. Reusing one alias does not increase coverage."
+            + (
+                # fast_montage authors fast_cuts, so its wording stays as it
+                # was: per-beat packing guidance is story-beat-only (KRI-126).
+                "distinct aliases: if the required source count exceeds your beat count, assign "
+                "multiple sources to some beats. "
+                if input.direction == "fast_montage"
+                else f"distinct aliases (a hard cap of {GUIDED_DRAFT_MEDIA_PER_BEAT} per beat): "
+                "if the required source count exceeds your beat count, spread the extra sources "
+                "evenly across beats -- never exceed the per-beat cap and never pile them onto "
+                "one beat. "
+            )
+            + "Reusing one alias does not increase coverage."
         )
         if uses_quick_photo_long_video_timing(input.mixed_media_timing):
             source_floor_note += (
@@ -1365,6 +1479,38 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 if media.media_id in required_media_ids
             )
             source_floor_note += "."
+        beat_ceiling = _guided_beat_ceiling(input)
+        if input.direction == "fast_montage":
+            # story_beats are compatibility-only here (the edit is fast_cuts);
+            # never hand a fast montage story-beat packing rules (KRI-126).
+            beat_count_note = (
+                "Longer all-media edits may use up to 10 beats so every meaningful source has "
+                "enough room."
+            )
+        elif beat_ceiling > LEGACY_GUIDED_DRAFT_BEATS and not required_media_ids:
+            # Large upload, nothing required: more chapters are allowed, not
+            # demanded -- the coverage/packing rules below do not apply.
+            beat_count_note = (
+                f"This is a large upload: return at most {beat_ceiling} story beats, one per "
+                "chapter the request actually describes (3-5 is still right for a simple "
+                f"request). Every beat holds at most {GUIDED_DRAFT_MEDIA_PER_BEAT} media_ids -- "
+                "the schema rejects a longer list."
+            )
+        elif beat_ceiling > LEGACY_GUIDED_DRAFT_BEATS:
+            beat_count_note = (
+                f"HARD CAP: every beat holds at most {GUIDED_DRAFT_MEDIA_PER_BEAT} media_ids -- "
+                "never more, even to fit everything in; the schema rejects a longer list. This "
+                f"edit must cover more required sources than {LEGACY_GUIDED_DRAFT_BEATS} beats "
+                f"of {GUIDED_DRAFT_MEDIA_PER_BEAT} media each can hold, so return up to "
+                f"{beat_ceiling} story beats (never more) and spread the required sources "
+                "evenly across all of them -- never dump the remainder into the last beat. "
+                "Packing this many sources means each beat's screen time is necessarily brief: "
+                "give every beat a short, compressed duration_s (not its full real-world "
+                "length) so the sum of every beat's duration_s equals the declared duration_s "
+                "exactly -- do not let realistic per-source pacing overshoot the target."
+            )
+        else:
+            beat_count_note = f"Return at most {beat_ceiling} story beats for this edit."
         return load_prompt(
             "edit_proposal",
             idea=input.idea[:500],
@@ -1385,6 +1531,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             footage_note=footage_note,
             media_json=json.dumps([row.model_dump() for row in prompt_media], ensure_ascii=False),
             source_floor_note=source_floor_note,
+            beat_count_note=beat_count_note,
         )
 
     def parse(
@@ -1416,11 +1563,13 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             output = EditProposalAgentOutput.model_validate(payload)
         except Exception as exc:  # noqa: BLE001
             raise SchemaError(f"edit_proposal: invalid output — {exc}") from exc
-        if not creator_labels and len(output.story_beats) > LEGACY_GUIDED_DRAFT_BEATS:
-            raise SchemaError(
-                "edit_proposal: invalid output — story_beats: List should have at most "
-                f"{LEGACY_GUIDED_DRAFT_BEATS} items after validation"
-            )
+        if not creator_labels:
+            beat_ceiling = _guided_beat_ceiling(input)
+            if len(output.story_beats) > beat_ceiling:
+                raise SchemaError(
+                    "edit_proposal: invalid output — story_beats: List should have at most "
+                    f"{beat_ceiling} items after validation"
+                )
         if input.montage_audio is not None:
             returned_audio = output.montage_audio
             if returned_audio is None:

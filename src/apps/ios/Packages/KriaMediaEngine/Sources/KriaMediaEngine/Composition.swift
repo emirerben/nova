@@ -109,6 +109,7 @@ struct PreviewAudioBinding: Sendable {
                 if stillImage == nil { videoSource = try await asset.loadTracks(withMediaType: .video).first }
                 else { videoSource = nil }
                 if let source = videoSource {
+                    guard clip.stillLayout == nil else { throw NativePreviewFeatureError("Composition-still-layout") }
                     let track: AVMutableCompositionTrack
                     if let index = reusableVideoTracks.firstIndex(where: { $0.end <= clip.timelineStart + 0.000_001 }) {
                         track = reusableVideoTracks[index].track
@@ -206,8 +207,12 @@ struct PreviewAudioBinding: Sendable {
                     let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any]
                     let orientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.int32Value ?? 1
                     guard (1...8).contains(orientation) else { throw NativePreviewFeatureError("Composition-167") }
-                    let oriented = CIImage(cgImage: image).oriented(forExifOrientation: orientation)
-                    let normalized = oriented.transformed(by: CGAffineTransform(translationX: -oriented.extent.minX, y: -oriented.extent.minY))
+                    // Story photos match the cloud: matted over black, and drawn whole
+                    // inside a card when asked. Overlay stills keep their alpha.
+                    let drawn = recipeTrack.kind == .video ? try StillFrame.flattened(image) : image
+                    let oriented = CIImage(cgImage: drawn).oriented(forExifOrientation: orientation)
+                    var normalized = oriented.transformed(by: CGAffineTransform(translationX: -oriented.extent.minX, y: -oriented.extent.minY))
+                    if clip.stillLayout == .supportingCard { normalized = try StillFrame.supportingCard(normalized, canvas: canvas) }
                     layers.append(RecipeVideoLayer(trackID: nil, image: normalized,
                         transform: Self.transform(naturalSize: normalized.extent.size, preferred: .identity, canvas: canvas, clip: clip),
                         start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, isPrimary: recipeTrack.kind == .video,

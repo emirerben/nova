@@ -3,28 +3,51 @@ import KriaMediaEngine
 
 extension NativeEditorSession {
     /// Writes only the additive KRI-43 fields. Default values are removed so
-    /// legacy snapshots remain byte-for-byte shaped as they arrived.
+    /// legacy snapshots remain byte-for-byte shaped as they arrived; a clip
+    /// value the server stored is cleared with null (`clipSlotClearValue`).
     func setFootagePlaybackRate(_ selection: EditorSelection, rate: Double) {
-        guard rate.isFinite, (0.25...4).contains(rate), let section = footageSection(selection),
-              canEditOperation(["footage.retime", "playback_rate", section.rawValue], section: section) else { return }
+        guard rate.isFinite, (0.25...4).contains(rate), let section = footageSection(selection) else { return }
+        let resetting = abs(rate - 1) < 0.000_001
+        guard canEditFootage(section, keys: ["footage.retime", "playback_rate"], operation: "playback_rate", resetting: resetting) else { return }
+        let clearValue = footageClearValue(selection, key: "playback_rate")
         transactDocument(section: section) { document in
             mutateFootage(selection, in: &document) { raw in
-                if abs(rate - 1) < 0.000_001 { raw.removeValue(forKey: "playback_rate") }
-                else { raw["playback_rate"] = .number(rate) }
+                if !resetting { raw["playback_rate"] = .number(rate) }
+                else if let clearValue { raw["playback_rate"] = clearValue }
+                else { raw.removeValue(forKey: "playback_rate") }
             }
         }
     }
 
     func setFootageCrop(_ selection: EditorSelection, crop: NormalizedSourceRect?) {
         guard let section = footageSection(selection),
-              canEditOperation(["footage.crop", "source_crop", section.rawValue], section: section) else { return }
+              canEditFootage(section, keys: ["footage.crop", "source_crop"], operation: "source_crop", resetting: crop == nil) else { return }
         if let crop, (try? crop.validate()) == nil { return }
+        let clearValue = footageClearValue(selection, key: "source_crop")
         transactDocument(section: section) { document in
             mutateFootage(selection, in: &document) { raw in
                 if let crop { raw["source_crop"] = .object(["x": .number(crop.x), "y": .number(crop.y), "width": .number(crop.width), "height": .number(crop.height)]) }
+                else if let clearValue { raw["source_crop"] = clearValue }
                 else { raw.removeValue(forKey: "source_crop") }
             }
         }
+    }
+
+    /// A clip's crop and speed also carry a `clips.<operation>` capability,
+    /// which device variants close. Returning to the default stays under the
+    /// section's own gate: a value saved before that clamp must stay clearable,
+    /// or the edit could never save again.
+    private func canEditFootage(_ section: EditorSection, keys: [String], operation: String, resetting: Bool) -> Bool {
+        if resetting { return canEditOperation(keys + [section.rawValue], section: section) }
+        guard !rendersOnDevice else { return false }
+        let clipKeys: [String] = section == .timeline ? ["clips.\(operation)"] : []
+        return canEditOperation(keys + clipKeys + [section.rawValue], section: section)
+    }
+
+    private func footageClearValue(_ selection: EditorSelection, key: String) -> JSONValue? {
+        guard selection.kind == .clip,
+              let slotID = timelineClips.first(where: { $0.id.uuidString == selection.id })?.slotID else { return nil }
+        return clipSlotClearValue(slotID: slotID, key: key)
     }
 
     func footageCrop(for selection: EditorSelection) -> NormalizedSourceRect? {

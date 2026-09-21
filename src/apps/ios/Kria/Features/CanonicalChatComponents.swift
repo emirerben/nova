@@ -344,6 +344,9 @@ struct FootageStage: View {
     /// the user chose.
     var failures: [UploadFailure] = []
     var dismissFailure: (UUID) -> Void = { _ in }
+    /// Photos and videos in Visuals. A montage can be made from them alone.
+    var visualCount = 0
+    var continueWithVisuals: () -> Void = {}
 
     private var readiness: FootageReadiness {
         FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count + preparingCount)
@@ -353,6 +356,9 @@ struct FootageStage: View {
     /// progress would misrepresent the rest; a clip still being prepared counts as 0.
     private var overallProgress: Double {
         FootageReadiness.overallProgress(uploads: uploads.map { progress[$0.id] ?? 0 }, preparingCount: preparingCount)
+    }
+    private var visualsReadiness: FootageReadiness {
+        FootageReadiness(attachedCount: format == .montage && mediaCount == 0 ? visualCount : 0, pendingCount: uploads.count + preparingCount)
     }
 
     var body: some View {
@@ -442,6 +448,16 @@ struct FootageStage: View {
                     }
                 }
                 .accessibilityIdentifier("footage-uploading-clips")
+            }
+
+            if visualsReadiness.attachedCount > 0 {
+                Text("\(visualsReadiness.attachedCount) \(visualsReadiness.attachedCount == 1 ? "visual" : "visuals") ready")
+                    .font(KriaFont.body(12).weight(.medium))
+                    .foregroundStyle(KriaColor.zinc)
+                Button("Continue with \(visualsReadiness.attachedCount) \(visualsReadiness.attachedCount == 1 ? "visual" : "visuals")", action: continueWithVisuals)
+                    .buttonStyle(CanonicalPrimaryButtonStyle())
+                    .disabled(isBusy || !visualsReadiness.canContinue)
+                    .accessibilityIdentifier("continue-with-visuals")
             }
 
             if readiness.pendingCount > 0 {

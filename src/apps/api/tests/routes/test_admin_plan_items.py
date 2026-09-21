@@ -42,6 +42,10 @@ SECRET_CREATOR_REQUEST = "SECRET_CREATOR_REQUEST_photos fast and videos longer"
 SECRET_USER_NOTE = "SECRET_USER_NOTE_this is the clip from the Tokyo trip"
 SECRET_ATTEMPT_TOKEN = "SECRET_ATTEMPT_TOKEN_do-not-leak-me"  # noqa: S105 - test fixture, not a real secret
 SECRET_MALFORMED_VALUE = "SECRET_MALFORMED_VALUE_should_never_appear"
+# KRI-126: admin-only diagnostic (deterministic-fallback marker) -- this one
+# is EXPECTED to surface in the admin debug response, unlike the SECRET_*
+# creator-authored/internal-secret markers above.
+PLANNER_FALLBACK_REASON = "guided story fallback cannot use every required source safely"
 
 
 def _digest(seed: str) -> str:
@@ -163,6 +167,13 @@ def _edit_proposal_dict() -> dict:
             "code": "conversation_failed",
             "message": "the edit-guide agent call errored: upstream timeout",
             "retryable": True,
+        },
+        # KRI-126: admin-only diagnostic (deterministic-fallback marker).
+        # Unlike the SECRET_* markers above, this is meant to surface here.
+        "planner_fallback": {
+            "reason": PLANNER_FALLBACK_REASON,
+            "direction": "guided_story",
+            "at": "2026-08-15T10:00:00+00:00",
         },
     }
 
@@ -432,6 +443,13 @@ class TestPlanItemDebugPayload:
         assert proposal["generation_attempt_id"] == "attempt-1"
         assert proposal["failure"]["code"] == "conversation_failed"
         assert "timeout" in proposal["failure"]["message"]
+
+        # KRI-126: the deterministic-fallback marker is admin-only and DOES
+        # surface here (contrast with the SECRET_* creator text above, which
+        # must never appear).
+        assert proposal["planner_fallback"]["reason"] == PLANNER_FALLBACK_REASON
+        assert proposal["planner_fallback"]["direction"] == "guided_story"
+        assert proposal["planner_fallback"]["at"] == "2026-08-15T10:00:00Z"
 
         # conversation_attempt: token is gone, presence + versions survive.
         attempt = proposal["conversation_attempt"]

@@ -467,7 +467,11 @@ private struct CreationWorkspaceView: View {
                 attachedClipCount: attachedClipCount,
                 thread: fullThread,
                 capabilities: capabilities,
-                refresh: { await refreshNow() }
+                capabilitiesLoaded: capabilitiesAreAuthoritative,
+                refresh: {
+                    if !capabilitiesAreAuthoritative { await refreshCapabilities() }
+                    await refreshNow()
+                }
             )
                 .environmentObject(model)
                 .presentationDetents([.medium, .large])
@@ -548,7 +552,17 @@ private struct CreationWorkspaceView: View {
                     isBusy: isSending || isActing,
                     removeMedia: { mediaID in performAction("remove_media", payload: ["media_id": .string(mediaID)]) },
                     failures: uploadFailures.filter { $0.projectID == project.id && $0.role == .clip },
-                    dismissFailure: { model.uploads.dismissFailure(id: $0) }
+                    dismissFailure: { model.uploads.dismissFailure(id: $0) },
+                    // Only a project this iPhone renders can be made of Visuals
+                    // alone, and only from the Visuals the server's rule counts.
+                    visualCount: ProjectUploadDestination.resolve(
+                        capabilities: capabilities?.phoneRendering, capabilitiesLoaded: capabilitiesAreAuthoritative,
+                        sourcePurposes: [], role: .visual
+                    ).visualKinds == nil ? 0 : fullThread?.deviceReadyVisualCount ?? 0,
+                    continueWithVisuals: {
+                        let count = fullThread?.deviceReadyVisualCount ?? 0
+                        Task { await send(message: "Continue with my \(count) \(count == 1 ? "visual" : "visuals")") }
+                    }
                 )
                 .id("upload-prompt")
             }
@@ -806,6 +820,9 @@ private struct CreationWorkspaceView: View {
             await refreshDeviceRender()
         } catch is CancellationError {
             // The view went away mid-request; leave the last-known state as-is.
+        } catch let error as URLError where error.code == .cancelled {
+            // URLSession reports a cancelled task (e.g. the attachment sheet
+            // closing) this way; it must not wipe what another request loaded.
         } catch {
             capabilitiesAreAuthoritative = false
             capabilities = nil

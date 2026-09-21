@@ -1198,6 +1198,22 @@ class ProposalRenderFailure(BaseModel):
     failed_at: datetime
 
 
+class ProposalPlannerFallback(BaseModel):
+    """Server-only marker: this draft was produced by the deterministic
+    recovery path after the Edit Proposal specialist raised TerminalError
+    (see app/tasks/edit_proposal_build.py, ``except TerminalError``).
+
+    Admin/debug-only diagnostic, never shown to end users -- routes/
+    plan_items.py's ``_edit_proposal_response`` and the public
+    ``EditProposalResponse`` model never surface this field (KRI-126). A
+    later successful, non-fallback draft clears it back to ``None``.
+    """
+
+    reason: str = Field(min_length=1, max_length=500)
+    direction: str = Field(min_length=1, max_length=40)
+    at: datetime
+
+
 class ProposalBrief(BaseModel):
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
@@ -1367,6 +1383,13 @@ class EditProposal(BaseModel):
     # approval clears it automatically. See services/edit_proposals.py
     # (record_proposal_render_failure / guided_render_is_blocked).
     render_failure: ProposalRenderFailure | None = None
+    # KRI-126: set by the same draft write whenever the deterministic
+    # fallback (app/tasks/edit_proposal_build.py, ``except TerminalError``)
+    # replaced the Edit Proposal specialist. Cleared by the next successful,
+    # non-fallback draft. Admin-only diagnostic -- see EditProposalResponse,
+    # which redacts this field, and routes/admin_plan_items.py, which
+    # surfaces it in the debug endpoint.
+    planner_fallback: ProposalPlannerFallback | None = None
 
 
 class MediaRefResponse(MediaRef):
@@ -1393,6 +1416,18 @@ class EditProposalResponse(EditProposal):
     conversation_retry_required: bool = False
     draft: EditProposalSnapshotResponse | None = None
     last_approved: ApprovedProposalSnapshotResponse | None = None
+    # KRI-126: admin/debug-only diagnostic (see EditProposal.planner_fallback).
+    # Never surfaced to end users. Unlike conversation_attempt (redacted by
+    # routes/plan_items.py explicitly overwriting the dict key before
+    # validation), this field is coerced to None by a validator so a
+    # fallback-drafted proposal never fails response validation for an
+    # ordinary user -- app/routes/plan_items.py is outside this change.
+    planner_fallback: None = None
+
+    @field_validator("planner_fallback", mode="before")
+    @classmethod
+    def _redact_planner_fallback(cls, _value: object) -> None:
+        return None
 
 
 def canonical_media_digest(

@@ -94,6 +94,9 @@ class TimelineClip(_RecipeModel):
     overlay_preserve_alpha: bool | None = None
     visual_placement: VisualMediaPlacement | None = None
     overlay_dissolve_seed: int | None = Field(default=None, ge=0, le=4294967295)
+    # A Visuals photo shown whole: fitted inside a card over a blurred cover of
+    # itself instead of cropped to fill the frame (guided ``supporting_card``).
+    still_layout: Literal["supporting_card"] | None = None
     volume: float = Field(default=1, ge=0, le=2)
 
     @model_serializer(mode="wrap")
@@ -106,6 +109,7 @@ class TimelineClip(_RecipeModel):
             "overlay_above_text",
             "overlay_pop_in",
             "overlay_preserve_alpha",
+            "still_layout",
         ):
             if getattr(self, key) is None:
                 result.pop(key, None)
@@ -156,6 +160,8 @@ MediaCapability = Literal[
     "hevcDecode",
     "hdr",
     "local1080Export",
+    "stillImages",
+    "visualVideos",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the
@@ -209,6 +215,15 @@ class EditRecipeV1(_RecipeModel):
                     ):
                         raise ValueError("visual placement requires a silent bounded V2 overlay")
                     self.required_capabilities |= {"visualBlocks"}
+                if clip.still_layout is not None and (
+                    self.schema_version != 2
+                    or track.kind != "video"
+                    or clip.rate != 1
+                    or clip.look is not None
+                    or clip.hold_duration is not None
+                    or clip.transform != MediaTransform()
+                ):
+                    raise ValueError("a still card requires a plain V2 main-track clip")
                 if (
                     clip.overlay_dissolve_seed is not None
                     or clip.hold_duration is not None

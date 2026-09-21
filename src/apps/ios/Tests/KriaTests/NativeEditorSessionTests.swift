@@ -24,6 +24,79 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document, original)
     }
 
+    /// The server closes `clips.source_crop/playback_rate/looks` on device
+    /// variants because the phone compiler rejects them. A value saved before
+    /// that clamp must still clear, as an explicit null the guided writer honors.
+    func testDeviceVariantRefusesNewCropSpeedAndLookButClearsSavedOnes() async throws {
+        let (session, fake) = await Self.footageSession(destination: "device", operationsEditable: false, slot: [
+            "source_crop": .object(["x": .number(0.1), "y": .number(0.1), "width": .number(0.5), "height": .number(0.5)]),
+            "playback_rate": .number(2),
+            "look_preset": .string("golden_hour"),
+        ])
+        XCTAssertTrue(session.rendersOnDevice)
+        let clip = try XCTUnwrap(session.timelineClips.first)
+        let selection = EditorSelection(kind: .clip, id: clip.id.uuidString)
+        let slotID = try XCTUnwrap(session.document.clips.first?.id)
+        let original = session.document
+
+        session.setFootageCrop(selection, crop: .init(x: 0.2, y: 0.2, width: 0.6, height: 0.6))
+        session.setFootagePlaybackRate(selection, rate: 0.5)
+        session.setClipLookPreset(clipID: slotID, preset: "olive_film")
+        session.setClipLookAdjustments(clipID: slotID, adjustments: ["exposure": .number(0.2)])
+        XCTAssertEqual(session.document, original, "A device variant can't take a new crop, speed or look")
+        XCTAssertFalse(session.hasUnsavedChanges)
+
+        session.setFootageCrop(selection, crop: nil)
+        session.setFootagePlaybackRate(selection, rate: 1)
+        session.setClipLookPreset(clipID: slotID, preset: "none")
+        let slot = try XCTUnwrap(session.document.clips.first)
+        XCTAssertEqual(slot.raw["source_crop"], .null)
+        XCTAssertEqual(slot.raw["playback_rate"], .null)
+        XCTAssertEqual(slot.lookPreset, "none")
+        XCTAssertNil(session.footageCrop(for: selection))
+        XCTAssertEqual(session.footagePlaybackRate(for: selection), 1)
+        XCTAssertTrue(session.hasUnsavedChanges)
+
+        await session.save()
+        let sent = try XCTUnwrap(fake.lastRequest?.timelineSlots?.first?.objectValue)
+        XCTAssertEqual(sent["source_crop"], .null, "An omitted key would keep the stored crop")
+        XCTAssertEqual(sent["playback_rate"], .null)
+    }
+
+    func testCloudVariantKeepsCropSpeedAndLookEditable() async throws {
+        let (session, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
+        XCTAssertFalse(session.rendersOnDevice)
+        let clip = try XCTUnwrap(session.timelineClips.first)
+        let selection = EditorSelection(kind: .clip, id: clip.id.uuidString)
+        let slotID = try XCTUnwrap(session.document.clips.first?.id)
+
+        session.setFootageCrop(selection, crop: .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
+        session.setFootagePlaybackRate(selection, rate: 0.5)
+        session.setClipLookPreset(clipID: slotID, preset: "olive_film")
+        var slot = try XCTUnwrap(session.document.clips.first)
+        XCTAssertEqual(slot.raw["source_crop"]?.objectValue?["y"], .number(0.2))
+        XCTAssertEqual(slot.raw["playback_rate"], .number(0.5))
+        XCTAssertEqual(slot.lookPreset, "olive_film")
+
+        // The saved slot never had these keys, so a reset drops them again.
+        session.setFootageCrop(selection, crop: nil)
+        session.setFootagePlaybackRate(selection, rate: 1)
+        slot = try XCTUnwrap(session.document.clips.first)
+        XCTAssertNil(slot.raw["source_crop"])
+        XCTAssertNil(slot.raw["playback_rate"])
+    }
+
+    func testClosedClipCropCapabilityIsHonoredOnCloudVariants() async throws {
+        let (session, _) = await Self.footageSession(destination: "cloud", operationsEditable: false)
+        let clip = try XCTUnwrap(session.timelineClips.first)
+        let selection = EditorSelection(kind: .clip, id: clip.id.uuidString)
+        let original = session.document
+
+        session.setFootageCrop(selection, crop: .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
+        session.setFootagePlaybackRate(selection, rate: 0.5)
+        XCTAssertEqual(session.document, original, "`clips.*` wins over the broader `timeline` capability")
+    }
+
     func testRenderedRebaseRefreshesGenerationSourcesButLocalEditsDoNot() async {
         let jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
@@ -2281,6 +2354,29 @@ final class NativeEditorSessionTests: XCTestCase {
             "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]),
             "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(duration), "source_duration_s": .number(4), "removed": .bool(false)])])]),
         ]
+    }
+
+    /// Loads one clip slot (plus `extras`) under the server's per-clip
+    /// `clips.*` crop, speed and look capabilities.
+    private static func footageSession(destination: String, operationsEditable: Bool, slot extras: [String: JSONValue] = [:]) async -> (NativeEditorSession, EditorCommitSpy) {
+        let threadID = UUID()
+        var authoritative = variant(duration: 2, generation: "generation-1")
+        authoritative["render_destination"] = .string(destination)
+        let operation: JSONValue = .object(["editable": .bool(operationsEditable)])
+        authoritative["editor_capabilities"] = .object([
+            "timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false),
+            "clips": .object(["source_crop": operation, "playback_rate": operation, "looks": operation]),
+        ])
+        var slot: [String: JSONValue] = ["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(4), "removed": .bool(false)]
+        slot.merge(extras) { _, extra in extra }
+        authoritative["user_timeline"] = .object(["slots": .array([.object(slot)])])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: UUID().uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: authoritative
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+        await session.load(api: fake, threadID: threadID)
+        return (session, fake)
     }
 }
 
