@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -496,52 +497,95 @@ def _sheet(composite: np.ndarray, variant: str, bg: str,
 # comparison isn't confounded, except `bare`, which is the control that shows
 # what dropping the shadow costs. Greys are taken from the warm-ink scale in
 # DESIGN.md where one exists, so this stays inside the palette.
-# name: (mark hex, mark opacity, faint shadow?, scrim hex, scrim opacity)
-GrayCandidate = tuple[str, float, bool, str | None, float]
+@dataclass(frozen=True)
+class GrayCandidate:
+    """One grey watermark treatment.
+
+    Three ways to stay legible without shouting, in increasing footage cost:
+    a `shadow` (cheapest, helps only on light backgrounds), a `halo` that hugs
+    the letterforms, or a `scrim` chip behind the whole mark. `pad` controls
+    how much footage the chip covers -- worth tightening before reaching for
+    more opacity.
+    """
+
+    fill: str
+    opacity: float
+    shadow: bool = False
+    scrim_hex: str | None = None
+    scrim: float = 0.0
+    halo_hex: str | None = None
+    halo: float = 0.0
+    halo_sigma: float = 9.0
+    pad: tuple[int, int, int] = (PLATE_PAD_X, PLATE_PAD_Y, PLATE_RADIUS)
+
+    def label(self) -> str:
+        bits = [f"{self.fill} @{self.opacity:.0%}"]
+        if self.shadow:
+            bits.append("shadow")
+        if self.halo_hex:
+            bits.append(f"halo {self.halo:.0%}")
+        if self.scrim_hex:
+            bits.append(f"chip {self.scrim:.0%}"
+                        + ("" if self.pad[0] == PLATE_PAD_X else " tight"))
+        return "  ".join(bits)
+
+
+# Round 3. Round 2 showed that walking the chip's opacity down trades
+# legibility away one-for-one -- the chip works precisely because it replaces
+# the footage with a known background. The cheaper lever is to cover *less*
+# footage rather than cover it more faintly: a tighter chip, or a halo that
+# follows the letterforms instead of boxing them.
 GRAY_CANDIDATES: dict[str, GrayCandidate] = {
-    # --- unaided tonal ladder, light to dark ---------------------------------
-    "frost":  ("#FFFFFF", 0.55, True,  None, 0.0),      # near-white
-    "mist":   ("#CAD2DB", 0.72, True,  None, 0.0),      # brand divider grey
-    "ash":    ("#A1A1AA", 0.78, True,  None, 0.0),      # brand ink-4
-    "smoke":  ("#8A8F96", 0.85, True,  None, 0.0),      # neutral mid
-    "slate":  ("#677587", 0.85, True,  None, 0.0),      # brand ink-3
-    "bare":   ("#8A8F96", 0.85, False, None, 0.0),      # control: no shadow
-    # --- light chip ----------------------------------------------------------
-    # None of the unaided greys hold on busy mid-tone footage: the mark and the
-    # background keep landing on the same luminance. A dark-grey mark on a soft
-    # light chip fixes that and suits a paper-light brand better than a dark
-    # scrim would. `veil` is the lightest touch; `chip` is the one that clears
-    # the 3:1 floor on every frame tested.
-    "veil":   ("#677587", 0.92, False, "#FFFFFF", 0.70),
-    "chip":   ("#526071", 0.90, False, "#FFFFFF", 0.62),
+    "chip":       GrayCandidate("#526071", 0.90, scrim_hex="#FFFFFF", scrim=0.62),
+    "chip-tight": GrayCandidate("#526071", 0.90, scrim_hex="#FFFFFF", scrim=0.62,
+                                pad=(13, 8, 13)),
+    "halo":       GrayCandidate("#526071", 0.92, halo_hex="#FFFFFF", halo=0.85),
+    "halo-soft":  GrayCandidate("#526071", 0.90, halo_hex="#FFFFFF", halo=0.60,
+                                halo_sigma=11.0),
+    "halo-warm":  GrayCandidate("#677587", 0.92, halo_hex="#FAF8F0", halo=0.80),
+    "slate":      GrayCandidate("#677587", 0.85, shadow=True),
+    "mist":       GrayCandidate("#CAD2DB", 0.75, shadow=True),
 }
+
 
 GRAY_SHADOW = dict(dy=2, sigma=7, opacity=0.30)
 
 
 def build_gray(name: str, width: int) -> np.ndarray:
-    fill, opacity, shadowed, scrim_hex, scrim = GRAY_CANDIDATES[name]
-    mark = wordmark(width, fill=fill)
+    c = GRAY_CANDIDATES[name]
+    mark = wordmark(width, fill=c.fill)
     mw, mh = mark.size
     pad = SHADOW_PAD
     surface = skia.Surface(mw + pad * 2, mh + pad * 2)
     with surface as canvas:
         canvas.clear(skia.ColorTRANSPARENT)
-        if scrim_hex is not None:
-            sp = skia.Paint(AntiAlias=True, Color=hex_to_color(scrim_hex, scrim))
+        if c.scrim_hex is not None:
+            px, py, radius = c.pad
+            sp = skia.Paint(AntiAlias=True,
+                            Color=hex_to_color(c.scrim_hex, c.scrim))
             sp.setImageFilter(skia.ImageFilters.Blur(PLATE_FEATHER, PLATE_FEATHER))
             canvas.drawRoundRect(
-                skia.Rect.MakeLTRB(pad - PLATE_PAD_X, pad - PLATE_PAD_Y,
-                                   pad + mw + PLATE_PAD_X, pad + mh + PLATE_PAD_Y),
-                PLATE_RADIUS, PLATE_RADIUS, sp)
-        paint = (soft_shadow(**GRAY_SHADOW) if shadowed
+                skia.Rect.MakeLTRB(pad - px, pad - py,
+                                   pad + mw + px, pad + mh + py),
+                radius, radius, sp)
+        if c.halo_hex is not None:
+            # A glow, not an outline: the same diffuse device as the shadow,
+            # inverted, so it lifts the mark off dark AND busy footage without
+            # boxing it. Drawn twice to build up density.
+            hp = skia.Paint(AntiAlias=True)
+            hp.setImageFilter(skia.ImageFilters.DropShadowOnly(
+                0.0, 0.0, c.halo_sigma, c.halo_sigma,
+                hex_to_color(c.halo_hex, c.halo)))
+            for _ in range(2):
+                draw_rgba(canvas, mark.full, pad, pad, hp)
+        paint = (soft_shadow(**GRAY_SHADOW) if c.shadow
                  else skia.Paint(AntiAlias=True))
-        draw_rgba(canvas, mark.full, pad, pad, paint, opacity)
+        draw_rgba(canvas, mark.full, pad, pad, paint, c.opacity)
     return np.array(surface.makeImageSnapshot().toarray())
 
 
-def context_sheet(video: Path, at: float, names: list[str],
-                  size: str) -> skia.Surface:
+def context_sheet(video: Path, at: float, names: list[str], size: str,
+                  slot: tuple[int, int] = WATERMARK_HOME) -> skia.Surface:
     """Full frames, side by side. A 1:1 crop makes every mark look shouty."""
     width = WATERMARK_SIZES[size]
     bg = load_frame(video, at)
@@ -552,7 +596,7 @@ def context_sheet(video: Path, at: float, names: list[str],
         canvas.clear(hex_to_color("#14171A"))
         for col, name in enumerate(names):
             composite = verify.over(
-                _overlay_rgba(build_gray(name, width), *WATERMARK_HOME), bg)
+                _overlay_rgba(build_gray(name, width), *slot), bg)
             rgba = np.dstack([composite.astype(np.uint8),
                               np.full((H, W, 1), 255, np.uint8)])
             img = to_image(rgba).resize(
@@ -563,17 +607,20 @@ def context_sheet(video: Path, at: float, names: list[str],
     return surface
 
 
-# The crop shown per cell: the watermark plus enough footage around it to judge
-# whether the mark is subtle or shouting.
-_CELL = (0, 130, 620, 390)
+def _cell_for(slot: tuple[int, int]) -> tuple[int, int, int, int]:
+    """The crop shown per cell: the mark plus enough footage around it to judge
+    whether it is subtle or shouting."""
+    return (0, slot[1] - 80, 620, slot[1] + 180)
 
 
-def compare_grays(video: Path, times: list[float], size: str) -> tuple[skia.Surface, dict]:
+def compare_grays(video: Path, times: list[float], size: str,
+                  slot: tuple[int, int] = WATERMARK_HOME
+                  ) -> tuple[skia.Surface, dict]:
     width = WATERMARK_SIZES[size]
     names = list(GRAY_CANDIDATES)
-    cx0, cy0, cx1, cy1 = _CELL
+    cx0, cy0, cx1, cy1 = _cell_for(slot)
     cw, ch = cx1 - cx0, cy1 - cy0
-    label_h, head_h = 54, 64
+    label_h, head_h = 76, 64
 
     frames = [(t, load_frame(video, t)) for t in times]
     scores: dict = {}
@@ -590,12 +637,12 @@ def compare_grays(video: Path, times: list[float], size: str) -> tuple[skia.Surf
 
         for row, name in enumerate(names):
             tile = build_gray(name, width)
-            bare = wordmark(width, fill=GRAY_CANDIDATES[name][0])
-            ink = _overlay_rgba(_pad(bare.full, SHADOW_PAD), *WATERMARK_HOME)
+            bare = wordmark(width, fill=GRAY_CANDIDATES[name].fill)
+            ink = _overlay_rgba(_pad(bare.full, SHADOW_PAD), *slot)
             y = head_h + row * (ch + label_h)
 
             for col, (t, bg) in enumerate(frames):
-                composite = verify.over(_overlay_rgba(tile, *WATERMARK_HOME), bg)
+                composite = verify.over(_overlay_rgba(tile, *slot), bg)
                 res = verify.contrast(ink, composite)
                 scores[f"{name}@{t:g}s"] = res.as_dict()
 
@@ -604,16 +651,16 @@ def compare_grays(video: Path, times: list[float], size: str) -> tuple[skia.Surf
                 cell = np.ascontiguousarray(rgba[cy0:cy1, cx0:cx1])
                 draw_rgba(canvas, cell, col * cw, y)
 
-                hexcode, opacity, shadowed, scrim_hex, scrim = GRAY_CANDIDATES[name]
-                label = (f"{name}  {hexcode} @{opacity:.0%}"
-                         f"{'  +shadow' if shadowed else ''}"
-                         f"{f'  on {scrim_hex} {scrim:.0%}' if scrim_hex else ''}")
-                canvas.drawString(
-                    f"{label}   {res.worst_tile:.1f}:1",
-                    col * cw + 18, y + ch + 36, font("Inter-Medium", 26),
-                    skia.Paint(AntiAlias=True,
-                               Color=hex_to_color(PAPER if res.worst_tile >= 2.0
-                                                  else "#E8846F")))
+                paint = skia.Paint(
+                    AntiAlias=True,
+                    Color=hex_to_color(PAPER if res.worst_tile >= 2.5
+                                       else "#E8846F"))
+                canvas.drawString(f"{name}   {res.worst_tile:.1f}:1",
+                                  col * cw + 18, y + ch + 30,
+                                  font("Inter-Bold", 26), paint)
+                canvas.drawString(GRAY_CANDIDATES[name].label(),
+                                  col * cw + 18, y + ch + 60,
+                                  font("Inter-Medium", 21), paint)
     return surface, scores
 
 
@@ -708,6 +755,8 @@ def main() -> int:
     cmp_.add_argument("--at", default="1,6,10",
                       help="comma-separated seek times")
     cmp_.add_argument("--size", choices=list(WATERMARK_SIZES), default="standard")
+    cmp_.add_argument("--slot", choices=["top-left", "bottom-left"],
+                      default="top-left")
     cmp_.add_argument("--context", default="mist,slate,veil",
                       help="candidates to show full-frame, comma-separated")
     cmp_.add_argument("--out", type=Path, default=Path("gray-compare.png"))
@@ -722,12 +771,13 @@ def main() -> int:
 
     if args.cmd == "compare":
         times = [float(x) for x in args.at.split(",")]
-        surface, scores = compare_grays(args.video, times, args.size)
+        slot = WATERMARK_HOME if args.slot == "top-left" else WATERMARK_ALT
+        surface, scores = compare_grays(args.video, times, args.size, slot)
         save_png(surface, args.out)
         args.out.with_suffix(".json").write_text(json.dumps(scores, indent=2) + "\n")
         ctx = args.out.with_name(args.out.stem + "-in-context.png")
         save_png(context_sheet(args.video, times[0],
-                               args.context.split(","), args.size), ctx)
+                               args.context.split(","), args.size, slot), ctx)
         print(f"wrote {args.out}\nwrote {ctx}")
         return 0
 
