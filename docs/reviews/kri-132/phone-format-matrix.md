@@ -2,13 +2,14 @@
 
 ## Summary (plain English)
 
-- **Only three of nine video types actually render on an iPhone today: Montage, Day-Vlog, and Single-Hero — and only when they came from an approved guided-story plan.** These three are the "guided" formats; the on-device app compiles a pre-approved edit plan into a native recipe and never touches raw pixels on the server.
+- **Only three of nine video types have an iPhone render path today: Montage, Day-Vlog, and Single-Hero — and only when they came from an approved guided-story plan.** These three are the "guided" formats; the on-device app compiles a pre-approved edit plan into a native recipe and never touches raw pixels on the server.
+- **In the app, only Montage is actually reachable.** The chat format picker never offers Day-Vlog or Single-Hero to any account (`_available_formats()`, `app/routes/creation_threads.py:607-615`), so after the phone filter the picker shows exactly one format. Day-Vlog/Single-Hero reach the phone only if the planner picks them from a free-text request.
 - **Talking-Head, Subtitled, and all three Narrated variants never render on the phone.** They're cloud-only today — no phone compiler exists for them at all, and the chat planner is explicitly blocked from proposing them on a phone account (it fails with a clear in-chat message, not a crash or a silent cloud render).
 - **Slides (mixed photo/video posts) can't even be requested through the chat planner on any account, phone or web** — it's not a bug specific to phone rendering, slides simply isn't part of that flow yet.
 - **A live bug, confirmed by reading both the Python compiler and the Swift renderer: phone-rendered background music never fades in or out.** The intended fade-envelope code path in the iOS app is wired to a field the phone compiler never sets, so music jumps to full volume on frame one and cuts hard at the end. See "musicBed fade envelope" below.
 - **First fixes to prioritize:** (1) the silent music-fade bug above (cheap, isolated, high visibility), (2) deciding whether a voiceover attached to a guided-format item should be blocked earlier — today it slips past the approval gate and only fails once the worker picks the job up, wasting a dispatch, (3) a captions data contract is the actual blocker for Subtitled/Talking-Head phone support, not device performance — nothing else can start until that schema exists.
 
-This document is backend-led. A companion iOS-side trace of the same journey (CreationFlow.swift, KriaMediaEngine) will be merged into the User Journey section below by the orchestrator.
+The backend and the iOS sources were traced separately; both are in the User Journey section below.
 
 All line numbers were verified against `origin/main` at commit `88eb0e5` (2026-09-21) by grep, not copied from memory.
 
@@ -18,9 +19,9 @@ All line numbers were verified against `origin/main` at commit `88eb0e5` (2026-0
 
 | EditFormat | Phone status | Compile path | Gating evidence |
 |---|---|---|---|
-| `montage` | **Works**, guided-approved only | `app/pipeline/phone_montage_plan.py::compile_phone_montage_plan` | In `GUIDED_EDIT_FORMATS` and `PHONE_RENDER_SUPPORTED_FORMATS` (`app/agents/_schemas/edit_format.py:75, 92`). Dispatch gate at `app/tasks/content_plan_build.py:1467-1471` requires an approved guided proposal. Worker fork `app/tasks/generative_build.py:2172-2180`. |
-| `day_vlog` | **Works**, guided-approved only | same as montage | Same gates; additionally requires `NARRATIVE_CLIP_ORDER_ENABLED` and `edit_format_day_vlog_enabled` upstream at the planning layer (`app/services/creator_capabilities.py:104-121`), not re-checked at the phone dispatch gate itself. |
-| `single_hero` | **Works**, guided-approved only | same as montage | Same gates; requires `edit_format_single_hero_enabled` upstream (`creator_capabilities.py:122-133`). |
+| `montage` | **Works**, guided-approved only | `app/pipeline/phone_guided_plan.py::compile_phone_guided_plan` via `_run_phone_guided_job` (see "Which compiler actually runs" below) | In `GUIDED_EDIT_FORMATS` and `PHONE_RENDER_SUPPORTED_FORMATS` (`app/agents/_schemas/edit_format.py:75, 92`). Dispatch gate at `app/tasks/content_plan_build.py:1467-1471` requires an approved guided proposal. Worker fork `app/tasks/generative_build.py:2172-2180`. |
+| `day_vlog` | **Works**, guided-approved only; not offered by the chat picker | same as montage | Same gates; additionally requires `NARRATIVE_CLIP_ORDER_ENABLED` and `edit_format_day_vlog_enabled` upstream at the planning layer (`app/services/creator_capabilities.py:104-121`), not re-checked at the phone dispatch gate itself. |
+| `single_hero` | **Works**, guided-approved only; not offered by the chat picker | same as montage | Same gates; requires `edit_format_single_hero_enabled` upstream (`creator_capabilities.py:122-133`). |
 | `talking_head` | **Blocked** | none — cloud-only `app/pipeline/talking_head_assembler.py` | Not in `GUIDED_EDIT_FORMATS`; dispatch gate rejects with `unsupported_format` (`content_plan_build.py:1473-1476`). Chat planner fails with `PhoneFormatUnavailableError` (`creator_policy.py:113-114`). |
 | `subtitled` | **Blocked** | none — cloud-only (assembled inline in `app/tasks/generative_build.py`'s subtitled path) | Same dispatch-gate rejection as `talking_head`. |
 | `narrated` | **Blocked** | none | Same. Additionally requires a recorded voiceover or `NARRATED_SELF_NARRATION_ENABLED`, neither of which changes the phone outcome. |
@@ -29,6 +30,15 @@ All line numbers were verified against `origin/main` at commit `88eb0e5` (2026-0
 | `slides` | **Blocked** | none on phone; cloud path is a dedicated slide-post drafting flow (`app/routes/plan_items.py`, `slide_post` field), not the Main Creator Agent chat strategy | `_format_availability` (`app/services/creator_capabilities.py:101-148`) has no branch for `"slides"` at all — it's unavailable to the chat planner on every account, not just phone. Falls through to the dispatch gate's generic `unsupported_format` if ever attempted with clip paths. |
 
 **Conditional, not in the table above:** montage/day_vlog/single_hero **with a voiceover attached** dispatch successfully (the dispatch gate's non-guided fallback branch lets them through with no approved proposal at all — see "A live gate quirk" below) but the worker always rejects them once picked up (`app/tasks/generative_build.py:3906-3907`, `"Phone rendering does not yet support voiceover edits"`). This is recorded as **not working** — see `works_on_phone` in `src/apps/api/tests/tasks/_phone_format_expectations.py`.
+
+### Which compiler actually runs
+
+There are two phone compilers, and the dispatch gate decides between them purely on `guided_edit_applicable()` (`app/tasks/content_plan_build.py:1106-1109`):
+
+- **No voiceover** → `guided_applicable` is always `True` for montage/day_vlog/single_hero → the phone gate requires an approved proposal (`content_plan_build.py:1468-1471`) → the worker sees `guided_edit` in the snapshot and runs `_run_phone_guided_job` → `compile_phone_guided_plan` (`app/tasks/generative_build.py:2172`).
+- **Voiceover attached** → `guided_applicable` flips to `False` → the non-guided branch only checks `PHONE_RENDER_SUPPORTED_FORMATS` → the worker runs `_run_phone_montage_job` → `compile_phone_montage_plan`... which rejects every voiceover on its first content check.
+
+So today `compile_phone_montage_plan` (KRI-114 P1-2/P1-3, including its music-bed track) has **no production entry that can succeed**: its only real entry is the voiceover case it refuses. `test_phone_gate_allowlist_extension_binds_without_approval` documents the no-approval dispatch as the intended extension point. Voiceover-on-phone (the KRI-132 follow-up PR) is what makes this compiler live; until then the music-bed findings below describe code that is compiled and unit-tested but not exercised by a real phone render.
 
 ### A live gate quirk: voiceover bypasses guided approval
 
@@ -86,6 +96,9 @@ All four default off/empty (`app/config.py:16-18, 33`):
 
 ## (d) Blockers to file
 
+0. **Day-Vlog and Single-Hero are unreachable from the chat format picker** (`_available_formats()` never emits them) — product decision: offer them, or state that they are planner-chosen only.
+0. **Phone-gate refusals are a dead end for the creator** — reason is logged, never shown; Retry cannot succeed. Fix rides with the voiceover PR.
+0. **`needsAttention` Retry loops for `unsupported_recipe`**, **Add clip is disabled with no explanation**, **deferred variants are never mentioned**, and **there is no phone-render UI test** — iOS follow-ups.
 1. **musicBed fade envelope is broken** (see above) — isolated fix, `phone_montage_plan.py:305` + `AudioMixRecipe` fade defaults; independently actionable today.
 2. **Voiceover-on-guided-format bypasses the approval gate** (see "A live gate quirk") — either close the gate earlier (reject at dispatch instead of wasting a Job) or explicitly document it as intentional defense-in-depth; currently looks accidental.
 3. **Slides** — no phone compiler, and not even reachable through the chat planner on any account. Needs its own drafting-flow-to-phone-recipe design; nothing here is shared with the guided/montage compilers.
@@ -101,9 +114,27 @@ All four default off/empty (`app/config.py:16-18, 33`):
 
 ## User journey on a phone-rendering account
 
-This section is **backend-led**: it traces what the FastAPI/Celery layer does and what user-facing copy it emits, verified by reading the code and (where noted) pinned by an automated test. It does not independently verify SwiftUI behavior, on-device negotiator state machines, backgrounding, or retry UI — those are being traced separately and will be merged in below.
+The backend subsections trace what the FastAPI/Celery layer does and the copy it emits; the iOS table traces what the app shows. Both are from reading `origin/main`; rows pinned by an automated test say so.
 
-<!-- iOS journey findings: to be merged by orchestrator -->
+### iOS side of the journey (traced in the Swift sources, `origin/main` @ `88eb0e5`)
+
+| Step | What the creator sees on a phone-rendering account | Evidence | Verdict |
+|---|---|---|---|
+| Format picker | Only **Montage**. `FormatStage` is fed by `GET /capabilities` (`ChatWorkspaceView.swift:527`, `803-816`), whose phone filter intersects `_available_formats()` = {montage, narrated_planned, subtitled, slides} with `PHONE_RENDER_SUPPORTED_FORMATS`. | `creation_threads.py:607-615`, `2661-2668` | Works, but Day-Vlog / Single-Hero are unreachable from the picker |
+| Add footage | `.phone`: a small analysis copy uploads, originals stay on the iPhone. | `CreationFlow.swift` `ProjectUploadDestination.resolve`; `DeviceRenderSessionTests.testFootageOnPhoneAccountsAlwaysRendersOnTheIPhone` | Works |
+| Add Visuals (photos / videos) | `.phoneVisuals(kinds)` per verified feature; otherwise "Visuals aren't available yet for videos rendered on this iPhone…" | `CreationFlow.swift:208-235`; `testPhoneAccountsKeepVisualsOnTheIPhone` | Restricted with clear message |
+| Add voiceover | "Voiceover isn't available yet for videos rendered on iPhone. Your project is saved." The recorder is not rendered at all. | `CreationFlow.swift:200, 232`; `CreationAttachments.swift`; `testVoiceoverNeverMovesAPhoneAccountToTheCloud` | Restricted with clear message (being lifted by the voiceover PR) |
+| Mixed sources | "This project has sources from different rendering destinations. Keep the project and reconnect its original footage before continuing." No control is attached to the message. | `CreationFlow.swift:198` | Restricted, recovery step unclear |
+| Generate, when the dispatch gate refuses | Chat: "I couldn't start that render. Your creative plan is still saved." (code `execution_failed`) with a **Retry generation** button that can never succeed; the manual Generate route says "Your clips couldn't be validated — re-upload them and try again". The real reason (`not_enrolled` / `unapproved_guided` / `unsupported_format`) is only logged. | `content_plan_build.py:1565-1572`; `creator_agent.py:3688, 3762-3782`; `plan_items.py:2863-2866`; `CreationConfirmationStage.swift` | **Dead end** — being fixed with the voiceover PR |
+| On-device render | preparing → rendering → localReady → syncing → synced. When `CapabilityNegotiator.decide` returns `.cloud` (missing capability, thermal, storage, renderer version, ducking) the session goes to `needsAttention`; it never uploads for a cloud render. | `Capabilities.swift:16-31`; `DeviceRenderSessions.swift:113-121`; `DeviceRenderPanel.swift:208-249`; `testDisabledGateNeverStartsExport` | Works — **no silent cloud fallback** |
+| Retry on `needsAttention` | "Try again" is offered for every reason, including `unsupported_recipe` ("This edit isn't supported for iPhone rendering yet."), where the negotiator deterministically refuses the same recipe again. | `DeviceRenderPanel.swift:212` | Loop with no way forward for structural reasons |
+| Backgrounding / app kill | `DeviceRenderCoordinator.recover()` restarts an interrupted encode and re-publishes an intact MP4 on the next `reconcile()`. No app-lifecycle test. | `DeviceRenderCoordinator.swift`; `DeviceRenderCoordinatorTests` | Works at unit level; lifecycle unverified |
+| Preview / save / share | Play, Save to Photos and Share work from the local file at `localReady`; `synced` adds "Available in your Gallery and on your other devices." | `DeviceRenderPanel.swift` | Works |
+| Edit + re-render | Text, trims, reorder, split, remove, transitions re-render on the phone (`rendersOnDevice` persists per variant). Crop / speed / looks and Visuals import are disabled **with** an explanation; **Add clip** is disabled with none. `capabilityReason(_:)` is plumbed but never displayed. | `NativeEditorSession.swift:663, 2310, 3611`; `NativeFootagePanel.swift`; `NativeEditorMediaViews.swift:1044, 1126` | Works; one unexplained disabled control |
+| Variants | The phone compiles only the top-ranked variant; the rest are recorded in `assembly_plan["phone_deferred_variants"]`. No iOS source references it, so the creator is never told. | `generative_build.py` `_run_phone_montage_job`; runbook | Silent narrowing (montage-compiler path only) |
+
+**Test coverage of the journey:** the upload-destination matrix, negotiator decisions, coordinator lifecycle, and editor fences are unit-tested. **No `KriaUITests` file touches phone rendering at all**, so none of the copy above is exercised through real views, and nothing tests app-lifecycle recovery or the phone-gate reason reaching the user.
+
 
 ### Can the planner choose a non-phone format from chat even though `/capabilities` hides it from the picker?
 
