@@ -29,6 +29,33 @@ Four cases exercise four distinct compiler branches:
                      the video timeline to prove the compiler's duration
                      clamp (basicComposition/audioMix/narrationAudio).
 
+Three more cases exercise the OTHER two KRI-132 phone compilers -- neither
+goes through `compile_phone_montage_plan` at all:
+  - `subtitled_sentence` -- `app.pipeline.phone_subtitled_plan
+                     .compile_phone_subtitled_plan`: one portrait clip,
+                     sentence (`pop-in`) captions with a deliberate gap
+                     between cues, the clip's own audio kept at full volume,
+                     no music/narration (basicComposition/local1080Export/
+                     positionedText/animatedText).
+  - `subtitled_word` -- same compiler, `caption_style="word"` -- per-word
+                     timings compile to the karaoke-line highlight sweep
+                     instead of plain pop-in blocks.
+  - `narrated`    -- `app.pipeline.phone_narrated_plan
+                     .compile_phone_narrated_plan`: two clips tiled onto
+                     narration step windows; the second clip is SHORTER than
+                     its step, so its `TimelineClip.rate` is exercised < 1
+                     (slow-down, never freeze-hold) -- plus captions and an
+                     audible footage bed under the voice (basicComposition/
+                     local1080Export/narrationAudio/audioMix/variableSpeed/
+                     positionedText/animatedText).
+
+All three new cases additionally write `caption_samples` into `e2e.json`
+(`{name, t, region, expect_text}`): a region derived from the compiled
+recipe's own `PortableTextLayer`/`PositionedTextRun` geometry (see
+`_caption_region` below), sampled once while a cue is on screen and once in
+a deliberate gap with no active cue, so `DeviceMontageRenderE2ETests` can
+assert caption pixels appear and disappear without OCR.
+
 `day_vlog`/`single_hero` are deliberately NOT separate cases: read
 `app/pipeline/phone_montage_plan.py` in full -- neither `resolved_archetype`
 nor `edit_format` is referenced anywhere in `compile_phone_montage_plan`.
@@ -82,7 +109,9 @@ from app.pipeline.generative_decision import (
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_montage_plan import compile_phone_montage_plan
+from app.pipeline.phone_narrated_plan import NarratedPhoneStep, compile_phone_narrated_plan
 from app.pipeline.phone_recipe_shared import PhoneMusicBed, PhoneNarrationBed
+from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding
 
@@ -120,7 +149,9 @@ def _tone(path: Path, freq: int, duration: float) -> None:
     )
 
 
-def _binding(path: Path, media_id: str) -> PhoneSourceBinding:
+def _binding(
+    path: Path, media_id: str, *, duration_s: float = CLIP_DURATION_S
+) -> PhoneSourceBinding:
     sha, size = _fingerprint(path)
     return PhoneSourceBinding(
         media_id=media_id,
@@ -129,7 +160,7 @@ def _binding(path: Path, media_id: str) -> PhoneSourceBinding:
         original=OriginalMediaDescriptor(
             sha256=sha,
             byte_count=size,
-            duration_s=CLIP_DURATION_S,
+            duration_s=duration_s,
             width=CANVAS["width"],
             height=CANVAS["height"],
             has_audio=True,
@@ -201,6 +232,38 @@ def _decision(
 def _status(job_id: uuid.UUID, variant_id: str, recipe) -> dict:
     request = make_device_request(job_id=job_id, variant_id=variant_id, revision=1, recipe=recipe)
     return DeviceRenderStatus(phase="awaiting_device", request=request).model_dump(mode="json")
+
+
+def _caption_region(
+    layer, *, canvas_width: int, canvas_height: int, pad: float = 56.0
+) -> list[int]:
+    """Generous pixel bbox ([x0, y0, x1, y1], top-left origin) around every
+    run in a compiled caption `layer`.
+
+    Derived from the layer's own resolved geometry rather than hardcoded:
+    `PositionedTextRun.x`/`baseline_y` are already fully-anchored ABSOLUTE
+    canvas pixels (see `portable_text_layout.compile_text_overlay` --
+    `x=cloud._anchored_left_x(...)`, `baseline_y=top + ascent + ...`), so only
+    each run's width needs approximating (`compile_text_overlay` doesn't hand
+    back a measured run width to its caller). A generous per-character
+    estimate plus `pad` only needs to be a safe SUPERSET of the actual glyph
+    pixels for a presence/absence pixel check, not an exact box.
+    """
+    lefts: list[float] = []
+    rights: list[float] = []
+    tops: list[float] = []
+    bottoms: list[float] = []
+    for run in layer.runs:
+        est_width = len(run.text) * run.font_size * 0.66
+        lefts.append(run.x)
+        rights.append(run.x + est_width)
+        tops.append(run.baseline_y - run.font_size * 1.1)
+        bottoms.append(run.baseline_y + run.font_size * 0.4)
+    x0 = max(0.0, min(lefts) - pad)
+    x1 = min(float(canvas_width), max(rights) + pad)
+    y0 = max(0.0, min(tops) - pad)
+    y1 = min(float(canvas_height), max(bottoms) + pad)
+    return [round(x0), round(y0), round(x1), round(y1)]
 
 
 def main() -> None:
@@ -314,8 +377,101 @@ def main() -> None:
         narration=narration_bed,
     )
 
+    # --- case (e): "Talking to camera" subtitled, sentence captions --------
+    # A deliberate 1.0s and 0.8s gap between cues so caption pixel-presence
+    # can be checked both on and off.
+    subtitled_sentence_cues = [
+        {"text": "Hello there friend", "start_s": 0.3, "end_s": 1.3},
+        {"text": "Welcome to the show", "start_s": 2.3, "end_s": 3.5},
+        {"text": "Thanks for watching", "start_s": 4.3, "end_s": 5.6},
+    ]
+    _color_clip(out / "subtitled-sentence-c0.mp4", "blue", 340, duration=6.0)
+    subtitled_sentence_binding = _binding(
+        out / "subtitled-sentence-c0.mp4", "subtitled-sentence-c0", duration_s=6.0
+    )
+    try:
+        recipes["subtitled_sentence"] = compile_phone_subtitled_plan(
+            (subtitled_sentence_binding,), caption_cues=subtitled_sentence_cues
+        )
+    except (UnsupportedPhonePlan, ValueError) as exc:
+        compile_errors["subtitled_sentence"] = f"{type(exc).__name__}: {exc}"
+
+    # --- case (f): "Talking to camera" subtitled, word/karaoke captions ----
+    subtitled_word_cues = [
+        {
+            "text": "Hello world",
+            "start_s": 0.3,
+            "end_s": 1.4,
+            "words": [
+                {"text": "Hello", "start_s": 0.3, "end_s": 0.8},
+                {"text": "world", "start_s": 0.8, "end_s": 1.4},
+            ],
+        },
+        {
+            "text": "Testing captions",
+            "start_s": 2.4,
+            "end_s": 3.7,
+            "words": [
+                {"text": "Testing", "start_s": 2.4, "end_s": 3.0},
+                {"text": "captions", "start_s": 3.0, "end_s": 3.7},
+            ],
+        },
+    ]
+    _color_clip(out / "subtitled-word-c0.mp4", "teal", 350, duration=6.0)
+    subtitled_word_binding = _binding(
+        out / "subtitled-word-c0.mp4", "subtitled-word-c0", duration_s=6.0
+    )
+    try:
+        recipes["subtitled_word"] = compile_phone_subtitled_plan(
+            (subtitled_word_binding,), caption_cues=subtitled_word_cues, caption_style="word"
+        )
+    except (UnsupportedPhonePlan, ValueError) as exc:
+        compile_errors["subtitled_word"] = f"{type(exc).__name__}: {exc}"
+
+    # --- case (g): narrated walkthrough -- second clip retimes (rate<1) ----
+    # c0 has more footage (5s) than its 4s step -> trims, rate=1.0. c1 has
+    # LESS footage (3s) than its 6s step -> slows down instead of freezing.
+    _color_clip(out / "narrated-c0.mp4", "gold", 260, duration=5.0)
+    _color_clip(out / "narrated-c1.mp4", "salmon", 410, duration=3.0)
+    narrated_bindings = (
+        _binding(out / "narrated-c0.mp4", "narrated-c0", duration_s=5.0),
+        _binding(out / "narrated-c1.mp4", "narrated-c1", duration_s=3.0),
+    )
+    narrated_steps = [
+        NarratedPhoneStep(step_id="s0", media_id="narrated-c0", start_s=0.0, end_s=4.0),
+        NarratedPhoneStep(step_id="s1", media_id="narrated-c1", start_s=4.0, end_s=10.0),
+    ]
+    # Reuses the same 10s voice tone (`voice_path`/`voice_sha`/`voice_bytes`,
+    # already computed above for the montage "narration" case) under a
+    # distinct `plan_item_id` -- both are just fixture tone bytes, and a
+    # second real ffmpeg render buys nothing here.
+    narrated_narration = PhoneNarrationBed(
+        plan_item_id="e2e-narrated-item",
+        generation="9",
+        fingerprint=RenderFingerprint(sha256=voice_sha, byte_count=voice_bytes),
+        duration_s=10.0,
+    )
+    narrated_cues = [
+        {"text": "Look at this view", "start_s": 0.5, "end_s": 2.0},
+        {"text": "Now check this out", "start_s": 5.0, "end_s": 6.5},
+    ]
+    try:
+        recipes["narrated"] = compile_phone_narrated_plan(
+            narrated_steps,
+            narrated_bindings,
+            narrated_narration,
+            voiceover_duration_s=10.0,
+            # Voice stays dominant but footage_bed_gain = 1 - mix = 0.4 keeps
+            # the clips' own audio audible under it (unlike "music", which
+            # replaces source audio entirely).
+            mix=0.6,
+            caption_cues=narrated_cues,
+        )
+    except (UnsupportedPhonePlan, ValueError) as exc:
+        compile_errors["narrated"] = f"{type(exc).__name__}: {exc}"
+
     if compile_errors:
-        print("compile_phone_montage_plan REJECTED:")
+        print("phone compiler REJECTED:")
         for case_id, reason in compile_errors.items():
             print(f"  {case_id}: {reason}")
         sys.exit(1)
@@ -345,6 +501,31 @@ def main() -> None:
     for case_id, recipe in recipes.items():
         status = _status(job_ids[case_id], case_id, recipe)
         (out / f"status-{case_id.replace('_', '-')}.json").write_text(json.dumps(status, indent=2))
+
+    # Caption regions are derived from each case's OWN compiled text layers
+    # (see `_caption_region`), not hardcoded -- one region per cue, indexed
+    # in the same order the cues were passed (cues are already sorted and
+    # none of ours are dropped, so cue index == `recipe.text_layers` index).
+    subtitled_sentence_region0 = _caption_region(
+        recipes["subtitled_sentence"].text_layers[0],
+        canvas_width=CANVAS["width"],
+        canvas_height=CANVAS["height"],
+    )
+    subtitled_word_region0 = _caption_region(
+        recipes["subtitled_word"].text_layers[0],
+        canvas_width=CANVAS["width"],
+        canvas_height=CANVAS["height"],
+    )
+    narrated_region0 = _caption_region(
+        recipes["narrated"].text_layers[0],
+        canvas_width=CANVAS["width"],
+        canvas_height=CANVAS["height"],
+    )
+    narrated_region1 = _caption_region(
+        recipes["narrated"].text_layers[1],
+        canvas_width=CANVAS["width"],
+        canvas_height=CANVAS["height"],
+    )
 
     e2e = {
         "verified_features": sorted(all_capabilities),
@@ -427,6 +608,113 @@ def main() -> None:
                     {"name": "c1", "t": 4.5, "x": 540, "y": 960, "rgb": [128, 0, 128]},
                 ],
             },
+            "subtitled_sentence": {
+                "status_file": "status-subtitled-sentence.json",
+                "duration_s": recipes["subtitled_sentence"].duration,
+                "required_capabilities": sorted(
+                    recipes["subtitled_sentence"].required_capabilities
+                ),
+                "drop_capability": "positionedText",
+                "clips": [
+                    {"media_id": "subtitled-sentence-c0", "file": "subtitled-sentence-c0.mp4"},
+                ],
+                "music_asset_id": None,
+                "music_file": None,
+                "expects_source_audio": True,
+                "expects_music_audio": False,
+                "expects_narration_audio": False,
+                # Sampled near the top of frame, far from the caption safe
+                # zone (which sits near the bottom -- cloud margin 384px on
+                # a 1920px canvas), so this never overlaps a caption region.
+                "samples": [
+                    {"name": "c0", "t": 1.0, "x": 540, "y": 200, "rgb": [0, 0, 255]},
+                ],
+                "caption_samples": [
+                    {
+                        "name": "cue0_on",
+                        "t": 0.8,
+                        "region": subtitled_sentence_region0,
+                        "expect_text": True,
+                    },
+                    {
+                        "name": "cue0_gap",
+                        "t": 1.8,
+                        "region": subtitled_sentence_region0,
+                        "expect_text": False,
+                    },
+                ],
+            },
+            "subtitled_word": {
+                "status_file": "status-subtitled-word.json",
+                "duration_s": recipes["subtitled_word"].duration,
+                "required_capabilities": sorted(recipes["subtitled_word"].required_capabilities),
+                "drop_capability": "animatedText",
+                "clips": [
+                    {"media_id": "subtitled-word-c0", "file": "subtitled-word-c0.mp4"},
+                ],
+                "music_asset_id": None,
+                "music_file": None,
+                "expects_source_audio": True,
+                "expects_music_audio": False,
+                "expects_narration_audio": False,
+                "samples": [
+                    {"name": "c0", "t": 1.0, "x": 540, "y": 200, "rgb": [0, 128, 128]},
+                ],
+                "caption_samples": [
+                    {
+                        "name": "cue0_on",
+                        "t": 0.6,
+                        "region": subtitled_word_region0,
+                        "expect_text": True,
+                    },
+                    {
+                        "name": "cue0_gap",
+                        "t": 2.0,
+                        "region": subtitled_word_region0,
+                        "expect_text": False,
+                    },
+                ],
+            },
+            "narrated": {
+                "status_file": "status-narrated.json",
+                "duration_s": recipes["narrated"].duration,
+                "required_capabilities": sorted(recipes["narrated"].required_capabilities),
+                "drop_capability": "variableSpeed",
+                "clips": [
+                    {"media_id": "narrated-c0", "file": "narrated-c0.mp4"},
+                    {"media_id": "narrated-c1", "file": "narrated-c1.mp4"},
+                ],
+                "music_asset_id": None,
+                "music_file": None,
+                "voiceover_asset_id": f"voiceover-{narrated_narration.plan_item_id}",
+                "voiceover_file": voice_path.name,
+                # mix=0.6 keeps the voice dominant but footage_bed_gain
+                # (1 - mix = 0.4) leaves the clips' own audio audible under
+                # it -- unlike "music", which replaces source audio entirely.
+                "expects_source_audio": True,
+                "expects_music_audio": False,
+                "expects_narration_audio": True,
+                "samples": [
+                    {"name": "c0", "t": 1.5, "x": 540, "y": 200, "rgb": [255, 215, 0]},
+                    {"name": "c1", "t": 7.0, "x": 540, "y": 200, "rgb": [250, 128, 114]},
+                ],
+                "caption_samples": [
+                    {"name": "cue0_on", "t": 0.9, "region": narrated_region0, "expect_text": True},
+                    {
+                        "name": "cue0_gap",
+                        "t": 3.0,
+                        "region": narrated_region0,
+                        "expect_text": False,
+                    },
+                    {"name": "cue1_on", "t": 5.5, "region": narrated_region1, "expect_text": True},
+                    {
+                        "name": "cue1_gap",
+                        "t": 8.0,
+                        "region": narrated_region1,
+                        "expect_text": False,
+                    },
+                ],
+            },
         },
     }
     (out / "e2e.json").write_text(json.dumps(e2e, indent=2))
@@ -437,6 +725,12 @@ def main() -> None:
             f"  {case_id}: duration={recipe.duration:.3f}s "
             f"required_capabilities={sorted(recipe.required_capabilities)}"
         )
+    for case_id, case in e2e["cases"].items():
+        caption_samples = case.get("caption_samples")
+        if not caption_samples:
+            continue
+        regions = {sample["name"]: sample["region"] for sample in caption_samples}
+        print(f"  {case_id} caption regions: {regions}")
     print(
         "verified_features (union, written to settings for validation only): "
         f"{sorted(all_capabilities)}"

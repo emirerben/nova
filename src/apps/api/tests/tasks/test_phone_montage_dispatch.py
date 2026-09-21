@@ -207,8 +207,8 @@ def test_voiceover_job_is_rejected_while_narration_flag_is_off(monkeypatch):
     session.commit.assert_not_called()
 
 
-def _fake_narration_bed(_job_id, decision):
-    if not decision.extras.get("voiceover_gcs_path"):
+def _fake_narration_bed(_job_id, voiceover_gcs_path):
+    if not voiceover_gcs_path:
         return None
     from app.kria.render_assets import RenderFingerprint
     from app.pipeline.phone_recipe_shared import PhoneNarrationBed

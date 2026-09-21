@@ -86,12 +86,46 @@ AUDIO_LED_EDIT_FORMATS: frozenset[str] = frozenset(
 # time as each archetype's phone compiler ships; kept positive on purpose so
 # an unknown/future format never accidentally qualifies.
 #
-# KRI-114 P1-2/P1-4: montage/day_vlog/single_hero without a voiceover now
-# compile through `app.pipeline.phone_montage_plan.compile_phone_montage_plan`
-# (`app.tasks.generative_build._run_phone_montage_job`). A voiceover on any of
-# these formats still routes to the cloud renderer — the dispatch fork checks
-# `all_candidates["voiceover_gcs_path"]` before this allowlist even applies.
-PHONE_RENDER_SUPPORTED_FORMATS: frozenset[str] = frozenset({"montage", "day_vlog", "single_hero"})
+# IMPORTANT — this is COMPILER EXISTENCE, not "will render right now". It is a
+# static, settings-free constant (importable at module load, safe to
+# monkeypatch-free-compare in tests) so it deliberately does NOT encode
+# runtime flags/rollout state. Every runtime decision (dispatch gate, the
+# worker's own dispatch fork, the chat picker) MUST consult
+# `app.services.phone_rollout.phone_render_supported_formats()` instead — that
+# settings-aware helper intersects this set with the currently-enabled
+# subset. Mirrors the existing montage-family precedent: `montage` has been in
+# this set since KRI-114 even though a voiceover on it additionally requires
+# `phone_narration_rendering_enabled` + a verified `narrationAudio` before it
+# actually renders (see that flag's docstring in `app/config.py`).
+#
+# KRI-114 P1-2/P1-4: montage/day_vlog/single_hero without a voiceover compile
+# through `app.pipeline.phone_montage_plan.compile_phone_montage_plan`
+# (`app.tasks.generative_build._run_phone_montage_job`); WITH a voiceover they
+# compile through the same function once `phone_narration_rendering_enabled`
+# + narrationAudio are satisfied (KRI-132).
+# KRI-132: `subtitled` (exactly one clip, own audio → editable captions)
+# compiles through `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan`
+# (`_run_phone_subtitled_job`), gated by `phone_subtitled_rendering_enabled` +
+# `subtitled_archetype_enabled`. `narrated`/`narrated_planned`/`narrated_ready`
+# WITH a recorded voiceover compile through
+# `app.pipeline.phone_narrated_plan.compile_phone_narrated_plan`
+# (`_run_phone_narrated_job`), gated by `phone_narrated_rendering_enabled` +
+# `phone_narration_rendering_enabled` + narrationAudio + `narrated_archetype_enabled`.
+# A narrated item with NO voiceover only ever reaches the phone through the
+# 1-clip self-narration exception documented on
+# `phone_render_supported_formats` (talking_head's 2+-clip self-narration
+# resolution has no phone compiler and is never included here).
+PHONE_RENDER_SUPPORTED_FORMATS: frozenset[str] = frozenset(
+    {
+        "montage",
+        "day_vlog",
+        "single_hero",
+        "subtitled",
+        "narrated",
+        "narrated_planned",
+        "narrated_ready",
+    }
+)
 
 RenderProgram = Literal["guided", "native"]
 

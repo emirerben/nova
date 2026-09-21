@@ -105,14 +105,118 @@ _UNSUPPORTED = PhoneFormatExpectation(
     phone_gate="unsupported_format",
     works_on_phone=False,
     worker_note=(
-        "Not in GUIDED_EDIT_FORMATS -> guided_edit_applicable() is False -> the "
-        "dispatch gate's non-guided branch checks "
-        "`fmt not in PHONE_RENDER_SUPPORTED_FORMATS` "
-        "(app/tasks/content_plan_build.py:1473-1476), which is "
-        "{montage, day_vlog, single_hero} -- this format is never a member, so "
-        "every scenario rejects identically regardless of approval or voiceover."
+        "Not in GUIDED_EDIT_FORMATS, not `subtitled`, not a NARRATED_EDIT_FORMATS "
+        "member -> the dispatch gate's non-guided branch falls to its final "
+        "`fmt not in phone_render_supported_formats()` check "
+        "(app/tasks/content_plan_build.py) and rejects unconditionally -- "
+        "talking_head and slides have no phone compiler at all, so every "
+        "scenario rejects identically regardless of approval or voiceover."
     ),
 )
+
+# --- subtitled ("Talking to camera") ---------------------------------------
+#
+# subtitled is never guided-applicable (audio-led), so `approved` never
+# changes its outcome -- "plain" and "guided_approved" behave identically.
+# `_run_phone_dispatch`'s test item always carries exactly ONE clip
+# (`_phone_dispatch_item`), which is the only shape subtitled ever accepts.
+
+_SUBTITLED_NO_VOICEOVER = PhoneFormatExpectation(
+    outcome="dispatched",
+    phone_gate=None,
+    works_on_phone=True,
+    worker_note=(
+        "subtitled is audio-led (guided_edit_applicable() is always False), so "
+        "the dispatch gate's non-guided branch checks "
+        "`phone_render_supported_formats()` (phone_subtitled_rendering_enabled + "
+        "subtitled_archetype_enabled) and the one-clip shape -- both hold here, "
+        "so it dispatches. The worker fork routes it to _run_phone_subtitled_job "
+        "-> compile_phone_subtitled_plan."
+    ),
+)
+
+_SUBTITLED_VOICEOVER = PhoneFormatExpectation(
+    outcome="invalid_clips",
+    phone_gate="unsupported_format",
+    works_on_phone=False,
+    worker_note=(
+        "subtitled is defined as spined by the CLIP's own audio (no voiceover, "
+        "by product definition) -- the dispatch gate rejects a subtitled item "
+        "that also carries a recorded voiceover unconditionally, independent of "
+        "any rollout flag, since no phone compiler accepts that combination "
+        "(compile_phone_subtitled_plan has no voiceover input at all)."
+    ),
+)
+
+_BY_SCENARIO_FOR_SUBTITLED = {
+    "plain": _SUBTITLED_NO_VOICEOVER,
+    "guided_approved": _SUBTITLED_NO_VOICEOVER,
+    "voiceover": _SUBTITLED_VOICEOVER,
+    "voiceover_enabled": _SUBTITLED_VOICEOVER,
+}
+
+# --- narrated / narrated_planned / narrated_ready ---------------------------
+#
+# Also always audio-led (never guided-applicable). Two independent phone
+# lanes reach these formats: a recorded voiceover (mirrors the montage-family
+# voiceover rollout exactly, gated by phone_narrated_rendering_enabled +
+# phone_narration_rendering_enabled + narrationAudio + narrated_archetype_enabled),
+# or self-narration with NO voiceover -- `_run_phone_dispatch`'s test item is
+# always exactly one clip, which is the only self-narration shape that can
+# possibly resolve to the phone-supported `subtitled` archetype (2+ clips
+# would need `talking_head`, which has no phone compiler and is refused at
+# the dispatch gate before any Job is minted).
+
+_NARRATED_SELF_NARRATION = PhoneFormatExpectation(
+    outcome="dispatched",
+    phone_gate=None,
+    works_on_phone=True,
+    worker_note=(
+        "No recorded voiceover -> self-narration branch: "
+        "narrated_self_narration_enabled + `subtitled` phone-supported + "
+        "exactly one clip all hold, so the dispatch gate lets it through. The "
+        "worker fork routes it to _run_phone_subtitled_job, which re-resolves "
+        "the REAL archetype post-ingest (_resolve_archetype) and only proceeds "
+        "when it actually lands on `subtitled` -- a no-speech clip (-> montage "
+        "fallback) or non-single-clip talking_head resolution fails closed "
+        "there via UnsupportedPhonePlan instead of silently rendering the "
+        "wrong shape."
+    ),
+)
+
+_NARRATED_VOICEOVER_DISABLED = PhoneFormatExpectation(
+    outcome="invalid_clips",
+    phone_gate="narrated_voiceover_unavailable",
+    works_on_phone=False,
+    worker_note=(
+        "Recorded voiceover present, but phone_narration_rendering_enabled is "
+        "off (the scenario default) -> `phone_render_supported_formats()` "
+        "excludes the narrated family -> the dispatch gate refuses before a Job "
+        "is minted, mirroring the montage-family voiceover_unavailable gate "
+        "exactly (distinct reason key so the creator hears about their "
+        "voiceover, not a generic format rejection)."
+    ),
+)
+
+_NARRATED_VOICEOVER_ENABLED = PhoneFormatExpectation(
+    outcome="dispatched",
+    phone_gate=None,
+    works_on_phone=True,
+    worker_note=(
+        "Recorded voiceover + phone_narration_rendering_enabled on + "
+        "narrationAudio verified -> `phone_render_supported_formats()` includes "
+        "the narrated family -> dispatches. The worker fork routes it to "
+        "_run_phone_narrated_job -> compile_phone_narrated_plan, mirroring "
+        "_render_narrated_variant's script/auto-segment step timing."
+    ),
+)
+
+_BY_SCENARIO_FOR_NARRATED = {
+    "plain": _NARRATED_SELF_NARRATION,
+    "guided_approved": _NARRATED_SELF_NARRATION,
+    "voiceover": _NARRATED_VOICEOVER_DISABLED,
+    "voiceover_enabled": _NARRATED_VOICEOVER_ENABLED,
+}
 
 SCENARIOS: tuple[str, ...] = ("plain", "guided_approved", "voiceover", "voiceover_enabled")
 
@@ -129,16 +233,26 @@ _ALL_FORMATS: tuple[str, ...] = (
 )
 
 _GUIDED_FORMATS = frozenset({"montage", "day_vlog", "single_hero"})
+_NARRATED_FORMATS = frozenset({"narrated", "narrated_planned", "narrated_ready"})
 
-_BY_SCENARIO_FOR_GUIDED = {
-    "plain": _GUIDED_PLAIN,
-    "guided_approved": _GUIDED_APPROVED,
-    "voiceover": _GUIDED_VOICEOVER,
-    "voiceover_enabled": _GUIDED_VOICEOVER_ENABLED,
-}
+
+def _expectation_for(fmt: str, scenario: str) -> PhoneFormatExpectation:
+    if fmt in _GUIDED_FORMATS:
+        return {
+            "plain": _GUIDED_PLAIN,
+            "guided_approved": _GUIDED_APPROVED,
+            "voiceover": _GUIDED_VOICEOVER,
+            "voiceover_enabled": _GUIDED_VOICEOVER_ENABLED,
+        }[scenario]
+    if fmt == "subtitled":
+        return _BY_SCENARIO_FOR_SUBTITLED[scenario]
+    if fmt in _NARRATED_FORMATS:
+        return _BY_SCENARIO_FOR_NARRATED[scenario]
+    return _UNSUPPORTED
+
 
 EXPECTATIONS: dict[tuple[str, str], PhoneFormatExpectation] = {
-    (fmt, scenario): (_BY_SCENARIO_FOR_GUIDED[scenario] if fmt in _GUIDED_FORMATS else _UNSUPPORTED)
+    (fmt, scenario): _expectation_for(fmt, scenario)
     for fmt in _ALL_FORMATS
     for scenario in SCENARIOS
 }

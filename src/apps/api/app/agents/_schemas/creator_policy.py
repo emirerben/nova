@@ -7,6 +7,7 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents._schemas.edit_format import (
     AUDIO_LED_EDIT_FORMATS,
+    NARRATED_EDIT_FORMATS,
     coerce_edit_format,
     guided_edit_applicable,
 )
@@ -116,13 +117,68 @@ def effective_render_program(
         # longer necessarily a hard block. A strategy asking to newly SWITCH
         # audio_strategy to "voiceover" with none attached yet is a
         # different, still-unsupported request the capability above never
-        # considered, so that half of the check remains unconditional.
-        if not manifest.has_voiceover and strategy.audio_strategy == "voiceover":
+        # considered, so that half of the check remains unconditional --
+        # EXCEPT for the narrated family, handled separately immediately
+        # below: narrated IS the voiceover format (unlike montage, which has
+        # a non-voiceover default), so a narrated strategy that intends to
+        # record one is the NORMAL planning-stage shape, not a "switch".
+        narrated_pending_voiceover = (
+            strategy_format in NARRATED_EDIT_FORMATS
+            and not manifest.has_voiceover
+            and strategy.audio_strategy == "voiceover"
+        )
+        if narrated_pending_voiceover:
+            # KRI-132 follow-up: the chat-planning turn for Narrated happens
+            # BEFORE the creator records a voiceover (pick format -> chat,
+            # write script -> record voiceover -> Generate) -- mirroring the
+            # cloud/`_format_availability` leniency that already lets
+            # narrated be planned before a voiceover exists. Checks the
+            # phone's OWN rollout state for "would a recorded voiceover on
+            # this format render here" (`phone_format_pending_voiceover:
+            # {format}`, settings-only -- true regardless of whether THIS
+            # item has recorded one yet, unlike `phone_format:{format}`
+            # below, which also needs self-narration's clip-count shape).
+            # Generate itself still fails closed with no recording via the
+            # dispatch gate (`content_plan_build.py`) -- this only unblocks
+            # planning, never a render.
+            pending = manifest.capabilities.get(f"phone_format_pending_voiceover:{strategy_format}")
+            if pending is None or not pending.available:
+                raise PhoneFormatUnavailableError(
+                    (pending.reason if pending is not None else None)
+                    or "phone rendering does not support voiceover audio",
+                    voiceover=True,
+                )
+        elif not manifest.has_voiceover and strategy.audio_strategy == "voiceover":
             raise PhoneFormatUnavailableError(
                 "phone rendering does not support voiceover audio", voiceover=True
             )
-        if not guided_edit_applicable(strategy_format, has_voiceover=False):
-            raise PhoneFormatUnavailableError("phone sources require a guided edit format")
+        # KRI-132: this used to be a hardcoded `guided_edit_applicable(...)`
+        # check that only ever admitted the montage family. It now consults
+        # `phone_format:{format}` -- a voiceover-state-aware, settings-aware
+        # capability `app.services.creator_capabilities.resolve_creator_manifest`
+        # computes via `app.services.phone_rollout.phone_render_supported_formats`
+        # (this module must not import settings/services itself, hence the
+        # indirection through the manifest). Montage-family formats are
+        # always `available` here; `subtitled`/`narrated*` are available only
+        # once rolled out AND shaped correctly for the phone compiler (clip
+        # count, voiceover presence) -- see that resolver for the exact rule.
+        # Skipped for the pending-voiceover narrated case just handled above:
+        # `phone_format:{format}` answers "is THIS item's current media shape
+        # renderable right now" (self-narration needs exactly one clip
+        # today), which is the wrong question while planning toward a
+        # not-yet-recorded voiceover -- clip count is irrelevant until
+        # Generate.
+        if not narrated_pending_voiceover:
+            phone_format_capability = manifest.capabilities.get(f"phone_format:{strategy_format}")
+            if phone_format_capability is None or not phone_format_capability.available:
+                raise PhoneFormatUnavailableError(
+                    (
+                        phone_format_capability.reason
+                        if phone_format_capability is not None
+                        else None
+                    )
+                    or "phone sources require a supported edit format"
+                )
         source_ids: set[str] = set()
         if strategy.montage_cadence is not None:
             source_ids.update(strategy.montage_cadence.source_media_ids)
@@ -256,11 +312,20 @@ def effective_render_program(
                     visual_videos_available=False,
                 )
             return "native"
-        if not (guided and guided.available):
-            raise MixedMediaTimingUnavailableError(
-                "phone rendering requires the guided proposal capability"
-            )
-        return "guided"
+        # No voiceover. Montage-family formats still need an approved guided
+        # proposal (byte-identical to pre-KRI-132). `subtitled` and a
+        # self-narrated `narrated*` item were already confirmed
+        # phone-format-eligible above (`phone_format:{strategy_format}`,
+        # voiceover-aware) and have no guided-story lane at all -- they
+        # resolve "native" directly instead of requiring a capability that
+        # never exists for them.
+        if guided_edit_applicable(strategy_format, has_voiceover=False):
+            if not (guided and guided.available):
+                raise MixedMediaTimingUnavailableError(
+                    "phone rendering requires the guided proposal capability"
+                )
+            return "guided"
+        return "native"
     native_required = (
         manifest.has_voiceover
         or (

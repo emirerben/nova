@@ -20,13 +20,10 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
-from app.agents._schemas.edit_format import (
-    PHONE_RENDER_SUPPORTED_FORMATS,
-    coerce_edit_format,
-    guided_edit_applicable,
-)
+from app.agents._schemas.edit_format import coerce_edit_format, guided_edit_applicable
 from app.config import settings
 from app.models import CreationThread, PlanItemAsset
+from app.services.phone_rollout import phone_render_supported_formats
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,7 +94,7 @@ def visuals_only_on_device(
         return False
     if (
         not guided_edit_applicable(edit_format, has_voiceover=False)
-        or coerce_edit_format(edit_format) not in PHONE_RENDER_SUPPORTED_FORMATS
+        or coerce_edit_format(edit_format) not in phone_render_supported_formats()
     ):
         return False
     drawable = phone_drawable_visual_kinds()

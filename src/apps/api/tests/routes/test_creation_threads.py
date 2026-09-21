@@ -4844,6 +4844,79 @@ async def test_phone_pilot_is_advertised_only_to_enrolled_account(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_phone_picker_offers_subtitled_and_narrated_once_rolled_out(monkeypatch):
+    """KRI-132: once `phone_subtitled_rendering_enabled` /
+    `phone_narrated_rendering_enabled` are on (alongside their existing
+    prerequisites), a phone native-client picker offers Talking to camera and
+    Narrated too, not just Montage -- this is the user-visible goal of the
+    settings-aware `phone_render_supported_formats()` helper."""
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_narrated_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(settings, "narrated_archetype_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["narrationAudio"])
+
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=True)
+
+    edit_formats = {entry["edit_format"] for entry in manifest["formats"]}
+    assert {"montage", "subtitled", "narrated_planned"} <= edit_formats
+
+
+@pytest.mark.asyncio
+async def test_phone_picker_only_offers_montage_when_new_flags_are_off(monkeypatch):
+    """Flag-off byte-identical to pre-KRI-132: only Montage is offered even
+    though `subtitled`/`narrated_planned` are generally-available formats
+    (`subtitled_archetype_enabled` on), because the phone-specific rollout
+    flags stay off."""
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "narrated_archetype_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", False)
+    monkeypatch.setattr(settings, "phone_narrated_rendering_enabled", False)
+
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=True)
+
+    edit_formats = {entry["edit_format"] for entry in manifest["formats"]}
+    assert edit_formats == {"montage"}
+
+
+@pytest.mark.asyncio
+async def test_phone_picker_still_hides_narrated_when_narration_audio_unverified(monkeypatch):
+    """The narrated family reuses the SAME narrationAudio device capability
+    the montage-family voiceover render already uses -- rolling out
+    `phone_narrated_rendering_enabled` alone, without the device having
+    verified narrationAudio, must not advertise Narrated."""
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "narrated_archetype_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "phone_narrated_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_verified_features", [])
+
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=True)
+
+    edit_formats = {entry["edit_format"] for entry in manifest["formats"]}
+    assert "narrated_planned" not in edit_formats
+
+
+@pytest.mark.asyncio
+async def test_web_picker_is_unaffected_by_phone_rollout_flags(monkeypatch):
+    """`native_client=False` (the web) always keeps every generally-available
+    format regardless of any phone-specific flag -- the phone allowlist only
+    ever trims the NATIVE picker."""
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", False)
+    monkeypatch.setattr(settings, "phone_narrated_rendering_enabled", False)
+
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=False)
+
+    edit_formats = {entry["edit_format"] for entry in manifest["formats"]}
+    assert "subtitled" in edit_formats
+
+
+@pytest.mark.asyncio
 async def test_proxy_reservation_pins_original_and_rejects_changed_binding(monkeypatch):
     import app.routes.creation_threads as routes
     from app.config import settings

@@ -692,11 +692,18 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
         "phone_plan_unapproved",
         "This edit plan needs approving again before it can render on your iPhone.",
     ),
+    # KRI-132: this copy used to hard-code "Only Montage videos" — no longer
+    # true now that `subtitled` (talking-to-camera) and the `narrated*`
+    # formats can also render on the phone once rolled out (see
+    # `app.services.phone_rollout.phone_render_supported_formats`, the single
+    # source of truth for what's actually enabled). Kept deliberately
+    # format-agnostic here rather than naming the current allowlist, since
+    # that set changes with rollout flags and this string does not.
     "unsupported_format": (
         "phone_format_unavailable",
-        "Only Montage videos can render on your iPhone right now, not talking or "
-        "narrated ones. Choose Montage to render on this iPhone. No fallback edit "
-        "was rendered.",
+        "This kind of video can't render on your iPhone right now. Choose a format "
+        "that renders on this iPhone (Montage, or Talking to camera / Narrated "
+        "where available). No fallback edit was rendered.",
     ),
     "voiceover_unavailable": (
         "phone_voiceover_unavailable",
@@ -714,6 +721,30 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
         "A voiceover can't render on your iPhone yet, and this project's videos "
         "render on this iPhone. Ask for this edit without a voiceover. No fallback "
         "edit was rendered.",
+    ),
+    # KRI-132: a narrated/narrated_planned/narrated_ready item WITH a
+    # recorded voiceover, but `phone_narrated_rendering_enabled` /
+    # `phone_narration_rendering_enabled` / narrationAudio / narrated_archetype_enabled
+    # aren't all satisfied yet. Distinct from `voiceover_unavailable` only in
+    # which archetype it names, and distinct from `unsupported_format` so the
+    # creator hears "your voiceover" rather than "this format" — the fix is
+    # the same either way today (ask without a voiceover, or wait for the
+    # rollout), so the copy is deliberately identical to `voiceover_unavailable`.
+    "narrated_voiceover_unavailable": (
+        "phone_voiceover_unavailable",
+        "A voiceover can't render on your iPhone yet, and this project's videos "
+        "render on this iPhone. Ask for this edit without a voiceover. No fallback "
+        "edit was rendered.",
+    ),
+    # KRI-132: `subtitled` ("Talking to camera") is phone-supported, but only
+    # for exactly one clip — the uploader already caps new subtitled items at
+    # one clip, so this only fires for an item switched to `subtitled` after
+    # already carrying more (or fewer) clips.
+    "subtitled_clip_count_unsupported": (
+        "phone_format_unavailable",
+        "Talking-to-camera videos render on your iPhone with exactly one clip. "
+        "Remove the extra clips (or add one) and try again. No fallback edit was "
+        "rendered.",
     ),
 }
 
@@ -1514,9 +1545,10 @@ def _dispatch_item_render(
     )
     try:
         from app.agents._schemas.edit_format import (  # noqa: PLC0415
-            PHONE_RENDER_SUPPORTED_FORMATS,
+            NARRATED_EDIT_FORMATS,
         )
         from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+        from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
         from app.services.phone_sources import bind_phone_sources  # noqa: PLC0415
 
         phone_sources = ()
@@ -1547,7 +1579,69 @@ def _dispatch_item_render(
                     raise ValueError("analysis proxies require an approved phone edit plan")
             else:
                 fmt = coerce_edit_format(item.edit_format)
-                if fmt not in PHONE_RENDER_SUPPORTED_FORMATS:
+                supported_now = phone_render_supported_formats()
+                has_recorded_voiceover = audio_mode == "voiceover" and bool(item.voiceover_gcs_path)
+                if fmt in NARRATED_EDIT_FORMATS:
+                    if has_recorded_voiceover:
+                        # `phone_render_supported_formats()` already folds in
+                        # `phone_narrated_rendering_enabled` +
+                        # `phone_narration_rendering_enabled` + a verified
+                        # `narrationAudio` + `narrated_archetype_enabled` for
+                        # this family -- a distinct reason/message from plain
+                        # `unsupported_format` so the creator hears "your
+                        # voiceover" rather than "this format", mirroring
+                        # `guided_voiceover_unavailable` above.
+                        if fmt not in supported_now:
+                            phone_gate = "narrated_voiceover_unavailable"
+                            raise ValueError(
+                                "phone rendering does not yet support narrated voiceover edits"
+                            )
+                    else:
+                        # Self-narration (no recorded voiceover): the
+                        # footage's OWN speech spines the edit.
+                        # `_resolve_archetype` (generative_build.py) only
+                        # decides `subtitled` (exactly one clip) vs
+                        # `talking_head` (2+ clips, no phone compiler at all)
+                        # once the footage is actually probed post-ingest --
+                        # this dispatch gate deliberately does not run that
+                        # analysis. Only the single-clip shape can possibly
+                        # land on a phone-supported archetype, so it is the
+                        # ONLY self-narration case let through here; anything
+                        # else (0 or 2+ clips, or the self-narration flag
+                        # off) fails closed instead of binding phone sources
+                        # for an edit that might resolve to `talking_head`.
+                        if not (
+                            settings.narrated_self_narration_enabled
+                            and "subtitled" in supported_now
+                            and len(clip_paths) == 1
+                        ):
+                            phone_gate = "unsupported_format"
+                            raise ValueError(
+                                f"analysis proxies cannot render '{fmt}' on iPhone yet"
+                            )
+                elif fmt == "subtitled":
+                    if has_recorded_voiceover:
+                        # subtitled is spined by the CLIP's own audio, by
+                        # product definition -- no phone compiler accepts a
+                        # subtitled item that ALSO carries a recorded
+                        # voiceover (compile_phone_subtitled_plan has no
+                        # voiceover input at all), independent of any
+                        # rollout flag.
+                        phone_gate = "unsupported_format"
+                        raise ValueError(
+                            "phone rendering does not support a voiceover on a subtitled edit"
+                        )
+                    if "subtitled" not in supported_now:
+                        phone_gate = "unsupported_format"
+                        raise ValueError(f"analysis proxies cannot render '{fmt}' on iPhone yet")
+                    if len(clip_paths) != 1:
+                        # `compile_phone_subtitled_plan` also enforces
+                        # exactly one clip, but failing closed HERE avoids
+                        # binding phone sources and minting a Job that is
+                        # doomed to fail once the worker picks it up.
+                        phone_gate = "subtitled_clip_count_unsupported"
+                        raise ValueError("subtitled phone rendering requires exactly one clip")
+                elif fmt not in supported_now:
                     phone_gate = "unsupported_format"
                     raise ValueError(f"analysis proxies cannot render '{fmt}' on iPhone yet")
             # KRI-132: a recorded voiceover must never dispatch a phone job

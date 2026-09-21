@@ -40,6 +40,8 @@ from app.agents._schemas.creator_policy import (
 )
 from app.agents._schemas.edit_format import (
     EDIT_FORMATS,
+    GUIDED_EDIT_FORMATS,
+    NARRATED_EDIT_FORMATS,
     coerce_edit_format,
     guided_edit_applicable,
     render_program_for_intent,
@@ -47,6 +49,7 @@ from app.agents._schemas.edit_format import (
 from app.config import settings
 from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 from app.services.phone_destination import phone_drawable_visual_kinds
+from app.services.phone_rollout import phone_render_supported_formats
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
 CAPABILITY_GUIDED_STORY = "guided_story"
@@ -368,13 +371,33 @@ def resolve_creator_manifest(
             # below regardless of this flag) can render on the phone once the
             # rollout flag is on AND the device has verified narrationAudio.
             # Flag/capability off: byte-identical to pre-KRI-132.
-            montage_voiceover_ready = (
-                not visuals_only
-                and settings.phone_narration_rendering_enabled
-                and "narrationAudio" in settings.phone_render_verified_features
-                and guided_edit_applicable(edit_format, has_voiceover=False)
-                and not guided_voiceover_executable
-            )
+            #
+            # KRI-132 follow-up: a narrated* item WITH an already-recorded
+            # voiceover must ALSO resolve `phone` available here -- this is
+            # the manifest-level gate `effective_render_program` checks
+            # FIRST (before it ever reaches the per-format `phone_format:
+            # {format}` capability below), so leaving it montage-only would
+            # dead-end Generate's own chat-planning turn for a narrated item
+            # that already has its voiceover, even though the dispatch gate
+            # and worker both already support it (`phone_render_supported_
+            # formats()` folds in the narrated-specific flags this branch
+            # used to check only for montage via `guided_edit_applicable`).
+            declared_format = coerce_edit_format(edit_format)
+            if declared_format in GUIDED_EDIT_FORMATS:
+                montage_voiceover_ready = (
+                    not visuals_only
+                    and settings.phone_narration_rendering_enabled
+                    and "narrationAudio" in settings.phone_render_verified_features
+                    and not guided_voiceover_executable
+                )
+            elif declared_format in NARRATED_EDIT_FORMATS:
+                montage_voiceover_ready = (
+                    not visuals_only
+                    and declared_format in phone_render_supported_formats()
+                    and not guided_voiceover_executable
+                )
+            else:
+                montage_voiceover_ready = False
             phone = (
                 _available()
                 if montage_voiceover_ready
@@ -407,6 +430,98 @@ def resolve_creator_manifest(
         capabilities[CAPABILITY_GUIDED_VOICEOVER] = _unavailable(
             "unsupported_phone_audio", "phone rendering does not support recorded voiceover"
         )
+        # KRI-132: per-format phone-compile availability, voiceover-state
+        # aware -- `app.agents._schemas.creator_policy.effective_render_program`
+        # (a pure function that must not import settings) consults this
+        # instead of `guided_edit_applicable` directly, so a phone-account
+        # strategy correctly resolves `subtitled`/`narrated*` as renderable
+        # once rolled out, not just the montage family. `phone_render_
+        # supported_formats()` is the settings-aware single source of truth
+        # this mirrors (`app.services.phone_rollout`); the clip-count and
+        # self-narration nuances it cannot see are resolved here, where the
+        # manifest's attached clip count is already known.
+        if not phone.available:
+            for candidate_format in EDIT_FORMATS:
+                capabilities[f"phone_format:{candidate_format}"] = phone
+            for candidate_format in NARRATED_EDIT_FORMATS:
+                capabilities[f"phone_format_pending_voiceover:{candidate_format}"] = phone
+        else:
+            clip_count = len(attached_media)
+            supported_now = phone_render_supported_formats()
+            # KRI-132 follow-up: whether a narrated* format WOULD render on
+            # this phone once a voiceover is recorded -- a pure rollout-flag
+            # check (`phone_render_supported_formats()` doesn't take
+            # `has_voiceover` at all), independent of whether THIS item has
+            # recorded one yet or how many clips are attached so far. This is
+            # what lets the chat-planning turn proceed for the normal
+            # Narrated journey (pick format -> chat/script -> record
+            # voiceover -> Generate) instead of dead-ending before the
+            # creator has had a chance to record anything -- `phone_format:
+            # {format}` above answers a DIFFERENT question ("is this item's
+            # CURRENT media shape renderable right now", which for
+            # self-narration needs exactly one clip today) and stays
+            # unchanged. Generate itself still fails closed with no
+            # recording via the dispatch gate (`content_plan_build.py`).
+            for candidate_format in NARRATED_EDIT_FORMATS:
+                capabilities[f"phone_format_pending_voiceover:{candidate_format}"] = (
+                    _available()
+                    if candidate_format in supported_now
+                    else _unavailable(
+                        "phone_format_unavailable",
+                        f"{candidate_format} does not render on this iPhone yet",
+                    )
+                )
+            for candidate_format in EDIT_FORMATS:
+                if candidate_format in GUIDED_EDIT_FORMATS:
+                    # Unaffected by this KRI-132 addition: the montage
+                    # family's phone eligibility (with or without a
+                    # voiceover) is already fully described by `phone` above
+                    # (`phone.available` already true here); every
+                    # montage-family format is always structurally
+                    # phone-format-eligible at this point.
+                    phone_format_capability = _available()
+                elif candidate_format == "subtitled":
+                    phone_format_capability = (
+                        _available()
+                        if (
+                            candidate_format in supported_now
+                            and clip_count == 1
+                            and not has_voiceover
+                        )
+                        else _unavailable(
+                            "phone_format_unavailable",
+                            "talking-to-camera rendering on this iPhone requires exactly "
+                            "one clip and no recorded voiceover",
+                        )
+                    )
+                elif candidate_format in NARRATED_EDIT_FORMATS:
+                    if has_voiceover:
+                        narrated_ok = candidate_format in supported_now
+                    else:
+                        # Self-narration: only the single-clip shape can
+                        # ever resolve to the phone-supported `subtitled`
+                        # archetype (`_resolve_archetype`,
+                        # generative_build.py) -- 2+ clips would need
+                        # `talking_head`, which has no phone compiler.
+                        narrated_ok = (
+                            settings.narrated_self_narration_enabled
+                            and "subtitled" in supported_now
+                            and clip_count == 1
+                        )
+                    phone_format_capability = (
+                        _available()
+                        if narrated_ok
+                        else _unavailable(
+                            "phone_format_unavailable",
+                            f"{candidate_format} does not render on this iPhone yet",
+                        )
+                    )
+                else:
+                    phone_format_capability = _unavailable(
+                        "phone_format_unavailable",
+                        f"{candidate_format} does not render on this iPhone yet",
+                    )
+                capabilities[f"phone_format:{candidate_format}"] = phone_format_capability
     if capabilities["main_creator_agent"].available and not getattr(
         settings, "main_creator_agent_rollout_percent", 0
     ):

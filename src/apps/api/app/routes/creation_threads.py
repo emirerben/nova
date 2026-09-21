@@ -25,10 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app import storage
-from app.agents._schemas.edit_format import (
-    NARRATED_EDIT_FORMATS,
-    PHONE_RENDER_SUPPORTED_FORMATS,
-)
+from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.auth import CurrentUser, NativeClient
 from app.config import settings
 from app.database import get_db
@@ -2662,10 +2659,21 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
     if phone_enabled and native_client:
         # The app on a pilot account renders every project on the iPhone, and
         # only these formats can; offering the others would end in a refusal
-        # after the creator has already uploaded footage. The web keeps them all.
-        formats = {
-            key: value for key, value in formats.items() if value in PHONE_RENDER_SUPPORTED_FORMATS
-        }
+        # after the creator has already uploaded footage. The web keeps them
+        # all. `phone_render_supported_formats()` is the settings-aware single
+        # source of truth (KRI-132): once `phone_subtitled_rendering_enabled`/
+        # `phone_narrated_rendering_enabled` are rolled out, "Talking to
+        # camera" and "Narrated" appear here too, not just Montage. This is a
+        # FORMAT-level filter only -- the per-item nuances (subtitled's
+        # one-clip requirement, narrated's voiceover-vs-self-narration split)
+        # are enforced later, once the item actually has clips, by the
+        # `phone_format:{format}` manifest capability and the dispatch gate.
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            phone_render_supported_formats,
+        )
+
+        supported_now = phone_render_supported_formats()
+        formats = {key: value for key, value in formats.items() if value in supported_now}
     return {
         # Runtime v2 cannot create a guided phone job at all, so a pilot account
         # offered v2 would never get its render on the iPhone.

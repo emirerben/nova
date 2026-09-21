@@ -55,7 +55,6 @@ from app.agents._schemas.edit_format import (
     DAY_VLOG_RENDERER_VERSION,
     GUIDED_EDIT_FORMATS,
     NARRATED_EDIT_FORMATS,
-    PHONE_RENDER_SUPPORTED_FORMATS,
     SINGLE_HERO_RENDERER_VERSION,
     SLIDES_RENDERER_VERSION,
     coerce_edit_format,
@@ -2165,17 +2164,41 @@ def _run_generative_job_impl(
             try:
                 # Archetype-agnostic dispatch: a guided-story snapshot always uses the
                 # guided-story recipe; otherwise the plan-declared edit_format decides
-                # which decisions-only compiler applies (KRI-114 P1-2 adds the montage/
-                # day_vlog/single_hero compiler as PHONE_RENDER_SUPPORTED_FORMATS grows).
-                # Explicit branches on purpose, so an unrecognized snapshot shape fails
-                # loudly instead of silently entering the wrong (or a cloud) renderer.
+                # which decisions-only compiler applies. `phone_render_supported_formats()`
+                # is the settings-aware single source of truth (KRI-132) -- the dispatch
+                # gate (`content_plan_build.py`) already checked it before minting this
+                # Job, but the worker rechecks independently (redelivery, flag flips
+                # mid-flight). Explicit branches on purpose, so an unrecognized snapshot
+                # shape fails loudly instead of silently entering the wrong (or a cloud)
+                # renderer.
+                from app.services.phone_rollout import (  # noqa: PLC0415
+                    phone_render_supported_formats,
+                )
+
+                declared_format = coerce_edit_format(candidates.get("edit_format"))
+                has_voiceover_candidate = bool(candidates.get("voiceover_gcs_path"))
                 if isinstance(phone_snapshot.get("guided_edit"), dict):
                     _run_phone_guided_job(job_id, phone_snapshot, ownership_epoch=ownership_epoch)
-                elif (
-                    coerce_edit_format(candidates.get("edit_format"))
-                    in PHONE_RENDER_SUPPORTED_FORMATS
-                ):
+                elif declared_format not in phone_render_supported_formats():
+                    raise ValueError("No phone renderer is registered for this edit")
+                elif declared_format in GUIDED_EDIT_FORMATS:
                     _run_phone_montage_job(
+                        job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
+                    )
+                elif declared_format == "subtitled" or (
+                    declared_format in NARRATED_EDIT_FORMATS and not has_voiceover_candidate
+                ):
+                    # `subtitled` always lands here; a narrated* item with NO
+                    # recorded voiceover is self-narration, which the dispatch
+                    # gate only let through for the single-clip shape that can
+                    # possibly resolve to `subtitled` -- `_run_phone_subtitled_job`
+                    # re-verifies that with the real, post-ingest
+                    # `_resolve_archetype` and fails closed otherwise.
+                    _run_phone_subtitled_job(
+                        job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
+                    )
+                elif declared_format in NARRATED_EDIT_FORMATS and has_voiceover_candidate:
+                    _run_phone_narrated_job(
                         job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
                     )
                 else:
@@ -3855,15 +3878,17 @@ def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
     )
 
 
-def _resolve_phone_voiceover_bed(job_id: str, decision: GenerativeVariantDecision) -> Any:
+def _resolve_phone_voiceover_bed(job_id: str, voiceover_gcs_path: str | None) -> Any:
     """Bridge the sync worker to a fresh, pinned voiceover asset for a
-    montage-family phone job's recorded narration (KRI-132).
+    phone job's recorded narration (KRI-132; KRI-132 follow-up widened this
+    from montage-family-only to also back `_run_phone_narrated_job`).
 
     Mirrors `_resolve_phone_music_bed`: re-reads the owning `PlanItem`'s
     CURRENT `voiceover_gcs_path`/`voiceover_generation`/`voiceover_duration_s`
-    in a sync session -- never trusting `decision.extras["voiceover_gcs_path"]`
-    alone, since that was captured at the start of decide-phase prework and a
-    concurrent edit could have replaced or cleared the voiceover since. Then
+    in a sync session -- never trusting the caller's ``voiceover_gcs_path``
+    alone, since that was captured at the start of decide-phase (or
+    dispatch-phase) prework and a concurrent edit could have replaced or
+    cleared the voiceover since. Then
     `app.services.phone_voiceover.inspect_voiceover_asset` (mirrors
     `inspect_library_asset`'s pin-then-hash pattern) pins the exact
     generation + fingerprint. Unlike the library catalog grant,
@@ -3872,7 +3897,7 @@ def _resolve_phone_voiceover_bed(job_id: str, decision: GenerativeVariantDecisio
     still carries this exact `(path, generation)` before signing; the DEVICE
     re-hashes the downloaded bytes against the pinned SHA-256 itself.
 
-    Returns None when the decision has no voiceover (no narration bed
+    Returns None when ``voiceover_gcs_path`` is falsy (no narration bed
     needed). Raises `UnsupportedPhonePlan` (capability="narrationAudio")
     when the item's voiceover is missing, was replaced, or its bytes can no
     longer be read -- a phone job must never bake in a stale or mismatched
@@ -3882,7 +3907,6 @@ def _resolve_phone_voiceover_bed(job_id: str, decision: GenerativeVariantDecisio
     from app.pipeline.phone_recipe_shared import PhoneNarrationBed  # noqa: PLC0415
     from app.services.phone_voiceover import inspect_voiceover_asset  # noqa: PLC0415
 
-    voiceover_gcs_path = decision.extras.get("voiceover_gcs_path")
     if not voiceover_gcs_path:
         return None
     with _sync_session() as db:
@@ -4164,7 +4188,9 @@ def _run_phone_montage_job(
             )
 
             music = _resolve_phone_music_bed(decision)
-            narration = _resolve_phone_voiceover_bed(job_id, decision)
+            narration = _resolve_phone_voiceover_bed(
+                job_id, decision.extras.get("voiceover_gcs_path")
+            )
             recipe = compile_phone_montage_plan(
                 decision, bindings, music=music, narration=narration
             )
@@ -4218,6 +4244,537 @@ def _run_phone_montage_job(
             variants.append(new_entry)
         current["variants"] = variants
         current["phone_deferred_variants"] = [s["variant_id"] for s in deferred_specs]
+        job.assembly_plan = current
+        pin_device_request(job, request, base_generation=generation)
+        job.status = "awaiting_device"
+        job.error_detail = None
+        job.failure_reason = None
+        db.commit()
+
+
+def _phone_speech_cleanup_contract_guard(snapshot: dict) -> None:
+    """Fail closed instead of silently skipping a REQUIRED cleanup contract.
+
+    Neither `_run_phone_subtitled_job` nor `_run_phone_narrated_job` run
+    silence-cut/speech-cleanup at all (no timeline-reshaping primitive on the
+    phone engine, matching the montage-family phone compiler's own documented
+    divergence) -- fine for `off_v1`/`legacy_auto` (the item never asked for
+    cleanup, or historical jobs tolerate best-effort), but silently skipping
+    it for `required_v1` (the creator explicitly opted in, and the item's own
+    contract now REQUIRES a cleaned render) would ship uncut footage that
+    contradicts what the creator approved. `content_plan_build._dispatch_item_
+    render` persists `speech_cleanup_contract` onto the phone snapshot
+    (`job.assembly_plan`) exactly like it does for the cloud path.
+    """
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+
+    if str(snapshot.get("speech_cleanup_contract") or "legacy_auto") == "required_v1":
+        raise UnsupportedPhonePlan(
+            "phone rendering does not support this item's required speech-cleanup contract"
+        )
+
+
+def _run_phone_subtitled_job(
+    job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
+) -> None:
+    """Decisions-only "Talking to camera" (subtitled) phone compile (KRI-132).
+
+    Reached for a declared `subtitled` item, or a self-narrated `narrated`/
+    `narrated_planned`/`narrated_ready` item with NO recorded voiceover --
+    `content_plan_build.py`'s dispatch gate only lets the self-narration case
+    through for the single-clip shape that could possibly resolve to
+    `subtitled` (never `talking_head`, which has no phone compiler); this
+    function re-verifies that with the real, post-ingest `_resolve_archetype`
+    before proceeding, since the dispatch gate cannot run that analysis
+    itself.
+
+    Mirrors `_run_phone_montage_job`'s fences (immutable generation, bound
+    sources, single pinned device revision, redelivery idempotency) but skips
+    its text-agent/music-matcher/archetype-spec prework entirely -- subtitled
+    is the LEAN cloud path (`_render_subtitled_variant`): one clip, its own
+    audio, transcribed into editable captions. No silence-cut/speech-cleanup
+    runs on the phone path at all (see `_phone_speech_cleanup_contract_guard`).
+    """
+    from app.kria.device_render import make_device_request  # noqa: PLC0415
+    from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
+    from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan  # noqa: PLC0415
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
+    from app.pipeline.transcribe import transcribe_whisper_cached  # noqa: PLC0415
+    from app.services.device_render import (  # noqa: PLC0415
+        DEVICE_RENDER_FIELD,
+        pin_device_request,
+    )
+    from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    generation = snapshot.get("creator_generation_id")
+    if not isinstance(generation, str) or not generation:
+        raise ValueError("Phone rendering requires an immutable approved generation")
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row) for row in snapshot[PHONE_SOURCES_FIELD]
+    )
+    if not bindings:
+        raise ValueError("Phone rendering requires original source bindings")
+    if any(
+        isinstance(record, dict) and record.get("base_generation") == generation
+        for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
+    ):
+        return
+    if not settings.phone_rendering_enabled:
+        raise ValueError(
+            "Phone rendering is currently unavailable; originals remain on the device."
+        )
+
+    edit_format = coerce_edit_format(all_candidates.get("edit_format"))
+    has_voiceover = bool(all_candidates.get("voiceover_gcs_path"))
+    self_narrated = edit_format in NARRATED_EDIT_FORMATS and not has_voiceover
+    if edit_format != "subtitled" and not self_narrated:
+        raise ValueError(f"No phone renderer is registered for edit_format={edit_format!r}")
+    if edit_format == "subtitled" and not (
+        settings.phone_subtitled_rendering_enabled and settings.subtitled_archetype_enabled
+    ):
+        # Defense in depth: `content_plan_build.py`'s dispatch gate already
+        # checked this via `phone_render_supported_formats()`, but a
+        # redelivered message or a flag flipped mid-flight must still fail
+        # closed here rather than compile an edit the rollout disabled.
+        raise ValueError("Phone rendering does not yet support talking-to-camera edits")
+    if self_narrated and not settings.narrated_self_narration_enabled:
+        raise ValueError(
+            f"Phone rendering does not yet support self-narrated '{edit_format}' edits"
+        )
+    if len(bindings) != 1:
+        raise ValueError("Phone subtitled rendering requires exactly one clip")
+
+    clip_paths_gcs: list[str] = list(all_candidates.get("clip_paths") or [])
+    if len(clip_paths_gcs) != 1:
+        raise ValueError("Phone rendering requires exactly one clip path")
+
+    _phone_speech_cleanup_contract_guard(snapshot)
+
+    language: str = all_candidates.get("language") or "en"
+    caption_style = (
+        "word" if all_candidates.get("voiceover_caption_style") == "word" else "sentence"
+    )
+
+    with pipeline_trace_for(job_id):
+        with tempfile.TemporaryDirectory(
+            prefix="nova_phone_subtitled_", ignore_cleanup_errors=True
+        ) as tmpdir:
+            ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
+            clip_metas = ingest["clip_metas"]
+            clip_id_to_local = ingest["clip_id_to_local"]
+            clip_id_to_gcs = ingest["clip_id_to_gcs"]
+            probe_map = ingest["probe_map"]
+
+            if self_narrated:
+                # Re-verify the REAL archetype resolution post-ingest -- the
+                # dispatch gate could only check the single-clip SHAPE, not
+                # whether the clip actually carries usable speech.
+                clip_durations_s = {
+                    cid: float(getattr(probe_map.get(path), "duration_s", 0.0) or 0.0)
+                    for cid, path in clip_id_to_local.items()
+                    if probe_map.get(path) is not None
+                }
+                archetype, _spine, _fallback_reason = _resolve_archetype(
+                    edit_format,
+                    clip_metas,
+                    clip_id_to_local,
+                    job_id=job_id,
+                    voiceover_gcs_path=None,
+                    clip_durations_s=clip_durations_s,
+                )
+                if archetype != "subtitled":
+                    raise UnsupportedPhonePlan(
+                        f"self-narrated phone rendering resolved to unsupported "
+                        f"archetype={archetype!r}"
+                    )
+
+            clip_id = next(iter(clip_id_to_local))
+            clip_path = clip_id_to_local[clip_id]
+            gcs_path = clip_id_to_gcs.get(clip_id)
+            binding = bindings[0]
+            if gcs_path != binding.proxy_path:
+                raise UnsupportedPhonePlan("subtitled clip has no matching phone source binding")
+
+            probe = probe_video(clip_path)
+            if float(probe.duration_s) > 300.0:
+                raise UnsupportedPhonePlan(
+                    "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
+                )
+
+            transcript = transcribe_whisper_cached(clip_path, language=None)
+            detected_lang = transcript.language or language
+            cues = build_plain_cues(transcript.words, attach_words=True)
+            cues = correct_caption_cues(
+                cues,
+                detected_lang,
+                model=settings.caption_correction_model,
+                enabled=settings.subtitled_caption_correction_enabled,
+                trusted_aliases=None,
+            )
+            cues = resplit_cues_into_sentences(cues)
+
+            recipe = compile_phone_subtitled_plan(
+                bindings, caption_cues=cues, caption_style=caption_style
+            )
+
+    validate_phone_pilot_recipe(recipe)
+    variant_id = "subtitled"
+    request = make_device_request(
+        job_id=uuid.UUID(job_id), variant_id=variant_id, revision=1, recipe=recipe
+    )
+
+    with _sync_session() as db:
+        entry = _lock_owned_entry_job(db, job_id)
+        if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
+            return
+        job = entry[0]
+        if not settings.phone_rendering_for(job.user_id):
+            raise ValueError("Phone rendering is unavailable for this account")
+        current = copy.deepcopy(job.assembly_plan or {})
+        if current.get("creator_generation_id") != generation or current.get(
+            PHONE_SOURCES_FIELD
+        ) != snapshot.get(PHONE_SOURCES_FIELD):
+            return
+        prior_device = (current.get(DEVICE_RENDER_FIELD) or {}).get(variant_id)
+        if prior_device is not None and prior_device.get("base_generation") == generation:
+            return
+        variants = list(current.get("variants") or [])
+        existing_index = next(
+            (i for i, v in enumerate(variants) if v.get("variant_id") == variant_id), None
+        )
+        if existing_index is not None and variants[existing_index].get("render_status") == "ready":
+            raise ValueError("Cannot replace a ready phone variant with a new plan")
+        new_entry = {
+            "variant_id": variant_id,
+            "rank": 1,
+            "render_generation_id": generation,
+            "render_status": "awaiting_device",
+            "render_destination": "device",
+            "render_finished_at": None,
+            "resolved_archetype": "subtitled",
+            "duration_s": recipe.duration,
+            "caption_cues": cues,
+            "voiceover_caption_style": caption_style,
+            "caption_language": detected_lang,
+            "ok": False,
+        }
+        if existing_index is not None:
+            variants[existing_index] = new_entry
+        else:
+            variants.append(new_entry)
+        current["variants"] = variants
+        current["phone_deferred_variants"] = []
+        job.assembly_plan = current
+        pin_device_request(job, request, base_generation=generation)
+        job.status = "awaiting_device"
+        job.error_detail = None
+        job.failure_reason = None
+        db.commit()
+
+
+def _run_phone_narrated_job(
+    job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
+) -> None:
+    """Decisions-only narrated-walkthrough phone compile (KRI-132).
+
+    Reached only for a `narrated`/`narrated_planned`/`narrated_ready` item
+    WITH a recorded voiceover -- `content_plan_build.py`'s dispatch gate
+    routes the no-voiceover (self-narration) case to
+    `_run_phone_subtitled_job` instead. Mirrors `_render_narrated_variant`
+    (`app.tasks.generative_build`) up to but excluding FFmpeg: download the
+    voiceover, transcribe it, compute step timings (scripted force-alignment
+    when the filming guide has >=2 steps, else auto-segmentation), assign one
+    clip per step in narrative order, and burn the SAME caption cues the
+    cloud path builds. Skips the cloud path's agentic storyboard re-ranking
+    (`_narrated_storyboard_plan`) -- clip assignment stays in script/guide
+    order, exactly like `_narrated_clip_assignments`/the auto-segment
+    fallback already do before that agent's advisory re-ranking would apply.
+    No silence-cut/speech-cleanup runs on the phone path (see
+    `_phone_speech_cleanup_contract_guard`); this is normally a no-op for a
+    voiceover item regardless (`capability_for_item` marks cleanup
+    unavailable -- `replacement_voiceover` -- for any item carrying one, so a
+    voiceover item's contract is always `off_v1` in practice), checked
+    anyway as defense in depth.
+    """
+    from app.kria.device_render import make_device_request  # noqa: PLC0415
+    from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
+    from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
+    from app.pipeline.narrated_alignment import (  # noqa: PLC0415
+        align_script_to_voiceover,  # noqa: PLC0415
+        contiguous_step_timings,
+    )
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
+        NarratedPhoneStep,
+        compile_phone_narrated_plan,
+    )
+    from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
+    from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
+    from app.services.device_render import (  # noqa: PLC0415
+        DEVICE_RENDER_FIELD,
+        pin_device_request,
+    )
+    from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+    from app.storage import download_to_file  # noqa: PLC0415
+    from app.tasks.template_orchestrate import _probe_duration  # noqa: PLC0415
+
+    generation = snapshot.get("creator_generation_id")
+    if not isinstance(generation, str) or not generation:
+        raise ValueError("Phone rendering requires an immutable approved generation")
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row) for row in snapshot[PHONE_SOURCES_FIELD]
+    )
+    if not bindings:
+        raise ValueError("Phone rendering requires original source bindings")
+    if any(
+        isinstance(record, dict) and record.get("base_generation") == generation
+        for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
+    ):
+        return
+    if not settings.phone_rendering_enabled:
+        raise ValueError(
+            "Phone rendering is currently unavailable; originals remain on the device."
+        )
+
+    edit_format = coerce_edit_format(all_candidates.get("edit_format"))
+    if edit_format not in NARRATED_EDIT_FORMATS:
+        raise ValueError(f"No phone renderer is registered for edit_format={edit_format!r}")
+    voiceover_gcs_path = all_candidates.get("voiceover_gcs_path")
+    if not voiceover_gcs_path:
+        raise ValueError("Phone rendering requires a recorded voiceover for a narrated edit")
+    if (
+        not settings.phone_narrated_rendering_enabled
+        or not settings.phone_narration_rendering_enabled
+        or "narrationAudio" not in settings.phone_render_verified_features
+        or not settings.narrated_archetype_enabled
+    ):
+        # Defense in depth: `content_plan_build.py`'s dispatch gate already
+        # checked this exact combination via `phone_render_supported_formats()`.
+        raise ValueError("Phone rendering does not yet support voiceover edits")
+
+    _phone_speech_cleanup_contract_guard(snapshot)
+
+    clip_paths_gcs: list[str] = list(all_candidates.get("clip_paths") or [])
+    if not clip_paths_gcs:
+        raise ValueError("Phone rendering requires clip paths")
+    filming_guide = list(all_candidates.get("filming_guide") or [])
+    narrative_shot_count = int(all_candidates.get("narrative_shot_count") or 0)
+    voiceover_bed_level = all_candidates.get("voiceover_bed_level")
+    caption_style = (
+        "word" if all_candidates.get("voiceover_caption_style") == "word" else "sentence"
+    )
+    language: str = all_candidates.get("language") or "en"
+
+    narration = _resolve_phone_voiceover_bed(job_id, voiceover_gcs_path)
+    if narration is None:
+        raise UnsupportedPhonePlan(
+            "recorded voiceover is no longer available for phone rendering",
+            capability="narrationAudio",
+        )
+
+    with pipeline_trace_for(job_id):
+        with tempfile.TemporaryDirectory(
+            prefix="nova_phone_narrated_", ignore_cleanup_errors=True
+        ) as tmpdir:
+            ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
+            clip_id_to_local = ingest["clip_id_to_local"]
+            clip_id_to_gcs = ingest["clip_id_to_gcs"]
+
+            voiceover_local = os.path.join(tmpdir, "narrated_voiceover")
+            download_to_file(voiceover_gcs_path, voiceover_local)
+            transcript = transcribe_whisper(voiceover_local, model=settings.narrated_whisper_model)
+
+            narrative_order = _resolve_narrative_order(
+                narrative_shot_count, clip_id_to_gcs, job_id=job_id, strict=False
+            ) or list(clip_id_to_local)
+            bindings_by_gcs = {binding.proxy_path: binding.media_id for binding in bindings}
+            clip_path_to_id = {path: cid for cid, path in clip_id_to_local.items()}
+
+            def _media_id_for_clip(clip_id: str) -> str:
+                gcs_path = clip_id_to_gcs.get(clip_id)
+                media_id = bindings_by_gcs.get(gcs_path) if gcs_path else None
+                if media_id is None:
+                    raise UnsupportedPhonePlan("narrated step has no phone source binding")
+                return media_id
+
+            script_steps = _narrated_script_steps(filming_guide)
+            steps: list[NarratedPhoneStep] = []
+            if len(script_steps) >= 2:
+                clip_assignments = _narrated_clip_assignments(
+                    filming_guide, narrative_order, clip_id_to_local
+                )
+                if len(clip_assignments) < len(script_steps):
+                    raise UnsupportedPhonePlan(
+                        f"narrated variant has {len(clip_assignments)} clips for "
+                        f"{len(script_steps)} scripted steps"
+                    )
+                assignment_by_step = {a.step_id: a for a in clip_assignments}
+                step_timings = align_script_to_voiceover(script_steps, transcript.words)
+                for timing in step_timings:
+                    assignment = assignment_by_step.get(timing.step_id)
+                    if assignment is None:
+                        raise UnsupportedPhonePlan("narrated step has no clip assignment")
+                    clip_id = clip_path_to_id.get(assignment.clip_path)
+                    if clip_id is None:
+                        raise UnsupportedPhonePlan("narrated step has no phone source binding")
+                    steps.append(
+                        NarratedPhoneStep(
+                            step_id=timing.step_id,
+                            media_id=_media_id_for_clip(clip_id),
+                            start_s=timing.start_s,
+                            end_s=timing.end_s,
+                        )
+                    )
+            else:
+                vo_dur = _probe_duration(voiceover_local) or 0.0
+                words = transcript.words
+                total_s = max((w.end_s for w in words), default=vo_dur or 1.0)
+                phrases = split_phrases(words, video_duration_s=total_s)
+                if not phrases:
+                    phrases = [{"speech_start_s": 0.0, "speech_end_s": total_s}]
+                ordered_ids = list(narrative_order)
+                if not ordered_ids:
+                    raise UnsupportedPhonePlan("narrated_ready variant has no clips")
+                n_clips = len(ordered_ids)
+                target_count = max(1, min(n_clips, len(phrases)))
+                if len(phrases) > target_count:
+                    speech_start = phrases[0]["speech_start_s"]
+                    speech_end = phrases[-1]["speech_end_s"]
+                    total_speech = max(speech_end - speech_start, 0.1)
+                    bucket_dur = total_speech / target_count
+                    buckets: list[dict] = []
+                    bucket_open = phrases[0].copy()
+                    for p in phrases[1:]:
+                        if (
+                            p["speech_end_s"] - bucket_open["speech_start_s"]
+                        ) >= bucket_dur and len(buckets) < target_count - 1:
+                            buckets.append(
+                                {**bucket_open, "speech_end_s": bucket_open["speech_end_s"]}
+                            )
+                            bucket_open = p.copy()
+                        else:
+                            bucket_open = {**bucket_open, "speech_end_s": p["speech_end_s"]}
+                    buckets.append(bucket_open)
+                    phrases = buckets
+                timeline_end = max(total_s, vo_dur)
+                step_timings = contiguous_step_timings(
+                    [float(p["speech_start_s"]) for p in phrases], timeline_end
+                )
+                for index, timing in enumerate(step_timings):
+                    clip_id = ordered_ids[index % len(ordered_ids)]
+                    steps.append(
+                        NarratedPhoneStep(
+                            step_id=timing.step_id,
+                            media_id=_media_id_for_clip(clip_id),
+                            start_s=timing.start_s,
+                            end_s=timing.end_s,
+                        )
+                    )
+
+            if not steps:
+                raise UnsupportedPhonePlan("narrated phone plan has no steps")
+            # `narration.duration_s` (the server-pinned, registration-time
+            # probed voiceover duration -- see `_resolve_phone_voiceover_bed`)
+            # is the AUTHORITATIVE voiceover length, not the locally
+            # re-transcribed/re-probed value: a fresh transcript's last word
+            # end (scripted alignment) or a fresh local probe (auto-segment)
+            # routinely differs from it by trailing silence or rounding, and
+            # `compile_phone_narrated_plan` strictly requires the steps to
+            # tile exactly to whatever `voiceover_duration_s` it's given.
+            # Extend/shrink only the LAST step to that authoritative end so
+            # the compiled recipe always satisfies its own contract instead
+            # of failing closed on a few-millisecond mismatch.
+            voiceover_duration_s = float(narration.duration_s)
+            last_step = steps[-1]
+            if voiceover_duration_s <= last_step.start_s:
+                raise UnsupportedPhonePlan("recorded voiceover is too short for its narrated steps")
+            steps[-1] = last_step.model_copy(update={"end_s": voiceover_duration_s})
+
+            cues: list[dict] | None = None
+            detected_lang = language
+            if transcript.words:
+                detected_lang = transcript.language or language
+                cues = build_plain_cues(transcript.words, attach_words=True)
+                cues = correct_caption_cues(
+                    cues,
+                    detected_lang,
+                    model=settings.caption_correction_model,
+                    enabled=settings.subtitled_caption_correction_enabled,
+                    trusted_aliases=None,
+                )
+                cues = resplit_cues_into_sentences(cues)
+
+            # Cloud's `_mix_user_voiceover` knob is `voiceover_bed_level`
+            # (direct bed gain, ~0.25 default); this compiler's `mix`
+            # convention is 1.0 = voice fully dominant -- convert.
+            bed_level = float(voiceover_bed_level) if voiceover_bed_level is not None else 0.25
+            bed_level = max(0.0, min(1.0, bed_level))
+            mix = 1.0 - bed_level
+
+            recipe = compile_phone_narrated_plan(
+                steps,
+                bindings,
+                narration,
+                voiceover_duration_s=voiceover_duration_s,
+                mix=mix,
+                caption_cues=cues,
+                caption_style=caption_style,
+            )
+
+    validate_phone_pilot_recipe(recipe)
+    variant_id = "narrated"
+    request = make_device_request(
+        job_id=uuid.UUID(job_id), variant_id=variant_id, revision=1, recipe=recipe
+    )
+
+    with _sync_session() as db:
+        entry = _lock_owned_entry_job(db, job_id)
+        if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
+            return
+        job = entry[0]
+        if not settings.phone_rendering_for(job.user_id):
+            raise ValueError("Phone rendering is unavailable for this account")
+        current = copy.deepcopy(job.assembly_plan or {})
+        if current.get("creator_generation_id") != generation or current.get(
+            PHONE_SOURCES_FIELD
+        ) != snapshot.get(PHONE_SOURCES_FIELD):
+            return
+        prior_device = (current.get(DEVICE_RENDER_FIELD) or {}).get(variant_id)
+        if prior_device is not None and prior_device.get("base_generation") == generation:
+            return
+        variants = list(current.get("variants") or [])
+        existing_index = next(
+            (i for i, v in enumerate(variants) if v.get("variant_id") == variant_id), None
+        )
+        if existing_index is not None and variants[existing_index].get("render_status") == "ready":
+            raise ValueError("Cannot replace a ready phone variant with a new plan")
+        new_entry = {
+            "variant_id": variant_id,
+            "rank": 1,
+            "render_generation_id": generation,
+            "render_status": "awaiting_device",
+            "render_destination": "device",
+            "render_finished_at": None,
+            "resolved_archetype": "narrated",
+            "duration_s": recipe.duration,
+            "caption_cues": cues,
+            "voiceover_caption_style": caption_style,
+            "caption_language": detected_lang,
+            "voiceover_bed_level": bed_level,
+            "ok": False,
+        }
+        if existing_index is not None:
+            variants[existing_index] = new_entry
+        else:
+            variants.append(new_entry)
+        current["variants"] = variants
+        current["phone_deferred_variants"] = []
         job.assembly_plan = current
         pin_device_request(job, request, base_generation=generation)
         job.status = "awaiting_device"

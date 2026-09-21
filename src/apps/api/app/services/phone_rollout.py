@@ -7,6 +7,11 @@ from functools import cache
 from pathlib import Path
 from typing import get_args
 
+from app.agents._schemas.edit_format import (
+    GUIDED_EDIT_FORMATS,
+    NARRATED_EDIT_FORMATS,
+    PHONE_RENDER_SUPPORTED_FORMATS,
+)
 from app.config import settings
 from app.kria.portable_text import PortableTextLayer, PositionedTextRun
 from app.kria.recipes_v2 import EditRecipeV2
@@ -206,3 +211,62 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2) -> None:
         raise ValueError(
             "Giant-title handwriting is unavailable while phone performance is improved"
         )
+
+
+def phone_render_supported_formats() -> frozenset[str]:
+    """The single source of truth for "which edit formats can render on the
+    phone for THIS deployment, right now" -- settings-aware, unlike the
+    static `PHONE_RENDER_SUPPORTED_FORMATS` allowlist (compiler existence
+    only). Every runtime consumer (the dispatch gate in
+    `content_plan_build.py`, the worker's own dispatch fork in
+    `generative_build.py`, and the chat format picker in
+    `routes/creation_threads.py`) MUST call this instead of reading the
+    static constant directly, so the picker, the planner, and the render
+    path can never disagree about what actually works right now.
+
+    Always includes the montage family (`GUIDED_EDIT_FORMATS`:
+    montage/day_vlog/single_hero) -- unconditional, matching the existing
+    KRI-114 precedent; per-item nuances for that family (guided approval,
+    voiceover's own `phone_narration_rendering_enabled` gate) are handled
+    downstream by the dispatch gate, not here.
+
+    Adds `subtitled` when `settings.phone_subtitled_rendering_enabled` AND
+    `settings.subtitled_archetype_enabled` both hold -- the format itself
+    must be enabled at all (phone or not) before the phone compiler is
+    reachable.
+
+    Adds the whole `NARRATED_EDIT_FORMATS` family (narrated/narrated_planned/
+    narrated_ready) when `settings.phone_narrated_rendering_enabled` AND
+    `settings.phone_narration_rendering_enabled` AND `"narrationAudio"` is in
+    `settings.phone_render_verified_features` AND
+    `settings.narrated_archetype_enabled` all hold. The narrated family
+    reuses the SAME narration-audio device capability and rollout flag the
+    montage-family voiceover render already uses (`phone_narration_rendering
+    _enabled` / `narrationAudio`) -- a phone deployment that hasn't verified
+    on-device narration audio at all cannot render narrated either.
+
+    This function only ever says whether the DECLARED format has a reachable
+    phone compiler -- it says nothing about per-item nuances a caller must
+    still check itself: `subtitled` additionally requires exactly one clip
+    (`compile_phone_subtitled_plan` also enforces this, but the dispatch gate
+    checks it earlier to fail closed before a Job is minted); a `narrated*`
+    item with NO recorded voiceover only reaches the phone through a
+    dispatch-gate-checked exception (self-narration onto exactly one clip,
+    which can only ever resolve to the phone-supported `subtitled` archetype
+    -- never `talking_head`, which has no phone compiler at all and is never
+    included in this set under any settings combination).
+    """
+
+    formats: set[str] = set(GUIDED_EDIT_FORMATS)
+    if settings.phone_subtitled_rendering_enabled and settings.subtitled_archetype_enabled:
+        formats.add("subtitled")
+    if (
+        settings.phone_narrated_rendering_enabled
+        and settings.phone_narration_rendering_enabled
+        and "narrationAudio" in settings.phone_render_verified_features
+        and getattr(settings, "narrated_archetype_enabled", False)
+    ):
+        formats |= NARRATED_EDIT_FORMATS
+    # Defense in depth: never advertise a format the static compiler-existence
+    # allowlist doesn't even recognize, regardless of how settings resolve.
+    return frozenset(formats) & PHONE_RENDER_SUPPORTED_FORMATS

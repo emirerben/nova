@@ -266,6 +266,16 @@ async def test_pilot_accounts_are_only_offered_the_runtime_that_renders_on_devic
 async def test_the_app_on_a_pilot_account_only_offers_formats_the_iphone_renders(
     pilot, monkeypatch, enrolled
 ):
+    """KRI-132 follow-up: `phone_subtitled_rendering_enabled` /
+    `phone_narrated_rendering_enabled` default on, so once the underlying
+    formats are enabled at all (`subtitled_archetype_enabled` /
+    `narrated_archetype_enabled`), the picker offers Talking to camera too --
+    not just Montage. Narrated still doesn't appear here: the `pilot` fixture
+    only verifies `stillImages`, not `narrationAudio`, so
+    `phone_render_supported_formats()` still excludes the narrated family
+    (same rollout-flag gate the montage-family voiceover render already
+    uses). See `test_the_app_on_a_pilot_account_offers_only_montage_when_
+    rollout_flags_are_off` for the byte-identical-to-pre-rollout case."""
     monkeypatch.setattr(settings, "narrated_archetype_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     user = SimpleNamespace(id=USER_ID if enrolled else uuid.uuid4())
@@ -274,9 +284,28 @@ async def test_the_app_on_a_pilot_account_only_offers_formats_the_iphone_renders
     ]
     everything = list(routes._available_formats())
     assert {"montage", "narrated", "talking_to_camera"} <= set(everything)
-    # Narrated and talking videos have no on-device path; choosing one would
-    # only end in a refusal after the footage upload.
-    assert offered == (["montage"] if enrolled else everything)
+    # Narrated still has no verified narrationAudio in this fixture -- only
+    # Montage and Talking to camera are actually phone-renderable here.
+    assert offered == (["montage", "talking_to_camera"] if enrolled else everything)
+
+
+@pytest.mark.asyncio
+async def test_the_app_on_a_pilot_account_offers_only_montage_when_rollout_flags_are_off(
+    pilot, monkeypatch
+):
+    """Byte-identical to pre-KRI-132: with the new rollout flags off (and no
+    verified narrationAudio), an enrolled phone account's picker still shows
+    only Montage, even though Talking to camera/Narrated are generally
+    enabled formats."""
+    monkeypatch.setattr(settings, "narrated_archetype_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", False)
+    monkeypatch.setattr(settings, "phone_narrated_rendering_enabled", False)
+    user = SimpleNamespace(id=USER_ID)
+    offered = [
+        entry["id"] for entry in (await routes.capabilities(user, native_client=True))["formats"]
+    ]
+    assert offered == ["montage"]
 
 
 # --- "Continue with N visuals" reads what the iPhone can render from ----------
