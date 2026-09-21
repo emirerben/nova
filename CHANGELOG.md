@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.94.0] - 2026-09-21
+
+### Changed
+- feat(kri-121): render Visuals photos and videos on iPhone for phone-rendering projects (#1104) <!-- release-pr: 1104 -->
+
 ## [0.76.93.0] - 2026-09-21
 
 ### Changed
