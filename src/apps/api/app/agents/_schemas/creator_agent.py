@@ -21,6 +21,7 @@ from pydantic import (
     Field,
     TypeAdapter,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -30,6 +31,7 @@ from app.agents._schemas.sfx_intent import (
     LicensedSfxIntent,
     SfxIntent,
 )
+from app.schemas.clip_intents import MAX_CLIP_INTENTS, ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
     CREATOR_TITLE_MAX_CHARS,
     MAX_CREATOR_SHOT_LABELS,
@@ -343,6 +345,32 @@ class CreativeStrategy(_CreatorModel):
             "no model-authored label text."
         ),
     )
+    # KRI-127 (flag CLIP_INTENTS_ENABLED). Both default to None so stored
+    # strategies and every exclude_none hash stay byte-identical when unused.
+    clip_intents: list[ClipIntent] | None = Field(
+        default=None,
+        max_length=MAX_CLIP_INTENTS,
+        description=(
+            "Open-vocabulary requests over the owned clips: label / group / order / "
+            "include clips by an attribute the creator described in their own words. "
+            "Carries no per-clip answers; the server resolves those."
+        ),
+    )
+    # Server-owned. Never trusted from model output: the route overwrites it
+    # with the resolver's result (assignments, evidence, grounding).
+    resolved_clip_intents: list[ResolvedClipIntent] | None = Field(
+        default=None, max_length=MAX_CLIP_INTENTS
+    )
+
+    @model_serializer(mode="wrap")
+    def _omit_unused_clip_intents(self, handler):  # noqa: ANN001, ANN202
+        # Stored strategies stay byte-identical to pre-KRI-127 when unused.
+        data = handler(self)
+        for key in ("clip_intents", "resolved_clip_intents"):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
+
     image_layout: BeatLayout | None = Field(
         default=None,
         description=(

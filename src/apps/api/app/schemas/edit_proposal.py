@@ -23,10 +23,12 @@ from pydantic import (
     Field,
     WithJsonSchema,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
+from app.schemas.clip_intents import MAX_CLIP_INTENTS, ResolvedClipIntent
 
 # Keep existing integer JSON stable for approval hashes while accepting fractions.
 MAX_PROPOSAL_DURATION_S = 120
@@ -1215,6 +1217,18 @@ class ProposalPlannerFallback(BaseModel):
 
 
 class ProposalBrief(BaseModel):
+    # KRI-127: creator intents already resolved to clips by the chat turn.
+    clip_intents: list[ResolvedClipIntent] | None = Field(default=None, max_length=MAX_CLIP_INTENTS)
+
+    @model_serializer(mode="wrap")
+    def _omit_unused_clip_intents(self, handler):  # noqa: ANN001, ANN202
+        # Stored briefs (and anything hashing them) stay byte-identical to
+        # pre-KRI-127 when the feature is unused.
+        data = handler(self)
+        if data.get("clip_intents") is None:
+            data.pop("clip_intents", None)
+        return data
+
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
     pace: ProposalPace = "balanced"

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
+from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_proposal import (
     CREATOR_TITLE_MAX_CHARS,
     GUIDED_STORY_MIN_MOMENT_S,
@@ -348,6 +349,8 @@ class EditProposalMedia(BaseModel):
 
 
 class EditProposalAgentInput(BaseModel):
+    # KRI-127: resolved creator intents (groups / order / includes) the plan must honor.
+    clip_intents: list[ResolvedClipIntent] | None = None
     idea: str = ""
     theme: str = ""
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
