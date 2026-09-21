@@ -36,7 +36,7 @@ from app.kria.device_render import (
     DeviceRetryOut,
     require_current_request,
 )
-from app.kria.render_assets import LibraryRenderAsset, VisualRenderAsset
+from app.kria.render_assets import LibraryRenderAsset, VisualRenderAsset, VoiceoverRenderAsset
 from app.limiter import limiter
 from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, TemporaryMediaUpload
 from app.routes.generative_jobs import PLAYBACK_URL_TTL_MIN
@@ -192,6 +192,13 @@ async def download_device_asset(
             download_url=url,
             expires_at=datetime.now(UTC) + timedelta(minutes=15),
         )
+    if isinstance(asset, VoiceoverRenderAsset):
+        url = await _voiceover_download_url(db, job, user_id, asset)
+        return DeviceAssetDownloadOut(
+            asset_id=asset.id,
+            download_url=url,
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
+        )
     if not isinstance(asset, LibraryRenderAsset):
         raise HTTPException(404, "Library asset unavailable")
     try:
@@ -265,6 +272,43 @@ async def _visual_download_url(
         )
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(409, "Visual changed; refresh the recipe") from exc
+
+
+async def _voiceover_download_url(
+    db: AsyncSession, job: Job, user_id: uuid.UUID, asset: VoiceoverRenderAsset
+) -> str:
+    """Grant the job owner's own plan-item voiceover, never another item's bytes.
+
+    Unlike a Visuals-pool asset (one row per photo/video, looked up by its
+    own id), a voiceover is a bare `PlanItem` column -- ownership is already
+    established by `_owned_job`'s lock chain (job -> item -> plan ->
+    `plan.user_id == user_id`), so this looks the item up by the JOB's own
+    `content_plan_item_id`, never by parsing the asset's `plan_item_id`
+    (only cross-checked here, defense-in-depth, against the job's already-
+    trusted value). The recipe pinned one immutable generation; the device
+    re-hashes the downloaded bytes against the pinned SHA-256. The item must
+    still be in "voiceover" audio mode with that exact `(path, generation)`
+    attached, so a cleared or replaced voiceover fails closed instead of
+    granting different bytes.
+    """
+    if job.content_plan_item_id is None or str(job.content_plan_item_id) != asset.plan_item_id:
+        raise HTTPException(404, "Voiceover unavailable")
+    item = await db.get(PlanItem, job.content_plan_item_id, populate_existing=True)
+    if (
+        item is None
+        or getattr(item, "audio_mode", None) != "voiceover"
+        or not item.voiceover_gcs_path
+        or str(item.voiceover_generation or "") != asset.generation
+    ):
+        raise HTTPException(409, "Voiceover changed; refresh the recipe")
+    path = str(item.voiceover_gcs_path)
+    await db.rollback()
+    try:
+        return await asyncio.to_thread(
+            storage.signed_get_url_for_generation, path, generation=asset.generation
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(409, "Voiceover changed; refresh the recipe") from exc
 
 
 @router.post("/jobs/{job_id}/device-render/uploads", response_model=DeviceExportReservationOut)

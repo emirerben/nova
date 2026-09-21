@@ -205,6 +205,66 @@ def test_phone_item_with_recorded_voiceover_names_the_voiceover(monkeypatch) -> 
     assert exc.value.voiceover is True
 
 
+def test_phone_item_with_recorded_voiceover_manifest_advertises_availability(
+    monkeypatch,
+) -> None:
+    """KRI-132: flag on + narrationAudio verified lifts the manifest-level
+    CAPABILITY_PHONE_SOURCE_AUDIO gate for a montage-family (non-guided)
+    voiceover (creator_capabilities.py's `resolve_creator_manifest`), and the
+    redundant unconditional has_voiceover check inside
+    `effective_render_program` (creator_policy.py) no longer fires for it
+    either -- confirmed by the DIFFERENT error below. The guided-story
+    CAPABILITY_GUIDED_VOICEOVER stays unconditionally unsupported_phone_audio
+    regardless (asserted below).
+
+    KNOWN REMAINING GAP (follow-up, not fixed by this change): even past that
+    check, `effective_render_program`'s phone branch unconditionally requires
+    `CAPABILITY_DRAFT_GUIDED_PROPOSAL` to be available and returns "guided"
+    -- there is no "return native" branch for ANY phone manifest, voiceover
+    or not. Since a voiceover manifest is BY DESIGN never guided-applicable
+    (`guided_edit_applicable(..., has_voiceover=True)` is always False --
+    render_program_for_intent routes has_voiceover straight to "native"),
+    `guided.available` can never be true for it either, so
+    `compile_strategy_to_plan` still cannot reach a successful plan for a
+    phone+voiceover manifest end-to-end from chat. This does not block
+    DISPATCH (`_dispatch_item_render` recomputes `guided_applicable` fresh
+    from `has_voiceover` independent of what this function returned), but it
+    does mean the Main Creator chat flow cannot yet DRAFT a phone+voiceover
+    strategy purely through this resolver. Giving phone manifests a "native"
+    return path here (mirroring the dispatch-time `guided_applicable`
+    computation) is out of scope for KRI-132 backend (B1); filed for a
+    follow-up PR.
+    """
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "phone_render_verified_features", ["narrationAudio"])
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+        has_voiceover=True,
+    )
+    phone_audio = manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO]
+    assert phone_audio.available is True
+    guided_voiceover = manifest.capabilities[capabilities.CAPABILITY_GUIDED_VOICEOVER]
+    assert (guided_voiceover.available, guided_voiceover.reason_code) == (
+        False,
+        "unsupported_phone_audio",
+    )
+
+    # The has_voiceover-specific block no longer fires; a DIFFERENT,
+    # pre-existing, voiceover-agnostic gate ("phone rendering requires the
+    # guided proposal capability") is what remains -- see the known-gap note
+    # above.
+    with pytest.raises(MixedMediaTimingUnavailableError, match="guided proposal capability") as exc:
+        capabilities.compile_strategy_to_plan(
+            manifest, CreativeStrategy(selected_media_ids=["phone-a"])
+        )
+    assert not isinstance(exc.value, PhoneFormatUnavailableError)
+
+
 def test_phone_only_strategy_rejects_audio_led_format_even_when_enabled(monkeypatch) -> None:
     _enable_guided(monkeypatch)
     monkeypatch.setattr(capabilities.settings, "edit_format_talking_head_enabled", True)

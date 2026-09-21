@@ -8,8 +8,17 @@ from app.pipeline.generative_decision import (
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_montage_plan import compile_phone_montage_plan
-from app.pipeline.phone_recipe_shared import PhoneMusicBed
+from app.pipeline.phone_recipe_shared import PhoneMusicBed, PhoneNarrationBed
 from app.services.phone_sources import PhoneSourceBinding
+
+
+def _narration(plan_item_id: str = "item-1", *, duration_s: float = 20.0) -> PhoneNarrationBed:
+    return PhoneNarrationBed(
+        plan_item_id=plan_item_id,
+        generation="9",
+        fingerprint=RenderFingerprint(sha256="d" * 64, byte_count=999),
+        duration_s=duration_s,
+    )
 
 
 def _binding(media_id: str, *, duration_s: float = 10.0) -> PhoneSourceBinding:
@@ -56,6 +65,9 @@ def fixture(
     music_start_s=None,
     extras_overrides=None,
     bindings=None,
+    mix=None,
+    voiceover_gcs_path=None,
+    voiceover_target_s=None,
 ):
     if steps is None:
         steps = [
@@ -88,6 +100,9 @@ def fixture(
             else None
         ),
     }
+    if voiceover_gcs_path:
+        extras["voiceover_gcs_path"] = voiceover_gcs_path
+        extras["voiceover_target_s"] = voiceover_target_s
     if extras_overrides:
         extras.update(extras_overrides)
     decision = GenerativeVariantDecision(
@@ -99,6 +114,7 @@ def fixture(
         assembly_steps=steps,
         music_track_id=music_track_id,
         music_start_s=music_start_s,
+        mix=mix,
         extras=extras,
     )
     return decision, bindings
@@ -258,3 +274,87 @@ def test_no_text_variant_has_no_layers():
     recipe = compile_phone_montage_plan(decision, bindings, music=None)
     assert recipe.text_layers == []
     assert "positionedText" not in recipe.required_capabilities
+
+
+def test_voiceover_mix_1_0_fully_ducks_footage_audio():
+    """Default voiceover_only mix (1.0): footage bed silent, voice full."""
+    decision, bindings = fixture(
+        voiceover_gcs_path="voiceover-uploads/direct/u/i/voice.m4a",
+        voiceover_target_s=11.4,
+        mix=1.0,
+    )
+    narration = _narration()
+    recipe = compile_phone_montage_plan(decision, bindings, music=None, narration=narration)
+
+    narration_track = next(t for t in recipe.tracks if t.id == "narration")
+    assert narration_track.kind == "audio"
+    assert narration_track.clips[0].source_asset_id == f"voiceover-{narration.plan_item_id}"
+    assert narration_track.clips[0].volume == pytest.approx(1.0)
+    assert narration_track.clips[0].source_start == pytest.approx(0.0)
+    assert narration_track.clips[0].source_duration == pytest.approx(11.4)
+    assert recipe.audio.narration_asset_id == f"voiceover-{narration.plan_item_id}"
+    assert recipe.audio.original_volume == pytest.approx(0.0)
+    assert not any(t.id == "music" for t in recipe.tracks)
+    assert {"narrationAudio", "audioMix"} <= recipe.required_capabilities
+    voiceover_asset = next(
+        a for a in recipe.asset_manifest.assets if a.id == f"voiceover-{narration.plan_item_id}"
+    )
+    assert voiceover_asset.kind == "voiceover"
+    assert voiceover_asset.plan_item_id == narration.plan_item_id
+    assert voiceover_asset.generation == narration.generation
+    # Digest stability: serializing twice must produce identical bytes.
+    assert recipe.model_dump_json() == recipe.model_dump_json()
+    recipe.model_validate(recipe.model_dump(mode="json"))
+
+
+def test_voiceover_mix_0_4_mixes_footage_audio_under_the_voice():
+    """A lower mix brings the clips' own audio up under the voice."""
+    decision, bindings = fixture(
+        voiceover_gcs_path="voiceover-uploads/direct/u/i/voice.m4a",
+        voiceover_target_s=11.4,
+        mix=0.4,
+    )
+    narration = _narration()
+    recipe = compile_phone_montage_plan(decision, bindings, music=None, narration=narration)
+
+    assert recipe.audio.original_volume == pytest.approx(0.6)
+    narration_track = next(t for t in recipe.tracks if t.id == "narration")
+    assert narration_track.clips[0].volume == pytest.approx(1.0)
+
+
+def test_voiceover_music_bed_caps_gain_and_never_mixes_footage():
+    """voiceover_music: matched track plays as a low bed, footage never mixed."""
+    music = PhoneMusicBed(
+        catalog_id="track1",
+        generation="7",
+        fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        duration_s=120.0,
+        start_s=10.0,
+        volume=1.0,
+    )
+    narration = _narration()
+    for mix, expected_gain in [(0.7, 0.3), (0.0, 0.5)]:
+        decision, bindings = fixture(
+            voiceover_gcs_path="voiceover-uploads/direct/u/i/voice.m4a",
+            voiceover_target_s=11.4,
+            mix=mix,
+            music_track_id="track1",
+            music_start_s=10.0,
+        )
+        recipe = compile_phone_montage_plan(decision, bindings, music=music, narration=narration)
+        music_track = next(t for t in recipe.tracks if t.id == "music")
+        assert music_track.clips[0].volume == pytest.approx(expected_gain)
+        assert recipe.audio.music_volume == pytest.approx(expected_gain)
+        # Footage audio is never referenced at all in the music-bed branch.
+        assert recipe.audio.original_volume == pytest.approx(0.0)
+        assert {"narrationAudio", "musicBed", "audioMix"} <= recipe.required_capabilities
+
+
+def test_voiceover_requires_a_phone_narration_binding():
+    decision, bindings = fixture(
+        voiceover_gcs_path="voiceover-uploads/direct/u/i/voice.m4a",
+        voiceover_target_s=11.4,
+    )
+    with pytest.raises(UnsupportedPhonePlan, match="narration binding") as exc:
+        compile_phone_montage_plan(decision, bindings, music=None, narration=None)
+    assert exc.value.capability == "narrationAudio"

@@ -106,7 +106,18 @@ def effective_render_program(
                     voiceover=True,
                 )
             raise MixedMediaTimingUnavailableError(phone.reason or "phone rendering is unavailable")
-        if manifest.has_voiceover or strategy.audio_strategy == "voiceover":
+        # `phone.available` already reflects whether THIS project's recorded
+        # voiceover may render on the phone (`CAPABILITY_PHONE_SOURCE_AUDIO`
+        # in `app.services.creator_capabilities.resolve_creator_manifest`,
+        # KRI-132's montage-family rollout flag + verified narrationAudio
+        # gate; the guided-story narration lane stays hard-blocked via a
+        # SEPARATE, unconditional `CAPABILITY_GUIDED_VOICEOVER` there) — so
+        # reaching here with a voiceover already on the manifest is no
+        # longer necessarily a hard block. A strategy asking to newly SWITCH
+        # audio_strategy to "voiceover" with none attached yet is a
+        # different, still-unsupported request the capability above never
+        # considered, so that half of the check remains unconditional.
+        if not manifest.has_voiceover and strategy.audio_strategy == "voiceover":
             raise PhoneFormatUnavailableError(
                 "phone rendering does not support voiceover audio", voiceover=True
             )
@@ -200,6 +211,22 @@ def effective_render_program(
             )
         return "guided"
     if phone is not None:
+        # KRI-132 KNOWN GAP: every phone manifest reaching here requires the
+        # guided-proposal capability and resolves to "guided" -- there is no
+        # "native" return for phone. A voiceover manifest is BY DESIGN never
+        # guided-applicable (`guided_edit_applicable(..., has_voiceover=True)`
+        # is always False, so `guided.available` can never be true for it
+        # either), so this still blocks a phone+voiceover manifest from
+        # resolving here even though the has_voiceover-specific check above
+        # no longer does. Does not block DISPATCH (`_dispatch_item_render`
+        # recomputes `guided_applicable` fresh from `has_voiceover`,
+        # independent of this function's return value) -- it only means the
+        # Main Creator chat flow cannot yet draft a phone+voiceover strategy
+        # through this resolver. Giving phone a native path here (mirroring
+        # the dispatch-time computation) is a follow-up, not part of KRI-132
+        # backend (B1). See `tests/services/test_creator_capabilities.py
+        # ::test_phone_item_with_recorded_voiceover_manifest_advertises
+        # _availability`.
         if not (guided and guided.available):
             raise MixedMediaTimingUnavailableError(
                 "phone rendering requires the guided proposal capability"
