@@ -27,7 +27,7 @@ final class NativeMotionPainterTests: XCTestCase {
         let assets = ["photo": photo, "font": font]
         let preview = try await LivePreviewComposition(recipe: recipe, assetURLs: assets)
         let output = directory.appendingPathComponent("motion.mp4")
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state"))).export(recipe: recipe, assetURLs: assets, outputURL: output)
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none).export(recipe: recipe, assetURLs: assets, outputURL: output)
         let native = AVAssetImageGenerator(asset: preview.preview.playerItem.asset)
         native.videoComposition = preview.preview.playerItem.videoComposition
         let exported = AVAssetImageGenerator(asset: AVURLAsset(url: output))

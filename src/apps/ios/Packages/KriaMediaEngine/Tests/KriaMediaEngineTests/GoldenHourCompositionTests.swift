@@ -31,7 +31,7 @@ final class GoldenHourCompositionTests: XCTestCase {
         let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: urls)
         let output = directory.appendingPathComponent("native-golden\(suffix).mp4")
         let exportStart = Date()
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
             .export(recipe: recipe, assetURLs: urls, outputURL: output)
         print("GOLDEN_EXPORT \(width)x\(height) seconds=\(Date().timeIntervalSince(exportStart))")
         let previewFrames = AVAssetImageGenerator(asset: preview.playerItem.asset)

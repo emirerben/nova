@@ -64,7 +64,7 @@ final class StillCardCompositionTests: XCTestCase {
         ])
         let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: urls)
         let output = directory.appendingPathComponent("matte.mp4")
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state"))).export(recipe: recipe, assetURLs: urls, outputURL: output)
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none).export(recipe: recipe, assetURLs: urls, outputURL: output)
         let reference = AVAssetImageGenerator(asset: preview.playerItem.asset)
         reference.videoComposition = preview.playerItem.videoComposition
         for (name, generator) in [("preview", reference), ("export", AVAssetImageGenerator(asset: AVURLAsset(url: output)))] {
@@ -128,7 +128,7 @@ final class StillCardCompositionTests: XCTestCase {
         XCTAssertTrue(recipe.effectiveCapabilities.contains(.stillImages))
         let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: urls)
         let output = directory.appendingPathComponent("card.mp4")
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state"))).export(recipe: recipe, assetURLs: urls, outputURL: output)
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none).export(recipe: recipe, assetURLs: urls, outputURL: output)
         let reference = AVAssetImageGenerator(asset: preview.playerItem.asset)
         reference.videoComposition = preview.playerItem.videoComposition
         // The card is x 96..<981, y 268..<1650; the photo is 885x664 around row 959.

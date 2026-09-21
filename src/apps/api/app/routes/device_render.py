@@ -22,6 +22,7 @@ from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
 from app.kria.device_render import (
+    BRAND_TAIL_SECONDS,
     DeviceAssetDownloadBody,
     DeviceAssetDownloadOut,
     DeviceExportCompleteBody,
@@ -329,7 +330,12 @@ async def reserve_device_export(
     attempt = str(body.attempt_id)
     attempts = record["attempts"]
     previous = attempts.get(attempt)
-    if previous and (previous["size"] != body.file_size_bytes or previous["sha256"] != body.sha256):
+    if previous and (
+        previous["size"] != body.file_size_bytes
+        or previous["sha256"] != body.sha256
+        # A different tail is different bytes, even at the same length.
+        or previous.get("brand_tail", "none") != body.brand_tail
+    ):
         raise HTTPException(409, "Upload attempt reused for different bytes")
     if not previous and len(attempts) >= 5:
         raise HTTPException(409, "Too many export attempts for this recipe")
@@ -357,7 +363,12 @@ async def reserve_device_export(
         or cleanup.retention_expires_at <= now
     ):
         raise HTTPException(409, "Upload reservation expired")
-    attempts[attempt] = {"path": path, "size": body.file_size_bytes, "sha256": body.sha256}
+    attempts[attempt] = {
+        "path": path,
+        "size": body.file_size_bytes,
+        "sha256": body.sha256,
+        "brand_tail": body.brand_tail,
+    }
     status.phase = "syncing"
     record["status"] = status.model_dump(mode="json")
     save_device_record(job, body.identity.variant_id, record)
@@ -445,7 +456,12 @@ async def retry_device_export(
 
 
 def _verify_export(
-    path: str, generation: str, expected_size: int, expected_sha256: str, status: DeviceRenderStatus
+    path: str,
+    generation: str,
+    expected_size: int,
+    expected_sha256: str,
+    status: DeviceRenderStatus,
+    brand_tail: str = "none",
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="kria_device_export_") as directory:
         local = Path(directory) / "export.mp4"
@@ -502,7 +518,11 @@ def _verify_export(
         ):
             raise ValueError("export audio format mismatch")
         duration = float(probe["format"]["duration"])
-        if not math.isfinite(duration) or abs(duration - recipe.duration) > max(
+        # The phone appends brand furniture after the edit, so the file is
+        # legitimately longer than the recipe. It declared which tail it used at
+        # reservation time and the length of that tail is ours, not its.
+        expected = recipe.duration + BRAND_TAIL_SECONDS[brand_tail]
+        if not math.isfinite(duration) or abs(duration - expected) > max(
             0.1, 2 / recipe.frame_rate
         ):
             raise ValueError("export duration mismatch")
@@ -547,6 +567,7 @@ async def complete_device_export(
             attempt["size"],
             attempt["sha256"],
             status,
+            attempt.get("brand_tail", "none"),
         )
     except FileNotFoundError as exc:
         raise HTTPException(409, "Export upload has not finished") from exc
@@ -596,7 +617,8 @@ async def complete_device_export(
             "video_path": attempt["path"],
             "output_url": url,
             "render_destination": "device",
-            "duration_s": status.request.recipe.duration,
+            "duration_s": status.request.recipe.duration
+            + BRAND_TAIL_SECONDS[attempt.get("brand_tail", "none")],
         }
         if v.get("variant_id") == body.identity.variant_id
         else v

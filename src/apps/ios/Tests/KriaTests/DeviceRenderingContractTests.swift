@@ -22,10 +22,14 @@ final class DeviceRenderingContractTests: XCTestCase {
     func testUploadAndCompleteUseBackendIdentityKeys() throws {
         let identity = DeviceRenderIdentity(jobID: UUID(), variantID: "original_text", recipeRevision: 7, recipeDigest: String(repeating: "a", count: 64))
         let attempt = UUID()
-        let upload = DeviceExportUploadBody(identity: identity, attemptID: attempt, fileSizeBytes: 123, sha256: String(repeating: "b", count: 64))
+        let upload = DeviceExportUploadBody(identity: identity, attemptID: attempt, fileSizeBytes: 123, sha256: String(repeating: "b", count: 64), brandTail: "standard")
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(upload)) as? [String: Any])
         XCTAssertEqual(object["attempt_id"] as? String, attempt.uuidString)
         XCTAssertEqual(object["file_size_bytes"] as? Int, 123)
+        // The server reads this to decide how long the upload may be. It must
+        // land as `brand_tail` with one of the two identifiers the API's enum
+        // accepts, or every branded publish 422s.
+        XCTAssertEqual(object["brand_tail"] as? String, "standard")
         let nested = try XCTUnwrap(object["identity"] as? [String: Any])
         XCTAssertEqual(nested["job_id"] as? String, identity.jobID.uuidString)
         XCTAssertEqual(nested["variant_id"] as? String, "original_text")

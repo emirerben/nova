@@ -37,7 +37,7 @@ final class GiantTitleCompositionTests: XCTestCase {
                 assetManifest: RenderAssetManifest(assets: references), textLayers: [test])
             let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: urls)
             let output = directory.appendingPathComponent("giant-\(index).mp4")
-            _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
+            _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
                 .export(recipe: recipe, assetURLs: urls, outputURL: output)
             let reference = AVAssetImageGenerator(asset: preview.playerItem.asset)
             reference.videoComposition = preview.playerItem.videoComposition

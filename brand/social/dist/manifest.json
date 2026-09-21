@@ -1,0 +1,302 @@
+{
+  "watermark": {
+    "kria-watermark-mist-compact.png": {
+      "variant": "mist",
+      "for_footage": [
+        "dark",
+        "mid",
+        "warm",
+        "busy"
+      ],
+      "mark_width_px": 108,
+      "tile_px": [
+        169,
+        109
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "bottom-left": [
+          30,
+          1396
+        ],
+        "top-left": [
+          30,
+          180
+        ]
+      }
+    },
+    "kria-watermark-mist-standard.png": {
+      "variant": "mist",
+      "for_footage": [
+        "dark",
+        "mid",
+        "warm",
+        "busy"
+      ],
+      "mark_width_px": 132,
+      "tile_px": [
+        193,
+        119
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "bottom-left": [
+          30,
+          1386
+        ],
+        "top-left": [
+          30,
+          180
+        ]
+      }
+    },
+    "kria-watermark-mist-demo.png": {
+      "variant": "mist",
+      "for_footage": [
+        "dark",
+        "mid",
+        "warm",
+        "busy"
+      ],
+      "mark_width_px": 165,
+      "tile_px": [
+        226,
+        134
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "bottom-left": [
+          30,
+          1371
+        ],
+        "top-left": [
+          30,
+          180
+        ]
+      }
+    },
+    "kria-watermark-graphite-compact.png": {
+      "variant": "graphite",
+      "for_footage": [
+        "bright"
+      ],
+      "mark_width_px": 108,
+      "tile_px": [
+        169,
+        109
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "bottom-left": [
+          30,
+          1396
+        ],
+        "top-left": [
+          30,
+          180
+        ]
+      }
+    },
+    "kria-watermark-graphite-standard.png": {
+      "variant": "graphite",
+      "for_footage": [
+        "bright"
+      ],
+      "mark_width_px": 132,
+      "tile_px": [
+        193,
+        119
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "bottom-left": [
+          30,
+          1386
+        ],
+        "top-left": [
+          30,
+          180
+        ]
+      }
+    },
+    "kria-watermark-graphite-demo.png": {
+      "variant": "graphite",
+      "for_footage": [
+        "bright"
+      ],
+      "mark_width_px": 165,
+      "tile_px": [
+        226,
+        134
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "bottom-left": [
+          30,
+          1371
+        ],
+        "top-left": [
+          30,
+          180
+        ]
+      }
+    },
+    "kria-watermark-sky-compact.png": {
+      "variant": "sky",
+      "for_footage": "logotype only",
+      "mark_width_px": 108,
+      "tile_px": [
+        109,
+        49
+      ],
+      "transparent_pad_px": 0,
+      "overlay_xy": {
+        "bottom-left": [
+          60,
+          1426
+        ],
+        "top-left": [
+          60,
+          210
+        ]
+      }
+    },
+    "kria-watermark-sky-standard.png": {
+      "variant": "sky",
+      "for_footage": "logotype only",
+      "mark_width_px": 132,
+      "tile_px": [
+        133,
+        59
+      ],
+      "transparent_pad_px": 0,
+      "overlay_xy": {
+        "bottom-left": [
+          60,
+          1416
+        ],
+        "top-left": [
+          60,
+          210
+        ]
+      }
+    },
+    "kria-watermark-sky-demo.png": {
+      "variant": "sky",
+      "for_footage": "logotype only",
+      "mark_width_px": 165,
+      "tile_px": [
+        166,
+        74
+      ],
+      "transparent_pad_px": 0,
+      "overlay_xy": {
+        "bottom-left": [
+          60,
+          1401
+        ],
+        "top-left": [
+          60,
+          210
+        ]
+      }
+    }
+  },
+  "outro": {
+    "kria-outro-paper.mp4": {
+      "bytes": 37181,
+      "duration_s": 1.6,
+      "streams": [
+        {
+          "codec_name": "h264",
+          "width": 1080,
+          "height": 1920,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1"
+        },
+        {
+          "codec_name": "aac",
+          "width": null,
+          "height": null,
+          "pix_fmt": null,
+          "r_frame_rate": "0/0"
+        }
+      ]
+    },
+    "kria-endcard-paper.png": {
+      "px": [
+        1080,
+        1920
+      ]
+    },
+    "kria-outro-overlay.webm": {
+      "bytes": 61316,
+      "duration_s": 1.6,
+      "streams": [
+        {
+          "codec_name": "vp9",
+          "width": 1080,
+          "height": 1920,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1"
+        }
+      ]
+    },
+    "kria-endcard-overlay.png": {
+      "px": [
+        1080,
+        1920
+      ]
+    }
+  },
+  "templates": {
+    "hook-example-1.png": {
+      "px": [
+        1080,
+        1920
+      ],
+      "ink_rect": [
+        45,
+        255,
+        892,
+        698
+      ]
+    },
+    "hook-example-2.png": {
+      "px": [
+        1080,
+        1920
+      ],
+      "ink_rect": [
+        46,
+        304,
+        750,
+        520
+      ]
+    },
+    "step-example-1.png": {
+      "px": [
+        1080,
+        1920
+      ],
+      "ink_rect": [
+        60,
+        1294,
+        685,
+        1400
+      ]
+    },
+    "step-example-2.png": {
+      "px": [
+        1080,
+        1920
+      ],
+      "ink_rect": [
+        60,
+        1294,
+        686,
+        1400
+      ]
+    }
+  }
+}

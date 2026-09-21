@@ -169,8 +169,12 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true)
         let movie = frames.appendingPathComponent("\(caseID).mp4")
         try? FileManager.default.removeItem(at: movie)
+        // Unbranded: this asserts the renderer reproduces the recipe, down to
+        // exact duration and sampled pixels. Brand furniture is verified
+        // separately by KriaMediaEngine's BrandingTests.
         let checkpoint = try await AVFoundationLocalExporter(
-            stateStore: FileExportStateStore(directory: project.root.appendingPathComponent("state"))
+            stateStore: FileExportStateStore(directory: project.root.appendingPathComponent("state")),
+            branding: .none
         ).export(recipe: recipe, assetURLs: urls, outputURL: movie)
         XCTAssertEqual(checkpoint.status, .completed, caseID)
 

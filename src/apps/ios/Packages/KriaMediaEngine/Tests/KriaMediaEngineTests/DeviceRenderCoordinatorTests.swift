@@ -30,6 +30,24 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
         XCTAssertEqual(unchanged?.attemptID, first?.attemptID)
     }
 
+    /// The server adds seconds to its expected duration based on the tail the
+    /// phone declares, so the coordinator must forward what the exporter
+    /// actually appended. Declaring "none" while shipping the outro is a 422 on
+    /// every publish; declaring "standard" without one is a 422 the other way.
+    func testCoordinatorDeclaresTheExportersBrandTailWhenPublishing() async throws {
+        for tail in ["none", "standard"] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let exporter = RecordingExporter(brandTail: tail), publisher = RecordingPublisher()
+            let coordinator = try DeviceRenderCoordinator(
+                directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher)
+            try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+            await coordinator.waitUntilIdle()
+            let declared = await publisher.declaredTails
+            XCTAssertEqual(declared, [tail], "coordinator must forward the exporter's tail")
+        }
+    }
+
     func testSupersededExportCannotPublishOverNewRecipe() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -179,9 +197,14 @@ private actor RecordingFailureReporter: DeviceRenderFailureReporter {
 private actor RecordingExporter: LocalExporting {
     var count = 0
     let holdFirst: Bool
+    /// Mirrors what AVFoundationLocalExporter reports for its branding.
+    nonisolated let brandTail: String
     var started: CheckedContinuation<Void, Never>?
     var held: CheckedContinuation<Void, Never>?
-    init(holdFirst: Bool = false) { self.holdFirst = holdFirst }
+    init(holdFirst: Bool = false, brandTail: String = "none") {
+        self.holdFirst = holdFirst
+        self.brandTail = brandTail
+    }
     func waitStarted() async { if count == 0 { await withCheckedContinuation { started = $0 } } }
     func release() { held?.resume(); held = nil }
     func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
@@ -196,11 +219,16 @@ private actor RecordingExporter: LocalExporting {
 private actor RecordingPublisher: DeviceRenderPublishing {
     var failure = false
     var published: [DeviceRenderIdentity] = []
+    /// What the coordinator declared to the server for each publish. The server
+    /// adds the matching seconds before checking the uploaded file's duration,
+    /// so a wrong value here is a 422 on every real render.
+    var declaredTails: [String] = []
     func setFailure(_ value: Bool) { failure = value }
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
-    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID) async throws -> DevicePublication {
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
         if failure { throw URLError(.notConnectedToInternet) }
         published.append(identity)
+        declaredTails.append(brandTail)
         return .published
     }
 }
