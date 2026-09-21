@@ -1,0 +1,30 @@
+{
+  "agent": "nova.compose.camera_emphasis",
+  "prompt_version": "2026-09-21",
+  "input": {
+    "candidates": [
+      {"index": 0, "start_s": 0.0, "end_s": 2.6, "text": "Okay so everyone asks me the same question.", "role": "", "preset_pick": false},
+      {"index": 1, "start_s": 2.8, "end_s": 6.2, "text": "How do you edit a whole week of videos in one afternoon?", "role": "", "preset_pick": false},
+      {"index": 2, "start_s": 6.4, "end_s": 8.6, "text": "Um, honestly, for a year I couldn't.", "role": "", "preset_pick": false},
+      {"index": 3, "start_s": 9.0, "end_s": 12.8, "text": "The thing that changed everything was batching the hooks.", "role": "", "preset_pick": false},
+      {"index": 4, "start_s": 13.0, "end_s": 16.6, "text": "I write twenty hooks on Monday and film them back to back.", "role": "list_item", "preset_pick": true},
+      {"index": 5, "start_s": 16.8, "end_s": 20.4, "text": "That one change took me from six hours to forty minutes.", "role": "", "preset_pick": false},
+      {"index": 6, "start_s": 20.6, "end_s": 23.4, "text": "Anyway, that's it. See you next week.", "role": "", "preset_pick": false}
+    ],
+    "duration_s": 24.0,
+    "max_effects": 3,
+    "visual_notes": [],
+    "language_hint": "en"
+  },
+  "raw_text": "{\"emphases\": [{\"candidate_index\": 3, \"style\": \"zoom_in\", \"strength\": \"strong\", \"reason\": \"the turn: what actually changed\"}, {\"candidate_index\": 5, \"style\": \"zoom_in\", \"strength\": \"standard\", \"reason\": \"the payoff number\"}]}",
+  "output": {
+    "emphases": [
+      {"candidate_index": 3, "style": "zoom_in", "strength": "strong", "reason": "the turn: what actually changed"},
+      {"candidate_index": 5, "style": "zoom_in", "strength": "standard", "reason": "the payoff number"}
+    ]
+  },
+  "meta": {
+    "source": "live_gemini_2026-09-21",
+    "case": "24s talking-head. The substance is the turn (index 3) and the payoff number (index 5). The greeting, the 'um', the mechanical how-to detail the preset flagged (index 4), and the sign-off all earn nothing. Recorded verbatim from a live gemini-2.5-flash run."
+  }
+}

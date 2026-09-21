@@ -2245,13 +2245,16 @@ export interface OverlayApplyReceipt {
   at?: string;
 }
 
+/** Emphasis shape. `sine_pulse` accents; `ease_in_hold` punches in and holds. */
+export type CameraEffectEasing = "sine_pulse" | "ease_in_hold";
+
 export interface CameraEffect {
   id: string;
   token?: "semantic_crop_pulse" | string;
   start_s: number;
   end_s: number;
   intensity: number;
-  easing: "sine_pulse";
+  easing: CameraEffectEasing;
   source: "smart_captions" | "user" | string;
   effect_group_id?: string | null;
   event_id?: string | null;

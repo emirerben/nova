@@ -20,6 +20,11 @@ from app.agents._schemas.persona import _MAX_TOPICS as PERSONA_MAX_TOPICS
 from app.agents._schemas.persona import Persona
 from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
 from app.agents.audio_template import AudioTemplateOutput
+from app.agents.camera_emphasis import (
+    MAX_CAMERA_EMPHASES,
+    CameraEmphasisInput,
+    CameraEmphasisOutput,
+)
 from app.agents.clip_metadata import (
     _BALL_BLACKLIST,
     _BALL_WHITELIST,
@@ -1362,6 +1367,51 @@ def check_sequence_quote(output: SequenceQuoteOutput) -> list[str]:
     own validation.
     """
     return quote_structural_failures(output.quote)
+
+
+def check_camera_emphasis(
+    output: CameraEmphasisOutput,
+    input: CameraEmphasisInput,  # noqa: A002
+) -> list[str]:
+    """Keep zoom placement inside the envelope the server offered (KRI-7).
+
+    The agent only ever picks candidate indexes and a closed-vocabulary shape;
+    `services/camera_emphasis.py` owns the final geometry. These checks catch a
+    prompt regression BEFORE that layer silently discards every pick: too many
+    emphases, an index nobody offered, back-to-back moments, more than one
+    "strong", or a set so dense it stops reading as emphasis.
+    """
+
+    failures: list[str] = []
+    by_index = {candidate.index: candidate for candidate in input.candidates}
+    if len(output.emphases) > min(input.max_effects, MAX_CAMERA_EMPHASES):
+        failures.append(
+            f"{len(output.emphases)} emphases exceeds the caller's max_effects={input.max_effects}"
+        )
+    seen: set[int] = set()
+    strong = 0
+    picked: list[tuple[float, float]] = []
+    for position, emphasis in enumerate(output.emphases):
+        candidate = by_index.get(emphasis.candidate_index)
+        if candidate is None:
+            failures.append(
+                f"emphasis {position}: candidate_index={emphasis.candidate_index} was never offered"
+            )
+            continue
+        if emphasis.candidate_index in seen:
+            failures.append(f"emphasis {position}: candidate {emphasis.candidate_index} repeated")
+        seen.add(emphasis.candidate_index)
+        if emphasis.strength == "strong":
+            strong += 1
+        picked.append((candidate.start_s, candidate.end_s))
+    if strong > 1:
+        failures.append(f"{strong} emphases marked 'strong' — at most one may be the peak")
+    for (start, _end), (next_start, _next_end) in zip(
+        sorted(picked), sorted(picked)[1:], strict=False
+    ):
+        if next_start - start < 1.0:
+            failures.append(f"emphases at {start:.1f}s and {next_start:.1f}s are back to back")
+    return failures
 
 
 def check_sfx_placement(
@@ -2979,6 +3029,12 @@ def run_structural(
                 if "sfx" in action.strategy.optional_treatments:
                     failures.append("explicit Fah request silently degraded to optional sfx")
         return failures
+    if agent_name == "nova.compose.camera_emphasis":
+        if not isinstance(output, CameraEmphasisOutput) or not isinstance(
+            input, CameraEmphasisInput
+        ):
+            return ["camera emphasis input/output type mismatch"]
+        return check_camera_emphasis(output, input)
     if agent_name == "nova.compose.sfx_placement":
         if not isinstance(output, SfxPlacementOutput) or not isinstance(input, SfxPlacementInput):
             return ["sfx placement input/output type mismatch"]

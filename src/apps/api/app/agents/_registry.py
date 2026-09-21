@@ -58,6 +58,10 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "VisualTreatmentPlannerAgent",
     ),
     ("nova.compose.scene_matcher", "app.agents.scene_matcher", "SceneMatcherAgent"),
+    # KRI-7: picks the moments that earn a camera push-in. Failure-isolated —
+    # `services/camera_emphasis.plan_camera_emphasis` falls back to the
+    # deterministic Smart-preset picks, so a bad run never fails a render.
+    ("nova.compose.camera_emphasis", "app.agents.camera_emphasis", "CameraEmphasisAgent"),
     (
         "nova.compose.narrated_storyboard",
         "app.agents.narrated_storyboard",

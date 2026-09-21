@@ -410,6 +410,57 @@ describe("computeToolDisabledReasons — captions branch", () => {
   });
 });
 
+describe("camera emphasis keeps the Visuals drawer reachable (KRI-7)", () => {
+  /** A subtitled edit: blocks and Creator Blocks off, camera lane live. */
+  const CAMERA_ONLY: EditorCapabilities = {
+    ...SUBTITLED_EFFECTS_LIVE,
+    visual_blocks: false,
+    visual_blocks_reason: "visual_blocks_disabled",
+    motion_scenes: false,
+    camera_effects: true,
+  };
+
+  it("leaves Visuals enabled when only the camera lane is available", () => {
+    const disabled = computeToolDisabledReasons({
+      capabilities: CAMERA_ONLY,
+      readOnly: false,
+      readOnlyReason: "",
+      isLyrics: false,
+    });
+    expect(disabled.visuals).toBeUndefined();
+  });
+
+  it("still disables Visuals when every lane in that drawer is closed", () => {
+    const disabled = computeToolDisabledReasons({
+      capabilities: { ...CAMERA_ONLY, camera_effects: false },
+      readOnly: false,
+      readOnlyReason: "",
+      isLyrics: false,
+    });
+    expect(disabled.visuals).toBe("visual blocks are turned off right now");
+  });
+
+  it("renders the Visuals rail button for a camera-only edit", () => {
+    render(
+      <ToolRail
+        activeTool={null}
+        disabledTools={computeToolDisabledReasons({
+          capabilities: CAMERA_ONLY,
+          readOnly: false,
+          readOnlyReason: "",
+          isLyrics: false,
+        })}
+        cameraEmphasisAvailable
+        onToggleTool={() => {}}
+      />,
+    );
+
+    const visuals = screen.getByRole("button", { name: "Visuals tool" });
+    expect(visuals).toBeEnabled();
+    expect(visuals).not.toHaveAttribute("aria-disabled");
+  });
+});
+
 describe("ToolRail with the lyrics-sync effects-live disable map", () => {
   it("marks Text focusable-disabled while Styles/Sounds/Overlays stay enabled", () => {
     render(

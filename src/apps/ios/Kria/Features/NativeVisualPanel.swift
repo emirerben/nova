@@ -16,7 +16,8 @@ struct NativeVisualPanel: View {
     @State private var motionPreset: String?
     @State private var motionAssetIDs: [String] = []
     @State private var phase = "entrance"
-    @State private var cameraIntensity = 0.04
+    /// nil = use the shape's own default strength; the inspector tunes it after.
+    @State private var cameraIntensity: Double? = nil
     @FocusState private var editingText: Bool
     private let visualKinds: Set<EditorSelectionKind> = [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect]
     private var selected: EditorSelection? { session.selection.flatMap { visualKinds.contains($0.kind) ? $0 : nil } }
@@ -297,18 +298,35 @@ struct NativeVisualPanel: View {
 
     private var camera: some View {
         VStack(spacing: 12) {
-            Button { session.addCameraPulse(intensity: cameraIntensity) } label: {
-                HStack(spacing: 14) {
-                    Image(systemName: "viewfinder").font(.system(size: 40)).frame(width: 90, height: 80)
-                        .background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 10))
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Zoom pulse").fontWeight(.semibold)
-                        Text("A gentle push in and back out to emphasize a moment.").font(KriaFont.body(13))
-                    }
-                }
-            }.disabled(!session.canEdit(.cameraEffects))
+            cameraOption(
+                easing: CameraEmphasis.holdEasing,
+                icon: "plus.magnifyingglass",
+                title: "Zoom in",
+                detail: "Pushes in, holds through the moment, then eases back out."
+            )
+            cameraOption(
+                easing: CameraEmphasis.pulseEasing,
+                icon: "viewfinder",
+                title: "Zoom pulse",
+                detail: "A gentle push in and back out to emphasize a moment."
+            )
             Text("Applies to footage. Adjust its range on the timeline.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
         }
+    }
+
+    private func cameraOption(easing: String, icon: String, title: String, detail: String) -> some View {
+        Button { session.addCameraPulse(easing: easing, intensity: cameraIntensity) } label: {
+            HStack(spacing: 14) {
+                Image(systemName: icon).font(.system(size: 40)).frame(width: 90, height: 80)
+                    .background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title).fontWeight(.semibold)
+                    Text(detail).font(KriaFont.body(13))
+                }
+            }
+        }
+        .disabled(!session.canEdit(.cameraEffects))
+        .accessibilityIdentifier("native-visual-add-camera-\(easing)")
     }
 
     @ViewBuilder private var placement: some View {

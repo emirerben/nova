@@ -283,8 +283,10 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
         }
     ),
     "open_tool": frozenset({"tool"}),
-    "add_camera_effect": frozenset({"start_s", "end_s", "intensity", "effect_bundle_id"}),
-    "patch_camera_effect": frozenset({"camera_effect_index", "start_s", "end_s", "intensity"}),
+    "add_camera_effect": frozenset({"start_s", "end_s", "intensity", "easing", "effect_bundle_id"}),
+    "patch_camera_effect": frozenset(
+        {"camera_effect_index", "start_s", "end_s", "intensity", "easing"}
+    ),
     "remove_camera_effect": frozenset({"camera_effect_index"}),
     "set_transition": frozenset({"boundary_index", "transition", "duration_s"}),
     "remove_visual_media": frozenset({"target_ids"}),
@@ -424,6 +426,10 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
     ),
     (
         "add_camera_effect",
+        # NOTE: the op schema also accepts `easing` ("ease_in_hold" for a held
+        # zoom-in, "sine_pulse" for the accent). Teaching the director to author
+        # holds is a prompt change — it needs a prompt_version bump plus a live
+        # eval run, so it ships separately from KRI-7's editor work.
         '{"op":"add_camera_effect","start_s":1.0,"end_s":2.2,'
         '"intensity":0.04,"effect_bundle_id":"reveal_1"}',
     ),

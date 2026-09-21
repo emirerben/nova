@@ -2376,16 +2376,24 @@ struct NativeEditorTemporaryVideo {
         } catch { visualError = "The composition couldn’t be opened. " + error.localizedDescription }
     }
 
-    func addCameraPulse(intensity: Double = 0.04) {
-        guard intensity.isFinite, canEditSection(.cameraEffects),
-              let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection, preferred: 1.2, minimum: 0.4) else {
-            visualError = "Zoom pulse isn’t available at this position in the edit."
+    func addCameraPulse(easing: String = CameraEmphasis.pulseEasing, intensity: Double? = nil) {
+        let resolved = CameraEmphasis.resolve(easing)
+        let bounds = CameraEmphasis.bounds(resolved)
+        let strength = intensity ?? bounds.defaultIntensity
+        guard strength.isFinite, canEditSection(.cameraEffects),
+              let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection, preferred: bounds.defaultDuration, minimum: bounds.minDuration) else {
+            visualError = "\(CameraEmphasis.label(resolved)) isn’t available at this position in the edit."
             return
         }
-        let effect = EditorCameraEffect(id: UUID().uuidString, startS: window.start, endS: window.end, effect: "semantic_crop_pulse",
-            raw: ["token": .string("semantic_crop_pulse"), "intensity": .number(min(0.08, max(0.01, intensity))), "easing": .string("sine_pulse"), "source": .string("user")])
+        let effect = EditorCameraEffect(id: UUID().uuidString, startS: window.start, endS: window.end, effect: CameraEmphasis.token,
+            raw: ["token": .string(CameraEmphasis.token), "intensity": .number(min(CameraEmphasis.maxIntensity, max(0.01, strength))), "easing": .string(resolved), "source": .string("user")])
         transactDocument(section: .cameraEffects) { $0.cameraEffects.append(effect) }
         select(.init(kind: .cameraEffect, id: effect.id))
+    }
+
+    /// Easing of one effect, for callers that clamp timing against its bounds.
+    func cameraEffectEasing(id: String) -> String {
+        CameraEmphasis.resolve(document.cameraEffects.first { $0.id == id }?.raw["easing"]?.stringValue)
     }
 
     func visualRaw(_ selection: EditorSelection) -> [String: JSONValue]? {
@@ -2475,7 +2483,9 @@ struct NativeEditorTemporaryVideo {
     func setVisualTiming(_ selected: EditorSelection, outputTime: Double, isStart: Bool) {
         guard outputTime.isFinite, let bounds = timedBounds(selected, in: document) else { return }
         let total = timelineProjection.unprojectOutputTime(duration)
-        let minimum = selected.kind == .cameraEffect ? 0.4 : selected.kind == .motionScene ? 1.0 / 30 : minimumClipDuration
+        let minimum = selected.kind == .cameraEffect
+            ? CameraEmphasis.bounds(cameraEffectEasing(id: selected.id)).minDuration
+            : selected.kind == .motionScene ? 1.0 / 30 : minimumClipDuration
         let value = timelineProjection.unprojectOutputTime(min(duration, max(0, outputTime)))
         let start = isStart ? min(max(0, value), max(0, min(total, bounds.end) - minimum)) : bounds.start
         let end = isStart ? min(total, bounds.end) : min(total, max(start + minimum, value))
@@ -2735,14 +2745,28 @@ struct NativeEditorTemporaryVideo {
             var value = document.cameraEffects[index]
             if let startS { value.startS = max(0, startS) }
             if let endS { value.endS = endS }
-            value.endS = min(value.startS + 2, max(value.startS + 0.4, value.endS))
+            let clamped = CameraEmphasis.clampWindow(
+                start: value.startS, end: value.endS, easing: value.raw["easing"]?.stringValue
+            )
+            value.startS = clamped.0
+            value.endS = clamped.1
             document.cameraEffects[index] = value
         }
     }
     func setCameraEffectIntensity(id: String, intensity: Double) {
-        mutateCameraEffect(id: id, keys: ["camera_effects.intensity", "lanes.camera_effects.intensity", "camera_effects"]) { $0.raw["intensity"] = .number(min(max(0, intensity), 0.08)) }
+        mutateCameraEffect(id: id, keys: ["camera_effects.intensity", "lanes.camera_effects.intensity", "camera_effects"]) { $0.raw["intensity"] = .number(min(max(0, intensity), CameraEmphasis.maxIntensity)) }
     }
-    func setCameraEffectEasing(id: String, easing: String) { mutateCameraEffect(id: id, keys: ["camera_effects.easing", "lanes.camera_effects.easing", "camera_effects"]) { $0.raw["easing"] = .string(easing) } }
+    /// Switching shape re-clamps the window: a hold may run longer than a pulse,
+    /// so a long hold has to shrink when it becomes one.
+    func setCameraEffectEasing(id: String, easing: String) {
+        let resolved = CameraEmphasis.resolve(easing)
+        mutateCameraEffect(id: id, keys: ["camera_effects.easing", "lanes.camera_effects.easing", "camera_effects"]) { effect in
+            effect.raw["easing"] = .string(resolved)
+            let clamped = CameraEmphasis.clampWindow(start: effect.startS, end: effect.endS, easing: resolved)
+            effect.startS = clamped.0
+            effect.endS = clamped.1
+        }
+    }
 
     func setCarouselMomentPosition(_ position: String) {
         guard canEditOperation(["carousel.position", "carousel", "carousel_moment"], section: .carouselMoment) else { return }
@@ -3144,8 +3168,11 @@ struct NativeEditorTemporaryVideo {
             document.motionScenes[index].endS = Self.roundToMotionFrame(min(end, start + 8))
         case .cameraEffect:
             guard let index = document.cameraEffects.firstIndex(where: { $0.id == selection.id }) else { return }
-            document.cameraEffects[index].startS = start
-            document.cameraEffects[index].endS = min(start + 2, max(start + 0.4, end))
+            let clamped = CameraEmphasis.clampWindow(
+                start: start, end: end, easing: document.cameraEffects[index].raw["easing"]?.stringValue
+            )
+            document.cameraEffects[index].startS = clamped.0
+            document.cameraEffects[index].endS = clamped.1
         default: break
         }
     }

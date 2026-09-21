@@ -184,7 +184,7 @@ struct NativeVideoPreview: View {
                 return NativeEditorPreviewObject(item: item, text: nil, position: CGPoint(x: 0.5, y: 0.18), style: nil, title: "Motion (final render)", render: .runtimeOnly, detail: scene?.preset)
             case .cameraEffect:
                 let effect = document.cameraEffects.first { $0.id == item.id }
-                return NativeEditorPreviewObject(item: item, text: nil, position: CGPoint(x: 0.5, y: 0.18), style: nil, title: "Camera effect (final render)", render: .runtimeOnly, detail: effect?.effect)
+                return NativeEditorPreviewObject(item: item, text: nil, position: CGPoint(x: 0.5, y: 0.18), style: nil, title: "Camera effect (final render)", render: .runtimeOnly, detail: effect.map { CameraEmphasis.label($0.raw["easing"]?.stringValue) })
             default:
                 return nil
             }
@@ -1431,7 +1431,7 @@ struct NativeMiniStrip: View {
             return scene.map { "Motion: \($0.preset ?? "Scene")" } ?? laneTitle
         case .cameraEffect:
             let effect = session.document.cameraEffects.first { $0.id == item.id }
-            return effect.map { "Camera: \($0.effect ?? "Effect")" } ?? laneTitle
+            return effect.map { "Camera: \(CameraEmphasis.label($0.raw["easing"]?.stringValue))" } ?? laneTitle
         case .carousel:
             return "Carousel: \(item.id)"
         default:

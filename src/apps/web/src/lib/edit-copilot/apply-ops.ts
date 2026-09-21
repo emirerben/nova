@@ -13,7 +13,11 @@ import type {
   VisualBlock,
 } from "@/lib/plan-api";
 import type { TimelineClip } from "@/lib/generative-api";
-import { normalizeCameraEffect } from "@/lib/camera-effects";
+import {
+  cameraEasingBounds,
+  normalizeCameraEffect,
+  resolveCameraEasing,
+} from "@/lib/camera-effects";
 import { removeOverlayEffectGroup } from "@/lib/overlay-effect-groups";
 import { defaultLookAdjustments, lookPresetLabel } from "@/lib/look-presets";
 import {
@@ -2476,15 +2480,15 @@ export function applyCopilotOps(
         token: "semantic_crop_pulse",
         start_s: op.start_s,
         end_s: op.end_s,
-        intensity: op.intensity ?? 0.04,
-        easing: "sine_pulse",
+        intensity: op.intensity ?? cameraEasingBounds(op.easing).defaultIntensity,
+        easing: resolveCameraEasing(op.easing),
         source: bundleEffectGroupId ? "edit_ai" : "user",
         ...(bundleEffectGroupId ? { effect_group_id: bundleEffectGroupId } : {}),
       });
       workingCameraEffects = [...workingCameraEffects, effect];
       nextCameraEffects = workingCameraEffects;
       applied.push({
-        label: "Camera pulse",
+        label: effect.easing === "ease_in_hold" ? "Zoom in" : "Camera pulse",
         from: "none",
         to: `${fmtSeconds(effect.start_s)}-${fmtSeconds(effect.end_s)}`,
       });
@@ -2506,6 +2510,7 @@ export function applyCopilotOps(
         ...(op.start_s !== undefined ? { start_s: op.start_s } : {}),
         ...(op.end_s !== undefined ? { end_s: op.end_s } : {}),
         ...(op.intensity !== undefined ? { intensity: op.intensity } : {}),
+        ...(op.easing !== undefined ? { easing: op.easing } : {}),
         source: "user",
       });
       if (sameNormalizedValue(patched, effect)) {
@@ -2516,7 +2521,11 @@ export function applyCopilotOps(
         candidate.id === effect.id ? patched : candidate,
       );
       nextCameraEffects = workingCameraEffects;
-      applied.push({ label: "Camera pulse", from: "previous", to: "updated" });
+      applied.push({
+        label: patched.easing === "ease_in_hold" ? "Zoom in" : "Camera pulse",
+        from: "previous",
+        to: "updated",
+      });
     } else if (op.op === "remove_camera_effect") {
       const snap = ctx.snapshot.camera_effects?.[op.camera_effect_index];
       const effect = snap

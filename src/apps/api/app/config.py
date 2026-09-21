@@ -1230,6 +1230,16 @@ class Settings(BaseSettings):
     # Persisted instances continue to validate and render while disabled.
     evolving_type_enabled: bool = False
 
+    # KRI-7 contextual zoom-in emphasis. The renderer and the editor lane are
+    # NOT gated by this flag — creators can always author a zoom by hand. What
+    # it gates is the ONE `camera_emphasis` LLM call that picks the moments
+    # automatically. Kill switch: CAMERA_EMPHASIS_AI_ENABLED=false → renders
+    # fall back to the deterministic Smart-preset camera picks (the pre-KRI-7
+    # behavior) with no other change. Already-placed effects keep rendering.
+    # Apply: fly secrets set CAMERA_EMPHASIS_AI_ENABLED=false --app nova-video
+    # + machine restart (worker).
+    camera_emphasis_ai_enabled: bool = True
+
     # Sound-effects glossary + user placement (PR-1 foundation). Admin-curated
     # SFX + user uploads placed at arbitrary timestamps in a plan-item variant.
     # Kill switch: SOUND_EFFECTS_ENABLED=false → sfx-upload-urls + sound-effects

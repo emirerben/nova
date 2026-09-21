@@ -379,6 +379,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.main_creator import MainCreatorAgent
 
         return MainCreatorAgent
+    if agent_name == "nova.compose.camera_emphasis":
+        from app.agents.camera_emphasis import CameraEmphasisAgent
+
+        return CameraEmphasisAgent
     if agent_name == "nova.compose.sfx_placement":
         from app.agents.sfx_placement import SfxPlacementAgent
 
