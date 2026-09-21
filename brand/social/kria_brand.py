@@ -36,9 +36,15 @@ FPS = 30
 
 # --- Platform UI occlusion map ------------------------------------------------
 # Rectangles (x0, y0, x1, y1) of the 1080x1920 frame that each app covers with
-# its own chrome. Measured from full-screen captures, September 2026. These are
-# the numbers every placement in this kit is checked against; re-measure and
-# re-run `build.py` when an app reflows its UI.
+# its own chrome, as of September 2026.
+#
+# PROVENANCE: these are conservative values from the platforms' published
+# safe-area guidance, NOT from screenshots taken on our own devices. They are
+# deliberately generous, but they have not been confirmed against a real
+# capture on a real handset, and the apps differ by device and by app version.
+# Before the kit is relied on for a launch push, screenshot each app on the
+# team's phones, compare, and correct these numbers -- everything downstream
+# (safe rectangle, placements, template gating) recomputes from here.
 OCCLUSION: dict[str, list[tuple[int, int, int, int]]] = {
     "tiktok": [
         (0, 0, 1080, 200),        # For You / Following tabs + search

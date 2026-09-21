@@ -25,8 +25,15 @@ treat a red build the same way you would a failing test.
 All coordinates are for a 1080×1920 export.
 
 TikTok, Reels and Shorts each cover part of the frame with their own UI. The
-measured map lives in `kria_brand.OCCLUSION` and is drawn in
+map lives in `kria_brand.OCCLUSION` and is drawn in
 [`dist/proofs/safezone-map.png`](dist/proofs/safezone-map.png).
+
+> ⚠️ **Open item — the map is not yet device-verified.** The rectangles come
+> from the platforms' published safe-area guidance, not from screenshots on our
+> own phones. They are deliberately conservative, but chrome shifts with device
+> and app version. Before a launch push, capture a full-screen frame in each app
+> on the team's handsets, compare against the map, and correct `OCCLUSION`.
+> Everything else recomputes from it.
 
 **The safe rectangle is `x 60 → 890`, `y 200 → 1520`.** It is clear on all three
 platforms at once. Anything you need a viewer to read goes inside it.
@@ -52,9 +59,11 @@ template, checks that rectangle against the chrome map, and records both in
 measured rectangles are shadow-inclusive, so they feather a few pixels past the
 safe rectangle on the widest lines while the glyphs themselves stay inside.
 
-> **Re-measure when an app reflows its UI.** The map is from full-screen
-> captures taken September 2026. If TikTok moves the rail, update `OCCLUSION`
-> and rebuild; everything downstream re-checks itself.
+> **Re-measure when an app reflows its UI.** If TikTok moves the rail, update
+> `OCCLUSION` and rebuild; everything downstream re-checks itself.
+
+The legibility numbers in §6 are a different matter — those are measured
+directly, by compositing the real assets and reading the pixels.
 
 ---
 
