@@ -74,7 +74,7 @@ directly, by compositing the real assets and reading the pixels.
 
 `dist/watermark/kria-watermark-<variant>-<size>.png`
 
-Three sizes — `compact` (118px mark), `standard` (144px), `demo` (180px).
+Three sizes — `compact` (108px mark), `standard` (132px), `demo` (165px).
 Use `standard` unless you have a reason. `demo` is for product walkthroughs
 where the watermark doubles as the title; `compact` is for busy travel edits.
 

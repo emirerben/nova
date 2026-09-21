@@ -131,11 +131,11 @@ final class BrandingTests: XCTestCase {
         generator.requestedTimeToleranceAfter = .zero
 
         // The mark's box, measured from the visual top-left.
-        let markBox = CGRect(x: 60, y: 1475 - 64, width: 144, height: 64)
-        let mirrored = CGRect(x: 1080 - 60 - 144, y: 1475 - 64, width: 144, height: 64)
+        let markBox = CGRect(x: 60, y: 1475 - 59, width: 133, height: 59)
+        let mirrored = CGRect(x: 1080 - 60 - 133, y: 1475 - 59, width: 133, height: 59)
         for time in [0.1, 1.0, 1.9] {
             let frame = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image
-            XCTAssertGreaterThan(brightPixels(in: frame, rect: markBox, canvas: canvas, context: context), 600,
+            XCTAssertGreaterThan(brightPixels(in: frame, rect: markBox, canvas: canvas, context: context), 500,
                                  "no watermark at \(time)s")
             XCTAssertEqual(brightPixels(in: frame, rect: mirrored, canvas: canvas, context: context), 0,
                            "the mark must be bottom-LEFT only, at \(time)s")
@@ -166,7 +166,7 @@ final class BrandingTests: XCTestCase {
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
         let frame = try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
-        XCTAssertEqual(brightPixels(in: frame, rect: CGRect(x: 60, y: 1475 - 64, width: 144, height: 64),
+        XCTAssertEqual(brightPixels(in: frame, rect: CGRect(x: 60, y: 1475 - 59, width: 133, height: 59),
                                     canvas: canvas, context: CIContext()), 0)
     }
 

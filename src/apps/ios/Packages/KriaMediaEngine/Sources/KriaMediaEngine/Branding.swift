@@ -26,8 +26,8 @@ public enum KriaBranding {
     static let referenceHeight: CGFloat = 1920
 
     static let markLeft: CGFloat = 60
-    static let markWidth: CGFloat = 144
-    static let markHeight: CGFloat = 64
+    static let markWidth: CGFloat = 133
+    static let markHeight: CGFloat = 59
     /// Distance from the bottom of the frame to the bottom of the mark.
     ///
     /// The approved position pins the mark's BOTTOM edge at y=1475, because the

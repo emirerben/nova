@@ -8,16 +8,16 @@
         "warm",
         "busy"
       ],
-      "mark_width_px": 118,
+      "mark_width_px": 108,
       "tile_px": [
-        178,
-        113
+        169,
+        109
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
         "bottom-left": [
           30,
-          1392
+          1396
         ],
         "top-left": [
           30,
@@ -33,16 +33,16 @@
         "warm",
         "busy"
       ],
-      "mark_width_px": 144,
+      "mark_width_px": 132,
       "tile_px": [
-        205,
-        124
+        193,
+        119
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
         "bottom-left": [
           30,
-          1381
+          1386
         ],
         "top-left": [
           30,
@@ -58,16 +58,16 @@
         "warm",
         "busy"
       ],
-      "mark_width_px": 180,
+      "mark_width_px": 165,
       "tile_px": [
-        241,
-        141
+        226,
+        134
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
         "bottom-left": [
           30,
-          1364
+          1371
         ],
         "top-left": [
           30,
@@ -80,16 +80,16 @@
       "for_footage": [
         "bright"
       ],
-      "mark_width_px": 118,
+      "mark_width_px": 108,
       "tile_px": [
-        178,
-        113
+        169,
+        109
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
         "bottom-left": [
           30,
-          1392
+          1396
         ],
         "top-left": [
           30,
@@ -102,16 +102,16 @@
       "for_footage": [
         "bright"
       ],
-      "mark_width_px": 144,
+      "mark_width_px": 132,
       "tile_px": [
-        205,
-        124
+        193,
+        119
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
         "bottom-left": [
           30,
-          1381
+          1386
         ],
         "top-left": [
           30,
@@ -124,16 +124,16 @@
       "for_footage": [
         "bright"
       ],
-      "mark_width_px": 180,
+      "mark_width_px": 165,
       "tile_px": [
-        241,
-        141
+        226,
+        134
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
         "bottom-left": [
           30,
-          1364
+          1371
         ],
         "top-left": [
           30,
@@ -144,16 +144,16 @@
     "kria-watermark-sky-compact.png": {
       "variant": "sky",
       "for_footage": "logotype only",
-      "mark_width_px": 118,
+      "mark_width_px": 108,
       "tile_px": [
-        118,
-        53
+        109,
+        49
       ],
       "transparent_pad_px": 0,
       "overlay_xy": {
         "bottom-left": [
           60,
-          1422
+          1426
         ],
         "top-left": [
           60,
@@ -164,16 +164,16 @@
     "kria-watermark-sky-standard.png": {
       "variant": "sky",
       "for_footage": "logotype only",
-      "mark_width_px": 144,
+      "mark_width_px": 132,
       "tile_px": [
-        145,
-        64
+        133,
+        59
       ],
       "transparent_pad_px": 0,
       "overlay_xy": {
         "bottom-left": [
           60,
-          1411
+          1416
         ],
         "top-left": [
           60,
@@ -184,16 +184,16 @@
     "kria-watermark-sky-demo.png": {
       "variant": "sky",
       "for_footage": "logotype only",
-      "mark_width_px": 180,
+      "mark_width_px": 165,
       "tile_px": [
-        181,
-        81
+        166,
+        74
       ],
       "transparent_pad_px": 0,
       "overlay_xy": {
         "bottom-left": [
           60,
-          1394
+          1401
         ],
         "top-left": [
           60,

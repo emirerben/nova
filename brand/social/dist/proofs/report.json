@@ -3,8 +3,8 @@
     "watermark/compact/bottom-left": {
       "rect": [
         60,
-        1422,
-        178,
+        1426,
+        169,
         1475
       ],
       "collisions": {
@@ -18,8 +18,8 @@
       "rect": [
         60,
         210,
-        178,
-        263
+        169,
+        259
       ],
       "collisions": {
         "tiktok": [],
@@ -31,8 +31,8 @@
     "watermark/standard/bottom-left": {
       "rect": [
         60,
-        1411,
-        205,
+        1416,
+        193,
         1475
       ],
       "collisions": {
@@ -46,8 +46,8 @@
       "rect": [
         60,
         210,
-        205,
-        274
+        193,
+        269
       ],
       "collisions": {
         "tiktok": [],
@@ -59,8 +59,8 @@
     "watermark/demo/bottom-left": {
       "rect": [
         60,
-        1394,
-        241,
+        1401,
+        226,
         1475
       ],
       "collisions": {
@@ -74,8 +74,8 @@
       "rect": [
         60,
         210,
-        241,
-        291
+        226,
+        284
       ],
       "collisions": {
         "tiktok": [],
@@ -197,8 +197,8 @@
       "meets_reference": false
     },
     "sky/dark": {
-      "median": 9.21,
-      "worst_tile": 9.21,
+      "median": 9.2,
+      "worst_tile": 9.2,
       "passes_floor": true,
       "meets_target": true,
       "recommended_pairing": false,
@@ -253,24 +253,24 @@
       "meets_reference": false
     },
     "mist/busy": {
-      "median": 1.59,
-      "worst_tile": 1.55,
+      "median": 1.61,
+      "worst_tile": 1.54,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": true,
       "meets_reference": false
     },
     "graphite/busy": {
-      "median": 1.32,
-      "worst_tile": 1.31,
+      "median": 1.31,
+      "worst_tile": 1.25,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
       "meets_reference": false
     },
     "sky/busy": {
-      "median": 2.22,
-      "worst_tile": 2.15,
+      "median": 2.23,
+      "worst_tile": 2.13,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
