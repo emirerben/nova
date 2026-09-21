@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.102.0] - 2026-09-21
+
+### Changed
+- test(kri-132): every video type × iPhone rendering matrix, journey report, montage render E2E (#1114) <!-- release-pr: 1114 -->
+
 ## [0.76.101.0] - 2026-09-21
 
 ### Changed
