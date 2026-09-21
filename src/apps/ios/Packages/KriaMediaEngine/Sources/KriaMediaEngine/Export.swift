@@ -28,6 +28,14 @@ private enum ExportStateStoreKey { static func fileName(for id: String) -> Strin
 
 public protocol LocalExporting: Sendable {
     func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint
+    /// The brand tail this exporter appends, declared to the server so its
+    /// duration check can account for it. Defaulted, so a stub exporter that
+    /// writes bytes of its own does not have to think about branding.
+    var brandTail: String { get }
+}
+
+public extension LocalExporting {
+    var brandTail: String { KriaBranding.Options.none.contractTail }
 }
 
 #if canImport(AVFoundation)
@@ -41,6 +49,10 @@ public protocol LocalExporting: Sendable {
     /// stays theirs. Pass `.none` for an internal export that must not carry it.
     public let branding: KriaBranding.Options
     public init(stateStore: any ExportStatePersisting, preset: LocalExportPreset = .default, instrumentation: (any MediaInstrumentation)? = nil, branding: KriaBranding.Options = .standard) { self.stateStore = stateStore; self.preset = preset; self.instrumentation = instrumentation; self.branding = branding }
+    // `branding` is a `let` holding a Sendable value type, so reading it off
+    // the main actor is safe — and it has to be, because `LocalExporting` is
+    // consumed from the coordinator's detached render task.
+    public nonisolated var brandTail: String { branding.contractTail }
     public func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String = UUID().uuidString, progress: (@Sendable (Double) -> Void)? = nil) async throws -> ExportCheckpoint {
         try recipe.validate()
         let resolvedOutput = outputURL.resolvingSymlinksInPath().standardizedFileURL

@@ -169,6 +169,19 @@ final class BrandingTests: XCTestCase {
         XCTAssertGreaterThan(bright, Int(canvas.width * canvas.height) / 2, "the export should end on the outro")
     }
 
+    /// Pins what the PRODUCTION exporter declares. The server trusts this string
+    /// to decide how long the uploaded file is allowed to be.
+    @MainActor func testProductionExporterDeclaresTheStandardTail() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = FileExportStateStore(directory: directory)
+        XCTAssertEqual(AVFoundationLocalExporter(stateStore: store).brandTail, "standard")
+        XCTAssertEqual(
+            AVFoundationLocalExporter(stateStore: store, branding: .none).brandTail, "none")
+        // Only the outro changes duration, so the watermark alone declares "none".
+        XCTAssertEqual(KriaBranding.Options(watermark: true, outro: false).contractTail, "none")
+        XCTAssertEqual(KriaBranding.Options.standard.contractTail, "standard")
+    }
+
     @MainActor func testUnbrandedExportHasNeitherMarkNorOutro() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

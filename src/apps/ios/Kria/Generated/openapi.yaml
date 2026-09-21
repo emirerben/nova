@@ -1157,6 +1157,15 @@
             "title": "Attempt Id",
             "type": "string"
           },
+          "brand_tail": {
+            "default": "none",
+            "enum": [
+              "none",
+              "standard"
+            ],
+            "title": "Brand Tail",
+            "type": "string"
+          },
           "file_size_bytes": {
             "exclusiveMinimum": true,
             "maximum": 1073741824,

@@ -60,6 +60,14 @@ public enum KriaBranding {
 
         public static let standard = Options()
         public static let none = Options(watermark: false, outro: false)
+
+        /// What the phone declares to the server's export verifier.
+        ///
+        /// Only the outro changes the file's DURATION, which is the single
+        /// thing the server checks, so the watermark deliberately does not
+        /// affect this value. The server owns the seconds each identifier is
+        /// worth — see `BRAND_TAIL_SECONDS` in app/kria/device_render.py.
+        public var contractTail: String { outro ? "standard" : "none" }
     }
 
     static let outroResourceName = "kria-outro-paper"

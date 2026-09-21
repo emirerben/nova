@@ -66,7 +66,13 @@ struct DeviceExportUploadBody: Encodable, Sendable {
     let attemptID: UUID
     let fileSizeBytes: Int64
     let sha256: String
-    private enum CodingKeys: String, CodingKey { case identity, attemptID = "attemptId", fileSizeBytes, sha256 }
+    /// Which brand tail this upload carries ("none" or "standard"). The server
+    /// adds the matching number of seconds before checking the file's duration;
+    /// we never send the duration itself. Encoded as `brand_tail`.
+    let brandTail: String
+    private enum CodingKeys: String, CodingKey {
+        case identity, attemptID = "attemptId", fileSizeBytes, sha256, brandTail
+    }
 }
 struct DeviceExportCompleteBody: Encodable, Sendable {
     let identity: DeviceRenderIdentity
@@ -159,7 +165,7 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         }
         catch APIError.conflict { return false }
     }
-    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID) async throws -> DevicePublication {
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
         let current = try await api.deviceRender(jobID: identity.jobID, variantID: identity.variantID)
         guard current.request.identity == identity else { return .superseded }
         guard ["awaiting_device", "syncing", "published"].contains(current.phase) else { throw APIError.conflict }
@@ -169,7 +175,7 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
             catch APIError.conflict { return .superseded }
         }
         let fingerprint = try await Task.detached { try SHA256Fingerprinter().fingerprint(file: file) }.value
-        let reservation = try await api.reserveDeviceExport(DeviceExportUploadBody(identity: identity, attemptID: attemptID, fileSizeBytes: fingerprint.byteCount, sha256: fingerprint.hex))
+        let reservation = try await api.reserveDeviceExport(DeviceExportUploadBody(identity: identity, attemptID: attemptID, fileSizeBytes: fingerprint.byteCount, sha256: fingerprint.hex, brandTail: brandTail))
         guard reservation.attemptID == attemptID, reservation.uploadURL.scheme == "https", reservation.expiresAt > Date() else { throw APIError.invalidResponse }
         var put = URLRequest(url: reservation.uploadURL)
         put.httpMethod = "PUT"
