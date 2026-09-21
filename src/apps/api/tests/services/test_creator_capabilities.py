@@ -398,6 +398,61 @@ def test_phone_subtitled_one_clip_no_voiceover_compiles_native(monkeypatch) -> N
     assert plan.strategy.render_program == "native"
 
 
+def _without_phone_format_capabilities(manifest):
+    """A manifest as it was resolved before `phone_format:*` existed."""
+    return manifest.model_copy(
+        update={
+            "capabilities": {
+                key: value
+                for key, value in manifest.capabilities.items()
+                if not key.startswith("phone_format")
+            }
+        }
+    )
+
+
+def test_legacy_phone_manifest_without_phone_format_keys_keeps_montage_working(
+    monkeypatch,
+) -> None:
+    """An in-flight session (or replay fixture) persisted before KRI-132 has no
+    `phone_format:*` capability. Absence falls back to the old rule -- montage
+    still compiles "guided" -- rather than refusing every phone project the
+    moment this deploys (caught by the `phone_original_audio_17_clips` eval)."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = _without_phone_format_capabilities(
+        _phone_manifest(monkeypatch, "montage", [{"media_id": "phone-a", "kind": "video"}])
+    )
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage", audio_strategy="original_audio", selected_media_ids=["phone-a"]
+        ),
+    )
+    assert plan.strategy.render_program == "guided"
+
+
+def test_legacy_phone_manifest_without_phone_format_keys_still_refuses_subtitled(
+    monkeypatch,
+) -> None:
+    """The legacy fallback is the OLD rule, which never admitted subtitled --
+    the new formats need a freshly resolved manifest."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = _without_phone_format_capabilities(
+        _phone_manifest(monkeypatch, "subtitled", [{"media_id": "phone-a", "kind": "video"}])
+    )
+    with pytest.raises(PhoneFormatUnavailableError, match="guided edit format"):
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                edit_format="subtitled",
+                audio_strategy="original_audio",
+                selected_media_ids=["phone-a"],
+            ),
+        )
+
+
 def test_phone_subtitled_two_clips_fails_closed(monkeypatch) -> None:
     """subtitled requires exactly one clip -- two clips raises
     PhoneFormatUnavailableError, not a silent single-clip truncation."""

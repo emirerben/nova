@@ -170,13 +170,19 @@ def effective_render_program(
         # Generate.
         if not narrated_pending_voiceover:
             phone_format_capability = manifest.capabilities.get(f"phone_format:{strategy_format}")
-            if phone_format_capability is None or not phone_format_capability.available:
+            if phone_format_capability is None:
+                # A manifest resolved before `phone_format:*` existed (an
+                # in-flight creator session persisted across the deploy, a
+                # replay fixture) carries no such key. Absence must mean
+                # "apply the pre-KRI-132 rule", not "refuse": otherwise a
+                # plain montage on a phone account starts failing the moment
+                # this ships. The old rule admits the montage family only, so
+                # the new formats still need a freshly resolved manifest.
+                if not guided_edit_applicable(strategy_format, has_voiceover=False):
+                    raise PhoneFormatUnavailableError("phone sources require a guided edit format")
+            elif not phone_format_capability.available:
                 raise PhoneFormatUnavailableError(
-                    (
-                        phone_format_capability.reason
-                        if phone_format_capability is not None
-                        else None
-                    )
+                    phone_format_capability.reason
                     or "phone sources require a supported edit format"
                 )
         source_ids: set[str] = set()
