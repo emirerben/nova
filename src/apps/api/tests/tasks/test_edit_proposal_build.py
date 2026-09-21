@@ -1245,7 +1245,7 @@ def test_agent_media_carries_shared_understanding_fields_for_new_style_analysis(
         UNDERSTANDING_KEY: understanding_payload(
             SimpleNamespace(
                 detected_subject="Acropolis of Athens",
-                summary="A tourist films the Acropolis from below.",
+                clip_summary="A tourist films the Acropolis from below.",
                 setting="the Acropolis of Athens",
                 activity="sightseeing",
                 transcript="look at that view",

@@ -177,14 +177,14 @@ def test_round_trip_preserves_kri127_understanding_fields(fake_redis):
     defaults for fields it never populated. This pins that a FRESH write
     (post-bump) round-trips every new field losslessly."""
     meta = _meta(
-        summary="Two friends grill burgers in a backyard.",
+        clip_summary="Two friends grill burgers in a backyard.",
         setting="backyard patio at dusk",
         activity="grilling burgers",
         people_count=2,
         speaks_to_camera=True,
         people_note="two men in aprons",
-        brands=["Weber"],
-        composition_note="subject centered, smoke drifting right",
+        clip_brands=["Weber"],
+        clip_composition_note="subject centered, smoke drifting right",
         clip_content_type="action",
         clip_audio_type="dialogue",
     )
@@ -192,14 +192,14 @@ def test_round_trip_preserves_kri127_understanding_fields(fake_redis):
     got = clip_cache.get_cached_meta("hash1", "ball", creator_id=_CREATOR_ID)
 
     assert got is not None
-    assert got.summary == "Two friends grill burgers in a backyard."
+    assert got.clip_summary == "Two friends grill burgers in a backyard."
     assert got.setting == "backyard patio at dusk"
     assert got.activity == "grilling burgers"
     assert got.people_count == 2
     assert got.speaks_to_camera is True
     assert got.people_note == "two men in aprons"
-    assert got.brands == ["Weber"]
-    assert got.composition_note == "subject centered, smoke drifting right"
+    assert got.clip_brands == ["Weber"]
+    assert got.clip_composition_note == "subject centered, smoke drifting right"
     assert got.clip_content_type == "action"
     assert got.clip_audio_type == "dialogue"
 

@@ -1,12 +1,17 @@
-"""KRI-127: matcher_clip_metas reads the clip activity through the shared record.
+"""KRI-127: the shared record must NOT leak into ``matcher_clip_metas``.
 
-Legacy (no ``understanding`` block) analyses must stay byte-identical, since
-`detected_subject` also feeds the sport-label matcher in generative_build.py
-(`_canonical_context_sport_labels`), which only accepts an exact single-alias
-match against that same string.
+``detected_subject`` feeds the on-screen sport-label matcher
+(`generative_build._canonical_context_sport_labels`, exact single-alias match)
+and the music matcher prompt. Replaying the real KRI-126 clips showed that
+appending the record's free-text ``activity`` gains a wrong label ("some people
+playing soccer in the background") and loses a correct one ("foot-volleyball"
+makes two aliases match). Open-vocabulary labels ship behind a flag with a
+grounding step instead; until then this string stays byte-identical.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 from app.pipeline.guided_story import matcher_clip_metas
 from app.schemas.edit_proposal import EditProposalSnapshot, MediaRef, StoryBeat
@@ -34,55 +39,23 @@ def _snapshot(analysis: dict) -> EditProposalSnapshot:
     )
 
 
-def test_legacy_analysis_without_understanding_block_is_byte_identical() -> None:
+def test_understanding_block_never_changes_the_label_matcher_input() -> None:
     legacy_analysis = {
-        "subject": "man playing basketball",
-        "description": "a man dribbles a basketball on an outdoor court",
-        "on_screen_text": "nice shot",
+        "subject": "people walking across a field",
+        "description": "a group crosses a park",
+        "on_screen_text": "come on",
         "source": "clip_metadata",
     }
+    meta_source = SimpleNamespace(
+        detected_subject="people walking across a field",
+        activity="walking across a field, some people playing soccer in the background",
+        setting="football pitch in a park",
+        clip_summary="A group crosses a park while others play soccer behind them.",
+    )
+    new_analysis = {**legacy_analysis, UNDERSTANDING_KEY: understanding_payload(meta_source)}
 
-    [meta] = matcher_clip_metas(_snapshot(legacy_analysis))
+    [legacy] = matcher_clip_metas(_snapshot(legacy_analysis))
+    [new] = matcher_clip_metas(_snapshot(new_analysis))
 
-    assert meta.detected_subject == "man playing basketball"
-
-
-def test_new_style_analysis_appends_activity_but_never_setting() -> None:
-    meta_source = {
-        "detected_subject": "man playing basketball",
-        "summary": "A man practices free throws at a park court.",
-        "setting": "an outdoor basketball court",
-        "activity": "shooting free throws",
-    }
-    analysis = {
-        "subject": "man playing basketball",
-        "description": "a man dribbles a basketball on an outdoor court",
-        UNDERSTANDING_KEY: understanding_payload(
-            __import__("types").SimpleNamespace(**meta_source)
-        ),
-    }
-
-    [meta] = matcher_clip_metas(_snapshot(analysis))
-
-    assert meta.detected_subject.startswith("man playing basketball")
-    assert "shooting free throws" in meta.detected_subject
-    # A place must never reach the on-screen sport-label matcher.
-    assert "an outdoor basketball court" not in meta.detected_subject
-
-
-def test_new_style_analysis_without_subject_still_appends_activity() -> None:
-    meta_source = {
-        "detected_subject": "",
-        "activity": "cooking pasta",
-        "setting": "a home kitchen",
-    }
-    analysis = {
-        UNDERSTANDING_KEY: understanding_payload(
-            __import__("types").SimpleNamespace(**meta_source)
-        ),
-    }
-
-    [meta] = matcher_clip_metas(_snapshot(analysis))
-
-    assert "cooking pasta" in meta.detected_subject
-    assert "a home kitchen" not in meta.detected_subject
+    assert new.detected_subject == legacy.detected_subject == "people walking across a field"
+    assert "soccer" not in new.detected_subject

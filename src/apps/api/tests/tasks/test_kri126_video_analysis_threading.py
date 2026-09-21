@@ -259,8 +259,8 @@ def test_analyze_video_persists_understanding_block(monkeypatch) -> None:
         detected_subject="people playing volleyball",
         hook_text="watch this rally",
         transcript="okay so this is the final point " * 20,  # long enough to test capping
-        brands=["Mikasa"],
-        summary="Friends play a volleyball match on a sand court.",
+        clip_brands=["Mikasa"],
+        clip_summary="Friends play a volleyball match on a sand court.",
         setting="outdoor sand volleyball court in a city park",
         activity="playing volleyball",
         people_count=6,

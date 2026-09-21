@@ -544,6 +544,12 @@ def _media_prompt_dict(media: EditProposalMedia) -> dict:
     for key, default in _MEDIA_PROMPT_UNDERSTANDING_DEFAULTS.items():
         if data.get(key) == default:
             data.pop(key, None)
+    # A legacy analysis projects `description` into `summary` and (for videos)
+    # `on_screen_text` into `transcript`: never send the same text twice.
+    if data.get("summary") and data.get("summary") == data.get("description"):
+        data.pop("summary")
+    if data.get("transcript") and data.get("transcript") == data.get("on_screen_text"):
+        data.pop("transcript")
     return data
 
 

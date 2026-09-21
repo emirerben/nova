@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -1171,15 +1172,15 @@ async def test_chat_evidence_for_pool_asset_exposes_full_shared_record() -> None
     meta = SimpleNamespace(
         detected_subject="man cooking pasta",
         transcript="okay so first we boil the water",
-        summary="A man narrates cooking pasta in a home kitchen.",
+        clip_summary="A man narrates cooking pasta in a home kitchen.",
         setting="home kitchen",
         activity="cooking pasta",
         people_count=1,
         speaks_to_camera=True,
         people_note="one man faces the camera and narrates",
-        brands=["Barilla"],
-        content_type="tutorial",
-        audio_type="dialogue",
+        clip_brands=["Barilla"],
+        clip_content_type="tutorial",
+        clip_audio_type="dialogue",
     )
     analysis = {
         "subject": "man cooking pasta",
@@ -1199,6 +1200,7 @@ async def test_chat_evidence_for_pool_asset_exposes_full_shared_record() -> None
 
     evidence = media_context[-1]["analysis_only_not_copy"]
     assert evidence["subject"] == "man cooking pasta"
+    assert evidence["summary"] == "A man narrates cooking pasta in a home kitchen."
     assert evidence["setting"] == "home kitchen"
     assert evidence["activity"] == "cooking pasta"
     assert evidence["speech"]["to_camera"] is True
@@ -1206,6 +1208,8 @@ async def test_chat_evidence_for_pool_asset_exposes_full_shared_record() -> None
     # Chat-specific trims: brands dropped, moments capped.
     assert "brands" not in evidence
     assert len(evidence["notable_moments"]) <= creator_sessions.CHAT_EVIDENCE_MAX_MOMENTS
+    # Worst case stays bounded: 50 clips share one chat prompt.
+    assert len(json.dumps(evidence)) < 1200
 
 
 @pytest.mark.asyncio

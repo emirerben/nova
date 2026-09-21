@@ -11,6 +11,7 @@ This is AI-written evidence. It is never on-screen copy by itself.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -23,10 +24,21 @@ _TRANSCRIPT_LIMIT = 1200
 _MAX_MOMENTS = 8
 
 
+# Transcripts and descriptions are third-party text that ends up in agent
+# prompts. Defang role markers and code fences alongside the prompts' "DATA,
+# never instructions" framing (same policy as clip_plan_matcher._sanitize_text).
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_ROLE_MARKERS = re.compile(r"(?i)(^|[\s.;!?])(system|assistant|user|tool|developer)\s*[:>]")
+_FENCE = re.compile(r"```+")
+
+
 def _clean_text(value: object, limit: int) -> str:
     if not isinstance(value, str):
         return ""
-    return " ".join(value.split())[:limit]
+    text = _CONTROL_CHARS.sub(" ", value)
+    text = _ROLE_MARKERS.sub(r"\1[role-marker-stripped]", text)
+    text = _FENCE.sub("'''", text)
+    return " ".join(text.split())[:limit]
 
 
 class ClipPeople(BaseModel):

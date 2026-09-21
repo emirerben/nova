@@ -49,7 +49,7 @@ def understanding_payload(meta: Any, *, best_moments: list[dict] | None = None) 
     record = ClipUnderstanding(
         kind="video",
         subject=getattr(meta, "detected_subject", "") or "",
-        summary=getattr(meta, "summary", "") or "",
+        summary=getattr(meta, "clip_summary", "") or "",
         setting=getattr(meta, "setting", "") or "",
         activity=getattr(meta, "activity", "") or "",
         people=ClipPeople(
@@ -62,9 +62,11 @@ def understanding_payload(meta: Any, *, best_moments: list[dict] | None = None) 
             to_camera=speaks_to_camera and bool(transcript.strip()),
             transcript=transcript,
         ),
-        brands=list(getattr(meta, "brands", None) or []),
-        # ClipMeta names these `clip_*` on purpose: talking_head_assembler reads
-        # `content_type`/`audio_type` via getattr and must keep seeing defaults.
+        # ClipMeta names these `clip_*` on purpose: older modules read the bare
+        # names via getattr (music matcher `summary`, talking-head assembler
+        # `content_type`/`audio_type`, autoplace `brands`) and have only ever seen
+        # the defaults. Guard: tests/pipeline/test_clip_meta_dormant_readers.py.
+        brands=list(getattr(meta, "clip_brands", None) or []),
         content_type=getattr(meta, "clip_content_type", "") or "",
         audio_type=getattr(meta, "clip_audio_type", "") or "",
         notable_moments=_moment_notes(best_moments or []),

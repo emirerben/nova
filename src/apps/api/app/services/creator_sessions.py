@@ -115,8 +115,19 @@ def _positive_duration_s(value: object) -> float | None:
     return duration_s
 
 
-CHAT_EVIDENCE_TRANSCRIPT_CHARS = 240
-CHAT_EVIDENCE_MAX_MOMENTS = 3
+# Per-clip budget for the chat prompt: up to MAX_CREATOR_MEDIA_REFS clips share
+# one MainCreatorAgent call (35s timeout), so every free-text field is capped.
+CHAT_EVIDENCE_TRANSCRIPT_CHARS = 160
+CHAT_EVIDENCE_MAX_MOMENTS = 2
+CHAT_EVIDENCE_FIELD_CHARS = {
+    "subject": 120,
+    "summary": 200,
+    "setting": 120,
+    "activity": 120,
+    "on_screen_text": 120,
+}
+CHAT_EVIDENCE_MOMENT_CHARS = 80
+CHAT_EVIDENCE_PEOPLE_NOTE_CHARS = 80
 
 
 def _chat_evidence(analysis: object, *, kind: str) -> dict[str, Any]:
@@ -133,9 +144,18 @@ def _chat_evidence(analysis: object, *, kind: str) -> dict[str, Any]:
     record = clip_record(analysis if isinstance(analysis, dict) else None, kind=kind)
     view = record.prompt_view(transcript_chars=CHAT_EVIDENCE_TRANSCRIPT_CHARS)
     view.pop("brands", None)
+    for key, limit in CHAT_EVIDENCE_FIELD_CHARS.items():
+        if key in view:
+            view[key] = view[key][:limit]
+    people = view.get("people")
+    if isinstance(people, dict) and people.get("note"):
+        people["note"] = people["note"][:CHAT_EVIDENCE_PEOPLE_NOTE_CHARS]
     moments = view.get("notable_moments")
-    if isinstance(moments, list) and len(moments) > CHAT_EVIDENCE_MAX_MOMENTS:
-        view["notable_moments"] = moments[:CHAT_EVIDENCE_MAX_MOMENTS]
+    if isinstance(moments, list):
+        view["notable_moments"] = [
+            {**m, "description": m["description"][:CHAT_EVIDENCE_MOMENT_CHARS]}
+            for m in moments[:CHAT_EVIDENCE_MAX_MOMENTS]
+        ]
     return view
 
 

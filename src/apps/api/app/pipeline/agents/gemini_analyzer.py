@@ -80,18 +80,18 @@ class ClipMeta:
     # Composition signal for agent-decided overlay sizing (overlay_sizing.py).
     text_safe_zone: dict | None = None  # {"x","y","w","h"} normalized to the 9:16 frame
     visual_density: float = 5.0  # 0 (empty) .. 10 (cluttered)
-    composition_note: str = ""
     # Open-vocabulary understanding fields (KRI-127 shared clip understanding
     # record). Free text/flags copied straight from ClipMetadataOutput -- see
     # app/services/clip_understanding.py (understanding_payload reads these
     # off this dataclass via getattr).
-    summary: str = ""
+    clip_summary: str = ""
     setting: str = ""
     activity: str = ""
     people_count: int | None = None
     speaks_to_camera: bool = False
     people_note: str = ""
-    brands: list[str] = field(default_factory=list)
+    clip_brands: list[str] = field(default_factory=list)
+    clip_composition_note: str = ""
     # NOTE: deliberately NOT named `content_type` / `audio_type`. Those exact
     # names are already read via getattr(meta, "content_type"/"audio_type", ...)
     # by app/pipeline/talking_head_assembler.py's `_content_type`/`_audio_type`
@@ -494,18 +494,18 @@ def analyze_clip(
         # partial shim/mock output may not — fall back to the ClipMeta defaults.
         text_safe_zone=getattr(out, "text_safe_zone", None),
         visual_density=getattr(out, "visual_density", 5.0),
-        composition_note=getattr(out, "composition_note", "") or "",
+        clip_composition_note=getattr(out, "composition_note", "") or "",
         # Previously dropped at this shim boundary (KRI-127): the agent output
         # carried these but ClipMeta had nowhere to put them, so every
         # downstream reader saw the ClipMeta defaults regardless of what
         # Gemini returned.
-        summary=getattr(out, "summary", "") or "",
+        clip_summary=getattr(out, "summary", "") or "",
         setting=getattr(out, "setting", "") or "",
         activity=getattr(out, "activity", "") or "",
         people_count=getattr(out, "people_count", None),
         speaks_to_camera=bool(getattr(out, "speaks_to_camera", False)),
         people_note=getattr(out, "people_note", "") or "",
-        brands=list(getattr(out, "brands", None) or []),
+        clip_brands=list(getattr(out, "brands", None) or []),
         clip_content_type=getattr(out, "content_type", "broll") or "broll",
         clip_audio_type=getattr(out, "audio_type", "ambient") or "ambient",
     )

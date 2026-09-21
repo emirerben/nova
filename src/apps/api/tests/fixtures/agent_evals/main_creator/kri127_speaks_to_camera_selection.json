@@ -1,6 +1,6 @@
 {
     "agent": "nova.creator.main",
-    "prompt_version": "2026-09-16-v27",
+    "prompt_version": "2026-09-21-v28",
     "input": {
         "user_message": "Make a video from only the clips where I talk to the camera",
         "creator_context": "",

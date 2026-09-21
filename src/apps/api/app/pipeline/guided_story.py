@@ -781,8 +781,6 @@ def matcher_clip_metas(snapshot: EditProposalSnapshot) -> list[Any]:
     """Build whole-story matcher inputs from ordered selected media analysis."""
 
     from app.pipeline.agents.gemini_analyzer import ClipMeta  # noqa: PLC0415
-    from app.schemas.clip_understanding import UNDERSTANDING_KEY  # noqa: PLC0415
-    from app.services.clip_understanding import clip_record  # noqa: PLC0415
 
     by_id = {ref.media_id: ref for ref in snapshot.media}
     rows: list[ClipMeta] = []
@@ -802,20 +800,6 @@ def matcher_clip_metas(snapshot: EditProposalSnapshot) -> list[Any]:
             )
             if value
         )
-        detected_subject = subject or context
-        # KRI-127: a NEW-style analysis (carrying the shared ``understanding``
-        # block) adds what the people are DOING on top of subject. Legacy
-        # analyses stay byte-identical. `setting` is deliberately left out:
-        # `detected_subject` feeds the on-screen sport-label matcher
-        # (`_canonical_context_sport_labels` in generative_build.py), and a
-        # place ("football pitch") must not label a clip where nobody plays.
-        if isinstance(analysis.get(UNDERSTANDING_KEY), dict) and analysis.get(UNDERSTANDING_KEY):
-            record_kind = ref.kind if ref.kind in {"video", "image"} else "video"
-            activity = clip_record(analysis, kind=record_kind).activity
-            if activity:
-                detected_subject = (
-                    f"{detected_subject} · {activity}" if detected_subject else activity
-                )
         raw_moments = analysis.get("best_moments")
         moments = (
             [moment for moment in raw_moments if isinstance(moment, dict)]
@@ -838,7 +822,7 @@ def matcher_clip_metas(snapshot: EditProposalSnapshot) -> list[Any]:
                 hook_text=snapshot.title,
                 hook_score=7.0,
                 best_moments=moments,
-                detected_subject=detected_subject,
+                detected_subject=subject or context,
                 clip_path=ref.gcs_path,
             )
         )

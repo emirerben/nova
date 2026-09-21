@@ -292,9 +292,9 @@ class TestAnalyzeClip:
 
             result = analyze_clip(file_ref)
 
-        assert result.brands == ["Weber"]
-        assert result.composition_note == "subject centered, smoke drifting right"
-        assert result.summary == "Two friends grill burgers in a backyard."
+        assert result.clip_brands == ["Weber"]
+        assert result.clip_composition_note == "subject centered, smoke drifting right"
+        assert result.clip_summary == "Two friends grill burgers in a backyard."
         assert result.setting == "backyard patio at dusk"
         assert result.activity == "grilling burgers"
         assert result.people_count == 2
