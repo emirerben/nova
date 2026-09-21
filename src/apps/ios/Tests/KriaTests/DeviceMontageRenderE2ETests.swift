@@ -21,13 +21,15 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
 /// resolution) on this harness.
 ///
 /// `scripts/ios/phone-montage-render-e2e.py` writes `KRIA_E2E_DIR` with
-/// three cases, each isolating one compiler branch:
+/// four cases, each isolating one compiler branch:
 ///   - `cuts_text`  -- plain cuts, preserved original audio, an agent-text
 ///                     intro (basicComposition/positionedText/animatedText).
 ///   - `music`      -- a licensed music bed replaces the original audio, no
 ///                     text/transition (basicComposition/audioMix/musicBed).
 ///   - `crossfade`  -- a crossfade transition, no text/music
 ///                     (basicComposition/crossfade).
+///   - `narration`  -- a recorded voiceover mixed under the clips' own audio
+///                     (KRI-132; basicComposition/audioMix/narrationAudio).
 ///
 /// `day_vlog`/`single_hero` are deliberately NOT separate cases: read
 /// `app/pipeline/phone_montage_plan.py` in full -- `compile_phone_montage_plan`
@@ -46,17 +48,21 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
     }
 
     func testLicensedMusicBedReplacesOriginalAudioOnTheIPhone() async throws {
-        // KRI-132 finding: the verified library cache stores music under an
-        // extensionless content address, and AVFoundation refuses it
-        // (-11828 "Cannot Open"). Visuals videos get a playable name from
-        // `VisualVideoFile.prepare`; library audio has no equivalent yet.
-        // Strict, so the fix has to delete this expectation.
-        XCTExpectFailure("library audio has no playable file extension", strict: true)
         try await assertCase("music")
     }
 
     func testCrossfadeTransitionRendersOnTheIPhone() async throws {
         try await assertCase("crossfade")
+    }
+
+    /// KRI-132: a recorded voiceover mixed under the clips' own audio
+    /// (mix=0.4), resolved through the same per-asset grant as the music
+    /// case's `.library` asset -- now a `.voiceover` asset -- and played from
+    /// the verified cache under a playable extension `PlayableAudioFile`
+    /// gives it (the source tone is longer than the video timeline, so this
+    /// also proves the compiler's narration-duration clamp end to end).
+    func testVoiceoverNarrationRendersOnTheIPhone() async throws {
+        try await assertCase("narration")
     }
 
     // MARK: -
@@ -127,6 +133,11 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         if let musicAssetID = caseMeta["music_asset_id"] as? String, let musicFile = caseMeta["music_file"] as? String {
             bytes[musicAssetID] = try Data(contentsOf: input.appendingPathComponent(musicFile))
         }
+        // KRI-132: a `.voiceover` asset resolves through the exact same
+        // per-asset grant endpoint as `.library`/`.visual` -- same mock, new asset id.
+        if let voiceoverAssetID = caseMeta["voiceover_asset_id"] as? String, let voiceoverFile = caseMeta["voiceover_file"] as? String {
+            bytes[voiceoverAssetID] = try Data(contentsOf: input.appendingPathComponent(voiceoverFile))
+        }
         let log = RequestLog()
         NativeEditorURLProtocol.handler = { request in
             log.urls.append(request.url?.absoluteString ?? "")
@@ -145,6 +156,12 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             XCTAssertTrue(
                 log.urls.contains { $0 == "https://storage.e2e.test/\(musicAssetID)" },
                 "the music bed must download through the same per-asset grant Visuals use"
+            )
+        }
+        if let voiceoverAssetID = caseMeta["voiceover_asset_id"] as? String {
+            XCTAssertTrue(
+                log.urls.contains { $0 == "https://storage.e2e.test/\(voiceoverAssetID)" },
+                "the voiceover must download through the same per-asset grant Visuals/library use"
             )
         }
 
@@ -167,6 +184,10 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         if caseMeta["expects_music_audio"] as? Bool == true {
             let peak = try await peakAmplitude(of: asset)
             XCTAssertGreaterThan(peak, 0.01, "\(caseID): the licensed music bed must be audible")
+        }
+        if caseMeta["expects_narration_audio"] as? Bool == true {
+            let peak = try await peakAmplitude(of: asset)
+            XCTAssertGreaterThan(peak, 0.01, "\(caseID): the recorded voiceover must be audible")
         }
 
         let generator = AVAssetImageGenerator(asset: asset)

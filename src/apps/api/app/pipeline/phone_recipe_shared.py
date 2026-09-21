@@ -73,3 +73,36 @@ class PhoneMusicBed(BaseModel):
     duration_s: float | None = Field(default=None, gt=0, le=1800)
     start_s: float = Field(default=0.0, ge=0)
     volume: float = Field(default=1.0, ge=0, le=2)
+
+
+class PhoneNarrationBed(BaseModel):
+    """A resolved, immutable voiceover receipt ready to compile into a phone
+    recipe's narration audio track (KRI-132).
+
+    Built by `app.tasks.generative_build._resolve_phone_voiceover_bed`, which
+    re-reads the owning `PlanItem`'s current `voiceover_gcs_path`/
+    `voiceover_generation` in a sync session, then calls
+    `app.services.phone_voiceover.inspect_voiceover_asset` (mirrors
+    `inspect_library_asset`'s pin-then-hash pattern) to pin the exact
+    generation + fingerprint at compile time. Unlike the library catalog
+    grant, `app.routes.device_render.download_device_asset` does NOT re-hash
+    this asset on every device fetch -- it only re-checks the job's own
+    `PlanItem` still carries this exact `(path, generation)` before signing;
+    the DEVICE re-hashes the downloaded bytes against the pinned SHA-256
+    itself. Unlike `PhoneMusicBed`'s shared catalog, this is private creator
+    media addressed by plan item, not catalog id -- see
+    `app.kria.render_assets.VoiceoverRenderAsset`.
+
+    Consumed by `compile_phone_montage_plan`, which never touches the
+    database or GCS itself -- it only reads this already-verified value.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    plan_item_id: str = Field(min_length=1, max_length=160)
+    generation: str = Field(min_length=1, max_length=160)
+    fingerprint: RenderFingerprint
+    # The server-verified duration for the captured generation (`PlanItem
+    # .voiceover_duration_s`, probed once at registration -- the generation
+    # is immutable so that probe cannot drift from these exact bytes).
+    duration_s: float = Field(gt=0, le=1800)

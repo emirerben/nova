@@ -227,17 +227,22 @@ enum ProjectUploadDestination: Equatable {
             if verified.contains(MediaCapability.stillImages.rawValue) { kinds.insert(.image) }
             if verified.contains(MediaCapability.visualVideos.rawValue) { kinds.insert(.video) }
             return kinds.isEmpty ? .visualsUnavailableOnPhone : .phoneVisuals(kinds)
-        // Narration has no on-device path yet, and this account renders on
-        // iPhone: say so rather than start a project the cloud would render.
-        case .voiceover: return .voiceoverUnavailableOnPhone
+        // KRI-132: a phone montage-family job can carry a recorded voiceover
+        // once the device has verified `narrationAudio`. The voiceover itself
+        // still uploads through the unchanged cloud contract (`sourcePurposes`
+        // below deliberately never sees it) -- only footage stays on iPhone.
+        case .voiceover: return verified.contains(MediaCapability.narrationAudio.rawValue) ? .phone : .voiceoverUnavailableOnPhone
         }
     }
 
-    /// Footage and voiceover are project media; Visuals live in the pool and never
-    /// decide the destination, so a pending Visuals upload can neither make a
-    /// phone project `.mixed` nor pull an empty project to the cloud.
+    /// Footage is project media and decides the destination. Visuals live in
+    /// the pool, and a voiceover always uploads through the existing cloud
+    /// contract regardless of the project's phone/cloud destination (KRI-132)
+    /// -- so neither a pending Visuals upload nor an attached voiceover can
+    /// make a phone project `.mixed` or pull an empty project to the cloud.
     static func sourcePurposes(media: [CreationAttachedMedia], records: [UploadRecoveryRecord], projectID: UUID) -> [String] {
-        media.map(\.uploadPurpose) + records.filter { $0.projectID == projectID && $0.role != .visual }.map(\.purpose.rawValue)
+        media.filter { $0.kind != "audio" }.map(\.uploadPurpose)
+            + records.filter { $0.projectID == projectID && $0.role != .visual && $0.role != .voiceover }.map(\.purpose.rawValue)
     }
 }
 

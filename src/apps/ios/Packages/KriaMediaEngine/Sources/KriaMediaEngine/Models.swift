@@ -107,7 +107,8 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         }) else { throw RecipeError.invalidTimeline }
         let ids = Set(assets.map(\.id))
         guard clips.allSatisfy({ ids.contains($0.sourceAssetID) }),
-              audio.musicAssetID.map({ ids.contains($0) }) ?? true else { throw RecipeError.missingAssetReference }
+              audio.musicAssetID.map({ ids.contains($0) }) ?? true,
+              audio.narrationAssetID.map({ ids.contains($0) }) ?? true else { throw RecipeError.missingAssetReference }
         try motionScenes?.validate(assets: ids, manifest: assetManifest)
         guard ids.count == assets.count else { throw RecipeError.invalidTimeline }
         for track in tracks {
@@ -191,6 +192,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
             result.insert(.audioMix)
         }
+        if audio.narrationAssetID != nil { result.insert(.narrationAudio) }
         return result
     }
 
@@ -360,7 +362,12 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
     public var musicAssetID: String?; public var musicVolume: Double; public var originalVolume: Double
     public var fadeIn: TimeInterval; public var fadeOut: TimeInterval; public var duckOriginalDuringMusic: Bool
     public var muteWindows: [AudioMuteWindow] = []
-    private enum CodingKeys: String, CodingKey { case musicAssetID = "musicAssetId", musicVolume, originalVolume, fadeIn, fadeOut, duckOriginalDuringMusic, muteWindows }
+    /// Recorded-voiceover asset id (KRI-132). Additive/optional so schema v2 decodes
+    /// unchanged for every recipe that predates it; the actual per-clip gain lives on
+    /// the narration `TimelineTrack`'s clip `volume`, mirroring `musicAssetID`'s
+    /// reference-only role. See `app.kria.recipes.AudioMixRecipe.narration_asset_id`.
+    public var narrationAssetID: String?
+    private enum CodingKeys: String, CodingKey { case musicAssetID = "musicAssetId", musicVolume, originalVolume, fadeIn, fadeOut, duckOriginalDuringMusic, muteWindows, narrationAssetID = "narrationAssetId" }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         musicAssetID = try c.decodeIfPresent(String.self, forKey: .musicAssetID)
@@ -368,6 +375,7 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
         fadeIn = try c.decode(Double.self, forKey: .fadeIn); fadeOut = try c.decode(Double.self, forKey: .fadeOut)
         duckOriginalDuringMusic = try c.decode(Bool.self, forKey: .duckOriginalDuringMusic)
         muteWindows = try c.decodeIfPresent([AudioMuteWindow].self, forKey: .muteWindows) ?? []
+        narrationAssetID = try c.decodeIfPresent(String.self, forKey: .narrationAssetID)
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -376,8 +384,9 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
         try c.encode(fadeIn, forKey: .fadeIn); try c.encode(fadeOut, forKey: .fadeOut)
         try c.encode(duckOriginalDuringMusic, forKey: .duckOriginalDuringMusic)
         if !muteWindows.isEmpty { try c.encode(muteWindows, forKey: .muteWindows) }
+        try c.encodeIfPresent(narrationAssetID, forKey: .narrationAssetID)
     }
-    public init(musicAssetID: String? = nil, musicVolume: Double = 1, originalVolume: Double = 1, fadeIn: TimeInterval = 0, fadeOut: TimeInterval = 0, duckOriginalDuringMusic: Bool = false, muteWindows: [AudioMuteWindow] = []) { self.musicAssetID = musicAssetID; self.musicVolume = musicVolume; self.originalVolume = originalVolume; self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.duckOriginalDuringMusic = duckOriginalDuringMusic; self.muteWindows = muteWindows }
+    public init(musicAssetID: String? = nil, musicVolume: Double = 1, originalVolume: Double = 1, fadeIn: TimeInterval = 0, fadeOut: TimeInterval = 0, duckOriginalDuringMusic: Bool = false, muteWindows: [AudioMuteWindow] = [], narrationAssetID: String? = nil) { self.musicAssetID = musicAssetID; self.musicVolume = musicVolume; self.originalVolume = originalVolume; self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.duckOriginalDuringMusic = duckOriginalDuringMusic; self.muteWindows = muteWindows; self.narrationAssetID = narrationAssetID }
     public static let `default` = AudioMixRecipe()
 }
 

@@ -361,8 +361,27 @@ def resolve_creator_manifest(
                 "unverified_phone_sources", "verified phone-only video sources are required"
             )
         elif has_voiceover:
-            phone = _unavailable(
-                "unsupported_phone_audio", "phone rendering does not support recorded voiceover"
+            # KRI-132: a recorded voiceover over a montage-family edit
+            # (day_vlog/single_hero/montage — never the guided-story
+            # narration lane, which `guided_voiceover_executable` identifies
+            # and which stays hard-blocked via `CAPABILITY_GUIDED_VOICEOVER`
+            # below regardless of this flag) can render on the phone once the
+            # rollout flag is on AND the device has verified narrationAudio.
+            # Flag/capability off: byte-identical to pre-KRI-132.
+            montage_voiceover_ready = (
+                not visuals_only
+                and settings.phone_narration_rendering_enabled
+                and "narrationAudio" in settings.phone_render_verified_features
+                and guided_edit_applicable(edit_format, has_voiceover=False)
+                and not guided_voiceover_executable
+            )
+            phone = (
+                _available()
+                if montage_voiceover_ready
+                else _unavailable(
+                    "unsupported_phone_audio",
+                    "phone rendering does not support recorded voiceover",
+                )
             )
         else:
             phone = _available()

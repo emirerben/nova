@@ -57,10 +57,16 @@ def test_dispatch_outcome_matches_table(
 
     expectation = EXPECTATIONS[(edit_format, scenario)]
     approved = scenario == "guided_approved"
-    voiceover = scenario == "voiceover"
+    voiceover = scenario in {"voiceover", "voiceover_enabled"}
+    enabled = scenario == "voiceover_enabled"
     with patch("app.tasks.content_plan_build.log") as mock_log:
         result, _job, mock_build, bind_mock = _run_phone_dispatch(
-            monkeypatch, edit_format=edit_format, approved=approved, voiceover=voiceover
+            monkeypatch,
+            edit_format=edit_format,
+            approved=approved,
+            voiceover=voiceover,
+            phone_narration_rendering_enabled=enabled,
+            phone_render_verified_features=["narrationAudio"] if enabled else None,
         )
 
     assert result.outcome == expectation.outcome
@@ -98,21 +104,12 @@ def test_phone_render_supported_formats_matches_table() -> None:
 # --- worker-level guards `_dispatch_item_render` alone cannot reach --------
 
 
-def test_worker_rejects_voiceover_even_when_dispatch_let_it_through(
+def test_worker_rejects_voiceover_while_narration_flag_is_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pins the worker-side half of the table's `_GUIDED_VOICEOVER` row: the
-    dispatch gate's non-guided fallback branch lets montage/day_vlog/
-    single_hero + voiceover through with NO approved proposal (see that
-    row's `worker_note`), but `_run_phone_montage_job` always rejects a
-    voiceover once picked up. Reuses `test_phone_montage_dispatch.setup`,
-    the lightest existing seam for calling `_run_phone_montage_job` directly
-    without driving ingest/agents for real -- that module's own
-    `test_voiceover_job_is_rejected` already exercises the same line; this
-    restates it as a named guard inside the format matrix so KRI-132 carries
-    its own regression signal independent of that file's test layout.
-    app/tasks/generative_build.py:3906-3907.
-    """
+    """With the narration rollout flag off, `_run_phone_montage_job` still
+    refuses a voiceover on its own -- defense in depth behind the dispatch
+    gate's `voiceover_unavailable` refusal."""
 
     job, snapshot, _session, _bindings, _cloud = _phone_montage_setup(monkeypatch)
     candidates = {**job.all_candidates, "voiceover_gcs_path": "users/u/voice.m4a"}

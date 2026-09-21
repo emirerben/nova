@@ -471,3 +471,35 @@ def test_default_mode_still_blocks_giant_title_handwriting(monkeypatch):
     )
     with pytest.raises(ValueError, match="Giant-title handwriting"):
         validate_phone_pilot_recipe(recipe)
+
+
+def test_narration_audio_requires_the_capability_to_be_verified(monkeypatch):
+    """KRI-132: a montage-family voiceover recipe needs narrationAudio in
+    phone_render_verified_features, same gating pattern as stillImages/
+    visualVideos -- follow how those are gated (see docs/reviews/kri-29
+    /capability-matrix.md's "narrationAudio" row)."""
+    from app.pipeline.phone_montage_plan import compile_phone_montage_plan
+    from tests.pipeline.test_phone_montage_plan import _narration
+    from tests.pipeline.test_phone_montage_plan import fixture as montage_fixture
+
+    decision, bindings = montage_fixture(
+        voiceover_gcs_path="voiceover-uploads/direct/u/i/voice.m4a",
+        voiceover_target_s=11.4,
+        mix=1.0,
+    )
+    narration = _narration()
+    recipe = compile_phone_montage_plan(decision, bindings, music=None, narration=narration)
+    assert "narrationAudio" in recipe.required_capabilities
+
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        list(recipe.required_capabilities - {"narrationAudio"}),
+    )
+    with pytest.raises(ValueError, match="phone capability that is not enabled"):
+        validate_phone_pilot_recipe(recipe)
+
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)

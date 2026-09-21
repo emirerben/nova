@@ -2903,6 +2903,8 @@ def _run_phone_dispatch(
     phone_rendering_enabled: bool = True,
     bound_sources: tuple = ("bound-source",),
     voiceover: bool = False,
+    phone_narration_rendering_enabled: bool = False,
+    phone_render_verified_features: list | None = None,
 ):
     from app.config import settings
 
@@ -2924,6 +2926,12 @@ def _run_phone_dispatch(
     monkeypatch.setattr(settings, "phone_rendering_enabled", phone_rendering_enabled)
     monkeypatch.setattr(settings, "phone_render_user_ids", [])
     monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(
+        settings, "phone_narration_rendering_enabled", phone_narration_rendering_enabled
+    )
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", phone_render_verified_features or []
+    )
 
     approved_proposal = (
         {"proposal_version": 1, "media_digest": "d" * 64, "snapshot": {"media": []}}
@@ -3014,7 +3022,16 @@ def test_phone_gate_allowlist_extension_binds_without_approval(
         edit_format_module, "PHONE_RENDER_SUPPORTED_FORMATS", frozenset({"montage"})
     )
     result, _job, mock_build, bind_mock = _run_phone_dispatch(
-        monkeypatch, edit_format="montage", approved=False, voiceover=True
+        monkeypatch,
+        edit_format="montage",
+        approved=False,
+        voiceover=True,
+        # KRI-132: a voiceover only binds without approval once phone
+        # narration rendering is turned on for this account AND the device
+        # has verified the capability -- see the voiceover-specific tests
+        # below for what happens with either one missing.
+        phone_narration_rendering_enabled=True,
+        phone_render_verified_features=["narrationAudio"],
     )
 
     bind_mock.assert_called_once()
@@ -3035,3 +3052,171 @@ def test_phone_gate_checks_enrollment_before_format(monkeypatch: pytest.MonkeyPa
     warning_call = mock_log.warning.call_args
     assert warning_call.kwargs["error"] == "phone rendering is unavailable for this account"
     assert warning_call.kwargs["phone_gate"] == "not_enrolled"
+
+
+def test_phone_gate_voiceover_rejected_when_flag_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """KRI-132: the default (flag off) must fail closed BEFORE a Job is minted,
+    never dispatch a job the worker is doomed to reject."""
+    with patch("app.tasks.content_plan_build.log") as mock_log:
+        result, _job, mock_build, bind_mock = _run_phone_dispatch(
+            monkeypatch,
+            edit_format="montage",
+            approved=True,
+            voiceover=True,
+            phone_narration_rendering_enabled=False,
+        )
+
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
+    assert result.outcome == "invalid_clips"
+    assert result.reason == "voiceover_unavailable"
+    warning_call = mock_log.warning.call_args
+    assert warning_call.kwargs["error"] == "phone rendering does not yet support voiceover edits"
+    assert warning_call.kwargs["phone_gate"] == "voiceover_unavailable"
+
+
+def test_phone_gate_voiceover_rejected_when_capability_not_verified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rollout flag alone is not enough -- narrationAudio must also be
+    in phone_render_verified_features (device-parity gate)."""
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="montage",
+        approved=True,
+        voiceover=True,
+        phone_narration_rendering_enabled=True,
+        phone_render_verified_features=[],
+    )
+
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
+    assert result.outcome == "invalid_clips"
+    assert result.reason == "voiceover_unavailable"
+
+
+def test_phone_gate_voiceover_dispatches_when_flag_and_capability_verified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flag on + narrationAudio verified: the montage-family voiceover binds
+    phone sources and dispatches like any other supported phone edit."""
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="montage",
+        approved=True,
+        voiceover=True,
+        phone_narration_rendering_enabled=True,
+        phone_render_verified_features=["narrationAudio"],
+    )
+
+    bind_mock.assert_called_once()
+    assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
+    assert result.outcome == "dispatched"
+    assert result.reason is None
+
+
+def test_phone_gate_guided_voiceover_always_rejected_regardless_of_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-132 follow-up: the guided-story narration lane
+    (`GUIDED_VOICEOVER_CONTRACT`) has no phone compiler at all --
+    `compile_phone_guided_plan` rejects its "narration" plan lane
+    unconditionally. Confirm this fails closed at the DISPATCH GATE (before a
+    Job is minted) rather than falling through to `bind_phone_sources` +
+    `_run_phone_guided_job`, which would only fail once the worker tries to
+    compile the (never-implemented) lane -- even with
+    PHONE_NARRATION_RENDERING_ENABLED on, since that flag only covers the
+    separate montage-family (non-guided) voiceover archetype.
+    """
+    from app.services.creator_execution_contract import GUIDED_VOICEOVER_CONTRACT
+
+    item = _phone_dispatch_item("montage")
+    item.audio_mode = "voiceover"
+    item.voiceover_gcs_path = "users/u/plan/i/voice.m4a"
+    plan = SimpleNamespace(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0
+    )
+    session = MagicMock()
+    creator_strategy = {
+        "execution_contract": GUIDED_VOICEOVER_CONTRACT,
+        "render_program": "guided",
+        "audio_strategy": "voiceover",
+    }
+    attempt_id = "attempt-xyz"
+    active_plan = {
+        "plan_hash": "hash-1",
+        "guided_generation_attempt_id": attempt_id,
+        "edit_plan": {
+            "strategy": creator_strategy,
+            "manifest_hash": "manifest-1",
+            "context_hash": "context-1",
+        },
+    }
+    session.execute.return_value = SimpleNamespace(
+        scalars=lambda: SimpleNamespace(all=lambda: [SimpleNamespace(active_plan=active_plan)])
+    )
+    # The item's own `edit_proposal` (unrelated to the guided-voiceover
+    # active_plan checked above) is read by BOTH `proposal_generate_error`
+    # (earlier) and the exact_attempt/expected_state re-check (later) -- a
+    # fake parse satisfying both avoids constructing a fully valid
+    # EditProposal document for this unit test.
+    fake_proposal = SimpleNamespace(
+        generation_attempt_id=attempt_id,
+        status="approved",
+        guidance=None,
+        last_approved=SimpleNamespace(
+            snapshot=SimpleNamespace(direction="cluster", fast_cuts=["x"])
+        ),
+        design_fallback=None,
+    )
+    monkeypatch.setattr(
+        "app.schemas.edit_proposal.parse_edit_proposal", lambda _value: fake_proposal
+    )
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(settings, "creator_prompt_fidelity_enabled", True)
+    # Even with the montage-family flag fully on, guided narration stays blocked.
+    monkeypatch.setattr(settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["narrationAudio"])
+
+    bind_mock = MagicMock(return_value=("bound-source",))
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch(
+            "app.services.edit_proposals.validate_approved_proposal_media_sync",
+            return_value=(None, {"snapshot": {"narration": {}}}),
+        ),
+        patch(
+            "app.services.creator_execution_contract.narration_matches_item",
+            return_value=True,
+        ),
+        patch("app.services.phone_sources.bind_phone_sources", bind_mock),
+        patch("app.services.generative_jobs.build_generative_job") as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+        patch("app.tasks.content_plan_build.log") as mock_log,
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+            creator_strategy=creator_strategy,
+            creator_guided_attempt_id=attempt_id,
+        )
+
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
+    assert result.outcome == "invalid_clips"
+    assert result.reason == "guided_voiceover_unavailable"
+    warning_call = mock_log.warning.call_args
+    assert warning_call.kwargs["phone_gate"] == "guided_voiceover_unavailable"

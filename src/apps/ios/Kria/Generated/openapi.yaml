@@ -388,6 +388,13 @@
             "title": "Mute Windows",
             "type": "array"
           },
+          "narration_asset_id": {
+            "default": null,
+            "maxLength": 160,
+            "nullable": true,
+            "title": "Narration Asset Id",
+            "type": "string"
+          },
           "original_volume": {
             "default": 1,
             "maximum": 2,
@@ -5063,7 +5070,8 @@
                 "mapping": {
                   "library": "#/components/schemas/LibraryRenderAsset",
                   "original": "#/components/schemas/OriginalRenderAsset",
-                  "visual": "#/components/schemas/VisualRenderAsset"
+                  "visual": "#/components/schemas/VisualRenderAsset",
+                  "voiceover": "#/components/schemas/VoiceoverRenderAsset"
                 },
                 "propertyName": "kind"
               },
@@ -5076,6 +5084,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/VisualRenderAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/VoiceoverRenderAsset"
                 }
               ]
             },
@@ -7072,6 +7083,52 @@
           "duration_s"
         ],
         "title": "VisualShot",
+        "type": "object"
+      },
+      "VoiceoverRenderAsset": {
+        "additionalProperties": false,
+        "description": "A creator's recorded/uploaded voiceover for one content-plan item,\npinned to one storage generation (KRI-132).\n\nUnlike ``LibraryRenderAsset``'s shared, published catalog, a voiceover is\nprivate creator media addressed by its owning plan item, not a catalog\nid. The grant re-checks that the job's own plan item still carries this\nexact ``(path, generation)`` before signing; the device re-hashes the\ndownloaded bytes against ``fingerprint``.",
+        "properties": {
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "voiceover",
+            "enum": [
+              "voiceover"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "plan_item_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Plan Item Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "plan_item_id",
+          "generation",
+          "fingerprint"
+        ],
+        "title": "VoiceoverRenderAsset",
         "type": "object"
       }
     },

@@ -3124,6 +3124,23 @@ class _CommittedRenderPublishFailure(RuntimeError):
         self.job_id = job_id
 
 
+class _PhoneGateRejected(RuntimeError):
+    """`_dispatch_item_render`'s analysis-proxy phone-source fence rejected
+    the dispatch before a Job was minted (KRI-132).
+
+    Without this, `outcome.outcome == "invalid_clips"` fell through to the
+    generic `raise RuntimeError(f"render dispatch failed: {outcome.outcome}")`
+    a few lines below, caught by the blanket `except Exception` and surfaced
+    to chat as the unfixable-by-retry `execution_failed` / "I couldn't start
+    that render" message — even when the true, typed reason
+    (`DispatchResult.reason`, one of `PHONE_GATE_MESSAGES`) was already known.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"phone dispatch gate rejected: {reason}")
+        self.reason = reason
+
+
 def _retry_target_matches_confirmed_plan(
     *,
     item: PlanItem,
@@ -3684,6 +3701,8 @@ async def confirm_creator_plan_controller(
                 raise _SpeechCleanupRecoveryChanged
             if outcome.outcome == "publish_failed" and outcome.job_id:
                 raise _CommittedRenderPublishFailure(uuid.UUID(outcome.job_id))
+            if outcome.outcome == "invalid_clips" and getattr(outcome, "reason", None):
+                raise _PhoneGateRejected(outcome.reason)
             if outcome.outcome != "dispatched":
                 raise RuntimeError(f"render dispatch failed: {outcome.outcome}")
             job_id = uuid.UUID(outcome.job_id) if outcome.job_id else None
@@ -3755,6 +3774,36 @@ async def confirm_creator_plan_controller(
             payload={
                 "message": "I couldn't hand that render to the queue. Your direction is saved."
             },
+        )
+        return await _response(db, failed)
+    except _PhoneGateRejected as exc:
+        # The dispatch gate rejected this BEFORE a Job was minted (no queue
+        # publication was ever attempted), so — unlike
+        # `_CommittedRenderPublishFailure` — there is no Job row to bind.
+        # Surfaces the exact typed reason instead of falling into the
+        # blanket handler below's generic "execution_failed" dead end, which
+        # the iOS Retry affordance could never recover from for a phone-gate
+        # cause (see `app.tasks.content_plan_build.PHONE_GATE_MESSAGES`).
+        from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
+
+        await db.rollback()
+        failed = await _load_session(db, creator_session_id, user_id, plan_item_id, for_update=True)
+        code, message = PHONE_GATE_MESSAGES.get(
+            exc.reason,
+            (
+                "execution_failed",
+                "I couldn't start that render. Your creative plan is still saved.",
+            ),
+        )
+        failed.status = "failed"
+        failed.last_error = {"code": code, "message": message}
+        failed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)
+        if failed_receipt:
+            failed_receipt.status = "failed"
+            failed_receipt.error = failed.last_error
+            failed_receipt.completed_at = datetime.now(UTC)
+        await append_event(
+            db, failed, event_type="assistant_error", payload={"message": message, "code": code}
         )
         return await _response(db, failed)
     except Exception as exc:  # noqa: BLE001

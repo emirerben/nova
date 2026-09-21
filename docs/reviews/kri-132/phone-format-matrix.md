@@ -11,6 +11,8 @@
 
 The backend and the iOS sources were traced separately; both are in the User Journey section below.
 
+> **Update — voiceover PR (stacked on this one).** Everything below describes `origin/main` at `88eb0e5`. The voiceover PR changes four rows: (1) montage / day_vlog / single_hero **with a recorded voiceover** render on the iPhone behind `PHONE_NARRATION_RENDERING_ENABLED` + a verified `narrationAudio` (simulator-rendered, voice and footage levels measured); with the flag off the dispatch gate now refuses early with `voiceover_unavailable` instead of minting a doomed Job; (2) downloaded audio gets a playable file name, so the **music bed opens** (the strict expected-failure is gone); (3) phone-gate refusals reach the creator with their real reason in both the Generate route and chat; (4) iOS no longer offers a blind retry for `unsupported_recipe` or phone-gate refusals, and the disabled Add-clip control explains itself. Still open: music fade envelope, no on-device `loudnorm` or 0.5 s voice fade-out, guided-story narration, `narrated*`, talking_head / subtitled, slides, captions, SFX, ducking, crop, face-aware text, picker reachability of day_vlog / single_hero, deferred-variant visibility, phone-render UI tests.
+
 All line numbers were verified against `origin/main` at commit `88eb0e5` (2026-09-21) by grep, not copied from memory.
 
 ---

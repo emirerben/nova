@@ -27,7 +27,7 @@ from app.kria.recipes import (
     Transition,
 )
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import LibraryRenderAsset, RenderAssetManifest
+from app.kria.render_assets import LibraryRenderAsset, RenderAssetManifest, VoiceoverRenderAsset
 from app.pipeline.canvas import Canvas as PipelineCanvas
 from app.pipeline.canvas import canvas_for_orientation
 from app.pipeline.generative_decision import GenerativeVariantDecision
@@ -35,9 +35,17 @@ from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import (
     EXPORT_SAFETY_MARGIN_S,
     PhoneMusicBed,
+    PhoneNarrationBed,
     refit_source_window,
 )
 from app.services.phone_sources import PhoneSourceBinding
+
+# Mirrors `app.tasks.template_orchestrate._VOICEOVER_MUSIC_BED_MAX_GAIN`: a
+# matched-track bed under a recorded voiceover can never overpower the
+# narration, no matter where the mix slider sits. Kept in sync with that
+# constant's value (not imported -- this module never imports the cloud
+# orchestrator).
+_VOICEOVER_MUSIC_BED_MAX_GAIN = 0.5
 
 # `GenerativeAssemblyStepDecision.transition_in` values observed from the
 # montage matcher's slot vocabulary are "cut"/"none"/"crossfade" (see
@@ -72,7 +80,25 @@ def compile_phone_montage_plan(
     bindings: tuple[PhoneSourceBinding, ...],
     *,
     music: PhoneMusicBed | None = None,
+    narration: PhoneNarrationBed | None = None,
 ) -> EditRecipeV2:
+    """See the module docstring for the general contract.
+
+    `narration` (KRI-132): required whenever `decision.extras
+    ["voiceover_gcs_path"]` is set (the montage-family "voiceover" archetype
+    -- see `_specs_for_archetype`/`_resolve_archetype` in
+    `app.tasks.generative_build`), resolved by that module's
+    `_resolve_phone_voiceover_bed` the same way `music` is resolved by
+    `_resolve_phone_music_bed`. Compiles to a `VoiceoverRenderAsset` + a
+    second `TimelineTrack(id="narration", kind="audio")`, mirroring
+    `_mix_user_voiceover`'s gain math exactly (voice always at full volume;
+    the bed -- footage's own audio, or a matched-track music bed -- is
+    attenuated by `1 - decision.mix`, with a matched-track bed additionally
+    capped at `_VOICEOVER_MUSIC_BED_MAX_GAIN` so it can never bury the
+    voice). A voiceover with no binding fails closed with
+    `UnsupportedPhonePlan(capability="narrationAudio")`, same as every other
+    lane this compiler cannot yet express.
+    """
     from app.pipeline.generative_overlays import build_persistent_intro_overlays
     from app.pipeline.portable_text_layout import compile_text_overlay
 
@@ -259,6 +285,16 @@ def compile_phone_montage_plan(
 
     tracks = [TimelineTrack(id="montage", kind="video", clips=clips)]
     audio = AudioMixRecipe()
+    has_voiceover = bool(extras.get("voiceover_gcs_path"))
+    if has_voiceover and narration is None:
+        raise UnsupportedPhonePlan(
+            "recorded voiceover requires a phone narration binding",
+            capability="narrationAudio",
+        )
+    # Voice-prominence slider (`_VOICEOVER_ONLY_DEFAULT_MIX`/`_VOICEOVER_MUSIC
+    # _DEFAULT_MIX` in generative_build.py pick the default; a user override
+    # rides `decision.mix` unchanged). Meaningless when there's no voiceover.
+    voice_mix = max(0.0, min(1.0, float(decision.mix if decision.mix is not None else 1.0)))
     if decision.music_track_id:
         if music is None:
             raise UnsupportedPhonePlan(
@@ -282,6 +318,15 @@ def compile_phone_montage_plan(
             ),
             duration=music.duration_s,
         )
+        # `_mix_template_audio`'s plain song-variant path REPLACES source
+        # audio entirely (audio_gain default 1.0, no fade, no ducking) --
+        # mirror that exactly. `_mix_user_voiceover`'s `music_gcs_path`
+        # branch caps a voiceover's matched-track bed at
+        # `_VOICEOVER_MUSIC_BED_MAX_GAIN` and never mixes footage audio in at
+        # all -- mirror that too rather than inventing new defaults.
+        music_gain = (
+            max(0.0, min(1.0 - voice_mix, _VOICEOVER_MUSIC_BED_MAX_GAIN)) if has_voiceover else 1.0
+        )
         tracks.append(
             TimelineTrack(
                 id="music",
@@ -294,15 +339,76 @@ def compile_phone_montage_plan(
                         source_duration=max(total_duration_s, 0.1),
                         timeline_start=0.0,
                         rate=1.0,
-                        volume=float(music.volume),
+                        volume=music_gain,
                     )
                 ],
             )
         )
-        # `_mix_template_audio`'s song-variant path REPLACES source audio
-        # entirely (audio_gain default 1.0, no fade, no ducking) -- mirror
-        # that mix exactly rather than inventing new defaults.
-        audio = AudioMixRecipe(music_volume=1.0, original_volume=0.0)
+        audio = AudioMixRecipe(music_volume=music_gain, original_volume=0.0)
+
+    if has_voiceover and narration is not None:
+        # `narration is not None` always holds here (the earlier check
+        # raises when `has_voiceover` is True and `narration` is None) --
+        # spelled out again so type checkers can narrow it.
+        narration_asset = VoiceoverRenderAsset(
+            id=f"voiceover-{narration.plan_item_id}",
+            plan_item_id=narration.plan_item_id,
+            generation=narration.generation,
+            fingerprint=narration.fingerprint,
+        )
+        manifest[narration_asset.id] = narration_asset
+        assets[narration_asset.id] = MediaAsset(
+            id=narration_asset.id,
+            relative_path=narration_asset.id,
+            fingerprint=AssetFingerprint(
+                hex=narration.fingerprint.sha256, byte_count=narration.fingerprint.byte_count
+            ),
+            duration=narration.duration_s,
+        )
+        # Cap to the same window the decide phase sized the footage montage
+        # to (`voiceover_target_s` = min(footage, voice, the short-form
+        # ceiling) -- see `_decide_generative_variant`), further bounded by
+        # what this recipe's own assembled steps actually total. The cloud
+        # additionally hard-trims the WHOLE rendered output to this window
+        # (`-t` in `_mix_user_voiceover`); on the phone the video timeline is
+        # already ~this long by construction (the slots were sized to it),
+        # so only the audio needs the defensive cap -- a real mismatch would
+        # leave trailing silence rather than a truncated video, a known,
+        # accepted phone/cloud difference (see docs/runbooks/phone-rendering.md).
+        narration_duration_s = max(
+            0.1,
+            min(
+                float(extras.get("voiceover_target_s") or narration.duration_s),
+                max(total_duration_s, 0.1),
+            ),
+        )
+        tracks.append(
+            TimelineTrack(
+                id="narration",
+                kind="audio",
+                clips=[
+                    TimelineClip(
+                        id="narration-voice",
+                        source_asset_id=narration_asset.id,
+                        source_start=0.0,
+                        source_duration=narration_duration_s,
+                        timeline_start=0.0,
+                        rate=1.0,
+                        volume=1.0,
+                    )
+                ],
+            )
+        )
+        # No matched-track bed: the clips' own audio is the bed, attenuated
+        # by `1 - mix` (mix=1.0, the default, fully ducks it -- the voice is
+        # the whole track, matching `_mix_user_voiceover`'s `mix >= 0.999`
+        # branch). A matched-track bed instead: footage audio is never
+        # mixed in at all, matching `_mix_user_voiceover`'s `music_gcs_path`
+        # branch exactly.
+        footage_bed_gain = 0.0 if decision.music_track_id else max(0.0, 1.0 - voice_mix)
+        audio = audio.model_copy(
+            update={"narration_asset_id": narration_asset.id, "original_volume": footage_bed_gain}
+        )
 
     required_capabilities = (
         {"basicComposition", "local1080Export"}
@@ -318,6 +424,7 @@ def compile_phone_montage_plan(
             else set()
         )
         | ({"audioMix", "musicBed"} if decision.music_track_id else set())
+        | ({"narrationAudio", "audioMix"} if has_voiceover else set())
         | ({"variableSpeed"} if any(clip.rate != 1 for clip in clips) else set())
     )
 

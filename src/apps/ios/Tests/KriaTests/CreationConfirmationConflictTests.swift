@@ -122,4 +122,41 @@ import XCTest
         XCTAssertNotEqual(first.creatorPlanIdentity, replanned.creatorPlanIdentity)
         XCTAssertEqual(CreationConfirmationConflict.refreshDirectionMessage, "Keep the same plan with my current footage")
     }
+
+    /// KRI-132: the confirmation stage reads a phone-gate rejection's structured
+    /// code off the most recent `assistant_error` event, since `creator_agent`
+    /// doesn't carry `last_error` directly.
+    func testLastAssistantErrorCodeReadsTheMostRecentEvent() throws {
+        func thread(_ events: String) throws -> CreationThread {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(CreationThread.self, from: Data("""
+            {"id":"B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B","title":"Draft","status":"failed","revision":3,
+             "runtime_version":1,"state":{},"updated_at":"2026-09-07T12:00:00Z","events":\(events)}
+            """.utf8))
+        }
+        let none = try thread("[]")
+        XCTAssertNil(none.lastAssistantErrorCode)
+        XCTAssertNil(none.lastAssistantErrorMessage)
+
+        let phoneGate = try thread(#"""
+        [
+          {"id":"e1","sequence":1,"revision":1,"role":"assistant","event_type":"assistant_error",
+           "payload":{"code":"phone_format_unavailable","message":"Only Montage videos can render on your iPhone right now."},
+           "created_at":"2026-09-07T11:00:00Z"},
+          {"id":"e2","sequence":2,"revision":2,"role":"assistant","event_type":"assistant_review",
+           "payload":{},"created_at":"2026-09-07T11:05:00Z"}
+        ]
+        """#)
+        XCTAssertEqual(phoneGate.lastAssistantErrorCode, "phone_format_unavailable")
+        XCTAssertEqual(phoneGate.lastAssistantErrorMessage, "Only Montage videos can render on your iPhone right now.")
+        XCTAssertTrue(nonRetryablePhoneGateErrorCodes.contains(try XCTUnwrap(phoneGate.lastAssistantErrorCode)))
+
+        let transient = try thread(#"""
+        [{"id":"e1","sequence":1,"revision":1,"role":"assistant","event_type":"assistant_error",
+          "payload":{"code":"execution_failed","message":"I couldn't start that render."},
+          "created_at":"2026-09-07T11:00:00Z"}]
+        """#)
+        XCTAssertFalse(nonRetryablePhoneGateErrorCodes.contains(try XCTUnwrap(transient.lastAssistantErrorCode)))
+    }
 }
