@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.105.0] - 2026-09-21
+
+### Changed
+- feat(kri-132): Narrated and Talking to camera render on the iPhone, back in the picker (#1120) <!-- release-pr: 1120 -->
+
 ## [0.76.104.0] - 2026-09-21
 
 ### Changed
