@@ -54,6 +54,11 @@ struct PreviewAudioBinding: Sendable {
         guard recipe.rendererVersion == "kria-ios-\(recipe.schemaVersion)", !recipe.audio.duckOriginalDuringMusic else {
             throw NativePreviewFeatureError("Composition-47")
         }
+        // Ahead of any asset loading: a branding file missing from the bundle
+        // is a build defect, and the creator should meet it in a moment rather
+        // than after a full compose. A no-op on every path but the export,
+        // which is the only caller that asks for branding at all.
+        try KriaBranding.preflight(branding)
         let composition = AVMutableComposition()
         let canvas = CGSize(width: recipe.canvas.width, height: recipe.canvas.height)
         let videoComposition = AVMutableVideoComposition()
@@ -315,28 +320,44 @@ struct PreviewAudioBinding: Sendable {
         // Added last so it sits above every clip, fill and caption, and after
         // the still-clock coverage pass above, whose "is the timeline covered
         // by video" check must only see the edit's own clips.
+        //
+        // Every branch below is fatal rather than skip-on-failure. The phone
+        // declares `Options.contractTail` from the REQUESTED options when it
+        // reserves the upload, so a composition that quietly dropped the outro
+        // makes that declaration false and the server rejects the finished
+        // file for a duration mismatch. Failing here names the actual cause.
         var brandedTotal = total
         if branding.watermark, total > 0,
-           let watermark = KriaBranding.watermarkLayer(canvas: canvas, start: 0, end: total,
-                                                       variant: branding.variant) {
+           let watermark = try KriaBranding.watermarkLayer(canvas: canvas, start: 0, end: total,
+                                                           variant: branding.variant) {
             layers.append(watermark)
         }
-        if branding.outro, let outroURL = KriaBranding.outroURL() {
-            let outro = AVURLAsset(url: outroURL)
-            if let source = try await outro.loadTracks(withMediaType: .video).first,
-               let track = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
-                let duration = try await outro.load(.duration)
-                try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: source, at: time(total))
-                let size = try await source.load(.naturalSize)
-                let preferred = try await source.load(.preferredTransform)
-                let end = total + duration.seconds
-                layers.append(RecipeVideoLayer(
-                    trackID: track.trackID, image: nil,
-                    transform: KriaBranding.coverTransform(naturalSize: size, preferred: preferred, canvas: canvas),
-                    start: total, end: end, fadeIn: 0, isPrimary: false, clipID: "kria-outro",
-                    naturalSize: size, preferredTransform: preferred, visualOrder: 9_001))
-                brandedTotal = end
+        if branding.outro {
+            guard let outroURL = KriaBranding.outroURL() else {
+                throw MediaEngineError.missingBrandingResource(KriaBranding.outroFileName)
             }
+            let outro = AVURLAsset(url: outroURL)
+            guard let source = try await outro.loadTracks(withMediaType: .video).first,
+                  let track = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                throw MediaEngineError.missingBrandingResource(KriaBranding.outroFileName)
+            }
+            let duration = try await outro.load(.duration)
+            // A present-but-unreadable outro would insert nothing and leave
+            // `brandedTotal` at the edit's own length: the same over-declared
+            // tail as a missing file, so it fails the same way.
+            guard duration.seconds > 0 else {
+                throw MediaEngineError.missingBrandingResource(KriaBranding.outroFileName)
+            }
+            try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: source, at: time(total))
+            let size = try await source.load(.naturalSize)
+            let preferred = try await source.load(.preferredTransform)
+            let end = total + duration.seconds
+            layers.append(RecipeVideoLayer(
+                trackID: track.trackID, image: nil,
+                transform: KriaBranding.coverTransform(naturalSize: size, preferred: preferred, canvas: canvas),
+                start: total, end: end, fadeIn: 0, isPrimary: false, clipID: "kria-outro",
+                naturalSize: size, preferredTransform: preferred, visualOrder: 9_001))
+            brandedTotal = end
         }
 
         if composition.duration.seconds < brandedTotal { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, duration: time(brandedTotal - composition.duration.seconds))) }

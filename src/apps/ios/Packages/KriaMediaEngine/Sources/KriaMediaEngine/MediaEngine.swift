@@ -265,7 +265,7 @@ public struct AVFoundationWaveformExtractor: WaveformExtracting { public init() 
 #endif
 
 public enum MediaEngineError: Error, Equatable, Sendable, LocalizedError {
-    case avFoundationUnavailable, exportUnavailable, exportFailed, thumbnailWriteFailed, waveformFailed, insufficientStorage, unsupportedCapability, missingAsset(String), cancelled
+    case avFoundationUnavailable, exportUnavailable, exportFailed, thumbnailWriteFailed, waveformFailed, insufficientStorage, unsupportedCapability, missingAsset(String), missingBrandingResource(String), cancelled
 
     public var errorDescription: String? {
         switch self {
@@ -277,6 +277,7 @@ public enum MediaEngineError: Error, Equatable, Sendable, LocalizedError {
         case .insufficientStorage: "Your iPhone is low on storage. Free up space and try again."
         case .unsupportedCapability: "This clip uses a format this iPhone can’t process."
         case .missingAsset(let id): "One of the clips in this video is missing (\(id))."
+        case .missingBrandingResource(let file): "This app build is missing a Kria branding file (\(file)). Reinstall the app and try again."
         case .cancelled: "Export was cancelled."
         }
     }
