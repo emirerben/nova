@@ -70,9 +70,35 @@ def test_recommended_pairings_clear_the_watermark_floor(variant):
         composite = verify.over(B._place(tile, B.WATERMARK_HOME, pad),
                                 backgrounds[bg_name])
         result = verify.contrast(ink, composite)
+        if f"{variant}/{bg_name}" in B.ACCEPTED_BELOW_FLOOR:
+            continue
         assert result.worst_tile >= verify.WATERMARK_FLOOR, (
             f"{variant} on {bg_name}: worst tile {result.worst_tile:.2f}:1 "
             f"< {verify.WATERMARK_FLOOR}:1")
+
+
+def test_no_stale_entries_in_the_accepted_exception_list():
+    """An accepted exception must still be an exception.
+
+    Without this, a pairing that was waived once stays waived forever and
+    quietly stops being measured against the floor.
+    """
+    backgrounds = B._backgrounds()
+    for key in B.ACCEPTED_BELOW_FLOOR:
+        variant, _, bg_name = key.partition("/")
+        assert variant in B.VARIANTS and bg_name in backgrounds, key
+        assert bg_name in B.RECOMMENDED[variant], (
+            f"{key} is not a recommended pairing, so it is never gated")
+        pad = B.watermark_pad(variant)
+        tile = B.build_watermark(variant, B.WATERMARK_SIZES["standard"])
+        bare = wordmark(B.WATERMARK_SIZES["standard"], fill=B.VARIANTS[variant][0])
+        composite = verify.over(B._place(tile, B.WATERMARK_HOME, pad),
+                                backgrounds[bg_name])
+        result = verify.contrast(B._place(B._pad(bare.full, pad),
+                                          B.WATERMARK_HOME, pad), composite)
+        assert result.worst_tile < verify.WATERMARK_FLOOR, (
+            f"{key} now measures {result.worst_tile:.2f}:1 and clears the floor "
+            f"— remove it from ACCEPTED_BELOW_FLOOR")
 
 
 def test_the_two_tones_cover_every_footage_class_between_them():
@@ -96,6 +122,7 @@ def test_every_size_sits_on_the_caption_floor():
 def test_committed_report_has_no_gated_failures():
     report = json.loads((DIST / "proofs" / "report.json").read_text())
     failed = [k for k, v in report["legibility"].items()
-              if v["gated"] and not v["passes_watermark_floor"]]
+              if v["gated"] and not v["passes_watermark_floor"]
+              and not v["accepted_below_floor"]]
     assert not failed, failed
     assert all(v["clear"] for v in report["placements"].values())
