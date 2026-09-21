@@ -3849,9 +3849,11 @@ def _resolve_phone_voiceover_bed(job_id: str, decision: GenerativeVariantDecisio
     concurrent edit could have replaced or cleared the voiceover since. Then
     `app.services.phone_voiceover.inspect_voiceover_asset` (mirrors
     `inspect_library_asset`'s pin-then-hash pattern) pins the exact
-    generation + fingerprint that `app.routes.device_render
-    .download_device_asset` will independently recompute when the device
-    fetches the asset -- they must agree exactly.
+    generation + fingerprint. Unlike the library catalog grant,
+    `app.routes.device_render.download_device_asset` does NOT re-hash this
+    asset on every device fetch -- it only re-checks the job's own `PlanItem`
+    still carries this exact `(path, generation)` before signing; the DEVICE
+    re-hashes the downloaded bytes against the pinned SHA-256 itself.
 
     Returns None when the decision has no voiceover (no narration bed
     needed). Raises `UnsupportedPhonePlan` (capability="narrationAudio")

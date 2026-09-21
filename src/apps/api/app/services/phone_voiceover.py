@@ -1,15 +1,27 @@
 """Resolve a plan item's voiceover into a pinned, hashed phone render asset.
 
-Mirrors `app.services.render_library.inspect_library_asset`'s pin-then-hash
-pattern: the worker's compile step downloads the CURRENT bytes at the CURRENT
-generation and hashes them, and `app.routes.device_render`'s grant route
-independently re-derives the same fingerprint before signing a download URL
-for the device -- they must agree exactly, or the grant refuses (409)
-instead of handing the device different bytes than the recipe pinned.
+`inspect_voiceover_asset` is called ONCE, at compile time
+(`_resolve_phone_voiceover_bed` in `app.tasks.generative_build`): it mirrors
+`app.services.render_library.inspect_library_asset`'s pin-then-hash pattern,
+downloading the CURRENT bytes at the CURRENT generation and hashing them to
+produce the `VoiceoverRenderAsset` baked into the recipe.
+
+Unlike the library-catalog grant (which re-runs `inspect_library_asset` on
+every device download to independently re-derive the fingerprint before
+signing), the voiceover grant route (`_voiceover_download_url` in
+`app.routes.device_render`) does NOT re-hash: it only re-checks that the
+job's own `PlanItem` still carries the exact pinned `(path, generation)`,
+then signs a URL for that generation directly (mirrors the Visuals-pool
+asset grant's ownership pattern, not the library catalog's re-hash pattern).
+The DEVICE re-hashes the downloaded bytes against the pinned SHA-256 itself.
+Re-hashing server-side on every grant would cost a full download of up to
+`MAX_VOICEOVER_BYTES` per poll; trusting the immutable generation (GCS never
+lets two different byte sequences share one generation for one object) is
+sufficient, same as for `VisualRenderAsset`.
 
 Unlike `LibraryRenderAsset`'s shared, published catalog, a voiceover is
 private creator media addressed by its owning `PlanItem`, so callers of
-`inspect_voiceover_asset` are responsible for the ownership/ path checks a
+`inspect_voiceover_asset` are responsible for the ownership/path checks a
 shared catalog lookup does not need (see `_resolve_phone_voiceover_bed` in
 `app.tasks.generative_build` and `_voiceover_download_url` in
 `app.routes.device_render`).

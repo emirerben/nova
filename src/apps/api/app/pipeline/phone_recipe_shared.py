@@ -84,11 +84,14 @@ class PhoneNarrationBed(BaseModel):
     `voiceover_generation` in a sync session, then calls
     `app.services.phone_voiceover.inspect_voiceover_asset` (mirrors
     `inspect_library_asset`'s pin-then-hash pattern) to pin the exact
-    generation + fingerprint that `app.routes.device_render
-    .download_device_asset` will independently recompute when the device
-    fetches the asset -- they must agree exactly. Unlike `PhoneMusicBed`'s
-    shared catalog, this is private creator media addressed by plan item, not
-    catalog id -- see `app.kria.render_assets.VoiceoverRenderAsset`.
+    generation + fingerprint at compile time. Unlike the library catalog
+    grant, `app.routes.device_render.download_device_asset` does NOT re-hash
+    this asset on every device fetch -- it only re-checks the job's own
+    `PlanItem` still carries this exact `(path, generation)` before signing;
+    the DEVICE re-hashes the downloaded bytes against the pinned SHA-256
+    itself. Unlike `PhoneMusicBed`'s shared catalog, this is private creator
+    media addressed by plan item, not catalog id -- see
+    `app.kria.render_assets.VoiceoverRenderAsset`.
 
     Consumed by `compile_phone_montage_plan`, which never touches the
     database or GCS itself -- it only reads this already-verified value.

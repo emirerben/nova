@@ -185,27 +185,33 @@ actually propose a voiceover edit from chat instead of the capability
 permanently reading `unsupported_phone_audio`. `CAPABILITY_GUIDED_VOICEOVER`
 stays unconditionally `unsupported_phone_audio` regardless of the flag,
 matching the guided-story lane staying cloud-only above.
-`app.agents._schemas.creator_policy.effective_render_program`'s own
-redundant, unconditional `manifest.has_voiceover` hard block is lifted to
-match (a strategy that newly SWITCHES to voiceover with none attached yet is
-untouched, still blocked).
 
-**Known remaining chat-planning gap (follow-up, not part of KRI-132
-backend):** `effective_render_program`'s phone branch has no "native" return
-at all — every phone manifest requires `CAPABILITY_DRAFT_GUIDED_PROPOSAL`
-and resolves to `"guided"`. A voiceover manifest is by design never
-guided-applicable (`guided_edit_applicable(..., has_voiceover=True)` is
-always `False`), so that capability can never be available for it either —
-meaning `compile_strategy_to_plan` still cannot reach a successful plan for a
-phone+voiceover manifest end-to-end from chat, even with the flag and
-capability on. This does NOT block dispatch itself (`_dispatch_item_render`
-recomputes `guided_applicable` fresh from `has_voiceover`, independent of
-what this function returned) — it only means the Main Creator chat flow
-cannot yet *draft* a phone+voiceover strategy through this one resolver.
-Giving phone manifests a native return path here, mirroring the dispatch-time
-computation, is the next step. See `tests/services
-/test_creator_capabilities.py::test_phone_item_with_recorded_voiceover
-_manifest_advertises_availability` for the exact reproduction.
+`app.agents._schemas.creator_policy.effective_render_program`'s phone branch
+(`if phone is not None:`) resolves a voiceover-carrying phone manifest to
+`"native"` instead of the pre-KRI-132 unconditional `"guided"`/reject —
+`phone.available` already implies flag on + narrationAudio verified +
+montage-family format + not a guided-voiceover request by the time this
+branch is reached, mirroring `_dispatch_item_render`'s own
+`guided_applicable = guided_edit_applicable(strategy_format,
+has_voiceover=True)` (always `False`) and `routes/creator_agent.py`'s
+`bypass_guided_edit_gate = render_program == "native"`. Guarded so nothing
+silently drops creator media: the montage-family phone compiler
+(`compile_phone_montage_plan`) only ever binds clip-lane sources, never
+Visuals-pool ("asset-*") media, so an explicit pool-media selection
+alongside a voiceover fails closed with `PhoneMediaUnavailableError` instead
+of resolving native and dropping it; `media_scope == "all"` with a
+voiceover is intercepted by an earlier, pre-existing guard (requires the
+`guided_voiceover_v1` execution contract) before this branch is ever
+reached; a strategy that newly SWITCHES `audio_strategy` to `"voiceover"`
+with none attached yet remains blocked (that half of the earlier
+has_voiceover check is unconditional on purpose — see the code comment).
+Flag off or narrationAudio unverified stays byte-identical to pre-KRI-132:
+`PhoneFormatUnavailableError(voiceover=True)`. See `tests/services
+/test_creator_capabilities.py`'s
+`test_phone_item_with_recorded_voiceover_compiles_native_when_verified`,
+`test_phone_voiceover_with_selected_pool_media_fails_closed`,
+`test_phone_voiceover_all_media_scope_with_pool_media_fails_closed`, and
+`test_phone_voiceover_stays_blocked_when_flag_or_capability_missing`.
 
 **Rollback:** `fly secrets set PHONE_NARRATION_RENDERING_ENABLED=false
 --app nova-video` + `fly machine restart <id>` (api + worker) reverts to
