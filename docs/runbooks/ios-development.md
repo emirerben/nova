@@ -195,6 +195,11 @@ Text, Captions, Visuals, and Sounds share one bottom-connected panel shell and
 one tool-rail selection. Opening a panel keeps the preview and rail geometry
 stable; the retained timeline remains visually present under the shell but is
 disabled for scrolling, hit testing, and accessibility while covered. The
+Text tab opens without taking keyboard focus; tapping its input starts typing.
+Its unfinished draft survives tab switches, and tapping the active tool
+collapses the shell. The panel's visible grabber and the divider beneath the
+preview both resize the same panel/preview split, with a 44pt drag target and
+an accessibility adjustment action. The
 timeline is clipped to its available editor area while the keyboard is open,
 so text entry cannot let it paint over the source preview. Compact text presets
 use the current `Menu` control, and the text animation picker samples the
@@ -209,7 +214,8 @@ cleanup, preventing a delayed `onDisappear` from clearing the replacement's
 state. Existing controls, session mutations, capability checks, undo behavior,
 and save contracts remain unchanged.
 
-`NativeEditorInspectorUITests` covers panel switching, compact presets, preview
+`NativeEditorInspectorUITests` covers panel switching (including Text), dragging
+the visible panel grabber up and back down, compact presets, preview
 play/pause, and keyboard visibility (including a source-pixel check).
 `NativeEditorPanelLifecycleTests` and `NativeTextAnimationPreviewTests` cover
 cleanup ownership and preview timing; `AppleTextAccessibilityUITests` exercises

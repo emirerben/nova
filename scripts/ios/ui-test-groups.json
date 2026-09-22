@@ -74,7 +74,8 @@
       "KriaUITests/NativeEditorInspectorUITests/testConnectedPanelsKeepRailAndPreviewStableAndCollapseActiveTool",
       "KriaUITests/NativeEditorInspectorUITests/testConnectedTextPresetAndAnimationPreviewControls",
       "KriaUITests/NativeEditorInspectorUITests/testKeyboardKeepsSourcePreviewVisibleAboveConnectedPanel",
-      "KriaUITests/NativeCaptionVisualUITests/testUnfinishedCardSurvivesClosingAndSwitchingTools"
+      "KriaUITests/NativeCaptionVisualUITests/testUnfinishedCardSurvivesClosingAndSwitchingTools",
+      "KriaUITests/NativeEditorInspectorUITests/testVisiblePanelHandleExpandsAndRestoresEveryTool"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",

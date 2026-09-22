@@ -2,15 +2,67 @@ import SwiftUI
 
 /// One destination owns both the visible inspector and the rail highlight.
 enum NativeEditorPanel: Equatable {
-    case text(String), captions, visuals, sounds
+    case text(String), textCreation, captions, visuals, sounds
 
     var tool: NativeEditorTool {
         switch self {
-        case .text: return .text
+        case .text, .textCreation: return .text
         case .captions: return .captions
         case .visuals: return .visuals
         case .sounds: return .sounds
         }
+    }
+}
+
+/// The panel and timeline resize handles share one expansion value. Keeping
+/// the drag math here makes both handles continuous in global coordinates and
+/// gives the connected handle a real, accessible hit target.
+struct NativeEditorPanelResizeGrabber: View {
+    @Binding var expansion: CGFloat
+    let range: CGFloat
+    let reduceMotion: Bool
+    let accessibilityIdentifier: String
+    var topAligned = false
+    @State private var dragOrigin: CGFloat?
+    @State private var feedback = 0
+
+    var body: some View {
+        Capsule()
+            .fill(KriaColor.ink.opacity(0.28))
+            .frame(width: 38, height: 4)
+            .padding(.top, topAligned ? 8 : 0)
+            .frame(width: 80, height: 44, alignment: topAligned ? .top : .center)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                    .onChanged { value in
+                        guard range > 0 else { return }
+                        if dragOrigin == nil {
+                            dragOrigin = expansion
+                            feedback += 1
+                        }
+                        let next = min(1, max(0, (dragOrigin ?? 0) - value.translation.height / range))
+                        if next != expansion && (next == 0 || next == 1) { feedback += 1 }
+                        expansion = next
+                    }
+                    .onEnded { _ in
+                        dragOrigin = nil
+                        feedback += 1
+                    }
+            )
+            .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: feedback)
+            .accessibilityElement()
+            .accessibilityLabel("Editor panel size")
+            .accessibilityValue("\(Int(expansion * 100)) percent expanded")
+            .accessibilityHint("Swipe up or down to resize the editor panel and preview")
+            .accessibilityAdjustableAction { direction in
+                let step: CGFloat = direction == .increment ? 0.25 : -0.25
+                let next = min(1, max(0, expansion + step))
+                guard next != expansion else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { expansion = next }
+                feedback += 1
+            }
+            .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
 
