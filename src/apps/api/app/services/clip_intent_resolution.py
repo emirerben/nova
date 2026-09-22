@@ -29,6 +29,8 @@ import asyncio
 import os
 import re
 import tempfile
+import threading
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -71,6 +73,38 @@ log = structlog.get_logger()
 
 # Key on a stored clip analysis holding cached vision answers (see IntentResolution).
 ANSWERS_KEY = "answers"
+# Durable, expiring per-question claims shared with the background worker.
+ANSWER_QUERIES_KEY = "answer_queries"
+
+
+def vision_query_marker(
+    analysis: dict[str, Any] | None,
+    question: str,
+    generation: str | None = None,
+) -> dict[str, Any]:
+    queries = (analysis or {}).get(ANSWER_QUERIES_KEY)
+    query = queries.get(normalize_question(question)) if isinstance(queries, dict) else None
+    if not isinstance(query, dict) or str(query.get("generation") or "") != str(generation or ""):
+        return {}
+    expires_at = query.get("expires_at")
+    if isinstance(expires_at, (int, float)) and expires_at <= time.time():
+        return {}
+    return query
+
+
+def vision_query_pending(
+    analysis: dict[str, Any] | None,
+    question: str,
+    generation: str | None = None,
+) -> bool:
+    query = vision_query_marker(analysis, question, generation)
+    return (
+        query.get("status") in {"queued", "running"}
+        and isinstance(query.get("expires_at"), (int, float))
+        and query["expires_at"] > time.time()
+    )
+
+
 ResolutionStatus = Literal[
     "resolved",
     "needs_creator",
@@ -115,6 +149,12 @@ class IntentClip:
 
 
 @dataclass(frozen=True)
+class DeferredVisionQuery:
+    media_id: str
+    question: str
+
+
+@dataclass(frozen=True)
 class IntentResolution:
     intents: list[ResolvedClipIntent] = field(default_factory=list)
     # Set when any intent could not be resolved with enough certainty. The chat
@@ -126,6 +166,7 @@ class IntentResolution:
     vision_answers: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     status: ResolutionStatus = "resolved"
     error_code: str | None = None
+    deferred_queries: list[DeferredVisionQuery] = field(default_factory=list)
 
     @property
     def needs_creator(self) -> bool:
@@ -308,6 +349,46 @@ def _yes_no(answer: str) -> bool | None:
     return None
 
 
+def query_clip_vision(
+    clip: IntentClip,
+    question: str,
+    *,
+    question_agent: ClipQuestionAgent,
+    run_context: RunContext,
+    cancelled: threading.Event | None = None,
+) -> ClipQuestionOutput:
+    """Shared chat/worker media path. The caller owns failure handling.
+
+    Keep the temporary file's entire lifetime in one thread: cancelling the
+    chat await must not remove a file while an upload still reads it.
+    """
+    from app.pipeline.agents.gemini_analyzer import gemini_upload_and_wait  # noqa: PLC0415
+    from app.storage import download_generation_to_file, download_to_file  # noqa: PLC0415
+
+    if not clip.gcs_path or clip.kind != "video":
+        raise FileNotFoundError("Vision re-query requires a stored video")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        suffix = os.path.splitext(clip.gcs_path)[1] or ".mp4"
+        path = os.path.join(tmpdir, f"clip{suffix}")
+        if clip.generation:
+            download_generation_to_file(clip.gcs_path, path, generation=clip.generation)
+        else:
+            download_to_file(clip.gcs_path, path)
+        if cancelled is not None and cancelled.is_set():
+            raise TimeoutError("Chat vision deadline expired")
+        file_ref = gemini_upload_and_wait(path)
+        if cancelled is not None and cancelled.is_set():
+            raise TimeoutError("Chat vision deadline expired")
+        return question_agent.run(
+            ClipQuestionInput(
+                file_uri=file_ref.uri,
+                file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
+                question=question,
+            ),
+            ctx=run_context,
+        )
+
+
 async def _run_vision_candidate(
     candidate: _VisionCandidate,
     clip: IntentClip,
@@ -315,42 +396,19 @@ async def _run_vision_candidate(
     question_agent: ClipQuestionAgent,
     run_context: RunContext,
 ) -> ClipQuestionOutput:
-    """Download + upload + ask, leaving failure classification to the caller."""
-    from app.pipeline.agents.gemini_analyzer import gemini_upload_and_wait  # noqa: PLC0415
-    from app.storage import download_to_file  # noqa: PLC0415
-
-    if not clip.gcs_path or clip.kind != "video":
-        raise FileNotFoundError("clip media is unavailable for vision")
-    tmp_path: str | None = None
+    """One clip's failure must never crash the chat turn."""
+    cancelled = threading.Event()
     try:
-        suffix = os.path.splitext(clip.gcs_path)[1] or ".mp4"
-        fd, tmp_path = tempfile.mkstemp(suffix=suffix)
-        os.close(fd)
-        if clip.generation:
-            from app.storage import download_generation_to_file  # noqa: PLC0415
-
-            await asyncio.to_thread(
-                download_generation_to_file,
-                clip.gcs_path,
-                tmp_path,
-                generation=clip.generation,
-            )
-        else:
-            await asyncio.to_thread(download_to_file, clip.gcs_path, tmp_path)
-        file_ref = await asyncio.to_thread(gemini_upload_and_wait, tmp_path)
-        mime = getattr(file_ref, "mime_type", None) or "video/mp4"
-        out = await asyncio.to_thread(
-            question_agent.run,
-            ClipQuestionInput(file_uri=file_ref.uri, file_mime=mime, question=candidate.question),
-            ctx=run_context,
+        return await asyncio.to_thread(
+            query_clip_vision,
+            clip,
+            candidate.question,
+            question_agent=question_agent,
+            run_context=run_context,
+            cancelled=cancelled,
         )
-        return out
     finally:
-        if tmp_path is not None:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
+        cancelled.set()
 
 
 def _position_phrase(positions: list[int], *, max_refs: int = 5) -> str:
@@ -446,6 +504,8 @@ def _build_resolver_input(
 
 
 def _failure_status_and_code(exc: BaseException) -> tuple[ResolutionStatus, str]:
+    if isinstance(exc, (FileNotFoundError, OSError)) and not isinstance(exc, TimeoutError):
+        return "media_unavailable", "clip_media_unavailable"
     if isinstance(exc, ProviderOutcomeUnknownError):
         return "provider_unavailable", "provider_outcome_unknown"
     if isinstance(exc, AiBudgetExceededError):
@@ -526,6 +586,14 @@ async def resolve_clip_intents_for_turn(
     work_by_id: dict[str, _IntentWork] = {i.intent_id: _IntentWork(intent=i) for i in intents}
 
     vision_candidates: list[_VisionCandidate] = []
+    deferred: dict[tuple[str, str], DeferredVisionQuery] = {}
+
+    def defer(candidate: _VisionCandidate) -> None:
+        clip = clip_by_id[candidate.media_id]
+        if not background and clip.asset_id and clip.gcs_path and clip.kind == "video":
+            key = (clip.media_id, normalize_question(candidate.question))
+            deferred[key] = DeferredVisionQuery(clip.media_id, candidate.question)
+
     vision_answers: dict[str, dict[str, dict[str, Any]]] = {}
 
     for intent in intents:
@@ -715,6 +783,24 @@ async def resolve_clip_intents_for_turn(
     # Both membership and caption checks share one budget, cache, concurrency
     # bound and checkpoint path. Caption work is admitted only after membership.
     calls_spent = 0
+    foreground_deadline = (
+        asyncio.get_running_loop().time() + settings.clip_intents_vision_deadline_s
+    )
+
+    def record_failure(candidates, error_code):
+        fields = {
+            "provider_outcome_unknown": "provider_unknown_media_ids",
+            "ai_budget_exhausted": "ai_budget_exhausted_media_ids",
+            "provider_quota_exceeded": "provider_quota_exhausted_media_ids",
+            "clip_media_unavailable": "media_unavailable_media_ids",
+        }
+        for candidate in candidates:
+            work = work_by_id[candidate.intent_id]
+            getattr(work, fields.get(error_code, "provider_unavailable_media_ids")).add(
+                candidate.media_id
+            )
+            if error_code in {"ai_budget_exhausted", "provider_quota_exceeded"}:
+                work.budget_exhausted_media_ids.add(candidate.media_id)
 
     async def run_candidates(candidates, apply_result):
         nonlocal calls_spent
@@ -773,6 +859,18 @@ async def resolve_clip_intents_for_turn(
                         dependent.media_id
                     )
                 continue
+            marker = vision_query_marker(clip.analysis, candidate.question, clip.generation)
+            dependents_for_candidate = dependents[
+                (candidate.media_id, str(clip.generation or ""), question_norm)
+            ]
+            if marker.get("status") == "failed" and marker.get("error_code"):
+                record_failure(dependents_for_candidate, marker["error_code"])
+                continue
+            if vision_query_pending(clip.analysis, candidate.question, clip.generation):
+                defer(candidate)
+                for dependent in dependents_for_candidate:
+                    work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+                continue
             to_call.append(candidate)
 
         cap = (
@@ -788,6 +886,8 @@ async def resolve_clip_intents_for_turn(
         )
         allowed = 0 if terminal_budget else min(max(0, cap - calls_spent), len(to_call))
         for candidate in to_call[allowed:]:
+            if not terminal_budget:
+                defer(candidate)
             key = (
                 candidate.media_id,
                 str(clip_by_id[candidate.media_id].generation or ""),
@@ -799,9 +899,19 @@ async def resolve_clip_intents_for_turn(
 
         question_agent = ClipQuestionAgent(default_client())
         batch_size = 4
-        batch_timeout = settings.clip_intents_vision_deadline_s
         for offset in range(0, len(to_call), batch_size):
             batch = to_call[offset : offset + batch_size]
+            if not background and asyncio.get_running_loop().time() >= foreground_deadline:
+                for candidate in batch:
+                    defer(candidate)
+                    key = (
+                        candidate.media_id,
+                        str(clip_by_id[candidate.media_id].generation or ""),
+                        normalize_question(candidate.question),
+                    )
+                    for dependent in dependents[key]:
+                        work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+                continue
             calls_spent += len(batch)
             tasks = [
                 asyncio.ensure_future(
@@ -821,7 +931,9 @@ async def resolve_clip_intents_for_turn(
                 await asyncio.gather(*tasks, return_exceptions=True)
                 done = set(tasks)
             else:
-                done, _pending = await asyncio.wait(tasks, timeout=batch_timeout)
+                done, _pending = await asyncio.wait(
+                    tasks, timeout=max(0, foreground_deadline - asyncio.get_running_loop().time())
+                )
             # Fold completed siblings even if one slow provider call exhausts the
             # batch deadline; cancelled thread work is intentionally left alone.
             for candidate, task in zip(batch, tasks, strict=True):
@@ -832,6 +944,7 @@ async def resolve_clip_intents_for_turn(
                 )
                 dependents_for_candidate = dependents[key]
                 if task not in done:
+                    defer(candidate)
                     for dependent in dependents_for_candidate:
                         work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
                     task.cancel()
@@ -839,22 +952,10 @@ async def resolve_clip_intents_for_turn(
                 try:
                     output = task.result()
                 except Exception as exc:  # noqa: BLE001 — classify per candidate
-                    for dependent in dependents_for_candidate:
-                        work = work_by_id[dependent.intent_id]
-                        if isinstance(exc, ProviderOutcomeUnknownError):
-                            work.provider_unknown_media_ids.add(dependent.media_id)
-                        elif isinstance(exc, AiBudgetExceededError):
-                            work.ai_budget_exhausted_media_ids.add(dependent.media_id)
-                            work.budget_exhausted_media_ids.add(dependent.media_id)
-                        elif isinstance(exc, ProviderQuotaExceededError):
-                            work.provider_quota_exhausted_media_ids.add(dependent.media_id)
-                            work.budget_exhausted_media_ids.add(dependent.media_id)
-                        elif isinstance(exc, TimeoutError):
-                            work.provider_unavailable_media_ids.add(dependent.media_id)
-                        elif isinstance(exc, (FileNotFoundError, OSError)):
-                            work.media_unavailable_media_ids.add(dependent.media_id)
-                        else:
-                            work.provider_unavailable_media_ids.add(dependent.media_id)
+                    _status, error_code = _failure_status_and_code(exc)
+                    record_failure(dependents_for_candidate, error_code)
+                    if error_code == "vision_provider_error":
+                        defer(candidate)
                     continue
                 question_norm = normalize_question(candidate.question)
                 answer_record = {
@@ -867,6 +968,7 @@ async def resolve_clip_intents_for_turn(
                 vision_answers.setdefault(candidate.media_id, {})[question_norm] = answer_record
                 for dependent in dependents_for_candidate:
                     apply_result(dependent, output)
+            await asyncio.gather(*tasks, return_exceptions=True)
             if checkpoint is not None and background and done:
                 await checkpoint(vision_answers)
             if background and any(
@@ -1095,6 +1197,8 @@ async def resolve_clip_intents_for_turn(
     elif any(w.pending_media_ids for w in unresolved_work):
         status = "pending"
         error_code = "vision_batch_deadline_or_foreground_cap"
+    if error_code in {"provider_outcome_unknown", "ai_budget_exhausted", "provider_quota_exceeded"}:
+        deferred.clear()  # Do not bypass provider/budget stops by dispatching new paid work.
     turn_question = (
         _build_question(creator_work, position_by_media)
         if status == "needs_creator" and creator_work
@@ -1110,6 +1214,7 @@ async def resolve_clip_intents_for_turn(
         vision_answers=vision_answers,
         status=status,
         error_code=error_code,
+        deferred_queries=list(deferred.values()),
     )
 
 

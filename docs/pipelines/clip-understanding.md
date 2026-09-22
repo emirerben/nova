@@ -88,20 +88,44 @@ Flow (flag on):
    record. Clips the record cannot answer go to `ClipQuestionAgent` (the vision
    model re-watches THAT clip): at most `clip_intents_max_vision_requeries`
    (4) per turn, under one `clip_intents_vision_deadline_s` (25 s) deadline, video
-   only. Membership checks are re-asked as closed yes/no questions; a confident
-   "no" excludes the clip. New answers are cached on the asset's
-   `analysis["answers"][normalized_question]` (pool assets only).
-3. **Ask, never guess.** Anything unresolved (ungrounded label, over the cap,
-   deadline, "unknown", empty group, agent failure) becomes ONE
-   `assistant_question` event (`reason_code: clip_intent_unresolved`). The
-   creator's answer arrives as a normal next message.
-4. **Plan.** On confirm the intents travel `ProposalBrief.clip_intents` (chat
+   only. Completed answers survive another clip hitting the deadline; membership
+   and caption authoring share that deadline. Membership checks are re-asked as
+   closed yes/no questions; a confident "no" excludes the clip. New answers are
+   cached on the asset's `analysis["answers"][normalized_question]` (pool assets only).
+3. **Continue in the background (KRI-154).** On the foreground chat path,
+   cacheable video questions left over
+   after the cap, deadline, or a transient failure go to
+   `app.tasks.clip_intent_requery.requery_clip_intent`, one question per task on
+   `POOL_ASSET_ANALYSIS_QUEUE`. The chat returns an `assistant_question` event
+   with `reason_code: clip_intent_pending` and asks the creator to send another
+   message shortly. The next turn reloads the answers and re-resolves normally;
+   no polling endpoint, new client event, or worker-authored chat event is needed.
+   In-flight questions do not consume the next turn's synchronous vision budget.
+   Pool assets carry tokened, 15-minute claims in `analysis["answer_queries"]`,
+   deduplicating turns and deliveries. Broker failures release the claim; expired
+   claims can be reclaimed on the next turn. Workers recheck ownership, ownership
+   epoch, asset identity, and storage generation before querying and writing, and
+   download the pinned generation. No DB lock spans vision I/O. Results merge into
+   the latest analysis under a row lock. Two task retries bound transient failures;
+   exhausted failures retain a typed technical error for the claim's lifetime,
+   rather than becoming a visual "unknown". Budget/quota stops and unknown provider
+   outcomes never trigger automatic retries. When KRI-151's
+   `CREATOR_CLIP_PREPARATION_ENABLED` path owns a planning attempt, its background
+   resolver and checkpoint callback finish the batch without enqueueing separate
+   KRI-154 work. Both paths use the same generation-aware answer cache.
+4. **Ask, never guess.** Settled visual uncertainty (ungrounded label, "unknown",
+   or an empty group) becomes ONE `assistant_question` event
+   (`reason_code: clip_intent_unresolved`). Provider, budget, media, and failed
+   dispatch states retain KRI-151's technical error path. Pending queries and
+   partial assignments never authorize a strategy or an on-screen label.
+   The creator's answer arrives as a normal next message.
+5. **Plan.** On confirm the intents travel `ProposalBrief.clip_intents` (chat
    `asset-{uuid}` ids translated to planner ids) into `EditProposalAgent` as
    alias-only constraints: group (creator's words as the chapter title), order
    first/last, include. `parse()` validates them; order and include are repaired,
    a split group falls to the clarification retry. `shot_labels` wins when both
    are present. Label values are grouping hints only, never beat copy.
-5. **Render.** `EditProposalSnapshot.clip_intents` reaches the worker, which
+6. **Render.** `EditProposalSnapshot.clip_intents` reaches the worker, which
    **re-grounds every label** (`generative_build._grounded_context_labels`) and
    feeds the existing context-label lane (same geometry, compaction, slot windows,
    replay pinning; iOS consumes the same server text elements). The
@@ -156,8 +180,16 @@ the live evals: `tests/evals/test_clip_request_resolver_evals.py`,
 
 ## Known gaps
 
-- Vision re-query is video-only and per-turn capped; more vague clips than the
-  cap means a question. An async (Celery) re-query is a follow-up.
+- Vision re-query remains video-only. Images need an inline media input path.
+- KRI-154 overflow results are picked up on the next creator message. KRI-151's
+  separate durable preparation flow can finish and publish the original turn.
 - Vision answers are cached for pool assets only, not raw `clip_assignments`.
 - `participant_labels` / `score_labels` stay on the transcript-grounded narration
   lane; retiring them is a follow-up.
+
+KRI-154 regression coverage: `tests/services/test_clip_intent_resolution.py`
+replays the 30-clip / 8-vague-clip overflow and cache pickup;
+`tests/tasks/test_clip_intent_requery.py` covers claims, retries, failed dispatch,
+concurrent cache merges, and stale/deleted/unowned assets;
+`tests/routes/test_creator_agent_clip_intents.py` pins the pending receipt and
+clarification fallback.
