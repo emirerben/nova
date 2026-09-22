@@ -15,6 +15,8 @@ Date: 2026-09-22. Implementation integrates `origin/main` through `6a73bf1a8`, i
 
 The failed API shards were caused by a stale retired-field assertion in the edit-proposal test, a redelivery test double missing its narration field, and the Kria tool-schema snapshot still containing the removed fields. The same snapshot drift failed the portable iOS contract lane; the other two red checks were aggregate jobs.
 
+The first complete GitHub rerun cleared the original failures. API shard 1 then hit a 60-second timeout in the unchanged, uncapped carousel focus render test (7,080 other tests passed). That integration test now has the same 180-second budget as its two neighboring uncapped focus tests, preserving the real FFmpeg/Skia path and assertions. The targeted render test passes locally in 6.46 seconds.
+
 The merge preserves background preparation checkpoints and token fences, deferred vision query receipts, cached clip evidence, and multiple grounded labels per clip. The new inventory planner keeps transcript requests in the strategy while sending only visual requests to the visual resolver. Both creator entry points require the guided narration contract before accepting transcript labels. Guided timeline revisions preserve every grounded label and its provenance.
 
 - Affected backend integration: **807 passed**, including the repaired tests, Kria snapshot replay, cache round trips, source routing, background query handling, and narration/visual materialization. Focused merge checks: **105 passed**; guided revision module: **118 passed**. Counts overlap.
