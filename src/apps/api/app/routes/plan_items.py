@@ -2958,6 +2958,46 @@ async def _auto_design_idempotent_current(
     return plan_item_response(reloaded, instruction_level=instruction_level)
 
 
+async def _dispatch_confirmed_guided_attempt(
+    item_id: str,
+    owner_id: uuid.UUID,
+    generation_attempt_id: str,
+    ownership_epoch: int,
+    db: AsyncSession,
+) -> PlanItemResponse:
+    """Resume an approved Main Creator attempt through its durable worker path.
+
+    The worker re-reads the exact proposal/session tuple, recovers the
+    attempt-scoped Creator strategy and speech-cleanup consent, and binds the
+    resulting Job.  Reusing it here keeps the direct-consumer recovery path
+    from dispatching an approved/draft proposal as a generic one-click render.
+    """
+
+    from anyio import to_thread  # noqa: PLC0415
+
+    from app.tasks.edit_proposal_build import _dispatch_after_auto_design  # noqa: PLC0415
+
+    result = await to_thread.run_sync(
+        _dispatch_after_auto_design,
+        uuid.UUID(item_id),
+        item_id,
+        generation_attempt_id,
+        ownership_epoch,
+    )
+    if result is None:
+        # The worker's no-op fences mean this exact attempt is no longer
+        # dispatchable (for example, it was superseded). Do not serialize the
+        # pre-dispatch row as a successful recovery.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "proposal_identity_changed",
+                "message": "The guided edit changed before it could start.",
+            },
+        )
+    return await _respond_to_dispatch_result(result, item_id, owner_id, db)
+
+
 async def _auto_finalize_existing_draft(
     item_id: str,
     owner_id: uuid.UUID,
@@ -2967,6 +3007,7 @@ async def _auto_finalize_existing_draft(
     db: AsyncSession,
     *,
     reject_active_creator_session: bool,
+    generation_attempt_id: str | None = None,
 ) -> PlanItemResponse | None:
     """Approve + dispatch an existing reviewable draft instead of discarding
 
@@ -3006,6 +3047,15 @@ async def _auto_finalize_existing_draft(
         # duplicate click; report current state rather than a hard error.
         return await _auto_design_idempotent_current(item_id, owner_id, db)
     await db.commit()
+
+    if generation_attempt_id is not None:
+        return await _dispatch_confirmed_guided_attempt(
+            item_id,
+            owner_id,
+            generation_attempt_id,
+            ownership_epoch,
+            db,
+        )
 
     from functools import partial  # noqa: PLC0415
 
@@ -3171,6 +3221,14 @@ async def _maybe_auto_design_generate(
         # so falling through to them would incorrectly re-raise the original
         # conflict for a proposal that is actually approved now.
         await db.rollback()  # release the row lock before the separate sync-session dispatch call
+        if generation_attempt_id is not None:
+            return await _dispatch_confirmed_guided_attempt(
+                item_id,
+                owner_id,
+                generation_attempt_id,
+                ownership_epoch,
+                db,
+            )
         from functools import partial  # noqa: PLC0415
 
         from anyio import to_thread  # noqa: PLC0415
@@ -3192,6 +3250,7 @@ async def _maybe_auto_design_generate(
             current,
             db,
             reject_active_creator_session=raw_generate,
+            generation_attempt_id=generation_attempt_id,
         )
 
     from app.schemas.edit_proposal import (  # noqa: PLC0415

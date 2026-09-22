@@ -1470,6 +1470,195 @@ def test_initial_narrated_draft_failure_recovers_all_media_with_exact_audio_budg
     validate_proposal_timing(snapshot)
 
 
+def _run_narrated_guided_story(
+    monkeypatch,
+    *,
+    video_count: int = 5,
+    photo_count: int,
+    include_photos_in_output: bool = True,
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
+):
+    """Run the ordinary narrated guided-story path through its real compiler."""
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    narration = NarrationTrack(
+        gcs_path="users/u/voiceover.m4a",
+        generation="1",
+        duration_s=48.618667,
+    )
+    videos = [
+        MediaRef(
+            lane="clip",
+            media_id=f"video-{index}",
+            gcs_path=f"users/u/video-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=5.04,
+        )
+        for index in range(video_count)
+    ]
+    photos = [
+        MediaRef(
+            lane="asset",
+            media_id=f"photo-{index}",
+            gcs_path=f"users/u/photo-{index}.jpg",
+            generation="1",
+            kind="image",
+        )
+        for index in range(photo_count)
+    ]
+    item = _prod_item(
+        item_id,
+        clip_assignments=[{"media_id": ref.media_id, "gcs_path": ref.gcs_path} for ref in videos],
+    )
+    item.audio_mode = "voiceover"
+    item.voiceover_gcs_path = narration.gcs_path
+    item.voiceover_generation = narration.generation
+    item.voiceover_duration_s = narration.duration_s
+    output_media = videos + photos if include_photos_in_output else videos
+    item.edit_proposal = _proposal(
+        brief=ProposalBrief(
+            direction="guided_story",
+            pace="relaxed",
+            duration_s=48.618667,
+            narration=narration,
+            video_reuse_policy="once",
+            mixed_media_timing=mixed_media_timing,
+            media_scope="selected" if not include_photos_in_output else "all",
+            selected_media_ids=(
+                [ref.media_id for ref in output_media] if not include_photos_in_output else None
+            ),
+        )
+    )
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    monkeypatch.setattr(proposal_build, "_pool_refs", lambda *_a, **_kw: photos)
+    monkeypatch.setattr(proposal_build, "_transcribe_pinned_narration", lambda track: track)
+    monkeypatch.setattr(
+        proposal_build,
+        "_analyze_clip_assignments",
+        lambda assignments, *_a, **_kw: list(zip(assignments, videos, strict=True)),
+    )
+    monkeypatch.setattr(proposal_build, "media_generations_match_sync", lambda _refs: True)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+
+    media_groups = [output_media[index : index + 4] for index in range(0, len(output_media), 4)]
+    first_group_duration_s = len(media_groups[0]) * 1.4
+    remaining_duration_s = narration.duration_s - first_group_duration_s
+    beat_durations = (
+        [narration.duration_s]
+        if len(media_groups) == 1
+        else [first_group_duration_s]
+        + [remaining_duration_s / (len(media_groups) - 1) for _group in media_groups[1:]]
+    )
+
+    def _run(agent, agent_input, ctx=None):  # noqa: ANN001, ARG001
+        return agent.parse(
+            json.dumps(
+                {
+                    "title": "A longer story",
+                    "duration_s": narration.duration_s,
+                    "story_beats": [
+                        {
+                            "topic": f"The complete story {index + 1}",
+                            "thought": "Each source supports the full narration.",
+                            "media_ids": [ref.media_id for ref in group],
+                            "duration_s": beat_durations[index],
+                        }
+                        for index, group in enumerate(media_groups)
+                    ],
+                }
+            ),
+            agent_input,
+        )
+
+    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run)
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=False
+    )
+    return parse_edit_proposal(item.edit_proposal), narration
+
+
+@pytest.mark.parametrize("photo_count", [3, 5])
+def test_narrated_guided_story_with_stills_uses_renderer_capacity_and_compiles(
+    monkeypatch, photo_count: int
+) -> None:
+    """KRI-152: real incident media passes planning and strict compilation."""
+
+    persisted, narration = _run_narrated_guided_story(monkeypatch, photo_count=photo_count)
+
+    assert persisted is not None and persisted.status == "draft", persisted.failure
+    assert persisted.draft is not None
+    assert persisted.draft.duration_s == narration.duration_s
+    # This is deliberately not mocked: the planner's mandatory strict compiler
+    # proves the long still holds can really satisfy the narration frame budget.
+    from app.pipeline.guided_story import validate_proposal_compiles
+
+    validate_proposal_compiles(persisted.draft)
+
+
+def test_narrated_guided_story_single_still_clears_the_early_feasibility_floor(monkeypatch) -> None:
+    persisted, _narration = _run_narrated_guided_story(monkeypatch, video_count=0, photo_count=1)
+
+    assert persisted is not None and persisted.status == "draft", persisted.failure
+
+
+def test_narrated_guided_story_still_requires_the_real_compiler_to_use_the_still(
+    monkeypatch,
+) -> None:
+    """An authored plan that ignores the still cannot spend its unbounded hold."""
+
+    from app.pipeline import guided_story
+
+    real_validate = guided_story.validate_proposal_compiles
+    compiler_calls = []
+
+    def _spy_validate(snapshot):  # noqa: ANN001
+        compiler_calls.append(snapshot)
+        return real_validate(snapshot)
+
+    monkeypatch.setattr(guided_story, "validate_proposal_compiles", _spy_validate)
+    persisted, _narration = _run_narrated_guided_story(
+        monkeypatch, photo_count=3, include_photos_in_output=False
+    )
+
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.draft is None
+    assert len(compiler_calls) == 1
+
+
+def test_narrated_guided_story_with_videos_only_remains_bounded(monkeypatch) -> None:
+    persisted, _narration = _run_narrated_guided_story(monkeypatch, photo_count=0)
+
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.draft is None
+
+
+def test_narrated_quick_mixed_guided_story_keeps_its_bounded_photo_cap(monkeypatch) -> None:
+    persisted, _narration = _run_narrated_guided_story(
+        monkeypatch,
+        photo_count=3,
+        mixed_media_timing=MixedMediaTimingProfile(
+            image_hold="very_fast",
+            video_hold="longer",
+            boundary_style="cut",
+        ),
+    )
+
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.failure is not None
+    assert persisted.failure.code == "guided_edit_infeasible"
+
+
 def test_alternating_matches_acceptance_survives_specialist_worker_and_receipt(
     monkeypatch,
 ) -> None:
@@ -2069,14 +2258,17 @@ def test_creator_strategy_recovered_only_for_exact_owned_guided_attempt() -> Non
     )
     db = _Db(_Result(rows=[session]))
 
-    recovered = proposal_build._creator_strategy_for_guided_attempt(
+    recovered_context = proposal_build._creator_dispatch_context_for_guided_attempt(
         db,
         item_id=item_id,
         owner_id=owner_id,
         attempt_id="attempt-1",
+        ownership_epoch=0,
     )
 
-    assert recovered is not None
+    assert recovered_context is not None
+    assert set(recovered_context) == {"creator_strategy"}
+    recovered = recovered_context["creator_strategy"]
     assert recovered["opening_title"] == "Emir Olympics"
     assert recovered["font_family"] == "Rascal"
     assert recovered["text_color"] == "#FFD24A"
@@ -2089,17 +2281,49 @@ def test_creator_strategy_recovered_only_for_exact_owned_guided_attempt() -> Non
         "per_clip": True,
     }
     assert (
-        proposal_build._creator_strategy_for_guided_attempt(
+        proposal_build._creator_dispatch_context_for_guided_attempt(
             db,
             item_id=item_id,
             owner_id=owner_id,
             attempt_id="newer-attempt",
+            ownership_epoch=0,
         )
         is None
     )
 
 
-def test_main_creator_guided_dispatch_preserves_exact_render_contract(monkeypatch) -> None:
+def test_guided_dispatch_context_query_fences_owner_item_and_ownership_epoch() -> None:
+    """Do not let the permissive row fixture hide a removed ownership fence."""
+
+    from sqlalchemy import select
+
+    from app.models import CreatorAgentSession
+
+    item_id, owner_id = uuid.uuid4(), uuid.uuid4()
+    db = Mock()
+    db.execute.return_value = _Result(rows=[])
+
+    assert (
+        proposal_build._creator_dispatch_context_for_guided_attempt(
+            db,
+            item_id=item_id,
+            owner_id=owner_id,
+            attempt_id="attempt-1",
+            ownership_epoch=7,
+        )
+        is None
+    )
+    statement = db.execute.call_args.args[0]
+    expected = select(CreatorAgentSession).where(
+        CreatorAgentSession.plan_item_id == item_id,
+        CreatorAgentSession.creator_id == owner_id,
+        CreatorAgentSession.ownership_epoch == 7,
+    )
+    assert statement.whereclause.compare(expected.whereclause)
+
+
+@pytest.mark.parametrize("choice", [None, "clean", "keep_original", "create_without_cleanup"])
+def test_main_creator_guided_dispatch_preserves_exact_render_contract(monkeypatch, choice) -> None:
     item_id = uuid.uuid4()
     owner_id = uuid.uuid4()
     item = _prod_item(item_id, approval_mode="auto")
@@ -2111,31 +2335,38 @@ def test_main_creator_guided_dispatch_preserves_exact_render_contract(monkeypatc
             "design_fallback": "main_creator_fail_closed",
         }
     ).model_dump(mode="json")
-    db = _Db(_Result(rows=[]))
+    analysis_id = str(uuid.uuid4())
+    edit_plan = CreatorEditPlan(
+        manifest_hash="a" * 64,
+        context_hash="b" * 64,
+        strategy=CreativeStrategy(
+            opening_title="Emir Olympics",
+            font_family="Rascal",
+            text_color="#FFD24A",
+            context_label={"kind": "sport", "placement": "bottom_right", "size": "small"},
+        ),
+    )
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        active_plan={
+            "guided_generation_attempt_id": "attempt-1",
+            "edit_plan": edit_plan.model_dump(mode="json"),
+            "guided_speech_cleanup": {
+                "generation_attempt_id": "attempt-1",
+                "analysis_id": analysis_id,
+                "choice": choice,
+            },
+        },
+    )
+    db = _Db(_Result(rows=[session]))
 
     @contextmanager
     def _session():
         yield db
 
-    creator_strategy = {
-        "opening_title": "Emir Olympics",
-        "font_family": "Rascal",
-        "text_color": "#FFD24A",
-        "context_label": {
-            "kind": "sport",
-            "source": "clip_metadata",
-            "placement": "bottom_right",
-            "size": "small",
-            "per_clip": True,
-        },
-    }
+    creator_strategy = edit_plan.strategy.model_dump(mode="json", exclude_none=True)
     monkeypatch.setattr(proposal_build, "sync_session", _session)
     monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
-    monkeypatch.setattr(
-        proposal_build,
-        "_creator_strategy_for_guided_attempt",
-        lambda *_a, **_kw: creator_strategy,
-    )
     monkeypatch.setattr(
         proposal_build,
         "_creator_request_for_guided_attempt",
@@ -2152,8 +2383,10 @@ def test_main_creator_guided_dispatch_preserves_exact_render_contract(monkeypatc
 
     monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
 
-    proposal_build._dispatch_after_auto_design(item_id, str(item_id), "attempt-1", 0)
+    result = proposal_build._dispatch_after_auto_design(item_id, str(item_id), "attempt-1", 0)
 
+    assert result.outcome == "dispatched"
+    assert result.job_id == str(job_id)
     assert dispatch_calls == [
         (
             str(item_id),
@@ -2162,6 +2395,8 @@ def test_main_creator_guided_dispatch_preserves_exact_render_contract(monkeypatc
                 "bypass_guided_edit_gate": False,
                 "creator_guided_attempt_id": "attempt-1",
                 "creator_strategy": creator_strategy,
+                "speech_cleanup_analysis_id": analysis_id,
+                "speech_cleanup_choice": choice,
                 "creator_request": "Match the storyline and add player names.",
                 "reject_active_creator_session": False,
             },
@@ -2174,6 +2409,58 @@ def test_main_creator_guided_dispatch_preserves_exact_render_contract(monkeypatc
         ownership_epoch=0,
         job_id=str(job_id),
     )
+
+
+@pytest.mark.parametrize(
+    "invalid_field, invalid_value",
+    [
+        ("generation_attempt_id", "older-attempt"),
+        ("analysis_id", "not-a-uuid"),
+        ("analysis_id", None),
+        ("choice", "unchecked"),
+        ("choice", {}),
+    ],
+)
+def test_guided_dispatch_refuses_invalid_or_borrowed_speech_consent(
+    monkeypatch, invalid_field, invalid_value
+) -> None:
+    item_id, owner_id = uuid.uuid4(), uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    proposal = parse_edit_proposal(item.edit_proposal)
+    item.edit_proposal = proposal.model_copy(
+        update={"status": "approved", "design_fallback": "main_creator_fail_closed"}
+    ).model_dump(mode="json")
+    cleanup = {
+        "generation_attempt_id": "attempt-1",
+        "analysis_id": str(uuid.uuid4()),
+        "choice": "clean",
+        invalid_field: invalid_value,
+    }
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        active_plan={
+            "guided_generation_attempt_id": "attempt-1",
+            "edit_plan": CreatorEditPlan(
+                manifest_hash="a" * 64,
+                context_hash="b" * 64,
+                strategy=CreativeStrategy(),
+            ).model_dump(mode="json"),
+            "guided_speech_cleanup": cleanup,
+        },
+    )
+
+    @contextmanager
+    def _session():
+        yield _Db(_Result(rows=[session]))
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    dispatch = Mock()
+    monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", dispatch)
+
+    proposal_build._dispatch_after_auto_design(item_id, str(item_id), "attempt-1", 0)
+
+    dispatch.assert_not_called()
 
 
 def test_creator_job_binding_rejects_stale_attempt_without_touching_current_links(
