@@ -204,7 +204,10 @@ class GuidedStoryExecutionPlan(BaseModel):
     # Server-derived contextual labels are kept in their own lane. They are
     # not editor-authored text and therefore must not become part of the
     # approved text identity set, but they are still receipt-verified pixels.
-    context_label_intent: dict[str, Any] | None = None
+    # Keep the historical null key in compiler receipts so v1-v7 replay hashes
+    # remain byte-identical. Read adapters discard old values; no render lane
+    # accepts this retired intent.
+    context_label_intent: None = None
     context_label_text_elements: list[TextElement] = Field(default_factory=list)
     narration_label_text_elements: list[TextElement] = Field(default_factory=list)
     narration_label_receipt: dict[str, Any] | None = None
@@ -2296,7 +2299,13 @@ def validate_proposal_compiles(snapshot: EditProposalSnapshot) -> None:
 def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, Any]:
     proposal_version, media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
     try:
-        validated = GuidedStoryExecutionPlan.model_validate(plan)
+        # Old approved plans can retain the retired raw intent alongside their
+        # final rendered label snapshots. Ignore only that obsolete input so
+        # retries preserve the snapshots without reviving the legacy lane.
+        plan_payload = dict(plan) if isinstance(plan, dict) else plan
+        if isinstance(plan_payload, dict):
+            plan_payload.pop("context_label_intent", None)
+        validated = GuidedStoryExecutionPlan.model_validate(plan_payload)
     except Exception as exc:  # noqa: BLE001
         raise GuidedStoryError(
             "guided_story_snapshot_invalid", "The saved render plan is incomplete."
@@ -2354,18 +2363,12 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
     canonical.pop("narration_label_text_elements", None)
     normalized.pop("narration_label_receipt", None)
     canonical.pop("narration_label_receipt", None)
-    # The intent is persisted by the Creator dispatch envelope rather than the
-    # proposal compiler. It is independently constrained by the worker's
-    # closed allowlist before any label can reach pixels.
-    normalized.pop("context_label_intent", None)
-    canonical.pop("context_label_intent", None)
     runtime_sfx = list(normalized.pop("editor_sound_effects", []) or [])
     canonical.pop("editor_sound_effects", None)
     if normalized != canonical:
         raise GuidedStoryError(
             "guided_story_snapshot_invalid", "The saved render plan was changed after approval."
         )
-    normalized["context_label_intent"] = validated.context_label_intent
     normalized["context_label_text_elements"] = [
         element.model_dump(mode="json") for element in validated.context_label_text_elements
     ]
@@ -2535,7 +2538,12 @@ def compile_guided_runtime_plan(
     )
 
     try:
-        canonical = GuidedStoryExecutionPlan.model_validate(canonical_plan)
+        canonical_payload = (
+            dict(canonical_plan) if isinstance(canonical_plan, dict) else canonical_plan
+        )
+        if isinstance(canonical_payload, dict):
+            canonical_payload.pop("context_label_intent", None)
+        canonical = GuidedStoryExecutionPlan.model_validate(canonical_payload)
         proposal_version, media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
         normalized_revision = normalize_guided_editor_revision(
             revision,
@@ -2837,55 +2845,79 @@ def compile_guided_runtime_plan(
                 "editor_approved_text_ids": approved_text_ids,
             }
         )
-        # A timeline revision can split, reorder, or reuse sources. Rebuild the
-        # server-derived labels against the revision's output windows so a label
-        # never leaks into a neighboring segment. The raw intent carries no
-        # copy; sport text is resolved from the approved clip metadata only.
-        context_intent = runtime_payload.get("context_label_intent")
-        # KRI-127: resolved open-vocabulary label intents take the same lane,
-        # re-grounded at this edge exactly like the first render (flag-gated).
+        # A timeline revision can split, reorder, or reuse sources. Rebuild
+        # grounded clip labels against its output windows so a label never leaks
+        # into a neighboring segment.
         grounded_intents = [
             intent
             for intent in (snapshot.clip_intents or [])
-            if intent.op == "label" and intent.status == "resolved"
+            if intent.op == "label"
+            and intent.status == "resolved"
+            and getattr(intent, "label_source", "clip") == "clip"
         ]
         if not settings.clip_intents_enabled:
             grounded_intents = []
-        if (context_intent or grounded_intents) and canonical.narration is None:
+        if grounded_intents:
             from app.tasks.generative_build import (  # noqa: PLC0415
-                _canonical_context_sport_labels,
+                _CONTEXT_LABEL_COMBINED_MAX_CHARS,
                 _compact_context_sport_text_elements,
                 _grounded_context_labels,
-                _merge_context_label_rows,
             )
 
             clip_id_to_gcs = {ref.media_id: ref.gcs_path for ref in snapshot.media}
-            labels = _merge_context_label_rows(
-                _grounded_context_labels(
-                    grounded_intents,
-                    clip_id_to_gcs,
-                    matcher_clip_metas(snapshot),
-                    media_refs=list(snapshot.media),
-                )
-                if grounded_intents
-                else None,
-                _canonical_context_sport_labels(
-                    context_intent,
-                    clip_id_to_gcs,
-                    matcher_clip_metas(snapshot),
-                )
-                if context_intent
-                else [],
+            labels = _grounded_context_labels(
+                grounded_intents,
+                clip_id_to_gcs,
+                matcher_clip_metas(snapshot),
+                media_refs=list(snapshot.media),
             )
-            by_clip_row = {row["clip_id"]: row for row in labels}
+            by_clip_rows: dict[str, list[dict[str, Any]]] = {}
+            for row in labels:
+                clip_id = row.get("clip_id") if isinstance(row, dict) else None
+                if isinstance(clip_id, str) and row.get("source") == "grounded_label":
+                    by_clip_rows.setdefault(clip_id, []).append(row)
             context_elements: list[dict[str, Any]] = []
             for index, moment in enumerate(moments):
-                row = by_clip_row.get(str(moment.get("media_id") or "")) or {}
-                sport = row.get("sport")
+                clip_id = str(moment.get("media_id") or "")
+                rendered_rows: list[dict[str, Any]] = []
+                seen_texts: set[str] = set()
+                for row in by_clip_rows.get(clip_id, []):
+                    text = row.get("sport")
+                    if not isinstance(text, str) or not text or text in seen_texts:
+                        continue
+                    seen_texts.add(text)
+                    rendered_rows.append(row)
+                sport = " · ".join(str(row["sport"]) for row in rendered_rows)
                 start_s = float(moment.get("output_start_s") or 0.0)
                 end_s = float(moment.get("output_end_s") or 0.0)
                 if not sport or end_s <= start_s:
                     continue
+                if len(sport) > _CONTEXT_LABEL_COMBINED_MAX_CHARS:
+                    raise ValueError(
+                        "Combined context labels for clip "
+                        f"{clip_id!r} exceed the "
+                        f"{_CONTEXT_LABEL_COMBINED_MAX_CHARS}-character limit"
+                    )
+                row = rendered_rows[0]
+                source_params: dict[str, Any] = {
+                    "source": "context_sport",
+                    "key": f"{clip_id}:{index}:{start_s:.3f}:{end_s:.3f}",
+                    "identity": f"context_sport:{clip_id}:{index}:{start_s:.3f}:{end_s:.3f}",
+                    "source_clip_id": clip_id,
+                    "grounding": row.get("grounding"),
+                    "confidence": row.get("confidence"),
+                    "intent_id": row.get("intent_id") or "",
+                }
+                if len(rendered_rows) > 1:
+                    source_params["context_label_provenance"] = [
+                        {
+                            "text": candidate["sport"],
+                            "grounding": candidate.get("grounding"),
+                            "confidence": candidate.get("confidence"),
+                            "intent_id": candidate.get("intent_id") or "",
+                        }
+                        for candidate in rendered_rows
+                    ]
                 context_elements.append(
                     TextElement(
                         id=f"context-sport-{index}-{str(moment.get('moment_id') or '')}",
@@ -2898,29 +2930,14 @@ def compile_guided_runtime_plan(
                         # 0.86 leaves enough bottom margin for the same label
                         # on both portrait and landscape canvases.
                         y_frac=0.86,
-                        font_family="Inter-Bold",
+                        font_family="Inter",
                         size_class="small",
                         color="#FFFFFF",
                         highlight_color="#FFFFFF",
                         alignment="right",
                         effect="static",
                         z=8,
-                        source_params={
-                            "source": "context_sport",
-                            "context_label_source": "detected_sport",
-                            "context_label_position": "bottom_right",
-                            "context_label_size": "small",
-                            "source_clip_id": str(moment.get("media_id") or ""),
-                            **(
-                                {
-                                    "grounding": row.get("grounding"),
-                                    "confidence": row.get("confidence"),
-                                    "intent_id": row.get("intent_id") or "",
-                                }
-                                if row.get("grounding")
-                                else {}
-                            ),
-                        },
+                        source_params=source_params,
                     ).model_dump(mode="json", exclude_none=True)
                 )
             runtime_payload["context_label_text_elements"] = _compact_context_sport_text_elements(

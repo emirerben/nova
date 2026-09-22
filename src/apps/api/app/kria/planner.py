@@ -72,14 +72,19 @@ def adapt_creator_action(
     server_owned_intents = (
         server_clip_intents is not None or server_resolved_clip_intents is not None
     )
+    requested_intents = (
+        server_clip_intents
+        if server_owned_intents
+        else [
+            intent
+            for intent in (action.strategy.clip_intents or [])
+            if intent.label_source == "transcript"
+        ]
+    )
     strategy_update = {
-        "clip_intents": server_clip_intents or None,
+        "clip_intents": requested_intents or None,
         "resolved_clip_intents": server_resolved_clip_intents or None,
     }
-    if server_owned_intents:
-        # The generic resolver replaces the legacy sport/context-label lane.
-        # Leaving model-authored legacy flags would let it add unrelated text.
-        strategy_update.update({"sport_labels": False, "context_label": None})
     return KriaTurnPlan(
         mode="act",
         turn_value="action",
@@ -413,6 +418,18 @@ async def plan_live_turn(
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
             )
+        if any(intent.label_source == "transcript" for intent in planned.requested_intents) and (
+            manifest.narration is None
+            or output.action.strategy.execution_contract != "guided_voiceover_v1"
+        ):
+            return PlannedKriaTurn(
+                plan=_clip_intent_resolution_plan(
+                    question="Those labels need a recorded voiceover with guided visuals.",
+                    status="needs_creator",
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+            )
         if planned.resolution.vision_answers:
             try:
                 # `rollback()` before provider I/O expires ORM instances. Reload
@@ -464,6 +481,25 @@ async def plan_live_turn(
                 output.action,
                 server_clip_intents=planned.requested_intents,
                 server_resolved_clip_intents=planned.resolution.intents,
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
+    if (
+        isinstance(output.action, ProposeStrategy)
+        and any(
+            intent.label_source == "transcript"
+            for intent in output.action.strategy.clip_intents or []
+        )
+        and (
+            manifest.narration is None
+            or output.action.strategy.execution_contract != "guided_voiceover_v1"
+        )
+    ):
+        return PlannedKriaTurn(
+            plan=_clip_intent_resolution_plan(
+                question="Those labels need a recorded voiceover with guided visuals.",
+                status="needs_creator",
             ),
             manifest_hash=manifest.manifest_hash,
             context_hash=manifest.context_hash,

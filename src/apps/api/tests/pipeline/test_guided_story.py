@@ -39,6 +39,7 @@ from app.pipeline.guided_story import (
 )
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
 from app.pipeline.text_overlay_skia import measure_text_overlay_box
+from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
 from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
@@ -2090,15 +2091,59 @@ def test_short_edited_visual_timeline_holds_final_frame_to_pinned_narration(
     assert captured[captured.index("-t") + 1] == "44.800000"
 
 
-def test_runtime_revision_recomputes_server_context_labels_per_segment() -> None:
+def test_runtime_revision_recomputes_grounded_clip_labels_per_segment(monkeypatch) -> None:
+    monkeypatch.setattr(guided_story.settings, "clip_intents_enabled", True)
     guided = _guided_snapshot(catalog_extra=True)
     snapshot = EditProposalSnapshot.model_validate(guided["approved_proposal"])
     sports_video = snapshot.media[0].model_copy(
-        update={"analysis": {"subject": "basketball player on court"}}
+        update={"analysis": {"subject": "basketball player on a Paris court"}}
     )
-    snapshot = snapshot.model_copy(update={"media": [sports_video, *snapshot.media[1:]]})
+    snapshot = snapshot.model_copy(
+        update={
+            "media": [sports_video, *snapshot.media[1:]],
+            "narration": NarrationTrack(
+                gcs_path="voiceover/mixed-sources.m4a",
+                generation="mixed-sources-1",
+                duration_s=18.0,
+                words=[],
+            ),
+            "clip_intents": [
+                ResolvedClipIntent(
+                    intent_id="sport-label",
+                    op="label",
+                    attribute="sport",
+                    assignments=[
+                        ClipAssignment(
+                            media_id="coast-video",
+                            value="Basketball",
+                            confidence=0.9,
+                        )
+                    ],
+                ),
+                ResolvedClipIntent(
+                    intent_id="city-label",
+                    op="label",
+                    attribute="city",
+                    assignments=[
+                        ClipAssignment(
+                            media_id="coast-video",
+                            value="Paris",
+                            confidence=0.9,
+                        )
+                    ],
+                ),
+                ResolvedClipIntent(
+                    intent_id="participant-label",
+                    op="label",
+                    attribute="speaker",
+                    label_source="transcript",
+                    transcript_kind="participant",
+                ),
+            ],
+        }
+    )
     guided["approved_proposal"] = snapshot.model_dump(mode="json")
-    guided["media_digest"] = canonical_media_digest(snapshot.media)
+    guided["media_digest"] = canonical_media_digest(snapshot.media, snapshot.narration)
     guided["media_identities"] = [
         {
             "lane": ref.lane,
@@ -2110,13 +2155,6 @@ def test_runtime_revision_recomputes_server_context_labels_per_segment() -> None
         for ref in snapshot.media
     ]
     canonical = compile_execution_plan(guided, track=None)
-    canonical["context_label_intent"] = {
-        "kind": "sport",
-        "source": "clip_metadata",
-        "placement": "bottom_right",
-        "size": "small",
-        "per_clip": True,
-    }
     revision = guided_editor_revision_from_approval(
         proposal_version=guided["proposal_version"],
         media_digest=guided["media_digest"],
@@ -2131,13 +2169,54 @@ def test_runtime_revision_recomputes_server_context_labels_per_segment() -> None
         moment for moment in runtime["story_timeline"] if moment["media_id"] == "coast-video"
     )
 
-    assert [element["text"] for element in context] == ["Basketball"]
+    assert [element["text"] for element in context] == ["Basketball · Paris"]
     assert context[0]["start_s"] == basketball_moment["output_start_s"]
     assert context[0]["end_s"] == basketball_moment["output_end_s"]
     assert context[0]["x_frac"] == 0.86
     assert context[0]["y_frac"] == 0.86
     assert context[0]["alignment"] == "right"
-    assert [element["text"] for element in runtime["text_elements"]] != ["Basketball"]
+    assert context[0]["source_params"]["context_label_provenance"] == [
+        {
+            "text": "Basketball",
+            "grounding": "record_span",
+            "confidence": 0.9,
+            "intent_id": "sport-label",
+        },
+        {
+            "text": "Paris",
+            "grounding": "record_span",
+            "confidence": 0.9,
+            "intent_id": "city-label",
+        },
+    ]
+    assert [element["text"] for element in runtime["text_elements"]] != ["Basketball · Paris"]
+
+
+def test_validate_execution_plan_replays_final_context_elements_from_legacy_plan() -> None:
+    guided = _guided_snapshot(catalog_extra=True)
+    canonical = compile_execution_plan(guided, track=None)
+    final_elements = [
+        {
+            **canonical["text_elements"][0],
+            "id": "context-sport-legacy",
+            "text": "Basketball",
+            "start_s": 0.0,
+            "end_s": 1.0,
+            "role": "generative_sequence",
+            "position": "custom",
+            "x_frac": 0.86,
+            "y_frac": 0.86,
+            "alignment": "right",
+            "source_params": {"source": "context_sport", "identity": "legacy-label"},
+        }
+    ]
+    canonical["context_label_intent"] = {"kind": "sport"}
+    canonical["context_label_text_elements"] = final_elements
+
+    validated = validate_execution_plan(canonical, guided)
+
+    assert validated["context_label_text_elements"] == final_elements
+    assert validated["context_label_intent"] is None
 
 
 def test_runtime_revision_accepts_user_added_text_and_preserves_approval_provenance() -> None:

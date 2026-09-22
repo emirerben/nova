@@ -87,17 +87,10 @@ def test_exact_chat_request_is_promoted_to_typed_creator_fields() -> None:
     assert parsed.opening_title == "Emir Olympics"
     assert parsed.font_family == "Rascal"
     assert parsed.text_color == "#FFD24A"
-    assert parsed.context_label is not None
-    assert parsed.context_label.model_dump(mode="json") == {
-        "kind": "sport",
-        "source": "clip_metadata",
-        "placement": "bottom_right",
-        "size": "small",
-        "per_clip": True,
-    }
+    assert parsed.clip_intents is None  # Labels must be semantic intents, never regex additions.
 
 
-def test_context_label_is_not_invented_from_unrelated_request() -> None:
+def test_legacy_context_label_survives_as_an_inert_clip_intent() -> None:
     from app.routes.creator_agent import _apply_explicit_render_intent
 
     parsed = _apply_explicit_render_intent(
@@ -105,7 +98,7 @@ def test_context_label_is_not_invented_from_unrelated_request() -> None:
         "Use the strongest moments and keep the energy up.",
     )
 
-    assert parsed.context_label is None
+    assert parsed.clip_intents[0].intent_id == "legacy-sport"
 
 
 def test_production_repro_exact_copy_overrides_model_authored_style() -> None:
@@ -187,7 +180,7 @@ def test_latest_chat_corrections_become_executable_timing_and_photo_layout() -> 
     assert parsed.mixed_media_timing is not None
     assert parsed.mixed_media_timing.image_hold_s == pytest.approx(0.2)
     assert parsed.image_layout == "supporting_card"
-    assert parsed.context_label is not None
+    assert parsed.clip_intents is None
 
 
 def test_subsecond_photo_groups_compile_every_pool_image_into_guided_edit(
@@ -443,13 +436,8 @@ def test_exact_chat_request_mints_normal_content_plan_job_with_executable_constr
     assert persisted["opening_title"] == "Emir Olympics"
     assert persisted["font_family"] == "Rascal"
     assert persisted["text_color"] == "#FFD24A"
-    assert persisted["context_label"] == {
-        "kind": "sport",
-        "source": "clip_metadata",
-        "placement": "bottom_right",
-        "size": "small",
-        "per_clip": True,
-    }
+    assert "context_label" not in persisted
+    assert persisted["clip_intents"][0]["intent_id"] == "legacy-sport"
     assert persisted["story_structure"] == ["Use the best moments"]
 
 
@@ -476,8 +464,8 @@ def test_creator_capability_manifest_cannot_promise_unadvertised_exact_changes(
     assert plan.strategy.opening_title == "Emir Olympics"
     assert plan.strategy.font_family == "Rascal"
     assert plan.strategy.text_color == "#FFD24A"
-    assert plan.strategy.context_label is not None
-    assert plan.strategy.context_label.placement == "bottom_right"
+    assert plan.strategy.clip_intents[0].intent_id == "legacy-sport"
+    assert plan.strategy.clip_intents[0].label_source == "clip"
     assert plan.strategy.story_structure == ["Use the best moments"]
     # No unadvertised command family may be synthesized from exact fields.
     assert {command.command for command in plan.commands} <= {

@@ -91,3 +91,66 @@ async def test_provider_failure_never_falls_back_to_partial_candidates(monkeypat
             run_context=RunContext(),
         )
     resolver.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mixed_sources_preserve_transcript_intents_but_resolve_only_clip_intents(monkeypatch):
+    request = "Label the sport on each clip and show the score I say."
+    intents = [
+        PlannedClipIntent(
+            intent_id="sport",
+            op="label",
+            attribute="the sport on each clip",
+            source_quote="Label the sport on each clip",
+        ),
+        PlannedClipIntent(
+            intent_id="score",
+            op="label",
+            attribute="the score I say",
+            label_source="transcript",
+            transcript_kind="score",
+            source_quote="show the score I say",
+        ),
+    ]
+    _, resolver = wire(monkeypatch, ClipIntentPlannerOutput(intents=intents))
+
+    result = await service.plan_and_resolve_clip_intents(
+        creator_request=request,
+        latest_user_message=None,
+        candidate_intents=None,
+        clips=[],
+        run_context=RunContext(),
+    )
+
+    assert [intent.model_dump(mode="json") for intent in result.requested_intents] == [
+        intent.model_dump(mode="json", exclude={"source_quote"}) for intent in intents
+    ]
+    assert resolver.await_args.kwargs["intents"] == [result.requested_intents[0]]
+
+
+@pytest.mark.asyncio
+async def test_transcript_only_inventory_never_calls_visual_resolver(monkeypatch):
+    request = "Show the score I say."
+    intents = [
+        PlannedClipIntent(
+            intent_id="score",
+            op="label",
+            attribute="the score I say",
+            label_source="transcript",
+            transcript_kind="score",
+            source_quote=request,
+        )
+    ]
+    _, resolver = wire(monkeypatch, ClipIntentPlannerOutput(intents=intents))
+
+    result = await service.plan_and_resolve_clip_intents(
+        creator_request=request,
+        latest_user_message=None,
+        candidate_intents=None,
+        clips=[],
+        run_context=RunContext(),
+    )
+
+    assert result.requested_intents[0].transcript_kind == "score"
+    assert not result.resolution.needs_creator
+    resolver.assert_not_called()

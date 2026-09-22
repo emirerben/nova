@@ -14,6 +14,7 @@ from celery.exceptions import Retry
 
 import app.tasks.edit_proposal_build as proposal_build
 from app.agents._schemas.creator_agent import CreativeStrategy, CreatorEditPlan
+from app.schemas.clip_intents import ClipIntent
 from app.schemas.edit_proposal import (
     EditProposal,
     FastMontageCut,
@@ -2330,7 +2331,13 @@ def test_creator_strategy_recovered_only_for_exact_owned_guided_attempt() -> Non
         font_family="Rascal",
         text_color="yellow",
         image_layout="supporting_card",
-        context_label={"kind": "sport", "placement": "bottom_right", "size": "small"},
+        clip_intents=[
+            ClipIntent(
+                intent_id="sport",
+                op="label",
+                attribute="the sport being played in the clip",
+            )
+        ],
     )
     edit_plan = CreatorEditPlan(
         manifest_hash="a" * 64,
@@ -2361,13 +2368,13 @@ def test_creator_strategy_recovered_only_for_exact_owned_guided_attempt() -> Non
     assert recovered["font_family"] == "Rascal"
     assert recovered["text_color"] == "#FFD24A"
     assert recovered["image_layout"] == "supporting_card"
-    assert recovered["context_label"] == {
-        "kind": "sport",
-        "source": "clip_metadata",
-        "placement": "bottom_right",
-        "size": "small",
-        "per_clip": True,
-    }
+    assert recovered["clip_intents"] == [
+        {
+            "intent_id": "sport",
+            "op": "label",
+            "attribute": "the sport being played in the clip",
+        }
+    ]
     assert (
         proposal_build._creator_dispatch_context_for_guided_attempt(
             db,

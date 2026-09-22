@@ -1788,20 +1788,6 @@ def _dispatch_item_render(
         if guided_voiceover:
             snapshot["guided_edit"]["execution_contract"] = GUIDED_VOICEOVER_CONTRACT
             snapshot["guided_edit"]["creator_execution_identity"] = creator_identity
-        # Preserve only the typed contextual-label intent on the immutable
-        # guided snapshot. Label text is never copied from Creator JSON; the
-        # worker resolves it later from the approved clip metadata.
-        if creator_strategy:
-            from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
-
-            try:
-                typed_creator_strategy = CreativeStrategy.model_validate(creator_strategy)
-            except Exception:  # noqa: BLE001 - the normal strategy boundary already failed closed
-                typed_creator_strategy = None
-            if typed_creator_strategy is not None and typed_creator_strategy.context_label:
-                snapshot["guided_edit"]["context_label_intent"] = (
-                    typed_creator_strategy.context_label.model_dump(mode="json")
-                )
         job.assembly_plan = snapshot
     elif creator_guided_attempt_id is not None:
         if not bypass_guided_edit_gate:

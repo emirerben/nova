@@ -625,6 +625,10 @@ def compile_strategy_to_plan(
                 edit_format=strategy.edit_format,
             ) from exc
         raise CreatorStrategyError(str(exc)) from exc
+    if any(intent.label_source == "transcript" for intent in (strategy.clip_intents or [])) and (
+        strategy.execution_contract != "guided_voiceover_v1" or manifest.narration is None
+    ):
+        raise CreatorStrategyError("Narration labels require a recorded guided voiceover.")
     licensed_sfx = strategy.licensed_sfx
     if licensed_sfx is not None:
         sound_effects = manifest.capabilities.get(
