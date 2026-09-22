@@ -30,17 +30,20 @@ private extension Color {
 enum KriaFont {
     static func display(_ size: CGFloat) -> Font { .custom("Fraunces", size: size, relativeTo: .title) }
     static func body(_ size: CGFloat = 16) -> Font { .custom("Inter", size: size, relativeTo: .body) }
+    /// Inter Bold display type for the signup/consent screens. Never Fraunces here (KRI-161 rule).
+    static func headline(_ size: CGFloat) -> Font { .custom("Inter", size: size, relativeTo: .largeTitle).weight(.bold) }
 }
 
 struct KriaPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     var fill = KriaColor.butter
     var usesLightText = false
+    var minHeight: CGFloat = 48
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(KriaFont.body(16).weight(.semibold))
             .foregroundStyle(usesLightText ? KriaColor.paper : KriaColor.ink)
-            .frame(minHeight: 48)
+            .frame(minHeight: minHeight)
             .padding(.horizontal, 22)
             .background(fill)
             .clipShape(Capsule())
@@ -50,11 +53,12 @@ struct KriaPrimaryButtonStyle: ButtonStyle {
 
 struct KriaSecondaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    var minHeight: CGFloat = 48
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(KriaFont.body(16).weight(.semibold))
             .foregroundStyle(KriaColor.ink)
-            .frame(minHeight: 48)
+            .frame(minHeight: minHeight)
             .padding(.horizontal, 20)
             .background(KriaColor.paper)
             .overlay(Capsule().stroke(KriaColor.line, lineWidth: 1))

@@ -67,6 +67,8 @@ targets:
         buildPhase: resources
       - path: ../web/public/plan/type-posters/voiceover.jpg
         buildPhase: resources
+      - path: ../web/public/plan/type-posters/broll.jpg
+        buildPhase: resources
       - path: ../web/public/plan/type-posters/talking.jpg
         buildPhase: resources
     dependencies:
