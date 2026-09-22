@@ -520,7 +520,8 @@ def test_resolved_caption_intents_override_only_assigned_guided_chapters(pub_op)
     raw["chapters"][0]["thought"] = "Wrong model copy"
     raw["chapters"][1]["thought"] = "Also wrong"
     plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
-        json.dumps(raw), _input(creator_request="", clip_intents=intents)
+        json.dumps(raw),
+        _input(creator_request="", clip_intents=intents),
     )
     assert [chapter.thought for chapter in plan.chapters] == ["Park intro", "After the match"]
 
@@ -755,7 +756,8 @@ def test_clip_intent_group_and_order_require_every_source_in_exact_sequence() ->
     bad["chapters"][1]["sources"] = [{"media_id": "m002"}]
     with pytest.raises(SchemaError, match="order changed"):
         SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
-            json.dumps(bad), _input(creator_request="", clip_intents=intents)
+            json.dumps(bad),
+            _input(creator_request="", clip_intents=intents, video_reuse_policy="allow_repeat"),
         )
 
 
@@ -770,7 +772,8 @@ def test_exclusive_group_rejects_mixed_chapter_even_with_server_annotation() -> 
     raw["chapters"][0]["sources"] = [{"media_id": "m001"}, {"media_id": "m002"}]
     with pytest.raises(SchemaError, match="group has unrelated sources"):
         SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
-            json.dumps(raw), _input(creator_request="", clip_intents=[group])
+            json.dumps(raw),
+            _input(creator_request="", clip_intents=[group], video_reuse_policy="allow_repeat"),
         )
 
 
@@ -799,7 +802,9 @@ def test_group_schema_retry_names_exclusive_aliases_without_model_output(op) -> 
     agent = SemanticEditProposalAgent(client)  # type: ignore[arg-type]
     agent.spec = replace(agent.spec, model="test-model", max_attempts=2)
 
-    plan = agent.run(_input(creator_request="", clip_intents=[group]))
+    plan = agent.run(
+        _input(creator_request="", clip_intents=[group], video_reuse_policy="allow_repeat")
+    )
 
     assert [chapter.chapter_id for chapter in plan.chapters] == ["one", "two"]
     assert len(client.prompts) == 2
@@ -828,6 +833,131 @@ def test_label_count_retry_includes_exact_count_without_echoing_model_output() -
     assert "Return exactly 2 chapters" in hint
     assert "each video alias can appear only once" in hint
     assert "MODEL_ONLY_POLLUTION" not in hint
+
+
+def _misassigned_group_case():
+    path = (
+        Path(__file__).parents[1]
+        / "fixtures/agent_evals/semantic_edit_proposal/golden/kri129_pub_member_reconciliation.json"
+    )
+    fixture = json.loads(path.read_text())
+    return json.loads(fixture["raw_text"]), EditProposalAgentInput.model_validate(fixture["input"])
+
+
+def test_resolved_group_recovery_preserves_every_source_priority_and_candidate() -> None:
+    raw, input = _misassigned_group_case()
+    raw["chapters"][1]["sources"][0]["candidate_index"] = 0
+    input.media[6].best_moments = [{"start_s": 0, "end_s": 1}]
+    aliases = {f"m{i + 1:03d}": media.media_id for i, media in enumerate(input.media)}
+    priorities = {}
+    candidates = {}
+    for chapter in raw["chapters"]:
+        total = sum(source.get("weight", 1) for source in chapter["sources"])
+        for source in chapter["sources"]:
+            media_id = aliases[source["media_id"]]
+            priorities[media_id] = chapter.get("weight", 1) * source.get("weight", 1) / total
+            candidates[media_id] = source.get("candidate_index")
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    actual = {}
+    for chapter in plan.chapters:
+        total = sum(source.weight for source in chapter.sources)
+        for source in chapter.sources:
+            assert source.media_id not in actual
+            actual[source.media_id] = chapter.weight * source.weight / total
+            assert source.candidate_index == candidates[source.media_id]
+    assert actual == pytest.approx(priorities)
+    assert plan.montage_audio == input.montage_audio
+    assert any(repair.startswith("recovered_misassigned_group:") for repair in plan.repairs)
+    scheduled = schedule_semantic_edit(plan, input)
+    assert scheduled.schedule.total_frames == 1800
+    expected = next(intent.media_ids() for intent in input.clip_intents if intent.op == "group")
+    assert [source.media_id for source in plan.chapters[-1].sources] == expected
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "duplicate",
+        "repeat_duplicate",
+        "photo_duplicate",
+        "ambiguous",
+        "overlap",
+        "order",
+        "binding",
+        "anchor_binding",
+        "layout",
+        "shot_labels",
+        "overflow",
+    ],
+)
+def test_resolved_group_recovery_rejects_unsafe_moves(unsafe) -> None:
+    raw, input = _misassigned_group_case()
+    stray = raw["chapters"][1]["sources"][0]
+    stray_id = input.media[int(stray["media_id"][1:]) - 1].media_id
+    if unsafe in {"duplicate", "repeat_duplicate", "photo_duplicate"}:
+        raw["chapters"][-1]["sources"].append(dict(stray))
+        if unsafe == "repeat_duplicate":
+            input.video_reuse_policy = "allow_repeat"
+        elif unsafe == "photo_duplicate":
+            input.media[6].kind = "image"
+    elif unsafe == "ambiguous":
+        raw["chapters"].insert(
+            3,
+            {
+                **raw["chapters"][-1],
+                "chapter_id": "second-exclusive-anchor",
+                "sources": [raw["chapters"][-1]["sources"].pop()],
+            },
+        )
+    elif unsafe == "overlap":
+        input.clip_intents.append(
+            ResolvedClipIntent(
+                intent_id="overlap",
+                op="group",
+                attribute="another group",
+                creator_text="Another caption",
+                assignments=[ClipAssignment(media_id=stray_id)],
+            )
+        )
+    elif unsafe == "order":
+        input.clip_intents.append(
+            ResolvedClipIntent(
+                intent_id="stray-first",
+                op="order",
+                position="first",
+                attribute="stray first",
+                assignments=[ClipAssignment(media_id=stray_id)],
+            )
+        )
+    elif unsafe in {"binding", "anchor_binding"}:
+        input.creator_request += ' Also show "Speech" on the speaking chapter.'
+        raw["text_bindings"] = [
+            {
+                "text": "Speech",
+                "chapter_ids": [raw["chapters"][1 if unsafe == "binding" else -1]["chapter_id"]],
+            }
+        ]
+    elif unsafe == "layout":
+        raw["chapters"][1]["layout"] = "supporting_card"
+    elif unsafe == "overflow":
+        raw["chapters"][1]["weight"] = 1.7e308
+        raw["chapters"][-1]["weight"] = 1.7e308
+    else:
+        input.shot_labels = [f"Label {i}" for i in range(len(raw["chapters"]))]
+    with pytest.raises(SchemaError):
+        SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+
+
+def test_valid_contiguous_group_chapters_are_not_merged_by_recovery() -> None:
+    raw, input = _misassigned_group_case()
+    stray = raw["chapters"][1]["sources"].pop(0)
+    raw["chapters"].insert(
+        -1, {**raw["chapters"][-1], "chapter_id": "pub-part-one", "sources": [stray]}
+    )
+    expected = [(chapter["chapter_id"], len(chapter["sources"])) for chapter in raw["chapters"]]
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [(chapter.chapter_id, len(chapter.sources)) for chapter in plan.chapters] == expected
+    assert not any(repair.startswith("recovered_misassigned_group:") for repair in plan.repairs)
 
 
 @pytest.mark.parametrize(

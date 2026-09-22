@@ -7,6 +7,7 @@ all timestamps, durations, source windows, and frame arithmetic.
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import ClassVar
 
@@ -416,7 +417,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.semantic_edit_proposal",
         prompt_id="semantic_edit_proposal",
-        prompt_version="2.0.11",
+        prompt_version="2.0.12",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -643,6 +644,8 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
                         plan.text_bindings.append(
                             SemanticTextBinding(text=exact, chapter_ids=[chapter.chapter_id])
                         )
+        _validate_reuse_once(plan, input)
+        self._recover_single_misassigned_group(plan, input, alias_to_id, repairs)
         self._apply_resolved_caption_intents(plan, input, alias_to_id)
         self._add_creator_caption_bindings(plan, input)
         self._enforce_creator_text_bindings(plan, input)
@@ -653,6 +656,121 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         _validate_reuse_once(plan, input)
         self._validate_bindings(plan, input)
         return plan
+
+    @staticmethod
+    def _recover_single_misassigned_group(
+        plan: SemanticEditPlan,
+        input: EditProposalAgentInput,
+        aliases: dict[str, str],
+        repairs: list[str],
+    ) -> None:
+        """Move one stray trusted-group member into its sole exclusive anchor."""
+        if input.shot_labels:
+            return
+        for intent in input.clip_intents or []:
+            text = (
+                intent.caption_text
+                if intent.op == "caption"
+                else intent.creator_text
+                if intent.op == "group"
+                else None
+            )
+            if intent.status != "resolved" or not text:
+                continue
+            ids = [aliases.get(item.media_id, item.media_id) for item in intent.assignments]
+            group = set(ids)
+            overlaps = False
+            for other in input.clip_intents or []:
+                other_ids = {
+                    aliases.get(item.media_id, item.media_id) for item in other.assignments
+                }
+                if (
+                    other.status == "resolved"
+                    and other is not intent
+                    and other.op in {"group", "caption"}
+                    and other_ids
+                    and other_ids != group
+                    and group & other_ids
+                ):
+                    overlaps = True
+                    break
+            if overlaps:
+                continue
+            anchors = [
+                i
+                for i, c in enumerate(plan.chapters)
+                if any(s.media_id in group for s in c.sources)
+                and all(s.media_id in group for s in c.sources)
+            ]
+            mixed = [
+                i
+                for i, c in enumerate(plan.chapters)
+                if any(s.media_id in group for s in c.sources)
+                and any(s.media_id not in group for s in c.sources)
+            ]
+            if not mixed:
+                continue
+            if (
+                len(anchors) != 1
+                or len(mixed) != 1
+                or any(i == 0 and plan.chapters[i].role == "hook" for i in mixed)
+            ):
+                continue
+            anchor, origin = anchors[0], mixed[0]
+            if plan.chapters[anchor].layout != plan.chapters[origin].layout:
+                continue
+            moved = [s for s in plan.chapters[origin].sources if s.media_id in group]
+            remain = [s for s in plan.chapters[origin].sources if s.media_id not in group]
+            if not moved or not remain:
+                continue
+            if plan.chapters[origin].thought:
+                continue
+            moved_ids = {source.media_id for source in moved}
+            if moved_ids & {source.media_id for source in plan.chapters[anchor].sources}:
+                continue
+            if any(
+                binding.text != text
+                and (
+                    plan.chapters[origin].chapter_id in binding.chapter_ids
+                    or plan.chapters[anchor].chapter_id in binding.chapter_ids
+                    or moved_ids & set(binding.media_ids)
+                )
+                for binding in plan.text_bindings
+            ):
+                continue
+            anchor_sources = plan.chapters[anchor].sources
+            masses = {
+                id(source): chapter.weight
+                * (source.weight / sum(item.weight for item in chapter.sources))
+                for chapter in (plan.chapters[anchor], plan.chapters[origin])
+                for source in chapter.sources
+            }
+            if not all(math.isfinite(mass) and mass > 0 for mass in masses.values()):
+                continue
+            rank = {media_id: index for index, media_id in enumerate(ids)}
+            merged = list(anchor_sources)
+            for source in sorted(moved, key=lambda item: rank[item.media_id]):
+                insert_at = next(
+                    (
+                        index
+                        for index, existing in enumerate(merged)
+                        if rank.get(existing.media_id, len(rank)) > rank[source.media_id]
+                    ),
+                    len(merged),
+                )
+                merged.insert(insert_at, source)
+            chapter_totals = [
+                sum(masses[id(source)] for source in sources) for sources in (remain, merged)
+            ]
+            if len(merged) > 80 or not all(math.isfinite(total) for total in chapter_totals):
+                continue
+            plan.chapters[origin].sources = remain
+            plan.chapters[anchor].sources = merged
+            for chapter in (plan.chapters[anchor], plan.chapters[origin]):
+                for source in chapter.sources:
+                    source.weight = masses[id(source)]
+                chapter.weight = sum(source.weight for source in chapter.sources)
+            repairs.append(f"recovered_misassigned_group:{intent.intent_id}")
 
     @staticmethod
     def _validate_bindings(plan: SemanticEditPlan, input: EditProposalAgentInput) -> None:

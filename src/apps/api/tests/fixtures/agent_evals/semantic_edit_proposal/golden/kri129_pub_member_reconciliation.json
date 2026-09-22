@@ -4,18 +4,112 @@
   "input": {
     "idea": "",
     "theme": "",
-    "direction": "guided_story",
-    "goal": "Park individuals not playing sports; Sports clips grouped by sport; Creator speech to camera; Post match pub scenes",
-    "creator_request": "Continue with 16 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say “post match pub”. Add an intro title saying “Emir Olympics London Edition”. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech Keep 60 seconds and include everything with faster pacing Render this direction Do it again using all the videos The first videos are very long, can shorten them",
-    "pace": "fast",
+    "direction": "fast_montage",
+    "goal": "Intro with title 'Emir Olympics London Edition' over park videos of individuals not playing sports; Montage of everyone playing, grouped by sport, with sport labels on screen; Include the creator talking to the camera, preserving the speech audio; End with the pub videos grouped together, styled with the theme 'post match pub'",
+    "creator_request": "Continue with 16 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say \u201cpost match pub\u201d. Add an intro title saying \u201cEmir Olympics London Edition\u201d. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech Keep 60 seconds and include everything with faster pacing",
+    "pace": "balanced",
     "target_duration_s": 60,
     "video_reuse_policy": "once",
+    "media_scope": "all",
+    "selected_media_ids": [
+      "clip-01.mp4",
+      "clip-02.mp4",
+      "clip-03.mp4",
+      "clip-04.mp4",
+      "clip-05.mp4",
+      "clip-06.mp4",
+      "clip-07.mp4",
+      "clip-08.mp4",
+      "clip-09.mp4",
+      "clip-10.mp4",
+      "clip-11.mp4",
+      "clip-12.mp4",
+      "clip-13.mp4",
+      "clip-14.mp4",
+      "clip-15.mp4",
+      "clip-16.mp4"
+    ],
     "opening_title": "Emir Olympics London Edition",
     "closing_title": null,
+    "clip_intents": [
+      {
+        "intent_id": "park-first",
+        "op": "order",
+        "attribute": "park clips with people not playing sports",
+        "position": "first",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "clip-15.mp4",
+            "evidence": "group walking across field",
+            "confidence": 1.0
+          },
+          {
+            "media_id": "clip-14.mp4",
+            "evidence": "two people outdoors",
+            "confidence": 1.0
+          }
+        ]
+      },
+      {
+        "intent_id": "sport-label",
+        "op": "label",
+        "attribute": "sport being played",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "clip-16.mp4",
+            "value": "Volleyball",
+            "evidence": "people playing beach volleyball",
+            "confidence": 1.0,
+            "grounding": "record_span"
+          }
+        ]
+      },
+      {
+        "intent_id": "pub-group",
+        "op": "group",
+        "attribute": "post match pub clips",
+        "creator_text": "post match pub",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "clip-01.mp4",
+            "evidence": "talking at table",
+            "confidence": 1.0
+          },
+          {
+            "media_id": "clip-02.mp4",
+            "evidence": "outdoor cafe",
+            "confidence": 1.0
+          },
+          {
+            "media_id": "clip-06.mp4",
+            "evidence": "outdoor restaurant",
+            "confidence": 1.0
+          },
+          {
+            "media_id": "clip-07.mp4",
+            "evidence": "restaurant table",
+            "confidence": 1.0
+          },
+          {
+            "media_id": "clip-08.mp4",
+            "evidence": "outdoor cafe",
+            "confidence": 1.0
+          },
+          {
+            "media_id": "clip-09.mp4",
+            "evidence": "outdoor cafe",
+            "confidence": 1.0
+          }
+        ]
+      }
+    ],
     "montage_audio": {
-      "source_media_ids": [],
+      "preserve_source_audio": true,
       "preview_source_beds": false,
-      "preserve_source_audio": true
+      "source_media_ids": []
     },
     "media": [
       {
@@ -180,17 +274,17 @@
       }
     ]
   },
-  "raw_text": "{\"schema_version\": 1, \"title\": \"Emir Olympics London Edition\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"Park\", \"thought\": \"\", \"role\": \"hook\", \"weight\": 0.13333333333333333, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-15.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-14.mp4\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-2\", \"topic\": \"Sports\", \"thought\": \"\", \"role\": \"build\", \"weight\": 0.1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-16.mp4\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-3\", \"topic\": \"Speech\", \"thought\": \"\", \"role\": \"build\", \"weight\": 0.16666666666666666, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-13.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-03.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-12.mp4\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-4\", \"topic\": \"Street moments\", \"thought\": \"\", \"role\": \"build\", \"weight\": 0.16666666666666666, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-05.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-10.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-11.mp4\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-5\", \"topic\": \"Post match pub\", \"thought\": \"\", \"role\": \"build\", \"weight\": 0.2888833333333333, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-01.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-02.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-06.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-07.mp4\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-6\", \"topic\": \"Post match pub\", \"thought\": \"post match pub\", \"role\": \"payoff\", \"weight\": 0.14445, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-08.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-09.mp4\", \"candidate_index\": null, \"weight\": 1.0}]}], \"montage_audio\": {\"preserve_source_audio\": true, \"preview_source_beds\": false, \"source_media_ids\": []}, \"text_bindings\": [], \"repairs\": []}",
+  "raw_text": "{\n  \"schema_version\": 1,\n  \"title\": \"Emir Olympics London Edition\",\n  \"chapters\": [\n    {\n      \"chapter_id\": \"chapter-1\",\n      \"topic\": \"Park intro\",\n      \"thought\": \"London Edition\",\n      \"role\": \"hook\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m015\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m014\",\n          \"weight\": 1\n        }\n      ]\n    },\n    {\n      \"chapter_id\": \"chapter-2\",\n      \"topic\": \"Creator speech\",\n      \"thought\": \"\",\n      \"role\": \"build\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m007\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m011\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m013\",\n          \"weight\": 1\n        }\n      ]\n    },\n    {\n      \"chapter_id\": \"chapter-3\",\n      \"topic\": \"Volleyball\",\n      \"thought\": \"Volleyball\",\n      \"role\": \"build\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m016\",\n          \"weight\": 1\n        }\n      ]\n    },\n    {\n      \"chapter_id\": \"chapter-4\",\n      \"topic\": \"Other activities\",\n      \"thought\": \"\",\n      \"role\": \"build\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m003\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m004\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m005\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m010\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m012\",\n          \"weight\": 1\n        }\n      ]\n    },\n    {\n      \"chapter_id\": \"chapter-5\",\n      \"topic\": \"Post match pub\",\n      \"thought\": \"post match pub\",\n      \"role\": \"payoff\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m001\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m002\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m006\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m008\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m009\",\n          \"weight\": 1\n        }\n      ]\n    }\n  ],\n  \"text_bindings\": []\n}",
   "output": {
     "schema_version": 1,
     "title": "Emir Olympics London Edition",
     "chapters": [
       {
-        "chapter_id": "chapter-1",
+        "chapter_id": "park",
         "topic": "Park",
         "thought": "",
         "role": "hook",
-        "weight": 0.13333333333333333,
+        "weight": 1.0,
         "layout": "fullscreen",
         "sources": [
           {
@@ -206,11 +300,11 @@
         ]
       },
       {
-        "chapter_id": "chapter-2",
+        "chapter_id": "sports",
         "topic": "Sports",
         "thought": "",
         "role": "build",
-        "weight": 0.1,
+        "weight": 1.0,
         "layout": "fullscreen",
         "sources": [
           {
@@ -221,11 +315,11 @@
         ]
       },
       {
-        "chapter_id": "chapter-3",
+        "chapter_id": "speech",
         "topic": "Speech",
         "thought": "",
         "role": "build",
-        "weight": 0.16666666666666666,
+        "weight": 1.0,
         "layout": "fullscreen",
         "sources": [
           {
@@ -246,11 +340,11 @@
         ]
       },
       {
-        "chapter_id": "chapter-4",
-        "topic": "Street moments",
+        "chapter_id": "street",
+        "topic": "Street",
         "thought": "",
         "role": "build",
-        "weight": 0.16666666666666666,
+        "weight": 1.0,
         "layout": "fullscreen",
         "sources": [
           {
@@ -267,15 +361,20 @@
             "media_id": "clip-11.mp4",
             "candidate_index": null,
             "weight": 1.0
+          },
+          {
+            "media_id": "clip-04.mp4",
+            "candidate_index": null,
+            "weight": 1.0
           }
         ]
       },
       {
-        "chapter_id": "chapter-5",
+        "chapter_id": "pub",
         "topic": "Post match pub",
-        "thought": "",
-        "role": "build",
-        "weight": 0.2888833333333333,
+        "thought": "post match pub",
+        "role": "payoff",
+        "weight": 1.0,
         "layout": "fullscreen",
         "sources": [
           {
@@ -297,17 +396,7 @@
             "media_id": "clip-07.mp4",
             "candidate_index": null,
             "weight": 1.0
-          }
-        ]
-      },
-      {
-        "chapter_id": "chapter-6",
-        "topic": "Post match pub",
-        "thought": "post match pub",
-        "role": "payoff",
-        "weight": 0.14445,
-        "layout": "fullscreen",
-        "sources": [
+          },
           {
             "media_id": "clip-08.mp4",
             "candidate_index": null,
@@ -326,19 +415,50 @@
       "preview_source_beds": false,
       "source_media_ids": []
     },
-    "text_bindings": [],
+    "text_bindings": [
+      {
+        "text": "post match pub",
+        "chapter_ids": [
+          "pub"
+        ],
+        "media_ids": []
+      },
+      {
+        "text": "post match pub",
+        "chapter_ids": [],
+        "media_ids": [
+          "clip-01.mp4",
+          "clip-02.mp4",
+          "clip-06.mp4",
+          "clip-07.mp4",
+          "clip-08.mp4",
+          "clip-09.mp4"
+        ]
+      }
+    ],
     "repairs": []
   },
   "meta": {
-    "source": "legacy_fixture_semantic_projection",
-    "case": "KRI-129: 16-clip guided_story whose 'Post match pub' beat groups 6 pub/cafe clips at once (redacted prod input, job 5016d555-family incident, \"story_beats.4.media_ids: List should have at most 4 items after validation, not 6\")",
-    "contract": "an oversized story beat is split into consecutive <=4-media beats with the same topic instead of failing the whole plan; every clip long enough to be offered to the model (all but the sub-1.4s clip-04.mp4) is preserved, and the total declared duration is unchanged",
-    "expected_topics": [
-      "park",
-      "sports",
-      "speech",
-      "street",
-      "pub"
-    ]
+    "source": "captured_model_response_on_public_eval_input",
+    "case": "Resolved pub member misplaced into a mixed speech chapter; preserve semantic weights while restoring exact creator membership",
+    "contract": "an authored montage that uses every required clip but lands short of the target is accepted at its authored total instead of being rejected with 'fast montage duration cannot fit the server target' and replaced by the request-blind fallback",
+    "expected_title": "Emir Olympics London Edition",
+    "expected_bindings": [
+      "post match pub"
+    ],
+    "expected_audio_ids": [],
+    "expected_frames": 1800,
+    "expected_group": [
+      "clip-01.mp4",
+      "clip-02.mp4",
+      "clip-06.mp4",
+      "clip-07.mp4",
+      "clip-08.mp4",
+      "clip-09.mp4"
+    ],
+    "expected_grounded_labels": {
+      "clip-16.mp4": "Volleyball"
+    },
+    "expected_schedule_contract": true
   }
 }

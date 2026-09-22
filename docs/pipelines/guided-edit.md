@@ -31,6 +31,9 @@ creator titles and captions remain immutable; resolved clip labels stay in the
 existing worker grounding lane. Resolved caption intents and legacy group copy bind
 only to their assigned, contiguous source chapters; model echoes on other sources
 are removed. Structured shot labels take precedence over quotation detection.
+An unambiguous misplaced caption-group member can move into its existing exclusive
+chapter while retaining its candidate and scheduling priority. Ambiguous targets,
+overlapping groups, source reuse, conflicting copy, or unsafe moves still fail closed.
 Private `planning_diagnostics` contains semantic
 intent, feasibility, schedule, repairs and failure reasons. Ordinary responses omit
 it. Pre-render model runs use `AgentRun.plan_item_id`; inspect them with

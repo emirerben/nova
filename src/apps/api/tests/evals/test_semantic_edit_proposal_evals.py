@@ -201,7 +201,7 @@ def test_semantic_edit_proposal_eval(
             source = media[moment.media_id]
             if source.kind == "video":
                 assert moment.source_end_frame <= math.ceil(float(source.duration_s or 0) * 30)
-    if fixture_path == KRI129_LIVE_FIXTURE:
+    if fixture_path == KRI129_LIVE_FIXTURE or fixture.meta.get("expected_schedule_contract"):
         _assert_kri129_compiler_contract(result.output, fixture, input)
         _assert_kri129_grounded_label_contract(fixture, input)
     if caption_targets := fixture.meta.get("expected_caption_targets"):

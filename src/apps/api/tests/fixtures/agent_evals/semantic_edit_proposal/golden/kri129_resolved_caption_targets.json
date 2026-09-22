@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.semantic_edit_proposal",
-  "prompt_version": "2.0.11",
+  "prompt_version": "2.0.12",
   "input": {
     "direction": "guided_story",
     "pace": "fast",
