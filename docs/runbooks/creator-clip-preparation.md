@@ -135,10 +135,8 @@ ids and let the normal ownership and lease fences prevent late writes.
 The following evidence is required before broad rollout and is intentionally
 pending until it is produced from the deployed implementation:
 
-- a real run with 19 native clips, showing durable progress from queued through
-  analysis and planning completion. This validation is currently blocked pending
-  explicit egress approval for a $2 cap; no acceptance or production-toggle
-  claim is made here;
+- a deployed-worker run with 19 native clips, showing durable progress from
+  queued through analysis and planning completion;
 - a request with a different semantic instruction over the same 19 clips,
   showing that the semantic preparation is reused safely where generation and
   freshness match and that the planner resolves the changed instruction;
@@ -156,8 +154,20 @@ behind a disabled flag with rollout evidence pending.
 
 ## Latest verification status
 
-The latest release-candidate verification passed 768 backend tests, 12
+The latest release-candidate verification passed 768 backend tests, 13
 PostgreSQL checks, 176 web tests, TypeScript checking, and the pre-ship gate.
 The focused iOS verification now passes 47 tests after project regeneration.
-These checks do not replace the
-blocked 19-native-clip validation or authorize a production toggle.
+
+An approved live-provider check analyzed all 19 native clips in a dedicated
+local database and persisted progress through completion. The saved original
+request resolved six clip intents and reached confirmation; a second request
+resolved indoor grouping, a creator-authored caption, and outdoor ordering
+without repeating clip analysis. Total provider cost was $0.18517 under the
+shared $2 cap. This exercise exposed an async conversation-loading failure in
+the preparation ownership check; the fix is covered by a real PostgreSQL
+regression test.
+
+This check invoked the task body locally, without Celery delivery, production
+writes, confirmation, or rendering. It verifies preparation and planning with
+real footage; it does not replace deployed-worker, device polling, or rendered
+output acceptance and does not authorize a production toggle.
