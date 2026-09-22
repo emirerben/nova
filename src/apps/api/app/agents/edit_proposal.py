@@ -1285,6 +1285,31 @@ def _creator_protected_media_ids(input: EditProposalAgentInput) -> set[str]:  # 
     return protected
 
 
+_QUOTED_TEXT_RE = re.compile(
+    r"[\"\u201c\u201d]([^\"\u201c\u201d]{1,120})[\"\u201c\u201d]|(?<!\w)'([^']{1,120})'(?!\w)"
+)
+
+
+def _creator_quoted_on_screen_text(input: EditProposalAgentInput) -> dict[str, str]:  # noqa: A002
+    """Phrases the creator put in quotes: the on-screen text they specified.
+
+    A creator who quotes what the screen should say ("post match pub") has
+    given the complete list of captions. Titles are quoted too but rendered
+    by the server, so they are excluded from the caption allowlist.
+    """
+
+    phrases: dict[str, str] = {}
+    for match in _QUOTED_TEXT_RE.finditer(input.creator_request):
+        text = (match.group(1) or match.group(2) or "").strip()
+        key = creator_copy_match_key(text)
+        if key:
+            phrases.setdefault(key, text)
+    for title in (input.opening_title, input.closing_title):
+        if title:
+            phrases.pop(creator_copy_match_key(title), None)
+    return phrases
+
+
 def _trim_media_to_moment_budget(
     beats: list[DraftStoryBeat],
     *,
@@ -1876,7 +1901,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.14.0",
+        prompt_version="1.15.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -2418,10 +2443,24 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             # rejections below this point are removed (KRI-129): the
             # creator's requested grouping decides beat count and topics, and
             # an empty thought simply renders no on-screen caption.
+        creator_captions = _creator_quoted_on_screen_text(input) if not creator_labels else {}
         for beat_index, beat in enumerate(output.story_beats):
             if beat_index in creator_beat_indexes or (creator_labels and not beat.thought.strip()):
                 # Confirmed creator copy is not an AI draft: it is never
                 # neutralized, length-capped, or screened for invented claims.
+                continue
+            if creator_captions and beat.thought.strip():
+                # The creator said what the screen should say: that list is
+                # complete. A caption that is not one of their quoted phrases
+                # is the model's own and is dropped, whatever the prompt led
+                # it to write (it kept captioning an unlabelled chapter).
+                exact = creator_captions.get(creator_copy_match_key(beat.thought))
+                if exact is not None:
+                    # Keep the creator's own spelling, not the model's echo.
+                    beat.thought = exact
+                    continue
+                beat.thought = ""
+                repairs.append(f"blanked_unrequested_thought:{beat_index}")
                 continue
             has_creator_context = any(
                 media_by_id[media_id].user_context.strip() for media_id in beat.media_ids

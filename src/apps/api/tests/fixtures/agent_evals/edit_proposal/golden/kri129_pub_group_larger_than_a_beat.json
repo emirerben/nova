@@ -1,6 +1,6 @@
 {
  "agent": "nova.plan.edit_proposal",
- "prompt_version": "1.12.0",
+ "prompt_version": "1.15.0",
  "input": {
   "idea": "",
   "theme": "",

@@ -21,10 +21,10 @@ from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
 
 # The no-intents prompt, for exactly the input `_canonical_input()` builds
 # below with clip_intents left unset. It pins that an absent/empty intent list
-# adds NOTHING to the prompt. Re-baselined for KRI-129 (prompt 1.14.0), which
+# adds NOTHING to the prompt. Re-baselined for KRI-129 (prompt 1.15.0), which
 # changed the base prompt itself (creator-request-outranks-guidelines rule,
 # advisory beat/source guidance); recompute it whenever the base prompt changes.
-_PRE_KRI127_PROMPT_SHA256 = "9766fafc638ed80edf2faed729764316db8476f2b55aacc08bc178bc90016a5e"
+_PRE_KRI127_PROMPT_SHA256 = "f55e42c8241d33df14b65f21b5207003878998dde0b93c04716ff84acea1215d"
 
 
 def _canonical_input(**overrides: object) -> EditProposalAgentInput:
