@@ -36,6 +36,7 @@ from app.routes.creation_threads import (
     _fill_default_title_if_needed,
     _format_clip_limit,
     _is_status_only_message,
+    _job_projection,
     _load,
     _media_path,
     _other_project_input_references,
@@ -3924,6 +3925,36 @@ async def test_list_summaries_batch_active_job_and_agent_status_for_safe_actions
         "variants": [{"variant_id": "one", "render_status": "rendering"}],
     }
     assert output[0].creator_agent == {"status": "rendering"}
+
+
+def test_job_projection_carries_a_human_failure_message_not_the_raw_code() -> None:
+    """KRI-163: the failure card used to print `failure_reason` itself
+    verbatim (e.g. "phone_plan_unsupported"). `_job_projection` must also
+    carry a sentence the client can show instead."""
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="processing_failed",
+        current_phase=None,
+        failure_reason="phone_plan_unsupported",
+        assembly_plan={"variants": []},
+    )
+    projection = _job_projection(job)
+    assert projection is not None
+    assert projection["failure_reason"] == "phone_plan_unsupported"
+    assert projection["failure_message"]
+    assert projection["failure_message"] != "phone_plan_unsupported"
+
+    # A job with no failure carries no message either.
+    ok_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="variants_ready",
+        current_phase=None,
+        failure_reason=None,
+        assembly_plan={"variants": []},
+    )
+    assert _job_projection(ok_job)["failure_message"] is None
+
+    assert _job_projection(None) is None
 
 
 @pytest.mark.asyncio
