@@ -10,6 +10,8 @@ import pytest
 
 from app.tasks import creator_preparation as task
 
+TEST_NOW = datetime(2026, 9, 22, tzinfo=UTC)
+
 
 def _asset(now, **overrides):
     values = dict(
@@ -27,7 +29,7 @@ def _asset(now, **overrides):
 
 
 def test_pending_pool_recovery_preserves_attempt_and_obeys_cooldown_and_batch():
-    now = datetime.now(UTC)
+    now = TEST_NOW
     assets = [_asset(now) for _ in range(task.POOL_REDISPATCH_BATCH + 1)]
 
     dispatches = task._pending_pool_dispatches(assets, now)
@@ -54,15 +56,15 @@ def test_pending_pool_recovery_preserves_attempt_and_obeys_cooldown_and_batch():
         {"status": "analyzing"},
         {"status": "ready"},
         {"status": "failed"},
-        {"analysis_started_at": datetime.now(UTC)},
+        {"analysis_started_at": TEST_NOW},
         {"analysis_attempt_token": None},
         {"gcs_generation": None},
-        {"analysis_last_dispatched_at": datetime.now(UTC)},
+        {"analysis_last_dispatched_at": TEST_NOW},
         {"analysis_last_dispatched_at": None, "created_at": None},
     ],
 )
 def test_pending_pool_recovery_leaves_ineligible_assets_untouched(overrides):
-    now = datetime.now(UTC)
+    now = TEST_NOW
     asset = _asset(now, **overrides)
     before = vars(asset).copy()
 
