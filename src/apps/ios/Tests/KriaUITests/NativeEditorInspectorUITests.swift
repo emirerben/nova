@@ -218,7 +218,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
             let previewDiagnostic = app.descendants(matching: .any)["native-editor-preview"].firstMatch.value as? String ?? ""
             // The accessibility time rounds to a tenth; skip the ambiguous
             // sample exactly on the cut and verify the frames on either side.
-            if abs(time - 2) > 0.1 {
+            // Past the two 2s clips (KRI-155's branded scrub/transport range
+            // now legitimately reaches the branded outro tail past 4s), there
+            // is no clip color to check -- that territory is the outro card.
+            if abs(time - 2) > 0.1, time < 4 {
                 XCTAssertGreaterThan(rgba[time < 2 ? 0 : 2], 220, "Wrong clip displayed at \(label): \(rgba), preview: \(previewDiagnostic)")
                 XCTAssertLessThan(rgba[time < 2 ? 2 : 0], 40, "Stale clip displayed at \(label): \(rgba), preview: \(previewDiagnostic)")
             }
@@ -270,8 +273,14 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // requiring a second snapshot inside a five-second window.
         waitForExpectations(timeout: 15)
         let previewState = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        // KRI-155: natural playback now runs through the branded outro tail
+        // (the transport bound is `playbackDuration`, not the two clips' own
+        // 4s), so the settled end time is whatever "native-editor-duration"
+        // reports rather than a hardcoded "0:04.0".
+        let duration = app.descendants(matching: .any)["native-editor-duration"].firstMatch
         let finalFrame = NSPredicate { _, _ in
-            time.value as? String == "0:04.0" && play.label == "Play preview"
+            guard let expected = duration.value as? String else { return false }
+            return time.value as? String == expected && play.label == "Play preview"
                 && (previewState.value as? String ?? "").contains("stillFrameReady:true")
         }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: finalFrame, object: previewState)], timeout: 15), .completed)
