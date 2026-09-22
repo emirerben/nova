@@ -398,6 +398,24 @@ final class ChatWorkspaceTests: XCTestCase {
         )
     }
 
+    func testPreparationWinsOverDraftAndReadyStatuses() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .draft, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true, preparationIsActive: true),
+            .rendering
+        )
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .ready, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true, preparationIsActive: true),
+            .rendering
+        )
+    }
+
+    func testFailedPreparationWinsOverReadyStatus() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .ready, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true, preparationFailed: true),
+            .failed
+        )
+    }
+
     func testFailedWithPendingPlanShowsDirectionNotFailed() {
         XCTAssertEqual(
             WorkspaceStage.resolve(status: .failed, awaitsNewPlanConfirmation: true, isChoosingFormat: false, hasFormat: true),
