@@ -2322,11 +2322,46 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> bool:
         "plan_hash": active_plan.get("plan_hash"),
         "version": active_plan.get("version"),
     }
+    # Clip preparation is durable and can take several minutes before it emits
+    # a planner reply. Persist a small, old-client-visible assistant event at
+    # the start of each valid active attempt so polling never looks silent.
+    # The thread is already locked by the polling path; the stable receipt
+    # also makes repeated polls and retries idempotent.
+    preparation = getattr(session, "preparation", None)
+    preparation_attempt_id = (
+        preparation.get("attempt_id") if isinstance(preparation, dict) else None
+    )
+    preparation_status = preparation.get("status") if isinstance(preparation, dict) else None
+    acknowledgement_appended = False
+    if (
+        session.status in {"planning", "revising"}
+        and preparation_status in {"queued", "analyzing", "resolving"}
+        and isinstance(preparation_attempt_id, str)
+    ):
+        try:
+            attempt_id = str(uuid.UUID(preparation_attempt_id))
+        except (TypeError, ValueError, AttributeError):
+            attempt_id = None
+        if attempt_id is not None:
+            receipt_id = f"creator-preparation:{attempt_id}"
+            if await _duplicate(db, thread.id, receipt_id) is None:
+                await _append(
+                    db,
+                    thread,
+                    event_type="status_update",
+                    role="assistant",
+                    content=(
+                        "I’ve saved your request. I’m analyzing your clips and will continue "
+                        "automatically."
+                    ),
+                    client_event_id=receipt_id,
+                )
+                acknowledgement_appended = True
     # Agent events are copied as an inert transcript projection.  Never copy
     # executable operations or external paths from model output.
     seen_ids = list(projection.get("creator_agent_event_ids", []))
     seen = set(seen_ids)
-    appended = False
+    appended = acknowledgement_appended
     events = (
         (
             await db.execute(

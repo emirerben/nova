@@ -529,6 +529,46 @@ def test_approved_static_text_uses_shared_layout_and_bound_font():
     assert font.fingerprint.byte_count > 1000
 
 
+def test_phone_guided_sentence_captions_apply_meta_and_group_only_the_rendered_text():
+    plan, bindings = fixture()
+    title = TextElement(id="title", text="Unchanged title", start_s=0, end_s=3, font_family="Inter")
+    captions = [
+        TextElement(
+            id=f"caption-{index}",
+            text=word,
+            start_s=index * 0.2,
+            end_s=(index + 1) * 0.2,
+            font_family="Inter",
+            source_params={"source": "caption_cue"},
+        )
+        for index, word in enumerate(["It", "costs", "172.5", "dollars.”"])
+    ]
+    plan.text_elements = [title, *captions]
+    plan.editor_caption_meta = {
+        "style": "sentence",
+        "y_frac": 0.7,
+        "color": "#FF0000",
+        "size_px": 88,
+    }
+
+    recipe = compile_phone_guided_plan(plan, bindings)
+
+    assert " ".join(run.text for run in recipe.text_layers[0].runs) == "Unchanged title"
+    rendered = recipe.text_layers[1:]
+    assert len(rendered) == len(captions)
+    assert [" ".join(run.text for run in layer.runs) for layer in rendered] == [
+        "It costs 172.5 dollars.”"
+    ] * len(captions)
+    assert [(layer.start, layer.end) for layer in rendered] == [
+        (0, 0.2),
+        (0.2, 0.4),
+        (0.4, 0.6),
+        (0.6, 0.8),
+    ]
+    assert all(layer.anchor_y == pytest.approx(0.7 * 1920) for layer in rendered)
+    assert all(layer.runs[0].fill.red == 1 for layer in rendered)
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

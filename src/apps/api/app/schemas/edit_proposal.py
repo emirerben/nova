@@ -708,6 +708,11 @@ class NarrationTrack(BaseModel):
     duration_s: float = Field(gt=0)
     words: list[NarrationWord] = Field(default_factory=list)
     language: str = Field(default="", max_length=16)
+    # Caption presentation belongs to the approved voiceover. Omission keeps
+    # legacy snapshot hashes and deterministic compiler replay unchanged.
+    caption_style: Literal["sentence", "word"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_words(self) -> NarrationTrack:

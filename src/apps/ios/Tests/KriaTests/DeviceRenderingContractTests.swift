@@ -69,6 +69,68 @@ final class DeviceRenderingContractTests: XCTestCase {
         XCTAssertEqual(target.assetID, "music-1")
         XCTAssertEqual(target.downloadURL.query, "generation=42")
     }
+
+    func testNarrationResolverUsesOnlyPinnedVoiceoverGrantAndSurvivesReopen() async throws {
+        defer { NativeEditorURLProtocol.handler = nil }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // A minimal RIFF header is enough for PlayableAudioFile to retain the
+        // WAV extension; AVFoundation validation belongs to preview assembly.
+        let bytes = Data([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45])
+        let source = root.appendingPathComponent("voice.wav")
+        try bytes.write(to: source)
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: source)
+        let narration = RenderAssetReference(
+            id: "voiceover-item", fingerprint: try RenderFingerprint(fingerprint),
+            source: .voiceover(planItemID: "item", generation: "9")
+        )
+        let recipe = KriaMediaEngine.EditRecipe(
+            schemaVersion: 2, rendererVersion: "kria-ios-2",
+            assets: [MediaAsset(id: narration.id, relativePath: narration.id, fingerprint: fingerprint)],
+            tracks: [TimelineTrack(id: "narration", kind: .audio, clips: [
+                TimelineClip(id: "voice", sourceAssetID: narration.id, sourceDuration: 1),
+            ])],
+            audio: AudioMixRecipe(originalVolume: 0, narrationAssetID: narration.id),
+            assetManifest: RenderAssetManifest(assets: [narration])
+        )
+        let request = DeviceRenderRequest(
+            identity: DeviceRenderIdentity(jobID: UUID(), variantID: "guided_story", recipeRevision: 1,
+                                           recipeDigest: String(repeating: "a", count: 64)),
+            recipe: recipe
+        )
+        let calls = EditorAdmissionRequestLog()
+        NativeEditorURLProtocol.handler = { request in
+            calls.paths.append(request.url?.path ?? "")
+            if request.url?.host == "storage.test" { return (200, bytes) }
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
+            XCTAssertEqual(body["asset_id"] as? String, narration.id)
+            return (200, Data(#"{"asset_id":"voiceover-item","download_url":"https://storage.test/voice","expires_at":"2099-01-01T00:00:00Z"}"#.utf8))
+        }
+        let project = ProjectDirectory(root: root.appendingPathComponent("project"))
+        let library = RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory))
+        func resolver() -> AuthorizedDeviceSourceResolver {
+            AuthorizedDeviceSourceResolver(api: NativeEditorTestSupport.api(), request: request,
+                originals: SourceAssetStore(project: project), library: library,
+                downloadSession: NativeEditorTestSupport.session())
+        }
+
+        let first = try await resolver().resolveNarration()
+        XCTAssertEqual(first.pathExtension, "wav")
+        XCTAssertEqual(try SHA256Fingerprinter().fingerprint(file: first), fingerprint)
+        let second = try await resolver().resolveNarration()
+        XCTAssertEqual(second, first)
+        // A reopened editor uses the verified cache; a damaged cache entry is
+        // re-authorized and repaired rather than becoming a silent fallback.
+        let verified = try await library.resolve(narration)
+        try Data("corrupt".utf8).write(to: verified)
+        let repaired = try await resolver().resolveNarration()
+        XCTAssertEqual(try SHA256Fingerprinter().fingerprint(file: repaired), fingerprint)
+        XCTAssertEqual(calls.paths, [
+            "/me/jobs/\(request.identity.jobID.uuidString)/device-render/assets", "/voice",
+            "/me/jobs/\(request.identity.jobID.uuidString)/device-render/assets", "/voice",
+        ])
+    }
     func testUploadAndCompleteUseBackendIdentityKeys() throws {
         let identity = DeviceRenderIdentity(jobID: UUID(), variantID: "original_text", recipeRevision: 7, recipeDigest: String(repeating: "a", count: 64))
         let attempt = UUID()

@@ -506,6 +506,23 @@ def test_pool_attempt_token_reads_rolling_deploy_compatible_header(monkeypatch) 
     assert ap._pool_attempt_token("explicit") == "explicit"
 
 
+def test_same_token_pool_redispatch_does_not_repeat_provider_analysis(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "original-attempt"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    monkeypatch.setattr("app.storage.download_to_file", lambda *_a, **_kw: None)
+    analysis = MagicMock(return_value=({"subject": "building"}, 1.0, (100, 100), False))
+    monkeypatch.setattr(ap, "_analyze_image", analysis)
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "original-attempt")
+    assert asset.status == "ready"
+    ap.analyze_pool_asset.run(str(asset.id), False, "original-attempt")
+
+    analysis.assert_called_once()
+    assert asset.status == "ready"
+
+
 def test_analyze_pool_asset_discards_late_output_after_attempt_changes(monkeypatch) -> None:
     asset = _PoolAsset(kind="image")
     asset.status = "queued"

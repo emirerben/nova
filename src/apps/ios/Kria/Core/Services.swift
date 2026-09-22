@@ -1369,8 +1369,9 @@ extension DraftSnapshot {
             var editorPayload = Self.object(document["editor_payload"]) ?? [:]
             var sections = Self.object(editorPayload["sections"]) ?? [:]
             let directKeys = [
-                "text_elements", "caption_cues", "captions_enabled", "caption_size_px",
+                "text_elements", "caption_cues", "caption_meta", "captions_enabled", "caption_size_px",
                 "caption_highlight_color", "caption_stroke_width", "caption_shadow_enabled", "caption_editor_style",
+                "caption_margin_v", "caption_y_frac",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
                 "motion_runtime_hash", "camera_effects", "carousel_moment",

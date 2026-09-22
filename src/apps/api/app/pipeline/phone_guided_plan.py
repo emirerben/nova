@@ -126,7 +126,11 @@ def compile_phone_guided_plan(
     gain, no matched bed) -- see that function in `app.pipeline.guided_story`
     for why (`-map 1:a:0`, never `-filter_complex amix`).
     """
+    # Import lazily: guided_story owns the shared caption-meta projection and
+    # imports this compiler for its device path.
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.guided_caption_presentation import project_guided_caption_overlays
+    from app.pipeline.guided_story import _apply_guided_caption_meta, _tag_guided_text_overlays
     from app.pipeline.portable_text_layout import compile_text_overlay
 
     for lane, capability in _UNSUPPORTED_PHONE_LANE_CAPABILITY.items():
@@ -456,16 +460,22 @@ def compile_phone_guided_plan(
         if compiled_duration < plan.resolved_duration_s - _TIMING_ROUNDING_TOLERANCE_S
         else None
     )
+    caption_elements, hidden_caption_ids = _apply_guided_caption_meta(
+        list(plan.text_elements), plan.editor_caption_meta
+    )
     layers = []
     ordered_overlays = []
     for lane, elements in (
-        ("text", plan.text_elements),
+        ("text", [element for element in caption_elements if element.id not in hidden_caption_ids]),
         ("context", plan.context_label_text_elements),
         ("narration", plan.narration_label_text_elements),
     ):
         overlays = build_overlays_from_text_elements(
             elements, video_duration_s=plan.resolved_duration_s, independent_box_alignment=True
         )
+        overlays = _tag_guided_text_overlays(overlays, elements)
+        if lane == "text":
+            overlays = project_guided_caption_overlays(overlays, plan.editor_caption_meta)
         ordered_overlays.extend(
             (f"{lane}-{index}", overlay) for index, overlay in enumerate(overlays)
         )

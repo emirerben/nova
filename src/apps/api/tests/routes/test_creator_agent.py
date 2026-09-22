@@ -924,7 +924,13 @@ def test_confirmed_creator_request_keeps_the_shared_bound() -> None:
     assert request.startswith(first)
 
 
-def test_guided_brief_seeds_pinned_narration_for_worker_transcription(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("caption_style", "expected_style"),
+    [("auto", None), ("editorial", "sentence"), ("clean", "sentence"), ("kinetic", "word")],
+)
+def test_guided_brief_seeds_pinned_narration_for_worker_transcription(
+    monkeypatch, caption_style, expected_style
+) -> None:
     monkeypatch.setattr(settings, "creator_prompt_fidelity_enabled", True, raising=False)
     manifest = resolve_creator_manifest(
         item_id="item-1",
@@ -944,6 +950,7 @@ def test_guided_brief_seeds_pinned_narration_for_worker_transcription(monkeypatc
             audio_strategy="voiceover",
             execution_contract="guided_voiceover_v1",
             media_scope="all",
+            caption_style=caption_style,
         ),
     )
     item = SimpleNamespace(
@@ -963,6 +970,7 @@ def test_guided_brief_seeds_pinned_narration_for_worker_transcription(monkeypatc
         "duration_s": 12.0,
         "words": [],
         "language": "",
+        **({"caption_style": expected_style} if expected_style else {}),
     }
 
 

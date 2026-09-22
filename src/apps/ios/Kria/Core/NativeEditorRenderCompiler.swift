@@ -267,15 +267,30 @@ enum NativeEditorRenderError: Error, Equatable {
         let captionMeta = document.captionMeta
         let captionsGloballyDisabled = captionMeta["enabled"] == .bool(false)
         var text: [PortableTextLayer] = []
-        for rawElement in document.textElements where rawElement.raw["enabled"] != .bool(false) {
+        // This is a render projection only: the editor document continues to
+        // contain one receipt-backed element per spoken word, with its original
+        // id and timing. Repeating the sentence on those adjacent intervals
+        // keeps it continuously visible without inventing a replacement cue.
+        let renderedTextElements = Self.projectSentenceCaptions(
+            document.textElements, captionMeta: captionMeta
+        )
+        for rawElement in renderedTextElements where rawElement.raw["enabled"] != .bool(false) && rawElement.raw["removed"] != .bool(true) {
             if rawElement.isCaption {
                 if captionsGloballyDisabled { continue }
             }
             let element = rawElement.isCaption
                 ? Self.applyingCaptionMeta(captionMeta, to: rawElement) : rawElement
-            guard let item = items.first(where: { $0.kind == .text && $0.id == element.id }) else {
+            guard let authoredItem = items.first(where: { $0.kind == .text && $0.id == element.id }) else {
                 throw RecipeError.invalidTimeline
             }
+            // Sentence projection may extend a caption through the silent gap
+            // before its next spoken word. This uses only the copied render
+            // element; the timeline item and persisted document stay pinned to
+            // the canonical word interval.
+            let item = rawElement.isCaption
+                ? NativeEditorTimelineItem(selection: authoredItem.selection, start: element.startS,
+                    end: min(max(element.endS, element.startS + 0.01), total), zIndex: authoredItem.zIndex, sourceIndex: authoredItem.sourceIndex)
+                : authoredItem
             // Nothing to draw is not a broken edit. A caption or title passes
             // through the empty string while its field is being retyped;
             // failing the whole composition for that fell the canvas back to
@@ -612,6 +627,54 @@ enum NativeEditorRenderError: Error, Equatable {
             output.replaceSubrange(range, with: word.prefix(1).uppercased() + word.dropFirst().lowercased())
         }
         return output
+    }
+
+    private static func projectSentenceCaptions(
+        _ elements: [EditorTextElement], captionMeta: [String: JSONValue]
+    ) -> [EditorTextElement] {
+        guard captionMeta["style"] == .string("sentence") else { return elements }
+        var projected = elements
+        let captionIndices = projected.indices.filter { projected[$0].isCaption }.sorted {
+            if projected[$0].startS != projected[$1].startS {
+                return projected[$0].startS < projected[$1].startS
+            }
+            return projected[$0].id < projected[$1].id
+        }
+        var sentence: [Int] = []
+        func emitSentence() {
+            guard !sentence.isEmpty else { return }
+            let display = sentence.map { projected[$0].text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .joined(separator: " ")
+            for (position, index) in sentence.enumerated() {
+                projected[index].text = display
+                // Python's render-only projection holds each sentence display
+                // to the next word's start. This eliminates a micro-gap while
+                // preserving the final word's real spoken end.
+                if sentence.indices.contains(position + 1) {
+                    projected[index].endS = projected[sentence[position + 1]].startS
+                }
+            }
+            sentence.removeAll()
+        }
+        for index in captionIndices {
+            let spoken = projected[index].text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !spoken.isEmpty else { continue }
+            let terminal = spoken.range(of: #"[.!?]+["'’”\)\]]*$"#, options: .regularExpression) != nil
+            guard projected[index].raw["enabled"] != .bool(false), projected[index].raw["removed"] != .bool(true) else {
+                // A hidden word must not leak into the display. Its terminal
+                // punctuation still separates the adjacent visible sentences.
+                if terminal { emitSentence() }
+                continue
+            }
+            sentence.append(index)
+            // The terminal mark has to end the token, so "172.5" is not a
+            // sentence boundary while `Done.”` is.
+            if terminal {
+                emitSentence()
+            }
+        }
+        emitSentence()
+        return projected
     }
 
     /// KRI-110: overlay caption_meta styling onto a caption_cue-tagged text
