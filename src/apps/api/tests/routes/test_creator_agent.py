@@ -5656,10 +5656,14 @@ async def test_chat_cleanup_publish_failure_crash_replay_refunds_once(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("phone_original_audio", [False, True])
+@pytest.mark.parametrize(
+    ("phone_original_audio", "speech_cleanup_choice"),
+    [(False, "clean"), (True, "keep_original"), (False, None)],
+)
 async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_rows(
     monkeypatch,
     phone_original_audio,
+    speech_cleanup_choice,
 ) -> None:
     """The guided confirmation must not read ORM instances after its rollback.
 
@@ -5748,8 +5752,14 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
         "plan_hash": "a" * 64,
         "summary": "A focused guided edit",
         "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
+        "guided_speech_cleanup": {
+            "generation_attempt_id": "old-attempt",
+            "analysis_id": str(uuid.uuid4()),
+            "choice": "clean",
+        },
     }
     session.active_plan = active
+    speech_cleanup_analysis_id = uuid.uuid4()
     receipt = SimpleNamespace(
         id=uuid.uuid4(),
         request_digest=canonical_context_hash(
@@ -5825,6 +5835,19 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
     )
 
     async def reserve_guided_proposal(*_args, generation_attempt_id, **_kwargs):
+        # The consent envelope is durable before the helper can reserve and
+        # publish guided work.  A no-choice confirmation must also clear the
+        # prior attempt's envelope.
+        assert db.commit.await_count == 1
+        if speech_cleanup_choice is None:
+            assert session.active_plan["guided_speech_cleanup"] is None
+        else:
+            assert session.active_plan["guided_speech_cleanup"] == {
+                "generation_attempt_id": generation_attempt_id,
+                "analysis_id": str(speech_cleanup_analysis_id),
+                "choice": speech_cleanup_choice,
+            }
+        assert session.active_plan["guided_generation_attempt_id"] == generation_attempt_id
         refreshed_item.edit_proposal = {
             "generation_attempt_id": generation_attempt_id,
             "proposal_version": 7,
@@ -5846,6 +5869,10 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
             plan_version=1,
             plan_hash="a" * 64,
             client_event_id="guided-confirm-1",
+            speech_cleanup_analysis_id=(
+                speech_cleanup_analysis_id if speech_cleanup_choice is not None else None
+            ),
+            speech_cleanup_choice=speech_cleanup_choice,
         ),
         user,
         db,
@@ -6002,6 +6029,12 @@ async def test_guided_confirm_resumes_exact_job_without_auto_design(monkeypatch)
     session_id = uuid.uuid4()
     job_id = uuid.uuid4()
     attempt_id = str(uuid.uuid4())
+    speech_cleanup_analysis_id = uuid.uuid4()
+    guided_speech_cleanup = {
+        "generation_attempt_id": attempt_id,
+        "analysis_id": str(speech_cleanup_analysis_id),
+        "choice": "clean",
+    }
     manifest = _manifest(monkeypatch)
     strategy = CreativeStrategy(
         direction="guided_story",
@@ -6027,6 +6060,7 @@ async def test_guided_confirm_resumes_exact_job_without_auto_design(monkeypatch)
             "version": 1,
             "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
             "guided_generation_attempt_id": attempt_id,
+            "guided_speech_cleanup": guided_speech_cleanup,
         },
     )
     completed = SimpleNamespace(
@@ -6094,6 +6128,9 @@ async def test_guided_confirm_resumes_exact_job_without_auto_design(monkeypatch)
     assert returned is response
     assert completed.status == "rendering"
     assert completed.target_job_id == job_id
+    # Receipt replays retain the already-durable attempt envelope. They do
+    # not mint an attempt or overwrite consent from the original confirmation.
+    assert completed.active_plan["guided_speech_cleanup"] == guided_speech_cleanup
     assert receipt.status == "succeeded"
     auto_design.assert_not_awaited()
 

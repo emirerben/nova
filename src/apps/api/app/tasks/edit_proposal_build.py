@@ -11,6 +11,7 @@ from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
@@ -63,6 +64,9 @@ from app.services.edit_proposals import (
 )
 from app.services.phone_destination import item_visuals_only_on_device_sync
 from app.worker import celery_app
+
+if TYPE_CHECKING:
+    from app.tasks.content_plan_build import DispatchResult
 
 log = structlog.get_logger()
 
@@ -162,21 +166,22 @@ def _locked_item(
     return item, plan.user_id
 
 
-def _creator_strategy_for_guided_attempt(
+def _creator_dispatch_context_for_guided_attempt(
     db,
     *,
     item_id: uuid.UUID,
     owner_id: uuid.UUID,
     attempt_id: str,
+    ownership_epoch: int,
 ) -> dict | None:
-    """Recover the confirmed Creator strategy for one guided render attempt.
+    """Recover the confirmed render intent for one owned guided attempt.
 
     Guided proposal drafting is asynchronous, so its final dispatch runs after
     the request-scoped Creator controller has returned. The proposal owns media
     selection and timing; the linked Creator session remains authoritative for
-    the user's exact title, typography, and trusted contextual-label intent.
-    Match the immutable attempt id and validate the complete typed plan before
-    allowing those fields onto the Job.
+    the user's exact title, typography, contextual labels, and speech choice.
+    Match the immutable attempt and ownership epoch, then validate the typed
+    plan and consent identity before allowing those fields onto the Job.
     """
 
     sessions = list(
@@ -185,6 +190,7 @@ def _creator_strategy_for_guided_attempt(
             .where(
                 CreatorAgentSession.plan_item_id == item_id,
                 CreatorAgentSession.creator_id == owner_id,
+                CreatorAgentSession.ownership_epoch == ownership_epoch,
             )
             .order_by(
                 CreatorAgentSession.updated_at.desc(),
@@ -209,7 +215,27 @@ def _creator_strategy_for_guided_attempt(
                 session_id=str(session.id),
             )
             return None
-        return edit_plan.strategy.model_dump(mode="json", exclude_none=True)
+        context = {
+            "creator_strategy": edit_plan.strategy.model_dump(mode="json", exclude_none=True)
+        }
+        cleanup = active_plan.get("guided_speech_cleanup")
+        if cleanup is not None:
+            # Consent belongs to the same immutable attempt as the strategy.
+            # Never borrow the latest analysis or a previous attempt's choice.
+            if not isinstance(cleanup, dict) or cleanup.get("generation_attempt_id") != attempt_id:
+                return None
+            try:
+                analysis_id = str(uuid.UUID(str(cleanup.get("analysis_id"))))
+            except (TypeError, ValueError):
+                return None
+            choice = cleanup.get("choice")
+            if choice not in (None, "clean", "keep_original", "create_without_cleanup"):
+                return None
+            context.update(
+                speech_cleanup_analysis_id=analysis_id,
+                speech_cleanup_choice=choice,
+            )
+        return context
     return None
 
 
@@ -1068,7 +1094,7 @@ def _checkpoint_analyzed_assignment(
 
 def _dispatch_after_auto_design(
     iid: uuid.UUID, item_id: str, attempt_id: str, ownership_epoch: int
-) -> None:
+) -> DispatchResult | None:
     """GUIDED_AUTO_DESIGN_ENABLED: dispatch after a draft attempt settles.
 
     Called unconditionally after _run_draft_attempt returns normally (i.e.
@@ -1093,7 +1119,7 @@ def _dispatch_after_auto_design(
     from app.tasks.content_plan_build import dispatch_item_render_for  # noqa: PLC0415
 
     bypass = False
-    creator_strategy: dict | None = None
+    creator_dispatch_context: dict | None = None
     creator_request = ""
     with sync_session() as db:
         locked = _locked_item(db, iid, ownership_epoch)
@@ -1135,15 +1161,16 @@ def _dispatch_after_auto_design(
 
         if current.design_fallback == MAIN_CREATOR_FAIL_CLOSED:
             assert owner_id is not None
-            creator_strategy = _creator_strategy_for_guided_attempt(
+            creator_dispatch_context = _creator_dispatch_context_for_guided_attempt(
                 db,
                 item_id=item.id,
                 owner_id=owner_id,
                 attempt_id=attempt_id,
+                ownership_epoch=ownership_epoch,
             )
-            if creator_strategy is None:
+            if creator_dispatch_context is None:
                 log.warning(
-                    "edit_proposal.creator_strategy_missing",
+                    "edit_proposal.creator_dispatch_context_missing",
                     item_id=item_id,
                     attempt_id=attempt_id,
                 )
@@ -1157,8 +1184,8 @@ def _dispatch_after_auto_design(
 
     dispatch_kwargs = {"bypass_guided_edit_gate": bypass}
     dispatch_kwargs["creator_guided_attempt_id"] = attempt_id
-    if creator_strategy is not None:
-        dispatch_kwargs["creator_strategy"] = creator_strategy
+    if creator_dispatch_context is not None:
+        dispatch_kwargs.update(creator_dispatch_context)
     if creator_request:
         dispatch_kwargs["creator_request"] = creator_request
     # `design_fallback=MAIN_CREATOR_FAIL_CLOSED` is the deploy-skew-safe,
@@ -1178,7 +1205,7 @@ def _dispatch_after_auto_design(
             ownership_epoch=ownership_epoch,
             job_id=getattr(result, "job_id", None),
         )
-        if creator_strategy is not None and not bound:
+        if creator_dispatch_context is not None and not bound:
             log.warning(
                 "edit_proposal.creator_job_binding_deferred",
                 item_id=item_id,
@@ -1196,6 +1223,9 @@ def _dispatch_after_auto_design(
             outcome=result.outcome,
             fallback=bypass,
         )
+    # Background callers need no response, but a synchronous resume must
+    # surface a rejected dispatch rather than reporting an edit has started.
+    return result
 
 
 @celery_app.task(
@@ -1483,6 +1513,21 @@ def _run_draft_attempt(
             brief.montage_cadence,
         )
         feasible_duration_s = feasible_guided_duration_s(media)
+        # Ordinary narrated guided stories may hold a still for the remaining
+        # narration. The conservative pre-agent image credit is useful for
+        # non-narrated targets and the bounded quick-photo policy, but would
+        # reject a renderer-valid voiceover plan before the strict compiler
+        # gets to verify it.
+        if (
+            narration is not None
+            and brief.direction == "guided_story"
+            and not uses_quick_photo_long_video_timing(brief.mixed_media_timing)
+        ):
+            feasible_duration_s = guided_story_capacity_s(
+                media,
+                pace=brief.pace,
+                mixed_media_timing=brief.mixed_media_timing,
+            )
         if semantic_enabled:
             target_duration_s = narration.duration_s if narration else brief.duration_s
         else:

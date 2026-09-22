@@ -13,6 +13,8 @@ import app.routes.plan_items as plan_items
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
 from app.agents.edit_guide import EditGuideOutput, EditGuideRevision, EditGuideRevisionBeat
 from app.schemas.edit_proposal import (
+    MAIN_CREATOR_FAIL_CLOSED,
+    ApprovedProposalSnapshot,
     EditProposal,
     EditProposalSnapshot,
     FastMontageCut,
@@ -2354,6 +2356,152 @@ async def test_auto_design_finalizes_an_existing_draft_instead_of_redrafting(mon
     assert item.edit_proposal["status"] == "approved"
     assert item.edit_proposal["last_approved"] is not None
     assert dispatch_calls == [(str(item.id), 1, True)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("proposal_status", ["draft", "approved"])
+async def test_creator_attempt_recovers_existing_proposal_through_guided_worker(
+    monkeypatch, proposal_status
+) -> None:
+    """Creator resumes preserve the exact persisted attempt, including consent."""
+
+    item = _draft_item()
+    item.clip_gcs_paths = [item.clip_assignments[0]["gcs_path"]]
+    user = _auto_design_user()
+    proposal = parse_edit_proposal(item.edit_proposal)
+    assert proposal is not None
+    proposal = proposal.model_copy(update={"design_fallback": MAIN_CREATOR_FAIL_CLOSED})
+    item.edit_proposal = proposal.model_dump(mode="json")
+    if proposal_status == "approved":
+        snapshot = proposal.draft
+        assert snapshot is not None
+        proposal = proposal.model_copy(
+            update={
+                "status": "approved",
+                "last_approved": ApprovedProposalSnapshot(
+                    proposal_version=proposal.proposal_version,
+                    media_digest=proposal.media_digest,
+                    approved_at=datetime.now(UTC),
+                    snapshot=snapshot,
+                ),
+            }
+        )
+        item.edit_proposal = proposal.model_dump(mode="json")
+
+    monkeypatch.setattr(plan_items.settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr(
+        plan_items,
+        "_dispatch_confirmed_guided_attempt",
+        AsyncMock(return_value=item),
+    )
+    monkeypatch.setattr(
+        plan_items.storage,
+        "object_metadata",
+        lambda _path: SimpleNamespace(generation="42"),
+    )
+    db = AsyncMock()
+    strategy = {"render_program": "guided"}
+
+    result = await plan_items._maybe_auto_design_generate(
+        str(item.id),
+        item,
+        _auto_design_plan(),
+        user,
+        db,
+        generation_attempt_id=proposal.generation_attempt_id,
+        creator_strategy=strategy,
+    )
+
+    assert result is item
+    plan_items._dispatch_confirmed_guided_attempt.assert_awaited_once_with(
+        str(item.id),
+        user.id,
+        proposal.generation_attempt_id,
+        1,
+        db,
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_confirmed_guided_attempt_uses_exact_worker_tuple_and_maps_result(
+    monkeypatch,
+) -> None:
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    db = AsyncMock()
+    result = SimpleNamespace(outcome="dispatched")
+    response = SimpleNamespace()
+    worker = MagicMock(return_value=result)
+    respond = AsyncMock(return_value=response)
+    monkeypatch.setattr("app.tasks.edit_proposal_build._dispatch_after_auto_design", worker)
+    monkeypatch.setattr(plan_items, "_respond_to_dispatch_result", respond)
+
+    result = await plan_items._dispatch_confirmed_guided_attempt(
+        str(item_id), owner_id, "attempt-1", 7, db
+    )
+
+    assert result is response
+    worker.assert_called_once_with(item_id, str(item_id), "attempt-1", 7)
+    respond.assert_awaited_once_with(worker.return_value, str(item_id), owner_id, db)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_confirmed_guided_attempt_maps_worker_speech_cleanup_conflict(
+    monkeypatch,
+) -> None:
+    item_id = uuid.uuid4()
+    worker = MagicMock(return_value=SimpleNamespace(outcome="speech_cleanup_analysis_conflict"))
+    monkeypatch.setattr("app.tasks.edit_proposal_build._dispatch_after_auto_design", worker)
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items._dispatch_confirmed_guided_attempt(
+            str(item_id), uuid.uuid4(), "attempt-1", 7, AsyncMock()
+        )
+
+    assert exc.value.status_code == 409
+    assert "speech_cleanup_analysis_conflict" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_dispatch_confirmed_guided_attempt_rejects_worker_noop(monkeypatch) -> None:
+    item_id = uuid.uuid4()
+    worker = MagicMock(return_value=None)
+    monkeypatch.setattr("app.tasks.edit_proposal_build._dispatch_after_auto_design", worker)
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items._dispatch_confirmed_guided_attempt(
+            str(item_id), uuid.uuid4(), "attempt-1", 7, AsyncMock()
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "proposal_identity_changed"
+
+
+@pytest.mark.asyncio
+async def test_creator_attempt_refuses_stale_existing_proposal_before_worker(monkeypatch) -> None:
+    item = _draft_item()
+    item.clip_gcs_paths = [item.clip_assignments[0]["gcs_path"]]
+    monkeypatch.setattr(plan_items.settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    worker = AsyncMock()
+    monkeypatch.setattr(plan_items, "_dispatch_confirmed_guided_attempt", worker)
+    db = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items._maybe_auto_design_generate(
+            str(item.id),
+            item,
+            _auto_design_plan(),
+            _auto_design_user(),
+            db,
+            generation_attempt_id="newer-attempt",
+            creator_strategy={"render_program": "guided"},
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "proposal_identity_changed"
+    worker.assert_not_awaited()
 
 
 @pytest.mark.asyncio
