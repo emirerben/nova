@@ -138,17 +138,25 @@ def test_default_font_qualification_cannot_expand_by_alias_or_coordinates(change
         validate_phone_pilot_recipe(recipe)
 
 
-def test_qualified_font_does_not_qualify_authored_phases(monkeypatch):
+def test_authored_phases_require_verified_authored_text(monkeypatch):
     from app.agents._schemas.text_animation_phases import TextAnimationPhases
 
     monkeypatch.setattr(settings, "phone_font_qualification_strict", True)
     recipe = _default_font_recipe("DM Sans")
     recipe.text_layers[0].animation_phases = TextAnimationPhases(loop="float")
     monkeypatch.setattr(
-        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+        settings,
+        "phone_render_verified_features",
+        list(recipe.required_capabilities - {"authoredText"}),
     )
     with pytest.raises(ValueError, match="phases"):
         validate_phone_pilot_recipe(recipe)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*recipe.required_capabilities, "authoredText"],
+    )
+    validate_phone_pilot_recipe(recipe)
 
 
 def test_guided_default_title_and_body_compile_through_phone_pilot(monkeypatch):
@@ -324,7 +332,7 @@ def test_slow_giant_handwriting_stays_blocked_with_animated_text_enabled(monkeyp
         validate_phone_pilot_recipe(recipe)
 
 
-def test_authored_phases_stay_blocked_until_device_parity_is_verified(monkeypatch):
+def test_authored_phases_gate_uses_layer_fields_not_stale_recipe_capabilities(monkeypatch):
     from app.agents._schemas.text_animation_phases import TextAnimationPhases
     from app.kria.recipes_v2 import EditRecipeV2
     from tests.kria.test_portable_text import text_document
@@ -333,10 +341,18 @@ def test_authored_phases_stay_blocked_until_device_parity_is_verified(monkeypatc
     recipe = EditRecipeV2.model_validate(text_document())
     recipe.text_layers[0].animation_phases = TextAnimationPhases(loop="float")
     monkeypatch.setattr(
-        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+        settings,
+        "phone_render_verified_features",
+        list(recipe.required_capabilities - {"authoredText"}),
     )
     with pytest.raises(ValueError, match="phases"):
         validate_phone_pilot_recipe(recipe)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*recipe.required_capabilities, "authoredText"],
+    )
+    validate_phone_pilot_recipe(recipe)
 
 
 def test_camera_program_cannot_bypass_device_qualification(monkeypatch):

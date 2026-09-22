@@ -199,13 +199,17 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise ValueError("Camera effects await native parity and device qualification")
     if _has_unqualified_font_instance(recipe):
         raise ValueError("This font instance awaits native parity and device qualification")
-    if any(
+    authored_text_features = any(
         layer.animation_phases is not None
         or layer.background is not None
         or layer.effect == "caption-pop"
         or (layer.karaoke is not None and layer.karaoke.active_only is not None)
         for layer in recipe.text_layers
-    ):
+    )
+    # These fields are implemented by the native authored-text renderer. Keep
+    # the capability gate explicit: callers may mutate a recipe after compile
+    # without recomputing ``required_capabilities``.
+    if authored_text_features and "authoredText" not in settings.phone_render_verified_features:
         raise ValueError(
             "Authored text phases and backgrounds await native parity and device qualification"
         )

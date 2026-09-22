@@ -121,6 +121,12 @@ final class DeviceRenderingContractTests: XCTestCase {
         ])
         let decodedWith = try JSONDecoder().decode(DeviceRenderStatusResponse.self, from: withCode)
         XCTAssertEqual(decodedWith.reasonCode, "thermal")
+
+        let published = try JSONSerialization.data(withJSONObject: [
+            "phase": "published", "request": raw, "published_generation": "generation-2",
+        ])
+        let decodedPublished = try JSONDecoder().decode(DeviceRenderStatusResponse.self, from: published)
+        XCTAssertEqual(decodedPublished.publishedGeneration, "generation-2")
     }
 
     func testFailureAndRetryBodiesUseServerExpectedKeys() throws {
