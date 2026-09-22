@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.127.0] - 2026-09-22
+
+### Fixed
+- fix: preserve explicit clip selections in long creator requests (#1143) <!-- release-pr: 1143 -->
+
 ## [0.76.126.0] - 2026-09-22
 
 ### Fixed
