@@ -2794,7 +2794,7 @@ async def _run_planning_turn(
                             question=(
                                 "Those labels need a recorded voiceover with guided visuals. "
                                 "Please add a recording or choose labels based on the footage."
-                            )
+                            ),
                         )
                     elif effective_clip_intents:
                         resolution = await resolve_clip_intents_for_turn(
@@ -2836,7 +2836,7 @@ async def _run_planning_turn(
                         question=(
                             "I couldn't confidently match that to your clips. Which "
                             "clips should it apply to, and what should each say?"
-                        )
+                        ),
                     )
                 if preparation_attempt_id:
                     await require_current_attempt(

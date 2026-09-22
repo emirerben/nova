@@ -1,6 +1,6 @@
 # KRI-156 label retirement validation
 
-Date: 2026-09-22. Implementation is based on `origin/main` at `df68c284d`, including KRI-133 semantic scheduling and KRI-158 ambiguous clip-identity rejection.
+Date: 2026-09-22. Implementation is based on `origin/main` at `d6a294cd7`, including KRI-133 semantic scheduling, KRI-158 ambiguous clip-identity rejection, and KRI-151 background clip preparation.
 
 ## Implementation
 
@@ -13,6 +13,8 @@ Date: 2026-09-22. Implementation is based on `origin/main` at `df68c284d`, inclu
 
 ## Deterministic verification
 
+Final pre-PR integration with KRI-151 passed **580 tests**, covering creator routes, background preparation, source-aware resolution, session bindings, transcript receipts, legacy decoding, guided compilation, and Main Creator replay evals. Background checkpoints, preparation token fences, and provider error states are preserved.
+
 The pre-rebase creator/schema/route/session/render/eval regression suite passed **1,256 tests**. After integration with current main, the combined run passed 1,269 tests and exposed five failures: four newly merged test cases used the retired function signature, and one legacy compiler hash check detected a missing inert null key. Those issues were fixed. The final affected integration suite passed **206 tests**, with **5 live-only semantic scheduler evals skipped**. It covers guided compilation and revisions, legacy v1–v7 hash receipts, clip identity ambiguity, generative labels, semantic scheduling, and replay evals. Counts overlap and are not additive.
 
 - `bash scripts/preship-check.sh`: passed scoped Ruff lint/format (29 Python files), frontend `tsc --noEmit`, no overlap with current main, and release-metadata ownership.
@@ -20,7 +22,7 @@ The pre-rebase creator/schema/route/session/render/eval regression suite passed 
 - `git diff origin/main --check`: passed.
 - Focused receipt and narration materializer checks: 26 passed, including changed attributes, disguised legacy IDs, malicious resolved payloads, old receipt replay, and score-span authority.
 
-Local complete logs and live outputs are in `.dev/rebased-tests.log`, `.dev/rebased-preship.log`, and `.dev/eval-results/` in the implementation worktree. These are local validation artifacts, not committed source assets.
+Local complete logs and live outputs are in `.dev/pr-integration-tests.log`, `.dev/rebased-tests.log`, `.dev/rebased-preship.log`, and `.dev/eval-results/` in the implementation worktree. These are local validation artifacts, not committed source assets.
 
 ## Live prompt comparison
 
@@ -58,6 +60,6 @@ Candidate `main_creator` prompt `2026-09-22-v33` was compared with baseline `202
 
 ## Release gates still open
 
-This implementation has not been pushed, merged, or deployed. Production flags are unchanged. The live judge gate is not green; review the failing cases before merge. KRI-156 also requires reviewing a couple of weeks of KRI-127 flag-on production observation. This task does not establish that evidence.
+This implementation is submitted as a draft PR; it has not been merged or deployed. Production flags are unchanged. The live judge gate is not green; review the failing cases before merge. KRI-156 also requires reviewing a couple of weeks of KRI-127 flag-on production observation. This task does not establish that evidence.
 
 The invoked autoship skill targets changeset/npm publication; the autoship CLI is not installed and this repository owns release metadata through post-merge automation. No npm release, version bump, or release workflow was run.

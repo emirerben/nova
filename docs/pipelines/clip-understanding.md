@@ -87,10 +87,13 @@ Flow (flag on):
    only. Membership checks are re-asked as closed yes/no questions; a confident
    "no" excludes the clip. New answers are cached on the asset's
    `analysis["answers"][normalized_question]` (pool assets only).
-3. **Ask, never guess.** Anything unresolved (ungrounded label, over the cap,
-   deadline, "unknown", empty group, agent failure) becomes ONE
-   `assistant_question` event (`reason_code: clip_intent_unresolved`). The
-   creator's answer arrives as a normal next message.
+3. **Ask, never guess.** Settled ambiguity (ungrounded label, "unknown", or
+   an empty group) becomes ONE `assistant_question` event
+   (`reason_code: clip_intent_unresolved`). The creator's answer arrives as a
+   normal next message. KRI-151 keeps cap/deadline and provider/media failures
+   separate from creator ambiguity; background preparation checkpoints completed
+   answers and fences retries to the current attempt. See
+   [creator clip preparation](../runbooks/creator-clip-preparation.md).
 4. **Plan.** On confirm the intents travel `ProposalBrief.clip_intents` (chat
    `asset-{uuid}` ids translated to planner ids) into `EditProposalAgent` as
    alias-only constraints: group (creator's words as the chapter title), order
