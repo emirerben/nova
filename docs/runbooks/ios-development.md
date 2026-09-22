@@ -195,7 +195,7 @@ Text, Captions, Visuals, and Sounds share one bottom-connected panel shell and
 one tool-rail selection. Opening a panel keeps the preview and rail geometry
 stable; the retained timeline remains visually present under the shell but is
 disabled for scrolling, hit testing, and accessibility while covered. The
-timeline is clipped to the available preview area while the keyboard is open,
+timeline is clipped to its available editor area while the keyboard is open,
 so text entry cannot let it paint over the source preview. Compact text presets
 use the current `Menu` control, and the text animation picker samples the
 media-engine animation phases from one shared display-link clock. Preview
@@ -208,6 +208,12 @@ outgoing panel flushes editing transactions before the next panel registers its
 cleanup, preventing a delayed `onDisappear` from clearing the replacement's
 state. Existing controls, session mutations, capability checks, undo behavior,
 and save contracts remain unchanged.
+
+`NativeEditorInspectorUITests` covers panel switching, compact presets, preview
+play/pause, and keyboard visibility (including a source-pixel check).
+`NativeEditorPanelLifecycleTests` and `NativeTextAnimationPreviewTests` cover
+cleanup ownership and preview timing; `AppleTextAccessibilityUITests` exercises
+the controls at 320pt width with accessibility text sizes.
 
 ## Native chat creation (KRI-24)
 
