@@ -60,6 +60,10 @@ def progress(
             "A source file is unavailable or has changed. "
             "Reattach it to continue. Your request is saved."
         )
+    elif error_code == "planning_unavailable":
+        message = (
+            "Planning your edit is unavailable right now. Your request is saved; try again later."
+        )
     elif error_code == "preparation_stale":
         message = (
             "Your footage changed while I was analyzing it. Send your next instruction to continue."
