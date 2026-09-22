@@ -25,6 +25,7 @@ from app.agents.camera_emphasis import (
     CameraEmphasisInput,
     CameraEmphasisOutput,
 )
+from app.agents.clip_intent_planner import ClipIntentPlannerInput, ClipIntentPlannerOutput
 from app.agents.clip_metadata import (
     _BALL_BLACKLIST,
     _BALL_WHITELIST,
@@ -1190,6 +1191,25 @@ def check_clip_plan_matcher(
             )
         last_score = a.score
 
+    return failures
+
+
+def check_clip_intent_planner(
+    output: ClipIntentPlannerOutput,
+    input: ClipIntentPlannerInput,  # noqa: A002
+) -> list[str]:
+    failures: list[str] = []
+    sources = (input.creator_request, input.latest_user_message or "")
+    if output.question is not None and output.intents:
+        failures.append("question accompanies a partial intent inventory")
+    for intent in output.intents:
+        if not any(intent.source_quote in source for source in sources):
+            failures.append(f"intent {intent.intent_id}: source_quote is not creator text")
+        if intent.creator_text and (
+            intent.creator_text not in intent.source_quote
+            or not any(intent.creator_text in source for source in sources)
+        ):
+            failures.append(f"intent {intent.intent_id}: creator_text is not source-backed")
     return failures
 
 
@@ -3015,6 +3035,8 @@ def run_structural(
         return check_clip_plan_matcher(output, input)
     if agent_name == "nova.plan.clip_request_resolver":
         return check_clip_request_resolver(output, input)
+    if agent_name == "nova.plan.clip_intent_planner":
+        return check_clip_intent_planner(output, input)
     if agent_name == "nova.video.clip_question":
         return check_clip_question(output, input)
     if agent_name == "nova.video.clip_router":

@@ -4992,7 +4992,7 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
                 materialize_guided_narration_labels,  # noqa: PLC0415
             )
 
-            return materialize_guided_narration_labels(
+            plan = materialize_guided_narration_labels(
                 plan,
                 snapshot=snapshot,
                 strategy=raw_strategy or {},
@@ -5001,6 +5001,11 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
             )
         intent = context_label_intent()
         resolved_label_intents = guided_resolved_clip_intents()
+        # Narration has its own legacy sport-label materializer. Generic
+        # resolved labels still need to be projected on narrated plans, but
+        # replaying the legacy intent here would duplicate that text.
+        if snapshot.narration is not None:
+            intent = None
         if intent is None and not resolved_label_intents:
             return plan
         from app.pipeline.guided_story import matcher_clip_metas  # noqa: PLC0415
@@ -5203,7 +5208,7 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
     # Existing pinned plans created before the contextual lane was propagated
     # are repaired on read. This keeps deploy-skewed localhost jobs renderable
     # without changing their approved media or timing.
-    if context_label_intent() is not None:
+    if context_label_intent() is not None or guided_resolved_clip_intents():
         plan = materialize_context_labels(plan)
         with _sync_session() as db:
             job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
@@ -11729,6 +11734,7 @@ _CONTEXT_SPORT_ALIASES: dict[str, str] = {
 }
 _CONTEXT_LABEL_MIN_CONFIDENCE = 0.8
 _CONTEXT_LABEL_CONTIGUITY_EPSILON_S = 0.001
+_CONTEXT_LABEL_COMBINED_MAX_CHARS = 120
 
 
 def _canonical_context_sport_labels(
@@ -11907,21 +11913,19 @@ def _grounded_context_labels(
     would persist it, but with no cached vision answers (so that lane can only
     ground via ``creator_text``/``record_span``, never ``vision_verified``,
     until a future lane threads its real analysis dict through too).
-    Anything that fails to re-ground is silently omitted; this never raises.
+    A single label that fails to re-ground is silently omitted for compatibility.
+    When several label intents target one clip, any failed value raises instead:
+    rendering a subset would misrepresent the confirmed creator request.
 
     Row shape matches ``_canonical_context_sport_labels`` exactly
     (``{"clip_id":..., "sport": <text>}``, consumed by
-    ``_context_sport_text_elements``'s ``by_clip_row``) plus provenance keys
-    that function reads when ``row["source"] == "grounded_label"``:
+    ``_context_sport_text_elements``) plus provenance keys that function
+    reads when ``row["source"] == "grounded_label"``:
     ``grounding``, ``confidence``, ``intent_id``.
 
-    At most one label renders per clip: the FIRST ``resolved_intents`` entry
-    (op == "label", status == "resolved") that names a clip via any assignment
-    claims that clip for the whole call, even if that specific assignment then
-    fails to ground -- a later intent's assignment for the same clip is never
-    consulted. This mirrors "first resolved intent wins" literally at intent
-    selection, not at grounding success, so a creator's later, more specific
-    label request never silently overrides an earlier one mid-render.
+    Each resolved label intent gets one independently grounded row per clip.
+    Several requested labels for one clip must all ground; otherwise the
+    request is rejected instead of silently rendering an arbitrary subset.
     """
     if not resolved_intents:
         return []
@@ -11943,8 +11947,10 @@ def _grounded_context_labels(
         if media_id:
             media_ref_by_clip_id[media_id] = ref
 
-    claimed: dict[str, str] = {}  # clip_id -> intent_id that claimed it (first wins)
-    accepted: dict[str, dict[str, Any]] = {}
+    accepted: list[dict[str, Any]] = []
+    attempted_by_clip: dict[str, list[str]] = {}
+    failures_by_clip: dict[str, list[str]] = {}
+    seen_pairs: set[tuple[str, str]] = set()
     for intent in resolved_intents:
         if intent.op != "label" or intent.status != "resolved":
             continue
@@ -11952,12 +11958,11 @@ def _grounded_context_labels(
             clip_id = _resolve_clip_id_for_media_id(assignment.media_id, clip_id_to_gcs)
             if clip_id is None:
                 continue
-            existing_claim = claimed.get(clip_id)
-            if existing_claim is not None and existing_claim != intent.intent_id:
-                continue  # a strictly earlier intent already claimed this clip
-            claimed.setdefault(clip_id, intent.intent_id)
-            if clip_id in accepted:
+            pair = (clip_id, intent.intent_id)
+            if pair in seen_pairs:
                 continue
+            seen_pairs.add(pair)
+            attempted_by_clip.setdefault(clip_id, []).append(intent.intent_id)
 
             media_ref = media_ref_by_clip_id.get(clip_id)
             cached_answers: Any = None
@@ -11971,6 +11976,7 @@ def _grounded_context_labels(
             else:
                 meta = meta_by_clip_id.get(clip_id)
                 if meta is None:
+                    failures_by_clip.setdefault(clip_id, []).append(intent.intent_id)
                     continue
                 record = clip_record(
                     {
@@ -12034,15 +12040,27 @@ def _grounded_context_labels(
                     )
 
             if grounded is not None:
-                accepted[clip_id] = {
-                    "clip_id": clip_id,
-                    "sport": grounded.text,
-                    "source": "grounded_label",
-                    "grounding": grounded.grounding,
-                    "confidence": grounded.confidence,
-                    "intent_id": grounded.intent_id,
-                }
-    return list(accepted.values())
+                accepted.append(
+                    {
+                        "clip_id": clip_id,
+                        "sport": grounded.text,
+                        "source": "grounded_label",
+                        "grounding": grounded.grounding,
+                        "confidence": grounded.confidence,
+                        "intent_id": grounded.intent_id,
+                    }
+                )
+            else:
+                failures_by_clip.setdefault(clip_id, []).append(intent.intent_id)
+
+    for clip_id, intent_ids in attempted_by_clip.items():
+        failed_intent_ids = failures_by_clip.get(clip_id, [])
+        if len(intent_ids) > 1 and failed_intent_ids:
+            raise ValueError(
+                "Could not independently ground every requested context label "
+                f"for clip {clip_id!r}; failed intent ids: {', '.join(failed_intent_ids)}"
+            )
+    return accepted
 
 
 def _merge_context_label_rows(
@@ -12084,7 +12102,11 @@ def _context_sport_text_elements(
     )
     if not labels or len(steps) != len(resolved_plans):
         return []
-    by_clip_row = {row["clip_id"]: row for row in labels}
+    by_clip_rows: dict[str, list[dict[str, Any]]] = {}
+    for row in labels:
+        clip_id = row.get("clip_id")
+        if isinstance(clip_id, str):
+            by_clip_rows.setdefault(clip_id, []).append(row)
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
 
     elements: list[dict] = []
@@ -12098,9 +12120,23 @@ def _context_sport_text_elements(
         if duration_s <= 0:
             continue
         clip_id = str(getattr(step, "clip_id", "") or "")
-        row = by_clip_row.get(clip_id)
-        sport = row.get("sport") if row else None
+        rows = by_clip_rows.get(clip_id, [])
+        rendered_rows: list[dict[str, Any]] = []
+        seen_texts: set[str] = set()
+        for row in rows:
+            text = row.get("sport")
+            if not isinstance(text, str) or not text or text in seen_texts:
+                continue
+            seen_texts.add(text)
+            rendered_rows.append(row)
+        sport = " · ".join(str(row["sport"]) for row in rendered_rows)
         if sport:
+            if len(sport) > _CONTEXT_LABEL_COMBINED_MAX_CHARS:
+                raise ValueError(
+                    "Combined context labels for clip "
+                    f"{clip_id!r} exceed the {_CONTEXT_LABEL_COMBINED_MAX_CHARS}-character limit"
+                )
+            row = rendered_rows[0]
             # `source_params["source"]` stays the literal "context_sport" for
             # BOTH lanes -- it is the identity token
             # `text_element_source_identity()` uses to merge/pin these
@@ -12124,6 +12160,16 @@ def _context_sport_text_elements(
                         "intent_id": row.get("intent_id") or "",
                     }
                 )
+                if len(rows) > 1:
+                    source_params["context_label_provenance"] = [
+                        {
+                            "text": candidate["sport"],
+                            "grounding": candidate.get("grounding"),
+                            "confidence": candidate.get("confidence"),
+                            "intent_id": candidate.get("intent_id") or "",
+                        }
+                        for candidate in rows
+                    ]
             else:
                 source_params.update(
                     {
@@ -12142,8 +12188,9 @@ def _context_sport_text_elements(
                 # Keep the label bottom-right without pushing glyph bounds
                 # outside the safe canvas margin on landscape renders.
                 y_frac=0.86,
-                font_family="Inter-Bold",
+                font_family=("Inter" if row.get("source") == "grounded_label" else "Inter-Bold"),
                 size_class="small",
+                max_width_frac=0.72 if row.get("source") == "grounded_label" else None,
                 color="#FFFFFF",
                 highlight_color="#FFFFFF",
                 alignment="right",
