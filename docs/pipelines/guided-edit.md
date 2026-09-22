@@ -41,8 +41,8 @@ is an optional advanced tool for creators who want to shape the edit before buil
    instead of failing schema validation trying to stretch it. Ordinary narrated guided stories
    without quick-photo timing instead use `guided_story_capacity_s`: a still may hold for the
    remaining narration, and the strict compiler validates the selected sources against that exact
-   duration. Footage under 3s is infeasible for a guided story — the agent is never called; the
-   attempt fails with `guided_edit_infeasible` naming the actual footage length.
+   duration. When the applicable capacity is under 3s, the agent is never called; the attempt
+   fails with `guided_edit_infeasible` naming the available duration.
    If guided-story or fast-montage planning terminates after its bounded retries, the task builds a
    neutral deterministic proposal from the complete owned set and asks the strict renderer to
    validate it before saving or auto-approving it. Fast-cut recovery uses distinct,
