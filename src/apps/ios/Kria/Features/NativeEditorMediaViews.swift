@@ -197,7 +197,7 @@ struct NativeVideoPreview: View {
         let textReady = session.textInteractionFrame.map {
             $0.element == selectedText && abs($0.time - clock.currentTime) < 0.01
         } ?? false
-        let target = min(clock.currentTime, max(0, session.duration - 1.0 / 600))
+        let target = min(clock.currentTime, max(0, session.playbackDuration - 1.0 / 600))
         let stillReady = !session.isPlaying && session.scrubPreviewFrame != nil
             && session.scrubPreviewTime.map { abs($0 - target) < 0.05 } == true
         return "liveTextSamples:\(liveTextSampleCount);liveTextReady:\(textReady);stillFrameReady:\(stillReady)"
@@ -1036,7 +1036,7 @@ struct NativeMiniStrip: View {
         // The rendered asset (or the server's expected_duration_s) owns the
         // transport boundary. Stale lane ends must not make the clock promise
         // seconds that the player cannot show.
-        max(0.1, session.duration)
+        max(0.1, session.playbackDuration)
     }
     private var documentCaptionsEnabled: Bool {
         nativeBool(session.document.captionMeta["enabled"]) ?? !session.document.captionCues.isEmpty
@@ -1327,7 +1327,7 @@ struct NativeMiniStrip: View {
     private func originalAudioLane(playheadX: CGFloat) -> some View {
         GeometryReader { viewport in
             let start = max(0, playheadX - CGFloat(clock.currentTime) * pixelsPerSecond)
-            let end = min(viewport.size.width, playheadX + CGFloat(timelineDuration - clock.currentTime) * pixelsPerSecond)
+            let end = min(viewport.size.width, playheadX + CGFloat(session.duration - clock.currentTime) * pixelsPerSecond)
             Label("Original audio", systemImage: "waveform")
                 .font(KriaFont.body(11))
                 .lineLimit(1)

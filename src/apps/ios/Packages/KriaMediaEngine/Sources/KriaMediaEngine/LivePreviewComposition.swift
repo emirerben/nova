@@ -19,10 +19,10 @@ public struct LivePreviewExportSnapshot: Sendable {
     public let preview: PreviewComposition
     private var assetURLs: [String: URL]
 
-    public init(recipe: EditRecipe, assetURLs: [String: URL]) async throws {
+    public init(recipe: EditRecipe, assetURLs: [String: URL], branding: KriaBranding.Options = .none) async throws {
         self.recipe = recipe
         self.assetURLs = assetURLs
-        self.preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: assetURLs)
+        self.preview = try await AVPlayerPreviewComposer(branding: branding).makePreview(recipe: recipe, assetURLs: assetURLs)
     }
 
     /// Freeze the inputs that own the visible composition before an async export.

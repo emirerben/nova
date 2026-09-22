@@ -656,6 +656,42 @@ final class NativeEditorSessionTests: XCTestCase {
         await preparation.value
     }
 
+    func testFirstSourcePreviewIncludesBrandOutroWithoutChangingEditableClips() async throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        let originalClips = session.document.clips
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+
+        XCTAssertTrue(session.hasSourcePreview)
+        let item = try XCTUnwrap(session.player?.currentItem)
+        let previewDuration = try await item.asset.load(.duration).seconds
+        let outro = try await AVURLAsset(url: XCTUnwrap(KriaBranding.outroURL())).load(.duration).seconds
+        XCTAssertEqual(previewDuration, session.duration + outro, accuracy: 0.01)
+        XCTAssertEqual(session.playbackDuration, previewDuration, accuracy: 0.01)
+        XCTAssertEqual(session.document.clips, originalClips)
+        XCTAssertFalse(session.hasUnsavedChanges)
+
+        // Scrubbing and resuming inside the outro must not clamp to the last
+        // editable frame or restart playback at zero.
+        let outroTime = session.duration + outro / 2
+        session.seek(to: outroTime)
+        XCTAssertEqual(session.currentTime, outroTime, accuracy: 0.001)
+        XCTAssertEqual(session.timelineTime(for: 100, width: 100), previewDuration, accuracy: 0.01)
+        for _ in 0..<100 where (session.scrubPreviewTime ?? 0) <= session.duration {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertGreaterThan(try XCTUnwrap(session.scrubPreviewTime), session.duration)
+        session.togglePlayback()
+        XCTAssertGreaterThan(session.currentTime, session.duration)
+        session.pausePlayback()
+
+        // Starting an authored text layer from the tail stays inside the edit.
+        session.seek(to: outroTime)
+        session.beginTextCreation()
+        XCTAssertLessThanOrEqual(try XCTUnwrap(session.pendingText).endS, session.duration)
+        session.cancelTextCreation()
+    }
+
     func testDisplayedSourcePreviewExportsAPlayableVideo() async throws {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
         let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
@@ -666,14 +702,13 @@ final class NativeEditorSessionTests: XCTestCase {
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: exported.fileURL.path))
         // This is the file the user saves to Photos, so it is a published
-        // video and carries the brand outro after the edit. `session.duration`
-        // is the editor's own timeline, which deliberately does not include it
-        // — branding is added by the exporter, not by the composition the
-        // creator scrubs.
+        // video and carries exactly the same outro as the first preview.
+        // The editable duration stays separate from the branded playback.
         let outroURL = try XCTUnwrap(KriaBranding.outroURL())
         let outro = try await AVURLAsset(url: outroURL).load(.duration).seconds
         let duration = try await AVURLAsset(url: exported.fileURL).load(.duration).seconds
         XCTAssertEqual(duration, session.duration + outro, accuracy: 0.1)
+        XCTAssertEqual(duration, session.playbackDuration, accuracy: 0.1)
     }
 
     func testProjectSessionUsesFreshPlaybackHandoffBeforeHydration() throws {

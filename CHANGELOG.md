@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.140.0] - 2026-09-22
+
+### Fixed
+- fix(ios): show Kria branding in the first editor preview (#1155) <!-- release-pr: 1155 -->
+
 ## [0.76.139.0] - 2026-09-22
 
 ### Changed
