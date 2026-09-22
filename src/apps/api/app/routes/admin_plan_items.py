@@ -42,7 +42,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from app.database import get_db
-from app.models import Job, PlanItem, PlanItemAsset
+from app.models import AgentRun, Job, PlanItem, PlanItemAsset
+from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
 from app.routes.admin import _require_admin
 from app.routes.plan_items import derive_item_status
 from app.schemas.edit_proposal import parse_edit_proposal
@@ -213,6 +214,22 @@ class PlanItemDebugResponse(BaseModel):
     edit_proposal_raw_keys: list[str] | None = None
 
 
+class ProposalTraceResponse(BaseModel):
+    """Sensitive, admin-only proposal planner trace.
+
+    This intentionally lives apart from the redacted ``/debug`` snapshot:
+    raw agent I/O can include model-generated semantic proposal content and
+    must only be loaded on an explicit operator diagnostic request.
+    """
+
+    item_id: str
+    direction: str | None = None
+    prompt_version: str | None = None
+    planning_diagnostics: dict[str, Any] | None = None
+    agent_runs: list[AgentRunPayload]
+    agent_runs_has_more: bool = False
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -310,7 +327,63 @@ def _edit_proposal_debug_payload(raw: Any) -> EditProposalDebugPayload | None:
     )
 
 
+def _proposal_trace_metadata(raw: Any) -> tuple[str | None, str | None, dict[str, Any] | None]:
+    """Extract operator diagnostics without coupling this route to a schema rollout.
+
+    ``planning_diagnostics`` was introduced after deployed proposal envelopes
+    already existed, so older schema versions simply return ``None`` here.
+    """
+    proposal = parse_edit_proposal(raw)
+    if proposal is None:
+        return None, None, None
+    diagnostics = getattr(proposal, "planning_diagnostics", None)
+    if not isinstance(diagnostics, dict):
+        diagnostics = None
+    prompt_version = diagnostics.get("prompt_version") if diagnostics else None
+    return proposal.brief.direction, prompt_version, diagnostics
+
+
 # ── Endpoint ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/{item_id}/proposal-trace", response_model=ProposalTraceResponse)
+async def get_plan_item_proposal_trace(
+    item_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_require_admin),
+) -> ProposalTraceResponse:
+    """Return latest pre-render planner runs and scheduler diagnostics.
+
+    The cap prevents an unusual retry storm from returning unbounded raw model
+    output in one response. Rows are newest first so rejected/schema-failed
+    semantic output appears immediately to the operator.
+    """
+    try:
+        item_uuid = uuid.UUID(item_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
+
+    item_res = await db.execute(select(PlanItem).where(PlanItem.id == item_uuid))
+    item = item_res.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
+
+    runs_res = await db.execute(
+        select(AgentRun)
+        .where(AgentRun.plan_item_id == item_uuid)
+        .order_by(AgentRun.created_at.desc())
+        .limit(11)
+    )
+    fetched_runs = list(runs_res.scalars().all())
+    direction, prompt_version, diagnostics = _proposal_trace_metadata(item.edit_proposal)
+    return ProposalTraceResponse(
+        item_id=str(item.id),
+        direction=direction,
+        prompt_version=prompt_version,
+        planning_diagnostics=diagnostics,
+        agent_runs=[agent_run_to_payload(run) for run in fetched_runs[:10]],
+        agent_runs_has_more=len(fetched_runs) > 10,
+    )
 
 
 @router.get("/{item_id}/debug", response_model=PlanItemDebugResponse)

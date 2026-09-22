@@ -42,10 +42,65 @@ private actor SessionPublisher: DeviceRenderPublishing {
     }
 }
 
+private actor PausedSessionPublisher: DeviceRenderPublishing {
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private(set) var publishStarted = false
+
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
+
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+        publishStarted = true
+        await withCheckedContinuation { continuation in releaseContinuation = continuation }
+        return .published
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
 private actor SessionRequest {
     var request: DeviceRenderRequest
     init(_ request: DeviceRenderRequest) { self.request = request }
     func set(_ request: DeviceRenderRequest) { self.request = request }
+}
+
+private actor SessionStatus {
+    var phase: String
+    var request: DeviceRenderRequest
+    private(set) var retryCalls = 0
+
+    init(phase: String, request: DeviceRenderRequest) {
+        self.phase = phase
+        self.request = request
+    }
+
+    func set(phase: String, request: DeviceRenderRequest) {
+        self.phase = phase
+        self.request = request
+    }
+
+    func retry(to request: DeviceRenderRequest) {
+        retryCalls += 1
+        phase = "awaiting_device"
+        self.request = request
+    }
+}
+
+private actor RetryGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var waiting = false
+
+    func wait() async {
+        waiting = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
 }
 
 @MainActor final class DeviceRenderSessionTests: XCTestCase {
@@ -67,6 +122,7 @@ private actor SessionRequest {
         let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
         await sessions.reconcile(key, capabilities: .disabled)
         XCTAssertEqual(sessions.presentations[key]?.phase, .needsAttention)
+        XCTAssertFalse(sessions.presentations[key]?.requiresServerRetry ?? true)
         let calls = await exporter.calls
         XCTAssertEqual(calls, 0)
     }
@@ -86,6 +142,7 @@ private actor SessionRequest {
         XCTAssertEqual(saved.phase, .localReady)
         await sessions.reconcile(key, capabilities: .disabled)
         XCTAssertEqual(sessions.presentations[key]?.localFile, saved.outputURL)
+        XCTAssertFalse(sessions.presentations[key]?.requiresServerRetry ?? true)
         await publisher.fail(false)
         await sessions.reconcile(key, capabilities: enabled, retry: true)
         await coordinator.waitUntilIdle()
@@ -96,6 +153,139 @@ private actor SessionRequest {
         XCTAssertEqual(saved.outputURL, synced.outputURL)
         let calls = await exporter.calls
         XCTAssertEqual(calls, 1)
+        await sessions.stopAll()
+    }
+
+    func testServerNeedsAttentionWithLocalOutputMintsFreshIdentityBeforeRetry() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let first = request(job)
+        let second = DeviceRenderRequest(
+            identity: DeviceRenderIdentity(jobID: job, variantID: "first", recipeRevision: 2, recipeDigest: String(repeating: "b", count: 64)),
+            recipe: first.recipe
+        )
+        let exporter = SessionExport()
+        let status = SessionStatus(phase: "awaiting_device", request: first)
+        let sessions = DeviceRenderSessions(
+            fetch: { _, _ in DeviceRenderStatusResponse(phase: await status.phase, request: await status.request) },
+            factory: { _, request in
+                try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: SessionPublisher())
+            },
+            retryFailure: { _, _ in
+                await status.retry(to: second)
+                let data = Data("""
+                {"identity":{"jobId":"\(second.identity.jobID.uuidString)","variantId":"first","recipeRevision":2,"recipeDigest":"\(second.identity.recipeDigest)"},"phase":"awaiting_device"}
+                """.utf8)
+                return try! JSONDecoder().decode(DeviceRenderRetryAck.self, from: data)
+            }
+        )
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+
+        await sessions.reconcile(key, capabilities: enabled)
+        for _ in 0..<100 {
+            if sessions.presentations[key]?.phase == .synced { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let initialPresentation = sessions.presentations[key]
+        let initialReceipt = try XCTUnwrap(initialPresentation)
+        XCTAssertEqual(initialReceipt.phase, .synced)
+
+        await status.set(phase: "needs_attention", request: first)
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertEqual(sessions.presentations[key]?.phase, .localReady)
+        XCTAssertTrue(sessions.presentations[key]?.requiresServerRetry == true)
+
+        let retried = await sessions.retryNeedsAttention(key)
+        let retryCalls = await status.retryCalls
+        XCTAssertTrue(retried)
+        XCTAssertEqual(retryCalls, 1)
+        XCTAssertEqual(sessions.presentations[key]?.phase, .preparing)
+
+        await sessions.reconcile(key, capabilities: enabled)
+        for _ in 0..<100 {
+            if sessions.presentations[key]?.phase == .synced { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let refreshedPresentation = sessions.presentations[key]
+        let refreshed = try XCTUnwrap(refreshedPresentation)
+        XCTAssertEqual(refreshed.phase, .synced)
+        XCTAssertFalse(refreshed.requiresServerRetry)
+        await sessions.stopAll()
+    }
+
+    func testNeedsAttentionCancelsObserverWithoutLosingServerRetryRequirement() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let first = request(job)
+        let publisher = PausedSessionPublisher()
+        let status = SessionStatus(phase: "awaiting_device", request: first)
+        let sessions = DeviceRenderSessions(
+            fetch: { _, _ in DeviceRenderStatusResponse(phase: await status.phase, request: await status.request) },
+            factory: { _, _ in
+                try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: publisher)
+            }
+        )
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+
+        await sessions.reconcile(key, capabilities: enabled)
+        for _ in 0..<100 {
+            if await publisher.publishStarted { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await status.set(phase: "needs_attention", request: first)
+        await sessions.reconcile(key, capabilities: enabled)
+
+        XCTAssertEqual(sessions.presentations[key]?.phase, .localReady)
+        XCTAssertTrue(sessions.presentations[key]?.requiresServerRetry == true)
+        await publisher.release()
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(sessions.presentations[key]?.requiresServerRetry == true)
+        await sessions.stopAll()
+    }
+
+    func testStaleRetryCompletionDoesNotClearNewerReconciledRequest() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let first = request(job)
+        let second = DeviceRenderRequest(
+            identity: DeviceRenderIdentity(jobID: job, variantID: "first", recipeRevision: 2, recipeDigest: String(repeating: "b", count: 64)),
+            recipe: first.recipe
+        )
+        let status = SessionStatus(phase: "needs_attention", request: first)
+        let gate = RetryGate()
+        let sessions = DeviceRenderSessions(
+            fetch: { _, _ in DeviceRenderStatusResponse(phase: await status.phase, request: await status.request) },
+            factory: { _, _ in
+                try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: SessionPublisher())
+            },
+            retryFailure: { _, _ in
+                await gate.wait()
+                let data = Data("""
+                {"identity":{"jobId":"\(second.identity.jobID.uuidString)","variantId":"first","recipeRevision":2,"recipeDigest":"\(second.identity.recipeDigest)"},"phase":"awaiting_device"}
+                """.utf8)
+                return try! JSONDecoder().decode(DeviceRenderRetryAck.self, from: data)
+            }
+        )
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+
+        await sessions.reconcile(key, capabilities: .disabled)
+        XCTAssertEqual(sessions.request(for: key), first)
+        let retryTask = Task { await sessions.retryNeedsAttention(key) }
+        for _ in 0..<100 {
+            if await gate.waiting { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        await status.set(phase: "needs_attention", request: second)
+        await sessions.reconcile(key, capabilities: .disabled)
+        XCTAssertEqual(sessions.request(for: key), second)
+        let presentationBeforeRelease = try XCTUnwrap(sessions.presentations[key])
+
+        await gate.release()
+        let retrySucceeded = await retryTask.value
+        XCTAssertFalse(retrySucceeded)
+        XCTAssertEqual(sessions.request(for: key), second)
+        XCTAssertEqual(sessions.presentations[key], presentationBeforeRelease)
         await sessions.stopAll()
     }
 

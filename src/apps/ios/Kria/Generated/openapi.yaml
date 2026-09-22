@@ -1404,6 +1404,12 @@
             "title": "Phase",
             "type": "string"
           },
+          "published_generation": {
+            "default": null,
+            "nullable": true,
+            "title": "Published Generation",
+            "type": "string"
+          },
           "reason": {
             "default": null,
             "nullable": true,

@@ -24,6 +24,14 @@ struct DeviceRenderPresentation: Equatable, Sendable {
     /// "insufficient_storage"); nil when the server hasn't reported one yet
     /// or the failure is still purely local.
     var reasonCode: String?
+    /// The server has invalidated this request and requires a fresh identity
+    /// before another device attempt. This is independent of `phase`: a
+    /// local MP4 can remain useful (`.localReady`) while the server still
+    /// needs `/device-render/retry`.
+    var requiresServerRetry: Bool = false
+    /// Generation published by the server for the authoritative device attempt.
+    /// This is populated only for a server `published` response.
+    var publishedGeneration: String?
 }
 
 /// Short label for the editor's top-of-preview device-render affordance
@@ -106,17 +114,20 @@ enum DeviceRenderButtonTitle {
             let saved = await coordinator.snapshot()
             guard tickets[key] == ticket else { return }
             if status.phase == "published" {
-                presentations[key] = DeviceRenderPresentation(phase: .synced, localFile: saved?.request == request ? saved?.outputURL : nil)
+                observations.removeValue(forKey: key)?.cancel()
+                presentations[key] = DeviceRenderPresentation(phase: .synced, localFile: saved?.request == request ? saved?.outputURL : nil, publishedGeneration: status.publishedGeneration)
                 return
             }
             let decision = Self.decision(request.recipe, capabilities: capabilities)
             if status.phase == "needs_attention" || decision.route != .local {
                 // Preserve a finished export and its receipt when rollout is paused.
+                observations.removeValue(forKey: key)?.cancel()
                 presentations[key] = DeviceRenderPresentation(
                     phase: saved?.outputURL == nil ? .needsAttention : .localReady,
                     localFile: saved?.request == request ? saved?.outputURL : nil,
                     message: status.reason ?? decision.reason,
-                    reasonCode: status.reasonCode
+                    reasonCode: status.reasonCode,
+                    requiresServerRetry: status.phase == "needs_attention"
                 )
                 return
             }
@@ -140,6 +151,10 @@ enum DeviceRenderButtonTitle {
         }
     }
 
+    /// The request identity last accepted by reconciliation. The editor uses
+    /// it to fence a ready response against another device attempt.
+    func request(for key: DeviceRenderKey) -> DeviceRenderRequest? { requests[key] }
+
     /// Calls the server's `/device-render/retry` endpoint for a `needsAttention`
     /// identity, which mints a fresh identity (incremented recipe revision) and
     /// moves the server back to `awaiting_device`. Drops the stale local
@@ -149,13 +164,22 @@ enum DeviceRenderButtonTitle {
         guard let request = requests[key] else { return false }
         do {
             _ = try await retryFailure(key.jobID, request.identity)
+            // A reconcile/save may have installed a newer request while the
+            // retry was in flight. Its coordinator and receipt now own this
+            // key; a stale retry completion must not tear them down.
+            guard requests[key] == request else { return false }
             observations.removeValue(forKey: key)?.cancel()
-            if let previous = entries[key] { try? await previous.cancel() }
-            entries.removeValue(forKey: key)
+            let previous = entries.removeValue(forKey: key)
             requests.removeValue(forKey: key)
+            // Invalidate a fetch that was already in flight before the retry
+            // completed. Otherwise its stale status can reinstall the old
+            // request after this method clears the maps.
+            tickets[key] = nil
             presentations[key] = DeviceRenderPresentation(phase: .preparing)
+            if let previous { try? await previous.cancel() }
             return true
         } catch {
+            guard requests[key] == request else { return false }
             var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .needsAttention)
             presentation.message = RequestFailureCause(error) == .connection
                 ? "Kria couldn’t retry this edit. Check your connection and try again."

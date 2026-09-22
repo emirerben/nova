@@ -1,0 +1,139 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.12",
+  "input": {
+    "idea": "Corfu architecture",
+    "theme": "Walking through town",
+    "direction": "guided_story",
+    "goal": "Show how the streets, buildings, and small details relate",
+    "pace": "balanced",
+    "target_duration_s": 24,
+    "media": [
+      {
+        "media_id": "a1",
+        "lane": "clip",
+        "kind": "video",
+        "subject": "walking into old town"
+      },
+      {
+        "media_id": "a2",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "stone arch"
+      },
+      {
+        "media_id": "a3",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "colorful shutters"
+      },
+      {
+        "media_id": "a4",
+        "lane": "asset",
+        "kind": "video",
+        "subject": "narrow street pan"
+      },
+      {
+        "media_id": "a5",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "balcony details"
+      },
+      {
+        "media_id": "a6",
+        "lane": "asset",
+        "kind": "video",
+        "subject": "open square"
+      },
+      {
+        "media_id": "a7",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "weathered doorway"
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"How Corfu town unfolds\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"Streets\", \"thought\": \"The route moves from tight lanes into open space.\", \"role\": \"hook\", \"weight\": 0.4, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"a1\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"a4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"a6\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-2\", \"topic\": \"Buildings\", \"thought\": \"Stone shapes and bright shutters create the larger rhythm.\", \"role\": \"build\", \"weight\": 0.3, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"a2\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"a3\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-3\", \"topic\": \"Details\", \"thought\": \"Balconies and doorways reward a slower look.\", \"role\": \"payoff\", \"weight\": 0.3, \"layout\": \"supporting_card\", \"sources\": [{\"media_id\": \"a5\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"a7\", \"candidate_index\": null, \"weight\": 1.0}]}], \"montage_audio\": null, \"text_bindings\": [], \"repairs\": []}",
+  "output": {
+    "schema_version": 1,
+    "title": "How Corfu town unfolds",
+    "chapters": [
+      {
+        "chapter_id": "chapter-1",
+        "topic": "Streets",
+        "thought": "The route moves from tight lanes into open space.",
+        "role": "hook",
+        "weight": 0.4,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "a1",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "a4",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "a6",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-2",
+        "topic": "Buildings",
+        "thought": "Stone shapes and bright shutters create the larger rhythm.",
+        "role": "build",
+        "weight": 0.3,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "a2",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "a3",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-3",
+        "topic": "Details",
+        "thought": "Balconies and doorways reward a slower look.",
+        "role": "payoff",
+        "weight": 0.3,
+        "layout": "supporting_card",
+        "sources": [
+          {
+            "media_id": "a5",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "a7",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      }
+    ],
+    "montage_audio": null,
+    "text_bindings": [],
+    "repairs": []
+  },
+  "meta": {
+    "source": "legacy_fixture_semantic_projection",
+    "expected_topics": [
+      "streets",
+      "buildings",
+      "details"
+    ]
+  }
+}

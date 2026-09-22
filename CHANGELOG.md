@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.122.0] - 2026-09-22
+
+### Changed
+- fix: reject ambiguous classic clip label mappings (KRI-158) (#1136) <!-- release-pr: 1136 -->
+
+## [0.76.121.0] - 2026-09-22
+
+### Changed
+- feat(planner): separate semantic proposals from exact frame scheduling (KRI-133) (#1131) <!-- release-pr: 1131 -->
+
+## [0.76.120.0] - 2026-09-22
+
+### Fixed
+- fix: make native text saves and device render retries reliable (KRI-153) (#1134) <!-- release-pr: 1134 -->
+
 ## [0.76.119.0] - 2026-09-22
 
 ### Changed

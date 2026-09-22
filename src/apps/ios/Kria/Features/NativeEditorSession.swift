@@ -30,6 +30,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
     case saved
     case previewPending
     case renderRetryNeeded(String)
+    case deviceRenderRetryNeeded(String)
     case conflict
     case loadFailed(String)
     case refreshFailed(String)
@@ -320,6 +321,7 @@ struct NativeEditorTemporaryVideo {
     let operations: any EditorOperations
     @Published private(set) var rendersOnDevice = false
     private var deviceRenders: DeviceRenderSessions?
+    private var pendingDeviceRenderIdentity: DeviceRenderIdentity?
     private var guidedRevisionNumber: Int?
     var deviceRenderKey: DeviceRenderKey? {
         guard rendersOnDevice, let jobID, let variantKey else { return nil }
@@ -3187,9 +3189,13 @@ struct NativeEditorTemporaryVideo {
                 undoStack.removeAll(); redoStack.removeAll()
             }
             if response.ok {
-                pendingRenderRetrySections.removeAll()
+                // The commit is durable even while its render is pending. Keep
+                // the acknowledged sections retryable until a matching ready
+                // generation is observed.
+                pendingRenderRetrySections = acknowledged
                 saveState = .previewPending
                 await refreshDeviceRender()
+                pendingDeviceRenderIdentity = deviceRenderKey.flatMap { deviceRenders?.request(for: $0)?.identity }
                 startPreviewRefresh(generation: response.generation)
             } else {
                 pendingRenderRetrySections = acknowledged
@@ -3989,21 +3995,24 @@ struct NativeEditorTemporaryVideo {
                     }
                     continue
                 }
-                let currentGeneration = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
-                guard currentGeneration == generation else { continue }
-                let status = variant["render_status"]?.stringValue
-                if status == "ready", let output = variant["output_url"]?.stringValue, let url = URL(string: output) {
-                    guard let self else { return }
-                    self.rebaseCleanDraft(from: variant)
-                    self.installFinishedRenderPlayer(url: url, preferredDuration: self.authoritativeDuration)
-                    self.pendingPreviewGeneration = nil
-                    self.saveState = .saved
-                    return
+                guard !Task.isCancelled else { return }
+                guard let self, self.pendingPreviewGeneration == generation else { return }
+                // Device failures are reported on the authoritative variant;
+                // only reconcile the local renderer for that terminal status.
+                // Save-time reconciliation already covers the normal path,
+                // while this branch lets a later server failure reach the
+                // device retry affordance without doing a full reconcile on
+                // every poll tick.
+                let variantGeneration = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
+                let refreshDevice = self.deviceRenderKey != nil && (
+                    variant["render_status"]?.stringValue == "needs_attention"
+                    || (variant["render_status"]?.stringValue == "ready" && variantGeneration != generation)
+                )
+                if refreshDevice {
+                    await self.refreshDeviceRender()
+                    guard !Task.isCancelled, self.pendingPreviewGeneration == generation else { return }
                 }
-                if status == "failed" {
-                    self?.saveState = .previewFailed("Your edit is saved, but its new preview could not be rendered.")
-                    return
-                }
+                if self.applyPreviewVariant(variant, generation: generation) { return }
             }
             guard !Task.isCancelled, let self, self.pendingPreviewGeneration == generation else { return }
             self.saveState = .previewFailed(
@@ -4018,6 +4027,60 @@ struct NativeEditorTemporaryVideo {
 
     func retryPreviewRefresh() {
         guard let generation = pendingPreviewGeneration else { return }
+        saveState = .previewPending
+        startPreviewRefresh(generation: generation)
+    }
+
+    /// Applies one status response from the render-generation poll. Kept
+    /// internal so tests can cover terminal states without waiting five
+    /// minutes for the production poll loop.
+    @discardableResult
+    func applyPreviewVariant(_ variant: [String: JSONValue], generation: String) -> Bool {
+        guard pendingPreviewGeneration == generation else { return false }
+        let currentGeneration = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
+        guard let currentGeneration else { return false }
+        if currentGeneration != generation {
+            guard let key = deviceRenderKey,
+                  variant["render_status"]?.stringValue == "ready",
+                  let presentation = deviceRenders?.presentations[key],
+                  presentation.publishedGeneration == currentGeneration,
+                  let expectedIdentity = pendingDeviceRenderIdentity,
+                  deviceRenders?.request(for: key)?.identity == expectedIdentity else { return false }
+        }
+        if let key = deviceRenderKey,
+           let presentation = deviceRenders?.presentations[key],
+           presentation.requiresServerRetry {
+            saveState = .deviceRenderRetryNeeded(
+                presentation.message ?? "Your edit is saved, but this iPhone needs to retry rendering it."
+            )
+            return true
+        }
+        let status = variant["render_status"]?.stringValue
+        if status == "ready", let output = variant["output_url"]?.stringValue, let url = URL(string: output) {
+            if !rebaseCleanDraft(from: variant) {
+                rebaseGenerationPreservingLocalEdits(currentGeneration)
+            }
+            installFinishedRenderPlayer(url: url, preferredDuration: authoritativeDuration)
+            pendingRenderRetrySections.removeAll()
+            pendingPreviewGeneration = nil
+            saveState = .saved
+            return true
+        }
+        if status == "failed" {
+            saveState = .renderRetryNeeded("Your edit is saved, but its preview render failed. You can retry it safely.")
+            return true
+        }
+        return false
+    }
+
+    func retryDeviceRender() async {
+        guard !isSaving, let key = deviceRenderKey, let deviceRenders,
+              let generation = pendingPreviewGeneration else { return }
+        let retried = await deviceRenders.retryNeedsAttention(key)
+        guard retried, !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
+        await refreshDeviceRender(retry: true)
+        guard !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
+        pendingDeviceRenderIdentity = deviceRenders.request(for: key)?.identity
         saveState = .previewPending
         startPreviewRefresh(generation: generation)
     }
@@ -4078,6 +4141,24 @@ struct NativeEditorTemporaryVideo {
         setAuthoritativeDuration(Self.number(variant["duration_s"]))
         refreshDuration()
         return true
+    }
+
+    /// Advances renderer ownership after a device publication while retaining
+    /// local follow-up edits. The clean baseline and history snapshots must
+    /// move with the document or the next commit will use the old generation.
+    private func rebaseGenerationPreservingLocalEdits(_ generation: String) {
+        document.revision.baseGeneration = generation
+        cleanDocument.revision.baseGeneration = generation
+        undoStack = undoStack.map { snapshot in
+            var value = snapshot
+            value.revision.baseGeneration = generation
+            return value
+        }
+        redoStack = redoStack.map { snapshot in
+            var value = snapshot
+            value.revision.baseGeneration = generation
+            return value
+        }
     }
 
     private func selectionExists(_ value: EditorSelection) -> Bool {

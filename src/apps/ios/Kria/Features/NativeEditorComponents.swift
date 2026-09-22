@@ -93,6 +93,16 @@ struct NativeEditorSaveBanner: View {
                     .background(KriaColor.softZinc)
                     .accessibilityIdentifier("native-editor-retry-render")
             }
+        case .deviceRenderRetryNeeded(let message):
+            VStack(spacing: 0) {
+                banner(title: "Saved — iPhone render needs a retry", detail: message, systemImage: "arrow.clockwise", tint: .orange)
+                Button("Retry device render") { Task { await session.retryDeviceRender() } }
+                    .font(KriaFont.body(12).weight(.semibold))
+                    .foregroundStyle(KriaColor.ink)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(KriaColor.softZinc)
+                    .accessibilityIdentifier("native-editor-retry-device-render")
+            }
         case .refreshFailed(let message):
             banner(title: "Couldn’t refresh this edit", detail: message, systemImage: "arrow.clockwise", tint: .orange)
         case .loadFailed(let message):

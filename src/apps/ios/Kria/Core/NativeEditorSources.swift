@@ -466,7 +466,6 @@ extension KriaAPI {
     }
 }
 
-#if DEBUG
 /// Bounded device diagnostics; no URLs, tokens, content, or raw errors.
 enum NativePreviewDiagnostics {
     private static let lock = NSLock()
@@ -479,6 +478,7 @@ enum NativePreviewDiagnostics {
         events.append(fields.merging(["stage": stage, "time": ISO8601DateFormatter().string(from: Date())]) { _, value in value })
         if let data = try? JSONEncoder().encode(Array(events.suffix(40))) { try? data.write(to: url, options: .atomic) }
     }
+    #if DEBUG
     static func failure(_ stage: String, error: Error) {
         var fields = ["type": String(describing: type(of: error)), "domain": (error as NSError).domain, "code": String((error as NSError).code)]
         if let feature = error as? NativePreviewFeatureError { fields["feature"] = feature.feature }
@@ -506,8 +506,8 @@ enum NativePreviewDiagnostics {
         }
         record(stage, fields: fields)
     }
+    #endif
 }
-#endif
 
 #if DEBUG
 @MainActor enum NativeLibraryAudit {

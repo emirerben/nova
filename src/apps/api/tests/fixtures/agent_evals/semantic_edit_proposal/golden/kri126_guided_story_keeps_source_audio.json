@@ -1,0 +1,454 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.12",
+  "input": {
+    "idea": "",
+    "theme": "",
+    "direction": "guided_story",
+    "goal": "Open with title over park footage of individuals relaxing; Transition to active sports footage, grouped by sport; Include the creator's speech to camera; End with a sequence of the post-match pub celebration",
+    "creator_request": "Continue with 30 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say “post match pub”. Add an intro title saying “Emir Olympics London Edition”. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech",
+    "pace": "balanced",
+    "target_duration_s": 45,
+    "video_reuse_policy": "once",
+    "opening_title": "Emir Olympics London Edition",
+    "closing_title": "post match pub",
+    "montage_audio": {
+      "preserve_source_audio": true,
+      "preview_source_beds": false,
+      "source_media_ids": []
+    },
+    "media": [
+      {
+        "media_id": "clip-01.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 6.7,
+        "subject": "group of friends relaxing in a park",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-02.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 0.866667,
+        "subject": "man sitting on grass",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-03.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 2.833333,
+        "subject": "group of people posing",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-04.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 11.2,
+        "subject": "people playing football",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-05.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 6.466667,
+        "subject": "group of young adults",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-06.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.066667,
+        "subject": "people playing soccer",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-07.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 2.533333,
+        "subject": "people walking across a field",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-08.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 4.666667,
+        "subject": "group of people playing with balls",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-09.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 4.666667,
+        "subject": "group of friends relaxing on grass",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-10.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 1.3,
+        "subject": "young woman waving and smiling",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-11.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 6.7,
+        "subject": "group of friends on a field",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-12.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 7.333333,
+        "subject": "people in a park",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-13.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 1.833333,
+        "subject": "two men sitting on grass",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-14.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 2.5,
+        "subject": "person on grass using phone",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-15.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 4.6,
+        "subject": "woman on grass with phone",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-16.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 1.566667,
+        "subject": "people on field",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-17.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 1.933333,
+        "subject": "three young men sitting on grass",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-18.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 2.833333,
+        "subject": "group of friends",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-19.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 1.2,
+        "subject": "group of men on a field",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-20.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 13.166667,
+        "subject": "group of people playing soccer",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-21.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 3.733333,
+        "subject": "players on a football pitch",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-22.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 2.933333,
+        "subject": "people playing soccer",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-23.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 11.3,
+        "subject": "people playing field sport",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-24.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 8.733333,
+        "subject": "group playing soccer",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-25.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 2.533333,
+        "subject": "people walking on a field",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-26.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 6.466667,
+        "subject": "group of young adults",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-27.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 7.6,
+        "subject": "group playing soccer",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-28.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 3.4,
+        "subject": "people playing volleyball",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-29.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 1.2,
+        "subject": "woman on volleyball court",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      },
+      {
+        "media_id": "clip-30.mp4",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 2.166667,
+        "subject": "woman making funny faces",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": []
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"Emir Olympics London Edition\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"Park hangout\", \"thought\": \"Before the games, the park.\", \"role\": \"hook\", \"weight\": 0.2, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-01.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-09.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-11.mp4\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-2\", \"topic\": \"Football\", \"thought\": \"Football takes over the pitch.\", \"role\": \"build\", \"weight\": 0.3111111111111111, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-20.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-04.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-24.mp4\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-3\", \"topic\": \"Volleyball and field games\", \"thought\": \"Then the net goes up.\", \"role\": \"build\", \"weight\": 0.2, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-23.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-28.mp4\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-4\", \"topic\": \"Speech to camera\", \"thought\": \"A word from the host.\", \"role\": \"build\", \"weight\": 0.13333333333333333, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-05.mp4\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-5\", \"topic\": \"Post match pub\", \"thought\": \"Everyone ends up at the pub.\", \"role\": \"payoff\", \"weight\": 0.15555555555555556, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-26.mp4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-30.mp4\", \"candidate_index\": null, \"weight\": 1.0}]}], \"montage_audio\": {\"preserve_source_audio\": true, \"preview_source_beds\": false, \"source_media_ids\": []}, \"text_bindings\": [], \"repairs\": []}",
+  "output": {
+    "schema_version": 1,
+    "title": "Emir Olympics London Edition",
+    "chapters": [
+      {
+        "chapter_id": "chapter-1",
+        "topic": "Park hangout",
+        "thought": "Before the games, the park.",
+        "role": "hook",
+        "weight": 0.2,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip-01.mp4",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "clip-09.mp4",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "clip-11.mp4",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-2",
+        "topic": "Football",
+        "thought": "Football takes over the pitch.",
+        "role": "build",
+        "weight": 0.3111111111111111,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip-20.mp4",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "clip-04.mp4",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "clip-24.mp4",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-3",
+        "topic": "Volleyball and field games",
+        "thought": "Then the net goes up.",
+        "role": "build",
+        "weight": 0.2,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip-23.mp4",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "clip-28.mp4",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-4",
+        "topic": "Speech to camera",
+        "thought": "A word from the host.",
+        "role": "build",
+        "weight": 0.13333333333333333,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip-05.mp4",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-5",
+        "topic": "Post match pub",
+        "thought": "Everyone ends up at the pub.",
+        "role": "payoff",
+        "weight": 0.15555555555555556,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip-26.mp4",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "clip-30.mp4",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      }
+    ],
+    "montage_audio": {
+      "preserve_source_audio": true,
+      "preview_source_beds": false,
+      "source_media_ids": []
+    },
+    "text_bindings": [],
+    "repairs": []
+  },
+  "meta": {
+    "source": "legacy_fixture_semantic_projection",
+    "case": "KRI-126: 30-clip guided_story that keeps original audio (redacted prod input, job 506d2993)",
+    "contract": "a story-beat direction with montage_audio is authored in story_beats, never fast_cuts; an echoed montage_audio.source_media_ids list (13 ids here, over the 12-item schema cap) is coerced back to the requested empty list instead of crashing the planner into the deterministic fallback",
+    "expected_topics": [
+      "park",
+      "football",
+      "volleyball",
+      "speech",
+      "pub"
+    ]
+  }
+}

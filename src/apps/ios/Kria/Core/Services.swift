@@ -951,6 +951,14 @@ struct KriaAPI: KriaAPIClient {
             throw APIError.conflict(detail: ConflictDetail(detail))
         }
         guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 422, path.hasSuffix("/editor-commit") {
+                let saveError = EditorSaveError.from(responseData: data)
+                NativePreviewDiagnostics.record("editor-save-rejected", fields: [
+                    "status": "422",
+                    "code": saveError.diagnosticCode,
+                ])
+                throw saveError
+            }
             #if DEBUG
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
@@ -964,6 +972,81 @@ struct KriaAPI: KriaAPIClient {
         NotificationCenter.default.post(name: .kriaSessionExpired, object: nil)
     }
 }
+enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
+    case unsupportedPhoneEdit
+    case phoneRenderingUnavailable
+    case guidedStorySourceStale
+    case invalidTextSettings
+    case rejected
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedPhoneEdit:
+            "This text style or layout can’t be saved on this iPhone yet. Your edits are still here; adjust the style or size and try again."
+        case .phoneRenderingUnavailable:
+            "Rendering is temporarily unavailable. Your edits are still here."
+        case .guidedStorySourceStale:
+            "The source changed or is unavailable. Your edits are still here."
+        case .invalidTextSettings:
+            "Text settings are invalid. Your edits are still here; review text, style, and timing."
+        case .rejected:
+            "This save was rejected. Your edits are still here."
+        }
+    }
+
+    fileprivate var diagnosticCode: String {
+        switch self {
+        case .unsupportedPhoneEdit: "unsupported_phone_edit"
+        case .phoneRenderingUnavailable: "phone_rendering_unavailable"
+        case .guidedStorySourceStale: "guided_story_source_stale"
+        case .invalidTextSettings: "text_validation"
+        case .rejected: "unknown"
+        }
+    }
+
+    fileprivate static func from(responseData data: Data) -> Self {
+        guard let detail = (try? JSONDecoder().decode(EditorSaveErrorEnvelope.self, from: data))?.detail else { return .rejected }
+        switch detail {
+        case .code("unsupported_phone_edit"): return .unsupportedPhoneEdit
+        case .code("phone_rendering_unavailable"): return .phoneRenderingUnavailable
+        case .code("guided_story_source_stale"): return .guidedStorySourceStale
+        case .validation(let issues) where issues.contains(where: { $0.loc?.contains(.string("text_elements")) == true }):
+            return .invalidTextSettings
+        default: return .rejected
+        }
+    }
+}
+
+private struct EditorSaveErrorEnvelope: Decodable {
+    let detail: EditorSaveErrorDetail
+}
+
+private enum EditorSaveErrorDetail: Decodable {
+    case code(String)
+    case validation([EditorSaveValidationIssue])
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let code = try? container.decode(String.self) {
+            self = .code(code)
+        } else if let object = try? container.decode(EditorSaveErrorObject.self), let code = object.code {
+            self = .code(code)
+        } else if let issues = try? container.decode([EditorSaveValidationIssue].self) {
+            self = .validation(issues)
+        } else {
+            self = .code("")
+        }
+    }
+}
+
+private struct EditorSaveErrorObject: Decodable {
+    let code: String?
+}
+
+private struct EditorSaveValidationIssue: Decodable {
+    let loc: [JSONValue]?
+}
+
 private struct EmptyProjectResponse: Decodable {}
 private struct LibraryResponse: Decodable {
     let jobs: [LibraryJob]
