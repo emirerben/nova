@@ -333,7 +333,10 @@ def test_narrated_reported_speech_replay_parses_schedules_and_compiles() -> None
     from app.pipeline.guided_story import validate_proposal_compiles
     from app.services.semantic_edit_scheduler import schedule_semantic_edit
 
-    fixture_path = Path(__file__).resolve().parents[1] / "fixtures/narrative_quote_replay.json"
+    fixture_path = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures/agent_evals/semantic_edit_proposal/golden/narrated_reported_speech.json"
+    )
     replay = json.loads(fixture_path.read_text())
     creator_input = EditProposalAgentInput.model_validate(replay["input"])
     assert len(creator_input.media) == 10
