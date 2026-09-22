@@ -189,6 +189,26 @@ pure, nonisolated function so `NativeEditorIslandMetricsTests` can cover it
 without SwiftUI. The island itself always sits `bottomPadding` (6pt) above the
 real safe-area inset, never inside `bottomClearance`'s own padding budget.
 
+### Connected editor panels (KRI-148)
+
+Text, Captions, Visuals, and Sounds share one bottom-connected panel shell and
+one tool-rail selection. Opening a panel keeps the preview and rail geometry
+stable; the retained timeline remains visually present under the shell but is
+disabled for scrolling, hit testing, and accessibility while covered. The
+timeline is clipped to the available preview area while the keyboard is open,
+so text entry cannot let it paint over the source preview. Compact text presets
+use the current `Menu` control, and the text animation picker samples the
+media-engine animation phases from one shared display-link clock. Preview
+autoplay pauses for Reduce Motion and panel lifecycle changes, while manual
+play remains available.
+
+Panel-local authoring state is shared across panel switches so unfinished text
+card, motion composition, and music track ID inputs survive navigation. The
+outgoing panel flushes editing transactions before the next panel registers its
+cleanup, preventing a delayed `onDisappear` from clearing the replacement's
+state. Existing controls, session mutations, capability checks, undo behavior,
+and save contracts remain unchanged.
+
 ## Native chat creation (KRI-24)
 
 The capabilities endpoint advertises `formats`, per-role `media` limits,
