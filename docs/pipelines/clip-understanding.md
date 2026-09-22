@@ -68,14 +68,23 @@ pinned by prompt-hash and serializer tests).
 
 Flow (flag on):
 
-1. **Chat.** `MainCreatorAgent` emits `strategy.clip_intents`
-   (`app/schemas/clip_intents.py::ClipIntent`). It never authors per-clip answers
-   or label text; `creator_text` only carries the creator's exact words. The
-   sport regex in `_apply_explicit_render_intent` stops forcing `context_label`.
-   `resolved_clip_intents` is server-owned: every entry point that accepts a
-   model-authored strategy clears it (creator route, Kria `apply_strategy`), and
-   both fields are hidden from derived JSON schemas (`SkipJsonSchema`) so the
-   Kria tool contract is unchanged.
+1. **Inventory the complete creator request.** `ClipIntentPlannerAgent`
+   (`app/agents/clip_intent_planner.py`) independently extracts all requested
+   clip operations, even when `MainCreatorAgent` omits every `clip_intents`
+   entry. It reads creator-authored history plus the latest correction; unrelated
+   follow-ups preserve prior requirements. Every operation must cite exact creator
+   wording. Location, activity, dish, sport, and other attributes use the same
+   open-vocabulary contract, with no category allowlist. Labels, grouping, order,
+   inclusion, and chapter captions remain separate operations. More than six
+   operations or ambiguous instructions require clarification, never a subset.
+   The generic inventory owns labels when enabled; the sports regex is legacy-only.
+   `app/services/clip_intent_planning.py` forwards the complete inventory for
+   grounding. Model-authored `resolved_clip_intents` remains untrusted.
+   Both the classic creator route and Kria inventory instructions before proposing
+   an executable plan. Kria accepts only server-resolved intents, persists fresh
+   vision answers, and returns a question/recovery response for incomplete resolution.
+   Dynamic partitioning (for example, separate chapters for every discovered city)
+   asks for concrete groups instead of silently treating every clip as one group.
 2. **Resolve, inside the chat turn** (`app/services/clip_intent_resolution.py`,
    DB-free, the session row lock is released around it): `ClipRequestResolverAgent`
    (text-only, media aliases, id set-membership) matches intents to the shared
@@ -193,3 +202,14 @@ replays the 30-clip / 8-vague-clip overflow and cache pickup;
 concurrent cache merges, and stale/deleted/unowned assets;
 `tests/routes/test_creator_agent_clip_intents.py` pins the pending receipt and
 clarification fallback.
+
+### Multiple labels on one clip
+
+Each requested label is grounded independently. The worker combines accepted
+values into one overlay (for example, `Paris · Cycling`) and retains every
+intent's provenance. Repeated text is displayed once. A multi-label request fails
+clearly if any value cannot be re-verified, or if the combined text exceeds 120
+characters; it never silently keeps the first label. Generic overlays use the
+registered Inter font and a bounded width so combined values wrap safely. Single-label identity and
+flag-off rendering remain unchanged. Narrated guided edits also retain these
+generic visual labels alongside their narration labels.

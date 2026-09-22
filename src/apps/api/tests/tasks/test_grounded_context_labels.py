@@ -359,7 +359,7 @@ def test_creator_text_fallback_requires_exact_match_key_when_creator_request_unr
     assert rows2 == []
 
 
-def test_first_resolved_intent_claims_a_clip_even_when_it_fails_to_ground():
+def test_multiple_requested_labels_for_a_clip_must_each_ground():
     meta = _meta("clip-a", clip_summary="a basketball game at the park")
     fails_to_ground = _intent(
         intent_id="i1",
@@ -369,8 +369,120 @@ def test_first_resolved_intent_claims_a_clip_even_when_it_fails_to_ground():
         intent_id="i2",
         assignments=[ClipAssignment(media_id="clip-a", value="Basketball", confidence=0.9)],
     )
-    rows = _grounded_context_labels([fails_to_ground, would_ground], {"clip-a": "a.mp4"}, [meta])
-    assert rows == []
+    with pytest.raises(ValueError, match="independently ground every requested context label"):
+        _grounded_context_labels([fails_to_ground, would_ground], {"clip-a": "a.mp4"}, [meta])
+
+
+def test_multiple_requested_labels_raise_when_one_clip_record_is_missing():
+    first = _intent(
+        intent_id="city",
+        assignments=[ClipAssignment(media_id="clip-a", value="Paris", confidence=0.9)],
+    )
+    second = _intent(
+        intent_id="activity",
+        assignments=[ClipAssignment(media_id="clip-a", value="Cycling", confidence=0.9)],
+    )
+    with pytest.raises(ValueError, match="failed intent ids: city, activity"):
+        _grounded_context_labels([first, second], {"clip-a": "a.mp4"}, [])
+
+
+def test_multiple_grounded_labels_compose_once_and_keep_every_intent_provenance():
+    meta = _meta("clip-a", clip_summary="cycling through Paris in the afternoon")
+    city = _intent(
+        intent_id="city",
+        attribute="city",
+        assignments=[ClipAssignment(media_id="clip-a", value="Paris", confidence=0.9)],
+    )
+    activity = _intent(
+        intent_id="activity",
+        attribute="activity",
+        assignments=[ClipAssignment(media_id="clip-a", value="Cycling", confidence=0.9)],
+    )
+    rows = _grounded_context_labels([city, activity], {"clip-a": "a.mp4"}, [meta])
+    assert [(row["sport"], row["intent_id"]) for row in rows] == [
+        ("Paris", "city"),
+        ("Cycling", "activity"),
+    ]
+
+    elements = _context_sport_text_elements(
+        None,
+        steps=[SimpleNamespace(clip_id="clip-a", slot={"transition_in": "cut"})],
+        resolved_plans=[{"duration_s": 2.0}],
+        clip_id_to_gcs={"clip-a": "a.mp4"},
+        video_duration_s=2.0,
+        grounded_rows=rows,
+    )
+    assert len(elements) == 1
+    assert elements[0]["text"] == "Paris · Cycling"
+    assert elements[0]["font_family"] == "Inter"
+    assert elements[0]["max_width_frac"] == 0.72
+    assert elements[0]["source_params"]["identity"] == "context_sport:clip-a:0:0.000:2.000"
+    assert elements[0]["source_params"]["context_label_provenance"] == [
+        {"text": "Paris", "grounding": "record_span", "confidence": 0.9, "intent_id": "city"},
+        {
+            "text": "Cycling",
+            "grounding": "record_span",
+            "confidence": 0.9,
+            "intent_id": "activity",
+        },
+    ]
+
+
+def test_duplicate_grounded_text_renders_once_but_keeps_all_provenance():
+    meta = _meta("clip-a", clip_summary="a Paris street scene")
+    first = _intent(
+        intent_id="city",
+        assignments=[ClipAssignment(media_id="clip-a", value="Paris", confidence=0.9)],
+    )
+    second = _intent(
+        intent_id="location",
+        assignments=[ClipAssignment(media_id="clip-a", value="Paris", confidence=0.9)],
+    )
+    rows = _grounded_context_labels([first, second], {"clip-a": "a.mp4"}, [meta])
+    elements = _context_sport_text_elements(
+        None,
+        steps=[SimpleNamespace(clip_id="clip-a", slot={"transition_in": "cut"})],
+        resolved_plans=[{"duration_s": 2.0}],
+        clip_id_to_gcs={"clip-a": "a.mp4"},
+        video_duration_s=2.0,
+        grounded_rows=rows,
+    )
+    assert elements[0]["text"] == "Paris"
+    provenance = elements[0]["source_params"]["context_label_provenance"]
+    assert [row["intent_id"] for row in provenance] == [
+        "city",
+        "location",
+    ]
+
+
+def test_overlong_combined_context_labels_raise_instead_of_dropping_a_value():
+    rows = [
+        {
+            "clip_id": "clip-a",
+            "sport": "A" * 61,
+            "source": "grounded_label",
+            "grounding": "record_span",
+            "confidence": 0.9,
+            "intent_id": "i1",
+        },
+        {
+            "clip_id": "clip-a",
+            "sport": "B" * 61,
+            "source": "grounded_label",
+            "grounding": "record_span",
+            "confidence": 0.9,
+            "intent_id": "i2",
+        },
+    ]
+    with pytest.raises(ValueError, match="120-character limit"):
+        _context_sport_text_elements(
+            None,
+            steps=[SimpleNamespace(clip_id="clip-a", slot={"transition_in": "cut"})],
+            resolved_plans=[{"duration_s": 2.0}],
+            clip_id_to_gcs={"clip-a": "a.mp4"},
+            video_duration_s=2.0,
+            grounded_rows=rows,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +627,9 @@ def test_grounded_and_legacy_elements_share_identical_timing_and_geometry():
     )
 
     assert len(legacy_elements) == len(grounded_elements) == 1
+    # Generic labels use the registry key, avoiding Skia's serif fallback.
+    assert grounded_elements[0]["font_family"] == "Inter"
+    assert legacy_elements[0]["font_family"] == "Inter-Bold"
     geometry_keys = [
         "start_s",
         "end_s",
@@ -522,7 +637,6 @@ def test_grounded_and_legacy_elements_share_identical_timing_and_geometry():
         "position",
         "x_frac",
         "y_frac",
-        "font_family",
         "size_class",
         "color",
         "highlight_color",

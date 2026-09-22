@@ -58,6 +58,7 @@ _EXPECTED = {
     # Main Creator Agent V1 — capability-aware creative orchestrator
     "nova.creator.main",
     # KRI-127 Lane C — open-vocabulary clip-intent resolution
+    "nova.plan.clip_intent_planner",
     "nova.plan.clip_request_resolver",
     "nova.video.clip_question",
 }

@@ -25,3 +25,6 @@ of the candidate bands `choose_guided_text_y_frac` moves a title to when the
 authored default (`y_frac=0.16`) collides with a face. Confirms the move itself
 never clips text; face-avoidance placement logic is unit-tested separately in
 `tests/pipeline/test_render_geometry.py` and `tests/pipeline/test_guided_story.py`.
+
+`generic_context_labels.json` compiles short and long combined location/activity
+labels through the same right-aligned burn-dict contract used by guided edits.

@@ -471,6 +471,127 @@ def test_first_guided_plan_materializes_explicit_licensed_sfx_before_persist(
         gb._guided_execution_plan(str(job.id), raw)
 
 
+def test_narrated_guided_plan_keeps_generic_context_labels_after_narration_materializes(
+    monkeypatch,
+) -> None:
+    """A narration-label pass must not short-circuit generic grounded labels."""
+    from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
+    from app.schemas.edit_proposal import (
+        EditProposalSnapshot,
+        MediaRef,
+        NarrationTrack,
+        StoryBeat,
+        canonical_media_digest,
+    )
+
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id="city-clip",
+            gcs_path="users/u/paris.mp4",
+            generation="1",
+            kind="video",
+            duration_s=4,
+            analysis={"description": "cycling through Paris in the afternoon"},
+        )
+    ]
+    narration = NarrationTrack(
+        gcs_path="voiceover-uploads/u/narration.m4a",
+        generation="1",
+        duration_s=4,
+        words=[{"text": "Welcome", "start_s": 0, "end_s": 0.5}],
+    )
+    snapshot = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Show the city ride",
+        duration_s=4,
+        title="Paris ride",
+        media=media,
+        narration=narration,
+        clip_intents=[
+            ResolvedClipIntent(
+                intent_id="city",
+                op="label",
+                attribute="city",
+                assignments=[ClipAssignment(media_id="city-clip", value="Paris", confidence=0.9)],
+            )
+        ],
+        story_beats=[
+            StoryBeat(
+                beat_id="city",
+                topic="Paris",
+                thought="A ride through the city.",
+                media_ids=["city-clip"],
+                duration_s=4,
+            )
+        ],
+    )
+    raw = {
+        "proposal_version": 7,
+        "media_digest": canonical_media_digest(media, narration),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {
+                "lane": "clip",
+                "media_id": "city-clip",
+                "gcs_path": "users/u/paris.mp4",
+                "generation": "1",
+                "kind": "video",
+            }
+        ],
+    }
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="queued",
+        assembly_plan={"guided_edit": raw},
+        all_candidates={"creator_strategy": {"sport_labels": True}},
+    )
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, _model, _pk, **_kwargs):
+            return job
+
+        def commit(self):
+            return None
+
+    def materialize_narration(plan, **_kwargs):
+        return {
+            **plan,
+            "narration_label_text_elements": [{"id": "narration-label", "text": "PLAYER 1"}],
+        }
+
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Session())
+    monkeypatch.setattr(gb.settings, "clip_intents_enabled", True)
+    monkeypatch.setattr(
+        "app.services.guided_narration_labels.materialize_guided_narration_labels",
+        materialize_narration,
+    )
+
+    plan, track = gb._guided_execution_plan(str(job.id), raw)
+
+    assert track is None
+    assert plan["narration_label_text_elements"] == [{"id": "narration-label", "text": "PLAYER 1"}]
+    assert [row["text"] for row in plan["context_label_text_elements"]] == ["Paris"]
+    assert plan["context_label_text_elements"][0]["source_params"]["intent_id"] == "city"
+
+    # Mimic a plan pinned before generic labels were carried through the
+    # narrated path. The read/repair branch must restore them as well.
+    job.assembly_plan["guided_story_execution_plan"].pop("context_label_text_elements")
+    repaired, repaired_track = gb._guided_execution_plan(str(job.id), raw)
+    assert repaired_track is None
+    assert repaired["narration_label_text_elements"] == [
+        {"id": "narration-label", "text": "PLAYER 1"}
+    ]
+    assert [row["text"] for row in repaired["context_label_text_elements"]] == ["Paris"]
+    assert job.assembly_plan["guided_story_execution_plan"] == repaired
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

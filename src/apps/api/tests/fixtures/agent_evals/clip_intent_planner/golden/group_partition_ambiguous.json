@@ -1,0 +1,20 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-09-22.2",
+  "input": {
+    "creator_request": "Group the clips by city.",
+    "latest_user_message": null,
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\":[],\"question\":\"Which city groups should I create? Please name them.\"}",
+  "output": {
+    "intents": [],
+    "question": "Which city groups should I create? Please name them."
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_intents": [],
+    "expect_any": false,
+    "expect_question": true
+  }
+}
