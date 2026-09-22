@@ -189,6 +189,7 @@ export interface CreationThread {
     summary?: string | null;
     plan_hash?: string | null;
     version?: string | null;
+    preparation?: CreationPreparation | null;
     [key: string]: unknown;
   } | null;
   media_capabilities?: CreationMediaCapabilities | null;
@@ -210,6 +211,15 @@ export interface CreationThread {
   job: CreationJob | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CreationPreparation {
+  status: "queued" | "analyzing" | "resolving" | "failed" | "ready" | string;
+  completed: number;
+  total: number;
+  message: string;
+  error_code: string | null;
+  retryable: boolean;
 }
 
 export function creationDirectionReceiptLabel(thread: CreationThread | null): string | null {
@@ -500,8 +510,11 @@ export function creationPlanningFailed(thread: CreationThread): boolean {
       ? (thread.state.creator_agent as { status?: unknown }).status
       : null);
   if (typeof status === "string" && status) {
-    return ["failed", "error"].includes(status.toLowerCase());
+    if (["failed", "error"].includes(status.toLowerCase())) return true;
+    if (creationPreparationFailed(thread)) return true;
+    return false;
   }
+  if (creationPreparationFailed(thread)) return true;
   // Legacy/deploy-skew responses may omit the projected Creator status. In
   // that case only the newest relevant event is authoritative: an old error
   // must not poison the fresh session started by a later user direction.
@@ -536,6 +549,7 @@ export function latestCreationDirection(thread: CreationThread): string {
 
 const CREATOR_PROGRESS_STATES = new Set(["executing", "rendering", "reviewing"]);
 const GENERATION_PROGRESS_STATES = new Set(["queued", "rendering"]);
+const PREPARATION_PROGRESS_STATES = new Set(["queued", "analyzing", "resolving"]);
 
 function creatorStatus(thread: CreationThread): string | null {
   const direct = thread.creator_agent?.status;
@@ -546,6 +560,24 @@ function creatorStatus(thread: CreationThread): string | null {
     return typeof status === "string" ? status : null;
   }
   return null;
+}
+
+export function creationPreparation(thread: CreationThread): CreationPreparation | null {
+  const preparation = thread.creator_agent?.preparation;
+  if (!preparation || typeof preparation !== "object") return null;
+  return preparation;
+}
+
+export function creationPreparationActive(thread: CreationThread): boolean {
+  return PREPARATION_PROGRESS_STATES.has(creationPreparation(thread)?.status ?? "");
+}
+
+export function creationPreparationFailed(thread: CreationThread): boolean {
+  return creationPreparation(thread)?.status === "failed";
+}
+
+export function creationPreparationRetryable(thread: CreationThread): boolean {
+  return creationPreparation(thread)?.retryable ?? true;
 }
 
 function generationStatus(thread: CreationThread): string | null {
@@ -567,7 +599,8 @@ export function creationThreadInProgress(thread: CreationThread): boolean {
   return jobActive
     || variantActive
     || GENERATION_PROGRESS_STATES.has(generationStatus(thread) ?? "")
-    || CREATOR_PROGRESS_STATES.has(creatorStatus(thread) ?? "");
+    || CREATOR_PROGRESS_STATES.has(creatorStatus(thread) ?? "")
+    || creationPreparationActive(thread);
 }
 
 /** Whether the current automatic speech preflight still needs detail polling. */
@@ -583,10 +616,9 @@ export function creationThreadNeedsPolling(thread: CreationThread): boolean {
 
 /** A Creator execution has committed, but its Job may not exist yet. */
 export function creationThreadPreparing(thread: CreationThread): boolean {
-  return !thread.job && (
-    CREATOR_PROGRESS_STATES.has(creatorStatus(thread) ?? "")
+  return CREATOR_PROGRESS_STATES.has(creatorStatus(thread) ?? "")
     || GENERATION_PROGRESS_STATES.has(generationStatus(thread) ?? "")
-  );
+    || creationPreparationActive(thread);
 }
 
 /** Stable polling dependency; avoids restarting the effect for fresh JSON objects. */
@@ -600,6 +632,7 @@ export function creationThreadProgressKey(thread: CreationThread): string {
     ].join("/"))
     .sort()
     .join(",");
+  const preparation = creationPreparation(thread);
   const renderKey = [
     thread.active_job_id ?? "",
     thread.job?.status ?? "",
@@ -607,12 +640,15 @@ export function creationThreadProgressKey(thread: CreationThread): string {
     generationStatus(thread) ?? "",
     variants,
   ].join(":");
+  const preparationKey = preparation
+    ? `:${preparation.status}:${preparation.completed}:${preparation.total}:${preparation.message}`
+    : "";
   const cleanup = thread.speech_cleanup;
-  if (!cleanup) return renderKey;
+  if (!cleanup) return `${renderKey}${preparationKey}`;
   const analysis = cleanup.analysis;
   const outcome = cleanup.outcome;
   return [
-    renderKey,
+    `${renderKey}${preparationKey}`,
     analysis?.id ?? "",
     analysis?.status ?? "",
     outcome?.job_id ?? "",

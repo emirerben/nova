@@ -252,6 +252,14 @@ struct CreationThread: Codable, Identifiable, Sendable {
         if case .number(let count) = mediaCapabilities?["visuals"]?.objectValue?["device_ready"] { return max(0, Int(count)) }
         return 0
     }
+    var preparation: [String: JSONValue]? { creatorAgent?["preparation"]?.objectValue }
+    var preparationStatus: String? { preparation?["status"]?.stringValue }
+    var preparationIsActive: Bool { ["queued", "analyzing", "resolving"].contains(preparationStatus ?? "") }
+    var preparationFailed: Bool { preparationStatus == "failed" }
+    var preparationRetryable: Bool { preparation?["retryable"]?.boolValue ?? true }
+    var preparationMessage: String? { preparation?["message"]?.stringValue }
+    var preparationCompleted: Int { max(0, Int(preparation?["completed"]?.numberValue ?? 0)) }
+    var preparationTotal: Int { max(0, Int(preparation?["total"]?.numberValue ?? 0)) }
     enum CodingKeys: String, CodingKey { case id, title, status, revision, job, state, events; case creatorAgent = "creator_agent"; case speechCleanup = "speech_cleanup"; case mediaCapabilities = "media_capabilities"; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case activePlanItemID = "active_plan_item_id"; case updatedAt = "updated_at" }
 
     init(from decoder: Decoder) throws {
@@ -324,6 +332,11 @@ struct CreationThread: Codable, Identifiable, Sendable {
         return variants.first(where: \.isPlayable)
     }
     private var projectStatus: ProjectStatus {
+        // Preparation belongs to the current request even when this project
+        // already has a ready or failed job. Keep its progress visible after
+        // reopening instead of letting the old job status win.
+        if preparationFailed { return .failed }
+        if preparationIsActive { return .rendering }
         guard activeJobID != nil else {
             // A confirmed Creator execution prepares media before it mints a
             // Job. Both this phase and pre-dispatch failures are real states.

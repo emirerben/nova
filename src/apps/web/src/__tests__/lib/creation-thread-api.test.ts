@@ -13,6 +13,9 @@ import {
   creationThreadNeedsPolling,
   creationThreadPreparing,
   creationThreadProgressKey,
+  creationPreparationActive,
+  creationPreparationFailed,
+  creationPreparationRetryable,
   creationThreadMediaCount,
   cancelKriaTurn,
   creationGenerationArtifactKey,
@@ -626,6 +629,56 @@ describe("creation thread projection", () => {
     expect(isCreationThreadRevisionConflict(new CreationThreadError("Creation thread changed", 409))).toBe(true);
     expect(isCreationThreadRevisionConflict(new CreationThreadError("Creator session is busy", 409))).toBe(false);
     expect(isCreationThreadRevisionConflict(new Error("Creation thread changed"))).toBe(false);
+  });
+
+  it("polls clip preparation and keeps legacy projections unchanged", () => {
+    const preparing = thread({
+      creator_agent: {
+        status: "planning",
+        preparation: { status: "analyzing", completed: 1, total: 4, message: "Reading your clips…", error_code: null, retryable: true },
+      },
+    });
+    expect(creationPreparationActive(preparing)).toBe(true);
+    expect(creationThreadNeedsPolling(preparing)).toBe(true);
+    expect(creationThreadInProgress(preparing)).toBe(true);
+    expect(creationThreadProgressKey(preparing)).toContain(":analyzing:1:4:Reading your clips…");
+    expect(creationPreparationFailed(thread())).toBe(false);
+    expect(creationThreadNeedsPolling(thread())).toBe(false);
+  });
+
+  it("keeps preparation progress visible when a previous Job is already ready", () => {
+    const preparing = thread({
+      active_job_id: "old-job",
+      job: { id: "old-job", status: "variants_ready", variants: [{ variant_id: "original_text", render_status: "ready", output_url: "/old-cut.mp4" }] },
+      creator_agent: {
+        status: "planning",
+        preparation: { status: "analyzing", completed: 2, total: 4, message: "Reading your clips…", error_code: null, retryable: true },
+      },
+    });
+    expect(creationThreadPreparing(preparing)).toBe(true);
+    expect(creationThreadInProgress(preparing)).toBe(true);
+  });
+
+  it("recognizes a failed preparation while the creator returns to briefing", () => {
+    const failed = thread({
+      creator_agent: {
+        status: "briefing",
+        preparation: { status: "failed", completed: 1, total: 4, message: "Couldn’t analyze one clip.", error_code: "clip_analysis_failed", retryable: true },
+      },
+    });
+    expect(creationPreparationFailed(failed)).toBe(true);
+    expect(creationPreparationRetryable(failed)).toBe(true);
+    expect(creationPlanningFailed(failed)).toBe(true);
+  });
+
+  it("preserves a terminal preparation failure as non-retryable", () => {
+    const failed = thread({
+      creator_agent: {
+        status: "briefing",
+        preparation: { status: "failed", completed: 1, total: 4, message: "Choose the missing media again.", error_code: "missing_media", retryable: false },
+      },
+    });
+    expect(creationPreparationRetryable(failed)).toBe(false);
   });
 
   it("keeps a settled parent Job polling for an editor replacement generation", () => {
