@@ -3173,6 +3173,12 @@
             "title": "Raw Status",
             "type": "string"
           },
+          "slide_count": {
+            "default": null,
+            "nullable": true,
+            "title": "Slide Count",
+            "type": "integer"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -5445,6 +5451,473 @@
         "title": "ResolvedTextMotion",
         "type": "object"
       },
+      "SlideEdits": {
+        "description": "Per-slide edit state, applied at render time in `pipeline/slide_post/build.py`.\n\nDeliberately flat and small \u2014 see plans/024 follow-up eng-review for why\nthis is NOT a scaled-down `EditorShell` document (media_overlays, text\nlanes, etc). Every field here must correspond to an FFmpeg filter fragment\n`normalize_image_slide`/`normalize_video_slide` can append to their\nexisting `-vf` chain; there is no separate rendering subsystem.",
+        "properties": {
+          "look_preset": {
+            "default": "none",
+            "enum": [
+              "none",
+              "stadium_diffusion",
+              "olive_film",
+              "smoky_split_tone",
+              "golden_hour",
+              "faded_analog"
+            ],
+            "title": "Look Preset",
+            "type": "string"
+          },
+          "text": {
+            "$ref": "#/components/schemas/TextOverlay",
+            "default": null,
+            "nullable": true
+          }
+        },
+        "title": "SlideEdits",
+        "type": "object"
+      },
+      "SlidePostDraft": {
+        "description": "The persisted draft document (`PlanItem.slide_post`).",
+        "properties": {
+          "caption": {
+            "default": "",
+            "maxLength": 2200,
+            "title": "Caption",
+            "type": "string"
+          },
+          "cover_index": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Cover Index",
+            "type": "integer"
+          },
+          "platform_profile": {
+            "enum": [
+              "tiktok_photo",
+              "instagram_carousel"
+            ],
+            "title": "Platform Profile",
+            "type": "string"
+          },
+          "rendered_version": {
+            "default": null,
+            "nullable": true,
+            "title": "Rendered Version",
+            "type": "integer"
+          },
+          "schema_version": {
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "slides": {
+            "items": {
+              "$ref": "#/components/schemas/SlideRef"
+            },
+            "maxItems": 35,
+            "title": "Slides",
+            "type": "array"
+          },
+          "user_edited": {
+            "default": false,
+            "title": "User Edited",
+            "type": "boolean"
+          },
+          "version": {
+            "default": 1,
+            "minimum": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "platform_profile"
+        ],
+        "title": "SlidePostDraft",
+        "type": "object"
+      },
+      "SlidePostDraftBody": {
+        "description": "PUT /{item_id}/slide-post request \u2014 a full replacement of the draft's\nuser-editable fields. `version`/`rendered_version`/`user_edited` are\nserver-owned and never accepted from the client.",
+        "properties": {
+          "caption": {
+            "default": "",
+            "title": "Caption",
+            "type": "string"
+          },
+          "cover_index": {
+            "default": 0,
+            "title": "Cover Index",
+            "type": "integer"
+          },
+          "expected_version": {
+            "default": null,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "platform_profile": {
+            "title": "Platform Profile",
+            "type": "string"
+          },
+          "slides": {
+            "items": {
+              "$ref": "#/components/schemas/SlideRef"
+            },
+            "title": "Slides",
+            "type": "array"
+          }
+        },
+        "required": [
+          "platform_profile",
+          "slides"
+        ],
+        "title": "SlidePostDraftBody",
+        "type": "object"
+      },
+      "SlidePostGenerateBody": {
+        "properties": {
+          "expected_version": {
+            "minimum": 1,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "SlidePostGenerateBody",
+        "type": "object"
+      },
+      "SlidePostMutationResponse": {
+        "description": "Fields the native client reads from richer PlanItem mutation responses.",
+        "properties": {
+          "current_job_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Current Job Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "slide_post": {
+            "$ref": "#/components/schemas/SlidePostDraft",
+            "default": null,
+            "nullable": true
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "SlidePostMutationResponse",
+        "type": "object"
+      },
+      "SlidePostProposalResponse": {
+        "properties": {
+          "base_version": {
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/SlidePostDraft"
+          },
+          "fallback_used": {
+            "title": "Fallback Used",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft",
+          "base_version",
+          "fallback_used",
+          "summary"
+        ],
+        "title": "SlidePostProposalResponse",
+        "type": "object"
+      },
+      "SlidePostProposeBody": {
+        "properties": {
+          "asset_ids": {
+            "default": null,
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "title": "Asset Ids",
+            "type": "array"
+          },
+          "expected_version": {
+            "minimum": 0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "instruction": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Instruction",
+            "type": "string"
+          },
+          "platform_profile": {
+            "title": "Platform Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "platform_profile",
+          "instruction"
+        ],
+        "title": "SlidePostProposeBody",
+        "type": "object"
+      },
+      "SlidePostState": {
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/SlidePostStateAsset"
+            },
+            "title": "Assets",
+            "type": "array"
+          },
+          "bundle_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Bundle Url",
+            "type": "string"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/SlidePostDraft",
+            "default": null,
+            "nullable": true
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "job_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Job Id",
+            "type": "string"
+          },
+          "render_status": {
+            "title": "Render Status",
+            "type": "string"
+          },
+          "rendered_version": {
+            "default": null,
+            "nullable": true,
+            "title": "Rendered Version",
+            "type": "integer"
+          },
+          "schema_version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "slides": {
+            "items": {
+              "$ref": "#/components/schemas/SlidePostStateSlide"
+            },
+            "title": "Slides",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "validation_errors": {
+            "items": {
+              "$ref": "#/components/schemas/SlidePostValidationError"
+            },
+            "title": "Validation Errors",
+            "type": "array"
+          }
+        },
+        "required": [
+          "item_id",
+          "title",
+          "render_status"
+        ],
+        "title": "SlidePostState",
+        "type": "object"
+      },
+      "SlidePostStateAsset": {
+        "properties": {
+          "display_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Display Url",
+            "type": "string"
+          },
+          "duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_status": {
+            "title": "Media Status",
+            "type": "string"
+          },
+          "preview_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Preview Url",
+            "type": "string"
+          },
+          "source_filename": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Filename",
+            "type": "string"
+          },
+          "source_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Url",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "media_status"
+        ],
+        "title": "SlidePostStateAsset",
+        "type": "object"
+      },
+      "SlidePostStateSlide": {
+        "properties": {
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "video"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "preview_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Preview Url",
+            "type": "string"
+          },
+          "url": {
+            "default": null,
+            "nullable": true,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "asset_id",
+          "kind"
+        ],
+        "title": "SlidePostStateSlide",
+        "type": "object"
+      },
+      "SlidePostValidationError": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "slide_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Slide Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "SlidePostValidationError",
+        "type": "object"
+      },
+      "SlideRef": {
+        "description": "One item in the ordered sequence. Points at pooled media, never copies it.",
+        "properties": {
+          "alt": {
+            "default": null,
+            "maxLength": 500,
+            "nullable": true,
+            "title": "Alt",
+            "type": "string"
+          },
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "edits": {
+            "$ref": "#/components/schemas/SlideEdits",
+            "default": null,
+            "nullable": true
+          },
+          "id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "pattern": "^(image|video)$",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "asset_id",
+          "kind"
+        ],
+        "title": "SlideRef",
+        "type": "object"
+      },
       "SmoothRevealContent": {
         "additionalProperties": false,
         "properties": {
@@ -6118,6 +6591,28 @@
           "alpha"
         ],
         "title": "TextInk",
+        "type": "object"
+      },
+      "TextOverlay": {
+        "description": "One static text overlay burned onto a single slide via FFmpeg drawtext.",
+        "properties": {
+          "content": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "position": {
+            "pattern": "^(top|center|bottom)$",
+            "title": "Position",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "position"
+        ],
+        "title": "TextOverlay",
         "type": "object"
       },
       "TextPenStroke": {
@@ -9171,6 +9666,191 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PoolAssetOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/plan-items/{item_id}/slide-post": {
+      "get": {
+        "operationId": "getSlidePostState",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlidePostState"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "operationId": "saveSlidePostDraft",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlidePostDraftBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlidePostMutationResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/plan-items/{item_id}/slide-post/generate": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "generateSlidePost",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlidePostGenerateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlidePostMutationResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/plan-items/{item_id}/slide-post/propose": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "proposeSlidePost",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlidePostProposeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlidePostProposalResponse"
                 }
               }
             },

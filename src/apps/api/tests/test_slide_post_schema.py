@@ -13,6 +13,7 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
+from app.routes.plan_items import _slide_post_export_is_current
 from app.schemas.slide_post import (
     MAX_SLIDE_TEXT_LENGTH,
     SlideEdits,
@@ -111,3 +112,33 @@ def test_legacy_slide_ref_json_without_edits_field_still_parses() -> None:
     restored = parse_slide_post(legacy)
     assert restored is not None
     assert restored.slides[0].edits is None
+
+
+def test_export_freshness_requires_complete_unique_rendered_assets() -> None:
+    draft = SlidePostDraft(
+        platform_profile="instagram_carousel",
+        slides=[
+            SlideRef(id="a", asset_id=uuid.uuid4(), kind="image"),
+            SlideRef(id="b", asset_id=uuid.uuid4(), kind="image"),
+        ],
+        version=3,
+        rendered_version=3,
+    )
+    valid = {
+        "render_status": "ready",
+        "slides": [
+            {"asset_id": str(draft.slides[0].asset_id), "asset_gcs_path": "private/a.jpg"},
+            {"asset_id": str(draft.slides[1].asset_id), "asset_gcs_path": "private/b.jpg"},
+        ],
+        "slide_post": {"validation": {"errors": []}},
+    }
+    assert _slide_post_export_is_current(draft, valid)
+    assert not _slide_post_export_is_current(
+        draft, {**valid, "slides": [valid["slides"][0], valid["slides"][0]]}
+    )
+    assert not _slide_post_export_is_current(
+        draft, {**valid, "slides": [{"asset_id": str(draft.slides[0].asset_id)}]}
+    )
+    assert not _slide_post_export_is_current(
+        draft.model_copy(update={"rendered_version": 2}), valid
+    )

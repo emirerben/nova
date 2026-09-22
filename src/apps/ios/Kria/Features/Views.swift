@@ -279,7 +279,7 @@ struct GalleryView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         Text("Gallery")
                             .font(KriaFont.body(29))
-                        Text("Your finished videos")
+                        Text("Your videos and posts")
                             .font(KriaFont.body(14))
                             .foregroundStyle(KriaColor.zinc)
                     }
@@ -338,11 +338,17 @@ struct GalleryView: View {
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), spacing: 20) {
                             ForEach(projects) { project in
                                 if project.status == .ready {
-                                    NavigationLink(destination: ResultsView(project: project, libraryJobID: project.id)) {
+                                    NavigationLink {
+                                        if project.isSlidePost {
+                                            SlidePostWorkspaceView(project: project)
+                                        } else {
+                                            ResultsView(project: project, libraryJobID: project.id)
+                                        }
+                                    } label: {
                                         GalleryProjectCard(project: project)
                                     }
                                     .buttonStyle(.plain)
-                                    .accessibilityLabel("Play \(project.workspaceTitle)")
+                                    .accessibilityLabel("\(project.isSlidePost ? "Open post" : "Play") \(project.workspaceTitle)")
                                 } else {
                                     Button {
                                         model.selectProject(project)
@@ -410,6 +416,10 @@ private struct GalleryProjectCard: View {
             Text(project.workspaceTitle)
                 .font(KriaFont.body(13).weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
+            if project.isSlidePost {
+                Text(project.slideCount.map { "Photo & video post · \($0) slides" } ?? "Photo & video post")
+                    .font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc)
+            }
             Text(project.updatedAt, style: .relative)
                 .font(KriaFont.body(11))
                 .foregroundStyle(KriaColor.zinc)

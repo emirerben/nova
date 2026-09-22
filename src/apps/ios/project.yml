@@ -69,6 +69,12 @@ targets:
         buildPhase: resources
       - path: ../web/public/plan/type-posters/talking.jpg
         buildPhase: resources
+      - path: ../web/public/landing/raw-story/trulli-street.jpg
+        buildPhase: resources
+      - path: ../web/public/landing/raw-story/istanbul.mp4
+        buildPhase: resources
+      - path: ../web/public/landing/raw-story/lisbon.jpg
+        buildPhase: resources
     dependencies:
       - package: KriaMediaEngine
         product: KriaMediaEngine
