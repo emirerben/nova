@@ -263,6 +263,21 @@ def test_get_device_render_touches_last_polled_at_throttled(fixture, monkeypatch
     fixture.db.commit.assert_awaited_once()
 
 
+def test_get_device_render_includes_published_attempt_generation(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    attempt = str(uuid.uuid4())
+    record = device_record(fixture.job, "first")
+    record["status"]["phase"] = "published"
+    record["published_attempt"] = attempt
+    record["base_generation"] = attempt
+    fixture.job.assembly_plan["variants"][0]["render_generation_id"] = attempt
+    save_device_record(fixture.job, "first", record)
+
+    response = fixture.client.get(f"/me/jobs/{fixture.job.id}/device-render?variant_id=first")
+    assert response.status_code == 200
+    assert response.json()["published_generation"] == attempt
+
+
 @pytest.mark.parametrize("during_verification", [False, True])
 def test_held_recipe_cannot_publish_reserved_output(fixture, monkeypatch, during_verification):
     attempt, _ = prepared(fixture)
