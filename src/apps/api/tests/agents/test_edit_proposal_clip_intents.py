@@ -21,10 +21,10 @@ from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
 
 # The no-intents prompt, for exactly the input `_canonical_input()` builds
 # below with clip_intents left unset. It pins that an absent/empty intent list
-# adds NOTHING to the prompt. Re-baselined for KRI-129 (prompt 1.14.0), which
+# adds NOTHING to the prompt. Re-baselined for KRI-129 (prompt 1.15.0), which
 # changed the base prompt itself (creator-request-outranks-guidelines rule,
 # advisory beat/source guidance); recompute it whenever the base prompt changes.
-_PRE_KRI127_PROMPT_SHA256 = "9766fafc638ed80edf2faed729764316db8476f2b55aacc08bc178bc90016a5e"
+_PRE_KRI127_PROMPT_SHA256 = "f55e42c8241d33df14b65f21b5207003878998dde0b93c04716ff84acea1215d"
 
 
 def _canonical_input(**overrides: object) -> EditProposalAgentInput:
@@ -181,6 +181,24 @@ def _label_intent(
     )
 
 
+def _caption_intent(
+    media_ids: list[str],
+    caption_text: str,
+    *,
+    attribute: str = "pub videos",
+    caption_attribute: str | None = None,
+    intent_id: str = "i-caption",
+) -> ResolvedClipIntent:
+    return ResolvedClipIntent(
+        intent_id=intent_id,
+        op="caption",
+        attribute=attribute,
+        caption_attribute=caption_attribute,
+        caption_text=caption_text,
+        assignments=[ClipAssignment(media_id=mid, confidence=0.8) for mid in media_ids],
+    )
+
+
 # ── Byte-identical prompt when unused ───────────────────────────────────────
 
 
@@ -246,6 +264,19 @@ def test_needs_creator_intent_is_not_rendered() -> None:
     agent_input = _canonical_input(clip_intents=[unresolved])
     prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
     assert "CLIP INTENT CONSTRAINTS" not in prompt
+
+
+def test_caption_intent_prompt_note_renders_aliases_and_exact_text() -> None:
+    agent_input = _canonical_input(
+        clip_intents=[_caption_intent(["clip_pub"], "post match pub", caption_attribute="the mood")]
+    )
+    prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+
+    assert "CLIP INTENT CONSTRAINTS" in prompt
+    assert 'CAPTION ("the mood")' in prompt
+    assert '"post match pub"' in prompt
+    for media in agent_input.media:
+        assert media.media_id not in prompt
 
 
 def test_media_not_in_input_is_dropped_from_the_prompt() -> None:
@@ -568,3 +599,144 @@ def test_missing_include_is_repaired_into_a_beat_with_room() -> None:
     output = EditProposalAgent(None).parse(raw, agent_input)  # type: ignore[arg-type]
     used = {mid for beat in output.story_beats for mid in beat.media_ids}
     assert "speech" in used
+
+
+# ── parse(): caption clip-intents are server-authoritative (KRI-129) ───────
+
+
+def test_caption_intent_forces_exact_text_and_blanks_every_other_beat() -> None:
+    """The chat turn already resolved the creator's own quoted phrase into a
+    caption intent. Whatever the model wrote for the pub beat is overridden
+    with the exact creator spelling, and every other beat is blanked -- the
+    quoted-phrase heuristic this replaces could not have done both at once
+    when a caption intent also targets a second, described chapter (see the
+    two-intents test below)."""
+
+    agent_input = _canonical_input(clip_intents=[_caption_intent(["clip_pub"], "post match pub")])
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        _five_beat_raw(pub_thought="Post Match Pub"), agent_input
+    )
+    assert [beat.thought for beat in output.story_beats] == ["", "", "", "", "post match pub"]
+    assert "caption_applied:4" in output.repairs
+    assert "blanked_thought_for_caption:0" in output.repairs
+    assert "blanked_thought_for_caption:1" in output.repairs
+    assert "blanked_thought_for_caption:2" in output.repairs
+    assert "blanked_thought_for_caption:3" in output.repairs
+
+
+def test_two_caption_intents_in_one_turn_each_land_on_their_own_beat() -> None:
+    """A described caption ("Grey skies over the pitch") on the park clips
+    AND a quoted caption ("post match pub") on the pub clips, resolved in the
+    same turn. Both land, on their own beat, and nothing else survives --
+    exactly the shape the single quoted-phrase heuristic could not handle
+    (it only ever knew about the creator's own quoted words, never a
+    resolver-authored phrase)."""
+
+    agent_input = _canonical_input(
+        clip_intents=[
+            _caption_intent(
+                ["clip_park"],
+                "Grey skies over the pitch",
+                attribute="park clips",
+                caption_attribute="the weather",
+                intent_id="i-caption-park",
+            ),
+            _caption_intent(["clip_pub"], "post match pub", intent_id="i-caption-pub"),
+        ]
+    )
+    output = EditProposalAgent(None).parse(_five_beat_raw(), agent_input)  # type: ignore[arg-type]
+    assert [beat.thought for beat in output.story_beats] == [
+        "Grey skies over the pitch",
+        "",
+        "",
+        "",
+        "post match pub",
+    ]
+
+
+def test_caption_clips_split_across_beats_is_repaired_by_reordering() -> None:
+    """clip_soccer and clip_speech are the caption's clips but land two beats
+    apart in the raw output (clip_volleyball between them). A trivial reorder
+    -- the same repair style GROUP already gets -- pulls them together; the
+    first of the two carries the text, the second (like every other beat) is
+    blanked."""
+
+    agent_input = _canonical_input(
+        clip_intents=[_caption_intent(["clip_soccer", "clip_speech"], "Quick reunion")]
+    )
+    output = EditProposalAgent(None).parse(_five_beat_raw(), agent_input)  # type: ignore[arg-type]
+    media_order = [beat.media_ids[0] for beat in output.story_beats]
+    assert media_order == ["clip_park", "clip_soccer", "clip_speech", "clip_volleyball", "clip_pub"]
+    thoughts = [beat.thought for beat in output.story_beats]
+    assert thoughts[1] == "Quick reunion"
+    assert thoughts[0] == thoughts[2] == thoughts[3] == thoughts[4] == ""
+
+
+def test_shot_labels_precedence_skips_caption_enforcement() -> None:
+    """Both contracts present: shot_labels wins outright, exactly like it
+    does for group/order/include -- the caption intent is never applied and
+    the confirmed label survives untouched."""
+
+    labels = ["Park", "Soccer", "Volleyball", "Talking", "Pub"]
+    agent_input = _canonical_input(
+        shot_labels=labels,
+        clip_intents=[_caption_intent(["clip_pub"], "post match pub")],
+    )
+    raw = json.dumps(
+        {
+            "title": "Park then pub",
+            "duration_s": 25,
+            "story_beats": [
+                {
+                    "topic": f"Beat {index}",
+                    "thought": label,
+                    "media_ids": [media_id],
+                    "layout": "fullscreen",
+                    "duration_s": 5,
+                }
+                for index, (label, media_id) in enumerate(
+                    zip(
+                        labels,
+                        ["clip_park", "clip_soccer", "clip_volleyball", "clip_speech", "clip_pub"],
+                        strict=True,
+                    )
+                )
+            ],
+        }
+    )
+    output = EditProposalAgent(None).parse(raw, agent_input)  # type: ignore[arg-type]
+    assert output.story_beats[-1].thought == "Pub"
+    assert not any(repair.startswith("caption_applied") for repair in output.repairs)
+    assert not any(repair.startswith("blanked_thought_for_caption") for repair in output.repairs)
+
+
+def test_caption_lands_on_the_first_beat_even_when_an_opening_title_exists() -> None:
+    """Live replay: the park chapter opened the edit and never got its caption,
+    because caption placement inherited ORDER/GROUP's lead-beat exemption
+    (opening_title => beat 0 treated as a title hold). The title is a separate
+    overlay; beat 0 is story content and a valid caption home."""
+
+    agent_input = _canonical_input(
+        opening_title="Emir Olympics London Edition",
+        clip_intents=[
+            _caption_intent(
+                ["clip_park"],
+                "Grey skies over the park",
+                attribute="the park clips",
+                caption_attribute="the weather",
+                intent_id="i-weather",
+            ),
+            _caption_intent(["clip_pub"], "post match pub", intent_id="i-pub"),
+        ],
+    )
+    output = EditProposalAgent(None).parse(_five_beat_raw(), agent_input)  # type: ignore[arg-type]
+
+    thoughts = {tuple(b.media_ids): b.thought for b in output.story_beats}
+    park = next(t for ids, t in thoughts.items() if "clip_park" in ids)
+    pub = next(t for ids, t in thoughts.items() if "clip_pub" in ids)
+    assert park == "Grey skies over the park"
+    assert pub == "post match pub"
+    assert (
+        output.repairs.count("caption_applied:0") + output.repairs.count("caption_applied:1") >= 1
+    )
+    assert sum(1 for r in output.repairs if r.startswith("caption_applied:")) == 2

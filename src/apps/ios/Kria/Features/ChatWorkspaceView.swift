@@ -13,6 +13,7 @@ struct ChatWorkspaceView: View {
     @State private var drawerGestureExclusions: [CGRect] = []
     @State private var showsGallery = false
     @State private var showsAccount = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         GeometryReader { geometry in
@@ -103,9 +104,17 @@ struct ChatWorkspaceView: View {
         .onChange(of: showsProjects) { _, isOpen in
             if isOpen { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
         }
-        .task { await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID)) }
-        .onChange(of: model.selectedProject?.id) { _, identifier in
+        .task {
+            await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID))
+            await model.sweepAbandonedChats()
+        }
+        .onChange(of: model.selectedProject?.id) { previous, identifier in
             lastProjectID = identifier?.uuidString ?? ""
+            if let previous, previous != identifier { Task { await model.discardIfAbandoned(previous) } }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .background, let id = model.selectedProject?.id else { return }
+            Task { await model.discardIfAbandoned(id) }
         }
         .fullScreenCover(isPresented: $showsGallery) {
             NavigationStack { GalleryView(openProjects: { showsGallery = false; setDrawerOpen(true) }) }
@@ -443,6 +452,8 @@ private struct CreationWorkspaceView: View {
             .accessibilityHidden(projectsDrawerOpen)
             .allowsHitTesting(!projectsDrawerOpen)
         }
+        .onAppear { if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) } }
+        .onChange(of: prompt) { _, text in model.chatDrafts.setDraft(text, for: project.id) }
         .task {
             // History should not wait for the independent capability request.
             async let capabilities: Void = refreshCapabilities()

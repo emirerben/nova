@@ -181,12 +181,16 @@ enum AccountIdentity {
     let deviceRenders: DeviceRenderSessions
     private let cache: CacheRepository?
     private var deletedProjectIDs: Set<UUID> = []
+    private var reapingChatIDs: Set<UUID> = []
+    let chatDrafts: ChatDraftStore
     private var collectionGeneration = 0
     init(
         api: KriaAPIClient = KriaAPI(),
         editorOperations: EditorOperations = LocalEditorOperations(),
-        cache: CacheRepository? = nil
+        cache: CacheRepository? = nil,
+        chatDrafts: ChatDraftStore = ChatDraftStore()
     ) {
+        self.chatDrafts = chatDrafts
         self.api = api
         self.editorOperations = editorOperations
         self.uploads = BackgroundUploadCoordinator(api: api)
@@ -338,6 +342,31 @@ enum AccountIdentity {
         await loadLibrary()
         libraryProjects.removeAll { $0.id == project.id || $0.id == project.activeJobID }
         if let cacheWarning { errorMessage = cacheWarning }
+    }
+    /// Silently deletes a chat the user walked away from without sending anything, staging media,
+    /// or leaving unsent text. Any doubt (fetch failure, conflict, still uploading) keeps the chat.
+    func discardIfAbandoned(_ id: UUID) async {
+        guard !deletedProjectIDs.contains(id), !reapingChatIDs.contains(id),
+              let project = projects.first(where: { $0.id == id }), project.status == .draft else { return }
+        reapingChatIDs.insert(id)
+        defer { reapingChatIDs.remove(id) }
+        guard let thread = try? await api.project(threadID: id),
+              AbandonedChat.isEmpty(
+                thread: thread,
+                draft: chatDrafts.draft(for: id),
+                hasPendingUploads: uploads.records.contains { $0.projectID == id }
+              ) else { return }
+        // The user may have come back and typed while the thread was loading.
+        guard chatDrafts.draft(for: id).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        try? await deleteProject(thread.summary)
+        chatDrafts.setDraft("", for: id)
+    }
+    /// Cleans up empty chats left by a killed app, keeping whichever chat is open when
+    /// `keeping` is given (the app is foregrounded on it).
+    func sweepAbandonedChats(keeping: UUID? = nil) async {
+        for project in projects where project.status == .draft && project.id != keeping && !project.awaitsConfirmation {
+            await discardIfAbandoned(project.id)
+        }
     }
     func updateProject(_ project: ProjectSummary) {
         guard !deletedProjectIDs.contains(project.id) else { return }

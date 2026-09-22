@@ -127,8 +127,14 @@ The in-app wordmark is a transparent, tightly cropped vector PDF in `KriaWordmar
 
 The chat workspace owns the project drawer, Gallery, and account presentation.
 Gallery follows `/me/jobs` cursors until all pages are loaded, using the API's
-60-row page limit and retaining server order while deduplicating job IDs. A
-failed refresh preserves the prior library; an initial failure shows recovery
+60-row page limit and retaining server order while deduplicating job IDs. Each
+card uses the API's saved video title: an owned plan item's editor title takes
+precedence over its creation-thread name, with `Untitled video` when neither is
+available. Legacy API responses without a title use the same neutral fallback.
+Posters and playback retain the API's selected variant identity. Missing or
+failed posters show `Preview unavailable`; loading posters show a progress
+indicator. Bundled sample photography never stands in for a user's video.
+A failed refresh preserves the prior library; an initial failure shows recovery
 instead of substituting preview videos, including in Debug builds. For an
 authenticated, count-only device check, launch Debug with
 `-native-library-audit -native-library-inventory-audit` and inspect
@@ -146,8 +152,10 @@ Download follows the video currently shown in the editor. A ready source preview
 
 For repeatable visual review, a Debug build accepts `-ui-testing-brand` with
 `KRIA_BRAND_STATE` set to `format`, `footage`, `direction`, `rendering`, `ready`,
-`editor`, `projects`, `gallery`, `signin`, `account`, or `recovery`.
-These fixtures compose the real components; they never enter Release navigation.
+`editor`, `projects`, `gallery`, `gallery-posters`, `signin`, `account`, or `recovery`.
+`gallery-posters` exercises missing, loading, failed, and loaded poster states
+without network timing. These fixtures compose the real components; they never
+enter Release navigation.
 Use `-ui-testing-chat` for interactive navigation and the existing editor fixtures
 for edit/save/export verification.
 

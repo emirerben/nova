@@ -550,6 +550,10 @@ def _job_mode(job: Job) -> str:
 
 class LibraryJob(BaseModel):
     id: str
+    # Additive display metadata for native library cards.  The list route always
+    # resolves this to a neutral fallback; optional keeps older callers and
+    # already-deployed clients compatible with an omitted field.
+    title: str | None = None
     mode: str  # generative | content_plan | template | music | auto_music | default
     status: str  # derived: ready | generating | failed
     raw_status: str
@@ -761,6 +765,7 @@ def _to_library_job(
     *,
     clips: list[JobClip] | None = None,
     content_plan_item_id: str | None = None,
+    title: str | None = None,
     feedback_signal: str | None = None,
     tiktok_publication: TikTokPublication | None = None,
     preferred_variant_id: str | None = None,
@@ -812,6 +817,7 @@ def _to_library_job(
     )
     return LibraryJob(
         id=str(job.id),
+        title=title,
         mode=_job_mode(job),
         status=_derived_status(job),
         raw_status=job.status,
@@ -949,15 +955,49 @@ async def list_my_jobs(
     latest_tiktok: dict[uuid.UUID, TikTokPublication] = {}
     clips_by_job: dict[uuid.UUID, list[JobClip]] = {}
     preferred_variant_by_job: dict[uuid.UUID, str] = {}
+    title_by_job: dict[uuid.UUID, str] = {}
     retention_warnings: list[LibraryRetentionWarning] = []
     retention_summary: LibraryRetentionSummary | None = None
     if rows:
+        job_ids = [job.id for job in rows]
+        forward_item_ids = [
+            job.content_plan_item_id for job in rows if job.content_plan_item_id is not None
+        ]
+        # An item is only a title source when its content plan belongs to this
+        # caller.  Prefer Job.content_plan_item_id, then the PlanItem reverse
+        # link; stable ordering makes legacy multiple reverse links predictable.
+        item_rows = (
+            await db.execute(
+                select(PlanItem.id, PlanItem.theme, PlanItem.current_job_id)
+                .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+                .where(
+                    ContentPlan.user_id == user.id,
+                    or_(
+                        PlanItem.id.in_(forward_item_ids),
+                        PlanItem.current_job_id.in_(job_ids),
+                    ),
+                )
+                .order_by(PlanItem.id.asc())
+            )
+        ).all()
+        items_by_id = {item_id: theme for item_id, theme, _current_job_id in item_rows}
+        reverse_themes_by_job: dict[uuid.UUID, str | None] = {}
+        for _item_id, theme, current_job_id in item_rows:
+            if current_job_id is not None:
+                reverse_themes_by_job.setdefault(current_job_id, theme)
+        for job in rows:
+            theme = items_by_id.get(job.content_plan_item_id)
+            if job.content_plan_item_id not in items_by_id:
+                theme = reverse_themes_by_job.get(job.id)
+            if isinstance(theme, str) and theme.strip():
+                title_by_job[job.id] = theme.strip()
+
         thread_rows = (
             await db.execute(
-                select(CreationThread.active_job_id, CreationThread.state)
+                select(CreationThread.active_job_id, CreationThread.state, CreationThread.title)
                 .where(
                     CreationThread.creator_id == user.id,
-                    CreationThread.active_job_id.in_([j.id for j in rows]),
+                    CreationThread.active_job_id.in_(job_ids),
                 )
                 # A job could, in principle, be `active_job_id` for more than
                 # one thread row over its lifetime; the most recently updated
@@ -965,10 +1005,22 @@ async def list_my_jobs(
                 .order_by(CreationThread.updated_at.asc())
             )
         ).all()
-        for active_job_id, state in thread_rows:
+        thread_titles_by_job: dict[uuid.UUID, str | None] = {}
+        for active_job_id, state, thread_title in thread_rows:
             selected = (state or {}).get("selected_variant_id")
             if isinstance(selected, str) and selected.strip():
                 preferred_variant_by_job[active_job_id] = selected.strip()  # last (newest) wins
+            # Assignment is deliberately unconditional: a newer blank title
+            # clears an older title instead of reviving stale conversation copy.
+            thread_titles_by_job[active_job_id] = thread_title
+        for job in rows:
+            if job.id in title_by_job:
+                continue
+            thread_title = thread_titles_by_job.get(job.id)
+            if isinstance(thread_title, str) and thread_title.strip():
+                title_by_job[job.id] = thread_title.strip()
+            else:
+                title_by_job[job.id] = "Untitled video"
 
         fb_rows = (
             await db.execute(
@@ -1108,6 +1160,7 @@ async def list_my_jobs(
                 feedback_signal=thumbs.get(j.id),
                 tiktok_publication=latest_tiktok.get(j.id),
                 preferred_variant_id=preferred_variant_by_job.get(j.id),
+                title=title_by_job.get(j.id, "Untitled video"),
             )
             for j in rows
         ],

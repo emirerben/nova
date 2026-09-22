@@ -1,9 +1,20 @@
-"""Resolve creator clip intents to clips inside one chat turn (KRI-127).
+"""Resolve creator clip intents to clips inside one chat turn (KRI-127,
+extended for captions by KRI-129).
 
 Contract frozen here; the pipeline is: text resolver over the shared clip
 records -> capped, deadline-bounded vision re-query for clips the record cannot
-answer -> grounding fence (``app.schemas.clip_intents.ground_label``) -> either
-fully resolved intents or ONE question for the creator. Never a silent partial.
+answer -> grounding fence (``app.schemas.clip_intents.ground_label`` /
+``ground_caption``) -> either fully resolved intents or ONE question for the
+creator. Never a silent partial.
+
+``op="caption"`` (KRI-129) resolves membership exactly like ``group`` (a
+creator_text caption additionally holds per-clip membership to the LABEL bar,
+mirroring the label+creator_text path — see the alias loop below), then
+authors ONE on-screen phrase for the whole chapter AFTER membership is final:
+``creator_text`` verbatim when quoted, or the resolver's own phrase re-checked
+by ``ground_caption`` against the UNION of every member clip's vision
+evidence, with at most one extra vision re-query (against one representative
+member clip) if that first check fails.
 
 Kept DB-free on purpose (no session, no row lock) — the caller does all
 persistence (the resolved intents, plus ``IntentResolution.vision_answers``
@@ -46,9 +57,12 @@ from app.schemas.clip_intents import (
     ClipIntent,
     GroundedLabel,
     ResolvedClipIntent,
+    clean_caption_text,
     clean_label_text,
+    ground_caption,
     ground_label,
 )
+from app.schemas.clip_understanding import ClipUnderstanding
 from app.services.clip_understanding import clip_record
 
 log = structlog.get_logger()
@@ -162,11 +176,16 @@ class _VisionCandidate:
     # The intent's own wording; membership checks are re-asked as yes/no about it.
     attribute: str = ""
     generation: str | None = None
+    # True for the caption text-authoring re-query (KRI-129): a free-form
+    # "what should this say" question about the caption's content, never the
+    # closed yes/no membership check `is_membership_check` would otherwise
+    # force for any non-"label" op.
+    text_authoring: bool = False
 
     @property
     def is_membership_check(self) -> bool:
         """True when the vision model confirms a clip BELONGS, rather than names a value."""
-        return self.op != "label" or bool(self.creator_text)
+        return not self.text_authoring and (self.op != "label" or bool(self.creator_text))
 
     def __post_init__(self) -> None:
         # A membership check must be a closed yes/no question: a free-form
@@ -197,6 +216,14 @@ class _IntentWork:
     provider_quota_exhausted_media_ids: set[str] = field(default_factory=set)
     budget_exhausted_media_ids: set[str] = field(default_factory=set)
     media_unavailable_media_ids: set[str] = field(default_factory=set)
+    # op="caption" with no creator_text only: the resolver's own authored
+    # phrase, cleaned. Re-grounded against the FINAL member set once
+    # membership settles (see the caption text-authoring phase below).
+    authored_caption: str | None = None
+    # op="caption" only, set once text authoring finishes: the final grounded
+    # on-screen phrase + its grounding source, or None if it never grounded.
+    caption_text: str | None = None
+    caption_grounding: str | None = None
 
 
 def _cached_answer(clip: IntentClip, question_norm: str) -> dict[str, Any] | None:
@@ -230,6 +257,18 @@ def _fallback_question(intent: ClipIntent) -> str:
 
 def _membership_question(attribute: str) -> str:
     return f'Does this clip match this description: "{attribute}"? Answer only "yes" or "no".'
+
+
+def _caption_question(intent: ClipIntent) -> str:
+    """The creator-facing question when a caption never grounds."""
+    return f"What should the caption on the {intent.attribute} say?"
+
+
+def _caption_authoring_question(intent: ClipIntent) -> str:
+    """The ONE free-form vision re-query when the record-span check on the
+    resolver's authored phrase fails (KRI-129's caption escalation)."""
+    subject = intent.caption_attribute or intent.attribute
+    return f"In a short phrase (10 words or fewer), what is {subject} in this clip?"
 
 
 def _yes_no(answer: str) -> bool | None:
@@ -363,6 +402,7 @@ def _build_resolver_input(
             op=i.op,
             attribute=i.attribute,
             creator_text=i.creator_text,
+            caption_attribute=i.caption_attribute,
             position=i.position,
         )
         for i in intents
@@ -469,6 +509,11 @@ async def resolve_clip_intents_for_turn(
         assignment_by_media = {a.media: a for a in resolved.assignments}
         vision_media = {nv.media: nv.question for nv in resolved.needs_vision}
         work.had_any_candidate = bool(assignment_by_media or vision_media)
+        if intent.op == "caption" and not intent.creator_text:
+            # The resolver's ONE authored phrase for the whole chapter — text
+            # authoring against the FINAL member set happens after membership
+            # settles, below.
+            work.authored_caption = resolved.caption
 
         candidate_media = list(dict.fromkeys([*assignment_by_media, *vision_media]))
         for alias in candidate_media:
@@ -561,7 +606,50 @@ async def resolve_clip_intents_for_turn(
                             creator_text=None,
                         )
                     )
-            else:  # group / order / include: membership only, never printed
+            elif intent.op == "caption" and intent.creator_text:
+                # A quoted caption ("say ... on the X clips"): the text is the
+                # creator's, applied verbatim once membership is final (below)
+                # — mirrors op="label"'s creator_text path, except there is no
+                # per-clip text to (re)ground here (a caption is one phrase for
+                # the whole chapter, not a per-clip value).
+                if forced_question is not None:
+                    vision_candidates.append(
+                        _VisionCandidate(
+                            media_id=media_id,
+                            intent_id=intent.intent_id,
+                            op=intent.op,
+                            attribute=intent.attribute,
+                            question=forced_question,
+                            fallback_value=None,
+                            creator_text=intent.creator_text,
+                        )
+                    )
+                    continue
+                if assignment is None:
+                    continue
+                if assignment.confidence >= LABEL_MIN_CONFIDENCE:
+                    work.kept.append(
+                        ClipAssignment(
+                            media_id=media_id,
+                            value=None,
+                            evidence=assignment.evidence,
+                            confidence=assignment.confidence,
+                            grounding=None,
+                        )
+                    )
+                    continue
+                vision_candidates.append(
+                    _VisionCandidate(
+                        media_id=media_id,
+                        intent_id=intent.intent_id,
+                        op=intent.op,
+                        attribute=intent.attribute,
+                        question=_fallback_question(intent),
+                        fallback_value=None,
+                        creator_text=intent.creator_text,
+                    )
+                )
+            else:  # group / order / include / described caption: membership only, never printed
                 if forced_question is not None:
                     vision_candidates.append(
                         _VisionCandidate(
@@ -592,169 +680,291 @@ async def resolve_clip_intents_for_turn(
                 # on the resolver's own uncertainty, only on an explicit
                 # needs_vision entry (handled above).
 
-    # ── Deduplicated, fair, deadline-bounded vision re-query ────────────────
-    # Build a stable round-robin order so the first intent cannot consume the
-    # foreground budget, then collapse identical media/generation/question work.
-    by_intent: dict[str, list[_VisionCandidate]] = {i.intent_id: [] for i in intents}
-    for candidate in vision_candidates:
-        by_intent.setdefault(candidate.intent_id, []).append(candidate)
-    ordered_candidates: list[_VisionCandidate] = []
-    while any(by_intent.values()):
-        for intent in intents:
-            pending = by_intent[intent.intent_id]
-            if pending:
-                ordered_candidates.append(pending.pop(0))
+    # Both membership and caption checks share one budget, cache, concurrency
+    # bound and checkpoint path. Caption work is admitted only after membership.
+    calls_spent = 0
 
-    unique: list[_VisionCandidate] = []
-    dependents: dict[tuple[str, str, str], list[_VisionCandidate]] = {}
-    for candidate in ordered_candidates:
-        clip = clip_by_id.get(candidate.media_id)
-        if clip is None:
-            work_by_id[candidate.intent_id].media_unavailable_media_ids.add(candidate.media_id)
-            continue
-        key = (
-            candidate.media_id,
-            str(clip.generation or ""),
-            normalize_question(candidate.question),
-        )
-        if key not in dependents:
-            unique.append(candidate)
-            dependents[key] = []
-        dependents[key].append(candidate)
+    async def run_candidates(candidates, apply_result):
+        nonlocal calls_spent
+        # Build a stable round-robin order so the first intent cannot consume the
+        # foreground budget, then collapse identical media/generation/question work.
+        by_intent: dict[str, list[_VisionCandidate]] = {i.intent_id: [] for i in intents}
+        for candidate in candidates:
+            by_intent.setdefault(candidate.intent_id, []).append(candidate)
+        ordered_candidates: list[_VisionCandidate] = []
+        while any(by_intent.values()):
+            for intent in intents:
+                pending = by_intent[intent.intent_id]
+                if pending:
+                    ordered_candidates.append(pending.pop(0))
 
-    to_call: list[_VisionCandidate] = []
-    for candidate in unique:
-        clip = clip_by_id[candidate.media_id]
-        question_norm = normalize_question(candidate.question)
-        cached = _cached_answer(clip, question_norm)
-        if cached is not None:
-            output = ClipQuestionOutput(
-                answer=str(cached.get("answer", "") or ""),
-                confidence=float(cached.get("confidence", 0.0) or 0.0),
-                evidence=str(cached.get("evidence", "") or ""),
+        unique: list[_VisionCandidate] = []
+        dependents: dict[tuple[str, str, str], list[_VisionCandidate]] = {}
+        for candidate in ordered_candidates:
+            clip = clip_by_id.get(candidate.media_id)
+            if clip is None:
+                work_by_id[candidate.intent_id].media_unavailable_media_ids.add(candidate.media_id)
+                continue
+            key = (
+                candidate.media_id,
+                str(clip.generation or ""),
+                normalize_question(candidate.question),
             )
-            for dependent in dependents[
-                (candidate.media_id, str(clip.generation or ""), question_norm)
-            ]:
-                _apply_vision_result(
-                    dependent,
-                    output,
-                    work_by_id=work_by_id,
-                    records_by_id=records_by_id,
-                    creator_request=creator_request,
-                )
-            continue
-        if not clip.gcs_path or clip.kind != "video":
-            for dependent in dependents[
-                (candidate.media_id, str(clip.generation or ""), question_norm)
-            ]:
-                work_by_id[dependent.intent_id].media_unavailable_media_ids.add(dependent.media_id)
-            continue
-        to_call.append(candidate)
+            if key not in dependents:
+                unique.append(candidate)
+                dependents[key] = []
+            dependents[key].append(candidate)
 
-    foreground_cap = min(4, settings.clip_intents_max_vision_requeries)
-    max_background_work = max(1, min(len(intents), 6) * 50)
-    allowed = len(to_call) if background else min(foreground_cap, len(to_call))
-    if background:
-        allowed = min(max_background_work, allowed)
-    for candidate in to_call[allowed:]:
-        key = (
-            candidate.media_id,
-            str(clip_by_id[candidate.media_id].generation or ""),
-            normalize_question(candidate.question),
+        to_call: list[_VisionCandidate] = []
+        for candidate in unique:
+            clip = clip_by_id[candidate.media_id]
+            question_norm = normalize_question(candidate.question)
+            cached = vision_answers.get(candidate.media_id, {}).get(
+                question_norm
+            ) or _cached_answer(clip, question_norm)
+            if cached is not None:
+                output = ClipQuestionOutput(
+                    answer=str(cached.get("answer", "") or ""),
+                    confidence=float(cached.get("confidence", 0.0) or 0.0),
+                    evidence=str(cached.get("evidence", "") or ""),
+                )
+                for dependent in dependents[
+                    (candidate.media_id, str(clip.generation or ""), question_norm)
+                ]:
+                    apply_result(dependent, output)
+                continue
+            if not clip.gcs_path or clip.kind != "video":
+                for dependent in dependents[
+                    (candidate.media_id, str(clip.generation or ""), question_norm)
+                ]:
+                    work_by_id[dependent.intent_id].media_unavailable_media_ids.add(
+                        dependent.media_id
+                    )
+                continue
+            to_call.append(candidate)
+
+        cap = (
+            max(1, min(len(intents), 6) * 50)
+            if background
+            else min(4, settings.clip_intents_max_vision_requeries)
         )
-        for dependent in dependents[key]:
-            work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
-    to_call = to_call[:allowed]
-
-    question_agent = ClipQuestionAgent(default_client())
-    batch_size = 4
-    batch_timeout = settings.clip_intents_vision_deadline_s
-    for offset in range(0, len(to_call), batch_size):
-        batch = to_call[offset : offset + batch_size]
-        tasks = [
-            asyncio.ensure_future(
-                _run_vision_candidate(
-                    candidate,
-                    clip_by_id[candidate.media_id],
-                    question_agent=question_agent,
-                    run_context=ctx,
-                )
-            )
-            for candidate in batch
-        ]
-        if background:
-            # The provider agent and its SDK calls have their own bounded
-            # runtime. Await the worker threads to completion so a retry cannot
-            # overlap an in-flight paid request after this resolver returns.
-            await asyncio.gather(*tasks, return_exceptions=True)
-            done = set(tasks)
-        else:
-            done, _pending = await asyncio.wait(tasks, timeout=batch_timeout)
-        # Fold completed siblings even if one slow provider call exhausts the
-        # batch deadline; cancelled thread work is intentionally left alone.
-        for candidate, task in zip(batch, tasks, strict=True):
+        terminal_budget = any(
+            work.ai_budget_exhausted_media_ids or work.provider_quota_exhausted_media_ids
+            for work in work_by_id.values()
+        )
+        allowed = 0 if terminal_budget else min(max(0, cap - calls_spent), len(to_call))
+        for candidate in to_call[allowed:]:
             key = (
                 candidate.media_id,
                 str(clip_by_id[candidate.media_id].generation or ""),
                 normalize_question(candidate.question),
             )
-            dependents_for_candidate = dependents[key]
-            if task not in done:
-                for dependent in dependents_for_candidate:
-                    work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
-                task.cancel()
-                continue
-            try:
-                output = task.result()
-            except Exception as exc:  # noqa: BLE001 — classify per candidate
-                for dependent in dependents_for_candidate:
-                    work = work_by_id[dependent.intent_id]
-                    if isinstance(exc, AiBudgetExceededError):
-                        work.ai_budget_exhausted_media_ids.add(dependent.media_id)
-                        work.budget_exhausted_media_ids.add(dependent.media_id)
-                    elif isinstance(exc, ProviderQuotaExceededError):
-                        work.provider_quota_exhausted_media_ids.add(dependent.media_id)
-                        work.budget_exhausted_media_ids.add(dependent.media_id)
-                    elif isinstance(exc, TimeoutError):
-                        work.provider_unavailable_media_ids.add(dependent.media_id)
-                    elif isinstance(exc, (FileNotFoundError, OSError)):
-                        work.media_unavailable_media_ids.add(dependent.media_id)
-                    else:
-                        work.provider_unavailable_media_ids.add(dependent.media_id)
-                continue
-            question_norm = normalize_question(candidate.question)
-            answer_record = {
-                "answer": output.answer,
-                "confidence": output.confidence,
-                "evidence": output.evidence,
-            }
-            if clip_by_id[candidate.media_id].generation is not None:
-                answer_record["generation"] = clip_by_id[candidate.media_id].generation
-            vision_answers.setdefault(candidate.media_id, {})[question_norm] = answer_record
-            for dependent in dependents_for_candidate:
-                _apply_vision_result(
-                    dependent,
-                    output,
-                    work_by_id=work_by_id,
-                    records_by_id=records_by_id,
-                    creator_request=creator_request,
+            for dependent in dependents[key]:
+                work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+        to_call = to_call[:allowed]
+
+        question_agent = ClipQuestionAgent(default_client())
+        batch_size = 4
+        batch_timeout = settings.clip_intents_vision_deadline_s
+        for offset in range(0, len(to_call), batch_size):
+            batch = to_call[offset : offset + batch_size]
+            calls_spent += len(batch)
+            tasks = [
+                asyncio.ensure_future(
+                    _run_vision_candidate(
+                        candidate,
+                        clip_by_id[candidate.media_id],
+                        question_agent=question_agent,
+                        run_context=ctx,
+                    )
                 )
-        if checkpoint is not None and background and done:
-            await checkpoint(vision_answers)
-        if background and any(
-            work.ai_budget_exhausted_media_ids or work.provider_quota_exhausted_media_ids
-            for work in work_by_id.values()
+                for candidate in batch
+            ]
+            if background:
+                # The provider agent and its SDK calls have their own bounded
+                # runtime. Await the worker threads to completion so a retry cannot
+                # overlap an in-flight paid request after this resolver returns.
+                await asyncio.gather(*tasks, return_exceptions=True)
+                done = set(tasks)
+            else:
+                done, _pending = await asyncio.wait(tasks, timeout=batch_timeout)
+            # Fold completed siblings even if one slow provider call exhausts the
+            # batch deadline; cancelled thread work is intentionally left alone.
+            for candidate, task in zip(batch, tasks, strict=True):
+                key = (
+                    candidate.media_id,
+                    str(clip_by_id[candidate.media_id].generation or ""),
+                    normalize_question(candidate.question),
+                )
+                dependents_for_candidate = dependents[key]
+                if task not in done:
+                    for dependent in dependents_for_candidate:
+                        work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+                    task.cancel()
+                    continue
+                try:
+                    output = task.result()
+                except Exception as exc:  # noqa: BLE001 — classify per candidate
+                    for dependent in dependents_for_candidate:
+                        work = work_by_id[dependent.intent_id]
+                        if isinstance(exc, AiBudgetExceededError):
+                            work.ai_budget_exhausted_media_ids.add(dependent.media_id)
+                            work.budget_exhausted_media_ids.add(dependent.media_id)
+                        elif isinstance(exc, ProviderQuotaExceededError):
+                            work.provider_quota_exhausted_media_ids.add(dependent.media_id)
+                            work.budget_exhausted_media_ids.add(dependent.media_id)
+                        elif isinstance(exc, TimeoutError):
+                            work.provider_unavailable_media_ids.add(dependent.media_id)
+                        elif isinstance(exc, (FileNotFoundError, OSError)):
+                            work.media_unavailable_media_ids.add(dependent.media_id)
+                        else:
+                            work.provider_unavailable_media_ids.add(dependent.media_id)
+                    continue
+                question_norm = normalize_question(candidate.question)
+                answer_record = {
+                    "answer": output.answer,
+                    "confidence": output.confidence,
+                    "evidence": output.evidence,
+                }
+                if clip_by_id[candidate.media_id].generation is not None:
+                    answer_record["generation"] = clip_by_id[candidate.media_id].generation
+                vision_answers.setdefault(candidate.media_id, {})[question_norm] = answer_record
+                for dependent in dependents_for_candidate:
+                    apply_result(dependent, output)
+            if checkpoint is not None and background and done:
+                await checkpoint(vision_answers)
+            if background and any(
+                work.ai_budget_exhausted_media_ids or work.provider_quota_exhausted_media_ids
+                for work in work_by_id.values()
+            ):
+                for remaining in to_call[offset + batch_size :]:
+                    remaining_key = (
+                        remaining.media_id,
+                        str(clip_by_id[remaining.media_id].generation or ""),
+                        normalize_question(remaining.question),
+                    )
+                    for dependent in dependents[remaining_key]:
+                        work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+                break
+
+    def apply_membership(candidate, output):
+        _apply_vision_result(
+            candidate,
+            output,
+            work_by_id=work_by_id,
+            records_by_id=records_by_id,
+            creator_request=creator_request,
+        )
+
+    await run_candidates(vision_candidates, apply_membership)
+
+    # ── Caption text authoring (intent-level, after membership is final) ────
+    # A caption is ONE phrase for the whole chapter, so it can only be
+    # grounded once every member clip for the intent has settled — unlike a
+    # label, which grounds per clip inline in the alias loop above.
+    caption_to_call: list[_VisionCandidate] = []
+    caption_member_records: dict[str, list[ClipUnderstanding]] = {}
+    for intent in intents:
+        if intent.op != "caption":
+            continue
+        work = work_by_id[intent.intent_id]
+        if (
+            work.intent_question
+            or work.failed_media_ids
+            or not work.kept
+            or work.pending_media_ids
+            or work.provider_unavailable_media_ids
+            or work.budget_exhausted_media_ids
+            or work.media_unavailable_media_ids
         ):
-            for remaining in to_call[offset + batch_size :]:
-                remaining_key = (
-                    remaining.media_id,
-                    str(clip_by_id[remaining.media_id].generation or ""),
-                    normalize_question(remaining.question),
-                )
-                for dependent in dependents[remaining_key]:
-                    work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
-            break
+            # Membership itself never fully settled (ambiguous intent, a
+            # member clip still unresolved, or zero members) — that is
+            # already reported by the generic membership question below;
+            # there is nothing to author a caption ABOUT yet.
+            continue
+        member_records = [
+            records_by_id[a.media_id] for a in work.kept if a.media_id in records_by_id
+        ]
+        caption_member_records[intent.intent_id] = member_records
+
+        if intent.creator_text:
+            grounded = ground_caption(
+                value=intent.creator_text,
+                confidence=1.0,
+                creator_request=creator_request,
+                records=member_records,
+                intent_id=intent.intent_id,
+            )
+            if grounded is not None:
+                work.caption_text = grounded.text
+                work.caption_grounding = grounded.grounding
+            else:
+                work.intent_question = _caption_question(intent)
+            continue
+
+        # Described caption: ground the resolver's authored phrase first —
+        # confidence is fixed at the label bar (there is no per-intent
+        # resolver confidence for an authored phrase; the word-membership
+        # check against the union evidence IS the real gate).
+        grounded = ground_caption(
+            value=work.authored_caption,
+            confidence=LABEL_MIN_CONFIDENCE if work.authored_caption else 0.0,
+            creator_request=creator_request,
+            records=member_records,
+            intent_id=intent.intent_id,
+        )
+        if grounded is not None:
+            work.caption_text = grounded.text
+            work.caption_grounding = grounded.grounding
+            continue
+
+        # Ungrounded — escalate to exactly ONE vision re-query, against one
+        # representative member clip (earliest in clip order), reusing the
+        # SAME per-turn cap/deadline budget as the membership round above.
+        first_member = min(work.kept, key=lambda a: position_by_media.get(a.media_id, 10**9))
+        clip = clip_by_id.get(first_member.media_id)
+        if clip is None:
+            work.media_unavailable_media_ids.add(first_member.media_id)
+            continue
+        question = _caption_authoring_question(intent)
+        caption_to_call.append(
+            _VisionCandidate(
+                media_id=first_member.media_id,
+                intent_id=intent.intent_id,
+                op=intent.op,
+                attribute=intent.attribute,
+                question=question,
+                fallback_value=None,
+                creator_text=None,
+                text_authoring=True,
+            )
+        )
+
+    by_intent_id = {i.intent_id: i for i in intents}
+
+    def apply_caption(candidate, output):
+        work = work_by_id[candidate.intent_id]
+        cand_intent = by_intent_id[candidate.intent_id]
+        if output.is_unknown():
+            work.intent_question = _caption_question(cand_intent)
+            return
+        value = work.authored_caption or clean_caption_text(output.answer)
+        re_grounded = ground_caption(
+            value=value,
+            confidence=0.0,
+            creator_request=creator_request,
+            records=caption_member_records.get(candidate.intent_id, []),
+            vision_answer=output.answer,
+            vision_confidence=output.confidence,
+            intent_id=candidate.intent_id,
+        )
+        if re_grounded is not None:
+            work.caption_text = re_grounded.text
+            work.caption_grounding = re_grounded.grounding
+        else:
+            work.intent_question = _caption_question(cand_intent)
+
+    await run_candidates(caption_to_call, apply_caption)
 
     # ── Assemble the result ──────────────────────────────────────────────────
     resolved_intents: list[ResolvedClipIntent] = []
@@ -786,10 +996,13 @@ async def resolve_clip_intents_for_turn(
                     op=intent.op,
                     attribute=intent.attribute,
                     creator_text=intent.creator_text,
+                    caption_attribute=intent.caption_attribute,
                     position=intent.position,
                     status="needs_creator",
                     assignments=work.kept,
                     question=None,  # set on the turn-level question below
+                    caption_text=work.caption_text,
+                    caption_grounding=work.caption_grounding,
                 )
             )
         else:
@@ -799,9 +1012,12 @@ async def resolve_clip_intents_for_turn(
                     op=intent.op,
                     attribute=intent.attribute,
                     creator_text=intent.creator_text,
+                    caption_attribute=intent.caption_attribute,
                     position=intent.position,
                     status="resolved",
                     assignments=work.kept,
+                    caption_text=work.caption_text,
+                    caption_grounding=work.caption_grounding,
                 )
             )
 

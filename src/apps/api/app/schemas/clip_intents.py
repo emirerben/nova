@@ -1,22 +1,37 @@
-"""Generic creator intents over clips, and the grounding fence for labels (KRI-127).
+"""Generic creator intents over clips, and the grounding fence for labels and
+captions (KRI-127, extended by KRI-129).
 
 One open-vocabulary intent replaces the per-feature strategy fields
 (``sport_labels``, ``context_label.kind``...): "label / group / order / include
-clips by <creator-described attribute>". A model step resolves an intent into
-per-clip assignments with evidence and a confidence; this module owns the
-contract and the ONLY rule by which resolved text may reach the screen.
+/ caption clips by <creator-described attribute>". A model step resolves an
+intent into per-clip assignments with evidence and a confidence; this module
+owns the contract and the ONLY rule by which resolved text may reach the
+screen.
 
-On-screen text fence (replaces the closed sport allowlist): a label is rendered
-only when it is
+On-screen text fence (replaces the closed sport allowlist): a label (per-clip
+corner text) or a caption (one on-screen phrase for a whole chapter — the
+group of clips an intent's membership resolves to) is rendered only when it is
 
 * ``creator_text``     the creator's own words (found in the confirmed request),
 * ``record_span``      every word of it appears in what the vision model wrote
-                       about THAT clip, resolver confidence >= 0.8, or
-* ``vision_verified``  the vision model answered it for THAT clip when asked,
-                       confidence >= 0.8.
+                       about the clip (a label: THAT clip; a caption: the
+                       UNION of every member clip's record), resolver
+                       confidence >= 0.8, or
+* ``vision_verified``  the vision model answered it when asked (a label: about
+                       THAT clip; a caption: about one representative member
+                       clip), confidence >= 0.8.
 
 Anything else is omitted and the creator is asked instead. Spoken transcripts
-never ground a label here (speech is third-party text, not vision evidence).
+never ground a label or caption here (speech is third-party text, not vision
+evidence).
+
+A caption differs from a label in shape, not in the fence: a label is a <=3
+word per-clip tag (``label_text``/``LABEL_MAX_*``); a caption is a <=10 word
+phrase for the whole chapter (``clean_caption_text``/``CAPTION_MAX_*``,
+``ground_caption``). ``op="caption"`` assignments stay membership-only (like
+``group``/``order``/``include`` — ``value`` is always ``None``); the one
+authored/quoted caption phrase lives on ``ResolvedClipIntent.caption_text`` +
+``caption_grounding`` instead of per-assignment ``value``.
 """
 
 from __future__ import annotations
@@ -29,7 +44,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.clip_understanding import ClipUnderstanding
 
-ClipIntentOp = Literal["label", "group", "order", "include"]
+ClipIntentOp = Literal["label", "group", "order", "include", "caption"]
 ClipOrderPosition = Literal["first", "last"]
 GroundingSource = Literal["creator_text", "record_span", "vision_verified"]
 ResolutionStatus = Literal["resolved", "needs_creator"]
@@ -38,11 +53,22 @@ MAX_CLIP_INTENTS = 6
 LABEL_MIN_CONFIDENCE = 0.8
 LABEL_MAX_CHARS = 24
 LABEL_MAX_WORDS = 3
-# Membership (group/order/include) moves clips but prints nothing, so it needs
-# less certainty than a label does.
+# Membership (group/order/include/caption) moves clips but prints nothing
+# itself, so it needs less certainty than a label's per-clip printed value
+# does.
 MEMBERSHIP_MIN_CONFIDENCE = 0.6
 
+# A caption is a phrase, not a tag: longer than a label, but still short
+# on-screen text for one chapter (never a full sentence).
+CAPTION_MAX_CHARS = 60
+CAPTION_MAX_WORDS = 10
+
 _LABEL_ALLOWED = re.compile(r"[^\w\s&'\-]", re.UNICODE)
+# Captions are ordinary short phrases: allow common sentence punctuation on
+# top of the label charset. Newlines can never survive `_clean` (it collapses
+# all whitespace, including newlines, to single spaces) so no explicit
+# newline check is needed here.
+_CAPTION_ALLOWED = re.compile(r"[^\w\s&'\-.,!?:;\"()]", re.UNICODE)
 
 
 def _clean(value: object, limit: int) -> str:
@@ -61,6 +87,10 @@ class ClipIntent(BaseModel):
     attribute: str = Field(min_length=1, max_length=160)
     # Exact creator-written copy for this intent ("post match pub"), if any.
     creator_text: str | None = Field(default=None, max_length=60)
+    # Only for op="caption" with no `creator_text`: what the caption should be
+    # ABOUT ("the weather"), as distinct from `attribute` (WHICH clips it's
+    # for, "the park clips"). Never set for any other op.
+    caption_attribute: str | None = Field(default=None, max_length=160)
     # Only for op="order".
     position: ClipOrderPosition | None = None
 
@@ -73,6 +103,11 @@ class ClipIntent(BaseModel):
     @classmethod
     def _creator_text(cls, v: object) -> str | None:
         return _clean(v, 60) or None
+
+    @field_validator("caption_attribute", mode="before")
+    @classmethod
+    def _caption_attribute(cls, v: object) -> str | None:
+        return _clean(v, 160) or None
 
 
 class ClipAssignment(BaseModel):
@@ -99,6 +134,12 @@ class ResolvedClipIntent(ClipIntent):
     assignments: list[ClipAssignment] = Field(default_factory=list)
     # Set when status == "needs_creator": one concise question for the chat.
     question: str | None = Field(default=None, max_length=300)
+    # Only for op="caption": the ONE on-screen phrase for the whole chapter
+    # (the member clips in `assignments`) -- `creator_text` verbatim, or the
+    # resolver's grounded phrase. `assignments[i].value` stays None for
+    # caption, same as group/order/include -- membership only.
+    caption_text: str | None = Field(default=None, max_length=CAPTION_MAX_CHARS)
+    caption_grounding: GroundingSource | None = None
 
     def media_ids(self) -> list[str]:
         return [a.media_id for a in self.assignments]
@@ -207,5 +248,74 @@ def ground_label(
             grounding="record_span",
             confidence=float(confidence),
             intent_id=intent_id,
+        )
+    return None
+
+
+class GroundedCaption(BaseModel):
+    """The only shape the caption render lane accepts. Intent-level (one
+    caption per chapter), unlike ``GroundedLabel`` which is per-clip."""
+
+    text: str = Field(min_length=1, max_length=CAPTION_MAX_CHARS)
+    grounding: GroundingSource
+    confidence: float = Field(ge=0.0, le=1.0)
+    intent_id: str = ""
+
+
+def clean_caption_text(value: object) -> str | None:
+    """Normalise candidate caption copy; None when it can never be a caption."""
+    text = _clean(value, 200)
+    if not text or _CAPTION_ALLOWED.search(text):
+        return None
+    if len(text) > CAPTION_MAX_CHARS or len(text.split()) > CAPTION_MAX_WORDS:
+        return None
+    if not any(c.isalpha() for c in text):
+        return None
+    return text
+
+
+def ground_caption(
+    *,
+    value: object,
+    confidence: float,
+    creator_request: str,
+    records: list[ClipUnderstanding],
+    vision_answer: str | None = None,
+    vision_confidence: float | None = None,
+    intent_id: str = "",
+) -> GroundedCaption | None:
+    """Apply the on-screen text fence to an intent-level caption phrase.
+
+    Same three-source fence as ``ground_label``, except ``record_span`` checks
+    the caption's words against the UNION of every member clip's vision
+    evidence (a caption spans a whole chapter, not one clip) instead of a
+    single clip's record.
+    """
+    text = clean_caption_text(value)
+    if text is None:
+        return None
+    if _contains_phrase(creator_request or "", text):
+        return GroundedCaption(
+            text=text, grounding="creator_text", confidence=1.0, intent_id=intent_id
+        )
+    words = _tokens(text)
+    if not words:
+        return None
+    if (
+        vision_answer
+        and vision_confidence is not None
+        and vision_confidence >= LABEL_MIN_CONFIDENCE
+        and words <= _tokens(vision_answer)
+    ):
+        return GroundedCaption(
+            text=text,
+            grounding="vision_verified",
+            confidence=float(vision_confidence),
+            intent_id=intent_id,
+        )
+    union_evidence = " ".join(vision_evidence_text(r) for r in records)
+    if confidence >= LABEL_MIN_CONFIDENCE and words <= _tokens(union_evidence):
+        return GroundedCaption(
+            text=text, grounding="record_span", confidence=float(confidence), intent_id=intent_id
         )
     return None

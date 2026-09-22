@@ -2,6 +2,22 @@ import XCTest
 
 @MainActor
 final class ProjectsUITests: XCTestCase {
+    func testGalleryPosterStatesNeverSubstituteSamplePhotos() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-brand"]
+        app.launchEnvironment["KRIA_BRAND_STATE"] = "gallery-posters"
+        app.launch()
+
+        let unavailable = app.descendants(matching: .any).matching(identifier: "project-poster-unavailable")
+        XCTAssertTrue(unavailable.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(unavailable.count, 2)
+        XCTAssertTrue(unavailable.matching(NSPredicate(format: "label == %@", "Preview unavailable for Missing poster")).firstMatch.exists)
+        XCTAssertTrue(unavailable.matching(NSPredicate(format: "label == %@", "Preview unavailable for Failed poster")).firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["project-poster-loading"].exists)
+        XCTAssertTrue(app.images["project-poster-image"].exists)
+        XCTAssertEqual(app.images.count, 1, "Only the successfully loaded poster may show an image")
+    }
+
     func testProjectActionsCanBeCancelledWithoutChangingProject() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]

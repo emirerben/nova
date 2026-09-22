@@ -174,6 +174,39 @@ def test_prod_shape_pub_group_beat_splits_without_losing_coverage() -> None:
     assert any(repair.startswith("split_beat:") for repair in output.repairs)
 
 
+def test_prod_shape_pub_group_caption_intent_lands_once_and_blanks_the_rest() -> None:
+    """KRI-129: a resolved caption intent for the pub clips, against the same
+    16-clip production shape (a) covers. The oversized 6-clip pub group still
+    splits into two consecutive same-topic beats (a) verifies structurally --
+    only ONE of those two carries the creator's exact caption text; the
+    other, like every non-pub beat, is blanked."""
+
+    from tests.agents.test_edit_proposal_clip_intents import _caption_intent  # noqa: PLC0415
+
+    pub_media_ids = [
+        "clip-01.mp4",
+        "clip-02.mp4",
+        "clip-06.mp4",
+        "clip-07.mp4",
+        "clip-08.mp4",
+        "clip-09.mp4",
+    ]
+    agent_input = _pub_group_input(clip_intents=[_caption_intent(pub_media_ids, "post match pub")])
+
+    output = EditProposalAgent(None).parse(_pub_group_raw_text(), agent_input)
+
+    pub_beats = [beat for beat in output.story_beats if beat.topic == "Post match pub"]
+    assert len(pub_beats) == 2
+    assert sum(len(beat.media_ids) for beat in pub_beats) == 6
+    pub_thoughts = [beat.thought for beat in pub_beats]
+    assert pub_thoughts.count("post match pub") == 1
+    assert pub_thoughts.count("") == 1
+    other_thoughts = [beat.thought for beat in output.story_beats if beat.topic != "Post match pub"]
+    assert all(thought == "" for thought in other_thoughts)
+    assert any(repair.startswith("caption_applied:") for repair in output.repairs)
+    assert any(repair.startswith("blanked_thought_for_caption:") for repair in output.repairs)
+
+
 # ── (b) 12 beats parse (old ceiling was 5) ─────────────────────────────────────
 
 
@@ -665,3 +698,90 @@ def test_trimming_for_length_never_drops_a_clip_a_creator_intent_names() -> None
     assert "speech" in used
     assert len(used) * 1.4 <= 16 + 1e-6
     assert any(repair.startswith("dropped_media_for_duration") for repair in output.repairs)
+
+
+# ---------------------------------------------------------------------------
+# On-screen text the creator specified is the complete list.
+# ---------------------------------------------------------------------------
+
+
+def _pub_group_payload(thoughts: list[str]) -> dict:
+    fixture = _load_pub_group_fixture()
+    ids = [row["media_id"] for row in fixture["media"]]
+    chapters = [
+        ("Park", ids[0:4]),
+        ("Speech to camera", ids[4:6]),
+        ("Beach volleyball", ids[6:8]),
+        ("Post Match Pub", ids[8:12]),
+        ("Post Match Pub", ids[12:16]),
+    ]
+    return {
+        "title": fixture["opening_title"],
+        "duration_s": fixture["duration_s"],
+        "montage_audio": fixture["montage_audio"],
+        "story_beats": [
+            {
+                "topic": topic,
+                "thought": thought,
+                "media_ids": media_ids,
+                "layout": "fullscreen",
+                "duration_s": 12,
+            }
+            for (topic, media_ids), thought in zip(chapters, thoughts, strict=True)
+        ],
+    }
+
+
+def test_creator_specified_on_screen_text_is_the_complete_caption_list() -> None:
+    """The creator said what the screen should say ("post match pub"). The
+    model still captioned the park chapter on its own in 2 of 3 live runs; the
+    prompt rule alone did not hold. Any caption that is not one of the
+    creator's own quoted phrases is blanked, and the repair is recorded."""
+
+    output = EditProposalAgent(None).parse(
+        json.dumps(
+            _pub_group_payload(
+                [
+                    "People enjoy the outdoor atmosphere, walking through the park.",
+                    "The creator addresses the camera.",
+                    "",
+                    "post match pub",
+                    "",
+                ]
+            )
+        ),
+        _pub_group_input(),
+    )
+
+    assert [beat.thought for beat in output.story_beats] == ["", "", "", "post match pub", ""]
+    assert "blanked_unrequested_thought:0" in output.repairs
+    assert "blanked_unrequested_thought:1" in output.repairs
+
+
+def test_creator_phrase_survives_case_and_smart_quote_differences() -> None:
+    output = EditProposalAgent(None).parse(
+        json.dumps(_pub_group_payload(["", "", "", "Post Match Pub", ""])),
+        _pub_group_input(),
+    )
+
+    # The creator's own spelling is written back, not the model's echo.
+    assert output.story_beats[3].thought == "post match pub"
+    assert not any(repair.startswith("blanked_unrequested") for repair in output.repairs)
+
+
+def test_ai_draft_captions_stay_when_the_creator_named_no_on_screen_text() -> None:
+    """Without quoted on-screen text in the request, thoughts are still the
+    editable AI draft they always were."""
+
+    agent_input = _pub_group_input(
+        creator_request="Group the clips by activity and keep the pace lively.",
+        opening_title=None,
+        closing_title=None,
+    )
+    output = EditProposalAgent(None).parse(
+        json.dumps(_pub_group_payload(["Park moments.", "Speech time.", "", "Pub night.", ""])),
+        agent_input,
+    )
+
+    assert [beat.thought for beat in output.story_beats][:2] == ["Park moments.", "Speech time."]
+    assert not any(repair.startswith("blanked_unrequested") for repair in output.repairs)

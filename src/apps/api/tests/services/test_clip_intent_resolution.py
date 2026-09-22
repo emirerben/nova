@@ -428,6 +428,252 @@ async def test_partial_label_resolution_still_asks_but_keeps_grounded(monkeypatc
     assert grounded_labels(result.intents) == []
 
 
+# ── KRI-129: op="caption" — one on-screen phrase for the whole chapter ──────
+
+
+async def test_creator_text_caption_grounds_after_membership_confirmed(monkeypatch) -> None:
+    intent = ClipIntent(
+        intent_id="i_food", op="caption", attribute="food clips", creator_text="post match feast"
+    )
+    clips = [
+        _video_clip("m1", subject="friends eating dinner"),
+        _video_clip("m2", subject="dessert table"),
+    ]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_food",
+                    assignments=[
+                        ResolverAssignment(media="m001", confidence=0.9),
+                        ResolverAssignment(media="m002", confidence=0.85),
+                    ],
+                )
+            ]
+        ),
+    )
+    _patch_vision_forbidden(monkeypatch)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request='Say "post match feast" on the food clips.',
+        clips=clips,
+        run_context=RunContext(),
+    )
+
+    assert result.question is None
+    resolved = result.intents[0]
+    assert resolved.status == "resolved"
+    assert resolved.caption_text == "post match feast"
+    assert resolved.caption_grounding == "creator_text"
+    assert {a.media_id for a in resolved.assignments} == {"m1", "m2"}
+    assert all(a.value is None for a in resolved.assignments)  # membership only, like group
+
+
+async def test_creator_text_caption_low_membership_confidence_escalates_to_vision(
+    monkeypatch,
+) -> None:
+    """Mirrors the label+creator_text path: below the LABEL bar, membership is
+    confirmed with a yes/no vision check before the (verbatim) text is applied."""
+    intent = ClipIntent(
+        intent_id="i_food", op="caption", attribute="food clips", creator_text="post match feast"
+    )
+    clip = _video_clip("m1", subject="a table")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_food",
+                    assignments=[ResolverAssignment(media="m001", confidence=0.5)],
+                )
+            ]
+        ),
+    )
+    calls = _patch_vision_success(monkeypatch, "yes", 0.9)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request='Say "post match feast" on the food clips.',
+        clips=[clip],
+        run_context=RunContext(),
+    )
+
+    assert calls[0] == 1
+    resolved = result.intents[0]
+    assert result.question is None
+    assert resolved.status == "resolved"
+    assert resolved.caption_text == "post match feast"
+    assert resolved.caption_grounding == "creator_text"
+
+
+async def test_described_caption_grounds_via_record_span_over_union_of_members(
+    monkeypatch,
+) -> None:
+    intent = ClipIntent(intent_id="i_park", op="caption", attribute="park clips")
+    clip_a = _video_clip("m1", subject="a rainy park bench")
+    clip_b = _video_clip("m2", subject="a windy afternoon walk")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_park",
+                    assignments=[
+                        ResolverAssignment(media="m001", confidence=0.9),
+                        ResolverAssignment(media="m002", confidence=0.9),
+                    ],
+                    caption="rainy windy",
+                )
+            ]
+        ),
+    )
+    _patch_vision_forbidden(monkeypatch)  # union grounds it directly, no re-query needed
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="Add a caption about the weather on the park clips",
+        clips=[clip_a, clip_b],
+        run_context=RunContext(),
+    )
+
+    assert result.question is None
+    resolved = result.intents[0]
+    assert resolved.status == "resolved"
+    assert resolved.caption_text == "rainy windy"
+    assert resolved.caption_grounding == "record_span"
+
+
+async def test_described_caption_escalates_to_one_vision_requery_when_ungrounded(
+    monkeypatch,
+) -> None:
+    intent = ClipIntent(
+        intent_id="i_park", op="caption", attribute="park clips", caption_attribute="the weather"
+    )
+    clip = _video_clip("m1", subject="people at a park")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_park",
+                    assignments=[ResolverAssignment(media="m001", confidence=0.9)],
+                    caption="cold and rainy",  # the record alone does not support this
+                )
+            ]
+        ),
+    )
+    calls = _patch_vision_success(monkeypatch, "cold and rainy", 0.9)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="Add a caption about the weather on the park clips",
+        clips=[clip],
+        run_context=RunContext(),
+    )
+
+    assert calls[0] == 1  # exactly ONE extra vision call to author the caption
+    resolved = result.intents[0]
+    assert result.question is None
+    assert resolved.status == "resolved"
+    assert resolved.caption_text == "cold and rainy"
+    assert resolved.caption_grounding == "vision_verified"
+
+
+async def test_described_caption_still_ungrounded_after_vision_asks_creator(monkeypatch) -> None:
+    intent = ClipIntent(
+        intent_id="i_park", op="caption", attribute="park clips", caption_attribute="the weather"
+    )
+    clip = _video_clip("m1", subject="people at a park")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_park",
+                    assignments=[ResolverAssignment(media="m001", confidence=0.9)],
+                    caption="cold and rainy",
+                )
+            ]
+        ),
+    )
+    _patch_vision_success(monkeypatch, "unknown", 0.0)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="Add a caption about the weather on the park clips",
+        clips=[clip],
+        run_context=RunContext(),
+    )
+
+    resolved = result.intents[0]
+    assert resolved.status == "needs_creator"
+    assert resolved.caption_text is None
+    assert result.question == "What should the caption on the park clips say?. Could you clarify?"
+
+
+async def test_caption_intent_with_no_members_asks_creator(monkeypatch) -> None:
+    intent = ClipIntent(
+        intent_id="i_food", op="caption", attribute="food clips", creator_text="post match feast"
+    )
+    clip = _video_clip("m1", subject="people sitting on grass")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(intents=[ResolverIntentOut(intent_id="i_food")]),
+    )
+    _patch_vision_forbidden(monkeypatch)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request='Say "post match feast" on the food clips.',
+        clips=[clip],
+        run_context=RunContext(),
+    )
+
+    resolved = result.intents[0]
+    assert resolved.status == "needs_creator"
+    assert resolved.caption_text is None
+    assert result.question is not None
+
+
+async def test_caption_text_authoring_respects_the_shared_per_turn_vision_cap(monkeypatch) -> None:
+    """The membership round and the caption-authoring round share ONE budget —
+    a membership vision call that exhausts the cap must leave nothing for the
+    caption-text escalation (it asks the creator instead of over-spending)."""
+    monkeypatch.setattr(settings, "clip_intents_max_vision_requeries", 1)
+    intent = ClipIntent(
+        intent_id="i_park", op="caption", attribute="park clips", caption_attribute="the weather"
+    )
+    clip = _video_clip("m1", subject="people at a park")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_park",
+                    needs_vision=[ResolverVisionQuestion(media="m001", question="Who is here?")],
+                    caption="cold and rainy",
+                )
+            ]
+        ),
+    )
+    calls = _patch_vision_success(monkeypatch, "yes", 0.9)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="Add a caption about the weather on the park clips",
+        clips=[clip],
+        run_context=RunContext(),
+    )
+
+    assert calls[0] == 1  # only the membership call — the cap was already spent
+    resolved = result.intents[0]
+    assert resolved.status == "needs_creator"
+    assert resolved.caption_text is None
+    assert result.question == "What should the caption on the park clips say?. Could you clarify?"
+
+
 def test_membership_vision_checks_are_closed_yes_no_questions() -> None:
     """A free-form question answered "yes" must never count as belonging to a NOT-group."""
     from app.services.clip_intent_resolution import _VisionCandidate, _yes_no
