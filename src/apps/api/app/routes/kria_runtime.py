@@ -130,6 +130,10 @@ async def create_turn(
     except RuntimeFailure as failure:
         await db.rollback()
         return _problem(request, failure)
+    from app.services.creation_thread_titles import start_title_generation  # noqa: PLC0415
+
+    if isinstance(db, AsyncSession):
+        start_title_generation(uuid.UUID(thread_id))
     if should_publish:
         try:
             _publish_turn(response.turn_id)

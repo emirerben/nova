@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.135.0] - 2026-09-22
+
+### Changed
+- chore(deploy): gate Vercel builds to main + web-affecting commits (#1150) <!-- release-pr: 1150 -->
+
+## [0.76.134.0] - 2026-09-22
+
+### Changed
+- feat(chat): automatically name new chats from the first prompt (KRI-162) (#1148) <!-- release-pr: 1148 -->
+
+## [0.76.133.0] - 2026-09-22
+
+### Fixed
+- fix: deliver background creator replies during chat polling (#1147) <!-- release-pr: 1147 -->
+
 ## [0.76.132.0] - 2026-09-22
 
 ### Fixed

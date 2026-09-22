@@ -1103,3 +1103,88 @@ async def test_editor_revision_approval_atomically_stages_exact_job_generation(
             assert execution.result["render_generation_id"] == staged_generation
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("manual_rename", [False, True])
+async def test_first_prompt_title_is_durable_and_manual_rename_wins(
+    monkeypatch: pytest.MonkeyPatch, manual_rename: bool
+) -> None:
+    from app.services import creation_thread_titles
+
+    user_id, thread_id, _session_id = _seed_runtime_project()
+    prompt = "Create a 30-second reel from my Barcelona trip clips"
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id)
+        thread.title = "Untitled video"
+        db.commit()
+
+    started, finish = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def summarize(text: str) -> str:
+        calls.append(text)
+        started.set()
+        await finish.wait()
+        return "Barcelona Trip Reel"
+
+    monkeypatch.setattr(creation_thread_titles, "_summarize", summarize)
+    task = None
+    try:
+        async with AsyncSessionLocal() as db:
+            accepted, _ = await submit_turn(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                body=SubmitTurnBody(
+                    message=prompt,
+                    client_event_id=f"title-{uuid.uuid4()}",
+                    expected_thread_revision=2,
+                ),
+            )
+        task = asyncio.create_task(creation_thread_titles.generate_thread_title(thread_id))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        # A second API process observes the durable claim and performs no paid call.
+        await creation_thread_titles.generate_thread_title(thread_id)
+        if manual_rename:
+            async with AsyncSessionLocal() as db:
+                thread = await db.get(CreationThread, thread_id, with_for_update=True)
+                # Even explicitly choosing the fallback text establishes ownership.
+                thread.title = prompt
+                thread.state = {**thread.state, "title_source": "user"}
+                await db.commit()
+        finish.set()
+        await task
+        async with AsyncSessionLocal() as db:
+            reopened = await db.get(CreationThread, thread_id)
+            assert reopened.title == (prompt if manual_rename else "Barcelona Trip Reel")
+            assert reopened.state["title_source"] == ("user" if manual_rename else "generated")
+            delta = await read_delta(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                after_sequence=2,
+                limit=20,
+            )
+            assert [event.event_type for event in delta.events] == (
+                [] if manual_rename else ["thread_title_generated"]
+            )
+        # A follow-up accepted against the pre-title revision is still valid.
+        async with AsyncSessionLocal() as db:
+            await submit_turn(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                body=SubmitTurnBody(
+                    message="Keep the sunset shot",
+                    client_event_id=f"followup-{uuid.uuid4()}",
+                    expected_thread_revision=accepted.thread_revision,
+                ),
+            )
+        await creation_thread_titles.generate_thread_title(thread_id)
+        assert calls == [prompt]
+    finally:
+        finish.set()
+        if task is not None:
+            await task
+        await async_engine.dispose()
