@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.116.0] - 2026-09-22
+
+### Changed
+- feat(ios): auto-delete abandoned empty chats, keep unsent drafts (KRI-144) (#1127) <!-- release-pr: 1127 -->
+
 ## [0.76.115.0] - 2026-09-22
 
 ### Changed
