@@ -82,10 +82,10 @@ struct NativeEditorAddClipSheet: View {
         photoItem = nil
         dismissAfterPickerCloses()
         Task { @MainActor in
-            await session.addClip {
+            await session.addClip(source: {
                 guard let media = try await item.loadTransferable(type: ImportedMedia.self) else { throw AddClipSourceUnreadable() }
                 return media.url
-            }
+            }, uploadSource: .photos)
         }
     }
 
@@ -98,7 +98,7 @@ struct NativeEditorAddClipSheet: View {
         dismissAfterPickerCloses()
         Task { @MainActor in
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            await session.addClip(fileURL: url)
+            await session.addClip(source: { url }, uploadSource: .files)
         }
     }
 }

@@ -107,6 +107,7 @@ def compile_phone_guided_plan(
     visuals: tuple[PhoneVisualBinding, ...] = (),
     *,
     narration: PhoneNarrationBed | None = None,
+    allow_editor_media: bool = False,
 ) -> EditRecipeV2:
     """``visuals`` pins approved Visuals-pool photos and videos (KRI-121). Callers
     bind each kind only while its feature (``stillImages`` / ``visualVideos``)
@@ -129,6 +130,8 @@ def compile_phone_guided_plan(
     from app.pipeline.portable_text_layout import compile_text_overlay
 
     for lane, capability in _UNSUPPORTED_PHONE_LANE_CAPABILITY.items():
+        if lane == "editor_visual_blocks" and allow_editor_media:
+            continue
         if getattr(plan, lane):
             raise UnsupportedPhonePlan(f"unsupported phone lane: {lane}", capability=capability)
     if plan.narration is not None:
@@ -488,6 +491,28 @@ def compile_phone_guided_plan(
                 if layer.end - layer.start < _FRAME_S:
                     layer.start = max(0.0, layer.end - _FRAME_S)
     tracks = [TimelineTrack(id="story", kind="video", clips=clips)]
+    if plan.editor_visual_blocks:
+        from app.pipeline.phone_editor_visuals import (  # noqa: PLC0415
+            UnsupportedEditorMedia,
+            compile_editor_media_track,
+        )
+
+        if not allow_editor_media:
+            raise UnsupportedPhonePlan(
+                "unsupported phone lane: editor_visual_blocks", capability="visualBlocks"
+            )
+        try:
+            tracks.append(
+                compile_editor_media_track(
+                    plan.editor_visual_blocks,
+                    visuals=visuals,
+                    timeline_duration_s=compiled_duration,
+                    assets=assets,
+                    manifest=manifest,
+                )
+            )
+        except UnsupportedEditorMedia as exc:
+            raise UnsupportedPhonePlan(str(exc), capability="visualBlocks") from exc
     audio = AudioMixRecipe(original_volume=plan.editor_audio_level if preserve_audio else 0)
     required_capabilities = (
         {"basicComposition", "local1080Export"}
@@ -503,6 +528,9 @@ def compile_phone_guided_plan(
             else set()
         )
         | ({"audioMix"} if preserve_audio else set())
+        # Match the native engine's content-derived requirements for every
+        # silent overlay track, including a full-frame opaque media block.
+        | ({"visualBlocks", "alphaOverlay", "audioMix"} if plan.editor_visual_blocks else set())
     )
     if plan.narration is not None:
         # `narration is not None` always holds here (the checks at the top of

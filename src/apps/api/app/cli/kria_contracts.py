@@ -58,6 +58,7 @@ from app.routes.creation_threads import (
     UploadBody,
     UploadTarget,
 )
+from app.routes.editor_sources import EditorSourceOut, EditorSourceRequest
 from app.routes.generative_jobs import (
     EditorCommitRequest,
     EditorCommitResponse,
@@ -148,6 +149,8 @@ MOBILE_API_MODELS = (
     GenerativeJobStatusResponse,
     EditorCommitRequest,
     EditorCommitResponse,
+    EditorSourceRequest,
+    EditorSourceOut,
     *API_MODELS,
 )
 
@@ -194,6 +197,16 @@ def mobile_contract_json() -> str:
                         "request": "MobileExchangeRequest",
                         "response": "MobileLinkResponse",
                     },
+                    "/plan-items/{item_id}/variants/{variant_id}/editor-sources": {
+                        "method": "POST",
+                        "request": "EditorSourceRequest",
+                        "response": "EditorSourceOut",
+                        "success_statuses": [200, 202],
+                    },
+                    "/plan-items/{item_id}/variants/{variant_id}/editor-sources/{import_id}": {
+                        "method": "GET",
+                        "response": "EditorSourceOut",
+                    },
                 },
                 "models": {
                     "MobileExchangeRequest": {
@@ -231,6 +244,31 @@ def mobile_contract_json() -> str:
                         "tracks": "Array<TimelineTrack>",
                         "audio": "AudioMixRecipe",
                         "required_capabilities": "Set<MediaCapability>",
+                    },
+                    "EditorSourceRequest": {
+                        "client_import_id": "UUID",
+                        "base_generation": "string",
+                        "guided_revision_number": "integer",
+                        "source_kind": ["footage", "visual"],
+                        "source_id": "string",
+                    },
+                    "GuidedEditorSource": {
+                        "media_id": "string",
+                        "lane": ["clip", "asset"],
+                        "gcs_path": "string",
+                        "generation": "string",
+                        "kind": ["image", "video"],
+                        "duration_s": ["number", "null"],
+                    },
+                    "EditorSourceOut": {
+                        "import_id": "UUID",
+                        "status": ["preparing", "ready", "failed"],
+                        "source_id": "string",
+                        "source_index": ["integer", "null"],
+                        "source": ["GuidedEditorSource", "null"],
+                        "error": ["string", "null"],
+                        "reason_code": ["string", "null"],
+                        "retryable": "boolean",
                     },
                 },
             },
@@ -298,6 +336,16 @@ def _json_responses(model: type, *, status_code: str = "200") -> dict[str, Any]:
         "409": {"description": "Revision or identity conflict"},
         "422": {"description": "Invalid request"},
     }
+
+
+def _editor_source_responses(*, preparing: bool) -> dict[str, Any]:
+    responses = _json_responses(EditorSourceOut, status_code="202" if preparing else "200")
+    if preparing:
+        responses["200"] = {
+            "description": "Previously completed import",
+            "content": {"application/json": {"schema": _schema_ref(EditorSourceOut)}},
+        }
+    return responses
 
 
 def mobile_openapi_json() -> str:
@@ -786,6 +834,32 @@ def mobile_openapi_json() -> str:
                     "security": bearer,
                     "requestBody": _json_request(EditorCommitRequest),
                     "responses": _json_responses(EditorCommitResponse),
+                },
+            },
+            "/plan-items/{item_id}/variants/{variant_id}/editor-sources": {
+                "parameters": [item_id, variant_id],
+                "post": {
+                    "operationId": "admitPlanItemEditorSource",
+                    "security": bearer,
+                    "requestBody": _json_request(EditorSourceRequest),
+                    "responses": _editor_source_responses(preparing=True),
+                },
+            },
+            "/plan-items/{item_id}/variants/{variant_id}/editor-sources/{import_id}": {
+                "parameters": [
+                    item_id,
+                    variant_id,
+                    {
+                        "name": "import_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "format": "uuid"},
+                    },
+                ],
+                "get": {
+                    "operationId": "getPlanItemEditorSourceAdmission",
+                    "security": bearer,
+                    "responses": _editor_source_responses(preparing=False),
                 },
             },
         },

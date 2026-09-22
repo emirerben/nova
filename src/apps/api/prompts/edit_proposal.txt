@@ -38,7 +38,7 @@ resolves them to owned opaque IDs and rejects or safely repairs any invented ref
 
 Return JSON only:
 {"title":"...","duration_s":24,"story_beats":[{"topic":"Food",
-"thought":"A short editable thought","media_ids":["m001"],
+"thought":"","media_ids":["m001"],
 "layout":"fullscreen|supporting_card","duration_s":4.0}],
 "mixed_media_timing":null,
 "montage_text_bindings":[{"media_id":"m001","text":"Short source-specific text"}],
@@ -66,7 +66,7 @@ Editorial rules:
 - When the creator names a group by where or what is happening (such as "the beach clips" or
   "the part where I explain it to the camera"), use each row's `setting`, `activity`, and `speaks_to_camera`
   evidence to decide which media_ids belong to that beat -- `subject` alone may not mention it.
-- A guided_story or text_explainer needs a visible intro plus short thought moments. A fast_montage
+- A guided_story or text_explainer needs a visible intro; `thought` captions follow the rules below. A fast_montage
   is music-led: emit fast_cuts with exact source windows, a hook first, hard cuts only, and
   minimal generated text. Follow the timing note above: legacy plans use 0.8-1.2s cuts, while an
   explicit mixed-media timing profile authorizes its per-kind photo/video bounds. With the
@@ -77,22 +77,24 @@ Editorial rules:
 - For every fast_montage, the FIRST item in `fast_cuts` MUST have `role: "hook"`; do not label the
   opening cut `build` even when its visual action develops the story.
 - A CREATOR TEXT CONTRACT label is exact creator copy, not a draft: copy it unchanged.
-- ON-SCREEN TEXT THE CREATOR SPECIFIED: when the CREATOR REQUEST says what text should appear on
-  screen (a title, names or labels, a phrase to "say" or "show" on a group of clips), that is the
-  complete list. Put a requested phrase in the `thought` of the chapter it belongs to, written
-  exactly as the creator wrote it, and leave every other `thought` empty. Do not add descriptive
-  captions of your own to an edit whose creator already told you what the screen should say.
-  Titles and per-clip name labels are rendered by the server; do not repeat them in `thought`.
-- Otherwise `thought` is an AI DRAFT for the creator to edit. It may describe a visible quality or suggest
+- `thought` is the caption shown on a chapter. There are two modes; decide which applies first.
+  MODE A, ON-SCREEN TEXT THE CREATOR SPECIFIED: the CREATOR REQUEST quotes what the screen should
+  say (a phrase to "say" or "show" on a group of clips, names or labels). That is the complete
+  list. Put each quoted phrase in the `thought` of the chapter it belongs to, exactly as written,
+  and set every other `thought` to "" (the example above shows this). Write nothing of your own:
+  the server drops any caption that is not one of the creator's quoted phrases. Titles and
+  per-clip name labels are rendered separately; do not repeat them in `thought`.
+  MODE B, NO ON-SCREEN TEXT SPECIFIED: the creator quoted nothing for the screen. Then `thought` is
+  an AI DRAFT for the creator to edit, and the rules below apply. It may describe a visible quality or suggest
   a reflective tone, but MUST NOT invent where they went, what they ate, how it tasted, who they
   were with, what they felt, or any other factual personal experience not stated in user_context.
-- Without user_context, write neutral observations only. Do not imply creator actions with words
+- (Mode B only.) Without user_context, write neutral observations only. Do not imply creator actions with words
   such as enjoying, discovering, exploring, visiting, tasting, or relaxing. Do not describe food
   as delicious, tasty, refreshing, favorite, or otherwise claim a sensory reaction.
-- Start each context-free thought with a visible subject noun: "Stone arches frame the street" or
+- (Mode B only.) Start each context-free thought with a visible subject noun: "Stone arches frame the street" or
   "Market stalls show fresh produce." Never start it with an action such as "Exploring...".
-- Write one shared observation per chapter, not one sentence per file. Every thought must contain
-  at most 18 words.
+- (Mode B only.) Write one shared observation per chapter, not one sentence per file. Every thought
+  must contain at most 18 words.
 - Chapters may run as long as their footage supports, up to the full story length — do not cap
   every chapter at a few seconds. Prefer a clip's full best moment over trimming every clip down to
   match its neighbors; fewer, longer moments are fine when the footage is strong. Chapter durations
@@ -107,7 +109,7 @@ Editorial rules:
 - When a recorded voiceover contract is present, group semantically related visuals around its
   timed words, preserve the full narration duration, and keep every required source in the plan.
 - Mostly use fullscreen sequential moments. Use supporting_card only when it clarifies a topic.
-- Keep each thought readable, specific to the visible subject, and under 18 words.
+- Keep any non-empty thought readable, specific to the visible subject, and under 18 words.
 - For fast_montage, each fast cut's source_start_s/source_end_s must be an exact window inside
   that same alias's listed source duration (prefer an analyzed best_moment), and output_duration_s
   must not stretch it. Check every cut against its own media row; never reuse another alias's

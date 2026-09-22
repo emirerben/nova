@@ -71,6 +71,7 @@ celery_app = Celery(
         "app.tasks.billing_reconciliation",
         "app.tasks.template_upload_promotion",
         "app.tasks.device_render_reaper",
+        "app.tasks.editor_sources",
         # Deliberately NOT in MAINTENANCE_TASK_NAMES: repair_job_poster downloads
         # a full MP4 into the RAM-backed /tmp, which is exactly the workload that
         # OOM'd the 1GB `light`/Beat machine on 2026-08-02. It is dispatched with

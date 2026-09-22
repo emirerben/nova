@@ -232,10 +232,25 @@ struct NativeEditorTransport: View {
 
 struct NativeEditorTimeline: View {
     @ObservedObject var session: NativeEditorSession
+    @ObservedObject var uploads: BackgroundUploadCoordinator
     var bottomClearance: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 6) {
+            ForEach(session.pendingEditorImports.filter { $0.lane == .timeline }) { pending in
+                HStack(spacing: 8) {
+                    if pending.status == "failed" { Image(systemName: "exclamationmark.circle").foregroundStyle(KriaColor.failureText) }
+                    else { ProgressView().controlSize(.small) }
+                    Text(pending.status == "failed" ? (pending.error ?? "Couldn’t prepare media.") : "Preparing media import…")
+                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    Spacer()
+                    if pending.status == "failed" && pending.retryable {
+                        Button("Retry") { Task { await session.retryPendingEditorImport(pending) } }.font(KriaFont.body(12)).frame(minHeight: 44)
+                    }
+                    Button("Remove", role: .destructive) { Task { await session.dismissPendingEditorImport(pending) } }.font(KriaFont.body(12)).frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("native-editor-pending-timeline-import")
+            }
             NativeMiniStrip(session: session, bottomClearance: bottomClearance)
                 .frame(maxHeight: .infinity)
                 .accessibilityIdentifier("native-editor-mini-strip")

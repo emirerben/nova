@@ -86,11 +86,21 @@ def _one(row: object) -> MagicMock:
     return r
 
 
-def _db(execute_results: list) -> AsyncMock:
+def _db(execute_results: list, *, library_title_rows: list | None = None) -> AsyncMock:
     db = AsyncMock()
     db.add = MagicMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=execute_results)
+
+    async def execute(statement, *args, **kwargs):
+        # The library title lookup is a new fixed-cost batched query. Keep the
+        # existing route fixtures focused on their own relation while allowing
+        # title-specific tests to provide its rows explicitly.
+        sql = str(statement)
+        if sql.startswith("SELECT plan_items.id, plan_items.theme, plan_items.current_job_id"):
+            return _rows(library_title_rows or [])
+        return execute_results.pop(0)
+
+    db.execute = AsyncMock(side_effect=execute)
     return db
 
 
@@ -216,7 +226,7 @@ def test_list_prefers_thread_selected_variant_over_rank(monkeypatch) -> None:
     db = _db(
         [
             _scalars([job]),
-            _rows([(job.id, {"selected_variant_id": "rank-two"})]),
+            _rows([(job.id, {"selected_variant_id": "rank-two"}, "Thread title")]),
             _rows([]),
             _scalars([]),
             _scalars([]),
@@ -230,6 +240,68 @@ def test_list_prefers_thread_selected_variant_over_rank(monkeypatch) -> None:
     row = resp.json()["jobs"][0]
     assert row["output_variant_id"] == "rank-two"
     assert row["output_url"] == f"https://resigned.example/{selected_path}"
+
+
+def test_list_resolves_owned_titles_with_forward_reverse_and_thread_precedence() -> None:
+    user = _user()
+    forward = _job(user_id=user.id, content_plan_item_id=uuid.UUID(int=2))
+    reverse = _job(user_id=user.id)
+    thread = _job(user_id=user.id)
+    blank_theme = _job(user_id=user.id, content_plan_item_id=uuid.uuid4())
+    blank_newest_thread = _job(user_id=user.id)
+    unowned = _job(user_id=user.id, content_plan_item_id=uuid.uuid4())
+
+    db = _db(
+        [
+            _scalars([forward, reverse, thread, blank_theme, blank_newest_thread, unowned]),
+            _rows(
+                [
+                    (forward.id, {}, "Conflicting conversation title"),
+                    (thread.id, {}, "Original conversation title"),
+                    (thread.id, {}, "Conversation title"),
+                    (blank_theme.id, {}, "Thread fallback title"),
+                    (blank_newest_thread.id, {}, "Older conversation title"),
+                    (blank_newest_thread.id, {}, "  "),
+                ]
+            ),
+            _rows([]),
+            _scalars([]),
+            _scalars([]),
+        ],
+        library_title_rows=[
+            # The explicitly forward-linked item wins over a reverse candidate.
+            (uuid.UUID(int=1), "Conflicting reverse title", forward.id),
+            (forward.content_plan_item_id, " Saved editor title ", forward.id),
+            (uuid.UUID(int=3), "Stable reverse title", reverse.id),
+            (uuid.UUID(int=4), "Later reverse title", reverse.id),
+            (blank_theme.content_plan_item_id, "  ", blank_theme.id),
+        ],
+    )
+    _override(user, db)
+
+    response = client.get("/me/jobs")
+
+    assert response.status_code == 200
+    assert [row["title"] for row in response.json()["jobs"]] == [
+        "Saved editor title",
+        "Stable reverse title",
+        "Conversation title",
+        "Thread fallback title",
+        "Untitled video",
+        "Untitled video",
+    ]
+    title_statement = next(
+        call.args[0]
+        for call in db.execute.call_args_list
+        if str(call.args[0]).startswith(
+            "SELECT plan_items.id, plan_items.theme, plan_items.current_job_id"
+        )
+    )
+    title_sql = str(title_statement)
+    assert "content_plans.user_id = :user_id_1" in title_sql
+    assert title_statement.compile().params["user_id_1"] == user.id
+    assert "plan_items.current_job_id" in title_sql
+    assert "ORDER BY plan_items.id ASC" in title_sql
 
 
 def test_list_generating_job_has_no_preview_url() -> None:

@@ -28,6 +28,19 @@
       "method": "POST",
       "request": "MobileRefreshRequest",
       "response": "MobileRevokeResponse"
+    },
+    "/plan-items/{item_id}/variants/{variant_id}/editor-sources": {
+      "method": "POST",
+      "request": "EditorSourceRequest",
+      "response": "EditorSourceOut",
+      "success_statuses": [
+        200,
+        202
+      ]
+    },
+    "/plan-items/{item_id}/variants/{variant_id}/editor-sources/{import_id}": {
+      "method": "GET",
+      "response": "EditorSourceOut"
     }
   },
   "models": {
@@ -40,6 +53,59 @@
       "required_capabilities": "Set<MediaCapability>",
       "schema_version": 1,
       "tracks": "Array<TimelineTrack>"
+    },
+    "EditorSourceOut": {
+      "error": [
+        "string",
+        "null"
+      ],
+      "import_id": "UUID",
+      "reason_code": [
+        "string",
+        "null"
+      ],
+      "retryable": "boolean",
+      "source": [
+        "GuidedEditorSource",
+        "null"
+      ],
+      "source_id": "string",
+      "source_index": [
+        "integer",
+        "null"
+      ],
+      "status": [
+        "preparing",
+        "ready",
+        "failed"
+      ]
+    },
+    "EditorSourceRequest": {
+      "base_generation": "string",
+      "client_import_id": "UUID",
+      "guided_revision_number": "integer",
+      "source_id": "string",
+      "source_kind": [
+        "footage",
+        "visual"
+      ]
+    },
+    "GuidedEditorSource": {
+      "duration_s": [
+        "number",
+        "null"
+      ],
+      "gcs_path": "string",
+      "generation": "string",
+      "kind": [
+        "image",
+        "video"
+      ],
+      "lane": [
+        "clip",
+        "asset"
+      ],
+      "media_id": "string"
     },
     "MobileExchangeRequest": {
       "id_token": "string",

@@ -120,6 +120,8 @@ protocol KriaAPIClient: Sendable {
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse
     func editorMusicTracks() async throws -> [NativeEditorMusicTrack]
     func editorSourcePool(jobID: UUID, variantID: String) async throws -> NativeEditorSourcePool
+    func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse
+    func editorSource(itemID: String, variantID: String, importID: UUID) async throws -> EditorSourceRegistrationResponse
     func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]]
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue]
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
@@ -184,6 +186,8 @@ extension KriaAPIClient {
 
     func editorMusicTracks() async throws -> [NativeEditorMusicTrack] { throw APIError.unsupported }
     func editorSourcePool(jobID: UUID, variantID: String) async throws -> NativeEditorSourcePool { throw APIError.unsupported }
+    func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse { throw APIError.unsupported }
+    func editorSource(itemID: String, variantID: String, importID: UUID) async throws -> EditorSourceRegistrationResponse { throw APIError.unsupported }
     func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]] {
         _ = jobID
         throw APIError.unsupported
@@ -816,6 +820,29 @@ struct KriaAPI: KriaAPIClient {
     func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
         try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
     }
+    func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse {
+        struct Body: Encodable {
+            let clientImportID: UUID
+            let baseGeneration: String
+            let guidedRevisionNumber: Int
+            let sourceKind: EditorSourceRegistrationTarget.SourceKind
+            let sourceID: String
+            enum CodingKeys: String, CodingKey {
+                case clientImportID = "client_import_id", baseGeneration = "base_generation"
+                case guidedRevisionNumber = "guided_revision_number", sourceKind = "source_kind", sourceID = "source_id"
+            }
+        }
+        return try await request(
+            path: "plan-items/\(target.itemID)/variants/\(target.variantID)/editor-sources",
+            method: "POST",
+            bodyData: try JSONEncoder().encode(Body(clientImportID: target.clientImportID, baseGeneration: target.baseGeneration,
+                guidedRevisionNumber: target.guidedRevisionNumber, sourceKind: target.sourceKind, sourceID: sourceID)),
+            decode: EditorSourceRegistrationResponse.self)
+    }
+    func editorSource(itemID: String, variantID: String, importID: UUID) async throws -> EditorSourceRegistrationResponse {
+        try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-sources/\(importID.uuidString)",
+                          method: "GET", bodyData: nil, decode: EditorSourceRegistrationResponse.self)
+    }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/draft/undo", method: "POST", bodyData: try JSONEncoder().encode(DraftUndoRequest(expectedRevision: expectedRevision)), decode: DraftSnapshot.self) }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)", method: "GET", bodyData: nil, decode: ApprovalSnapshot.self) }
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint)), decode: ApprovalResponse.self) }
@@ -938,7 +965,43 @@ struct KriaAPI: KriaAPIClient {
     }
 }
 private struct EmptyProjectResponse: Decodable {}
-private struct LibraryResponse: Decodable { let jobs: [LibraryJob]; let nextCursor: String?; enum CodingKeys: String, CodingKey { case jobs; case nextCursor = "next_cursor" }; struct LibraryJob: Decodable { let id: String; let mode: String; let status: String; let posterURL: String?; let createdAt: Date; enum CodingKeys: String, CodingKey { case id, mode, status; case posterURL = "poster_url"; case createdAt = "created_at" }; var summary: ProjectSummary { ProjectSummary(id: UUID(uuidString: id) ?? UUID(), title: mode.capitalized, status: status == "ready" ? .ready : status == "failed" ? .failed : .rendering, updatedAt: createdAt, posterURL: posterURL.flatMap(URL.init(string:))) } } }
+private struct LibraryResponse: Decodable {
+    let jobs: [LibraryJob]
+    let nextCursor: String?
+
+    enum CodingKeys: String, CodingKey { case jobs; case nextCursor = "next_cursor" }
+
+    struct LibraryJob: Decodable {
+        let id: String
+        let title: String?
+        let status: String
+        let posterURL: String?
+        let outputURL: String?
+        let outputVariantID: String?
+        let createdAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id, title, status
+            case posterURL = "poster_url"
+            case outputURL = "output_url"
+            case outputVariantID = "output_variant_id"
+            case createdAt = "created_at"
+        }
+
+        var summary: ProjectSummary {
+            let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return ProjectSummary(
+                id: UUID(uuidString: id) ?? UUID(),
+                title: cleanedTitle.isEmpty ? "Untitled video" : cleanedTitle,
+                status: status == "ready" ? .ready : status == "failed" ? .failed : .rendering,
+                updatedAt: createdAt,
+                posterURL: posterURL.flatMap(URL.init(string:)),
+                outputURL: outputURL.flatMap(URL.init(string:)),
+                outputVariantID: outputVariantID
+            )
+        }
+    }
+}
 private struct PlaybackResponse: Decodable { let videoURL: String; enum CodingKeys: String, CodingKey { case videoURL = "video_url" } }
 private struct ApprovalResponse: Decodable {}
 private struct RevokeResponse: Decodable { let revoked: Bool? }

@@ -206,4 +206,40 @@ final class NativeEditorSourcesTests: XCTestCase {
             XCTFail("A changed local original must not be accepted")
         } catch SourceAssetError.changedOriginal("source") { }
     }
+
+    func testLocalRequiredSourceNeverFallsBackToProxyWhenOriginalIsMissing() async throws {
+        let project = ProjectDirectory(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let descriptor = OriginalMediaDescriptor(sha256: String(repeating: "a", count: 64), byteCount: 1,
+            durationS: 1, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true)
+        let pool = NativeEditorSourcePool(clips: [.init(clipIndex: 3, nativeSource: .init(mediaID: "analysis-proxy-3",
+            sourceURL: nil, original: descriptor, localRequired: true))], baseGeneration: "generation")
+        do {
+            _ = try await NativeEditorSourceResolver(project: project).resolve(pool, generation: "generation")
+            XCTFail("A proxy cannot stand in for a missing device original")
+        } catch SourceAssetError.missingOriginal("analysis-proxy-3") { }
+    }
+
+    func testEditorSourceRegistrationUsesVariantScopedEndpointAndSnakeCaseBody() async throws {
+        defer { NativeEditorURLProtocol.handler = nil }
+        let target = EditorSourceRegistrationTarget(itemID: "plan-item", variantID: "song_text", clientImportID: UUID(),
+            baseGeneration: "render-12", guidedRevisionNumber: 5, sourceKind: .footage)
+        NativeEditorURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/plan-items/plan-item/variants/song_text/editor-sources")
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
+            XCTAssertEqual(body["client_import_id"] as? String, target.clientImportID.uuidString)
+            XCTAssertEqual(body["base_generation"] as? String, "render-12")
+            XCTAssertEqual(body["guided_revision_number"] as? Int, 5)
+            XCTAssertEqual(body["source_kind"] as? String, "footage")
+            XCTAssertEqual(body["source_id"] as? String, "analysis-proxy-4")
+            return (200, try JSONSerialization.data(withJSONObject: [
+                "import_id": target.clientImportID.uuidString, "status": "ready", "source_id": "analysis-proxy-4",
+                "source_index": 4, "retryable": false,
+            ]))
+        }
+
+        let response = try await NativeEditorTestSupport.api().registerEditorSource(target, sourceID: "analysis-proxy-4")
+        XCTAssertEqual(response.importID, target.clientImportID)
+        XCTAssertEqual(response.sourceIndex, 4)
+    }
 }
