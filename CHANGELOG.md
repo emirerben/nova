@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.123.0] - 2026-09-22
+
+### Fixed
+- fix: prepare creator clips before planning (KRI-151) (#1135) <!-- release-pr: 1135 -->
+
 ## [0.76.122.0] - 2026-09-22
 
 ### Changed
