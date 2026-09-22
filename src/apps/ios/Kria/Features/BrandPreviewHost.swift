@@ -17,6 +17,17 @@ struct BrandPreviewHost: View {
             case "signin": SignInView()
             case "account": NavigationStack { AccountView() }
             case "gallery": NavigationStack { GalleryView() }
+            case "gallery-posters":
+                // Drive the real poster component without network timing, so
+                // every AsyncImage state is repeatable in native UI checks.
+                VStack(spacing: 12) {
+                    ProjectPosterContent(phase: nil, title: "Missing poster")
+                    ProjectPosterContent(phase: .empty, title: "Loading poster")
+                    ProjectPosterContent(phase: .failure(URLError(.cannotDecodeContentData)), title: "Failed poster")
+                    ProjectPosterContent(phase: .success(Image(systemName: "checkmark")), title: "Loaded poster")
+                }
+                .frame(width: 174)
+                .padding(20)
             case "projects": ProjectsDrawer(close: {}, openGallery: {})
             case "editor": NativeEditorView(project: PreviewFixtures.editorProject, initialDraft: PreviewFixtures.editorDraft, initialPlaybackURL: Bundle.main.url(forResource: "montage", withExtension: "mp4"), onBack: {})
             default:

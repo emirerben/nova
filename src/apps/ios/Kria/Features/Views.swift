@@ -198,25 +198,49 @@ struct ProjectPosterView: View {
         Group {
             if let posterURL = project.posterURL {
                 AsyncImage(url: posterURL) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else if phase.error == nil {
-                        ZStack { KriaColor.softZinc; ProgressView().tint(KriaColor.ink) }
-                    } else {
-                        fallback
-                    }
+                    ProjectPosterContent(phase: phase, title: project.workspaceTitle)
                 }
             } else {
-                fallback
+                ProjectPosterContent(phase: nil, title: project.workspaceTitle)
             }
         }
         .clipped()
-        .accessibilityLabel("Poster for \(project.workspaceTitle)")
     }
+}
 
-    private var fallback: some View {
-        BundledPosterImage(name: project.status == .ready ? "montage" : "voiceover")
-            .scaledToFill()
+/// Only a successfully loaded poster represents the user's footage. Missing,
+/// loading and failed images must never substitute an unrelated sample photo.
+struct ProjectPosterContent: View {
+    let phase: AsyncImagePhase?
+    let title: String
+
+    var body: some View {
+        switch phase {
+        case .some(.success(let image)):
+            image.resizable().scaledToFill()
+                .accessibilityLabel("Preview for \(title)")
+                .accessibilityIdentifier("project-poster-image")
+        case .some(.empty):
+            ZStack {
+                KriaColor.softZinc
+                ProgressView().tint(KriaColor.ink)
+                    .accessibilityLabel("Loading preview for \(title)")
+            }
+            .accessibilityIdentifier("project-poster-loading")
+        default:
+            ZStack {
+                KriaColor.softZinc
+                VStack(spacing: 8) {
+                    Image(systemName: "video").font(.system(size: 24))
+                    Text("Preview unavailable").font(KriaFont.body(12))
+                }
+                .foregroundStyle(KriaColor.zinc)
+                .padding(12)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Preview unavailable for \(title)")
+            .accessibilityIdentifier("project-poster-unavailable")
+        }
     }
 }
 
@@ -365,16 +389,7 @@ private struct GalleryProjectCard: View {
                 .aspectRatio(174.0 / 246.0, contentMode: .fit)
                 .overlay {
                     GeometryReader { geometry in
-                        Group {
-                            if let posterURL = project.posterURL {
-                                AsyncImage(url: posterURL) { phase in
-                                    if let image = phase.image { image.resizable().scaledToFill() }
-                                    else { BundledPosterImage(name: "montage").scaledToFill() }
-                                }
-                            } else {
-                                BundledPosterImage(name: project.status == .ready ? "montage" : "voiceover").scaledToFill()
-                            }
-                        }
+                        ProjectPosterView(project: project)
                         .frame(width: geometry.size.width, height: geometry.size.height)
                         .clipped()
                     }
