@@ -287,7 +287,7 @@ struct FormatStage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             AssistantHeading(
-                title: "What kind of video are we making?",
+                title: "What are we making?",
                 bodyText: "Choose a starting point. We can shape the details together.",
                 isFormatHeading: true
             )
@@ -295,23 +295,27 @@ struct FormatStage: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(formats) { format in
-                        Button { select(format) } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                BundledPosterImage(name: format.imageName)
-                                    .scaledToFill()
-                                    .frame(width: 156, height: 164)
-                                    .clipped()
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                Text(format.title)
-                                    .font(KriaFont.display(18))
-                                    .foregroundStyle(KriaColor.ink)
+                        if format == .slides {
+                            SlidePostFormatCard(isBusy: isBusy) { select(format) }
+                        } else {
+                            Button(action: { select(format) }) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    BundledPosterImage(name: format.imageName)
+                                        .scaledToFill()
+                                        .frame(width: 156, height: 164)
+                                        .clipped()
+                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    Text(format.title)
+                                        .font(KriaFont.display(18))
+                                        .foregroundStyle(KriaColor.ink)
+                                }
+                                .frame(width: 156, alignment: .leading)
                             }
-                            .frame(width: 156, alignment: .leading)
+                            .buttonStyle(.plain)
+                            .disabled(isBusy)
+                            .accessibilityIdentifier("format-\(format.serverValue)")
+                            .accessibilityHint("Choose \(format.title) as this creation format")
                         }
-                        .buttonStyle(.plain)
-                        .disabled(isBusy)
-                        .accessibilityIdentifier("format-\(format.serverValue)")
-                        .accessibilityHint("Choose \(format.title) as this video's format")
                     }
                 }
             }
@@ -323,6 +327,52 @@ struct FormatStage: View {
                 }
             }
         }
+    }
+}
+
+private struct SlidePostFormatCard: View {
+    let isBusy: Bool
+    let select: () -> Void
+    @State private var paused = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .bottomTrailing) {
+                Button(action: select) {
+                    SlidePostFormatCover(paused: $paused)
+                        .frame(width: 156, height: 156)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isBusy)
+                .accessibilityIdentifier("format-slides")
+                .accessibilityLabel("Photo & video post")
+                .accessibilityHint("Choose Photo & video post as this creation format")
+                // The moving strip has four visual frames. Keep its children
+                // out of Accessibility so this card's frame stays at 156pt and
+                // cannot overlap the narrated card beside it.
+                .accessibilityElement(children: .ignore)
+
+                // This is a sibling of the format-selection button. Nesting a
+                // Button inside a Button sends the pause tap to the card too.
+                Button { paused.toggle() } label: {
+                    Image(systemName: paused ? "play.fill" : "pause.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(width: 44, height: 44)
+                        .background(.black.opacity(0.38), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 5)
+                .padding(.bottom, 5)
+                .accessibilityLabel(paused ? "Play format preview" : "Pause format preview")
+                .accessibilityIdentifier("slide-format-cover-playback")
+            }
+            Text("Photo & video post")
+                .font(KriaFont.display(18))
+                .foregroundStyle(KriaColor.ink)
+        }
+        .frame(width: 156, alignment: .leading)
     }
 }
 
@@ -347,7 +397,7 @@ struct FootageStage: View {
     /// the user chose.
     var failures: [UploadFailure] = []
     var dismissFailure: (UUID) -> Void = { _ in }
-    /// Photos and videos in Visuals. A montage can be made from them alone.
+    /// Ready photos and videos in the PlanItemAsset Visuals pool.
     var visualCount = 0
 
     private var readiness: FootageReadiness {
@@ -360,14 +410,16 @@ struct FootageStage: View {
         FootageReadiness.overallProgress(uploads: uploads.map { progress[$0.id] ?? 0 }, preparingCount: preparingCount)
     }
     private var visualsReadiness: FootageReadiness {
-        FootageReadiness(attachedCount: format == .montage && mediaCount == 0 ? visualCount : 0, pendingCount: uploads.count + preparingCount)
+        FootageReadiness(attachedCount: format.usesVisualPool ? visualCount : 0, pendingCount: uploads.count + preparingCount)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             AssistantHeading(
-                title: "Add your footage",
-                bodyText: format == .talkingToCamera
+                title: format.usesVisualPool ? "Add photos & videos" : "Add your footage",
+                bodyText: format.usesVisualPool
+                    ? "Choose the photos and videos for your post. You can mix both."
+                    : format == .talkingToCamera
                     ? "Choose one clear take. I’ll keep your voice at the center."
                     : "Choose the moments you want me to work with. You can add up to \(maximumClipCount) clips."
             )
@@ -380,10 +432,10 @@ struct FootageStage: View {
                         .frame(width: 34, height: 34)
                         .background(KriaColor.sage)
                         .clipShape(Circle())
-                    Text("Choose videos")
+                    Text(format.usesVisualPool ? "Add photos & videos" : "Choose videos")
                         .font(KriaFont.body(14).weight(.semibold))
                         .foregroundStyle(KriaColor.ink)
-                    Text("MP4, MOV · up to \(maximumClipCount) clips")
+                    Text(format.usesVisualPool ? "Photos or videos · up to \(maximumClipCount) items" : "MP4, MOV · up to \(maximumClipCount) clips")
                         .font(KriaFont.body(11))
                         .foregroundStyle(KriaColor.zinc)
                 }
@@ -395,7 +447,7 @@ struct FootageStage: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("choose-videos")
+            .accessibilityIdentifier(format.usesVisualPool ? "choose-photos-videos" : "choose-videos")
 
             if !failures.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {

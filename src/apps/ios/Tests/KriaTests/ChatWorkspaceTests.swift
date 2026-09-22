@@ -99,11 +99,11 @@ final class ChatWorkspaceTests: XCTestCase {
             role: "assistant",
             eventType: "format_prompt",
             content: "Choose a format",
-            payload: ["formats": .object(["montage": .string("montage"), "narrated": .string("narrated_planned")])],
+            payload: ["formats": .object(["montage": .string("montage"), "narrated": .string("narrated_planned"), "slides": .string("slides")])],
             createdAt: .now
         )
 
-        XCTAssertEqual(CreationFormat.available(in: [prompt]), [.montage, .narrated])
+        XCTAssertEqual(CreationFormat.available(in: [prompt]), [.montage, .narrated, .slides])
     }
 
     func testAcceptedMutationRefreshFailureDoesNotReportTheMutationAsRejected() async throws {

@@ -5489,11 +5489,10 @@ def _resolve_slide_post_draft_and_assets(
             or not asset.gcs_path.startswith(allowed_prefix)
             or asset.kind != ref.kind
         ):
-            # A stale/foreign/unreadable reference is dropped rather than
-            # failing the whole post — same best-effort posture as a
-            # deleted clip elsewhere in the pipeline. The route layer is
-            # the one place that prevents deleting a REFERENCED asset;
-            # this is defense-in-depth for a draft that outlived that.
+            # A post is an ordered, complete set. Rendering a subset would
+            # produce a bundle that no longer represents the approved draft
+            # and could stamp that draft as rendered, so fail before any
+            # normalization/upload work instead of silently dropping it.
             continue
         ordered_assets.append(
             {
@@ -5507,8 +5506,10 @@ def _resolve_slide_post_draft_and_assets(
                 "edits": ref.edits,
             }
         )
-    if not ordered_assets:
-        raise SlidePostPolicyError("no_usable_slides", "No usable slides to render.")
+    if len(ordered_assets) != len(draft.slides):
+        raise SlidePostPolicyError(
+            "incomplete_draft_assets", "Every saved slide must be ready and available to render."
+        )
     return content_plan_item_id, job_user_id, draft, ordered_assets
 
 

@@ -18,6 +18,7 @@ import pytest
 from app.agents._schemas.content_plan import PlanItemSpec
 from app.models import ContentPlan, Job, PlanItem, SpeechCleanupAnalysis
 from app.models import Persona as PersonaRow
+from app.schemas.slide_post import SlidePostDraft, SlideRef
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.tasks.content_plan_build import (
     JOB_FAILURE_MESSAGES,
@@ -205,6 +206,47 @@ def test_legacy_generate_task_keeps_wire_shape_and_fences_creator_sessions() -> 
         7,
         reject_active_creator_session=True,
     )
+
+
+@pytest.mark.parametrize(("edit_format", "expected_version"), [("slides", 5), ("montage", 4)])
+def test_slide_dispatch_version_guard_runs_under_locked_item_before_job_mint(
+    monkeypatch: pytest.MonkeyPatch, edit_format: str, expected_version: int
+) -> None:
+    """The async route check is advisory; this is the authoritative lock check."""
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        content_plan_id=uuid.uuid4(),
+        edit_format=edit_format,
+        slide_post=SlidePostDraft(
+            platform_profile="tiktok_photo",
+            slides=[SlideRef(id="slide", asset_id=uuid.uuid4(), kind="image")],
+            version=4,
+        ).model_dump(mode="json"),
+    )
+    plan = SimpleNamespace(id=item.content_plan_id, user_id=uuid.uuid4(), ownership_epoch=3)
+    persona = SimpleNamespace()
+    session = MagicMock()
+    session.get.side_effect = lambda model, _id, **_kw: item if model is PlanItem else None
+    context = MagicMock()
+    context.__enter__.return_value = session
+    context.__exit__.return_value = False
+    monkeypatch.setattr("app.tasks.content_plan_build.sync_session", lambda: context)
+    monkeypatch.setattr(
+        "app.tasks.content_plan_build._lock_owned_plan_persona",
+        lambda *_args, **_kwargs: (plan, persona),
+    )
+    with patch("app.services.generative_jobs.build_generative_job") as build:
+        result = dispatch_item_render_for(
+            str(item.id),
+            3,
+            expected_slide_post_version=expected_version,
+            reject_active_creator_session=False,
+        )
+    assert result.outcome == "slide_post_version_conflict"
+    build.assert_not_called()
+    # The active CreatorAgentSession query is never reached for this dedicated
+    # path; a valid version proceeds past this guard with the same false flag.
+    assert session.execute.call_count == 0
 
 
 @pytest.fixture(autouse=True)

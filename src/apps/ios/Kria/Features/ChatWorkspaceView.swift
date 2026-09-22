@@ -331,11 +331,16 @@ private struct CreationWorkspaceView: View {
 
     private var canAttachMedia: Bool {
         selectedFormat != nil && !isSending && !isActing && !isThinking
-            && currentProject.status != .rendering && currentProject.status != .ready
+            && (selectedFormat != .slides || hasDedicatedSlideWorkspace)
+            && currentProject.status != .rendering && (selectedFormat == .slides || currentProject.status != .ready)
     }
 
     private var readyMediaCount: Int {
         guard workspaceStage == .footage else { return 0 }
+        // A slide post is composed from the PlanItemAsset Visuals pool. The
+        // primary clip list is intentionally irrelevant: the server rejects it
+        // for this format, and counting it here would enable a misleading send.
+        if selectedFormat == .slides { return fullThread?.readyVisualCount ?? 0 }
         if attachedClipCount > 0 { return attachedClipCount }
         let destination = ProjectUploadDestination.resolve(
             capabilities: capabilities?.phoneRendering, capabilitiesLoaded: capabilitiesAreAuthoritative,
@@ -542,42 +547,50 @@ private struct CreationWorkspaceView: View {
         )
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            WorkspaceHeader(
-                project: currentProject,
-                // `currentProject.status` (not `workspaceStage`) so the switch
-                // to the existing cut stays available even while a new plan's
-                // confirmation card is showing on top of it.
-                showsEditorSwitch: currentProject.status == .ready,
-                openProjects: openProjects,
-                openEditor: { showsResult = true },
-                openAccount: openAccount
-            )
-            .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
+    /// A slide post switches out of the generic creator runtime as soon as
+    /// select_format has provisioned its PlanItemAsset pool. Before then, keep
+    /// polling the existing chat rather than presenting an upload surface with
+    /// no item to reserve against.
+    private var hasDedicatedSlideWorkspace: Bool {
+        !isChoosingFormat && selectedFormat == .slides && fullThread?.activePlanItemID != nil
+    }
 
-            ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
-                conversationContent
+    var body: some View {
+        Group {
+            if hasDedicatedSlideWorkspace {
+                SlidePostWorkspaceView(
+                    project: currentProject,
+                    thread: fullThread,
+                    capabilities: capabilities,
+                    capabilitiesLoaded: capabilitiesAreAuthoritative,
+                    conversation: { AnyView(editorConversation) },
+                    conversationAcceptedID: conversationAcceptedID,
+                    onBack: { isChoosingFormat = true },
+                    onAddMedia: openAttachments
+                )
+                .environmentObject(model)
+            } else {
+                genericChatWorkspace
             }
-            .accessibilityHidden(projectsDrawerOpen)
-            .allowsHitTesting(!projectsDrawerOpen)
         }
         .background(WorkspaceSurface())
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: responsePresentation.hapticToken)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ChatComposer(
-                text: $prompt,
-                isSending: isSending || isActing,
-                canAttach: canAttachMedia,
-                canSendWithoutText: readyMediaCount > 0,
-                blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures,
-                placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
-                isFocused: $composerFocused,
-                attach: openAttachments,
-                send: { Task { await send() } }
-            )
-            .accessibilityHidden(projectsDrawerOpen)
-            .allowsHitTesting(!projectsDrawerOpen)
+            if !hasDedicatedSlideWorkspace {
+                ChatComposer(
+                    text: $prompt,
+                    isSending: isSending || isActing,
+                    canAttach: canAttachMedia,
+                    canSendWithoutText: readyMediaCount > 0,
+                    blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures,
+                    placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
+                    isFocused: $composerFocused,
+                    attach: openAttachments,
+                    send: { Task { await send() } }
+                )
+                .accessibilityHidden(projectsDrawerOpen)
+                .allowsHitTesting(!projectsDrawerOpen)
+            }
         }
         .onAppear { if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) } }
         .onChange(of: prompt) { _, text in model.chatDrafts.setDraft(text, for: project.id) }
@@ -605,6 +618,7 @@ private struct CreationWorkspaceView: View {
                 projectID: project.id,
                 maximumClipCount: selectedMaximumClipCount,
                 attachedClipCount: attachedClipCount,
+                format: selectedFormat,
                 thread: fullThread,
                 capabilities: capabilities,
                 capabilitiesLoaded: capabilitiesAreAuthoritative,
@@ -625,6 +639,28 @@ private struct CreationWorkspaceView: View {
                 onBack: { showsResult = false }
             )
                 .environmentObject(model)
+        }
+    }
+
+    private var genericChatWorkspace: some View {
+        VStack(spacing: 0) {
+            WorkspaceHeader(
+                project: currentProject,
+                // `currentProject.status` (not `workspaceStage`) so the switch
+                // to the existing cut stays available even while a new plan's
+                // confirmation card is showing on top of it.
+                showsEditorSwitch: currentProject.status == .ready,
+                openProjects: openProjects,
+                openEditor: { showsResult = true },
+                openAccount: openAccount
+            )
+            .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
+
+            ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
+                conversationContent
+            }
+            .accessibilityHidden(projectsDrawerOpen)
+            .allowsHitTesting(!projectsDrawerOpen)
         }
     }
 
@@ -657,7 +693,7 @@ private struct CreationWorkspaceView: View {
             if let selectedFormat {
                 FootageStage(
                     format: selectedFormat,
-                    mediaCount: attachedClipCount,
+                    mediaCount: selectedFormat == .slides ? 0 : attachedClipCount,
                     maximumClipCount: selectedMaximumClipCount,
                     uploads: [],
                     preparingCount: 0,
@@ -672,7 +708,9 @@ private struct CreationWorkspaceView: View {
                     dismissFailure: { model.uploads.dismissFailure(id: $0) },
                     // Only a project this iPhone renders can be made of Visuals
                     // alone, and only from the Visuals the server's rule counts.
-                    visualCount: ProjectUploadDestination.resolve(
+                    visualCount: selectedFormat == .slides
+                        ? (fullThread?.readyVisualCount ?? 0)
+                        : ProjectUploadDestination.resolve(
                         capabilities: capabilities?.phoneRendering, capabilitiesLoaded: capabilitiesAreAuthoritative,
                         sourcePurposes: [], role: .visual
                     ).visualKinds == nil ? 0 : fullThread?.deviceReadyVisualCount ?? 0
@@ -789,6 +827,9 @@ private struct CreationWorkspaceView: View {
     }
 
     private func send(message submittedMessage: String? = nil) async {
+        // Slide direction is intentionally handled by SlidePostWorkspaceView.
+        // Generic creator runtime has no slide proposal/create tools.
+        guard selectedFormat != .slides else { return }
         guard !isSending, !isActing, !isThinking,
               let message = ChatSubmission.message(
                 text: submittedMessage ?? prompt, readyMediaCount: readyMediaCount,
@@ -880,6 +921,10 @@ private struct CreationWorkspaceView: View {
 
     private func selectFormat(_ format: CreationFormat) {
         guard capabilitiesAreAuthoritative, availableFormats.contains(format) else { return }
+        if format.usesVisualPool, attachedClipCount > 0 {
+            failure = ChatFailure("Photo & video posts use Photos & videos. Remove primary footage before switching formats.")
+            return
+        }
         let pendingClips = model.uploads.records.filter { $0.projectID == project.id && $0.role == .clip }.count
         if let capacityError = formatClipCapacityError(format: format, clipLimit: maximumClipsByFormat[format] ?? format.fallbackMaximumClipCount, occupiedClipCount: attachedClipCount + pendingClips) {
             failure = ChatFailure(capacityError)
@@ -943,7 +988,9 @@ private struct CreationWorkspaceView: View {
                 limits[format] = max(1, capability.maxClips)
                 return format
             }
-            availableFormats = formats
+            // The service advertises capability, not presentation order. Keep
+            // the post as the final card even if a rollout reorders its list.
+            availableFormats = formats.sorted { $0.carouselOrder < $1.carouselOrder }
             capabilities = response
             capabilitiesFailure = formats.isEmpty ? ChatFailure("No creation formats are currently available. Try again in a moment.") : nil
             maximumClipsByFormat = limits
@@ -1354,6 +1401,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     case montage
     case narrated
     case talkingToCamera
+    case slides
 
     var id: String { rawValue }
     var serverValue: String {
@@ -1361,6 +1409,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         case .montage: "montage"
         case .narrated: "narrated"
         case .talkingToCamera: "talking_to_camera"
+        case .slides: "slides"
         }
     }
     var title: String {
@@ -1368,6 +1417,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         case .montage: "Montage"
         case .narrated: "Narrated"
         case .talkingToCamera: "Talking"
+        case .slides: "Photo & video post"
         }
     }
     var choiceSentence: String {
@@ -1375,6 +1425,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         case .montage: "Let’s make a montage"
         case .narrated: "Let’s make it narrated"
         case .talkingToCamera: "Let’s make a talking video"
+        case .slides: "Let’s make a photo and video post"
         }
     }
     var imageName: String {
@@ -1382,6 +1433,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         case .montage: "montage"
         case .narrated: "voiceover"
         case .talkingToCamera: "talking"
+        case .slides: "trulli-street"
         }
     }
 
@@ -1418,6 +1470,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         case "montage": self = .montage
         case "narrated": self = .narrated
         case "talking_to_camera": self = .talkingToCamera
+        case "slides": self = .slides
         default: return nil
         }
     }
@@ -1427,8 +1480,34 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         case "montage": self = .montage
         case "narrated", "narrated_planned": self = .narrated
         case "subtitled", "talking_to_camera": self = .talkingToCamera
+        case "slides": self = .slides
         default: return nil
         }
+    }
+}
+
+extension CreationFormat {
+    var usesVisualPool: Bool { self == .slides }
+    var carouselOrder: Int {
+        switch self {
+        case .montage: 0
+        case .narrated: 1
+        case .talkingToCamera: 2
+        case .slides: 3
+        }
+    }
+}
+
+extension CreationThread {
+    /// Slide composition requires fully ready pool assets. `current` includes
+    /// imports that can still fail, so it must never unlock the chat composer.
+    /// `device_ready` is retained as an older-server fallback for the existing
+    /// device-render pilot; current slide-capable servers return `ready`.
+    var readyVisualCount: Int {
+        let visuals = mediaCapabilities?["visuals"]?.objectValue
+        if case .number(let count) = visuals?["ready"] { return max(0, Int(count)) }
+        if case .number(let count) = visuals?["device_ready"] { return max(0, Int(count)) }
+        return 0
     }
 }
 

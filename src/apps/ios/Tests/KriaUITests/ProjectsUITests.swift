@@ -154,7 +154,7 @@ final class ProjectsUITests: XCTestCase {
             hierarchy.name = "App hierarchy at tap time"; hierarchy.lifetime = .keepAlways; add(hierarchy)
         }
         newChat.tap()
-        XCTAssertTrue(app.staticTexts["What kind of video are we making?"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["What are we making?"].waitForExistence(timeout: 20))
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["drawer-new-chat"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
     }

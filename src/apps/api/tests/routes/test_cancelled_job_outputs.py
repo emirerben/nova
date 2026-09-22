@@ -105,6 +105,26 @@ def test_cancelled_library_row_has_no_playback_download_or_publish(monkeypatch) 
     sign.assert_not_called()
 
 
+def test_library_slide_count_only_uses_selected_validated_slides_variant(monkeypatch) -> None:
+    job = _job(status="template_ready", mode="template", job_type="template")
+    job.assembly_plan = {
+        "variants": [
+            {
+                "variant_id": "slides",
+                "resolved_archetype": "slides",
+                "render_status": "ready",
+                "video_path": f"generative-jobs/{job.id}/slides/preview.mp4",
+                "slides": [{"asset_id": "a"}, {"asset_id": "b"}, {"asset_id": "c"}],
+            }
+        ]
+    }
+    monkeypatch.setattr(me, "signed_get_url", lambda *_args, **_kwargs: "https://signed")
+    monkeypatch.setattr(me, "signed_download_url", lambda *_args, **_kwargs: "https://download")
+    assert me._to_library_job(job).slide_count == 3  # noqa: SLF001
+    job.assembly_plan["variants"][0]["slides"] = [{"asset_id": "a"}, "bad"]
+    assert me._to_library_job(job).slide_count is None  # noqa: SLF001
+
+
 def test_cancelled_publishable_output_rejected_before_storage_lookup(monkeypatch) -> None:
     metadata = MagicMock(side_effect=AssertionError("cancelled output must not be inspected"))
     monkeypatch.setattr(tiktok_publishable.storage, "object_metadata", metadata)

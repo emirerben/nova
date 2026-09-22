@@ -2081,6 +2081,7 @@ def dispatch_item_render_for(
     expected_job_id: str | None = None,
     expected_render_generation_id: str | None = None,
     expected_speech_cleanup_analysis_id: str | None = None,
+    expected_slide_post_version: int | None = None,
     reject_active_creator_session: bool = False,
 ) -> DispatchResult:
     """Load + lock a plan item, re-check for an active render, then dispatch.
@@ -2142,6 +2143,26 @@ def dispatch_item_render_for(
         if item is None or item.content_plan_id != plan.id:
             log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
             return DispatchResult("missing_row")
+        # Native slide-post creation authorizes one exact persisted revision.
+        # Recheck under the dispatcher row lock so a concurrent PUT cannot make
+        # this render an old draft after the route's read-time validation.
+        if expected_slide_post_version is not None:
+            from app.pipeline.slide_post.profiles import SlideInput, validate  # noqa: PLC0415
+            from app.schemas.slide_post import parse_slide_post  # noqa: PLC0415
+
+            draft = parse_slide_post(item.slide_post)
+            if (
+                item.edit_format != "slides"
+                or draft is None
+                or not draft.slides
+                or draft.version != expected_slide_post_version
+            ):
+                return DispatchResult("slide_post_version_conflict")
+            if not validate(
+                draft.platform_profile,
+                [SlideInput(slide_id=ref.id, kind=ref.kind) for ref in draft.slides],
+            ).ok:
+                return DispatchResult("slide_post_invalid")
         # This check deliberately lives behind the canonical Plan -> Persona ->
         # PlanItem locks. A route-side async check either races session start or,
         # if it holds the same item lock while awaiting this sync dispatcher,

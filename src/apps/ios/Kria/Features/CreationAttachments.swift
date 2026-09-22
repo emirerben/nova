@@ -7,6 +7,7 @@ struct AttachmentSheet: View {
     let projectID: UUID
     let maximumClipCount: Int
     let attachedClipCount: Int
+    let format: CreationFormat?
     let thread: CreationThread?
     let capabilities: CreationCapabilities?
     /// False until the account's capabilities have loaded; uploads wait for them.
@@ -23,6 +24,32 @@ struct AttachmentSheet: View {
     @State private var uploadingRecording = false
     @State private var pendingRecords: [UploadRecoveryRecord] = []
     @StateObject private var recorder = CreationVoiceRecorder()
+
+    init(
+        projectID: UUID,
+        maximumClipCount: Int,
+        attachedClipCount: Int,
+        format: CreationFormat? = nil,
+        thread: CreationThread?,
+        capabilities: CreationCapabilities?,
+        capabilitiesLoaded: Bool = true,
+        refresh: @escaping () async -> Void
+    ) {
+        self.projectID = projectID
+        self.maximumClipCount = maximumClipCount
+        self.attachedClipCount = attachedClipCount
+        self.format = format
+        self.thread = thread
+        self.capabilities = capabilities
+        self.capabilitiesLoaded = capabilitiesLoaded
+        self.refresh = refresh
+        _role = State(initialValue: format?.usesVisualPool == true ? .visual : .clip)
+    }
+
+    /// Slides may only use the existing PlanItemAsset Visuals pool. Keeping
+    /// this decision inside the sheet prevents a transient role-picker render
+    /// from offering primary footage or voiceover before the picker appears.
+    private var usesVisualPoolOnly: Bool { format?.usesVisualPool == true }
 
     private var itemID: String? { thread?.activePlanItemID }
     private var limit: CreationMediaLimit? { capabilities?.media?[role.capabilityKey] }
@@ -76,16 +103,21 @@ struct AttachmentSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Picker("Attachment type", selection: $role) {
-                        Text("Footage").tag(CreationMediaRole.clip)
-                        if capabilities?.visualsEnabled == true, itemID != nil { Text("Visuals").tag(CreationMediaRole.visual) }
-                        if thread.map({ CreationFormat(thread: $0) == .narrated }) == true || media.contains(where: { $0.kind == "audio" }) {
-                            Text("Voiceover").tag(CreationMediaRole.voiceover)
-                        }
-                    }.pickerStyle(.segmented)
+                    if !usesVisualPoolOnly {
+                        Picker("Attachment type", selection: $role) {
+                            Text("Footage").tag(CreationMediaRole.clip)
+                            if capabilities?.visualsEnabled == true, itemID != nil { Text("Visuals").tag(CreationMediaRole.visual) }
+                            if thread.map({ CreationFormat(thread: $0) == .narrated }) == true || media.contains(where: { $0.kind == "audio" }) {
+                                Text("Voiceover").tag(CreationMediaRole.voiceover)
+                            }
+                        }.pickerStyle(.segmented)
+                    }
                     if role == .visual {
                         // When nothing can upload, the destination message explains why.
-                        if uploadDestination.canUpload { Text(visualsCaption).font(KriaFont.body(14)) }
+                        if uploadDestination.canUpload {
+                            Text(usesVisualPoolOnly ? "Photos & videos" : visualsCaption)
+                                .font(KriaFont.body(14))
+                        }
                         if pool == nil, error == nil { ProgressView("Loading visuals…") }
                     }
                     // Until the pool loads, its limit is unknown; don't show a
@@ -154,7 +186,7 @@ struct AttachmentSheet: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(recorder.isRecording) } }
             .interactiveDismissDisabled(recorder.isRecording)
             .task {
-                guard capabilities?.visualsEnabled == true else { return }
+                guard capabilities?.visualsEnabled == true || usesVisualPoolOnly else { return }
                 while !Task.isCancelled {
                     await loadVisuals()
                     do { try await Task.sleep(for: .seconds(5)) } catch { return }

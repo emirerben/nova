@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
 from app.kria.api_schemas import (
     ApprovalDecisionBody,
     ApprovalDecisionOut,
@@ -80,12 +82,28 @@ from app.routes.plan_items import (
     PoolUploadUrlsBody,
     PoolUploadUrlsResponse,
     RegisterAssetBody,
+    SlidePostDraftBody,
+    SlidePostGenerateBody,
+    SlidePostProposalResponse,
+    SlidePostProposeBody,
+    SlidePostState,
 )
+from app.schemas.slide_post import SlidePostDraft
 
 DEFAULT_SNAPSHOT = Path(__file__).parents[2] / "tests" / "fixtures" / "kria_turns" / "tools.json"
 DEFAULT_TYPES = Path(__file__).parents[3] / "web" / "src" / "lib" / "kria-runtime-v2.generated.ts"
 DEFAULT_MOBILE_SNAPSHOT = Path(__file__).parents[2] / "tests" / "fixtures" / "kria_mobile.json"
 DEFAULT_MOBILE_OPENAPI = Path(__file__).parents[3] / "ios" / "Kria" / "Generated" / "openapi.yaml"
+
+
+class SlidePostMutationResponse(BaseModel):
+    """Fields the native client reads from richer PlanItem mutation responses."""
+
+    id: str
+    status: str
+    current_job_id: str | None = None
+    slide_post: SlidePostDraft | None = None
+
 
 API_MODELS = (
     SubmitTurnBody,
@@ -137,6 +155,12 @@ MOBILE_API_MODELS = (
     PoolUploadUrlsBody,
     PoolUploadUrlsResponse,
     RegisterAssetBody,
+    SlidePostMutationResponse,
+    SlidePostDraftBody,
+    SlidePostGenerateBody,
+    SlidePostProposeBody,
+    SlidePostProposalResponse,
+    SlidePostState,
     PersonaResponse,
     QuestionnaireBody,
     LibraryResponse,
@@ -549,6 +573,38 @@ def mobile_openapi_json() -> str:
                     "operationId": "retryCreationVisual",
                     "security": bearer,
                     "responses": _json_responses(PoolAssetOut),
+                },
+            },
+            "/plan-items/{item_id}/slide-post": {
+                "parameters": [item_id],
+                "get": {
+                    "operationId": "getSlidePostState",
+                    "security": bearer,
+                    "responses": _json_responses(SlidePostState),
+                },
+                "put": {
+                    "operationId": "saveSlidePostDraft",
+                    "security": bearer,
+                    "requestBody": _json_request(SlidePostDraftBody),
+                    "responses": _json_responses(SlidePostMutationResponse),
+                },
+            },
+            "/plan-items/{item_id}/slide-post/propose": {
+                "parameters": [item_id],
+                "post": {
+                    "operationId": "proposeSlidePost",
+                    "security": bearer,
+                    "requestBody": _json_request(SlidePostProposeBody),
+                    "responses": _json_responses(SlidePostProposalResponse),
+                },
+            },
+            "/plan-items/{item_id}/slide-post/generate": {
+                "parameters": [item_id],
+                "post": {
+                    "operationId": "generateSlidePost",
+                    "security": bearer,
+                    "requestBody": _json_request(SlidePostGenerateBody),
+                    "responses": _json_responses(SlidePostMutationResponse),
                 },
             },
             "/creation-threads/{thread_id}/actions": {

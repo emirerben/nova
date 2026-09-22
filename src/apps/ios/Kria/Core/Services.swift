@@ -78,6 +78,10 @@ struct KeychainTokenStore: TokenStore, @unchecked Sendable {
 struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { "Secure sign-in storage is unavailable." } }
 
 protocol KriaAPIClient: Sendable {
+    func slidePost(itemID: String) async throws -> SlidePostState
+    func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal
+    func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft
+    func generateSlidePost(itemID: String, expectedVersion: Int) async throws
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse
     func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget
     func reserveDeviceExport(_ body: DeviceExportUploadBody) async throws -> DeviceExportUploadTarget
@@ -152,6 +156,10 @@ protocol KriaAPIClient: Sendable {
 /// editor saves fail explicitly when the production commit endpoint is not
 /// implemented by a substitute.
 extension KriaAPIClient {
+    func slidePost(itemID: String) async throws -> SlidePostState { throw APIError.unsupported }
+    func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal { throw APIError.unsupported }
+    func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft { throw APIError.unsupported }
+    func generateSlidePost(itemID: String, expectedVersion: Int) async throws { throw APIError.unsupported }
     func requestAccountDeletion() async throws -> AccountDeletionRequest { throw APIError.unsupported }
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
@@ -300,7 +308,8 @@ struct CreationThread: Codable, Identifiable, Sendable {
             serverRevision: revision,
             activeJobID: activeJobID.flatMap(UUID.init(uuidString:)),
             activePlanItemID: activePlanItemID,
-            awaitsConfirmation: awaitsNewPlanConfirmation
+            awaitsConfirmation: awaitsNewPlanConfirmation,
+            editFormat: state?["format"]?.stringValue ?? state?["edit_format"]?.stringValue
         )
     }
 
@@ -1079,6 +1088,8 @@ private struct LibraryResponse: Decodable {
         let posterURL: String?
         let outputURL: String?
         let outputVariantID: String?
+        let slideCount: Int?
+        let contentPlanItemID: String?
         let createdAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -1086,6 +1097,8 @@ private struct LibraryResponse: Decodable {
             case posterURL = "poster_url"
             case outputURL = "output_url"
             case outputVariantID = "output_variant_id"
+            case slideCount = "slide_count"
+            case contentPlanItemID = "content_plan_item_id"
             case createdAt = "created_at"
         }
 
@@ -1098,7 +1111,11 @@ private struct LibraryResponse: Decodable {
                 updatedAt: createdAt,
                 posterURL: posterURL.flatMap(URL.init(string:)),
                 outputURL: outputURL.flatMap(URL.init(string:)),
-                outputVariantID: outputVariantID
+                outputVariantID: outputVariantID,
+                activeJobID: UUID(uuidString: id),
+                activePlanItemID: contentPlanItemID,
+                editFormat: outputVariantID == "slides" ? "slides" : nil,
+                slideCount: slideCount
             )
         }
     }

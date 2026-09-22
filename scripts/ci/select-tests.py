@@ -37,7 +37,11 @@ def release_only(path, base, head):
 def affected(path):
     # These web resources are also bundled by the native Xcode project.
     if path.startswith(
-        ("src/apps/web/public/fonts/", "src/apps/web/public/plan/type-posters/")
+        (
+            "src/apps/web/public/fonts/",
+            "src/apps/web/public/plan/type-posters/",
+            "src/apps/web/public/landing/raw-story/",
+        )
     ):
         return {"web", "ios", "ios_ui"}
     # Unit-test edits and generated clients need compilation/unit contracts, but
