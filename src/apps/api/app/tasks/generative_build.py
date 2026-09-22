@@ -40,7 +40,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from contextlib import contextmanager, nullcontext
-from dataclasses import asdict, dataclass, is_dataclass, replace
+from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import wraps
 from itertools import cycle
@@ -1378,20 +1378,8 @@ def _clip_meta_to_cache(meta: Any) -> dict[str, Any]:
 def _clip_meta_from_cache(raw: dict[str, Any]) -> Any:
     from app.pipeline.agents.gemini_analyzer import ClipMeta  # noqa: PLC0415
 
-    allowed = {
-        "clip_id",
-        "transcript",
-        "hook_text",
-        "hook_score",
-        "best_moments",
-        "detected_subject",
-        "analysis_degraded",
-        "moments_synthetic",
-        "failed",
-        "clip_path",
-        "text_safe_zone",
-        "visual_density",
-    }
+    # Mirror the dataclass serializer so new analysis fields survive cache hits.
+    allowed = {field.name for field in fields(ClipMeta) if field.init}
     payload = {k: raw.get(k) for k in allowed if k in raw}
     return ClipMeta(**payload)
 
