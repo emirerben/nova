@@ -136,7 +136,14 @@ private final class CreationChatFixture: @unchecked Sendable {
                     ])
                 }
             } else if action == "generate", ProcessInfo.processInfo.environment["KRIA_CHAT_SLOW_CREATION"] == "1" {
-                thread["creator_agent"] = ["status": "failed", "summary": "Open on the laugh and keep the pacing quick."]
+                // Mirror `_sync_agent`'s server-side projection (creation_threads.py):
+                // `plan_hash`/`version` come from `session.active_plan`, which a
+                // job-dispatch failure does not clear -- only `status` moves. A
+                // fixture that drops plan_hash here makes the confirmed plan look
+                // unconfirmed, wrongly routing the client's FailedWorkspacePresentation
+                // away from the legacy confirmation card's "Retry generation".
+                let version = planVersions[id, default: 0]
+                thread["creator_agent"] = ["status": "failed", "summary": "Open on the laugh and keep the pacing quick.", "version": version, "plan_hash": "fixture-plan-\(version)"]
                 state["generation"] = ["status": "failed"]
                 append("agent_assistant_error", text: "I couldn't start that render. Your creative plan is still saved.")
             } else if action == "retry", ProcessInfo.processInfo.environment["KRIA_CHAT_SLOW_CREATION"] == "1" {
