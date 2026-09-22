@@ -1431,6 +1431,33 @@ async def test_generation_cache_mismatch_is_not_reused_and_new_answer_is_pinned(
     )
 
 
+@pytest.mark.asyncio
+async def test_transcript_intents_never_call_visual_resolver(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app.schemas.clip_intents import ClipIntent
+    from app.services import clip_intent_resolution as service
+
+    agent = MagicMock()
+    monkeypatch.setattr(service, "ClipRequestResolverAgent", agent)
+    result = await service.resolve_clip_intents_for_turn(
+        intents=[
+            ClipIntent(
+                intent_id="score",
+                op="label",
+                attribute="spoken score",
+                label_source="transcript",
+                transcript_kind="score",
+            )
+        ],
+        creator_request="Show the spoken score",
+        clips=[],
+        run_context=None,
+    )
+    assert result.needs_creator
+    agent.assert_not_called()
+
+
 async def test_thirty_clip_overflow_resolves_next_turn_without_more_vision(monkeypatch):
     """The KRI-154 report: 8 vague clips in a 30-clip upload, cap 4."""
     from dataclasses import replace

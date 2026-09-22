@@ -1,0 +1,153 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-09-22-v33",
+  "input": {
+    "user_message": "Use all uploaded images and videos with my recording. Add anonymous participant placeholders only on single-player shots, show the scores spoken in my narration, and label the sport mentioned in that narration. Do not infer score text from the video.",
+    "creator_context": "Travel creator; warm and direct.",
+    "item_context": "A friendly sports afternoon: a football kickoff, a tennis serve, and a single-player portrait. A 20-second recorded voiceover recounts the games.",
+    "media_context": [
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "creator_note": "football kickoff"
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "creator_note": "tennis serve"
+      },
+      {
+        "media_id": "photo-1",
+        "kind": "image",
+        "creator_note": "one player at the end of the games"
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-1",
+      "edit_format": "montage",
+      "render_program": "native",
+      "has_voiceover": true,
+      "media": [
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "label": "arrival"
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "label": "sunset"
+        },
+        {
+          "media_id": "photo-1",
+          "kind": "image",
+          "label": "city detail"
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm travel beat"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "transitions": {
+          "available": true
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "guided_voiceover": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "narration": {
+        "gcs_path": "voiceover-uploads/test/recording.mp3",
+        "generation": "1",
+        "duration_s": 20
+      }
+    },
+    "creator_request": "Use all uploaded images and videos with my recording. Add anonymous participant placeholders only on single-player shots, show the scores spoken in my narration, and label the sport mentioned in that narration. Do not infer score text from the video.",
+    "creator_direction": "Follow the 20-second recording, opening with football action, then tennis, and finishing on the player portrait."
+  },
+  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"fast_montage\", \"edit_format\": \"montage\", \"audio_strategy\": \"voiceover\", \"execution_contract\": \"guided_voiceover_v1\", \"media_scope\": \"all\", \"render_program\": \"guided\", \"target_duration_s\": 20, \"selected_media_ids\": [], \"story_structure\": [\"Open with the football kickoff\", \"Follow the recording into the tennis serve\", \"Finish on the player portrait\"], \"clip_intents\": [{\"intent_id\": \"participant\", \"op\": \"label\", \"attribute\": \"anonymous single-player placeholders\", \"label_source\": \"transcript\", \"transcript_kind\": \"participant\"}, {\"intent_id\": \"score\", \"op\": \"label\", \"attribute\": \"scores spoken in narration\", \"label_source\": \"transcript\", \"transcript_kind\": \"score\"}, {\"intent_id\": \"topic\", \"op\": \"label\", \"attribute\": \"the sport spoken in narration\", \"label_source\": \"transcript\", \"transcript_kind\": \"topic\"}], \"rationale\": \"Keep the recording intact and align grounded labels to its words and final shots.\"}, \"summary\": \"Use all footage under your recording with grounded player, score and spoken sport labels.\"}}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "fast_montage",
+        "edit_format": "montage",
+        "audio_strategy": "voiceover",
+        "execution_contract": "guided_voiceover_v1",
+        "media_scope": "all",
+        "render_program": "guided",
+        "target_duration_s": 20,
+        "selected_media_ids": [],
+        "story_structure": [
+          "Open with the football kickoff",
+          "Follow the recording into the tennis serve",
+          "Finish on the player portrait"
+        ],
+        "clip_intents": [
+          {
+            "intent_id": "participant",
+            "op": "label",
+            "attribute": "anonymous single-player placeholders",
+            "label_source": "transcript",
+            "transcript_kind": "participant"
+          },
+          {
+            "intent_id": "score",
+            "op": "label",
+            "attribute": "scores spoken in narration",
+            "label_source": "transcript",
+            "transcript_kind": "score"
+          },
+          {
+            "intent_id": "topic",
+            "op": "label",
+            "attribute": "the sport spoken in narration",
+            "label_source": "transcript",
+            "transcript_kind": "topic"
+          }
+        ],
+        "rationale": "Keep the recording intact and align grounded labels to its words and final shots."
+      },
+      "summary": "Use all footage under your recording with grounded player, score and spoken sport labels."
+    }
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "transcript_label_kinds": [
+      "participant",
+      "score",
+      "topic"
+    ]
+  }
+}

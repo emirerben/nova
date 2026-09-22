@@ -86,6 +86,10 @@
       "attributes": [
         "the food clips",
         "the park clips"
+      ],
+      "live_keywords": [
+        "food",
+        "park"
       ]
     },
     "contract": "A caption differs from a label: op=\"caption\" with a quoted creator_text (\"post match feast\") applies that text verbatim once membership is resolved, while a described caption (caption_attribute=\"the weather\", no creator_text) leaves the server to author ONE grounded phrase for the whole chapter from the matched clips' own records -- never a model-authored on-screen value."

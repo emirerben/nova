@@ -25,6 +25,16 @@ def _matches_requirement(row: dict[str, Any], requirement: dict[str, Any]) -> bo
     if row.get("op") != requirement["op"]:
         return False
 
+    # Source ownership is the routing boundary: clip labels go through vision;
+    # transcript labels are deferred to the pinned narration materializer.
+    # Fixtures that predate KRI-156 deliberately default to visual ownership.
+    label_source = requirement.get("label_source", "clip")
+    if row.get("label_source", "clip") != label_source:
+        return False
+    transcript_kind = requirement.get("transcript_kind")
+    if row.get("transcript_kind") != transcript_kind:
+        return False
+
     source_quote = str(row.get("source_quote") or "").casefold()
     source_keywords = requirement["source_quote_keywords"]
     if not all(keyword.casefold() in source_quote for keyword in source_keywords):

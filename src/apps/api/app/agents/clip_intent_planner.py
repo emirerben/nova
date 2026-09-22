@@ -47,7 +47,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_intent_planner",
         prompt_id="clip_intent_planner",
-        prompt_version="2026-09-22.2",
+        prompt_version="2026-09-22.3",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -112,7 +112,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
 
         sources = (input.creator_request, input.latest_user_message or "")
         intents: list[PlannedClipIntent] = []
-        seen: set[tuple[str, str, str | None, str | None]] = set()
+        seen: set[tuple[str, str, str | None, str | None, str, str | None]] = set()
         seen_ids: set[str] = set()
         for index, raw_intent in enumerate(raw_intents):
             if not isinstance(raw_intent, dict):
@@ -149,7 +149,14 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 raise SchemaError(
                     f"clip_intent_planner: duplicate intent_id {intent.intent_id!r} at {index}"
                 )
-            key = (intent.op, intent.attribute.casefold(), intent.creator_text, intent.position)
+            key = (
+                intent.op,
+                intent.attribute.casefold(),
+                intent.creator_text,
+                intent.position,
+                intent.label_source,
+                intent.transcript_kind,
+            )
             if key in seen:
                 raise SchemaError(f"clip_intent_planner: duplicate intent at {index}")
             seen.add(key)

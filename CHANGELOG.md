@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.136.0] - 2026-09-22
+
+### Changed
+- refactor: replace typed labels with sourced clip intents (KRI-156) (#1142) <!-- release-pr: 1142 -->
+
 ## [0.76.135.0] - 2026-09-22
 
 ### Changed

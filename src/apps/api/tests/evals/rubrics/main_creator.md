@@ -9,3 +9,11 @@ For a guided strategy, `selected_media_ids: []` is the required privacy and resp
 the bounded guided specialist receives the complete accepted media universe and selects the sources.
 Do not penalize an empty guided selection. For a native strategy, score ownership and usefulness of
 the selected IDs normally. Licensed music is valid only when the manifest catalog contains music.
+
+`clip_intents` are supported requests, not invented copy or manual `media_overlays`.
+Clip-sourced requests describe an attribute for the visual resolver; they must not
+contain invented label values. Transcript-sourced labels require the recorded
+`guided_voiceover_v1` path: participant placeholders, spoken scores, and spoken
+topics are grounded later against the recording and final shots. An empty guided
+selection remains correct for that path, and the explicit contract permits a
+guided voiceover strategy despite the general audio-led/native preference.
