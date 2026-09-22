@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.146.0] - 2026-09-22
+
+### Changed
+- fix(planner): distinguish story quotations from requested captions (#1165) <!-- release-pr: 1165 -->
+
 ## [0.76.145.0] - 2026-09-22
 
 ### Changed
