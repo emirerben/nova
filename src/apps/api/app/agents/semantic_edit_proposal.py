@@ -131,12 +131,6 @@ def _creator_captions(input: EditProposalAgentInput) -> dict[str, list[str]]:  #
     phrases: dict[str, list[str]] = {}
     for match in _QUOTED_TEXT_RE.finditer(input.creator_request):
         text = (match.group(1) or match.group(2) or "").strip()
-        # A quotation can be factual evidence (for example a song title) as
-        # well as an instruction.  Only a phrase introduced as screen copy is
-        # a caption contract; otherwise it stays ordinary creator context.
-        lead = input.creator_request[max(0, match.start() - 48) : match.start()].casefold()
-        if not re.search(r"\b(?:say|show|screen|label|caption|text|title)\b", lead):
-            continue
         key = creator_copy_match_key(text)
         if key:
             if text not in phrases.setdefault(key, []):
@@ -673,16 +667,18 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             key = creator_copy_match_key(binding.text)
             if key not in captions or binding.text not in captions[key]:
                 raise SchemaError("semantic_edit_proposal: unrequested text binding was invented")
-        present = {
+        present = [
             text
             for text in [
                 *(chapter.thought for chapter in plan.chapters),
                 *(binding.text for binding in plan.text_bindings),
             ]
             if text
-        }
+        ]
         required_captions = _caption_texts(captions) - label_texts
-        if not required_captions <= present:
+        if any(
+            not any(caption in rendered for rendered in present) for caption in required_captions
+        ):
             raise SchemaError("semantic_edit_proposal: creator caption was dropped")
 
     @staticmethod

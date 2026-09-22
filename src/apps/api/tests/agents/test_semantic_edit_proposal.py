@@ -447,6 +447,21 @@ def test_distinct_creator_caption_variant_must_not_be_missing_or_ambiguous() -> 
         SemanticEditProposalAgent(None).parse(json.dumps(ambiguous), input)  # type: ignore[arg-type]
 
 
+def test_quoted_caption_without_cue_words_is_enforced_for_non_english_request() -> None:
+    input = _input(creator_request="“maç sonrası pub” pub çekimleri için.")
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = "Invented copy"
+    raw["chapters"][1]["thought"] = "maç sonrası pub"
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["", "maç sonrası pub"]
+
+    missing = json.loads(_raw())
+    missing["chapters"][0]["thought"] = "Invented copy"
+    missing["chapters"][1]["thought"] = ""
+    with pytest.raises(SchemaError, match="creator caption was dropped"):
+        SemanticEditProposalAgent(None).parse(json.dumps(missing), input)  # type: ignore[arg-type]
+
+
 def test_resolved_label_generic_text_binding_is_dropped_for_grounded_lane() -> None:
     input = _input(
         creator_request="",
