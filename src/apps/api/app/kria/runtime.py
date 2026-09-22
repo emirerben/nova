@@ -38,6 +38,10 @@ from app.models import (
     CreatorAgentTurn,
     CreatorEditDraft,
 )
+from app.services.creation_thread_titles import (
+    matches_conversation_revision,
+    prepare_message_title,
+)
 
 
 @dataclass
@@ -120,6 +124,8 @@ async def _append_event(
     payload: dict[str, Any] | None = None,
     client_event_id: str | None = None,
 ) -> CreationThreadEvent:
+    if role == "user" and event_type == "user_message" and content:
+        await prepare_message_title(db, thread, content)
     sequence = (
         int(
             (
@@ -192,7 +198,7 @@ async def submit_turn(
             ),
             should_publish,
         )
-    if int(thread.revision) != body.expected_thread_revision:
+    if not matches_conversation_revision(thread, body.expected_thread_revision):
         raise RuntimeFailure(
             409,
             "thread_revision_stale",
@@ -454,7 +460,7 @@ async def cancel_turn(
     if turn is None:
         raise RuntimeFailure(404, "turn_not_found", "Kria turn not found")
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
-    if int(thread.revision) != expected_thread_revision:
+    if not matches_conversation_revision(thread, expected_thread_revision):
         raise RuntimeFailure(
             409,
             "thread_revision_stale",
@@ -680,7 +686,7 @@ async def decide_approval(
             recovery="refresh_replan",
             current_revision=int(thread.revision),
         )
-    if int(thread.revision) != body.expected_thread_revision:
+    if not matches_conversation_revision(thread, body.expected_thread_revision):
         raise RuntimeFailure(
             409,
             "thread_revision_stale",

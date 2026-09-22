@@ -1070,6 +1070,12 @@ private struct CreationWorkspaceView: View {
             return changed
         }
         let delta = try await model.api.threadDelta(threadID: project.id, afterSequence: afterSequence)
+        let revisionBeforeDelta = threadRevision
+        // `threadRevision` advances as soon as the delta is acknowledged, even
+        // if the subsequent full-projection request fails. Keep the revision
+        // of the last successfully applied projection separately so the next
+        // idle delta retries a title (or another mutable projection) sync.
+        let lastFullProjectionRevision = fullThread?.revision ?? project.serverRevision
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: delta.threadRevision)
         let known = Set(events.map(\.id))
         let fresh = delta.events.filter { !known.contains($0.id) }
@@ -1100,11 +1106,21 @@ private struct CreationWorkspaceView: View {
         // successfully.
         clearChatRefreshRecoveryMessage(&failure)
         try await synchronizeApproval()
-        if !fresh.isEmpty || currentProject.status == .rendering {
+        // A background mutation, such as assigning the first-prompt title,
+        // advances the thread revision but may intentionally be a system event
+        // that does not produce a chat row. Delta responses do not contain the
+        // mutable thread projection (including `title`), so fetch it whenever
+        // the revision advances as well as for ordinary conversational updates.
+        if ThreadProjectionRefresh.requiresFullProjection(
+            lastFullProjectionRevision: lastFullProjectionRevision,
+            incomingRevision: delta.threadRevision,
+            receivedEvents: fresh,
+            isRendering: currentProject.status == .rendering
+        ) {
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
         }
         if !fresh.isEmpty, !isThinking { await editorSession.synchronizePromptRevision() }
-        return !fresh.isEmpty
+        return !fresh.isEmpty || threadRevision > revisionBeforeDelta
     }
 
     private func reconcilePendingMessages() {
@@ -1258,6 +1274,23 @@ struct ThreadProjectionOrder {
 enum ThreadRevisionOrder {
     static func advance(current: Int, incoming: Int) -> Int { max(current, incoming) }
     static func acceptsProjection(current: Int, incoming: Int) -> Bool { incoming >= current }
+}
+
+/// Deltas carry append-only events and a revision, while a full thread carries
+/// mutable fields such as the user-visible title. Keep the decision pure so a
+/// non-conversational background update cannot leave the workspace header or
+/// Recent chats stale. The comparison is with the last *applied full*
+/// projection, not the last delta, because a transient projection-fetch
+/// failure must retry on the next otherwise-idle delta.
+enum ThreadProjectionRefresh {
+    static func requiresFullProjection(
+        lastFullProjectionRevision: Int,
+        incomingRevision: Int,
+        receivedEvents: [ThreadEvent],
+        isRendering: Bool
+    ) -> Bool {
+        incomingRevision > lastFullProjectionRevision || !receivedEvents.isEmpty || isRendering
+    }
 }
 
 struct ChatTranscriptMessage: Identifiable, Equatable {
