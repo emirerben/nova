@@ -2,14 +2,19 @@
   "agent": "nova.video.clip_question",
   "prompt_version": "2026-09-21.3",
   "input": {
-    "file_uri": "files/kri127-eval-fixture-clip",
+    "file_uri": "clips/devtest-1778504452/clip_00.mp4",
     "file_mime": "video/mp4",
     "question": "What sport is being played?"
   },
   "raw_text": "{\"answer\": \"Volleyball\", \"confidence\": 0.92, \"evidence\": \"net visible, player spikes the ball\"}",
-  "output": {"answer": "Volleyball", "confidence": 0.92, "evidence": "net visible, player spikes the ball"},
+  "output": {
+    "answer": "Volleyball",
+    "confidence": 0.92,
+    "evidence": "net visible, player spikes the ball"
+  },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "Confident, specific answer grounded in what's visible in the clip."
+    "case": "Confident, specific answer grounded in what's visible in the clip.",
+    "live_note": "Bucket-relative dev clip; live mode uploads it via the fixture uploader. Replay uses raw_text; live is structural only (the dev clip's real content differs from the recorded answer)."
   }
 }
