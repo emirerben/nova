@@ -166,6 +166,22 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(self.text, r'git diff --quiet "\$HEAD_SHA" "FETCH_HEAD" --')
         self.assertIn("Main advanced only outside release inputs", self.text)
 
+    def test_backend_route_changes_wait_for_matching_api_deploy(self):
+        """A native release that calls a new API route cannot outrun Fly."""
+        gate = re.search(
+            r'if git diff --quiet "\$HEAD_SHA\^" "\$HEAD_SHA" -- \\\n+(?P<paths>[^;]*)\; then\n\s*echo "requires_api_deploy=false".*?\n\s*else\n\s*echo "requires_api_deploy=true"',
+            self.text,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(gate, "missing requires-api-deploy diff guard")
+        assert gate is not None
+        self.assertRegex(gate.group("paths"), r"(?m)^\s*src/apps/api\s*\\$")
+        self.assertIn("Wait for the matching production API deploy", self.text)
+        self.assertRegex(
+            self.text,
+            r"if: steps\.gate\.outputs\.eligible == 'true' && steps\.gate\.outputs\.requires_api_deploy == 'true'",
+        )
+
     def test_release_uses_protected_environment_and_never_echoes_secrets(self):
         self.assertRegex(self.text, r"(?m)^\s*environment\s*:\s*testflight-production\s*$")
         # Secret values may be passed to actions/scripts, but not interpolated
