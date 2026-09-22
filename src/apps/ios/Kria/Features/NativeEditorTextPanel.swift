@@ -13,7 +13,14 @@ struct NativeEditorTextPanel: View {
     @State private var typing = false
     @FocusState private var editingSize: Bool
     @State private var sizeInput = ""
+    @State private var ownerUUID = UUID()
+    @StateObject private var previewClock = NativeTextAnimationPreviewClock()
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.nativeEditorConnectedPanel) private var isConnectedPanel
+    @Environment(\.nativeEditorPanelLifecycle) private var panelLifecycle
+    @Environment(\.nativeEditorPanelContentWidth) private var panelContentWidth
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .body) private var editorHeight: CGFloat = 100
 
     init(id: String, session: NativeEditorSession, initialTab: Tab = .style, embeddedAnimation: Bool = false, onDone: @escaping () -> Void) {
@@ -24,13 +31,13 @@ struct NativeEditorTextPanel: View {
 
     private var item: EditorTextElement? { session.document.textElements.first { $0.id == id } }
     private let palette = ["#FFFFFF", "#30352C", "#FFF0A6", "#9BCAFF", "#E7DDF5"]
-    private var usesAccessibilityLayout: Bool { dynamicTypeSize.isAccessibilitySize }
+    private var usesAccessibilityLayout: Bool { dynamicTypeSize.isAccessibilitySize || panelContentWidth < 300 }
 
     @ViewBuilder var body: some View {
         if embeddedAnimation {
             animationControls
                 .disabled(!session.canEdit(.text))
-                .onDisappear { session.endTransaction() }
+                .onDisappear { stopPreview(); session.endTransaction() }
         } else {
             editorBody
         }
@@ -39,17 +46,16 @@ struct NativeEditorTextPanel: View {
     private var editorBody: some View {
         VStack(spacing: 6) {
             HStack {
-                Text("Text").font(KriaFont.body(15).weight(.semibold))
+                Text("Text").font(KriaFont.body(isConnectedPanel ? 18 : 15).weight(.semibold))
                 Spacer()
-                Button("Done") { commitSize(); editingSize = false; typing = false; session.endTransaction(); onDone() }
-                    .frame(minWidth: 44, minHeight: 44)
+                Button { performOutgoingCleanup(); onDone() } label: {
+                    Text("Done").frame(minWidth: 64, minHeight: 44)
+                        .background(isConnectedPanel ? KriaColor.ink.opacity(0.06) : Color.clear, in: Capsule())
+                }
                     .accessibilityIdentifier("native-editor-text-inspector-done")
             }
-            Picker("Text controls", selection: $tab) {
-                ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("native-editor-text-tabs")
+            NativeEditorPanelTabs(tabs: Tab.allCases, selection: $tab, accessibilityPrefix: "native-editor-text-tabs")
+                .accessibilityIdentifier("native-editor-text-tabs")
             ScrollView {
                 VStack(spacing: 8) {
                     switch tab {
@@ -80,11 +86,13 @@ struct NativeEditorTextPanel: View {
             .scrollDismissesKeyboard(.interactively)
             .disabled(!session.canEdit(.text))
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, isConnectedPanel ? 24 : 16)
         .padding(.bottom, 8)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(KriaColor.paper)
-        .overlay(alignment: .top) { KriaColor.line.opacity(0.4).frame(height: 1) }
+        .background(isConnectedPanel ? Color.clear : KriaColor.paper)
+        .overlay(alignment: .top) {
+            if !isConnectedPanel { KriaColor.line.opacity(0.4).frame(height: 1) }
+        }
         .font(KriaFont.body(14))
         .tint(KriaColor.ink)
         .onChange(of: tab) { _, tab in
@@ -100,7 +108,16 @@ struct NativeEditorTextPanel: View {
         .onChange(of: typing) { _, value in
             if value { session.beginTransaction() } else { session.endTransaction() }
         }
-        .onDisappear { session.endTransaction() }
+        .onAppear {
+            guard !embeddedAnimation else { return }
+            panelLifecycle?.register(owner: ownerUUID, prepareToClose: {
+                performOutgoingCleanup()
+            })
+        }
+        .onDisappear {
+            performOutgoingCleanup()
+            panelLifecycle?.unregister(owner: ownerUUID)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native-editor-text-panel")
     }
@@ -127,18 +144,33 @@ struct NativeEditorTextPanel: View {
 
     private var styleControls: some View {
         VStack(spacing: 4) {
-            HStack {
-                Text("Preset")
-                Spacer()
+            VStack(alignment: .leading, spacing: 6) {
                 Menu {
                     ForEach(["Simple", "Bold", "Highlight"], id: \.self) { preset in
-                        Button(preset) { session.applyTextPreset(id: id, preset: preset) }
+                        Button {
+                            session.applyTextPreset(id: id, preset: preset)
+                        } label: {
+                            if string("editor_preset", "Simple") == preset {
+                                Label(preset, systemImage: "checkmark")
+                            } else {
+                                Text(preset)
+                            }
+                        }
                     }
-                } label: { Label(string("editor_preset", "Simple"), systemImage: "chevron.down") }
+                } label: {
+                    HStack(spacing: 12) {
+                        Text(string("editor_preset", "Simple"))
+                            .font(KriaFont.body(14))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(minWidth: 112, minHeight: 44, alignment: .leading)
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(KriaColor.line))
+                }
                 .accessibilityIdentifier("native-editor-text-preset")
             }
-            .padding(.horizontal, 14).frame(minHeight: 44)
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(KriaColor.line))
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if usesAccessibilityLayout {
                 VStack(spacing: 8) {
@@ -240,17 +272,10 @@ struct NativeEditorTextPanel: View {
         }
     }
 
-    @ViewBuilder private var colorControl: some View {
-        if usesAccessibilityLayout {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Color")
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-                    colorChoices
-                }
-            }
-        } else {
-            HStack(spacing: 4) {
-                Text("Color").frame(width: 46, alignment: .leading)
+    private var colorControl: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Color")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 8)], spacing: 8) {
                 colorChoices
             }
         }
@@ -306,18 +331,18 @@ struct NativeEditorTextPanel: View {
 
     private var animationControls: some View {
         VStack(spacing: 14) {
-            Picker("Animation phase", selection: $phase) {
-                ForEach(Phase.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }.pickerStyle(.segmented)
-            if usesAccessibilityLayout {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 10) {
-                    animationEffects
-                }
-            } else {
-                HStack(spacing: 6) {
-                    animationEffects
-                }
+            NativeEditorPanelTabs(tabs: Phase.allCases, selection: $phase, accessibilityPrefix: "native-editor-text-animation-phase")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: usesAccessibilityLayout ? 118 : 92), spacing: 8)], spacing: 10) {
+                animationEffects
             }
+            Button {
+                previewClock.toggleManually()
+            } label: {
+                Label(previewClock.isPlaying ? "Pause previews" : "Play previews", systemImage: previewClock.isPlaying ? "pause.fill" : "play.fill")
+                    .font(KriaFont.body(13).weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+            .accessibilityIdentifier("native-editor-text-animation-preview-toggle")
             if usesAccessibilityLayout {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Speed")
@@ -333,14 +358,21 @@ struct NativeEditorTextPanel: View {
                 .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onAppear { startPreviewIfAllowed() }
+        .onDisappear { previewClock.pauseForLifecycle() }
+        .onChange(of: scenePhase) { _, next in
+            if next == .active { startPreviewIfAllowed() } else { previewClock.pauseForLifecycle() }
+        }
+        .onChange(of: reduceMotion) { _, enabled in
+            if enabled { previewClock.pauseForLifecycle() } else { startPreviewIfAllowed() }
+        }
     }
 
     private var animationEffects: some View {
         ForEach(phase == .loop ? ["None", "Pulse", "Bounce", "Float"] : ["None", "Fade", "Pop", "Slide", "Typewriter"], id: \.self) { effect in
             Button { session.setTextPhase(id: id, phase: phaseKey, effect: effect.lowercased()) } label: {
                 VStack(spacing: 6) {
-                    Text(effect == "Typewriter" ? "Te|" : "Text")
-                        .font(KriaFont.body(20).weight(.semibold))
+                    NativeTextAnimationPreview(phase: phaseKey, effect: effect.lowercased(), speed: phases["speed"]?.numberValue ?? 1, clock: previewClock)
                         .frame(maxWidth: .infinity, minHeight: 52)
                         .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 9))
                         .overlay(RoundedRectangle(cornerRadius: 9).stroke(selectedPhase == effect.lowercased() ? KriaColor.sky : .clear, lineWidth: 2))
@@ -363,6 +395,29 @@ struct NativeEditorTextPanel: View {
     }
 
     private var sizeLabel: String { currentSize.formatted(.number.grouping(.never).precision(.fractionLength(0...1))) }
+    private func performOutgoingCleanup() {
+        commitSize()
+        editingSize = false
+        typing = false
+        stopPreview()
+        session.endTransaction()
+    }
+
+    private var previewAutoplayAllowed: Bool {
+        NativeTextAnimationPreviewAutoplay.allows(
+            reduceMotion: reduceMotion,
+            environment: ProcessInfo.processInfo.environment
+        )
+    }
+
+    private func startPreviewIfAllowed() {
+        guard previewAutoplayAllowed else { return }
+        previewClock.startAutoplay()
+    }
+
+    private func stopPreview() {
+        previewClock.pauseForLifecycle()
+    }
     private func commitSize() {
         guard !sizeInput.isEmpty else { return }
         defer { sizeInput = "" }

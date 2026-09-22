@@ -2,6 +2,31 @@ import XCTest
 
 @MainActor
 final class NativeCaptionVisualUITests: XCTestCase {
+    func testUnfinishedCardSurvivesClosingAndSwitchingTools() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-legacy-visuals", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
+        app.launch()
+        XCTAssertTrue(app.buttons["native-editor-tool-visuals"].waitForExistence(timeout: 20))
+        app.buttons["native-editor-tool-visuals"].tap()
+        app.buttons["Text cards"].tap()
+        app.buttons["native-editor-card-preset-simple"].tap()
+        let input = app.textViews["native-editor-new-card-text"]
+        let field = app.textFields["native-editor-new-card-text"]
+        let editor = input.exists ? input : field
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        let handle = app.descendants(matching: .any)["native-editor-timeline-resize"].firstMatch
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -180)))
+        app.scrollViews["native-editor-visuals-scroll"].swipeUp()
+        editor.tap()
+        editor.typeText("Keep this card draft")
+        app.buttons["native-editor-visuals-done"].tap()
+        app.buttons["native-editor-tool-captions"].tap()
+        app.buttons["native-editor-tool-visuals"].tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        XCTAssertEqual(editor.value as? String, "Keep this card draft")
+    }
+
     func testLegacyServerAllowsOpeningVisualImporterAndAddingCard() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-legacy-visuals", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]

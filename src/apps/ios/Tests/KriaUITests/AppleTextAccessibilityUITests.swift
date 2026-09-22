@@ -6,6 +6,7 @@ final class AppleTextAccessibilityUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-two-text"]
         app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = "accessibility5"
+        app.launchEnvironment["UI_TEST_EDITOR_WIDTH"] = "320"
         app.launch()
 
         let timelineText = app.buttons["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"].firstMatch
@@ -15,7 +16,8 @@ final class AppleTextAccessibilityUITests: XCTestCase {
 
         let panel = app.descendants(matching: .any)["native-editor-text-panel"].firstMatch
         XCTAssertTrue(panel.waitForExistence(timeout: 3))
-        let viewport = app.windows.firstMatch.frame
+        let window = app.windows.firstMatch.frame
+        let viewport = CGRect(x: (window.width - 320) / 2, y: window.minY, width: 320, height: window.height)
         XCTAssertGreaterThanOrEqual(panel.frame.minX, viewport.minX)
         XCTAssertLessThanOrEqual(panel.frame.maxX, viewport.maxX)
 

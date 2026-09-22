@@ -45,6 +45,9 @@ enum NativeEditorIslandMetrics {
 /// 2. iOS 26+ with a Swift 6.2+ toolchain: Liquid Glass (`.glassEffect`).
 /// 3. Everything else: `.ultraThinMaterial` with a manual stroke + shadow.
 struct NativeEditorIslandSurface: ViewModifier {
+    var cornerRadius: CGFloat = 999
+    var isEnabled = true
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: cornerRadius, style: .continuous) }
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     // Neither `xcrun simctl ui` nor writing the `com.apple.Accessibility`
@@ -58,12 +61,16 @@ struct NativeEditorIslandSurface: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        if effectiveReduceTransparency {
+        if !isEnabled {
             content
-                .background(KriaColor.paper, in: Capsule())
-                .overlay(Capsule().strokeBorder(KriaColor.line, lineWidth: 1))
-                .shadow(color: KriaColor.ink.opacity(0.14), radius: 12, y: 8)
-                .shadow(color: KriaColor.ink.opacity(0.08), radius: 1.5, y: 1)
+        } else if effectiveReduceTransparency {
+            content
+                .background {
+                    shape.fill(KriaColor.paper)
+                        .shadow(color: KriaColor.ink.opacity(0.14), radius: 12, y: 8)
+                        .shadow(color: KriaColor.ink.opacity(0.08), radius: 1.5, y: 1)
+                }
+                .overlay(shape.strokeBorder(KriaColor.line, lineWidth: 1))
         } else {
             glass(content)
         }
@@ -89,7 +96,7 @@ struct NativeEditorIslandSurface: ViewModifier {
             // non-glass marker leaf (see `NativeEditorToolRail`), not
             // directly on (or as an ancestor of) a `.glassEffect()` view.
             content
-                .glassEffect(.regular.interactive(), in: Capsule())
+                .glassEffect(.regular.interactive(), in: shape)
                 // Liquid Glass alone reads as almost invisible against the
                 // white timeline/paper background; a soft shadow restores
                 // enough definition to read as a floating surface.
@@ -104,17 +111,19 @@ struct NativeEditorIslandSurface: ViewModifier {
 
     private func material(_ content: Content) -> some View {
         content
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(Color.white.opacity(0.75), lineWidth: 1))
-            .overlay(Capsule().strokeBorder(KriaColor.line.opacity(0.6), lineWidth: 0.5))
-            .shadow(color: KriaColor.ink.opacity(0.14), radius: 12, y: 8)
-            .shadow(color: KriaColor.ink.opacity(0.08), radius: 1.5, y: 1)
+            .background {
+                shape.fill(.ultraThinMaterial)
+                    .shadow(color: KriaColor.ink.opacity(0.14), radius: 12, y: 8)
+                    .shadow(color: KriaColor.ink.opacity(0.08), radius: 1.5, y: 1)
+            }
+            .overlay(shape.strokeBorder(Color.white.opacity(0.75), lineWidth: 1))
+            .overlay(shape.strokeBorder(KriaColor.line.opacity(0.6), lineWidth: 0.5))
     }
 }
 
 extension View {
-    func nativeEditorIslandSurface() -> some View {
-        modifier(NativeEditorIslandSurface())
+    func nativeEditorIslandSurface(cornerRadius: CGFloat = 999, isEnabled: Bool = true) -> some View {
+        modifier(NativeEditorIslandSurface(cornerRadius: cornerRadius, isEnabled: isEnabled))
     }
 }
 
