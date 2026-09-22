@@ -406,13 +406,31 @@ def compile_phone_guided_plan(
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone moments must have unique identities")
     # Composition.swift throws invalidTimeline unless the outgoing clip still
-    # plays through each incoming fade. A refit that shortened it breaks that,
-    # so refuse here instead of failing the export on the phone.
+    # plays through each incoming fade. The per-moment refit above routinely
+    # saturates a clip to the device file's own measured length minus
+    # `_EXPORT_SAFETY_MARGIN_S` (0.05s), while `transition.duration` was set
+    # from the plan's nominal, pre-refit overlap -- a shortfall of tens of
+    # milliseconds is the expected shape of that disagreement, not a broken
+    # plan (observed live: job 31eb638e, KRI-163). Refusing the whole render
+    # over a shave this small throws away the moment for no benefit: shorten
+    # the fade to whatever overlap the refit clip actually has, rounded down
+    # to a whole frame so Composition.swift's own frame-quantized timeline
+    # still contains it. Only a genuine hole -- the previous clip doesn't even
+    # reach where this one starts, a source dramatically shorter than
+    # planned rather than a rounding disagreement -- still fails closed.
     previous_end = None
     for clip in sorted(clips, key=lambda clip: clip.timeline_start):
-        fade = clip.transition.duration if clip.transition is not None else 0
-        if fade > 0 and (previous_end is None or previous_end + 1e-6 < clip.timeline_start + fade):
-            raise UnsupportedPhonePlan("phone transition needs the full source window")
+        if clip.transition is not None:
+            available = round((previous_end or 0.0) - clip.timeline_start, 6)
+            if previous_end is None or available <= 1e-6:
+                raise UnsupportedPhonePlan("phone transition needs the full source window")
+            if available + 1e-6 < clip.transition.duration:
+                fitted = math.floor((available + 1e-9) / _FRAME_S) * _FRAME_S
+                clip.transition = (
+                    clip.transition.model_copy(update={"duration": fitted})
+                    if fitted >= _FRAME_S
+                    else None
+                )
         previous_end = (
             clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0)
         )

@@ -21,6 +21,7 @@ from app.models import Persona as PersonaRow
 from app.schemas.slide_post import SlidePostDraft, SlideRef
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.tasks.content_plan_build import (
+    JOB_FAILURE_MESSAGES,
     _dispatch_item_render,
     _guided_render_queue,
     _item_direction_snapshot,
@@ -28,8 +29,22 @@ from app.tasks.content_plan_build import (
     dispatch_item_render_for,
     generate_content_plan,
     generate_plan_item_videos,
+    humanize_job_failure_reason,
     regenerate_content_plan,
 )
+
+
+def test_humanize_job_failure_reason_never_returns_the_raw_code() -> None:
+    """KRI-163: the client used to print `failure_reason` itself verbatim."""
+    assert humanize_job_failure_reason(None) is None
+    for code, message in JOB_FAILURE_MESSAGES.items():
+        assert humanize_job_failure_reason(code) == message
+        assert humanize_job_failure_reason(code) != code
+    # An unrecognized code (including every dynamic-suffix code this dict
+    # doesn't enumerate, e.g. `single_hero_*`) still gets a real sentence.
+    fallback = humanize_job_failure_reason("some_new_unmapped_code")
+    assert fallback and fallback not in JOB_FAILURE_MESSAGES.values()
+    assert fallback != "some_new_unmapped_code"
 
 
 def test_persona_render_snapshot_excludes_expired_derived_style() -> None:
