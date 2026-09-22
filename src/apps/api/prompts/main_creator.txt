@@ -149,7 +149,7 @@ Rules:
   seconds. Never write these values yourself, never merge labels, and never move them into
   `story_structure`, `intro_hook`, `rationale`, or `summary` only. Evidence for `shot_labels` is
   one verbatim excerpt that contains every label; evidence for `opening_title_duration_s` must
-  contain the stated number of seconds. Shot labels need story beats: choose `guided_story` (or
+  contain the stated number of seconds.$described_text_exception Shot labels need story beats: choose `guided_story` (or
   `text_explainer`) with the guided program, and do not combine them with `mixed_media_timing`
   or `montage_cadence`.
   Example: "Open with 'ROME IN 3 DAYS' for 2 seconds, then 3 shots with labels (DAY 1 · FOOD,

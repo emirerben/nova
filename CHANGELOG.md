@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.117.0] - 2026-09-22
+
+### Changed
+- feat(planner): captions are a clip intent, resolved by the chat AI and enforced by the planner (KRI-129 follow-up) (#1129) <!-- release-pr: 1129 -->
+
 ## [0.76.116.0] - 2026-09-22
 
 ### Changed

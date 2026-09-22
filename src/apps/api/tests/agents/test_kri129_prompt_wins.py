@@ -174,6 +174,39 @@ def test_prod_shape_pub_group_beat_splits_without_losing_coverage() -> None:
     assert any(repair.startswith("split_beat:") for repair in output.repairs)
 
 
+def test_prod_shape_pub_group_caption_intent_lands_once_and_blanks_the_rest() -> None:
+    """KRI-129: a resolved caption intent for the pub clips, against the same
+    16-clip production shape (a) covers. The oversized 6-clip pub group still
+    splits into two consecutive same-topic beats (a) verifies structurally --
+    only ONE of those two carries the creator's exact caption text; the
+    other, like every non-pub beat, is blanked."""
+
+    from tests.agents.test_edit_proposal_clip_intents import _caption_intent  # noqa: PLC0415
+
+    pub_media_ids = [
+        "clip-01.mp4",
+        "clip-02.mp4",
+        "clip-06.mp4",
+        "clip-07.mp4",
+        "clip-08.mp4",
+        "clip-09.mp4",
+    ]
+    agent_input = _pub_group_input(clip_intents=[_caption_intent(pub_media_ids, "post match pub")])
+
+    output = EditProposalAgent(None).parse(_pub_group_raw_text(), agent_input)
+
+    pub_beats = [beat for beat in output.story_beats if beat.topic == "Post match pub"]
+    assert len(pub_beats) == 2
+    assert sum(len(beat.media_ids) for beat in pub_beats) == 6
+    pub_thoughts = [beat.thought for beat in pub_beats]
+    assert pub_thoughts.count("post match pub") == 1
+    assert pub_thoughts.count("") == 1
+    other_thoughts = [beat.thought for beat in output.story_beats if beat.topic != "Post match pub"]
+    assert all(thought == "" for thought in other_thoughts)
+    assert any(repair.startswith("caption_applied:") for repair in output.repairs)
+    assert any(repair.startswith("blanked_thought_for_caption:") for repair in output.repairs)
+
+
 # ── (b) 12 beats parse (old ceiling was 5) ─────────────────────────────────────
 
 

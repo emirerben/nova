@@ -1285,6 +1285,94 @@ def test_clip_intents_reach_the_planner_only_when_the_flag_is_enabled(monkeypatc
     assert _run_with_flag(True) == [intent]
 
 
+def test_caption_clip_intent_beat_is_persisted_with_user_thought_source(monkeypatch) -> None:
+    """KRI-129: a resolved caption clip-intent's text is server-verified
+    copy, not an AI draft -- the persisted beat carrying it is marked "user",
+    the same way a confirmed shot label already is."""
+
+    from app.config import settings as app_settings
+    from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
+
+    caption = ResolvedClipIntent(
+        intent_id="i-caption",
+        op="caption",
+        attribute="the Acropolis clip",
+        caption_text="post match pub",
+        assignments=[
+            ClipAssignment(media_id=str(_PROD_CLIP_ASSIGNMENT["media_id"]), confidence=0.9)
+        ],
+    )
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+    proposal = parse_edit_proposal(item.edit_proposal)
+    proposal.brief.clip_intents = [caption]
+    item.edit_proposal = proposal.model_dump(mode="json")
+
+    def _run(agent, agent_input, ctx=None):  # noqa: ANN001, ARG001
+        return agent.parse(
+            json.dumps(
+                {
+                    "title": "T",
+                    "duration_s": 6,
+                    "story_beats": [
+                        {
+                            "topic": "Topic",
+                            "thought": "An AI draft caption the model wrote on its own.",
+                            "media_ids": [str(_PROD_CLIP_ASSIGNMENT["media_id"])],
+                            "duration_s": 6,
+                        }
+                    ],
+                }
+            ),
+            agent_input,
+        )
+
+    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run)
+    monkeypatch.setattr(app_settings, "clip_intents_enabled", True)
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted.status == "approved"
+    beat = persisted.last_approved.snapshot.story_beats[0]
+    assert beat.thought == "post match pub"
+    assert beat.thought_source == "user"
+
+
+def test_deterministic_fallback_carries_caption_clip_intent(monkeypatch) -> None:
+    """An agent failure must not drop a creator-authored caption: the
+    metadata-free deterministic fallback (`deterministic_guided_beats`) still
+    carries the resolved caption text onto the beat holding its clip."""
+
+    from app.config import settings as app_settings
+    from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
+
+    caption = ResolvedClipIntent(
+        intent_id="i-caption",
+        op="caption",
+        attribute="the Acropolis clip",
+        caption_text="post match pub",
+        assignments=[
+            ClipAssignment(media_id=str(_PROD_CLIP_ASSIGNMENT["media_id"]), confidence=0.9)
+        ],
+    )
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+    proposal = parse_edit_proposal(item.edit_proposal)
+    proposal.brief.clip_intents = [caption]
+    item.edit_proposal = proposal.model_dump(mode="json")
+
+    monkeypatch.setattr(app_settings, "clip_intents_enabled", True)
+    # _prepare_terminal_agent_attempt already makes EditProposalAgent.run
+    # raise TerminalError, forcing the deterministic fallback.
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted.status == "approved"
+    beat = persisted.last_approved.snapshot.story_beats[0]
+    assert beat.thought == "post match pub"
+    assert beat.thought_source == "user"
+
+
 def test_agent_media_carries_shared_understanding_fields_for_new_style_analysis(
     monkeypatch,
 ) -> None:

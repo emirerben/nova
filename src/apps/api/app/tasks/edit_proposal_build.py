@@ -1273,6 +1273,7 @@ def _run_draft_attempt(
     from app.config import settings  # noqa: PLC0415
     from app.services.edit_direction_planner import (  # noqa: PLC0415
         CreatorTextInfeasibleError,
+        apply_caption_clip_intents,
         deterministic_fast_cuts,
         deterministic_guided_beats,
         deterministic_labeled_beats,
@@ -1288,6 +1289,20 @@ def _run_draft_attempt(
         # planner's prompt, parsing, and validation byte-identical to
         # pre-KRI-127.
         return proposal_brief.clip_intents if settings.clip_intents_enabled else None
+
+    def _resolved_caption_texts(clip_intents) -> set[str]:
+        # KRI-129: a caption clip-intent's text is server-verified copy, not
+        # an AI draft -- a beat carrying it exactly is marked "user" the same
+        # way a confirmed shot label already is below.
+        if not clip_intents:
+            return set()
+        return {
+            intent.caption_text.strip()
+            for intent in clip_intents
+            if intent.status == "resolved"
+            and intent.op == "caption"
+            and (intent.caption_text or "").strip()
+        }
 
     try:
         with sync_session() as db:
@@ -1925,22 +1940,26 @@ def _run_draft_attempt(
             else:
                 fallback_cuts = None
                 fallback_beats = (
-                    deterministic_guided_beats(
-                        media,
-                        target_duration_s,
-                        required_media_ids=(
-                            [ref.media_id for ref in media]
-                            if brief.media_scope == "all"
-                            else brief.selected_media_ids
-                            if brief.media_scope == "selected"
-                            else None
+                    apply_caption_clip_intents(
+                        deterministic_guided_beats(
+                            media,
+                            target_duration_s,
+                            required_media_ids=(
+                                [ref.media_id for ref in media]
+                                if brief.media_scope == "all"
+                                else brief.selected_media_ids
+                                if brief.media_scope == "selected"
+                                else None
+                            ),
+                            pace=brief.pace,
+                            mixed_media_timing=brief.mixed_media_timing,
                         ),
-                        pace=brief.pace,
-                        mixed_media_timing=brief.mixed_media_timing,
+                        _resolved_clip_intents(brief),
                     )
                     if output is None
                     else None
                 )
+            caption_texts = _resolved_caption_texts(_resolved_clip_intents(brief))
             snapshot = EditProposalSnapshot(
                 # KRI-127: the render worker re-grounds every label from these.
                 clip_intents=_resolved_clip_intents(brief),
@@ -1985,10 +2004,15 @@ def _run_draft_attempt(
                             topic=beat.topic,
                             thought=beat.thought,
                             # parse() already bound labeled beats to the exact
-                            # confirmed labels; they are creator copy, not drafts.
+                            # confirmed labels, and a caption clip-intent's exact
+                            # text, to their beats; both are creator copy, not
+                            # AI drafts.
                             thought_source=(
                                 "user"
-                                if brief.shot_labels and beat.thought in brief.shot_labels
+                                if (
+                                    (brief.shot_labels and beat.thought in brief.shot_labels)
+                                    or beat.thought in caption_texts
+                                )
                                 else "ai_draft"
                             ),
                             media_ids=beat.media_ids,
