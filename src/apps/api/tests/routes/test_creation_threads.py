@@ -3818,6 +3818,7 @@ async def test_get_thread_repairs_projection_from_current_item_job(
     monkeypatch.setattr(
         "app.routes.creation_threads.reconcile_render_state", AsyncMock(return_value=False)
     )
+    monkeypatch.setattr("app.routes.creation_threads._sync_agent", AsyncMock(return_value=False))
     monkeypatch.setattr("app.routes.creation_threads._response", AsyncMock(return_value=thread))
 
     await get_thread(str(thread.id), SimpleNamespace(id=user_id), db, Response())

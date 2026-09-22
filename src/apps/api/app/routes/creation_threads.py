@@ -2285,17 +2285,19 @@ async def _load_authorized_projection_rows(
     return item, session, job, integrity
 
 
-async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
+async def _sync_agent(db: AsyncSession, thread: CreationThread) -> bool:
+    """Project background agent progress/replies, reporting whether anything changed."""
     if not thread.active_creator_agent_session_id:
-        return
+        return False
     session = await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
     # Ownership only: this copies session transcript content into the
     # thread's own state/events, so a cross-tenant session (a stale pointer
     # on a degraded thread, or any other drift) must never be projected here
     # -- the same tenant fence _load_authorized_projection_rows enforces.
     if session is None or session.creator_id != thread.creator_id:
-        return
+        return False
     projection = dict(thread.state or {})
+    previous_agent = projection.get("creator_agent") or {}
     active_plan = session.active_plan if isinstance(session.active_plan, dict) else {}
     from app.services.creator_preparation import public_preparation
 
@@ -2309,7 +2311,9 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
     }
     # Agent events are copied as an inert transcript projection.  Never copy
     # executable operations or external paths from model output.
-    seen = set(projection.get("creator_agent_event_ids", []))
+    seen_ids = list(projection.get("creator_agent_event_ids", []))
+    seen = set(seen_ids)
+    appended = False
     events = (
         (
             await db.execute(
@@ -2321,9 +2325,22 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
         .scalars()
         .all()
     )
+    # Older builds kept only 100 receipt IDs, but saved the full session
+    # revision. A retained ID ties that revision to this exact session, whose
+    # append-only events each advance the revision. Restore lost receipts
+    # without replaying the replies they already projected.
+    projected_revision = (
+        int(previous_agent.get("revision", 0) or 0)
+        if any(str(event.id) in seen for event in events)
+        else 0
+    )
     for event in events:
         key = str(event.id)
         if key in seen:
+            continue
+        if 0 < int(getattr(event, "revision", 0) or 0) <= projected_revision:
+            seen.add(key)
+            seen_ids.append(key)
             continue
         payload = event.payload if isinstance(event.payload, dict) else {}
         safe_payload = {
@@ -2365,8 +2382,15 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
             payload=safe_payload,
         )
         seen.add(key)
-    projection["creator_agent_event_ids"] = list(seen)[-100:]
+        seen_ids.append(key)
+        appended = True
+    # These are deduplication receipts, not a display window. Dropping old
+    # receipts would replay older replies on every poll of a long conversation.
+    projection["creator_agent_event_ids"] = seen_ids
+    if not appended and projection == thread.state:
+        return False
     thread.state = projection
+    return True
 
 
 def _resolve_default_title_fill(
@@ -3222,15 +3246,24 @@ async def get_thread(
             session = await db.get(
                 CreatorAgentSession, thread.active_creator_agent_session_id, with_for_update=True
             )
-        if session is not None and await reconcile_render_state(db, session):
+        if session is not None:
+            reconciled = await reconcile_render_state(db, session)
             # Guided planning creates and binds the exact Job asynchronously.
             # Reconciliation can discover that Job after the initial repair
             # pass, so project it in the same GET instead of requiring a
             # second page reload before polling or recovery can begin.
-            await _repair_missing_thread_job_projection(db, thread, user)
-            await _sync_agent(db, thread)
-            await db.commit()
-            await db.refresh(thread)
+            if reconciled:
+                await _repair_missing_thread_job_projection(db, thread, user)
+            # Async clip preparation/planning can finish without a render to
+            # reconcile. Its progress, reply or error must reach the next poll.
+            # V2 writes semantic thread events directly; keep its existing
+            # reconciliation path without importing legacy planner events.
+            synced = False
+            if reconciled or int(getattr(thread, "runtime_version", 1)) == 1:
+                synced = await _sync_agent(db, thread)
+            if reconciled or synced:
+                await db.commit()
+                await db.refresh(thread)
     # Polls are also the repair loop for the projection.  The read model is
     # updated after reconciliation, so a queued/rendering Job or a session in
     # executing/reviewing with no Job is visible in one response.
