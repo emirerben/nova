@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.109.0] - 2026-09-22
+
+### Changed
+- test(ios): export the narration test unbranded so it asserts the timeline (#1122) <!-- release-pr: 1122 -->
+
 ## [0.76.108.0] - 2026-09-22
 
 ### Changed
