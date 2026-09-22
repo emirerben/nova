@@ -34,13 +34,15 @@ is an optional advanced tool for creators who want to shape the edit before buil
    source floor target-capacity-aware, so a short target never requires more distinct sources than
    its 0.5s photo and 1.5s usable-video minimums can fit; eligible photos and videos are still both
    required when both kinds are available. It may not invent personal experiences. There is no artificial
-   duration floor: `draft_edit_proposal`
-   computes a feasible-duration estimate from the analyzed media (`feasible_guided_duration_s` —
-   real video durations summed, plus a fixed per-image credit) and clamps the brief's requested
-   duration down to it (`adapt_target_duration_s`) before calling the agent, so a short clip still
-   yields an edit instead of failing schema validation trying to stretch it. Footage under 3s is
-   infeasible for a guided story — the agent is never called; the attempt fails with
-   `guided_edit_infeasible` naming the actual footage length.
+   duration floor: `draft_edit_proposal` normally computes a feasible-duration estimate from the
+   analyzed media (`feasible_guided_duration_s` — real video durations summed, plus a fixed
+   per-image credit) and clamps the brief's requested duration down to it
+   (`adapt_target_duration_s`) before calling the agent, so a short clip still yields an edit
+   instead of failing schema validation trying to stretch it. Ordinary narrated guided stories
+   without quick-photo timing instead use `guided_story_capacity_s`: a still may hold for the
+   remaining narration, and the strict compiler validates the selected sources against that exact
+   duration. Footage under 3s is infeasible for a guided story — the agent is never called; the
+   attempt fails with `guided_edit_infeasible` naming the actual footage length.
    If guided-story or fast-montage planning terminates after its bounded retries, the task builds a
    neutral deterministic proposal from the complete owned set and asks the strict renderer to
    validate it before saving or auto-approving it. Fast-cut recovery uses distinct,
@@ -266,6 +268,9 @@ against the TARGET it was given, not against real footage — with a small targe
 `MIN_GUIDED_DURATION_S=3` floor) that tolerance window alone could still accept an output nobody
 validated against the true footage cap, so `draft_edit_proposal` independently rejects
 `output.duration_s > floor(feasible_duration_s)` rather than trusting the agent's tolerance alone.
+For ordinary narrated guided stories without quick-photo timing, that cap is
+`guided_story_capacity_s`, which permits a still to cover the remaining narration; non-narrated
+and quick-photo stories retain the conservative fixed per-image estimate.
 
 **Celery deploy-skew (P2-6):** `draft_edit_proposal` does not accept an `auto_finalize` kwarg — a task
 kwarg is a rolling-deploy hazard (an old worker consuming a new producer's message, or the reverse,
