@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.141.0] - 2026-09-22
+
+### Changed
+- fix(ios): shorten crossfade instead of refusing to build the editor's own composition (KRI-163 follow-up) (#1157) <!-- release-pr: 1157 -->
+
 ## [0.76.140.0] - 2026-09-22
 
 ### Fixed
