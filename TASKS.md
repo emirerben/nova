@@ -20,6 +20,8 @@ The autonomous dev-loop mints one **build_task** per unchecked item below.
 
 ## Backlog
 
+- [x] Acknowledge pending creator requests and recover unclaimed analysis :: Persist one assistant acknowledgment per preparation attempt, republish stalled pool tasks with their existing claim tokens, and distinguish planning failures from analysis failures.
+
 - [ ] (p80) Web review page for the dev-loop queue :: Next.js admin page at src/apps/web/src/app/admin/build-tasks/page.tsx listing build_tasks by status, showing each gate_report (per-gate pass/fail table) and linking the PRs. Mirror src/apps/web/src/app/admin/jobs/page.tsx; add a typed client src/apps/web/src/lib/admin-build-tasks-api.ts over the /api/admin proxy; re-queue/block buttons (PATCH action). Inherits ADMIN_BASIC_AUTH middleware. Add a Jest test under src/apps/web/src/__tests__/admin/. Verify the real admin patterns first.
 - [ ] (p80) Gate advisory: run /review on the diff :: In scripts/cron/gate_runner.sh, replace the placeholder `add_result qa 0 1 "advisory /qa not yet wired headless"` with a real time-bounded headless `claude --print "/review"` against the rebased diff, capturing a short verdict into the advisory gate result + PR body. Stays NON-blocking (advisory only).
 

@@ -236,8 +236,9 @@ class GuidedStoryExecutionPlan(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
-    # Optional post-approval runtime projection.  Canonical approved plans
-    # leave these unset; v2 revisions carry them without changing approval.
+    # Optional post-approval runtime projection. Caption presentation can also
+    # be seeded by approved narration; v2 revisions override it without changing
+    # the canonical per-word cue identities.
     editor_revision_number: int | None = Field(default=None, ge=1)
     editor_revision_hash: str | None = None
     editor_sound_effects: list[dict[str, Any]] = Field(default_factory=list)
@@ -1522,6 +1523,13 @@ def _text_elements(
     ]
 
 
+def _narration_caption_meta(snapshot: EditProposalSnapshot) -> dict[str, Any] | None:
+    narration = snapshot.narration
+    if narration is None or narration.caption_style is None:
+        return None
+    return {"style": narration.caption_style, "y_frac": 0.7}
+
+
 def _narration_caption_elements(snapshot: EditProposalSnapshot) -> list[dict]:
     """Project pinned speech words into the existing text renderer's caption lane."""
 
@@ -1834,6 +1842,7 @@ def _compile_scheduled_execution_plan(
         if song_reference and track
         else None,
         narration=snapshot.narration,
+        editor_caption_meta=_narration_caption_meta(snapshot),
     )
     return compiled.model_dump(mode="json", exclude_none=False)
 
@@ -2027,6 +2036,7 @@ def _compile_execution_plan_version(
                     else None
                 ),
                 narration=snapshot.narration,
+                editor_caption_meta=_narration_caption_meta(snapshot),
             )
         except Exception as exc:  # noqa: BLE001
             raise GuidedStoryError(
@@ -2199,6 +2209,7 @@ def _compile_execution_plan_version(
                 else None
             ),
             narration=snapshot.narration,
+            editor_caption_meta=_narration_caption_meta(snapshot),
         )
     except Exception as exc:  # noqa: BLE001
         raise GuidedStoryError(

@@ -167,6 +167,8 @@ authoring stay within the editable duration. Branding remains outside the edit
 recipe, so rebuilding the preview or exporting does not append it twice.
 Internal thumbnail and blur-fill sampling remains unbranded by default.
 
+For device-rendered narration, rebuilding the editor resolves the voiceover from the current published device recipe and its authorized asset grant/cache. Do not infer narration from the cloud-only render receipt or rely on an in-memory render session surviving an app restart. A generation change invalidates resolved audio. Guided sentence captions are a render projection of the original word cues: retain their canonical IDs and timing, carry `caption_meta` through draft hydration, and hold the complete sentence between its spoken words. Approved editorial/clean narration starts above the bottom fifth at `y_frac=0.7`; saved caption edits take precedence.
+
 For repeatable visual review, a Debug build accepts `-ui-testing-brand` with
 `KRIA_BRAND_STATE` set to `format`, `footage`, `direction`, `rendering`, `ready`,
 `editor`, `projects`, `gallery`, `gallery-posters`, `signin`, `account`, or `recovery`.

@@ -163,6 +163,46 @@ import KriaMediaEngine
         XCTAssertEqual(run.fontSize, 101)
     }
 
+    func testGuidedStorySentenceCaptionProjectionKeepsSourceItemsAndLeavesTitlesAlone() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let title = EditorTextElement(id: "title", text: "A title", startS: 0, endS: 3)
+        let captions = [
+            EditorTextElement(id: "caption-0", text: "It", startS: 0, endS: 0.1,
+                role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")])]),
+            EditorTextElement(id: "caption-1", text: "costs", startS: 0.3, endS: 0.4,
+                role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")]), "removed": .bool(true)]),
+            EditorTextElement(id: "caption-2", text: "172.5", startS: 0.6, endS: 0.7,
+                role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")])]),
+            EditorTextElement(id: "caption-3", text: "dollars.”", startS: 0.9, endS: 1.0,
+                role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")])]),
+        ]
+        let document = EditorDocument(textElements: [title] + captions,
+            captionMeta: ["style": .string("sentence"), "y_frac": .number(0.7), "color": .string("#FF0000")])
+        let items = [
+            NativeEditorTimelineItem(selection: .init(kind: .text, id: "title"), start: 0, end: 3),
+        ] + captions.map { element in
+                NativeEditorTimelineItem(selection: .init(kind: .text, id: element.id), start: element.startS, end: element.endS)
+            }
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source]).recipe
+
+        XCTAssertEqual(recipe.textLayers.first?.runs.map(\.text).joined(), "A title")
+        let rendered = recipe.textLayers.filter { $0.id.hasPrefix("caption-") }
+        XCTAssertEqual(rendered.map(\.id), ["caption-0", "caption-2", "caption-3"])
+        // Each run is a wrapped line; the layout trims its boundary whitespace.
+        XCTAssertEqual(rendered.map { $0.runs.map(\.text).joined(separator: " ") }, Array(repeating: "It 172.5 dollars.”", count: 3))
+        XCTAssertEqual(rendered.map(\.start), [0, 0.6, 0.9])
+        XCTAssertEqual(rendered.map(\.end), [0.6, 0.9, 1.0], "sentence display must span word gaps")
+        XCTAssertTrue(rendered.allSatisfy { $0.anchorY == 0.7 * 1920 })
+        XCTAssertTrue(rendered.allSatisfy { $0.runs.first?.fill == TextInk(red: 1, green: 0, blue: 0, alpha: 1) })
+        XCTAssertEqual(document.textElements.dropFirst().map(\.id), ["caption-0", "caption-1", "caption-2", "caption-3"])
+        XCTAssertEqual(document.textElements.map(\.text), ["A title", "It", "costs", "172.5", "dollars.”"])
+        XCTAssertEqual(document.textElements.dropFirst().map(\.endS), [0.1, 0.4, 0.7, 1.0])
+    }
+
     // KRI-110: every font the Captions Style tab offers must resolve to its
     // registry file for a caption-tagged text element, the same file the
     // backend's registry names — "Inter" is deliberately the guided caption's

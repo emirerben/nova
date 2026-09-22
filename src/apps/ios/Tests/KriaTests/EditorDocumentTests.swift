@@ -306,6 +306,34 @@ final class EditorDocumentTests: XCTestCase {
         XCTAssertEqual(document.captionMeta["vendor_caption_option"], .string("keep"))
     }
 
+    func testAuthoritativeGuidedCaptionMetaReplacesStaleDraftPresentationOnReload() {
+        let stale: [String: JSONValue] = [
+            "editor_payload": .object(["sections": .object([
+                "caption_meta": .object(["style": .string("word"), "y_frac": .number(0.82)]),
+            ])]),
+        ]
+        let snapshot = DraftSnapshot(
+            draftID: "draft", itemID: "item", variantKey: "guided_story", draftRevision: 1,
+            snapshotHash: "hash", etag: "etag", baseJobID: nil, baseGenerationID: "old",
+            snapshot: stale, canUndo: false, createdAt: .now
+        )
+        let authoritative: [String: JSONValue] = [
+            "render_generation_id": .string("fresh"),
+            "caption_meta": .object(["style": .string("sentence"), "y_frac": .number(0.7)]),
+            // Compatible scalar fields may accompany the nested contract, but
+            // cannot be allowed to revive the stale nested draft presentation.
+            "voiceover_caption_style": .string("sentence"),
+            "caption_margin_v": .number(576),
+        ]
+
+        let draft = snapshot.editorDraft(projectID: UUID(), authoritativeVariant: authoritative)
+        let document = EditorDocument.decode(snapshot: draft.serverSnapshot)
+
+        XCTAssertEqual(draft.captions.style, "sentence")
+        XCTAssertEqual(document.captionMeta["style"], .string("sentence"))
+        XCTAssertEqual(document.captionMeta["y_frac"], .number(0.7))
+    }
+
     func testCaptionMetadataNormalizationPreservesOmittedAndNullFields() throws {
         let omitted = EditorDocument.decode(snapshot: [
             "editor_payload": .object(["sections": .object([

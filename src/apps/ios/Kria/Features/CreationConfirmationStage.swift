@@ -122,8 +122,15 @@ struct CreationConfirmationStage: View {
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
             }
             if isBusy { ProgressView("Saving your choice…") }
-            if let reason = thread.job?.failureReason, isFailure {
-                Text(reason).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            // A sentence, never the raw failure_reason taxonomy code the user
+            // used to see verbatim here (e.g. "phone_plan_unsupported") --
+            // KRI-163. Falls back through whatever detail the thread actually
+            // carries for this failure before giving up.
+            if isFailure,
+                let message = thread.job?.failureMessage ?? thread.lastAssistantErrorMessage
+                    ?? thread.preparationMessage
+            {
+                Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
             }
             if let conflict { conflictNotice(conflict) }
             if hasCleanup {

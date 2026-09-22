@@ -3505,7 +3505,16 @@ def _seed_guided_specialist_brief(
         # stays byte-identical until this ever actually resolves something.
         "clip_intents": _specialist_clip_intents(plan.strategy.resolved_clip_intents),
         "narration": (
-            {**narration_identity.model_dump(mode="json"), "words": []}
+            {
+                **narration_identity.model_dump(mode="json"),
+                "words": [],
+                "caption_style": {
+                    "clean": "sentence",
+                    "editorial": "sentence",
+                    "kinetic": "word",
+                    "karaoke": "word",
+                }.get(plan.strategy.caption_style),
+            }
             if narration_identity is not None
             else None
         ),
