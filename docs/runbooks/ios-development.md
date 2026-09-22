@@ -154,6 +154,33 @@ for edit/save/export verification.
 See the [KRI-23 native design review](../reviews/kri-23/README.md) for screenshot
 comparisons, behavior coverage, and the remaining live-device validation limits.
 
+### Glass surfaces (KRI-131)
+
+The editor's tool rail and clip/text context capsule float as a glass "island"
+over the timeline (`NativeEditorIsland.swift`) instead of sitting beneath it in
+an opaque row. `NativeEditorIslandSurface` picks one of three branches, checked
+in this order: Reduce Transparency (solid `KriaColor.paper` + a hairline
+stroke, no blur), iOS 26+ on a Swift 6.2+ toolchain (`.glassEffect`, Liquid
+Glass), else `.ultraThinMaterial` with a manual stroke and shadow. The
+`#if compiler(>=6.2)` guard is required so a toolchain that predates
+`.glassEffect` still compiles; CI (`ios.yml`, `xcode-version: latest-stable`)
+resolved to Xcode 26.3 as of 2026-09-21, which satisfies both the compiler and
+`#available(iOS 26.0, *)` checks.
+
+`NativeEditorIslandScrim` sits behind the island so the timeline's lanes and
+playhead — which run to the screen's physical bottom edge under the island via
+`.ignoresSafeArea(.container, edges: .bottom)` — stay legible where they pass
+behind it. The scrim is always `.allowsHitTesting(false)` and
+`.accessibilityHidden(true)`: touches beside or above the capsules must reach
+the timeline underneath, never the scrim.
+
+`NativeEditorIslandMetrics.bottomClearance(showsContext:safeAreaBottom:)` is
+the single source of truth for how much bottom padding the timeline's
+scrollable lanes need so the last lane can scroll clear of the island; it's a
+pure, nonisolated function so `NativeEditorIslandMetricsTests` can cover it
+without SwiftUI. The island itself always sits `bottomPadding` (6pt) above the
+real safe-area inset, never inside `bottomClearance`'s own padding budget.
+
 ## Native chat creation (KRI-24)
 
 The capabilities endpoint advertises `formats`, per-role `media` limits,

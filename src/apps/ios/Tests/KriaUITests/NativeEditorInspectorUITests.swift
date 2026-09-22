@@ -166,7 +166,15 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let playhead = app.descendants(matching: .any)["native-editor-playhead"].firstMatch
         XCTAssertTrue(playhead.exists)
         let originalX = playhead.frame.midX
-        for row in [0.23, 0.5, 0.85] {
+        // KRI-131: this fixture's short timeline leaves the tool island
+        // floating over roughly the lower half of the lane scroll's own
+        // frame (unlike `-ui-testing-editor-all-lanes`, whose tall,
+        // scrollable content fills that same region with real lanes
+        // instead). A touch landing there reaches the island's buttons,
+        // not the timeline's pan gesture — the intended overlay behavior,
+        // not a regression — so the sampled rows stay in the upper portion
+        // that's never covered by the island.
+        for row in [0.15, 0.3, 0.45] {
         let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: row))
         start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: -110, dy: 0)))
         XCTAssertNotEqual(time.value as? String, initialTime)
@@ -390,8 +398,14 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(toolRail.exists)
 
         XCTAssertLessThanOrEqual(preview.frame.height, 338)
-        XCTAssertLessThanOrEqual(timeline.frame.maxY, toolRail.frame.minY + 1)
-        XCTAssertLessThanOrEqual(toolRail.frame.maxY, app.frame.maxY + 1)
+        // KRI-131: the tool rail now floats as a glass island over the
+        // timeline, which keeps running behind it, instead of sitting
+        // beneath it in its own opaque row.
+        XCTAssertGreaterThanOrEqual(timeline.frame.maxY, toolRail.frame.minY, "the timeline must extend behind the floating island")
+        XCTAssertLessThan(toolRail.frame.maxY, app.frame.maxY, "the island must float above the physical bottom edge")
+        XCTAssertGreaterThanOrEqual(toolRail.frame.minX, 12, "the island is inset, not edge-to-edge")
+        XCTAssertLessThanOrEqual(toolRail.frame.maxX, app.frame.maxX - 12, "the island is inset, not edge-to-edge")
+        XCTAssertGreaterThanOrEqual(timeline.frame.height, 120)
 
         XCTAssertFalse(app.buttons["native-editor-tool-styles"].exists)
         XCTAssertFalse(app.buttons["native-editor-tool-overlays"].exists)
@@ -411,6 +425,65 @@ final class NativeEditorInspectorUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["native-editor-save"].exists)
         XCTAssertTrue(app.buttons["native-editor-export"].exists)
+    }
+
+    func testToolIslandFloatsOverTimelineAndLastLaneStaysReachable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]
+        app.launch()
+
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let timeline = app.descendants(matching: .any)["native-editor-mini-strip"].firstMatch
+        let toolRail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
+        let laneScroll = app.descendants(matching: .any)["native-editor-lane-scroll"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 8))
+        XCTAssertTrue(timeline.exists)
+        XCTAssertTrue(toolRail.exists)
+        let previewHeightBeforeSelection = preview.frame.height
+
+        // (a) the rail floats above the physical bottom edge, and the
+        // timeline extends behind it rather than stopping above it.
+        XCTAssertLessThan(toolRail.frame.maxY, app.frame.maxY, "the island must float above the physical bottom edge")
+        // The island must sit close to the safe-area inset (6pt above it,
+        // per spec), not stranded high above it. A regression here (e.g.
+        // double-counting the safe-area inset in the island's own bottom
+        // padding) previously floated it ~34pt too high on a Face ID
+        // device; on a home-indicator device this gap should land well
+        // under 60pt.
+        XCTAssertGreaterThanOrEqual(app.frame.maxY - toolRail.frame.maxY, 20, "the island must not float detached from the safe area")
+        XCTAssertLessThanOrEqual(app.frame.maxY - toolRail.frame.maxY, 60, "the island must sit close to the safe-area inset, not far above it")
+        XCTAssertGreaterThanOrEqual(timeline.frame.maxY, toolRail.frame.minY, "the timeline must run behind the island")
+
+        // (b) the last lane must be able to clear the island; nothing may
+        // stay permanently hidden behind it. `tap()` on an off-screen
+        // descendant of a SwiftUI ScrollView makes XCUITest auto-scroll it
+        // into view first (the established pattern in this file — see
+        // `tapTimelineElement` below); a raw swipe/drag gesture on this
+        // ScrollView is unreliable because its bottom edge sits directly
+        // under the floating, horizontally-centered island, which consumes
+        // the touch before the ScrollView's own pan recognizer sees it.
+        let lastLabel = app.staticTexts["native-editor-lane-label-last"].firstMatch
+        XCTAssertTrue(lastLabel.waitForExistence(timeout: 4), "fixture must expose an identifiable last lane label")
+        lastLabel.tap()
+        // `tap()` only guarantees XCUITest found a non-obscured hit point
+        // (near the element's center) once scrolled into view, not that the
+        // element's entire bounding box cleared the island — so this checks
+        // the element's midpoint, not its trailing edge, against the
+        // island's top.
+        XCTAssertLessThanOrEqual(lastLabel.frame.midY, toolRail.frame.minY + 1, "the last lane must be reachable above the island")
+
+        // (c) selecting a clip shows the context capsule without shrinking
+        // the preview, and every tool button stays hittable.
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 4))
+        clip.tap()
+        let adjust = app.buttons["native-editor-adjust"]
+        XCTAssertTrue(adjust.waitForExistence(timeout: 4))
+        XCTAssertTrue(adjust.isHittable)
+        for tool in ["text", "captions", "visuals", "sounds"] {
+            XCTAssertTrue(app.buttons["native-editor-tool-\(tool)"].isHittable, "\(tool) must stay tappable once a clip is selected")
+        }
+        XCTAssertEqual(preview.frame.height, previewHeightBeforeSelection, accuracy: 1, "selecting a clip must not resize the preview")
     }
 
     func testSongReferenceBarKeepsTimelineAndToolsOnScreen() {
@@ -433,8 +506,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         func assertTimelineAndToolsOnScreen(_ state: String) {
             XCTAssertLessThanOrEqual(card.frame.maxY, preview.frame.minY + 1, "\(state): the song bar sits above the preview")
             XCTAssertGreaterThanOrEqual(timeline.frame.height, 120, "\(state): the timeline must not be squeezed")
-            XCTAssertLessThanOrEqual(timeline.frame.maxY, toolRail.frame.minY + 1)
-            XCTAssertLessThanOrEqual(toolRail.frame.maxY, app.frame.maxY + 1, "\(state): the tool rail must stay on screen")
+            // KRI-131: the tool rail floats over the timeline, which now runs
+            // behind it, instead of the timeline stopping above the rail.
+            XCTAssertGreaterThanOrEqual(timeline.frame.maxY, toolRail.frame.minY, "\(state): the timeline must extend behind the floating island")
+            XCTAssertLessThan(toolRail.frame.maxY, app.frame.maxY, "\(state): the tool rail must float above the physical bottom edge")
             for tool in ["text", "captions", "visuals", "sounds"] {
                 XCTAssertTrue(app.buttons["native-editor-tool-\(tool)"].isHittable, "\(state): \(tool) must stay tappable")
             }

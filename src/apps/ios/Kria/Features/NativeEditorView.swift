@@ -200,7 +200,10 @@ struct NativeEditorView: View {
         let resizeRange = max(0, defaultPreviewHeight - 80)
         let showsTimeline = session.pendingText == nil && textInspectorID == nil && lanePanel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
-        let previewHeight = max(80, defaultPreviewHeight - timelineExpansion * resizeRange - (showsContext ? 52 : 0))
+        // KRI-131: the context capsule now floats over the timeline instead
+        // of pushing it up, so selecting a clip/text no longer shrinks the
+        // preview.
+        let previewHeight = max(80, defaultPreviewHeight - timelineExpansion * resizeRange)
         VStack(spacing: 0) {
             NativeEditorProjectHeader(
                 title: project.workspaceTitle, session: session, exporter: exporter,
@@ -268,27 +271,64 @@ struct NativeEditorView: View {
                 NativeEditorTextPanel(id: id, session: session) { textInspectorID = nil }
                     .id(id)
             } else {
-            NativeEditorTimeline(session: session)
-                .frame(maxHeight: .infinity)
-                .layoutPriority(1)
+            // KRI-131: the tool rail (and, when a clip/text is selected, the
+            // context capsule above it) floats over the timeline as a glass
+            // island. The timeline's lanes and playhead keep running behind
+            // it down to the physical bottom edge; the island itself stays a
+            // fixed distance above the real home-indicator safe area.
+            let bottomInset = viewport.safeAreaInsets.bottom
+            let islandClearance = NativeEditorIslandMetrics.bottomClearance(showsContext: showsContext, safeAreaBottom: bottomInset)
+            ZStack(alignment: .bottom) {
+                NativeEditorTimeline(session: session, bottomClearance: islandClearance)
+                    .ignoresSafeArea(.container, edges: .bottom)
 
-            if let selection = session.selection, selection.kind == .text {
-                NativeEditorTextContextStrip(
-                    onEdit: { textInspectorID = selection.id },
-                    onDeselect: { session.select(nil) }
-                )
-                .transition(shouldReduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
-            } else if session.selectedClipID != nil {
-                NativeEditorContextStrip(session: session, onAdjust: { inspector = .adjust })
-                    .transition(shouldReduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
-            }
+                // `NativeEditorIslandScrim` has a fixed `.frame(height:)`, so
+                // applying `.ignoresSafeArea` directly to it leaves it
+                // pinned to the safe-area boundary instead of extending to
+                // the physical bottom edge (a fixed-size leaf has nothing
+                // for the modifier to grow into). Wrapping it in a flexible,
+                // ignoring container with a leading `Spacer` lets THAT
+                // container's bounds reach the physical edge, then pins the
+                // fixed-height scrim flush to its (now-physical) bottom.
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    NativeEditorIslandScrim(showsContext: showsContext, safeAreaBottom: bottomInset)
+                }
+                .ignoresSafeArea(.container, edges: .bottom)
+                .allowsHitTesting(false)
 
-            NativeEditorToolRail(selected: $selectedTool) { tool in
-                if tool == .visuals { session.select(nil); lanePanel = tool }
-                else if tool == .captions { lanePanel = tool }
-                else if tool == .text { session.beginTextCreation() }
-                else { inspector = .tool(tool) }
+                NativeEditorIslandGroup {
+                    VStack(spacing: NativeEditorIslandMetrics.stackSpacing) {
+                        if let selection = session.selection, selection.kind == .text {
+                            NativeEditorTextContextStrip(
+                                onEdit: { textInspectorID = selection.id },
+                                onDeselect: { session.select(nil) }
+                            )
+                            .transition(shouldReduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
+                        } else if session.selectedClipID != nil {
+                            NativeEditorContextStrip(session: session, onAdjust: { inspector = .adjust })
+                                .transition(shouldReduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
+                        }
+
+                        NativeEditorToolRail(selected: $selectedTool) { tool in
+                            if tool == .visuals { session.select(nil); lanePanel = tool }
+                            else if tool == .captions { lanePanel = tool }
+                            else if tool == .text { session.beginTextCreation() }
+                            else { inspector = .tool(tool) }
+                        }
+                    }
+                }
+                // The island group does NOT ignore the safe area (only the
+                // timeline + scrim above do), so it's already laid out with
+                // its bottom edge at the safe-area boundary (~bottomInset
+                // above the physical edge) before this padding is applied.
+                // Padding by `bottomPadding + bottomInset` here would
+                // double-count that inset and float the island far higher
+                // than the spec's "6pt above the safe-area inset".
+                .padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             }
+            .frame(maxHeight: .infinity)
+            .layoutPriority(1)
             }
         }
     }
