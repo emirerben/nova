@@ -4,6 +4,57 @@ Guided edit separates creative approval from rendering. It is the review contrac
 uploaded plan-item media and the strict story renderer. Planning and approval create the contract;
 the story assembler consumes the approved Job snapshot directly.
 
+## Semantic planning and exact frames (KRI-133)
+
+`EDIT_PROPOSAL_SEMANTIC_ENABLED` defaults to `false`. With the flag enabled,
+`plan_edit_proposal` checks source capacity before calling the semantic proposal
+agent. The model returns ordered chapters, source/candidate references, relative
+weights, and text placement intent. It does not author timestamps or duration totals.
+`semantic_edit_scheduler` allocates integer frames at 30fps, includes transition
+overlap, preserves required media and reuse policy, and expands late candidate
+windows backward within the uploaded source when needed. Narration rounds upward
+to the next complete frame. Capacity clamps record requested and effective frames;
+incompatible coverage or pinned timing fails with a specific reason.
+
+New snapshots include a versioned, server-owned `frame_schedule`. Compiler v8
+projects those approved boundaries without beat snapping or reallocating footage.
+Legacy snapshots omit the field entirely and keep compiler versions 1–7.
+PATCH ignores client-provided schedules and rebuilds timing from the corrected
+editorial contract. Text-only changes retain trusted source windows. Direction
+changes and conversational timing revisions use the same scheduler, and final
+phone/photo layout normalization updates the schedule before approval validation.
+A scheduled proposal still uses this path when the new-draft flag is rolled back.
+
+Semantic planning never replaces a rejected plan with a weakened legacy fallback.
+Failures retain `main_creator_fail_closed`, including automatic creation. Exact
+creator titles and captions remain immutable; resolved clip labels stay in the
+existing worker grounding lane. Resolved caption intents and legacy group copy bind
+only to their assigned, contiguous source chapters; model echoes on other sources
+are removed. Structured shot labels take precedence over quotation detection.
+An unambiguous misplaced caption-group member can move into its existing exclusive
+chapter while retaining its candidate and scheduling priority. Ambiguous targets,
+overlapping groups, source reuse, conflicting copy, or unsafe moves still fail closed.
+Private `planning_diagnostics` contains semantic
+intent, feasibility, schedule, repairs and failure reasons. Ordinary responses omit
+it. Pre-render model runs use `AgentRun.plan_item_id`; inspect them with
+`python scripts/admin.py GET plan-items/<id>/proposal-trace`.
+
+Rollout: deploy migration 0107 and v8-compatible API **and every worker** with the
+flag off, verify replay/render gates, then enable the flag and restart those
+processes. Verify a production regeneration's trace and exact output duration.
+Rollback sets the flag false; retain the compatible binaries while v8 approvals
+exist. Never remove their schedules or down-convert approved timing.
+
+Focused gates include `test_semantic_edit_scheduler.py`,
+`test_proposal_planning.py`, `test_semantic_schedule_compiler.py` (baseline hashes
+for v1–7), semantic proposal route/task tests, and
+`tests/evals/test_semantic_edit_proposal_evals.py`. The live eval gate includes all
+existing fixture families plus five repetitions of the real KRI-129 16-clip case,
+each requiring 1,800 frames, grouping, exact title/caption, grounded labels and
+original audio. Use the cost-capped harness described in `tests/evals/README.md`.
+
+The following product-flow details describe the flag-off legacy planner.
+
 ## Product flow
 
 The primary clip-only path is **Upload clips → Create video → AI analyzes and builds in the

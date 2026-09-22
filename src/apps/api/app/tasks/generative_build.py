@@ -11864,15 +11864,21 @@ def _resolve_clip_id_for_media_id(media_id: str, clip_id_to_gcs: dict[str, str])
     positional ids (``clip_id_to_gcs = {"clip_0": gcs, ...}``,
     ``_run_generative_job``) that have no meaning outside one render; the only
     identifier stable across the chat turn that resolved these intents and
-    this later render is the clip's GCS path, so a reverse lookup by value
-    covers that lane. Returns None (never renders) when neither matches.
+    this later render is the clip's GCS path. A reverse lookup by value is
+    safe only when exactly one clip has that path. This mapping carries no
+    generation or occurrence identity, so a shared path is ambiguous even
+    when either clip could independently ground the label. Returns None
+    (never renders) for missing or ambiguous path matches.
     """
     if media_id in clip_id_to_gcs:
         return media_id
+    matched_clip_id: str | None = None
     for clip_id, gcs_path in clip_id_to_gcs.items():
         if gcs_path == media_id:
-            return clip_id
-    return None
+            if matched_clip_id is not None:
+                return None
+            matched_clip_id = clip_id
+    return matched_clip_id
 
 
 def _grounded_context_labels(

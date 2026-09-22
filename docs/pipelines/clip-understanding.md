@@ -102,6 +102,20 @@ Flow (flag on):
    timeline-revision rebuild in `guided_story.py` uses the same path. One label
    per clip; the first resolved label intent claims it.
 
+### Clip identity at render time (KRI-158)
+
+The guided lane carries stable media IDs, so an exact ID match identifies the
+intended clip even when multiple clips share a GCS path. The classic lane still
+mints positional IDs per render and resolves path-only assignments only when
+exactly one clip has that path. If two or more clips share it, the label is
+omitted for every occurrence rather than assigned by insertion order; labels
+for other, uniquely matched paths still render.
+
+The classic mapping carries neither generation nor occurrence identity, so it
+cannot distinguish even different generations of a shared path. Supporting
+labels on these repeated sources requires threading stable media identity
+through that lane. Guard: `tests/tasks/test_grounded_context_labels.py`.
+
 ### The on-screen text fence (replaces `_CONTEXT_SPORT_ALIASES`)
 
 `ground_label()` is the only rule by which AI-derived text may reach pixels. A
@@ -141,7 +155,3 @@ the live evals: `tests/evals/test_clip_request_resolver_evals.py`,
 - Vision answers are cached for pool assets only, not raw `clip_assignments`.
 - `participant_labels` / `score_labels` stay on the transcript-grounded narration
   lane; retiring them is a follow-up.
-- Non-guided lane id mapping falls back to the clip's GCS path
-  (`_resolve_clip_id_for_media_id`); two clips sharing one identical source
-  path can receive each other's label. The fence still re-grounds against the
-  clip it lands on, so this misplaces but never invents text.

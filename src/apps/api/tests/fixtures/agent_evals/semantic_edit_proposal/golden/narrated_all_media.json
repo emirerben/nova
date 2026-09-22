@@ -1,0 +1,151 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.12",
+  "input": {
+    "idea": "A team practice recap",
+    "theme": "Weekend practice",
+    "direction": "fast_montage",
+    "goal": "Keep the recording and use every uploaded visual",
+    "creator_request": "Use all seven visuals, including the short clips. Group the photos with each photo shown for exactly 0.3 seconds. Let the long clip fill the remaining recorded narration.",
+    "pace": "fast",
+    "target_duration_s": 11,
+    "narration_duration_s": 10.988,
+    "narration_words": [
+      {
+        "text": "Football practice brings the team together.",
+        "start_s": 0,
+        "end_s": 8.5
+      },
+      {
+        "text": "We finish with a celebration.",
+        "start_s": 8.5,
+        "end_s": 10.988
+      }
+    ],
+    "media_scope": "all",
+    "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "image_hold_s": 0.3,
+      "video_hold": "longer",
+      "boundary_style": "cut",
+      "image_grouping": "runs"
+    },
+    "media": [
+      {
+        "media_id": "long-video",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 10,
+        "subject": "football practice"
+      },
+      {
+        "media_id": "short-video",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 0.3,
+        "subject": "a quick ball kick"
+      },
+      {
+        "media_id": "closing-video",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 0.5,
+        "subject": "players celebrating"
+      },
+      {
+        "media_id": "photo-0",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "team practice photo"
+      },
+      {
+        "media_id": "photo-1",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "team practice photo"
+      },
+      {
+        "media_id": "photo-2",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "team practice photo"
+      },
+      {
+        "media_id": "photo-3",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "team practice photo"
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"Together on the pitch\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"Montage\", \"thought\": \"\", \"role\": \"hook\", \"weight\": 9.9, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"long-video\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"short-video\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"photo-0\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"photo-1\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-2\", \"topic\": \"Montage\", \"thought\": \"\", \"role\": \"payoff\", \"weight\": 1.1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"photo-2\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"photo-3\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"closing-video\", \"candidate_index\": null, \"weight\": 1.0}]}], \"montage_audio\": null, \"text_bindings\": [], \"repairs\": []}",
+  "output": {
+    "schema_version": 1,
+    "title": "Together on the pitch",
+    "chapters": [
+      {
+        "chapter_id": "chapter-1",
+        "topic": "Montage",
+        "thought": "",
+        "role": "hook",
+        "weight": 9.9,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "long-video",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "short-video",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "photo-0",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "photo-1",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-2",
+        "topic": "Montage",
+        "thought": "",
+        "role": "payoff",
+        "weight": 1.1,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "photo-2",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "photo-3",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "closing-video",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      }
+    ],
+    "montage_audio": null,
+    "text_bindings": [],
+    "repairs": []
+  },
+  "meta": {
+    "source": "legacy_fixture_semantic_projection",
+    "case": "narrated all-media edit with exact photo holds, subsecond clips, and a video longer than three seconds",
+    "contract": "Preserve all seven source identities, grouped nine-frame photos, bounded real video windows, and the full 330-frame narration timeline."
+  }
+}
