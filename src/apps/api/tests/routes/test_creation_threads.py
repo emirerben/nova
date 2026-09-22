@@ -3609,6 +3609,7 @@ async def test_sync_agent_forwards_clarifying_question_options_to_thread(
         event_type="assistant_question",
         payload={
             "message": "This edit cannot show all 34 clips in 30 seconds.",
+            "proposal_summary": "A tighter cut keeps the strongest moments.",
             "reason_code": "all_media_capacity",
             "options": [
                 "Keep 30 seconds with the strongest clips",
@@ -3636,9 +3637,86 @@ async def test_sync_agent_forwards_clarifying_question_options_to_thread(
     ]
     assert payload["recommended_option"] == "Keep 30 seconds with the strongest clips"
     assert payload["reason_code"] == "all_media_capacity"
+    assert payload["proposal_summary"] == "A tighter cut keeps the strongest moments."
     # The manifest-hash-fenced mapping is a server-internal matching detail,
     # not client-facing content -- only the allowlisted keys forward.
     assert "all_media_capacity" not in payload
+
+
+@pytest.mark.asyncio
+async def test_sync_agent_projects_strategy_summary_without_private_plan_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+
+    user_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user_id,
+        active_creator_agent_session_id=session_id,
+        state={},
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user_id,
+        status="awaiting_confirmation",
+        revision=2,
+        active_plan={"summary": "A focused opening with a quick payoff."},
+    )
+    event = SimpleNamespace(
+        id=uuid.uuid4(),
+        event_type="assistant_strategy",
+        payload={
+            "message": "I found a strong opening sequence.",
+            "proposal_summary": "A focused opening with a quick payoff.",
+            "edit_plan": {"strategy": {"media_scope": "all"}},
+            "strategy": {"selected_media_ids": ["private-id"]},
+            "storage_path": "users/other/private.mp4",
+        },
+    )
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=session),
+        execute=AsyncMock(
+            return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [event]))
+        ),
+    )
+    append_mock = AsyncMock()
+    monkeypatch.setattr(routes, "_append", append_mock)
+
+    await routes._sync_agent(db, thread)
+
+    payload = append_mock.await_args.kwargs["payload"]
+    assert payload == {
+        "message": "I found a strong opening sequence.",
+        "proposal_summary": "A focused opening with a quick payoff.",
+    }
+    assert append_mock.await_args.kwargs["content"] == "I found a strong opening sequence."
+
+
+@pytest.mark.asyncio
+async def test_prerequisite_prompt_reopens_after_media_removal() -> None:
+    import app.routes.creation_threads as routes
+
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        events=[
+            SimpleNamespace(sequence=1, event_type="media_prompt"),
+            SimpleNamespace(sequence=2, event_type="media_added"),
+            SimpleNamespace(sequence=3, event_type="action_remove_media"),
+        ],
+    )
+    db = Mock()
+
+    assert (
+        await routes._prerequisite_prompt_is_current(db, thread, prompt_type="media_prompt")
+        is False
+    )
+
+    thread.events.append(SimpleNamespace(sequence=4, event_type="media_prompt"))
+    assert (
+        await routes._prerequisite_prompt_is_current(db, thread, prompt_type="media_prompt") is True
+    )
 
 
 @pytest.mark.asyncio

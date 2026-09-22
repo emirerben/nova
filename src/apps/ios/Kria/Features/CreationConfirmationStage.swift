@@ -89,6 +89,7 @@ let nonRetryablePhoneGateErrorCodes: Set<String> = [
 struct CreationConfirmationStage: View {
     let thread: CreationThread
     let isBusy: Bool
+    var responseStartedAt: Date? = nil
     var conflict: CreationConfirmationConflict? = nil
     var refreshDirection: () -> Void = {}
     let action: (String, [String: JSONValue]) -> Void
@@ -98,6 +99,9 @@ struct CreationConfirmationStage: View {
     private var hasCleanup: Bool { cleanup["applicable"]?.booleanValue == true }
     private var isFailure: Bool { thread.summary.status == .failed }
     private var hasVideo: Bool { attachedVideoClipCount(in: thread.state ?? [:]) > 0 }
+    private var proposalSummary: String {
+        thread.creatorAgent?["summary"]?.stringValue ?? "Kria will use your footage and direction to make a new cut. Rendering starts only after you approve."
+    }
     /// KRI-132: a phone-gate rejection is structural, not a transient failure --
     /// retrying without changing the project (a different format, a voiceover
     /// removed, re-enrolling) fails the exact same way.
@@ -109,8 +113,10 @@ struct CreationConfirmationStage: View {
         VStack(alignment: .leading, spacing: 16) {
             Text(isFailure ? "Your project is safe" : "Here’s the direction I’ll use")
                 .font(KriaFont.display(24))
-            Text(thread.creatorAgent?["summary"]?.stringValue ?? "Kria will use your footage and direction to make a new cut. Rendering starts only after you approve.")
+            ChatResponseText(content: proposalSummary, startedAt: responseStartedAt)
                 .font(KriaFont.body(14))
+                .copyableMessage(proposalSummary, previewShape: RoundedRectangle(cornerRadius: 8))
+                .accessibilityLabel("Kria: \(proposalSummary)")
             if isFailure && thread.activeJobID == nil {
                 Text("Kria couldn’t start the video. Your direction and footage are still saved.")
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)

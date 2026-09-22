@@ -207,6 +207,19 @@ microphone permission (the account's AI consent already covers voices). Legacy u
 without a role remain primary clips. Pending records block generation, and failed
 attachments retry without uploading the original again.
 
+The chat timeline has one Send action. A prompt is optional once media is ready;
+clips-only sends use the neutral `Suggest an edit.` message through the existing
+nonempty transport. Durable media receipts follow server sequence order,
+contiguous receipts share one strip, and text between them keeps later receipts
+in a separate group. Events with no `client_event_id` use the local
+after-sequence and normalized-text fallback when replacing optimistic rows.
+Proposal summaries are shown once, either in the proposal stage or as the
+conversation message. Newly received assistant batches reveal at 35ms per word
+with a two-second cap, show the full text immediately for Reduce Motion or
+VoiceOver, and trigger one light sensory-feedback batch pulse while the chat is
+active. Conversation polling follows the latest message only while the reader
+is near the bottom; reading older messages does not force a jump.
+
 The Debug API URL must escape the second slash (`http:/$()/localhost:8000`) in
 xcconfig. `make ios-verify` checks the resolved URL, while allowing a complete
 custom URL in the ignored `Config/Local.xcconfig`.

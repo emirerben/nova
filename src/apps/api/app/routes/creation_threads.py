@@ -487,6 +487,7 @@ class RenameBody(StrictBody):
 
 class EventOut(BaseModel):
     id: str
+    client_event_id: str | None = None
     sequence: int
     revision: int
     role: str
@@ -1483,6 +1484,50 @@ async def _event_rows(db: AsyncSession, thread_id: uuid.UUID) -> list[CreationTh
     return rows
 
 
+async def _prerequisite_prompt_is_current(
+    db: AsyncSession,
+    thread: CreationThread,
+    *,
+    prompt_type: Literal["format_prompt", "media_prompt"],
+) -> bool:
+    """Return whether the latest prerequisite prompt is still unresolved.
+
+    Prompt events are append-only.  A repeated free-text message should not
+    grow an identical prompt forever, but a later format/media transition must
+    reopen the prompt when it creates a genuinely new prerequisite state (for
+    example, removing the last clip after a prior media prompt).
+    """
+
+    if isinstance(db, AsyncSession):
+        events = await _event_rows(db, thread.id)
+    else:
+        events = list(getattr(thread, "events", []) or [])
+    if not events:
+        return False
+    transition_types = (
+        {"action_select_format", "action_select_edit_format"}
+        if prompt_type == "format_prompt"
+        else {"media_added", "action_remove_media"}
+    )
+    prompt_sequences = [
+        int(getattr(event, "sequence", -1))
+        for event in events
+        if getattr(event, "event_type", None) == prompt_type
+    ]
+    if not prompt_sequences:
+        return False
+    latest_prompt = max(prompt_sequences)
+    latest_transition = max(
+        (
+            int(getattr(event, "sequence", -1))
+            for event in events
+            if getattr(event, "event_type", None) in transition_types
+        ),
+        default=-1,
+    )
+    return latest_prompt > latest_transition
+
+
 async def _append(
     db: AsyncSession,
     thread: CreationThread,
@@ -2288,6 +2333,9 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
             in {
                 "message",
                 "summary",
+                # Display-only proposal copy.  This is intentionally projected
+                # as inert transcript text and never treated as an operation.
+                "proposal_summary",
                 "plan_hash",
                 "review",
                 "status",
@@ -2309,7 +2357,11 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
             thread,
             event_type=f"agent_{event.event_type}",
             role="assistant" if event.event_type.startswith("assistant") else "system",
-            content=safe_payload.get("message") or safe_payload.get("summary"),
+            content=(
+                safe_payload.get("message")
+                or safe_payload.get("summary")
+                or safe_payload.get("proposal_summary")
+            ),
             payload=safe_payload,
         )
         seen.add(key)
@@ -2566,6 +2618,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         events=[
             EventOut(
                 id=str(event.id),
+                client_event_id=getattr(event, "client_event_id", None),
                 sequence=event.sequence,
                 revision=event.revision,
                 role=event.role,
@@ -3367,14 +3420,15 @@ async def message_thread(
     # Free text before the format and footage prerequisites is durable but
     # inert. Do not invoke the Creator Agent with an incomplete manifest.
     if not state.get("edit_format"):
-        await _append(
-            db,
-            thread,
-            event_type="format_prompt",
-            role="assistant",
-            content="Choose a format and I’ll shape the edit around it.",
-            payload={"kind": "select_format", "formats": _available_formats()},
-        )
+        if not await _prerequisite_prompt_is_current(db, thread, prompt_type="format_prompt"):
+            await _append(
+                db,
+                thread,
+                event_type="format_prompt",
+                role="assistant",
+                content="Choose a format and I’ll shape the edit around it.",
+                payload={"kind": "select_format", "formats": _available_formats()},
+            )
         await db.commit()
         await db.refresh(thread)
         return await _response(db, thread)
@@ -3383,14 +3437,15 @@ async def message_thread(
     if int(state.get("media_count", 0) or 0) <= 0 and not await _renders_visuals_on_device(
         db, thread, user
     ):
-        await _append(
-            db,
-            thread,
-            event_type="media_prompt",
-            role="assistant",
-            content="Add some footage and I’ll design the first direction.",
-            payload={"kind": "collect_media"},
-        )
+        if not await _prerequisite_prompt_is_current(db, thread, prompt_type="media_prompt"):
+            await _append(
+                db,
+                thread,
+                event_type="media_prompt",
+                role="assistant",
+                content="Add some footage and I’ll design the first direction.",
+                payload={"kind": "collect_media"},
+            )
         await db.commit()
         await db.refresh(thread)
         return await _response(db, thread)

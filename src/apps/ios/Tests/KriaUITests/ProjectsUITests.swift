@@ -14,8 +14,14 @@ final class ProjectsUITests: XCTestCase {
         XCTAssertTrue(unavailable.matching(NSPredicate(format: "label == %@", "Preview unavailable for Missing poster")).firstMatch.exists)
         XCTAssertTrue(unavailable.matching(NSPredicate(format: "label == %@", "Preview unavailable for Failed poster")).firstMatch.exists)
         XCTAssertTrue(app.descendants(matching: .any)["project-poster-loading"].exists)
-        let loadedPosters = app.images.matching(identifier: "project-poster-image")
-        XCTAssertEqual(loadedPosters.count, 1, "Only the successfully loaded poster may show an image")
+        XCTAssertTrue(app.images["project-poster-image"].exists)
+        XCTAssertEqual(app.images.matching(identifier: "project-poster-image").count, 1)
+        // XCTest includes the unavailable placeholders' decorative SF Symbols
+        // as images. Reject unrelated photos without mistaking those for posters.
+        let unexpectedImages = app.images.matching(NSPredicate(
+            format: "identifier != %@ AND identifier != %@", "project-poster-image", "video"
+        ))
+        XCTAssertEqual(unexpectedImages.count, 0, "Unavailable posters must not substitute unrelated photos: \(unexpectedImages.debugDescription)")
     }
 
     func testProjectActionsCanBeCancelledWithoutChangingProject() {

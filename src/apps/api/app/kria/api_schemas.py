@@ -129,6 +129,7 @@ class DraftUndoBody(_StrictBody):
 
 class DeltaEvent(BaseModel):
     id: str
+    client_event_id: str | None = None
     sequence: int
     revision: int
     role: Literal["user", "assistant", "system"]

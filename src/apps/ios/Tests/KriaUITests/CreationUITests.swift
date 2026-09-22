@@ -149,7 +149,7 @@ final class CreationUITests: XCTestCase {
             app.launch()
             createFreshChat(in: app)
             app.buttons["format-montage"].tap()
-            let next = app.buttons["Continue with 1 clip"]
+            let next = app.buttons["Send clips"]
             XCTAssertTrue(next.waitForExistence(timeout: 5))
             next.tap()
             let confirm = app.buttons["Create this video"]
@@ -158,6 +158,102 @@ final class CreationUITests: XCTestCase {
             XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
             app.terminate()
         }
+    }
+
+    func testClipsOnlySubmissionUsesSuggestAnEdit() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        let send = app.buttons["Send clips"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        XCTAssertEqual(send.label, "Send clips")
+        send.tap()
+
+        let user = app.staticTexts["You: Suggest an edit."]
+        XCTAssertTrue(user.waitForExistence(timeout: 10))
+    }
+
+    func testIncomingResponseDoesNotPullReaderFromScrolledHistory() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_LONG_HISTORY"] = "1"
+        app.launchEnvironment["KRIA_CHAT_SLOW_CREATION"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        let send = app.buttons["Send clips"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        send.tap()
+
+        // Send forces the conversation to the bottom first. Move away while the
+        // delayed response is still in flight, then choose a row that is truly
+        // visible after that gesture so LazyVStack has materialized it.
+        let historyRows = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS 'Long conversation message number'")
+        ).allElementsBoundByIndex
+        app.scrollViews.firstMatch.swipeDown()
+        XCTAssertTrue(app.buttons["chat-jump-to-latest"].waitForExistence(timeout: 3))
+        guard let earlierReply = historyRows.first(where: { $0.isHittable }) else {
+            XCTFail("Expected a long-history row to remain visible after scrolling up")
+            return
+        }
+        let yBeforeResponse = earlierReply.frame.minY
+
+        let response = app.staticTexts["Kria: Open on the laugh and keep the pacing quick."]
+        // The reply is intentionally outside LazyVStack's visible region.
+        // The persistent composer changes when the proposal projection arrives.
+        let proposalArrived = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Tell Kria what you want…"),
+            object: app.textFields["Message Kria"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [proposalArrived], timeout: 12), .completed)
+        XCTAssertEqual(earlierReply.frame.minY, yBeforeResponse, accuracy: 2)
+
+        app.buttons["chat-jump-to-latest"].tap()
+        let latestDismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: app.buttons["chat-jump-to-latest"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [latestDismissed], timeout: 3), .completed)
+        XCTAssertTrue(response.waitForExistence(timeout: 3))
+        XCTAssertTrue(response.isHittable)
+    }
+
+    func testTypedPromptAppearsBetweenMediaReceiptAndAssistantResponse() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        let receipt = app.descendants(matching: .any)["chat-media-fixture-clip"]
+        XCTAssertTrue(receipt.waitForExistence(timeout: 5))
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertEqual(composer.value as? String, "Add instructions (optional)")
+        composer.tap()
+        composer.typeText("Make it cinematic")
+        let send = app.buttons["Send message"]
+        XCTAssertTrue(send.waitForExistence(timeout: 3))
+        send.tap()
+
+        let user = app.staticTexts["You: Make it cinematic"]
+        let assistant = app.staticTexts["Kria: Open on the laugh and keep the pacing quick."]
+        XCTAssertTrue(user.waitForExistence(timeout: 10))
+        XCTAssertTrue(assistant.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == %@", assistant.label)).count, 1)
+        XCTAssertLessThan(receipt.frame.maxY, user.frame.minY)
+        XCTAssertLessThan(user.frame.maxY, assistant.frame.minY)
     }
 
     func testSlowDirectionAndPreJobFailureNeverReturnToUploading() {
@@ -169,7 +265,7 @@ final class CreationUITests: XCTestCase {
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
-        let next = app.buttons["Continue with 1 clip"]
+        let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
         XCTAssertTrue(app.descendants(matching: .any)["chat-thinking"].waitForExistence(timeout: 3))
@@ -264,7 +360,7 @@ final class CreationUITests: XCTestCase {
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
-        let next = app.buttons["Continue with 1 clip"]
+            let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
         XCTAssertTrue(app.staticTexts["This approval expired. Send a message to request an updated direction."].waitForExistence(timeout: 10))
@@ -391,7 +487,7 @@ final class CreationUITests: XCTestCase {
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
-        let next = app.buttons["Continue with 1 clip"]
+        let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
         return app
