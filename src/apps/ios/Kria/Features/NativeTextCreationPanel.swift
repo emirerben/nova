@@ -9,14 +9,14 @@ struct NativeTextCreationPanel: View {
     @Environment(\.nativeEditorConnectedPanel) private var connected
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 6) {
             HStack {
                 Button { focused = false; session.cancelTextCreation() } label: {
                     Text("Cancel").frame(minWidth: 64, minHeight: 44)
                 }
                     .accessibilityIdentifier("native-editor-text-cancel")
                 Spacer()
-                Text("Add text").font(KriaFont.body(15).weight(.semibold))
+                Text("Add text").font(KriaFont.body(connected ? 18 : 15).weight(.semibold))
                 Spacer()
                 Button {
                     focused = false
@@ -36,8 +36,16 @@ struct NativeTextCreationPanel: View {
                 .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
         }
         .padding(.horizontal, connected ? 24 : 16)
-        .padding(.bottom, 12)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(connected ? Color.clear : KriaColor.paper)
-        .task { focused = true }
+        .overlay(alignment: .top) {
+            if !connected { KriaColor.line.opacity(0.4).frame(height: 1) }
+        }
+        .font(KriaFont.body(14))
+        .tint(KriaColor.ink)
+        .task {
+            if !connected { focused = true }
+        }
     }
 }

@@ -13,9 +13,17 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(rail.waitForExistence(timeout: 20))
         let railBottom = rail.frame.maxY
         let previewHeight = preview.frame.height
-        for tool in ["captions", "visuals", "sounds", "captions"] {
+        var panelFrame: CGRect?
+        for tool in ["captions", "visuals", "sounds", "text", "captions"] {
             app.buttons["native-editor-tool-" + tool].tap()
-            XCTAssertTrue(app.scrollViews["native-editor-" + tool + "-scroll"].waitForExistence(timeout: 5))
+            let content = tool == "text" ? app.textViews["native-editor-new-text-input"] : app.scrollViews["native-editor-" + tool + "-scroll"]
+            XCTAssertTrue(content.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.keyboards.firstMatch.exists, "Opening a tab must not take keyboard focus")
+            let frame = app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch.frame
+            if let panelFrame {
+                XCTAssertEqual(frame.minY, panelFrame.minY, accuracy: 2, tool)
+                XCTAssertEqual(frame.height, panelFrame.height, accuracy: 2, tool)
+            } else { panelFrame = frame }
             XCTAssertTrue(app.buttons["native-editor-tool-" + tool].isSelected)
             XCTAssertEqual(rail.frame.maxY, railBottom, accuracy: 2)
             XCTAssertEqual(preview.frame.height, previewHeight, accuracy: 2)
@@ -43,6 +51,61 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.buttons["native-editor-tool-captions"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-lane-scroll"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["native-editor-tool-captions"].isSelected)
+        app.buttons["native-editor-tool-text"].tap()
+        XCTAssertTrue(app.textViews["native-editor-new-text-input"].waitForExistence(timeout: 5))
+        app.buttons["native-editor-tool-text"].tap()
+        XCTAssertFalse(app.textViews["native-editor-new-text-input"].exists)
+        XCTAssertFalse(app.buttons["native-editor-tool-text"].isSelected)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-lane-scroll"].firstMatch.exists)
+        app.buttons["native-editor-tool-text"].tap()
+        app.buttons["native-editor-text-done"].tap()
+        XCTAssertFalse(app.textViews["native-editor-new-text-input"].exists)
+        XCTAssertFalse(app.buttons["native-editor-tool-text"].isSelected)
+        app.buttons["native-editor-tool-text"].tap()
+        app.buttons["native-editor-text-cancel"].tap()
+        XCTAssertFalse(app.textViews["native-editor-new-text-input"].exists)
+        XCTAssertFalse(app.buttons["native-editor-tool-text"].isSelected)
+    }
+
+    func testVisiblePanelHandleExpandsAndRestoresEveryTool() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        XCTAssertTrue(app.buttons["native-editor-tool-captions"].waitForExistence(timeout: 20))
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let rail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
+        let panel = app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch
+        for tool in ["captions", "visuals", "sounds", "text"] {
+            app.buttons["native-editor-tool-" + tool].tap()
+            let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch
+            XCTAssertTrue(handle.waitForExistence(timeout: 5), tool)
+            XCTAssertTrue(handle.isHittable, tool)
+            XCTAssertGreaterThanOrEqual(handle.frame.height, 44, tool)
+            let initialPanel = panel.frame
+            let initialPreview = preview.frame
+            let railBottom = rail.frame.maxY
+            let headerY = app.buttons["native-editor-back"].frame.minY
+            // Start on the visible capsule near the panel's top edge, not
+            // merely somewhere inside its larger accessibility target.
+            let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+                .withOffset(CGVector(dx: 0, dy: 10))
+            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -160)))
+            XCTAssertGreaterThan(panel.frame.height, initialPanel.height + 80, tool)
+            XCTAssertLessThan(panel.frame.minY, initialPanel.minY - 80, tool)
+            XCTAssertLessThan(preview.frame.height, initialPreview.height - 40, tool)
+            XCTAssertEqual(rail.frame.maxY, railBottom, accuracy: 2, tool)
+            XCTAssertEqual(app.buttons["native-editor-back"].frame.minY, headerY, accuracy: 2, tool)
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "expanded-visible-handle-" + tool
+            capture.lifetime = .keepAlways
+            add(capture)
+            let raised = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+                .withOffset(CGVector(dx: 0, dy: 10))
+            raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: 320)))
+            XCTAssertEqual(panel.frame.height, initialPanel.height, accuracy: 2, tool)
+            XCTAssertEqual(preview.frame.height, initialPreview.height, accuracy: 2, tool)
+        }
     }
 
     func testConnectedTextPresetAndAnimationPreviewControls() {
