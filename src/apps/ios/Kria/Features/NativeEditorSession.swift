@@ -89,7 +89,16 @@ struct NativeEditorTemporaryVideo {
         get { playbackClock.currentTime }
         set { playbackClock.currentTime = newValue }
     }
+    /// Editable content only; branding never expands authoring ranges.
     @Published var duration: TimeInterval = 0
+    /// The visible source composition includes the outro after the editable
+    /// content. Transport and scrubbing must reach that tail as well.
+    var playbackDuration: TimeInterval {
+        if let sourcePreview, player?.currentItem === sourcePreview.preview.playerItem {
+            return sourcePreview.preview.description.duration
+        }
+        return duration
+    }
     @Published var isPlaying = false
     @Published var isSaving = false
     @Published var hasUnsavedChanges = false
@@ -1620,15 +1629,15 @@ struct NativeEditorTemporaryVideo {
             #if DEBUG
             NativePreviewDiagnostics.record("composition-start")
             #endif
-            let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs)
+            let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs, branding: .standard)
             guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             let latestTime = currentTime
             let resumePlayback = isPlaying
             sourcePreview = preview
-            installPlayer(item: preview.preview.playerItem, preferredDuration: preview.preview.description.duration)
+            installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe))
             sourcePreviewState = .ready
             if resumePlayback {
-                player?.seek(to: CMTime(seconds: min(latestTime, max(0, duration - 1.0 / 600)), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
+                player?.seek(to: CMTime(seconds: min(latestTime, max(0, playbackDuration - 1.0 / 600)), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
                 activatePreviewAudio()
                 player?.play()
             } else {
@@ -1668,7 +1677,7 @@ struct NativeEditorTemporaryVideo {
         }
         // Scrubbing renders stills independently of AVPlayer. Only that handoff
         // (or replay) needs a seek; ordinary resume keeps the decoded surface.
-        if duration > 0, currentTime >= duration - playbackEndTolerance {
+        if playbackDuration > 0, currentTime >= playbackDuration - playbackEndTolerance {
             currentTime = 0
             playbackSeekTarget = 0
         }
@@ -1714,7 +1723,7 @@ struct NativeEditorTemporaryVideo {
         // freeze at the player's actual clock, not the last 50ms UI sample.
         if playbackSeekTarget == nil, let player, player.currentItem?.status == .readyToPlay {
             let seconds = player.currentTime().seconds
-            if seconds.isFinite { currentTime = min(max(0, seconds), max(0, duration)) }
+            if seconds.isFinite { currentTime = min(max(0, seconds), max(0, playbackDuration)) }
         }
     }
 
@@ -1748,7 +1757,7 @@ struct NativeEditorTemporaryVideo {
             player?.pause()
             isPlaying = false
         }
-        let clamped = min(max(0, time), max(0, duration))
+        let clamped = min(max(0, time), max(0, playbackDuration))
         currentTime = clamped
         if requestScrubFrame(at: clamped) {
             seekRecoveryTask?.cancel()
@@ -1779,7 +1788,7 @@ struct NativeEditorTemporaryVideo {
             scrubFramePlayerItem = item
             scrubFrameComposition = composition
         }
-        playbackSeekTarget = min(time, max(0, duration - 1.0 / 600))
+        playbackSeekTarget = min(time, max(0, playbackDuration - 1.0 / 600))
         pendingScrubFrameTime = playbackSeekTarget
         // Coalescing finger events (above) means only the latest requested
         // position ever becomes visible, so re-arming on every call and
@@ -1851,7 +1860,7 @@ struct NativeEditorTemporaryVideo {
         let sequence = seekSequence
         // The timeline's end is exclusive in the compositor. Keep the ruler
         // at the requested end while displaying the final valid video frame.
-        let playableTarget = min(target, max(0, duration - 1.0 / 600))
+        let playableTarget = min(target, max(0, playbackDuration - 1.0 / 600))
         seekRecoveryTask?.cancel()
         seekRecoveryTask = Task { @MainActor [weak self, weak player] in
             do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
@@ -3928,7 +3937,7 @@ struct NativeEditorTemporaryVideo {
                 guard let self, self.player === next else { return }
                 let seconds = time.seconds
                 if seconds.isFinite && self.isPlaying && !self.seekInFlight && self.pendingSeekTime == nil && self.playbackSeekTarget == nil {
-                    self.currentTime = min(max(0, seconds), max(0, self.duration))
+                    self.currentTime = min(max(0, seconds), max(0, self.playbackDuration))
                 }
                 self.reconcilePlaybackState(next.timeControlStatus)
             }
@@ -3975,15 +3984,15 @@ struct NativeEditorTemporaryVideo {
 
     /// Public geometry helpers keep the view layer from implementing subtly
     /// different clamping or hit-target rules.
-    func timelineX(for time: TimeInterval, width: CGFloat) -> CGFloat { NativeEditorInteraction.x(forTime: time, duration: duration, width: width) }
-    func timelineTime(for x: CGFloat, width: CGFloat) -> TimeInterval { NativeEditorInteraction.time(forX: x, duration: duration, width: width) }
+    func timelineX(for time: TimeInterval, width: CGFloat) -> CGFloat { NativeEditorInteraction.x(forTime: time, duration: playbackDuration, width: width) }
+    func timelineTime(for x: CGFloat, width: CGFloat) -> TimeInterval { NativeEditorInteraction.time(forX: x, duration: playbackDuration, width: width) }
 
     private func refreshDuration() {
         let timelineDuration = timelineProjection.totalDuration
         duration = durationSourcesInvalidated ? timelineDuration : (authoritativeDuration ?? mediaDuration ?? timelineDuration)
         if !duration.isFinite || duration < 0 { duration = max(0, timelineDuration) }
         timelineItemsCache = nil
-        if currentTime > duration { seek(to: duration) }
+        if currentTime > playbackDuration { seek(to: playbackDuration) }
     }
 
     private func setAuthoritativeDuration(_ value: TimeInterval?) {
@@ -4002,12 +4011,12 @@ struct NativeEditorTemporaryVideo {
     private func finishPlayback(for endedPlayer: AVPlayer) {
         guard player === endedPlayer else { return }
         endedPlayer.pause()
-        currentTime = max(0, duration)
+        currentTime = max(0, playbackDuration)
         isPlaying = false
         // A composition has no active layers at its half-open end time.
         // Retain a generated frame from just inside the endpoint instead of
         // relying on VideoPlayer to keep its last surface after natural EOF.
-        _ = requestScrubFrame(at: duration)
+        _ = requestScrubFrame(at: playbackDuration)
     }
 
     private func configureCapabilities(from variant: [String: JSONValue]?) {
