@@ -152,8 +152,10 @@ Download follows the video currently shown in the editor. A ready source preview
 
 For repeatable visual review, a Debug build accepts `-ui-testing-brand` with
 `KRIA_BRAND_STATE` set to `format`, `footage`, `direction`, `rendering`, `ready`,
-`editor`, `projects`, `gallery`, `signin`, `account`, or `recovery`.
-These fixtures compose the real components; they never enter Release navigation.
+`editor`, `projects`, `gallery`, `gallery-posters`, `signin`, `account`, or `recovery`.
+`gallery-posters` exercises missing, loading, failed, and loaded poster states
+without network timing. These fixtures compose the real components; they never
+enter Release navigation.
 Use `-ui-testing-chat` for interactive navigation and the existing editor fixtures
 for edit/save/export verification.
 
