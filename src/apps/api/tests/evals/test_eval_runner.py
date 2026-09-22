@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -91,6 +92,96 @@ def test_live_eval_context_carries_shared_paid_attribution(monkeypatch: pytest.M
     assert ctx.test_run_id == "github-123-1"
     assert ctx.estimated_max_cost_usd == 2.0
     assert ctx.reservation_approved is True
+
+
+def test_run_eval_repeat_suffix_distinguishes_primary_and_shadow_contexts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Repeats are independent paid calls but remain inside one capped test run."""
+    from .runners import eval_runner as runner
+
+    monkeypatch.setenv("NOVA_EVAL_MODE", "live")
+    monkeypatch.setenv("NOVA_EVAL_TEST_RUN_ID", "batch-17")
+    contexts = []
+
+    class _Input:
+        @classmethod
+        def model_validate(cls, _value):
+            return {}
+
+    class _Output:
+        def model_dump(self):
+            return {"ok": True}
+
+    class _Agent:
+        Input = _Input
+        spec = SimpleNamespace(prompt_version="test")
+
+        def __init__(self, _client):
+            pass
+
+        def run(self, _input, *, ctx):
+            contexts.append(ctx)
+            return _Output()
+
+    monkeypatch.setattr(runner, "_build_agent_class_for", lambda _name: _Agent)
+    monkeypatch.setattr(runner, "run_structural", lambda *_args, **_kwargs: [])
+    fixture = _creative_direction_fixture(tmp_path, _GOOD_CD_TEXT)
+    shadow_dir = tmp_path / "shadow"
+    shadow_dir.mkdir()
+
+    result = run_eval(
+        fixture,
+        model_client=object(),  # type: ignore[arg-type]
+        shadow_prompts_dir=shadow_dir,
+        request_id_suffix="repeat-2",
+    )
+
+    assert result.passed
+    assert [context.request_id for context in contexts] == [
+        f"eval:{fixture.fixture_id}:primary:repeat-2",
+        f"eval:{fixture.fixture_id}:shadow:repeat-2",
+    ]
+    assert {context.test_run_id for context in contexts} == {"batch-17"}
+
+
+def test_live_agent_failure_captures_raw_responses_without_accepted_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Opt-in diagnostics retain paid responses without turning them into golden fixtures."""
+    from .runners import eval_runner as runner
+
+    monkeypatch.setenv("NOVA_EVAL_MODE", "live")
+    monkeypatch.setenv("NOVA_EVAL_TEST_RUN_ID", "batch-17")
+    capture_root = tmp_path / "captures"
+    monkeypatch.setenv("NOVA_EVAL_CAPTURE_DIR", str(capture_root))
+
+    class _Agent:
+        spec = SimpleNamespace(prompt_version="test")
+
+        def __init__(self, client):
+            self.client = client
+
+        def run(self, _input, *, ctx):
+            self.client.invoke(model="test", prompt="test")
+            raise RuntimeError(f"parse failed for {ctx.request_id}")
+
+    class _Client:
+        def invoke(self, **_kwargs):
+            return ModelInvocation(raw_text="first raw response")
+
+    monkeypatch.setattr(runner, "_build_agent_class_for", lambda _name: _Agent)
+    fixture = _creative_direction_fixture(tmp_path, _GOOD_CD_TEXT)
+
+    result = run_eval(fixture, model_client=_Client(), request_id_suffix="repeat-2")
+
+    assert not result.passed
+    capture_path = capture_root / fixture.path.parent.name / "cd--repeat-2--failed.json"
+    captured = json.loads(capture_path.read_text())
+    assert captured["raw_texts"] == ["first raw response"]
+    assert "parse failed" in captured["error"]
+    assert "output" not in captured
+    assert captured["meta"]["source"] == "provider_failure_diagnostic"
 
 
 # ── run_eval ────────────────────────────────────────────────────────────────

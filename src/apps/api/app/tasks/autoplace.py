@@ -39,6 +39,14 @@ import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
 from celery import current_task
 
+from app.agents._provider_errors import classify_provider_error
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    CostControlUnavailableError,
+    ProviderOutcomeUnknownError,
+    ProviderQuotaExceededError,
+    RunContext,
+)
 from app.database import sync_session as _sync_session
 from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, SoundEffect
 from app.services.content_plan_persona import (
@@ -932,7 +940,11 @@ def _persist_pool_media_readiness(
 
 
 def _analyze_image(
-    local_path: str, job_scope: str, *, creator_id: str | None = None
+    local_path: str,
+    job_scope: str,
+    *,
+    creator_id: str | None = None,
+    run_context: RunContext | None = None,
 ) -> tuple[dict | None, float | None, tuple[int, int] | None, bool]:
     """(analysis, aspect, (width, height), has_alpha) for a still image."""
     aspect: float | None = None
@@ -1010,7 +1022,7 @@ def _analyze_image(
 
         prompt = load_prompt("image_metadata")
         provider_max_output_tokens = effective_max_output_tokens(None)
-        ctx = RunContext(
+        ctx = run_context or RunContext(
             creator_id=creator_id,
             request_id=f"pool-image:{job_scope}:{hashlib.sha256(data).hexdigest()}",
             usage_purpose="optional_background",
@@ -1064,7 +1076,17 @@ def _analyze_image(
         )
     except SoftTimeLimitExceeded:
         raise
+    except (
+        AiBudgetExceededError,
+        CostControlUnavailableError,
+        ProviderOutcomeUnknownError,
+        ProviderQuotaExceededError,
+    ):
+        raise
     except Exception as exc:  # noqa: BLE001
+        quota_error = classify_provider_error(exc)
+        if quota_error is not None:
+            raise quota_error from exc
         log.warning("autoplace.image_analysis_failed", error_type=type(exc).__name__)
         raise AnalysisTemporarilyUnavailableError("image analysis provider failed") from exc
 
@@ -1087,6 +1109,7 @@ def _analyze_video(
     *,
     job_scope: str = "",
     creator_id: str | None = None,
+    run_context: RunContext | None = None,
 ) -> tuple[dict | None, float | None, float | None, tuple[int, int] | None]:
     """(analysis, aspect, duration_s, (width, height)) for a video asset."""
     aspect: float | None = None
@@ -1144,7 +1167,8 @@ def _analyze_video(
 
         meta = analyze_clip(
             file_ref,
-            run_context=RunContext(
+            run_context=run_context
+            or RunContext(
                 creator_id=creator_id,
                 request_id=f"pool-video:{job_scope}:{getattr(file_ref, 'name', '')}",
                 usage_purpose="optional_background",
@@ -1234,7 +1258,17 @@ def _analyze_video(
         raise
     except AnalysisTemporarilyUnavailableError:
         raise
+    except (
+        AiBudgetExceededError,
+        CostControlUnavailableError,
+        ProviderOutcomeUnknownError,
+        ProviderQuotaExceededError,
+    ):
+        raise
     except Exception as exc:  # noqa: BLE001
+        quota_error = classify_provider_error(exc)
+        if quota_error is not None:
+            raise quota_error from exc
         log.warning("autoplace.video_analysis_failed", error_type=type(exc).__name__)
         raise AnalysisTemporarilyUnavailableError("video analysis provider failed") from exc
 
@@ -1243,15 +1277,24 @@ def _analyze_video(
 # private implementations above so existing task-local monkeypatches and
 # regression tests remain stable while callers avoid importing task internals.
 def analyze_pool_image(
-    local_path: str, job_scope: str
+    local_path: str,
+    job_scope: str,
+    *,
+    run_context: RunContext | None = None,
 ) -> tuple[dict | None, float | None, tuple[int, int] | None, bool]:
-    return _analyze_image(local_path, job_scope)
+    if run_context is None:
+        return _analyze_image(local_path, job_scope)
+    return _analyze_image(local_path, job_scope, run_context=run_context)
 
 
 def analyze_pool_video(
     local_path: str,
+    *,
+    run_context: RunContext | None = None,
 ) -> tuple[dict | None, float | None, float | None, tuple[int, int] | None]:
-    return _analyze_video(local_path)
+    if run_context is None:
+        return _analyze_video(local_path)
+    return _analyze_video(local_path, run_context=run_context)
 
 
 def _plan_ownership_epoch(plan: ContentPlan) -> int:
@@ -1469,11 +1512,25 @@ def analyze_pool_asset(
                     )
                 if kind == "video":
                     analysis, aspect, duration, dims = _analyze_video(
-                        local, job_scope=scope, creator_id=str(plan.user_id)
+                        local,
+                        job_scope=scope,
+                        creator_id=str(plan.user_id),
+                        run_context=RunContext(
+                            creator_id=str(plan.user_id),
+                            request_id=f"pool-video:{scope}:{asset_id}",
+                            usage_purpose="optional_background",
+                        ),
                     )
                 else:
                     analysis, aspect, dims, has_alpha = _analyze_image(
-                        local, scope, creator_id=str(plan.user_id)
+                        local,
+                        scope,
+                        creator_id=str(plan.user_id),
+                        run_context=RunContext(
+                            creator_id=str(plan.user_id),
+                            request_id=f"pool-image:{scope}:{asset_id}",
+                            usage_purpose="optional_background",
+                        ),
                     )
                 if media_probe_failed:
                     # The successful authoritative analysis is itself proof
@@ -1510,7 +1567,31 @@ def analyze_pool_asset(
             failure_code = "analysis_temporarily_unavailable"
             failure_detail = "Kria temporarily couldn't analyze this file. Try again."
             failed = True
-        except Exception as exc:  # noqa: BLE001
+        except (
+            AiBudgetExceededError,
+            CostControlUnavailableError,
+            ProviderOutcomeUnknownError,
+        ) as exc:
+            failure_code = (
+                "ai_budget_exhausted"
+                if isinstance(exc, AiBudgetExceededError)
+                else "provider_outcome_unknown"
+                if isinstance(exc, ProviderOutcomeUnknownError)
+                else "cost_control_unavailable"
+            )
+            failure_detail = "Clip analysis is unavailable right now. Try again later."
+            failed = True
+        except ProviderQuotaExceededError as exc:
+            failure_code = "provider_quota_exceeded"
+            failure_detail = "Clip analysis is unavailable right now. Try again later."
+            failed = True
+            log.warning(
+                "autoplace.provider_denied",
+                asset_id=asset_id,
+                provider=exc.provider,
+                reason=exc.reason,
+            )
+        except Exception as exc:
             failure_code = "analysis_temporarily_unavailable"
             failure_detail = "Kria temporarily couldn't analyze this file. Try again."
             log.warning(
@@ -1559,14 +1640,20 @@ def analyze_pool_asset(
                         asset.error_detail = failure_detail or (
                             "Kria couldn't analyze this file. Try again."
                         )
-                        asset.error_retryable = failure_code != "analysis_unreadable"
+                        asset.error_retryable = failure_code not in {
+                            "analysis_unreadable",
+                            "provider_outcome_unknown",
+                        }
                     elif asset.media_status != "failed":
                         asset.media_status = "ready"
                         asset.error_code = failure_code or "analysis_failed"
                         asset.error_detail = failure_detail or (
                             "Kria couldn't analyze this file. Try again."
                         )
-                        asset.error_retryable = failure_code != "analysis_unreadable"
+                        asset.error_retryable = failure_code not in {
+                            "analysis_unreadable",
+                            "provider_outcome_unknown",
+                        }
             else:
                 if refresh and analysis is None:
                     # Refresh produced no better data (keyless / Gemini down):

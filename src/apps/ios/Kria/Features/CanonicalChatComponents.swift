@@ -594,6 +594,9 @@ private struct DirectionRow: View {
 
 struct RenderingStage: View {
     var isPreparing = false
+    var preparationMessage: String? = nil
+    var preparationCompleted: Int = 0
+    var preparationTotal: Int = 0
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             AssistantHeading(
@@ -606,7 +609,7 @@ struct RenderingStage: View {
                     icon: nil,
                     isActive: true,
                     title: isPreparing ? "Preparing your footage and edit" : "Rendering final video",
-                    detail: "Timing varies with footage length"
+                    detail: preparationDetail
                 )
             }
             .padding(16)
@@ -631,6 +634,13 @@ struct RenderingStage: View {
             .background(KriaColor.sage)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
+    }
+
+    private var preparationDetail: String {
+        if isPreparing, preparationTotal > 0 {
+            return "\(preparationMessage ?? "Preparing your clips…") · \(preparationCompleted) of \(preparationTotal) ready"
+        }
+        return preparationMessage ?? "Timing varies with footage length"
     }
 }
 
@@ -833,16 +843,21 @@ private struct QuestionOptionButton: View {
 }
 
 struct FailedStage: View {
-    let retry: () -> Void
+    var title = "This cut needs another pass"
+    var bodyText = "Your direction and footage are safe. Refresh the project or tell me what you want to change."
+    var retryLabel = "Refresh project"
+    var retry: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             AssistantHeading(
-                title: "This cut needs another pass",
-                bodyText: "Your direction and footage are safe. Refresh the project or tell me what you want to change."
+                title: title,
+                bodyText: bodyText
             )
-            Button("Refresh project", action: retry)
-                .buttonStyle(CanonicalPrimaryButtonStyle())
+            if let retry {
+                Button(retryLabel, action: retry)
+                    .buttonStyle(CanonicalPrimaryButtonStyle())
+            }
         }
     }
 }

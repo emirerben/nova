@@ -1842,8 +1842,11 @@ def _creator_agent_projection(session: CreatorAgentSession | None) -> dict[str, 
 
     if session is None:
         return None
+    from app.services.creator_preparation import public_preparation
+
     plan = session.active_plan if isinstance(session.active_plan, dict) else {}
     return {
+        **({"preparation": public_preparation(session)} if public_preparation(session) else {}),
         "status": session.status,
         "revision": session.revision,
         "summary": plan.get("summary"),
@@ -2294,7 +2297,10 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
         return
     projection = dict(thread.state or {})
     active_plan = session.active_plan if isinstance(session.active_plan, dict) else {}
+    from app.services.creator_preparation import public_preparation
+
     projection["creator_agent"] = {
+        **({"preparation": public_preparation(session)} if public_preparation(session) else {}),
         "status": session.status,
         "revision": session.revision,
         "summary": active_plan.get("summary"),

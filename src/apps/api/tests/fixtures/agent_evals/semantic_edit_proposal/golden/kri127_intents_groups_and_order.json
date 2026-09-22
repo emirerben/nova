@@ -1,0 +1,225 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.12",
+  "input": {
+    "idea": "A day out with friends",
+    "theme": "Park then pub",
+    "direction": "guided_story",
+    "goal": "Group the footage the way the creator described it",
+    "creator_request": "Group the pub videos together and call that chapter 'post match pub', order the park clips where nobody is playing first, make sure the part where I talk to the camera is included, and label each sport being played.",
+    "pace": "balanced",
+    "target_duration_s": 25,
+    "clip_intents": [
+      {
+        "intent_id": "i-park-first",
+        "op": "order",
+        "attribute": "park clips where nobody is playing",
+        "position": "first",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "clip_park",
+            "evidence": "empty park path, no players or equipment visible",
+            "confidence": 0.82,
+            "grounding": "record_span"
+          }
+        ]
+      },
+      {
+        "intent_id": "i-pub-group",
+        "op": "group",
+        "attribute": "pub videos",
+        "creator_text": "post match pub",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "clip_pub",
+            "evidence": "group raising glasses in a neighborhood pub",
+            "confidence": 0.78,
+            "grounding": "record_span"
+          }
+        ]
+      },
+      {
+        "intent_id": "i-speech-include",
+        "op": "include",
+        "attribute": "where I talk to the camera",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "clip_speech",
+            "evidence": "speaks directly to the camera",
+            "confidence": 0.75,
+            "grounding": "record_span"
+          }
+        ]
+      },
+      {
+        "intent_id": "i-sport-label",
+        "op": "label",
+        "attribute": "sport being played",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "clip_soccer",
+            "value": "Soccer",
+            "evidence": "soccer ball and goal visible",
+            "confidence": 0.85,
+            "grounding": "vision_verified"
+          },
+          {
+            "media_id": "clip_volleyball",
+            "value": "Volleyball",
+            "evidence": "volleyball net and players visible",
+            "confidence": 0.85,
+            "grounding": "vision_verified"
+          }
+        ]
+      }
+    ],
+    "media": [
+      {
+        "media_id": "clip_park",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "a quiet park path",
+        "setting": "a city park",
+        "activity": "walking outdoors"
+      },
+      {
+        "media_id": "clip_soccer",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "a soccer match",
+        "setting": "a sports field",
+        "activity": "playing soccer"
+      },
+      {
+        "media_id": "clip_volleyball",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "a volleyball rally",
+        "setting": "a sports field",
+        "activity": "playing volleyball"
+      },
+      {
+        "media_id": "clip_speech",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "a person talking to the camera",
+        "setting": "a park bench",
+        "activity": "talking to the camera",
+        "speaks_to_camera": true,
+        "transcript": "hey everyone, quick update"
+      },
+      {
+        "media_id": "clip_pub",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "a group raising glasses",
+        "setting": "a neighborhood pub",
+        "activity": "celebrating with drinks"
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"Park then pub\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"Park\", \"thought\": \"\", \"role\": \"hook\", \"weight\": 0.2, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip_park\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-2\", \"topic\": \"Soccer\", \"thought\": \"\", \"role\": \"build\", \"weight\": 0.2, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip_soccer\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-3\", \"topic\": \"Volleyball\", \"thought\": \"\", \"role\": \"build\", \"weight\": 0.2, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip_volleyball\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-4\", \"topic\": \"Talking\", \"thought\": \"\", \"role\": \"build\", \"weight\": 0.2, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip_speech\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-5\", \"topic\": \"Pub\", \"thought\": \"post match pub\", \"role\": \"payoff\", \"weight\": 0.2, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip_pub\", \"candidate_index\": null, \"weight\": 1.0}]}], \"montage_audio\": null, \"text_bindings\": [], \"repairs\": []}",
+  "output": {
+    "schema_version": 1,
+    "title": "Park then pub",
+    "chapters": [
+      {
+        "chapter_id": "chapter-1",
+        "topic": "Park",
+        "thought": "",
+        "role": "hook",
+        "weight": 0.2,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip_park",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-2",
+        "topic": "Soccer",
+        "thought": "",
+        "role": "build",
+        "weight": 0.2,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip_soccer",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-3",
+        "topic": "Volleyball",
+        "thought": "",
+        "role": "build",
+        "weight": 0.2,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip_volleyball",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-4",
+        "topic": "Talking",
+        "thought": "",
+        "role": "build",
+        "weight": 0.2,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip_speech",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-5",
+        "topic": "Pub",
+        "thought": "post match pub",
+        "role": "payoff",
+        "weight": 0.2,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip_pub",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      }
+    ],
+    "montage_audio": null,
+    "text_bindings": [],
+    "repairs": []
+  },
+  "meta": {
+    "source": "legacy_fixture_semantic_projection",
+    "expected_topics": [
+      "park",
+      "soccer",
+      "volleyball",
+      "pub"
+    ],
+    "contract": "KRI-127 Lane P: the chat turn already resolved 'the pub videos' (group, creator_text='post match pub'), 'park clips where nobody is playing' (order first), 'where I talk to the camera' (include), and per-clip sport labels into clip_intents. The planner must honor group/order/include as binding constraints -- app.agents.edit_proposal._validate_clip_intents structurally enforces this in parse() -- and must NOT write the label values into beat thoughts or split them into one beat per clip (labels are rendered by another lane)."
+  }
+}

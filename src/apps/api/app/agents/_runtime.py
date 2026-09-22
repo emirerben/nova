@@ -96,6 +96,24 @@ class TerminalError(AgentError):
     """Exhausted retries and fallbacks. Caller decides graceful degradation."""
 
 
+class ProviderQuotaExceededError(TerminalError):
+    """Provider explicitly denied a call because of quota or billing limits."""
+
+    SAFE_MESSAGE = "provider quota exceeded"
+
+    def __init__(
+        self,
+        *,
+        provider: str = "unknown",
+        reason: str = "quota_exceeded",
+        status_code: int | None = None,
+    ) -> None:
+        self.provider = provider
+        self.reason = reason
+        self.status_code = status_code
+        super().__init__(self.SAFE_MESSAGE)
+
+
 class ProviderOutcomeUnknownError(TerminalError):
     """Provider work may still be running; retrying could double-charge."""
 
@@ -190,6 +208,8 @@ class RunContext:
     """Per-call binding. Threaded into structlog events for cross-agent correlation."""
 
     job_id: str | None = None
+    # Durable owner for pre-render proposal planning, when no Job exists yet.
+    plan_item_id: str | None = None
     creator_agent_session_id: str | None = None
     request_id: str | None = None
     # True only for a client-minted intent token. The reservation key then
@@ -509,7 +529,11 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 # (Refusal/Schema/Transient) still emits an `agent_run` event
                 # so the observability layer never silently drops a failure.
                 self._log_outcome(
-                    outcome="terminal_unknown",
+                    outcome=(
+                        "terminal_provider_quota"
+                        if isinstance(exc, ProviderQuotaExceededError)
+                        else "terminal_unknown"
+                    ),
                     model=stats.model_used or model,
                     stats=stats,
                     fallback_used=fallback_used,
@@ -518,6 +542,15 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     error=str(exc),
                     input_dict=input_dump,
                 )
+                if isinstance(exc, ProviderQuotaExceededError):
+                    log.warning(
+                        "agent_provider_denied",
+                        agent=self.spec.name,
+                        provider=exc.provider,
+                        reason=exc.reason,
+                        status_code=exc.status_code,
+                        creator_agent_session_id=ctx.creator_agent_session_id,
+                    )
                 # Control-plane exceptions have deliberately fixed,
                 # non-sensitive messages and are part of the HTTP contract.
                 # Rewrapping them would erase 429 budget responses and the
@@ -526,6 +559,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     exc,
                     (
                         AiBudgetExceededError,
+                        ProviderQuotaExceededError,
                         ProviderOutcomeUnknownError,
                         CostControlUnavailableError,
                     ),
@@ -938,6 +972,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
             "cost_usd": round(cost_usd, 6),
             "latency_ms": latency_ms,
             "job_id": ctx.job_id,
+            "plan_item_id": ctx.plan_item_id,
             "creator_agent_session_id": ctx.creator_agent_session_id,
             "segment_idx": ctx.segment_idx,
             "request_id": ctx.request_id,
@@ -956,8 +991,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
         log.info("agent_run", **payload)
 
         # Persist one row to the agent_run table for the admin job-debug
-        # view. Skipped silently when ctx.job_id is missing or not a UUID
-        # (track-level analysis, eval harness). Errors are swallowed inside
+        # view. Skipped silently when no valid owner is supplied (eval
+        # harness). Errors are swallowed inside
         # persist_agent_run — a DB hiccup never breaks an in-flight job.
         # Caller can opt out via ctx.extra["skip_agent_run_persist"]=True
         # (eval harness uses this to keep test runs out of prod tables).
@@ -966,6 +1001,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
 
             persist_agent_run(
                 job_id=ctx.job_id,
+                plan_item_id=ctx.plan_item_id,
                 creator_agent_session_id=ctx.creator_agent_session_id,
                 segment_idx=ctx.segment_idx,
                 agent_name=self.spec.name,

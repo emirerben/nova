@@ -29,6 +29,7 @@ from pydantic import (
 
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
 from app.schemas.clip_intents import MAX_CLIP_INTENTS, ResolvedClipIntent
+from app.schemas.edit_frame_schedule import EditFrameSchedule
 
 # Keep existing integer JSON stable for approval hashes while accepting fractions.
 MAX_PROPOSAL_DURATION_S = 120
@@ -780,6 +781,11 @@ class ProposalGuidance(BaseModel):
 
 
 class EditProposalSnapshot(BaseModel):
+    # KRI-133: approved integer-frame timing. Absent on legacy snapshots so
+    # their serialized approval payloads and compiler replay stay unchanged.
+    frame_schedule: EditFrameSchedule | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
     pace: ProposalPace = "balanced"
@@ -1021,7 +1027,12 @@ class EditProposalSnapshot(BaseModel):
                 if ref.duration_s is not None:
                     # A short video is never left out for being short: a cut may
                     # be shorter than the floor when it shows the whole clip.
-                    minimum_video_s = min(minimum_video_s, float(ref.duration_s))
+                    source_duration_s = float(ref.duration_s)
+                    if self.frame_schedule is not None:
+                        # Scheduled edits use only complete source frames; e.g.
+                        # a 0.21s clip contains six safe frames at 30fps.
+                        source_duration_s = math.floor((source_duration_s + 1e-6) * 30) / 30
+                    minimum_video_s = min(minimum_video_s, source_duration_s)
                 if cut.output_duration_s < minimum_video_s - 0.001:
                     raise ValueError(
                         f"fast montage video cuts must be at least {minimum_video_s:g}s"
@@ -1429,6 +1440,8 @@ class EditProposal(BaseModel):
     # which redacts this field, and routes/admin_plan_items.py, which
     # surfaces it in the debug endpoint.
     planner_fallback: ProposalPlannerFallback | None = None
+    # Private pre-render diagnostics, separate from the immutable approval.
+    planning_diagnostics: dict | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class MediaRefResponse(MediaRef):
@@ -1462,6 +1475,12 @@ class EditProposalResponse(EditProposal):
     # fallback-drafted proposal never fails response validation for an
     # ordinary user -- app/routes/plan_items.py is outside this change.
     planner_fallback: None = None
+    planning_diagnostics: None = Field(default=None, exclude=True)
+
+    @field_validator("planning_diagnostics", mode="before")
+    @classmethod
+    def _redact_planning_diagnostics(cls, _value: object) -> None:
+        return None
 
     @field_validator("planner_fallback", mode="before")
     @classmethod

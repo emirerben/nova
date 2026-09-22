@@ -22,7 +22,14 @@ from typing import Any
 
 import structlog
 
-from app.agents._runtime import RunContext
+from app.agents._provider_errors import classify_provider_error
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    CostControlUnavailableError,
+    ProviderOutcomeUnknownError,
+    ProviderQuotaExceededError,
+    RunContext,
+)
 from app.config import settings
 
 log = structlog.get_logger()
@@ -289,6 +296,8 @@ def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
         """503 ServerError or 429 rate-limit ClientError."""
         if not isinstance(exc, genai_errors.APIError):
             return False
+        if classify_provider_error(exc) is not None:
+            return False
         if isinstance(exc, genai_errors.ServerError):
             return True
         code = getattr(exc, "code", None)
@@ -308,6 +317,9 @@ def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
                 )
                 break
             except genai_errors.APIError as exc:
+                quota_error = classify_provider_error(exc)
+                if quota_error is not None:
+                    raise quota_error from exc
                 if not _is_transient_api_error(exc):
                     raise  # permanent 4xx → fail immediately
                 if attempt >= max_attempts - 1:
@@ -339,6 +351,9 @@ def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
             file_ref = client.files.get(name=file_ref.name)
             poll_attempt = 0  # reset on success
         except genai_errors.APIError as exc:
+            quota_error = classify_provider_error(exc)
+            if quota_error is not None:
+                raise quota_error from exc
             if not _is_transient_api_error(exc):
                 raise  # permanent error during polling — bail
             backoff_s = backoff_schedule[min(poll_attempt, len(backoff_schedule) - 1)]
@@ -473,6 +488,16 @@ def analyze_clip(
     try:
         out = agent.run(inp, ctx=run_context or _cost_context(job_id))
     except TerminalError as exc:
+        if isinstance(
+            exc,
+            (
+                AiBudgetExceededError,
+                CostControlUnavailableError,
+                ProviderOutcomeUnknownError,
+                ProviderQuotaExceededError,
+            ),
+        ):
+            raise
         # Translate runtime taxonomy back to legacy exception classes.
         from app.agents._runtime import RefusalError, SchemaError  # noqa: PLC0415
 
@@ -722,6 +747,8 @@ def analyze_template(
     try:
         out = agent.run(inp, ctx=_cost_context(job_id))
     except TerminalError as exc:
+        if isinstance(exc, ProviderQuotaExceededError):
+            raise
         cause = exc.__cause__
         msg = str(exc)
         if isinstance(cause, (RefusalError, SchemaError)) or "refusal" in msg or "schema" in msg:
@@ -824,6 +851,8 @@ def _extract_creative_direction(
             ctx=_cost_context(job_id),
         )
     except TerminalError as exc:
+        if isinstance(exc, ProviderQuotaExceededError):
+            raise
         log.warning("template_creative_direction_failed", error=str(exc))
         return ""
     log.info("template_creative_direction", length=len(out.text), preview=out.text[:200])
@@ -1006,6 +1035,8 @@ def transcribe(file_ref: Any, *, job_id: str | None = None) -> Transcript:  # no
             low_confidence=out.low_confidence,
         )
     except TerminalError as exc:
+        if isinstance(exc, ProviderQuotaExceededError):
+            raise
         log.warning("gemini_transcribe_failed_falling_back", error=str(exc))
 
     clip_path = getattr(file_ref, "_local_path", None)
@@ -1066,6 +1097,8 @@ def analyze_audio_template(
     try:
         out = AudioTemplateAgent(default_client()).run(inp, ctx=_cost_context(job_id))
     except TerminalError as exc:
+        if isinstance(exc, ProviderQuotaExceededError):
+            raise
         cause = exc.__cause__
         msg = str(exc)
         if isinstance(cause, (RefusalError, SchemaError)) or "refusal" in msg or "schema" in msg:

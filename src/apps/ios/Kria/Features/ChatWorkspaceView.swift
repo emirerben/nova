@@ -536,7 +536,9 @@ private struct CreationWorkspaceView: View {
             status: currentProject.status,
             awaitsNewPlanConfirmation: awaitsNewPlanConfirmation,
             isChoosingFormat: isChoosingFormat,
-            hasFormat: selectedFormat != nil
+            hasFormat: selectedFormat != nil,
+            preparationIsActive: fullThread?.preparationIsActive == true,
+            preparationFailed: fullThread?.preparationFailed == true
         )
     }
 
@@ -713,7 +715,12 @@ private struct CreationWorkspaceView: View {
                     await refreshDeviceRender(retry: true)
                 }
             } else {
-                RenderingStage(isPreparing: currentProject.activeJobID == nil).id("rendering")
+                RenderingStage(
+                    isPreparing: currentProject.activeJobID == nil,
+                    preparationMessage: fullThread?.preparationMessage,
+                    preparationCompleted: fullThread?.preparationCompleted ?? 0,
+                    preparationTotal: fullThread?.preparationTotal ?? 0
+                ).id("rendering")
             }
         case .ready:
             ReadyStage(
@@ -746,7 +753,16 @@ private struct CreationWorkspaceView: View {
                     action: performAction
                 )
             } else {
-                FailedStage(retry: { Task { await send(message: "Try generating this edit again") } }).id("failed")
+                if fullThread?.preparationFailed == true {
+                    FailedStage(
+                        title: "Clip preparation needs another try",
+                        bodyText: fullThread?.preparationMessage ?? fullThread?.lastAssistantErrorMessage ?? "Kria couldn’t prepare your clips. Your direction and footage are still saved.",
+                        retryLabel: "Retry preparing clips",
+                        retry: fullThread?.preparationRetryable == true ? { Task { await send(message: "Retry preparing my clips.") } } : nil
+                    ).id("failed-preparation")
+                } else {
+                    FailedStage(retry: { Task { await send(message: "Try generating this edit again") } }).id("failed")
+                }
             }
         }
     }
@@ -957,7 +973,7 @@ private struct CreationWorkspaceView: View {
             do {
                 let changed = try await refreshDelta()
                 await refreshDeviceRender()
-                delay = changed || isSending || isActing || currentProject.status == .rendering
+                delay = changed || isSending || isActing || currentProject.status == .rendering || fullThread?.preparationIsActive == true
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
             } catch is CancellationError {
                 return
@@ -1178,8 +1194,12 @@ enum WorkspaceStage {
         status: ProjectStatus,
         awaitsNewPlanConfirmation: Bool,
         isChoosingFormat: Bool,
-        hasFormat: Bool
+        hasFormat: Bool,
+        preparationIsActive: Bool = false,
+        preparationFailed: Bool = false
     ) -> WorkspaceStage {
+        if preparationIsActive { return .rendering }
+        if preparationFailed { return .failed }
         switch status {
         case .rendering:
             // A render already in flight wins even over a freshly proposed

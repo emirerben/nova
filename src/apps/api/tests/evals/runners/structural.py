@@ -2902,6 +2902,10 @@ def run_structural(
                 if any(claim in lowered for claim in unsupported_personal_claims):
                     failures.append(f"beat {index}: invents an unsupported personal experience")
         return failures
+    if agent_name == "nova.plan.semantic_edit_proposal":
+        known = {media.media_id for media in input.media}
+        used = {source.media_id for chapter in output.chapters for source in chapter.sources}
+        return [] if used <= known else ["semantic plan references unknown media"]
     if agent_name == "nova.plan.edit_guide":
         failures: list[str] = []
         if not output.reply.strip():
