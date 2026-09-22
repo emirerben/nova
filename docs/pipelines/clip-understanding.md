@@ -71,7 +71,9 @@ Flow (flag on):
 1. **Chat.** `MainCreatorAgent` emits `strategy.clip_intents`
    (`app/schemas/clip_intents.py::ClipIntent`). It never authors per-clip answers
    or label text; `creator_text` only carries the creator's exact words. The
-   sport regex in `_apply_explicit_render_intent` stops forcing `context_label`.
+   sport regex in `_apply_explicit_render_intent` stops forcing `context_label`
+   only for a generic `op="label"` intent; unrelated caption, group, order, and
+   include intents preserve the explicit, server-grounded sport label lane.
    `resolved_clip_intents` is server-owned: every entry point that accepts a
    model-authored strategy clears it (creator route, Kria `apply_strategy`), and
    both fields are hidden from derived JSON schemas (`SkipJsonSchema`) so the
