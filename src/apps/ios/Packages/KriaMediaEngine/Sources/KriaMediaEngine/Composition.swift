@@ -106,10 +106,29 @@ struct PreviewAudioBinding: Sendable {
                     continue
                 }
                 let end = clip.timelineStart + clip.duration
-                let fadeIn = clip.transition?.duration ?? 0
+                var fadeIn = clip.transition?.duration ?? 0
                 // timeline_start is the actual insertion time; never subtract a transition here.
                 if fadeIn > 0 {
-                    guard let previousEnd, previousEnd + 0.000_001 >= clip.timelineStart + fadeIn else { throw RecipeError.invalidTimeline }
+                    // A recipe built server-side (phone_guided_plan.py) already
+                    // shortens a fade that a device-measurement refit left too
+                    // little overlap for (KRI-163); a recipe this compositor
+                    // builds directly -- e.g. the native editor's own local
+                    // preview/export, which has no such refit awareness of its
+                    // own -- can still arrive here with an authored duration
+                    // the previous clip's real window doesn't fully cover.
+                    // Shorten the fade to whatever overlap actually exists
+                    // (floored to a whole frame) instead of failing the whole
+                    // composition over a mismatch of a few milliseconds; only
+                    // a genuine hole -- the previous clip doesn't reach where
+                    // this one starts at all -- still fails closed.
+                    guard let previousEnd else { throw RecipeError.invalidTimeline }
+                    let available = previousEnd - clip.timelineStart
+                    guard available > 0.000_001 else { throw RecipeError.invalidTimeline }
+                    if available + 0.000_001 < fadeIn {
+                        let frame = 1 / recipe.frameRate
+                        let fitted = (available / frame).rounded(.down) * frame
+                        fadeIn = fitted >= frame ? fitted : 0
+                    }
                 }
                 previousEnd = end
                 let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil)
