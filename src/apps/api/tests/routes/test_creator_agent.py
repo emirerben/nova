@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import MissingGreenlet
 from starlette.requests import Request
 
-from app.agents._runtime import TerminalError
+from app.agents._runtime import ProviderQuotaExceededError, TerminalError
 from app.agents._schemas.creator_agent import (
     AskUser,
     CreativeStrategy,
@@ -2772,7 +2772,8 @@ async def test_route_fallback_preserves_pinned_voiceover_and_all_media_draft(
         "to_thread",
         AsyncMock(side_effect=TerminalError("model truncated output")),
     )
-    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    append_event = AsyncMock()
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
     monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
 
     result = await creator_routes._run_planning_turn(
@@ -2787,18 +2788,266 @@ async def test_route_fallback_preserves_pinned_voiceover_and_all_media_draft(
     )
 
     assert result is response
+    assert session.status == "briefing"
+    assert session.active_plan is None
+    assert session.last_error == {"code": "provider_unavailable"}
+    failure = append_event.await_args.kwargs
+    assert failure["event_type"] == "assistant_error"
+    assert failure["payload"] == {
+        "message": (
+            "Clip analysis is unavailable right now. Your request is saved; try again later."
+        ),
+        "code": "provider_unavailable",
+    }
+
+
+@pytest.mark.asyncio
+async def test_route_provider_quota_saves_request_restores_call_count_and_retry_clears_error(
+    monkeypatch,
+) -> None:
+    manifest = _manifest(monkeypatch)
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=None,
+    )
+    response = SimpleNamespace(status="briefing")
+    append_event = AsyncMock()
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            direction="fast_montage",
+            edit_format="montage",
+            render_program="native",
+            selected_media_ids=["clip-1"],
+            target_duration_s=4,
+        ),
+        summary="A fast montage.",
+    )
+    to_thread = AsyncMock(
+        side_effect=[
+            ProviderQuotaExceededError(reason="monthly_spend_limit"),
+            SimpleNamespace(action=action),
+        ]
+    )
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(creator_routes.asyncio, "to_thread", to_thread)
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    first = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Use the first clip as a fast montage.",
+    )
+
+    assert first is response
+    assert session.status == "briefing"
+    assert session.active_plan is None
+    assert session.agent_call_count == 0
+    assert session.last_error == {"code": "provider_quota_exceeded"}
+    assert append_event.await_args.kwargs["event_type"] == "assistant_error"
+    assert append_event.await_args.kwargs["payload"] == {
+        "message": (
+            "Clip analysis is unavailable right now. Your request is saved; try again later."
+        ),
+        "code": "provider_quota_exceeded",
+    }
+
+    session.status = "planning"
+    append_event.reset_mock()
+    second = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Use the first clip as a fast montage.",
+    )
+
+    assert second is response
     assert session.status == "awaiting_confirmation"
-    assert "completed" not in session.active_plan["summary"].casefold()
-    strategy = session.active_plan["edit_plan"]["strategy"]
-    assert strategy["audio_strategy"] == "voiceover"
-    assert strategy["execution_contract"] == "guided_voiceover_v1"
-    assert strategy["media_scope"] == "all"
-    assert strategy["target_duration_s"] == 44.688
-    assert strategy.get("opening_title") is None
-    assert strategy.get("intro_hook") is None
-    assert strategy["story_structure"] == []
-    assert len(strategy["selected_media_ids"]) == 39
-    assert strategy["mixed_media_timing"]["image_hold_s"] == pytest.approx(0.3)
+    assert session.active_plan is not None
+    assert session.last_error is None
+    assert session.agent_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_planning_turn_flag_off_does_not_admit_creator_preparation(monkeypatch) -> None:
+    manifest = _manifest(monkeypatch)
+    monkeypatch.setattr(settings, "creator_clip_preparation_enabled", False)
+    preparation = AsyncMock(side_effect=AssertionError("preparation must stay disabled"))
+    monkeypatch.setattr("app.services.creator_preparation.maybe_prepare", preparation)
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=None,
+    )
+    response = SimpleNamespace(status="awaiting_confirmation")
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            direction="fast_montage",
+            edit_format="montage",
+            render_program="native",
+            media_scope="all",
+            target_duration_s=8,
+        ),
+        summary="A fast montage.",
+    )
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(return_value=SimpleNamespace(action=action)),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Make a fast montage.",
+    )
+
+    assert result is response
+    preparation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_preparation_retry_controller_restores_saved_request_and_keeps_receipt(
+    monkeypatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace()
+    attempt_id = uuid.uuid4()
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item.id,
+        status="briefing",
+        revision=3,
+        render_attempts=0,
+        active_plan={"stale": "plan"},
+        preparation={"attempt_id": str(attempt_id), "status": "failed"},
+        last_error={"code": "analysis_unavailable"},
+    )
+    attempt = SimpleNamespace(
+        id=attempt_id,
+        session_id=session.id,
+        creator_id=user.id,
+        inputs={
+            "user_message": "Use the beach clips in a calm sequence.",
+            "previous_active_plan": {"direction": "guided_story"},
+        },
+    )
+    db = AsyncMock()
+    duplicate = MagicMock()
+    duplicate.scalar_one_or_none.return_value = None
+    db.execute.return_value = duplicate
+    db.get.return_value = attempt
+    append_event = AsyncMock()
+    planning = AsyncMock(return_value=SimpleNamespace(status="awaiting_confirmation"))
+    monkeypatch.setattr(creator_routes, "rollout_eligible", lambda _user_id: True)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_run_planning_turn", planning)
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "client": ("test", 1),
+            "scheme": "http",
+            "server": ("test", 80),
+            "query_string": b"",
+        }
+    )
+    retry_message = "Retry preparing my clips."
+    result = await creator_routes.creator_session_turn_controller(
+        request,
+        str(item.id),
+        TurnBody(
+            session_id=session.id,
+            expected_revision=3,
+            message=retry_message,
+            client_event_id="retry-preparation-1",
+        ),
+        user,
+        db,
+    )
+
+    assert result.status == "awaiting_confirmation"
+    assert session.status == "planning"
+    assert session.preparation is None
+    append_event.assert_awaited_once()
+    event = append_event.await_args.kwargs
+    assert event["event_type"] == "user_message"
+    assert event["payload"] == {"message": retry_message}
+    planning.assert_awaited_once()
+    assert planning.await_args.kwargs["user_message"] == attempt.inputs["user_message"]
+    assert (
+        planning.await_args.kwargs["previous_active_plan"] == attempt.inputs["previous_active_plan"]
+    )
 
 
 def test_main_creator_preserves_photo_runs_and_ordered_sport_context(monkeypatch) -> None:
@@ -6454,7 +6703,8 @@ async def test_route_schema_failure_preserves_madrid_text_and_source_capacity(
         "to_thread",
         AsyncMock(side_effect=TerminalError("model truncated output")),
     )
-    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    append_event = AsyncMock()
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
     monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
 
     message = "Add a text saying Summer in Madrid. Make it pastel yellow"
@@ -6507,6 +6757,19 @@ async def test_route_schema_failure_preserves_madrid_text_and_source_capacity(
     )
 
     assert result is response
+    if not semantic_plan:
+        assert session.status == "briefing"
+        assert session.active_plan is None
+        assert session.last_error == {"code": "provider_unavailable"}
+        failure = append_event.await_args.kwargs
+        assert failure["event_type"] == "assistant_error"
+        assert failure["payload"] == {
+            "message": (
+                "Clip analysis is unavailable right now. Your request is saved; try again later."
+            ),
+            "code": "provider_unavailable",
+        }
+        return
     assert session.status == "awaiting_confirmation"
     assert "completed" not in session.active_plan["summary"].casefold()
     strategy = session.active_plan["edit_plan"]["strategy"]

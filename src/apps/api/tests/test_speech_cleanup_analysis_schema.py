@@ -182,10 +182,10 @@ def test_plan_item_analysis_relationship_is_cascading_and_bidirectional() -> Non
     }
 
 
-def test_0107_is_the_single_alembic_head() -> None:
+def test_0108_is_the_single_alembic_head() -> None:
     script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script_dir.get_heads() == ["0107"]
-    assert script_dir.get_revision("0107").down_revision == "0106"
+    assert script_dir.get_heads() == ["0108"]
+    assert script_dir.get_revision("0108").down_revision == "0107"
     assert script_dir.get_revision("0106").down_revision == "0105"
     assert script_dir.get_revision("0105").down_revision == "0104"
     assert script_dir.get_revision("0094").down_revision == "0093"

@@ -1189,6 +1189,55 @@ describe("ChatCreationWorkspace", () => {
     expect(screen.getByRole("button", { name: "Edit direction and try again" })).toBeInTheDocument();
   });
 
+  it("shows server preparation progress and keeps polling before a Job exists", async () => {
+    const preparing = {
+      ...baseThread,
+      state: { format: "montage", edit_format: "montage", media: [{ media_id: "m1", kind: "video" }], media_count: 1 },
+      creator_agent: { status: "planning", preparation: { status: "analyzing", completed: 1, total: 3, message: "Reading your clips…", error_code: null, retryable: true } },
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([preparing]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(preparing);
+    render(<ChatCreationWorkspace />);
+
+    expect((await screen.findAllByText("Reading your clips…")).length).toBeGreaterThan(0);
+    expect(screen.getByText("1 of 3 ready")).toBeInTheDocument();
+    await waitFor(() => expect(refreshCreationThread).toHaveBeenCalledWith("thread-1", expect.any(AbortSignal)));
+  });
+
+  it("offers the preparation retry through the normal chat message", async () => {
+    const failed = {
+      ...baseThread,
+      state: { format: "montage", edit_format: "montage", media: [{ media_id: "m1", kind: "video" }], media_count: 1 },
+      creator_agent: { status: "briefing", preparation: { status: "failed", completed: 1, total: 3, message: "Couldn’t analyze one clip.", error_code: "clip_analysis_failed", retryable: true } },
+      events: [{ id: "error", sequence: 1, revision: 1, role: "assistant" as const, event_type: "assistant_error", content: null, payload: { code: "clip_analysis_failed", message: "Couldn’t analyze one clip." }, created_at: "2026-01-01T00:00:00Z" }],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([failed]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(failed);
+    jest.mocked(sendCreationMessage).mockResolvedValue(failed);
+    render(<ChatCreationWorkspace />);
+
+    const retry = await screen.findByRole("button", { name: "Retry preparing clips" });
+    fireEvent.click(retry);
+    await waitFor(() => expect(sendCreationMessage).toHaveBeenCalledWith(failed, "Retry preparing my clips."));
+  });
+
+  it("does not offer preparation retry for a non-retryable service failure", async () => {
+    const failed = {
+      ...baseThread,
+      state: { format: "montage", edit_format: "montage", media: [{ media_id: "m1", kind: "video" }], media_count: 1 },
+      creator_agent: { status: "briefing", preparation: { status: "failed", completed: 1, total: 3, message: "Kria couldn’t finish preparing these clips. Your request is saved; choose the missing media again.", error_code: "missing_media", retryable: false } },
+      events: [{ id: "error", sequence: 1, revision: 1, role: "assistant" as const, event_type: "assistant_error", content: null, payload: { code: "missing_media", message: "Kria couldn’t finish preparing these clips. Your request is saved; choose the missing media again." }, created_at: "2026-01-01T00:00:00Z" }],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([failed]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(failed);
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Kria couldn’t finish preparing these clips. Your request is saved; choose the missing media again.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry preparing clips" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit direction and try again" })).toBeInTheDocument();
+    expect(screen.queryByText("Let’s refine the direction")).not.toBeInTheDocument();
+  });
+
   it("surfaces creator planning failures without a Job and restores the last direction", async () => {
     const direction = "Match the content with the videos, add intro texts, and show the scores from my voiceover.";
     const failed = {
