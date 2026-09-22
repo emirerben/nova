@@ -3,7 +3,12 @@
 KRI-151 adds an upfront semantic preparation step before the first footage-based
 creator plan. When enabled, the API records the creator's request, analyzes the
 source clips, stores generation-pinned semantic analysis, and only then resumes
-planning. The preparation task does not approve or render an edit by itself.
+planning. Every footage-planning turn creates a preparation attempt and uses
+this background path, including turns where all clips are already ready. Those
+turns read background generation metadata and perform any residual semantic
+vision checks there; metadata checks do not trigger paid reanalysis, while
+residual semantic questions may still be paid.
+The preparation task does not approve or render an edit by itself.
 
 The feature is controlled by the backend flag:
 
@@ -16,17 +21,19 @@ the flag requires the rollout evidence below and an explicit operator decision.
 
 ## Durable execution model
 
-The first planning request that needs semantic analysis creates one
-`CreatorPlanningAttempt` for the source creator event. The database commit
-happens before the Celery task is published. The attempt is the durable outbox
-receipt; it is not a render authorization.
+Every footage-planning request creates one `CreatorPlanningAttempt` for the
+source creator event. The database commit
+happens before the Celery task is published, and the original planning inputs
+are stored on that receipt. The attempt is the durable outbox receipt; it is not
+a render authorization.
 
-The task claims an attempt with a lease and processes at most three clips in
-parallel. It checkpoints each completed analysis before continuing. A periodic
-reconciliation task republishes queued work and expired leases, so a broker
-publish failure or worker loss does not leave a committed preparation silently
-stranded. Delivery is at least once; the attempt status, lease token, source
-digest, and generation checks make re-entry safe.
+The task claims an attempt with an 1830-second lease, longer than the 1800-second
+hard task limit, and processes at most three clips in parallel. It checkpoints
+each completed analysis before continuing. A periodic reconciliation task
+republishes queued work and expired leases, so a broker publish failure or
+worker loss does not leave a committed preparation silently stranded. Delivery
+is at least once; the attempt status, lease token, source digest, and generation
+checks make re-entry safe.
 
 The task resumes the original planning inputs only after all required analysis
 is available. The resume path revalidates the attempt and its owning plan,
@@ -37,8 +44,11 @@ session, item, and sources before publishing any planning result.
 Preparation captures the source manifest and a digest of its media identities.
 For each source, the worker reads the current object generation and refuses to
 write an analysis if the registered generation changed. A cached semantic record
-is reused only when its generation and analysis freshness are valid; probe-only,
-stub, empty, or stale records are preparation misses.
+is reused only when its exact generation and analysis freshness are valid; the
+worker still reads those identities on an all-ready turn. Probe-only, stub,
+empty, or stale records are preparation misses and are reanalyzed in the
+background. Generation metadata checks do not consume paid analysis budget;
+residual semantic questions may still do so.
 
 Every claim and checkpoint verifies all of the following:
 
@@ -50,6 +60,13 @@ Every claim and checkpoint verifies all of the following:
 
 If any fence fails, the attempt is superseded or stopped. A late provider result
 must not overwrite a newer upload, session, plan, or preparation attempt.
+
+Background clip membership and caption work runs with at most four concurrent
+analyses, checkpoints completed batches, and is bounded by
+`min(intents, 6) * 50` units of work. Foreground-only intent resolution retains
+the cap `min(4, config)`. A terminal provider quota result or an unknown
+provider outcome halts later background batches for that turn; provider details
+remain private.
 
 ## Public progress and error contract
 
@@ -79,9 +96,10 @@ include provider payloads, private source text, storage paths, or credentials.
 2. Deploy the API and workers with `CREATOR_CLIP_PREPARATION_ENABLED=false`.
    Confirm task registration, reconciliation scheduling, disabled behavior, and
    the unchanged legacy planning path.
-3. Run the backend canary with the flag enabled for the approved internal
-   cohort. Verify durable attempt creation, lease recovery, publish recovery,
-   source-generation fencing, progress polling, and each public error category.
+3. Run an isolated staging canary with the flag enabled. There is no cohort
+   allowlist for this server-side flag. Verify durable attempt creation, lease
+   recovery, publish recovery, source-generation fencing, progress polling, and
+   each public error category before considering any production enablement.
 4. Verify the web client against both enabled and disabled responses. The web
    progress surface may show preparation status, but must remain compatible with
    older servers that omit `preparation`.
@@ -89,9 +107,9 @@ include provider payloads, private source text, storage paths, or credentials.
    optional preparation fields must decode missing values as an inactive
    preparation state, and progress polling must not require a new render or job
    payload.
-6. Expand the backend cohort only after the evidence ledger is complete. No
-   frontend or iOS production toggle is required for this feature; those clients
-   consume an additive progress projection.
+6. Consider production enablement only after the evidence ledger is complete.
+   No frontend or iOS production toggle is required for this feature; those
+   clients consume an additive progress projection.
 
 Do not enable the flag merely because the migration or unit tests pass. The
 acceptance evidence must use real source media and the deployed backend/worker
@@ -101,10 +119,11 @@ path.
 
 Set `CREATOR_CLIP_PREPARATION_ENABLED=false` and restart the API and workers.
 This stops new preparation admissions. Existing committed attempts are allowed
-to drain through their leases and reconciliation path; do not delete queued or
-running attempts during rollback. A completed preparation may still be read by
-the owning session, while new planning requests use the legacy path once the
-flag is disabled.
+to drain through their leases and reconciliation path; the API and workers
+release existing queued and running attempts through that path. Do not delete
+queued or running attempts during rollback. A completed preparation may still
+be read by the owning session, while new planning requests use the legacy path
+once the flag is disabled.
 
 Keep the additive migration and attempt rows in place. Do not downgrade the
 migration or reuse an old source generation to force a result through a stale
@@ -117,7 +136,9 @@ The following evidence is required before broad rollout and is intentionally
 pending until it is produced from the deployed implementation:
 
 - a real run with 19 native clips, showing durable progress from queued through
-  analysis and planning completion;
+  analysis and planning completion. This validation is currently blocked pending
+  explicit egress approval for a $2 cap; no acceptance or production-toggle
+  claim is made here;
 - a request with a different semantic instruction over the same 19 clips,
   showing that the semantic preparation is reused safely where generation and
   freshness match and that the planner resolves the changed instruction;
@@ -132,3 +153,11 @@ pending until it is produced from the deployed implementation:
 
 Until these checks are recorded, KRI-151 should be described as implemented
 behind a disabled flag with rollout evidence pending.
+
+## Latest verification status
+
+The latest release-candidate verification passed 768 backend tests, 12
+PostgreSQL checks, 176 web tests, TypeScript checking, and the pre-ship gate.
+The focused iOS verification now passes 47 tests after project regeneration.
+These checks do not replace the
+blocked 19-native-clip validation or authorize a production toggle.
