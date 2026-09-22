@@ -2416,6 +2416,108 @@
         "title": "EditorCommitSections",
         "type": "object"
       },
+      "EditorSourceOut": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "default": null,
+            "nullable": true,
+            "title": "Error",
+            "type": "string"
+          },
+          "import_id": {
+            "format": "uuid",
+            "title": "Import Id",
+            "type": "string"
+          },
+          "reason_code": {
+            "default": null,
+            "nullable": true,
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "source": {
+            "$ref": "#/components/schemas/GuidedEditorSource",
+            "default": null,
+            "nullable": true
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_index": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Index",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "preparing",
+              "ready",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "import_id",
+          "status",
+          "source_id"
+        ],
+        "title": "EditorSourceOut",
+        "type": "object"
+      },
+      "EditorSourceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "base_generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Base Generation",
+            "type": "string"
+          },
+          "client_import_id": {
+            "format": "uuid",
+            "title": "Client Import Id",
+            "type": "string"
+          },
+          "guided_revision_number": {
+            "minimum": 1,
+            "title": "Guided Revision Number",
+            "type": "integer"
+          },
+          "source_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_kind": {
+            "enum": [
+              "footage",
+              "visual"
+            ],
+            "title": "Source Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_import_id",
+          "base_generation",
+          "guided_revision_number",
+          "source_kind",
+          "source_id"
+        ],
+        "title": "EditorSourceRequest",
+        "type": "object"
+      },
       "EventOut": {
         "properties": {
           "content": {
@@ -2742,6 +2844,62 @@
           "to"
         ],
         "title": "GradientBackground",
+        "type": "object"
+      },
+      "GuidedEditorSource": {
+        "additionalProperties": false,
+        "properties": {
+          "duration_s": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "gcs_path": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Gcs Path",
+            "type": "string"
+          },
+          "generation": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Generation",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "video"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lane": {
+            "default": "clip",
+            "enum": [
+              "clip",
+              "asset"
+            ],
+            "title": "Lane",
+            "type": "string"
+          },
+          "media_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Media Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id",
+          "gcs_path",
+          "generation",
+          "kind"
+        ],
+        "title": "GuidedEditorSource",
         "type": "object"
       },
       "HandwritingContent": {
@@ -9071,6 +9229,137 @@
           }
         ]
       }
+    },
+    "/plan-items/{item_id}/variants/{variant_id}/editor-sources": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "variant_id",
+          "required": true,
+          "schema": {
+            "maxLength": 160,
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "admitPlanItemEditorSource",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditorSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditorSourceOut"
+                }
+              }
+            },
+            "description": "Previously completed import"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditorSourceOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/plan-items/{item_id}/variants/{variant_id}/editor-sources/{import_id}": {
+      "get": {
+        "operationId": "getPlanItemEditorSourceAdmission",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditorSourceOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "variant_id",
+          "required": true,
+          "schema": {
+            "maxLength": 160,
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "import_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
     }
   },
   "servers": [

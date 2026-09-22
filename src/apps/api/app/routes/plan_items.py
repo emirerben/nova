@@ -6399,6 +6399,33 @@ async def editor_commit_item(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"code": "guided_story_source_stale"},
             )
+        if locked_variant.get("render_destination") == "device":
+            from app.routes.editor_sources import validate_editor_sources
+            from app.routes.generative_jobs import _guided_v2_revision
+
+            revision = _guided_v2_revision(locked_job, locked_variant) or {}
+            sources = revision.get("sources") or []
+            if body.timeline_slots is None:
+                used_media_ids = {row["media_id"] for row in revision.get("segments") or []}
+            else:
+                used_media_ids = {
+                    sources[slot.clip_index]["media_id"]
+                    for slot in body.timeline_slots
+                    if not slot.removed and 0 <= slot.clip_index < len(sources)
+                }
+            blocks = (
+                [block.model_dump() for block in body.visual_blocks]
+                if body.visual_blocks is not None
+                else revision.get("visual_blocks") or []
+            )
+            used_media_ids.update(
+                str(row["asset_id"])
+                for row in blocks
+                if isinstance(row, dict) and row.get("asset_id")
+            )
+            await validate_editor_sources(
+                db, job=locked_job, variant=locked_variant, used_media_ids=used_media_ids
+            )
     if body.media_overlays is not None:
         await _require_verified_pool_paths(
             item_id=item_id,

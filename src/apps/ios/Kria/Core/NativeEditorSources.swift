@@ -74,6 +74,38 @@ struct NativeEditorSourcePool: Decodable, Sendable {
     }
 }
 
+/// The additive, device-editor source admission contract.  This deliberately
+/// lives beside the source-pool reader rather than the creation attachment
+/// APIs: an admitted source is private to one approved variant and must never
+/// mutate the creation thread or its approval.
+struct EditorSourceRegistrationTarget: Codable, Sendable, Equatable {
+    enum SourceKind: String, Codable, Sendable { case footage, visual }
+    let itemID: String
+    let variantID: String
+    let clientImportID: UUID
+    let baseGeneration: String
+    let guidedRevisionNumber: Int
+    let sourceKind: SourceKind
+}
+
+struct EditorSourceRegistrationResponse: Codable, Sendable, Equatable {
+    let importID: UUID
+    let status: String
+    let sourceID: String
+    let sourceIndex: Int?
+    let source: [String: JSONValue]?
+    let error: String?
+    let reasonCode: String?
+    let retryable: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case importID = "import_id", status, sourceID = "source_id", sourceIndex = "source_index"
+        case source, error, reasonCode = "reason_code", retryable
+    }
+
+    var isTerminal: Bool { status == "ready" || status == "failed" }
+}
+
 extension KriaAPI {
     func editorSourcePool(jobID: UUID, variantID: String) async throws -> NativeEditorSourcePool {
         try await request(path: "generative-jobs/\(jobID.uuidString)/variants/\(variantID)/timeline",

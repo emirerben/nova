@@ -2518,6 +2518,8 @@ def compile_guided_runtime_plan(
     canonical_plan: object,
     guided_snapshot: object,
     revision: object,
+    *,
+    admitted_sources: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Compile a validated v2 revision without mutating the approval plan.
 
@@ -2527,7 +2529,10 @@ def compile_guided_runtime_plan(
     snapshot's exact-generation pool.
     """
 
-    from app.schemas.guided_edit_revision import normalize_guided_editor_revision
+    from app.schemas.guided_edit_revision import (
+        GuidedEditorSource,
+        normalize_guided_editor_revision,
+    )
 
     try:
         canonical = GuidedStoryExecutionPlan.model_validate(canonical_plan)
@@ -2537,6 +2542,18 @@ def compile_guided_runtime_plan(
             expected_approval_version=proposal_version,
             expected_media_digest=media_digest,
         )
+        # Only trusted server receipts may extend the immutable approval. The
+        # client revision itself can never authorize a new path or generation.
+        source_by_id = {ref.media_id: ref for ref in snapshot.media}
+        for row in admitted_sources or []:
+            source = GuidedEditorSource.model_validate(row)
+            previous = source_by_id.get(source.media_id)
+            if previous is not None and any(
+                getattr(previous, field) != getattr(source, field)
+                for field in GuidedEditorSource.model_fields
+            ):
+                raise ValueError("admitted source conflicts with approved identity")
+            source_by_id[source.media_id] = source
         approved_sources = {
             (
                 ref.media_id,
@@ -2546,7 +2563,7 @@ def compile_guided_runtime_plan(
                 ref.kind,
                 ref.duration_s,
             )
-            for ref in snapshot.media
+            for ref in source_by_id.values()
         }
         revision_sources = {
             (
@@ -2590,7 +2607,6 @@ def compile_guided_runtime_plan(
         # selected ready track's exact object generation; the worker then
         # downloads that generation. The immutable proposal is provenance, not
         # an allowlist that would make every legitimate swap fail at render.
-        source_by_id = {ref.media_id: ref for ref in snapshot.media}
         base_by_media: dict[str, dict[str, Any]] = {}
         base_by_moment_id: dict[str, dict[str, Any]] = {}
         for moment in canonical.story_timeline:

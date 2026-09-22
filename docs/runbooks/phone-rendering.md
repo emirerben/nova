@@ -26,6 +26,52 @@ Rollback: set `PHONE_RENDERING_ENABLED=false`. This blocks new attempts while
 preserving published outputs and allowing already-reserved exports to finalize.
 The pilot does not satisfy or remove the remaining KRI-29 release gates.
 
+## Adding media to a saved guided edit (KRI-145)
+
+`PHONE_EDITOR_MEDIA_ENABLED` defaults to `false`. It enables the native editor's
+Visuals **Add photo or video** and timeline **Add clip or photo** only for an
+enrolled device-rendered guided edit with a valid guided revision. It also requires
+`GUIDED_STORY_EDITOR_V2_ENABLED`, `VISUAL_BLOCKS_ENABLED`, and verified `stillImages`,
+`visualVideos`, `visualBlocks`, `alphaOverlay`, and `audioMix` capabilities. The existing recipe's other
+capabilities remain required. Older clients and servers keep imports disabled.
+
+`POST /plan-items/{item_id}/variants/{variant_id}/editor-sources` admits a
+same-project upload reservation or ready Visuals asset against the current render
+generation and guided revision. Repeating the same import UUID is idempotent;
+the GET sibling reports preparation state. Hashing/probing runs in the worker,
+with an attempt token, expiring lease, and ownership/generation recheck before
+admission. A failed or expired retryable attempt can be resubmitted with its
+original body. No chat attachment or approval regeneration occurs.
+Successful footage admission expires its upload reservation atomically. Reservation
+lock contention is retryable, so admission cannot deadlock with project deletion.
+
+The app persists a pending placement separately from the upload until it is added
+to the local document. Relaunch resumes preparation, and failed imports expose
+Retry or Remove. Leaving the editor retains the pending intent; removing it fences
+late completion. Visual URLs are refreshed before a recovered placement opens.
+
+Footage originals remain in the device source store; only analysis proxies are
+uploaded. Photos and supporting videos use the existing Visuals pool. The private
+variant `_editor_sources_v1` catalog appends stable source indices and exact
+receipts without changing the saved timeline or immutable approval. Undo removes
+the placement while retaining its source. Save validates active references, compiles
+the new device recipe atomically, and retains `_phone_editor_plan_v1` so later
+text edits preserve prior timeline/visual changes and pinned narration.
+
+The qualified visual lane accepts plain `media` blocks: position, size, fit,
+focal point, zoom, ordering, and bounded image/video timing. Source video trims
+are honored. Cards, motion scenes, crop/rate changes, styled frames, transitions,
+and audio replacement remain unavailable; unsupported requests fail before the
+saved recipe is replaced. Missing footage originals require relinking and never
+fall back to proxy rendering or cloud output.
+
+Release order: deploy the backend with imports disabled, distribute the compatible
+iOS build through TestFlight, complete the [KRI-145 qualification checklist](../reviews/kri-145/editor-media.md),
+then enable imports for the existing qualified cohort. Rollback sets
+`PHONE_EDITOR_MEDIA_ENABLED=false`: it stops new imports while retaining source
+receipts, saved placements, and published outputs. Keep the relevant verified
+capabilities enabled if existing saved media must continue rendering.
+
 ## Matched songs as posting references
 
 New guided compiler-v6 jobs carry a timing-only song reference, with no music

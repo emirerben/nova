@@ -218,6 +218,17 @@ final class NativeVisualAuthoringTests: XCTestCase {
         XCTAssertNil(NativeVisualAuthoring.media(asset: video, start: 0, end: 3, z: 0))
     }
 
+    func testShortMediaWindowsStayWithinTheActualSourceAndUseMediaOnlyBlocks() throws {
+        let short = CreationVisual(id: "short", kind: "video", status: "ready", sourceFilename: "short.mov",
+            displayURL: nil, previewURL: nil, retryable: nil, gcsPath: "users/test/short.mov", durationS: 0.75)
+        let block = try XCTUnwrap(NativeVisualAuthoring.media(asset: short, start: 2, end: 2.75, z: 1))
+        XCTAssertEqual(block.kind, "media")
+        XCTAssertEqual(block.endS - block.startS, 0.75, accuracy: 0.0001)
+        XCTAssertEqual(block.raw["source_duration_s"], .number(0.75))
+        XCTAssertNil(block.raw["editor_style"], "Device media admission must not enable advanced styles")
+        XCTAssertNil(NativeVisualAuthoring.media(asset: short, start: 2, end: 2.751, z: 1))
+    }
+
     func testEmptyCardDoesNotInsert() {
         let session = session()
         let before = session.document

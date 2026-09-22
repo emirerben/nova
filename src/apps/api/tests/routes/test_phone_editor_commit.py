@@ -309,7 +309,7 @@ def test_unsupported_phone_edit_names_its_reason(monkeypatch):
     monkeypatch.setattr(
         phone_editor,
         "compile_guided_runtime_plan",
-        lambda *_args: (_ for _ in ()).throw(ValueError("re-clocked timeline")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("re-clocked timeline")),
     )
     with pytest.raises(HTTPException) as error:
         prepare_phone_editor_commit(

@@ -169,11 +169,18 @@ def _has_unqualified_font_instance(recipe: EditRecipeV2) -> bool:
     return False
 
 
-def validate_phone_pilot_recipe(recipe: EditRecipeV2) -> None:
-    if (
-        recipe.visual_fills
-        or recipe.audio.mute_windows
-        or any(clip.visual_placement is not None for track in recipe.tracks for clip in track.clips)
+def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: bool = False) -> None:
+    placements = [
+        clip.visual_placement
+        for track in recipe.tracks
+        for clip in track.clips
+        if clip.visual_placement is not None
+    ]
+    if recipe.visual_fills or recipe.audio.mute_windows:
+        raise ValueError("Visual blocks await native parity and device qualification")
+    if placements and not (
+        (getattr(settings, "phone_editor_media_enabled", False) or allow_editor_media)
+        and "visualBlocks" in settings.phone_render_verified_features
     ):
         raise ValueError("Visual blocks await native parity and device qualification")
     if any(

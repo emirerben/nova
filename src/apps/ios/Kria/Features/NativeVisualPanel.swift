@@ -44,6 +44,9 @@ struct NativeVisualPanel: View {
         guard selected != nil else { return [] }
         return mediaSelected || cardElement != nil ? [.edit, .animation] : [.edit]
     }
+    private var availableCategories: [Category] {
+        session.rendersOnDevice ? [.media] : Category.allCases
+    }
     private var editorHeading: String { selected.map { "Edit " + label($0).lowercased() } ?? "Add visual" }
     private var addAction: (() -> Void)? { selected == nil ? nil : { openLibrary() } }
 
@@ -68,6 +71,22 @@ struct NativeVisualPanel: View {
             onDelete: removeAction) {
             VStack(spacing: 12) {
                 if session.isAddingVisual { ProgressView("Opening visual…").frame(minHeight: 44) }
+                ForEach(session.pendingEditorImports.filter { $0.lane == .visual }) { pending in
+                    HStack(spacing: 8) {
+                        if pending.status == "failed" { Image(systemName: "exclamationmark.circle").foregroundStyle(KriaColor.failureText) }
+                        else { ProgressView().controlSize(.small) }
+                        Text(pending.status == "failed" ? (pending.error ?? "Couldn’t prepare visual.") : "Preparing visual import…")
+                            .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                        Spacer()
+                        if pending.status == "failed" && pending.retryable {
+                            Button("Retry") { Task { await session.retryPendingEditorImport(pending) } }
+                                .font(KriaFont.body(12)).frame(minHeight: 44)
+                        }
+                        Button("Remove", role: .destructive) { Task { await session.dismissPendingEditorImport(pending) } }
+                            .font(KriaFont.body(12)).frame(minHeight: 44)
+                    }
+                    .accessibilityIdentifier("native-editor-pending-visual-import")
+                }
                 if mediaSelected && !session.canEdit("visual_editor_style") {
                     Text("Advanced visual editing isn’t available for this edit yet. Placement and timing are still editable.")
                         .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
@@ -139,7 +158,7 @@ struct NativeVisualPanel: View {
     private var browse: some View {
         VStack(spacing: 12) {
             HStack(spacing: 0) {
-                ForEach(Category.allCases, id: \.self) { value in
+                ForEach(availableCategories, id: \.self) { value in
                     Button { category = value; cardPreset = nil; motionPreset = nil } label: {
                         Text(value.rawValue).font(KriaFont.body(13)).frame(maxWidth: .infinity, minHeight: 44)
                             .background(category == value ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 9))
