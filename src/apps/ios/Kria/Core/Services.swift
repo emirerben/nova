@@ -254,6 +254,14 @@ struct CreationThread: Codable, Identifiable, Sendable {
         if case .number(let count) = mediaCapabilities?["visuals"]?.objectValue?["device_ready"] { return max(0, Int(count)) }
         return 0
     }
+    var preparation: [String: JSONValue]? { creatorAgent?["preparation"]?.objectValue }
+    var preparationStatus: String? { preparation?["status"]?.stringValue }
+    var preparationIsActive: Bool { ["queued", "analyzing", "resolving"].contains(preparationStatus ?? "") }
+    var preparationFailed: Bool { preparationStatus == "failed" }
+    var preparationRetryable: Bool { preparation?["retryable"]?.boolValue ?? true }
+    var preparationMessage: String? { preparation?["message"]?.stringValue }
+    var preparationCompleted: Int { max(0, Int(preparation?["completed"]?.numberValue ?? 0)) }
+    var preparationTotal: Int { max(0, Int(preparation?["total"]?.numberValue ?? 0)) }
     enum CodingKeys: String, CodingKey { case id, title, status, revision, job, state, events; case creatorAgent = "creator_agent"; case speechCleanup = "speech_cleanup"; case mediaCapabilities = "media_capabilities"; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case activePlanItemID = "active_plan_item_id"; case updatedAt = "updated_at" }
 
     init(from decoder: Decoder) throws {
@@ -326,6 +334,11 @@ struct CreationThread: Codable, Identifiable, Sendable {
         return variants.first(where: \.isPlayable)
     }
     private var projectStatus: ProjectStatus {
+        // Preparation belongs to the current request even when this project
+        // already has a ready or failed job. Keep its progress visible after
+        // reopening instead of letting the old job status win.
+        if preparationFailed { return .failed }
+        if preparationIsActive { return .rendering }
         guard activeJobID != nil else {
             // A confirmed Creator execution prepares media before it mints a
             // Job. Both this phase and pre-dispatch failures are real states.
@@ -398,7 +411,7 @@ struct CreationJob: Codable, Sendable {
     }
 }
 struct ThreadDelta: Codable, Sendable { let threadID: String; let runtimeVersion: Int; let status: String; let threadRevision: Int; let events: [ThreadEvent]; let afterSequence: Int; let nextAfterSequence: Int; let hasMore: Bool; enum CodingKeys: String, CodingKey { case threadID = "thread_id"; case runtimeVersion = "runtime_version"; case status; case threadRevision = "thread_revision"; case events; case afterSequence = "after_sequence"; case nextAfterSequence = "next_after_sequence"; case hasMore = "has_more" } }
-struct ThreadEvent: Codable, Identifiable, Sendable { let id: String; let sequence: Int; let revision: Int; let role: String; let eventType: String; let content: String?; let payload: [String: JSONValue]?; let createdAt: Date; enum CodingKeys: String, CodingKey { case id, sequence, revision, role, content, payload; case eventType = "event_type"; case createdAt = "created_at" } }
+struct ThreadEvent: Codable, Identifiable, Sendable { let id: String; let sequence: Int; let revision: Int; let role: String; let eventType: String; let content: String?; let payload: [String: JSONValue]?; let createdAt: Date; var clientEventID: String? = nil; enum CodingKeys: String, CodingKey { case id, sequence, revision, role, content, payload; case eventType = "event_type"; case createdAt = "created_at"; case clientEventID = "client_event_id" } }
 struct DraftSnapshot: Codable, Sendable {
     let draftID: String
     let itemID: String
@@ -959,6 +972,14 @@ struct KriaAPI: KriaAPIClient {
             throw APIError.conflict(detail: ConflictDetail(detail))
         }
         guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 422, path.hasSuffix("/editor-commit") {
+                let saveError = EditorSaveError.from(responseData: data)
+                NativePreviewDiagnostics.record("editor-save-rejected", fields: [
+                    "status": "422",
+                    "code": saveError.diagnosticCode,
+                ])
+                throw saveError
+            }
             #if DEBUG
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
@@ -972,6 +993,81 @@ struct KriaAPI: KriaAPIClient {
         NotificationCenter.default.post(name: .kriaSessionExpired, object: nil)
     }
 }
+enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
+    case unsupportedPhoneEdit
+    case phoneRenderingUnavailable
+    case guidedStorySourceStale
+    case invalidTextSettings
+    case rejected
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedPhoneEdit:
+            "This text style or layout can’t be saved on this iPhone yet. Your edits are still here; adjust the style or size and try again."
+        case .phoneRenderingUnavailable:
+            "Rendering is temporarily unavailable. Your edits are still here."
+        case .guidedStorySourceStale:
+            "The source changed or is unavailable. Your edits are still here."
+        case .invalidTextSettings:
+            "Text settings are invalid. Your edits are still here; review text, style, and timing."
+        case .rejected:
+            "This save was rejected. Your edits are still here."
+        }
+    }
+
+    fileprivate var diagnosticCode: String {
+        switch self {
+        case .unsupportedPhoneEdit: "unsupported_phone_edit"
+        case .phoneRenderingUnavailable: "phone_rendering_unavailable"
+        case .guidedStorySourceStale: "guided_story_source_stale"
+        case .invalidTextSettings: "text_validation"
+        case .rejected: "unknown"
+        }
+    }
+
+    fileprivate static func from(responseData data: Data) -> Self {
+        guard let detail = (try? JSONDecoder().decode(EditorSaveErrorEnvelope.self, from: data))?.detail else { return .rejected }
+        switch detail {
+        case .code("unsupported_phone_edit"): return .unsupportedPhoneEdit
+        case .code("phone_rendering_unavailable"): return .phoneRenderingUnavailable
+        case .code("guided_story_source_stale"): return .guidedStorySourceStale
+        case .validation(let issues) where issues.contains(where: { $0.loc?.contains(.string("text_elements")) == true }):
+            return .invalidTextSettings
+        default: return .rejected
+        }
+    }
+}
+
+private struct EditorSaveErrorEnvelope: Decodable {
+    let detail: EditorSaveErrorDetail
+}
+
+private enum EditorSaveErrorDetail: Decodable {
+    case code(String)
+    case validation([EditorSaveValidationIssue])
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let code = try? container.decode(String.self) {
+            self = .code(code)
+        } else if let object = try? container.decode(EditorSaveErrorObject.self), let code = object.code {
+            self = .code(code)
+        } else if let issues = try? container.decode([EditorSaveValidationIssue].self) {
+            self = .validation(issues)
+        } else {
+            self = .code("")
+        }
+    }
+}
+
+private struct EditorSaveErrorObject: Decodable {
+    let code: String?
+}
+
+private struct EditorSaveValidationIssue: Decodable {
+    let loc: [JSONValue]?
+}
+
 private struct EmptyProjectResponse: Decodable {}
 private struct LibraryResponse: Decodable {
     let jobs: [LibraryJob]

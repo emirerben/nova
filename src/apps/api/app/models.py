@@ -1389,6 +1389,7 @@ class CreatorAgentSession(Base):
     last_review: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     last_good: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     last_error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    preparation: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
@@ -1449,6 +1450,53 @@ class CreatorAgentSession(Base):
                 "target_job_id IS NOT NULL AND target_variant_id IS NOT NULL "
                 "AND target_generation_id IS NOT NULL"
             ),
+        ),
+    )
+
+
+class CreatorPlanningAttempt(Base):
+    """Durable pre-planning work; one receipt per original creator message."""
+
+    __tablename__ = "creator_planning_attempts"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_event_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_events.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    creator_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    session_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    planning_action: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    inputs: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    lease_token: Mapped[str | None] = mapped_column(Text)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    last_dispatched_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    error_code: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued','running','completed','failed','superseded')",
+            name="ck_creator_planning_attempt_status",
+        ),
+        Index(
+            "idx_creator_planning_attempt_recovery", "status", "lease_until", "last_dispatched_at"
         ),
     )
 
@@ -2072,6 +2120,13 @@ class AgentRun(Base):
         ForeignKey("jobs.id", ondelete="CASCADE"),
         nullable=True,
     )
+    # Proposal planning invokes agents before a render Job exists. Keep that
+    # trace attached to its durable PlanItem rather than fabricating a Job id.
+    plan_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("plan_items.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     # video_templates.id and music_tracks.id are Text (not UUID) so the FK
     # columns must also be Text. ondelete=CASCADE mirrors job_id and avoids
     # a check-constraint violation on parent-delete (see migration 0024).
@@ -2129,10 +2184,12 @@ class AgentRun(Base):
     __table_args__ = (
         CheckConstraint(
             "(job_id IS NOT NULL) OR (template_id IS NOT NULL) "
-            "OR (music_track_id IS NOT NULL) OR (creator_agent_session_id IS NOT NULL)",
+            "OR (music_track_id IS NOT NULL) OR (creator_agent_session_id IS NOT NULL) "
+            "OR (plan_item_id IS NOT NULL)",
             name="ck_agent_run_has_owner",
         ),
         Index("idx_agent_run_job_id_created", "job_id", "created_at"),
+        Index("idx_agent_run_plan_item_id_created", "plan_item_id", "created_at"),
         Index("idx_agent_run_agent_name", "agent_name"),
         Index("idx_agent_run_usage_created", "environment", "usage_purpose", "created_at"),
         Index("idx_agent_run_test_run", "test_run_id", "created_at"),

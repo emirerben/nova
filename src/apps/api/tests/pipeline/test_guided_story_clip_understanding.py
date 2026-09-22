@@ -1,12 +1,7 @@
-"""KRI-127: the shared record must NOT leak into ``matcher_clip_metas``.
+"""The shared record must not change the music matcher's subject input.
 
-``detected_subject`` feeds the on-screen sport-label matcher
-(`generative_build._canonical_context_sport_labels`, exact single-alias match)
-and the music matcher prompt. Replaying the real KRI-126 clips showed that
-appending the record's free-text ``activity`` gains a wrong label ("some people
-playing soccer in the background") and loses a correct one ("foot-volleyball"
-makes two aliases match). Open-vocabulary labels ship behind a flag with a
-grounding step instead; until then this string stays byte-identical.
+Visual labels read persisted evidence independently through the grounding fence;
+free-text activity must not change the legacy subject fed to the music matcher.
 """
 
 from __future__ import annotations
@@ -39,7 +34,7 @@ def _snapshot(analysis: dict) -> EditProposalSnapshot:
     )
 
 
-def test_understanding_block_never_changes_the_label_matcher_input() -> None:
+def test_understanding_block_never_changes_the_music_matcher_input() -> None:
     legacy_analysis = {
         "subject": "people walking across a field",
         "description": "a group crosses a park",

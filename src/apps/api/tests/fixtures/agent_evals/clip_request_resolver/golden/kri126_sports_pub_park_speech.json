@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.clip_request_resolver",
-  "prompt_version": "2026-09-21",
+  "prompt_version": "2026-09-22.1",
   "input": {
     "creator_request": "Continue with 30 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say “post match pub”. Add an intro title saying “Emir Olympics London Edition”. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech",
     "intents": [

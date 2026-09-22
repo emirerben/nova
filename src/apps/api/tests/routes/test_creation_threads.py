@@ -2599,12 +2599,12 @@ async def test_detail_poll_is_read_only_and_revision_stable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_thread_with_initial_message_uses_it_as_title(
+@pytest.mark.parametrize("message", [None, "  ", "Weekend trip recap"])
+async def test_create_thread_only_reserves_naming_for_a_submitted_prompt(
     monkeypatch: pytest.MonkeyPatch,
+    message: str | None,
 ) -> None:
-    """A thread created with `CreateBody.message` gets that message as its
-    title (never left at `_DEFAULT_TITLE`), whether or not any later chat
-    turn ever runs `_agent_message`'s own first-message title rule."""
+    """Save the fallback immediately; empty chats do not reserve a model call."""
 
     import app.routes.creation_threads as routes
 
@@ -2637,14 +2637,20 @@ async def test_create_thread_with_initial_message_uses_it_as_title(
 
     await routes.create_thread(
         request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
-        body=CreateBody(message="Weekend trip recap"),
+        body=CreateBody(message=message),
         user=user,
         db=db,
     )
 
     thread = db.add.call_args.args[0]
-    assert thread.title == "Weekend trip recap"
-    assert thread.state["title_source"] == "first_prompt"
+    if message and message.strip():
+        assert thread.title == "Weekend trip recap"
+        assert thread.state["title_source"] == "first_prompt"
+        assert thread.state["title_generation"] == "pending"
+    else:
+        assert thread.title == _DEFAULT_TITLE
+        assert "title_source" not in thread.state
+        assert "title_generation" not in thread.state
 
 
 def test_resolve_default_title_fill_prefers_accepted_opening_title() -> None:
@@ -3609,6 +3615,7 @@ async def test_sync_agent_forwards_clarifying_question_options_to_thread(
         event_type="assistant_question",
         payload={
             "message": "This edit cannot show all 34 clips in 30 seconds.",
+            "proposal_summary": "A tighter cut keeps the strongest moments.",
             "reason_code": "all_media_capacity",
             "options": [
                 "Keep 30 seconds with the strongest clips",
@@ -3636,9 +3643,86 @@ async def test_sync_agent_forwards_clarifying_question_options_to_thread(
     ]
     assert payload["recommended_option"] == "Keep 30 seconds with the strongest clips"
     assert payload["reason_code"] == "all_media_capacity"
+    assert payload["proposal_summary"] == "A tighter cut keeps the strongest moments."
     # The manifest-hash-fenced mapping is a server-internal matching detail,
     # not client-facing content -- only the allowlisted keys forward.
     assert "all_media_capacity" not in payload
+
+
+@pytest.mark.asyncio
+async def test_sync_agent_projects_strategy_summary_without_private_plan_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+
+    user_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user_id,
+        active_creator_agent_session_id=session_id,
+        state={},
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user_id,
+        status="awaiting_confirmation",
+        revision=2,
+        active_plan={"summary": "A focused opening with a quick payoff."},
+    )
+    event = SimpleNamespace(
+        id=uuid.uuid4(),
+        event_type="assistant_strategy",
+        payload={
+            "message": "I found a strong opening sequence.",
+            "proposal_summary": "A focused opening with a quick payoff.",
+            "edit_plan": {"strategy": {"media_scope": "all"}},
+            "strategy": {"selected_media_ids": ["private-id"]},
+            "storage_path": "users/other/private.mp4",
+        },
+    )
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=session),
+        execute=AsyncMock(
+            return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [event]))
+        ),
+    )
+    append_mock = AsyncMock()
+    monkeypatch.setattr(routes, "_append", append_mock)
+
+    await routes._sync_agent(db, thread)
+
+    payload = append_mock.await_args.kwargs["payload"]
+    assert payload == {
+        "message": "I found a strong opening sequence.",
+        "proposal_summary": "A focused opening with a quick payoff.",
+    }
+    assert append_mock.await_args.kwargs["content"] == "I found a strong opening sequence."
+
+
+@pytest.mark.asyncio
+async def test_prerequisite_prompt_reopens_after_media_removal() -> None:
+    import app.routes.creation_threads as routes
+
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        events=[
+            SimpleNamespace(sequence=1, event_type="media_prompt"),
+            SimpleNamespace(sequence=2, event_type="media_added"),
+            SimpleNamespace(sequence=3, event_type="action_remove_media"),
+        ],
+    )
+    db = Mock()
+
+    assert (
+        await routes._prerequisite_prompt_is_current(db, thread, prompt_type="media_prompt")
+        is False
+    )
+
+    thread.events.append(SimpleNamespace(sequence=4, event_type="media_prompt"))
+    assert (
+        await routes._prerequisite_prompt_is_current(db, thread, prompt_type="media_prompt") is True
+    )
 
 
 @pytest.mark.asyncio
@@ -3740,6 +3824,7 @@ async def test_get_thread_repairs_projection_from_current_item_job(
     monkeypatch.setattr(
         "app.routes.creation_threads.reconcile_render_state", AsyncMock(return_value=False)
     )
+    monkeypatch.setattr("app.routes.creation_threads._sync_agent", AsyncMock(return_value=False))
     monkeypatch.setattr("app.routes.creation_threads._response", AsyncMock(return_value=thread))
 
     await get_thread(str(thread.id), SimpleNamespace(id=user_id), db, Response())
@@ -4975,4 +5060,34 @@ async def test_proxy_reservation_pins_original_and_rejects_changed_binding(monke
     with pytest.raises(HTTPException) as failure:
         await upload_urls(_request(), str(thread.id), payload, user, db)
     assert failure.value.status_code == 409
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_manual_rename_accepts_an_intervening_generated_title(monkeypatch):
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=5,
+        title="Barcelona Trip Reel",
+        state={"title_source": "generated", "title_generated_revision": 5},
+    )
+    db = Mock(commit=AsyncMock(), refresh=AsyncMock())
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    await rename_thread(
+        _request(),
+        str(thread.id),
+        RenameBody(
+            title="Summer Memories", expected_revision=4, client_event_id="rename-title-race"
+        ),
+        user,
+        db,
+    )
+    assert thread.title == "Summer Memories"
+    assert thread.state["title_source"] == "user"
     db.commit.assert_awaited_once()

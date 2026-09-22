@@ -37,6 +37,7 @@ final class ChatMessageCopyTests: XCTestCase {
                 "No element labelled \(label) in \(elements.map { $0.accessibilityLabel ?? "" })"
             )
             let copyActions = (element.accessibilityCustomActions ?? []).filter { $0.name == "Copy" }
+            XCTAssertTrue(element.accessibilityTraits.contains(.staticText))
             XCTAssertEqual(copyActions.count, 1)
             let copy = try XCTUnwrap(copyActions.first)
 

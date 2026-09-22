@@ -67,6 +67,30 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertTrue(ThreadRevisionOrder.acceptsProjection(current: revisionAfterAction, incoming: 10))
     }
 
+    func testTitleProjectionRefreshRetriesUntilFullProjectionIsApplied() {
+        // Acknowledging the delta or turn acceptance does not apply its title.
+        // Even after a failed fetch consumes the event, an idle poll must retry.
+        for _ in 0..<2 {
+            XCTAssertTrue(
+                ThreadProjectionRefresh.requiresFullProjection(
+                    lastFullProjectionRevision: 4,
+                    incomingRevision: 5,
+                    receivedEvents: [],
+                    isRendering: false
+                )
+            )
+        }
+        // Once the full projection succeeds, unchanged idle polls stay cheap.
+        XCTAssertFalse(
+            ThreadProjectionRefresh.requiresFullProjection(
+                lastFullProjectionRevision: 5,
+                incomingRevision: 5,
+                receivedEvents: [],
+                isRendering: false
+            )
+        )
+    }
+
     func testFormatPromptExposesOnlyServerAvailableChoices() {
         let prompt = ThreadEvent(
             id: "format-prompt",
@@ -395,6 +419,24 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertEqual(
             WorkspaceStage.resolve(status: .rendering, awaitsNewPlanConfirmation: true, isChoosingFormat: false, hasFormat: true),
             .rendering
+        )
+    }
+
+    func testPreparationWinsOverDraftAndReadyStatuses() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .draft, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true, preparationIsActive: true),
+            .rendering
+        )
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .ready, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true, preparationIsActive: true),
+            .rendering
+        )
+    }
+
+    func testFailedPreparationWinsOverReadyStatus() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .ready, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true, preparationFailed: true),
+            .failed
         )
     }
 

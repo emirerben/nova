@@ -25,12 +25,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agents._model_client import default_client
-from app.agents._runtime import AiBudgetExceededError, RunContext, TerminalError
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    ProviderQuotaExceededError,
+    RunContext,
+    TerminalError,
+)
 from app.agents._schemas.creator_agent import (
     CREATOR_REQUEST_MAX_CHARS,
     ApplySpeechCutCommand,
     AskUser,
-    ContextLabelIntent,
     CreativeStrategy,
     CreatorCraftBundle,
     CreatorEditPlan,
@@ -42,7 +46,7 @@ from app.agents._schemas.creator_agent import (
     SetLicensedSfxCommand,
     canonical_context_hash,
     canonical_manifest_hash,
-    legacy_clip_intents,
+    creator_strategies_equal,
     normalize_creator_text_color,
 )
 from app.agents._schemas.creator_policy import (
@@ -58,7 +62,7 @@ from app.agents._schemas.creator_policy import (
     normalize_creator_strategy_media,
     states_explicit_media_narrowing_cue,
 )
-from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCreatorOutput
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
@@ -97,11 +101,11 @@ from app.schemas.edit_proposal import (
     rejects_round_robin_cadence,
 )
 from app.services.ai_usage_headers import paid_call_headers
-from app.services.clip_intent_resolution import (
-    ANSWERS_KEY,
-    IntentResolution,
-    resolve_clip_intents_for_turn,
+from app.services.clip_intent_answers import (
+    persist_clip_intent_vision_answers as _persist_clip_intent_vision_answers,
 )
+from app.services.clip_intent_planning import plan_and_resolve_clip_intents
+from app.services.clip_intent_resolution import IntentResolution
 from app.services.content_plan_persona import load_owned_plan_persona
 from app.services.creator_autonomy import (
     build_auto_bundle,
@@ -228,6 +232,7 @@ class CreatorSessionResponse(BaseModel):
     last_review: dict | None
     events: list[dict]
     auto_iteration: dict | None = None
+    preparation: dict | None = None
     created_at: str
     updated_at: str
 
@@ -399,6 +404,9 @@ async def _session_for_start_event(
 
 
 async def _response(db: AsyncSession, session: CreatorAgentSession) -> CreatorSessionResponse:
+    from app.services.creator_preparation import finish_preparation
+
+    await finish_preparation(db, session)
     await db.commit()
     loaded = await _load_session(db, session.id, session.creator_id, session.plan_item_id)
     return _creator_session_response(loaded)
@@ -415,7 +423,9 @@ def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
     ]
 
 
-def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message: str) -> str:
+def _confirmed_creator_request(
+    events: list[CreatorAgentEvent], current_message: str, *, truncate: bool = True
+) -> str:
     """Preserve bounded creator-authored intent across clarification turns."""
 
     messages = [
@@ -425,7 +435,8 @@ def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message:
     ]
     if current_message.strip() and (not messages or messages[-1] != current_message.strip()):
         messages.append(current_message.strip())
-    return "\n".join(messages)[:CREATOR_REQUEST_MAX_CHARS]
+    request = "\n".join(messages)
+    return request[:CREATOR_REQUEST_MAX_CHARS] if truncate else request
 
 
 # Sent verbatim by the iOS confirmation card's "refresh direction" affordance
@@ -456,6 +467,7 @@ _PINNED_STRATEGY_FIELDS_ON_REFRESH: tuple[str, ...] = (
     "opening_title",
     "closing_title",
     "shot_labels",
+    "clip_intents",
     "audio_strategy",
     "video_reuse_policy",
     "montage_cadence",
@@ -516,7 +528,8 @@ def _original_creator_request_for_refresh(
         if event.role == "user" and str((event.payload or {}).get("message") or "").strip()
     ]
     messages = [message for message in messages if message != REFRESH_DIRECTION_MESSAGE]
-    return "\n".join(messages)[:CREATOR_REQUEST_MAX_CHARS]
+    request = "\n".join(messages)
+    return request[:CREATOR_REQUEST_MAX_CHARS]
 
 
 def _pin_strategy_fields_on_refresh(
@@ -810,11 +823,6 @@ def _apply_explicit_render_intent(
         "opening_title_duration_s": None,
         "shot_labels": None,
         "closing_title": None,
-        # A model-authored label is only retained when the typed companion
-        # flag records the same intent.  This keeps an unrelated request from
-        # inheriting a stale context label while allowing multilingual or
-        # otherwise non-regex wording to survive the boundary.
-        "context_label": strategy.context_label if strategy.sport_labels else None,
         "image_layout": None,
         "licensed_sfx": None,
         "execution_contract": strategy.execution_contract,
@@ -823,22 +831,9 @@ def _apply_explicit_render_intent(
             if _has_explicit_media_scope(creator_request, manifest)
             else strategy.media_scope
         ),
-        "participant_labels": strategy.participant_labels,
-        "score_labels": strategy.score_labels,
-        "sport_labels": strategy.sport_labels,
     }
 
     latest = " ".join(str(latest_user_message or "").casefold().split())
-    combined = " ".join(request.casefold().split())
-    latest_negates = lambda *terms: bool(  # noqa: E731
-        re.search(
-            r"\b(?:do not|don't|dont|never|without|no)\b.{0,60}\b(?:"
-            + "|".join(re.escape(term) for term in terms)
-            + r")\b",
-            latest,
-            re.IGNORECASE,
-        )
-    )
 
     # A named SFX is a required request, never an optional treatment. Resolve
     # names only by exact case-insensitive match against the server manifest;
@@ -981,59 +976,6 @@ def _apply_explicit_render_intent(
         updates["text_color"] = normalize_creator_text_color(
             color_match.group(1) or color_match.group(2) or color_match.group(3)
         )
-
-    # This is intent, not model-authored copy. The trusted render pipeline
-    # must resolve the actual label from server-side evidence before rendering.
-    # KRI-127: once the model has already committed to the generic, open-
-    # vocabulary path (flag on, `clip_intents` present) the resolver owns
-    # this label; the regex must not also force the legacy coded field.
-    generic_clip_intents_owns_labels = settings.clip_intents_enabled and bool(strategy.clip_intents)
-    sport_label_requested = bool(
-        re.search(
-            r"\b(?:name|label|text)\s+(?:of\s+)?(?:the\s+)?sports?\b"
-            r"|\b(?:label|identify|show|display|add|highlight)\b.{0,80}\b(?:each\s+)?sports?\b"
-            r"|\bsports?\b.{0,80}\b(?:bottom\s+right|bottom-right)\b",
-            request,
-            re.IGNORECASE,
-        )
-    )
-    if sport_label_requested and not generic_clip_intents_owns_labels:
-        updates["context_label"] = ContextLabelIntent(
-            kind="sport",
-            source="clip_metadata",
-            placement="bottom_right",
-            size="small",
-            per_clip=True,
-        )
-        updates["sport_labels"] = True
-
-    participant_label_requested = bool(
-        re.search(
-            r"\b(?:placeholder|temporary|player|participant)\s+(?:name|label)s?\b"
-            r"|\bname\s+(?:each|every|the)\s+(?:player|participant)\b",
-            combined,
-            re.IGNORECASE,
-        )
-    )
-    if participant_label_requested:
-        updates["participant_labels"] = "single_subject"
-    if latest_negates("player", "participant", "placeholder", "name"):
-        updates["participant_labels"] = "none"
-    score_requested = bool(
-        re.search(
-            r"\b(?:add|show|include|highlight|display|use)\b.{0,80}\bscore(?:s)?\b"
-            r"|\bscore(?:s)?\b.{0,80}\b(?:audio|spoken|mentioned|narration|voiceover)\b",
-            combined,
-            re.IGNORECASE,
-        )
-    )
-    if score_requested and not latest_negates("score", "scores"):
-        updates["score_labels"] = True
-    if latest_negates("score", "scores"):
-        updates["score_labels"] = False
-    if latest_negates("sport", "sports"):
-        updates["sport_labels"] = False
-        updates["context_label"] = None
 
     updates["image_layout"] = recognize_image_layout(request)
 
@@ -1472,6 +1414,26 @@ def _latest_message_narrows_media_scope(user_message: str, manifest: Any) -> boo
         _has_explicit_media_scope(user_message, manifest)
         and _explicit_media_scope(user_message, manifest) == "selected"
     )
+
+
+def _capacity_history_kind_for_turn(
+    events: list[CreatorAgentEvent], user_message: str, manifest: Any
+) -> HistoricalCapacityChoiceKind | None:
+    """Apply only a real historical choice to the current capacity question."""
+
+    historical_kind = _historical_all_media_capacity_choice_kind(events, manifest)
+    if _latest_message_narrows_media_scope(user_message, manifest):
+        return None
+    # A newer explicit all-media instruction rejects an older subset choice,
+    # but it does not manufacture a prior keep-everything answer.  With no
+    # valid historical preference, the normal capacity question remains.
+    if (
+        historical_kind == "strongest_subset"
+        and _has_explicit_media_scope(user_message, manifest)
+        and _explicit_media_scope(user_message, manifest) == "all"
+    ):
+        return None
+    return historical_kind
 
 
 def _latest_planned_cadence(
@@ -1995,57 +1957,6 @@ def _job_matches_guided_attempt(job: Job | None, attempt_id: str | None) -> bool
     return False
 
 
-async def _persist_clip_intent_vision_answers(
-    db: AsyncSession,
-    item: PlanItem,
-    vision_answers: dict[str, dict[str, dict[str, Any]]],
-) -> None:
-    """Best-effort cache write for KRI-127 vision re-query answers.
-
-    Only a pool asset's own ``analysis`` JSONB is a safe, lightweight write
-    from this route: a new dict is assigned (never mutated in place) so
-    SQLAlchemy detects the change, matching the pattern in
-    ``routes/plan_items.py`` (``analysis = dict(asset.analysis); analysis[...]
-    = ...; asset.analysis = analysis``). It piggybacks on the same commit as
-    the rest of this turn (``_response``) rather than committing here.
-
-    Raw ``clip_assignments`` entries have no equally light-weight writer
-    available to this route -- the sole writer, ``set_item_clips`` /
-    ``mutate_plan_item_media`` in ``app/services/plan_clips.py`` and
-    ``app/services/plan_item_media.py``, also invalidates narration/consent
-    state and reconciles speech cleanup, which is out of scope for caching a
-    vision answer. Persistence for those clips is skipped; a repeat question
-    for them simply re-runs the vision re-query on the next turn. Either way,
-    a failure here must never fail the chat turn.
-    """
-
-    if not vision_answers:
-        return
-    try:
-        # SAVEPOINT: a flush error here must roll back ONLY this cache write.
-        # Swallowing it without one would leave the turn's transaction in
-        # "pending rollback" and turn the final commit into a 500.
-        async with db.begin_nested():
-            for media_id, answers in vision_answers.items():
-                if not answers or not media_id.startswith("asset-"):
-                    continue
-                try:
-                    asset_uuid = uuid.UUID(media_id.removeprefix("asset-"))
-                except ValueError:
-                    continue
-                asset = await db.get(PlanItemAsset, asset_uuid)
-                if asset is None or asset.plan_item_id != item.id:
-                    continue
-                analysis = dict(asset.analysis) if isinstance(asset.analysis, dict) else {}
-                existing = dict(analysis.get(ANSWERS_KEY) or {})
-                existing.update(answers)
-                analysis[ANSWERS_KEY] = existing
-                asset.analysis = analysis
-            await db.flush()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("clip_intents.vision_answer_persist_failed", error=str(exc)[:300])
-
-
 async def _run_planning_turn(
     db: AsyncSession,
     *,
@@ -2061,9 +1972,41 @@ async def _run_planning_turn(
     reservation_approved: bool = False,
     release_canary_id: str | None = None,
     previous_active_plan: dict[str, Any] | None = None,
+    preparation_attempt_id: str | None = None,
+    preparation_token: str | None = None,
 ) -> CreatorSessionResponse:
     item, plan, persona = await _owned_context(db, item_id, user.id)
     session = await _load_session(db, session_id, user.id, item.id)
+    from app.services.creator_preparation import maybe_prepare, require_current_attempt
+
+    prepared_attempt = None
+    if preparation_attempt_id:
+        prepared_attempt = await require_current_attempt(
+            db, preparation_attempt_id, preparation_token or ""
+        )
+        await db.commit()
+    elif settings.creator_clip_preparation_enabled:
+        item, plan, persona = await _owned_context(db, item_id, user.id, for_update=True)
+        session = await _load_session(db, session_id, user.id, item.id, for_update=True)
+        if session.revision != expected_revision or session.status not in {"planning", "revising"}:
+            raise HTTPException(409, "Creator session changed while preparing")
+        if await maybe_prepare(
+            db,
+            item=item,
+            plan=plan,
+            session=session,
+            inputs={
+                "user_message": user_message,
+                "allow_chat": allow_chat,
+                "previous_active_plan": previous_active_plan,
+                "usage_purpose": usage_purpose,
+                "test_run_id": test_run_id,
+                "estimated_max_cost_usd": estimated_max_cost_usd,
+                "reservation_approved": reservation_approved,
+                "release_canary_id": release_canary_id,
+            },
+        ):
+            return await _response(db, session)
     manifest, media_context = await resolve_item_creator_context(
         db,
         item,
@@ -2251,11 +2194,17 @@ async def _run_planning_turn(
             },
         )
         return await _response(db, locked)
+    if preparation_attempt_id:
+        await require_current_attempt(db, preparation_attempt_id, preparation_token or "")
     locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
     if locked.revision != expected_revision or locked.status not in {"planning", "revising"}:
         raise HTTPException(status_code=409, detail="Creator session changed while planning")
     action: AskUser | ProposeStrategy | ReviewDecision
-    if all_media_capacity_choice is not None:
+    if prepared_attempt is not None and prepared_attempt.planning_action:
+        action = MainCreatorOutput.model_validate(
+            {"action": prepared_attempt.planning_action}
+        ).action
+    elif all_media_capacity_choice is not None:
         # The displayed, hash-fenced mapping is authoritative. Applying it is
         # deterministic and must not spend another model call or fail against
         # the model-call budget.
@@ -2311,31 +2260,78 @@ async def _run_planning_turn(
                 # KRI-127 model-output hygiene, applied right where the model's
                 # ProposeStrategy is accepted, flag on or off. `resolved_clip_intents`
                 # is server-owned and must never be trusted from the model. When the
-                # flag is off, `clip_intents` itself is also discarded so an
-                # experimenting or stale model response can never leak the field into
-                # a stored strategy while the feature is dark.
+                # flag is off, visual requests are discarded. Transcript intents
+                # keep their existing pinned-narration materialization path.
                 strategy_hygiene: dict[str, Any] = {"resolved_clip_intents": None}
                 if not settings.clip_intents_enabled:
-                    strategy_hygiene["clip_intents"] = None
+                    strategy_hygiene["clip_intents"] = [
+                        intent
+                        for intent in (action.strategy.clip_intents or [])
+                        if intent.label_source == "transcript"
+                    ] or None
                 action = action.model_copy(
                     update={"strategy": action.strategy.model_copy(update=strategy_hygiene)}
                 )
-        except AiBudgetExceededError:
+        except (AiBudgetExceededError, ProviderQuotaExceededError) as exc:
             locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
             if locked.revision == expected_revision and locked.status in {"planning", "revising"}:
                 locked.agent_call_count = max(0, locked.agent_call_count - 1)
-                locked.status = "briefing"
+                if not preparation_attempt_id:
+                    locked.status = "briefing"
+                    if isinstance(exc, ProviderQuotaExceededError):
+                        locked.last_error = {"code": "provider_quota_exceeded"}
+                        await append_event(
+                            db,
+                            locked,
+                            event_type="assistant_error",
+                            payload={
+                                "message": (
+                                    "Clip analysis is unavailable right now. "
+                                    "Your request is saved; try again later."
+                                ),
+                                "code": "provider_quota_exceeded",
+                            },
+                        )
+                        return await _response(db, locked)
                 await db.commit()
             raise
         except TerminalError as exc:
+            if preparation_attempt_id:
+                raise
+            locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+            if locked.revision != expected_revision or locked.status not in {
+                "planning",
+                "revising",
+            }:
+                raise HTTPException(409, "Creator session changed while planning")
+            locked.status = "briefing"
+            locked.last_error = {"code": "provider_unavailable"}
             log.warning(
-                "main_creator.planning_fallback", session_id=str(session.id), error=str(exc)[:300]
+                "main_creator.planning_failed",
+                session_id=str(session.id),
+                error_type=type(exc).__name__,
             )
-            action = ProposeStrategy(
-                kind="propose_strategy",
-                strategy=_fallback_strategy(manifest, user_message=creator_request),
-                summary=MAIN_CREATOR_FALLBACK_SUMMARY,
+            await append_event(
+                db,
+                locked,
+                event_type="assistant_error",
+                payload={
+                    "message": (
+                        "Clip analysis is unavailable right now. "
+                        "Your request is saved; try again later."
+                    ),
+                    "code": "provider_unavailable",
+                },
             )
+            return await _response(db, locked)
+
+    if preparation_attempt_id:
+        prepared_attempt = await require_current_attempt(
+            db, preparation_attempt_id, preparation_token or ""
+        )
+        prepared_attempt.planning_action = action.model_dump(mode="json")
+        await db.commit()
+        await require_current_attempt(db, preparation_attempt_id, preparation_token or "")
 
     locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
     if locked.revision != expected_revision or locked.status not in {"planning", "revising"}:
@@ -2613,22 +2609,6 @@ async def _run_planning_turn(
                 requested_duration_is_explicit=requested_duration_is_explicit,
             )
             if capacity_question is not None:
-                if locked.question_count < locked.question_budget:
-                    locked.status = "briefing"
-                    locked.question_count += 1
-                    await append_event(
-                        db,
-                        locked,
-                        event_type="assistant_question",
-                        payload=capacity_question,
-                    )
-                    return await _response(db, locked)
-                # The session cannot ask another question. An explicit "all"
-                # must never be silently swapped for a mapping the creator
-                # did not choose: reuse a real answer already given earlier
-                # in this session when one exists; otherwise prefer keeping
-                # every clip (faster pacing) over dropping clips, and always
-                # tell the creator what was applied instead of asking.
                 mappings = capacity_question["all_media_capacity"]["option_mappings"]
                 # mappings[0] is always the strength-ranked subset mapping;
                 # the keep-everything mapping is only present when the fast
@@ -2652,12 +2632,8 @@ async def _run_planning_turn(
                 # narrowing instruction in the creator's latest message
                 # always overrides a "keep everything"/"strongest subset"
                 # history, never the other way around.
-                historical_kind = (
-                    None
-                    if _latest_message_narrows_media_scope(user_message, planning_manifest)
-                    else _historical_all_media_capacity_choice_kind(
-                        session.events, planning_manifest
-                    )
+                historical_kind = _capacity_history_kind_for_turn(
+                    session.events, user_message, planning_manifest
                 )
                 total_clips = len(planning_manifest.media)
                 target_s = strategy.target_duration_s
@@ -2670,6 +2646,22 @@ async def _run_planning_turn(
                 elif historical_kind == "strongest_subset":
                     chosen_mapping = strongest_subset_mapping
                     left_out_sentence = "I used your earlier choice to keep the strongest clips."
+                if chosen_mapping is None and locked.question_count < locked.question_budget:
+                    locked.status = "briefing"
+                    locked.question_count += 1
+                    await append_event(
+                        db,
+                        locked,
+                        event_type="assistant_question",
+                        payload=capacity_question,
+                    )
+                    return await _response(db, locked)
+                # The session cannot ask another question. An explicit "all"
+                # must never be silently swapped for a mapping the creator
+                # did not choose: reuse a real answer already given earlier
+                # in this session when one exists; otherwise prefer keeping
+                # every clip (faster pacing) over dropping clips, and always
+                # tell the creator what was applied instead of asking.
                 if chosen_mapping is None:
                     # No usable history (none recorded, or the current
                     # question has no mapping of that kind): fall back to the
@@ -2731,71 +2723,172 @@ async def _run_planning_turn(
                 session_id=locked.id,
                 item_id=item.id,
             )
-            if settings.clip_intents_enabled:
-                effective_clip_intents = strategy.clip_intents or legacy_clip_intents(strategy)
-                if effective_clip_intents:
-                    intent_clips = await load_intent_clips_for_item(db, item, persona)
-                    # Never hold the session's FOR UPDATE row lock across the
-                    # resolver's own model/vision calls. Release it exactly the
-                    # way the MainCreatorAgent call above does (commit, call,
-                    # re-lock, re-check the revision fence) before writing
-                    # anything the resolution decided back onto the session.
-                    await db.commit()
-                    try:
-                        resolution = await resolve_clip_intents_for_turn(
-                            intents=effective_clip_intents,
-                            creator_request=creator_request,
+            transcript_intents = [
+                intent
+                for intent in (strategy.clip_intents or [])
+                if intent.label_source == "transcript"
+            ]
+            if settings.clip_intents_enabled or transcript_intents:
+                intent_clips = (
+                    await load_intent_clips_for_item(db, item, persona)
+                    if settings.clip_intents_enabled
+                    else []
+                )
+                requested_intents = transcript_intents
+                # Never hold the session's FOR UPDATE row lock across the
+                # resolver's own model/vision calls. Release it exactly the
+                # way the MainCreatorAgent call above does (commit, call,
+                # re-lock, re-check the revision fence) before writing
+                # anything the resolution decided back onto the session.
+                await db.commit()
+                background_pending = False
+                intent_context = RunContext(
+                    creator_agent_session_id=str(session.id),
+                    creator_id=str(user.id),
+                    request_id=str(expected_revision),
+                    usage_purpose=usage_purpose,
+                    test_run_id=test_run_id,
+                    estimated_max_cost_usd=estimated_max_cost_usd,
+                    reservation_approved=reservation_approved,
+                    release_canary_id=release_canary_id,
+                )
+
+                async def save_answers(answers):
+                    from app.services.creator_preparation import checkpoint_answers
+
+                    await checkpoint_answers(
+                        db, preparation_attempt_id, preparation_token or "", answers
+                    )
+
+                try:
+                    if settings.clip_intents_enabled:
+                        planned_intents = await plan_and_resolve_clip_intents(
+                            **(
+                                {"background": True, "checkpoint": save_answers}
+                                if preparation_attempt_id
+                                else {}
+                            ),
+                            candidate_intents=strategy.clip_intents,
+                            latest_user_message=user_message,
+                            creator_request=(
+                                creator_request
+                                if is_refresh_retry
+                                else _confirmed_creator_request(
+                                    session.events, user_message, truncate=False
+                                )
+                            ),
                             clips=intent_clips,
-                            run_context=RunContext(
-                                creator_agent_session_id=str(session.id),
-                                creator_id=str(user.id),
-                                request_id=str(expected_revision),
-                                usage_purpose=usage_purpose,
-                                test_run_id=test_run_id,
-                                estimated_max_cost_usd=estimated_max_cost_usd,
-                                reservation_approved=reservation_approved,
-                                release_canary_id=release_canary_id,
+                            run_context=intent_context,
+                        )
+                        resolution = planned_intents.resolution
+                        requested_intents = planned_intents.requested_intents
+                    else:
+                        resolution = IntentResolution()
+                    if any(
+                        intent.label_source == "transcript" for intent in requested_intents
+                    ) and (
+                        planning_manifest.narration is None
+                        or strategy.execution_contract != GUIDED_VOICEOVER_EXECUTION_CONTRACT
+                    ):
+                        resolution = IntentResolution(
+                            status="needs_creator",
+                            question=(
+                                "Those labels need a recorded voiceover with guided visuals. "
+                                "Please add a recording or choose labels based on the footage."
                             ),
                         )
-                    except Exception as exc:  # noqa: BLE001
-                        # Never a 500 for a resolver failure. Asking is the safe
-                        # degrade -- it can never print an unverified label.
-                        log.warning(
-                            "clip_intents.resolution_failed",
-                            session_id=str(session.id),
-                            error=str(exc)[:300],
+                    if resolution.deferred_queries and not preparation_attempt_id:
+                        from app.tasks.clip_intent_requery import (  # noqa: PLC0415
+                            enqueue_clip_intent_requeries,
                         )
-                        resolution = IntentResolution(
-                            question=(
-                                "I couldn't confidently match that to your clips. Which "
-                                "clips should it apply to, and what should each say?"
-                            )
+
+                        background_pending = await asyncio.to_thread(
+                            enqueue_clip_intent_requeries,
+                            plan_id=str(plan.id),
+                            item_id=str(item.id),
+                            user_id=str(user.id),
+                            ownership_epoch=int(plan.ownership_epoch or 0),
+                            clips=intent_clips,
+                            queries=resolution.deferred_queries,
+                            context=intent_context,
                         )
-                    locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
-                    if locked.revision != expected_revision or locked.status not in {
-                        "planning",
-                        "revising",
-                    }:
-                        raise HTTPException(
-                            status_code=409, detail="Creator session changed while planning"
-                        )
-                    await _persist_clip_intent_vision_answers(db, item, resolution.vision_answers)
-                    if resolution.needs_creator:
-                        locked.status = "briefing"
-                        await append_event(
-                            db,
-                            locked,
-                            event_type="assistant_question",
-                            role="assistant",
-                            payload={
-                                "message": resolution.question,
-                                "reason_code": "clip_intent_unresolved",
-                            },
-                        )
-                        return await _response(db, locked)
-                    strategy = strategy.model_copy(
-                        update={"resolved_clip_intents": resolution.intents}
+                except Exception as exc:  # noqa: BLE001
+                    if preparation_attempt_id:
+                        raise
+                    # Never a 500 for a resolver failure. Asking is the safe
+                    # degrade -- it can never print an unverified label.
+                    log.warning(
+                        "clip_intents.resolution_failed",
+                        session_id=str(session.id),
+                        error_type=type(exc).__name__,
                     )
+                    resolution = IntentResolution(
+                        status="provider_unavailable",
+                        error_code="provider_unavailable",
+                        question=(
+                            "I couldn't confidently match that to your clips. Which "
+                            "clips should it apply to, and what should each say?"
+                        ),
+                    )
+                if preparation_attempt_id:
+                    await require_current_attempt(
+                        db, preparation_attempt_id, preparation_token or ""
+                    )
+                locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+                if locked.revision != expected_revision or locked.status not in {
+                    "planning",
+                    "revising",
+                }:
+                    raise HTTPException(
+                        status_code=409, detail="Creator session changed while planning"
+                    )
+                if not preparation_attempt_id:
+                    await _persist_clip_intent_vision_answers(db, item, resolution.vision_answers)
+                if background_pending or resolution.needs_creator:
+                    locked.status = "briefing"
+                    await append_event(
+                        db,
+                        locked,
+                        event_type="assistant_question",
+                        role="assistant",
+                        payload={
+                            "message": (
+                                "I'm taking a closer look at the remaining clips. "
+                                "Send another message in a moment and I'll use what I find."
+                                if background_pending
+                                else resolution.question
+                            ),
+                            "reason_code": (
+                                "clip_intent_pending"
+                                if background_pending
+                                else "clip_intent_unresolved"
+                            ),
+                        },
+                    )
+                    return await _response(db, locked)
+                if resolution.status not in {"resolved", "needs_creator"}:
+                    locked.status = "briefing"
+                    locked.last_error = {"code": resolution.error_code or resolution.status}
+                    await append_event(
+                        db,
+                        locked,
+                        event_type="assistant_error",
+                        role="assistant",
+                        payload={
+                            "message": (
+                                "Clip analysis is unavailable right now. "
+                                "Your request is saved; try again later."
+                            ),
+                            "code": resolution.error_code or resolution.status,
+                        },
+                    )
+                    return await _response(db, locked)
+                strategy = strategy.model_copy(
+                    update={
+                        "clip_intents": requested_intents or None,
+                        "resolved_clip_intents": resolution.intents or None,
+                    }
+                )
             locked.active_plan = compile_active_plan(
                 locked,
                 manifest=planning_manifest,
@@ -2941,6 +3034,7 @@ async def _run_planning_turn(
             )
         locked.manifest_hash = manifest.manifest_hash
         locked.status = "awaiting_confirmation"
+        locked.last_error = None
         await append_event(
             db,
             locked,
@@ -3126,6 +3220,8 @@ async def start_creator_session_controller(
         raise HTTPException(status_code=409, detail="Creator session is busy")
     session.status = "planning" if session.status != "awaiting_feedback" else "revising"
     previous_active_plan = session.active_plan if isinstance(session.active_plan, dict) else None
+    session.preparation = None
+    session.last_error = None
     _reset_render_target(session)
     await append_event(
         db,
@@ -3191,8 +3287,13 @@ async def creator_session_turn_controller(
         raise HTTPException(status_code=409, detail="Creator session changed")
     if session.status not in {"briefing", "awaiting_confirmation", "awaiting_feedback"}:
         raise HTTPException(status_code=409, detail="Creator session is not accepting feedback")
+    from app.services.creator_preparation import retry_inputs
+
+    saved_inputs = await retry_inputs(db, session, body.message)
     session.status = "revising" if session.render_attempts else "planning"
     previous_active_plan = session.active_plan if isinstance(session.active_plan, dict) else None
+    session.preparation = None
+    session.last_error = None
     _reset_render_target(session)
     await append_event(
         db,
@@ -3210,9 +3311,9 @@ async def creator_session_turn_controller(
         user=user,
         session_id=session.id,
         expected_revision=expected_revision,
-        user_message=body.message.strip(),
+        user_message=(saved_inputs or {}).get("user_message", body.message.strip()),
         allow_chat=allow_chat,
-        previous_active_plan=previous_active_plan,
+        previous_active_plan=(saved_inputs or {}).get("previous_active_plan", previous_active_plan),
         **cost_headers.as_kwargs(),
     )
 
@@ -3399,9 +3500,6 @@ def _seed_guided_specialist_brief(
             else None
         ),
         "selected_media_ids": (plan.strategy.selected_media_ids if guided_selected_scope else None),
-        "participant_labels": plan.strategy.participant_labels,
-        "score_labels": plan.strategy.score_labels,
-        "sport_labels": plan.strategy.sport_labels,
         # KRI-127: server-owned, resolved-at-confirm-time only. None whenever
         # the flag is off or no turn resolved any intent, so a stored brief
         # stays byte-identical until this ever actually resolves something.
@@ -3582,9 +3680,7 @@ def _retry_target_matches_confirmed_plan(
         return _job_matches_guided_attempt(
             job, (session.active_plan or {}).get("guided_generation_attempt_id")
         )
-    return (job.all_candidates or {}).get("creator_strategy") == strategy.model_dump(
-        mode="json", exclude_none=True
-    )
+    return creator_strategies_equal((job.all_candidates or {}).get("creator_strategy"), strategy)
 
 
 def _manifest_with_original_current_edit(
@@ -3960,7 +4056,10 @@ async def confirm_creator_plan_controller(
         if (
             created_after_receipt
             and exact_owner
-            and (guided_matches or (not guided and candidate_strategy == expected_strategy))
+            and (
+                guided_matches
+                or (not guided and creator_strategies_equal(candidate_strategy, expected_strategy))
+            )
         ):
             job_id = candidate.id
             if (

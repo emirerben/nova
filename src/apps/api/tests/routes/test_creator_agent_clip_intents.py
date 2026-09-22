@@ -1,13 +1,9 @@
 """KRI-127 Lane D: chat-agent authoring, resolution, and brief forwarding for
 open-vocabulary `clip_intents`.
 
-Flag-off byte-identity for the model/prompt boundary is covered by
-`tests/agents/test_main_creator_agent.py`
-(`test_main_creator_prompt_flag_off_is_byte_identical_to_pre_kri127`). This
-file covers the route-level turn: model-output hygiene, the sport-regex gate,
-resolver invocation (without holding the session row lock across it),
-needs-creator vs. resolved outcomes, vision-answer persistence, the legacy
-mapping, and brief forwarding on confirm.
+Visual resolution is flag-gated; transcript requirements are deferred to the
+pinned narration materializer. Covers source ownership, model-output hygiene,
+legacy decoding, and brief forwarding on confirmation.
 """
 
 import uuid
@@ -17,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.agents._schemas.creator_agent import (
-    ContextLabelIntent,
     CreativeStrategy,
     ProposeStrategy,
     legacy_clip_intents,
@@ -25,6 +20,11 @@ from app.agents._schemas.creator_agent import (
 from app.routes import creator_agent as creator_routes
 from app.routes.creator_agent import _apply_explicit_render_intent, _seed_guided_specialist_brief
 from app.schemas.clip_intents import ClipAssignment, ClipIntent, ResolvedClipIntent
+from app.services.clip_intent_answers import (
+    ClipIntentAnswerPersistenceError,
+    persist_clip_intent_vision_answers,
+)
+from app.services.clip_intent_planning import PlannedIntentResolution
 from app.services.clip_intent_resolution import ANSWERS_KEY, IntentClip, IntentResolution
 from app.services.creator_capabilities import compile_strategy_to_plan, resolve_creator_manifest
 
@@ -147,7 +147,7 @@ async def test_flag_off_discards_model_authored_clip_intents_and_never_resolves(
     load_clips = AsyncMock()
     resolve = AsyncMock()
     monkeypatch.setattr(creator_routes, "load_intent_clips_for_item", load_clips)
-    monkeypatch.setattr(creator_routes, "resolve_clip_intents_for_turn", resolve)
+    monkeypatch.setattr(creator_routes, "plan_and_resolve_clip_intents", resolve)
 
     result = await _run_turn(item, session, user_message="Name the dish on each clip")
 
@@ -237,9 +237,14 @@ async def test_flag_on_resolved_intents_reach_strategy_and_block_sport_regex(mon
         )
     ]
     load_clips = AsyncMock(return_value=intent_clips)
-    resolve = AsyncMock(return_value=IntentResolution(intents=resolved, vision_answers={}))
+    resolve = AsyncMock(
+        return_value=PlannedIntentResolution(
+            [action.strategy.clip_intents[0]],
+            IntentResolution(intents=resolved, vision_answers={}),
+        )
+    )
     monkeypatch.setattr(creator_routes, "load_intent_clips_for_item", load_clips)
-    monkeypatch.setattr(creator_routes, "resolve_clip_intents_for_turn", resolve)
+    monkeypatch.setattr(creator_routes, "plan_and_resolve_clip_intents", resolve)
 
     result = await _run_turn(
         item,
@@ -252,7 +257,10 @@ async def test_flag_on_resolved_intents_reach_strategy_and_block_sport_regex(mon
     resolve.assert_awaited_once()
     kwargs = resolve.await_args.kwargs
     assert kwargs["clips"] == intent_clips
-    assert [intent.intent_id for intent in kwargs["intents"]] == ["sport-label"]
+    assert [intent.intent_id for intent in kwargs["candidate_intents"]] == ["sport-label"]
+    assert (
+        kwargs["latest_user_message"] == "Label the sport being played in each clip, bottom right"
+    )
 
     strategy = session.active_plan["edit_plan"]["strategy"]
     assert strategy["resolved_clip_intents"][0]["assignments"][0]["value"] == "Volleyball"
@@ -260,6 +268,88 @@ async def test_flag_on_resolved_intents_reach_strategy_and_block_sport_regex(mon
     # generic intent owns this request.
     assert strategy.get("sport_labels") in (None, False)
     assert strategy.get("context_label") is None
+
+
+@pytest.mark.asyncio
+async def test_flag_on_persists_planner_intents_when_model_returns_none(monkeypatch) -> None:
+    monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", True)
+    item = SimpleNamespace(id=uuid.uuid4())
+    persona = SimpleNamespace(user_id=uuid.uuid4())
+    session = _session()
+    response = SimpleNamespace(status="awaiting_confirmation")
+    append_event = AsyncMock()
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            direction="fast_montage",
+            edit_format="montage",
+            render_program="native",
+            selected_media_ids=["clip-1", "clip-2"],
+            target_duration_s=20,
+            rationale="Use the travel footage with grounded labels.",
+        ),
+        summary="A labeled travel montage.",
+    )
+    _wire_common_turn_mocks(
+        monkeypatch,
+        item=item,
+        persona=persona,
+        session=session,
+        manifest=_manifest(),
+        action=action,
+        response=response,
+        append_event=append_event,
+    )
+    clips = [
+        IntentClip(media_id="clip-1", kind="video", analysis={}),
+        IntentClip(media_id="clip-2", kind="video", analysis={}),
+    ]
+    requested = [
+        ClipIntent(intent_id="travel", op="label", attribute="travel destination"),
+        ClipIntent(intent_id="location", op="label", attribute="location shown"),
+        ClipIntent(intent_id="activity", op="label", attribute="activity happening"),
+    ]
+    resolved = [
+        ResolvedClipIntent(
+            intent_id=intent.intent_id,
+            op="label",
+            attribute=intent.attribute,
+            status="resolved",
+        )
+        for intent in requested
+    ]
+    load_clips = AsyncMock(return_value=clips)
+    planner = AsyncMock(
+        return_value=PlannedIntentResolution(
+            requested,
+            IntentResolution(intents=resolved, vision_answers={}),
+        )
+    )
+    monkeypatch.setattr(creator_routes, "load_intent_clips_for_item", load_clips)
+    monkeypatch.setattr(creator_routes, "plan_and_resolve_clip_intents", planner)
+
+    result = await _run_turn(
+        item,
+        session,
+        user_message="Label the travel destination, location, and activity in my clips",
+    )
+
+    assert result is response
+    planner.assert_awaited_once()
+    assert planner.await_args.kwargs["candidate_intents"] is None
+    strategy = session.active_plan["edit_plan"]["strategy"]
+    assert [intent["intent_id"] for intent in strategy["clip_intents"]] == [
+        "travel",
+        "location",
+        "activity",
+    ]
+    assert [intent["intent_id"] for intent in strategy["resolved_clip_intents"]] == [
+        "travel",
+        "location",
+        "activity",
+    ]
+    assert all(intent["op"] == "label" for intent in strategy["clip_intents"])
+    assert "sport_labels" not in strategy
 
 
 @pytest.mark.asyncio
@@ -302,9 +392,12 @@ async def test_flag_on_needs_creator_asks_and_never_proposes_strategy(monkeypatc
         AsyncMock(return_value=[IntentClip(media_id="clip-1", kind="video", analysis={})]),
     )
     resolve = AsyncMock(
-        return_value=IntentResolution(question="Which city is each clip from?", vision_answers={})
+        return_value=PlannedIntentResolution(
+            action.strategy.clip_intents or [],
+            IntentResolution(question="Which city is each clip from?", vision_answers={}),
+        )
     )
-    monkeypatch.setattr(creator_routes, "resolve_clip_intents_for_turn", resolve)
+    monkeypatch.setattr(creator_routes, "plan_and_resolve_clip_intents", resolve)
 
     result = await _run_turn(item, session, user_message="Group these clips by city")
 
@@ -312,6 +405,7 @@ async def test_flag_on_needs_creator_asks_and_never_proposes_strategy(monkeypatc
     resolve.assert_awaited_once()
     assert session.active_plan is None
     assert session.status == "briefing"
+    assert session.last_error is None
     append_event.assert_awaited_once()
     call = append_event.await_args
     assert call.kwargs["event_type"] == "assistant_question"
@@ -320,7 +414,9 @@ async def test_flag_on_needs_creator_asks_and_never_proposes_strategy(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_resolver_exception_degrades_to_a_question_never_a_500(monkeypatch) -> None:
+async def test_resolver_exception_is_a_technical_failure_never_a_genuine_no_match(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", True)
     manifest = _manifest()
     item = SimpleNamespace(id=uuid.uuid4())
@@ -360,7 +456,7 @@ async def test_resolver_exception_degrades_to_a_question_never_a_500(monkeypatch
     )
     monkeypatch.setattr(
         creator_routes,
-        "resolve_clip_intents_for_turn",
+        "plan_and_resolve_clip_intents",
         AsyncMock(side_effect=RuntimeError("vision backend unavailable")),
     )
 
@@ -369,9 +465,15 @@ async def test_resolver_exception_degrades_to_a_question_never_a_500(monkeypatch
     assert result is response
     assert session.active_plan is None
     assert session.status == "briefing"
+    assert session.last_error == {"code": "provider_unavailable"}
     call = append_event.await_args
-    assert call.kwargs["event_type"] == "assistant_question"
-    assert call.kwargs["payload"]["reason_code"] == "clip_intent_unresolved"
+    assert call.kwargs["event_type"] == "assistant_error"
+    assert call.kwargs["payload"] == {
+        "message": (
+            "Clip analysis is unavailable right now. Your request is saved; try again later."
+        ),
+        "code": "provider_unavailable",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -379,85 +481,94 @@ async def test_resolver_exception_degrades_to_a_question_never_a_500(monkeypatch
 # ---------------------------------------------------------------------------
 
 
-def test_sport_regex_still_forces_context_label_when_flag_off(monkeypatch) -> None:
-    monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", False)
-    strategy = _apply_explicit_render_intent(
-        CreativeStrategy(render_program="native"),
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize(
+    "creator_request",
+    [
         "Add a small text of the name of the sport being played on the bottom right",
+        "Add participant names and show the scores spoken in the narration",
+    ],
+)
+def test_label_requests_never_create_regex_label_intents(
+    monkeypatch, enabled, creator_request
+) -> None:
+    monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", enabled)
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(render_program="native"), creator_request
     )
-    assert strategy.sport_labels is True
-    assert strategy.context_label is not None
-    assert strategy.context_label.kind == "sport"
+    assert strategy.clip_intents is None
+    assert not {"context_label", "sport_labels", "score_labels", "participant_labels"} & set(
+        strategy.model_dump()
+    )
 
 
-def test_sport_regex_yields_to_generic_clip_intents_when_flag_on(monkeypatch) -> None:
+def test_semantic_clip_intents_survive_render_normalization() -> None:
+    intents = [ClipIntent(intent_id="sport", op="label", attribute="the sport being played")]
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(render_program="native", clip_intents=intents), "Label the sport"
+    )
+    assert strategy.clip_intents == intents
+
+
+def test_generic_inventory_owns_labels_with_unrelated_candidate_intents(monkeypatch) -> None:
     monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", True)
     strategy = _apply_explicit_render_intent(
         CreativeStrategy(
             render_program="native",
+            selected_media_ids=["clip-1"],
             clip_intents=[
-                ClipIntent(
-                    intent_id="sport",
-                    op="label",
-                    attribute="the sport being played in the clip",
-                )
+                ClipIntent(intent_id="pub", op="caption", attribute="pub clips"),
+                ClipIntent(intent_id="park", op="order", attribute="park clips", position="first"),
+                ClipIntent(intent_id="sport-group", op="group", attribute="sports clips"),
             ],
         ),
-        "Add a small text of the name of the sport being played on the bottom right",
+        "Add the name of each sport on the bottom right.",
     )
-    assert strategy.sport_labels is False
-    assert strategy.context_label is None
+
+    # The enabled generic inventory owns the label lane even when the model's
+    # candidate intents contain only unrelated operations.
+    assert [intent.op for intent in strategy.clip_intents or []] == ["caption", "order", "group"]
+    assert not {"sport_labels", "context_label"} & set(strategy.model_dump())
 
 
-def test_sport_regex_still_applies_when_flag_on_but_no_clip_intents(monkeypatch) -> None:
-    # The flag alone does not suppress the regex -- only an actual
-    # model-authored `clip_intents` list does, so an old/failed model
-    # response that never adopts the new field keeps today's behavior.
+def test_generic_inventory_owns_labels_when_model_returns_no_candidates(monkeypatch) -> None:
     monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", True)
     strategy = _apply_explicit_render_intent(
         CreativeStrategy(render_program="native"),
         "Add a small text of the name of the sport being played on the bottom right",
     )
-    assert strategy.sport_labels is True
-    assert strategy.context_label is not None
+    assert not {"sport_labels", "context_label"} & set(strategy.model_dump())
 
 
-# ---------------------------------------------------------------------------
-# Legacy -> generic mapping (schema-level).
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "legacy",
+    [
+        {"sport_labels": True},
+        {"context_label": {"kind": "sport"}},
+    ],
+)
+def test_legacy_sport_strategy_decodes_as_generic_intent_without_rewriting_input(legacy) -> None:
+    original = dict(legacy)
+    strategy = CreativeStrategy.model_validate({"render_program": "native", **legacy})
+    [intent] = strategy.clip_intents
+    assert intent.intent_id == "legacy-sport"
+    assert intent.op == "label"
+    assert intent.label_source == "clip"
+    assert legacy == original
+    assert CreativeStrategy.model_validate(strategy.model_dump()).clip_intents == [intent]
 
 
-def test_legacy_clip_intents_maps_sport_labels_flag() -> None:
-    strategy = CreativeStrategy(render_program="native", sport_labels=True)
-    mapped = legacy_clip_intents(strategy)
-    assert len(mapped) == 1
-    assert mapped[0].intent_id == "legacy-sport"
-    assert mapped[0].op == "label"
-    assert mapped[0].attribute == "the sport being played in the clip"
-
-
-def test_legacy_clip_intents_maps_sport_context_label() -> None:
-    strategy = CreativeStrategy(
-        render_program="native",
-        context_label=ContextLabelIntent(kind="sport"),
-    )
-    mapped = legacy_clip_intents(strategy)
-    assert len(mapped) == 1
-    assert mapped[0].op == "label"
-
-
-def test_legacy_clip_intents_empty_when_generic_intents_already_present() -> None:
-    strategy = CreativeStrategy(
-        render_program="native",
-        sport_labels=True,
-        clip_intents=[ClipIntent(intent_id="x", op="label", attribute="the sport")],
-    )
-    assert legacy_clip_intents(strategy) == []
+def test_modern_intents_take_precedence_over_legacy_sport_flag() -> None:
+    raw = {
+        "sport_labels": True,
+        "clip_intents": [ClipIntent(intent_id="x", op="label", attribute="the sport")],
+    }
+    assert legacy_clip_intents(raw) == []
+    assert len(CreativeStrategy.model_validate(raw).clip_intents) == 1
 
 
 def test_legacy_clip_intents_empty_when_neither_field_set() -> None:
-    strategy = CreativeStrategy(render_program="native")
-    assert legacy_clip_intents(strategy) == []
+    assert legacy_clip_intents({}) == []
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +636,34 @@ async def test_vision_answers_merge_without_clobbering_existing_cache() -> None:
         "old question": {"answer": "no"},
         "new question": {"answer": "yes"},
     }
+
+
+@pytest.mark.asyncio
+async def test_strict_vision_answer_cache_rejects_a_stale_asset_generation() -> None:
+    item_id = uuid.uuid4()
+    asset_id = uuid.uuid4()
+    asset = SimpleNamespace(
+        plan_item_id=item_id,
+        user_id=uuid.uuid4(),
+        gcs_generation="current",
+        analysis={},
+    )
+    item = SimpleNamespace(id=item_id)
+    db = _fake_db(return_value=asset)
+
+    with pytest.raises(ClipIntentAnswerPersistenceError, match="target_changed"):
+        await persist_clip_intent_vision_answers(
+            db,
+            item,
+            {
+                f"asset-{asset_id}": {
+                    "current question": {"answer": "yes", "generation": "current"},
+                    "stale question": {"answer": "no", "generation": "old"},
+                }
+            },
+            strict=True,
+        )
+    assert ANSWERS_KEY not in asset.analysis
 
 
 @pytest.mark.asyncio
@@ -658,3 +797,176 @@ def test_specialist_brief_intents_use_planner_media_ids():
     assert intent.media_ids()[0].startswith("asset-")  # the stored strategy is not mutated
     assert _specialist_clip_intents(None) is None
     assert _specialist_clip_intents([]) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("has_narration", [False, True])
+async def test_transcript_source_survives_inventory_and_requires_recorded_narration(
+    monkeypatch, enabled, has_narration
+):
+    monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", enabled)
+    monkeypatch.setattr(creator_routes.settings, "creator_prompt_fidelity_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-dishes",
+        edit_format="montage",
+        has_voiceover=has_narration,
+        narration={"gcs_path": "voiceover-uploads/voice.mp3", "generation": "1", "duration_s": 20}
+        if has_narration
+        else None,
+        media=[{"media_id": "clip-1", "kind": "video"}],
+        guided_capability_enabled=True,
+    )
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = _session()
+    response = SimpleNamespace()
+    append_event = AsyncMock()
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            render_program="guided" if has_narration else "native",
+            selected_media_ids=[] if has_narration else ["clip-1"],
+            audio_strategy="voiceover" if has_narration else "original_audio",
+            execution_contract="guided_voiceover_v1" if has_narration else None,
+            media_scope="all" if has_narration else None,
+            clip_intents=[
+                ClipIntent(
+                    intent_id="score",
+                    op="label",
+                    attribute="spoken score",
+                    label_source="transcript",
+                    transcript_kind="score",
+                )
+            ],
+        ),
+        summary="Use the requested narration labels.",
+    )
+    _wire_common_turn_mocks(
+        monkeypatch,
+        item=item,
+        persona=SimpleNamespace(user_id=uuid.uuid4()),
+        session=session,
+        manifest=manifest,
+        action=action,
+        response=response,
+        append_event=append_event,
+    )
+    load_clips = AsyncMock(return_value=[])
+    inventory = AsyncMock(
+        return_value=PlannedIntentResolution(action.strategy.clip_intents, IntentResolution())
+    )
+    monkeypatch.setattr(creator_routes, "load_intent_clips_for_item", load_clips)
+    monkeypatch.setattr(creator_routes, "plan_and_resolve_clip_intents", inventory)
+    assert (
+        await _run_turn(item, session, user_message="Show the score from my recording") is response
+    )
+    if enabled:
+        load_clips.assert_awaited_once()
+        inventory.assert_awaited_once()
+    else:
+        load_clips.assert_not_awaited()
+        inventory.assert_not_awaited()
+    if has_narration:
+        strategy = session.active_plan["edit_plan"]["strategy"]
+        assert strategy["clip_intents"][0]["transcript_kind"] == "score"
+        assert "resolved_clip_intents" not in strategy
+    else:
+        assert session.status == "briefing"
+        assert append_event.call_args.kwargs["payload"]["reason_code"] == "clip_intent_unresolved"
+
+
+@pytest.mark.parametrize("queued", [True, False])
+async def test_async_overflow_receipt_and_enqueue_failure_fallback(monkeypatch, queued):
+    from app.services.clip_intent_resolution import DeferredVisionQuery
+    from app.tasks import clip_intent_requery
+
+    monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", True)
+    item, persona, session = (
+        SimpleNamespace(id=uuid.uuid4()),
+        SimpleNamespace(user_id=uuid.uuid4()),
+        _session(),
+    )
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=3)
+    response, events = SimpleNamespace(status="briefing"), AsyncMock()
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            direction="fast_montage",
+            edit_format="montage",
+            render_program="native",
+            selected_media_ids=["clip-1", "clip-2"],
+            target_duration_s=20,
+            clip_intents=[
+                ClipIntent(intent_id="sport", op="label", attribute="sport being played")
+            ],
+        ),
+        summary="Label the sports.",
+    )
+    _wire_common_turn_mocks(
+        monkeypatch,
+        item=item,
+        persona=persona,
+        session=session,
+        manifest=_manifest(),
+        action=action,
+        response=response,
+        append_event=events,
+    )
+    monkeypatch.setattr(
+        creator_routes, "_owned_context", AsyncMock(return_value=(item, plan, persona))
+    )
+    clips = [IntentClip(media_id="clip-1", asset_id=str(uuid.uuid4()), kind="video", analysis={})]
+    monkeypatch.setattr(creator_routes, "load_intent_clips_for_item", AsyncMock(return_value=clips))
+    resolution = IntentResolution(
+        status="pending",
+        error_code="vision_batch_deadline_or_foreground_cap",
+        deferred_queries=[
+            DeferredVisionQuery("clip-1", "What sport?"),
+        ],
+    )
+    monkeypatch.setattr(
+        creator_routes,
+        "plan_and_resolve_clip_intents",
+        AsyncMock(return_value=PlannedIntentResolution([], resolution)),
+    )
+    persist = AsyncMock()
+    monkeypatch.setattr(creator_routes, "_persist_clip_intent_vision_answers", persist)
+    enqueue = MagicMock(return_value=queued)
+    monkeypatch.setattr(clip_intent_requery, "enqueue_clip_intent_requeries", enqueue)
+    db = AsyncMock()
+
+    async def to_thread(func, *args, **kwargs):
+        if func is enqueue:
+            assert db.commit.await_count >= 1
+            assert creator_routes._load_session.await_args.kwargs.get("for_update") is True
+            return enqueue(*args, **kwargs)
+        return SimpleNamespace(action=action)
+
+    monkeypatch.setattr(creator_routes.asyncio, "to_thread", to_thread)
+    await creator_routes._run_planning_turn(
+        db,
+        item_id=str(item.id),
+        user=SimpleNamespace(id=persona.user_id),
+        session_id=session.id,
+        expected_revision=1,
+        user_message="label the sport",
+    )
+    enqueue.assert_called_once()
+    assert enqueue.call_args.kwargs["queries"] == resolution.deferred_queries
+    assert enqueue.call_args.kwargs["ownership_epoch"] == 3
+    assert session.active_plan is None
+    assert session.status == "briefing"
+    payload = events.await_args.kwargs["payload"]
+    assert events.await_args.kwargs["event_type"] == (
+        "assistant_question" if queued else "assistant_error"
+    )
+    if queued:
+        assert payload["reason_code"] == "clip_intent_pending"
+    else:
+        assert payload["code"] == "vision_batch_deadline_or_foreground_cap"
+    assert payload["message"] == (
+        "I'm taking a closer look at the remaining clips. "
+        "Send another message in a moment and I'll use what I find."
+        if queued
+        else "Clip analysis is unavailable right now. Your request is saved; try again later."
+    )

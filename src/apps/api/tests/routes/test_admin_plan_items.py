@@ -306,6 +306,79 @@ class TestAdminPlanItemsAuth:
                 app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 200
 
+    def test_proposal_trace_requires_admin_token(self, client):
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            res = client.get(f"/admin/plan-items/{uuid.uuid4()}/proposal-trace")
+        assert res.status_code in (401, 422)
+
+
+class TestPlanItemProposalTrace:
+    def test_returns_bounded_agent_io_and_scheduler_diagnostics(self, client):
+        item = _plan_item_row()
+        now = datetime.now(UTC)
+        run = SimpleNamespace(
+            id=uuid.uuid4(),
+            segment_idx=None,
+            agent_name="nova.compose.semantic_edit",
+            prompt_version="semantic-v3",
+            model="gemini-2.5-flash",
+            outcome="schema_error",
+            attempts=2,
+            tokens_in=100,
+            tokens_out=50,
+            cost_usd=None,
+            latency_ms=250,
+            error_message="required frame omitted",
+            input_json={"frame_count": 4},
+            output_json=None,
+            raw_text='{"frames": []}',
+            created_at=now,
+        )
+        db = AsyncMock()
+        item_result = MagicMock()
+        item_result.scalar_one_or_none.return_value = item
+        runs_result = MagicMock()
+        runs_result.scalars.return_value.all.return_value = [run]
+        db.execute = AsyncMock(side_effect=[item_result, runs_result])
+
+        async def _gen():
+            yield db
+
+        proposal = SimpleNamespace(
+            brief=SimpleNamespace(direction="guided_story"),
+            planning_diagnostics={
+                "requested_frames": 4,
+                "effective_frames": 3,
+                "schedule_repairs": ["shorten_intro"],
+                "failure_reason": "frame overlap",
+                "scheduler_version": "v2",
+                "prompt_version": "semantic-v3",
+            },
+        )
+        with (
+            patch("app.routes.admin.settings") as settings,
+            patch("app.routes.admin_plan_items.parse_edit_proposal", return_value=proposal),
+        ):
+            settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _gen
+            try:
+                response = client.get(
+                    f"/admin/plan-items/{item.id}/proposal-trace",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["direction"] == "guided_story"
+        assert body["prompt_version"] == "semantic-v3"
+        assert body["planning_diagnostics"]["scheduler_version"] == "v2"
+        assert body["agent_runs"][0]["outcome"] == "schema_error"
+        assert body["agent_runs"][0]["raw_text"] == '{"frames": []}'
+        assert body["agent_runs"][0]["error_message"] == "required frame omitted"
+
 
 # ── Payload shape + redaction ────────────────────────────────────────────────
 

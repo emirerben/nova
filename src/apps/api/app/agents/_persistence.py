@@ -96,6 +96,7 @@ def _json_dumps(value: Any) -> str | None:
 def persist_agent_run(
     *,
     job_id: str | None,
+    plan_item_id: str | None = None,
     creator_agent_session_id: str | None = None,
     segment_idx: int | None,
     agent_name: str,
@@ -126,16 +127,28 @@ def persist_agent_run(
 ) -> None:
     """Insert one agent_run row. Swallows all errors. Uses the sync engine
     directly to stay decoupled from any caller-owned session/transaction.
-    A session ID is sufficient for pre-render Main Creator Agent calls.
+    A session ID or plan item ID is sufficient for pre-render calls.
     """
     job_uuid, template_uuid, track_uuid = _parse_owner(job_id)
+    plan_item_uuid: uuid.UUID | None = None
+    if plan_item_id:
+        try:
+            plan_item_uuid = uuid.UUID(plan_item_id)
+        except (ValueError, AttributeError):
+            plan_item_uuid = None
     session_uuid: uuid.UUID | None = None
     if creator_agent_session_id:
         try:
             session_uuid = uuid.UUID(creator_agent_session_id)
         except (ValueError, AttributeError):
             session_uuid = None
-    if job_uuid is None and template_uuid is None and track_uuid is None and session_uuid is None:
+    if (
+        job_uuid is None
+        and template_uuid is None
+        and track_uuid is None
+        and plan_item_uuid is None
+        and session_uuid is None
+    ):
         return
 
     try:
@@ -149,7 +162,7 @@ def persist_agent_run(
                 text(
                     """
                     INSERT INTO agent_run (
-                        job_id, template_id, music_track_id,
+                        job_id, plan_item_id, template_id, music_track_id,
                         creator_agent_session_id,
                         segment_idx, agent_name, prompt_version, model,
                         input_json, raw_text, output_json, outcome, attempts,
@@ -159,7 +172,7 @@ def persist_agent_run(
                         reserved_cost_usd, settled_cost_usd, cost_reservation_id,
                         cost_usd, latency_ms, error_message
                     ) VALUES (
-                        :job_id, :template_id, :music_track_id,
+                        :job_id, :plan_item_id, :template_id, :music_track_id,
                         :creator_agent_session_id,
                         :segment_idx, :agent_name, :prompt_version, :model,
                         CAST(:input_json AS JSONB), :raw_text,
@@ -174,6 +187,7 @@ def persist_agent_run(
                 ),
                 {
                     "job_id": str(job_uuid) if job_uuid else None,
+                    "plan_item_id": str(plan_item_uuid) if plan_item_uuid else None,
                     "template_id": str(template_uuid) if template_uuid else None,
                     "music_track_id": str(track_uuid) if track_uuid else None,
                     "creator_agent_session_id": str(session_uuid) if session_uuid else None,

@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.clip_request_resolver",
-  "prompt_version": "2026-09-21",
+  "prompt_version": "2026-09-22.1",
   "input": {
     "creator_request": "Name the dish on each food clip",
     "intents": [

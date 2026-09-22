@@ -197,6 +197,12 @@ private struct NativeEditorUITestHost: View {
         ProcessInfo.processInfo.environment["UI_TEST_DYNAMIC_TYPE_SIZE"] ?? "large"
     }
 
+    private var fixtureWidth: CGFloat? {
+        guard let raw = ProcessInfo.processInfo.environment["UI_TEST_EDITOR_WIDTH"],
+              let width = Double(raw) else { return nil }
+        return CGFloat(width)
+    }
+
     var body: some View {
         ZStack {
             Color.white.ignoresSafeArea()
@@ -220,6 +226,7 @@ private struct NativeEditorUITestHost: View {
                             showsProjects = true
                         }
                     )
+                    .frame(width: fixtureWidth)
                 }
                 .accessibilityIdentifier("native-editor-fixture-\(fixture.shape.rawValue)")
                 .accessibilityValue("Dynamic type \(dynamicTypeLabel); reduce motion \(reduceMotion ? "on" : "off")")

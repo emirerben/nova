@@ -7,6 +7,7 @@ import json
 import pytest
 
 from app.agents._runtime import SchemaError
+from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.agents.clip_request_resolver import (
     ClipRequestResolverAgent,
     ClipRequestResolverInput,
@@ -220,6 +221,29 @@ def test_render_prompt_sanitizes_creator_request_and_attribute() -> None:
     # Aliases and record data still round-trip verbatim.
     assert "m001" in prompt
     assert "soccer" in prompt
+
+
+def test_creator_request_uses_shared_bound_and_preserves_late_selection() -> None:
+    late_selection = "Use explicit selection m013 for the pub chapter."
+    creator_request = "x" * (CREATOR_REQUEST_MAX_CHARS - len(late_selection) - 1)
+    creator_request += " " + late_selection
+    inp = ClipRequestResolverInput(
+        creator_request=creator_request,
+        intents=[ResolverIntentIn(intent_id="i1", op="group", attribute="pub clips")],
+        clips=[ResolverClipIn(alias="m013", kind="video", record={"setting": "pub"})],
+    )
+
+    assert inp.creator_request == creator_request
+    assert late_selection in _agent().render_prompt(inp)
+
+
+def test_creator_request_rejects_values_over_shared_bound() -> None:
+    with pytest.raises(ValueError, match="at most"):
+        ClipRequestResolverInput(
+            creator_request="x" * (CREATOR_REQUEST_MAX_CHARS + 1),
+            intents=[ResolverIntentIn(intent_id="i1", op="group", attribute="pub clips")],
+            clips=[],
+        )
 
 
 def test_render_prompt_never_contains_a_media_id_field() -> None:

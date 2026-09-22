@@ -1,0 +1,150 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.12",
+  "input": {
+    "idea": "Korfu",
+    "theme": "Corfu trip",
+    "direction": "guided_story",
+    "goal": "Show what stood out about the food, town, and coast",
+    "pace": "balanced",
+    "target_duration_s": 24,
+    "media": [
+      {
+        "media_id": "m1",
+        "lane": "clip",
+        "kind": "video",
+        "subject": "sailboat on blue water"
+      },
+      {
+        "media_id": "m2",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "ice cream close-up"
+      },
+      {
+        "media_id": "m3",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "restaurant table"
+      },
+      {
+        "media_id": "m4",
+        "lane": "asset",
+        "kind": "video",
+        "subject": "walk through old town"
+      },
+      {
+        "media_id": "m5",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "arched stone building"
+      },
+      {
+        "media_id": "m6",
+        "lane": "asset",
+        "kind": "video",
+        "subject": "swimming by the coast"
+      },
+      {
+        "media_id": "m7",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "sunset over boats"
+      },
+      {
+        "media_id": "m8",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "narrow colorful street"
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"What stood out in Corfu\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"Food\", \"thought\": \"Small details made each food stop visually distinct.\", \"role\": \"hook\", \"weight\": 0.22727272727272727, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m2\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"m3\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-2\", \"topic\": \"Town and architecture\", \"thought\": \"Arches and narrow streets kept changing the view.\", \"role\": \"build\", \"weight\": 0.36363636363636365, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m4\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"m5\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"m8\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-3\", \"topic\": \"Coast\", \"thought\": \"Water, boats, and sunset give the story a slower finish.\", \"role\": \"payoff\", \"weight\": 0.4090909090909091, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m1\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"m6\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"m7\", \"candidate_index\": null, \"weight\": 1.0}]}], \"montage_audio\": null, \"text_bindings\": [], \"repairs\": []}",
+  "output": {
+    "schema_version": 1,
+    "title": "What stood out in Corfu",
+    "chapters": [
+      {
+        "chapter_id": "chapter-1",
+        "topic": "Food",
+        "thought": "Small details made each food stop visually distinct.",
+        "role": "hook",
+        "weight": 0.22727272727272727,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "m2",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "m3",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-2",
+        "topic": "Town and architecture",
+        "thought": "Arches and narrow streets kept changing the view.",
+        "role": "build",
+        "weight": 0.36363636363636365,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "m4",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "m5",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "m8",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-3",
+        "topic": "Coast",
+        "thought": "Water, boats, and sunset give the story a slower finish.",
+        "role": "payoff",
+        "weight": 0.4090909090909091,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "m1",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "m6",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "m7",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      }
+    ],
+    "montage_audio": null,
+    "text_bindings": [],
+    "repairs": []
+  },
+  "meta": {
+    "source": "legacy_fixture_semantic_projection",
+    "expected_topics": [
+      "food",
+      "town",
+      "coast"
+    ]
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "overlays": [
+    {
+      "role": "generative_sequence",
+      "text": "Paris \u00b7 Cycling",
+      "effect": "static",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "position": "center",
+      "text_size": "small",
+      "text_anchor": "right",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFFFFF",
+      "subject_substitute": false,
+      "font_family": "Inter",
+      "position_x_frac": 0.86,
+      "position_y_frac": 0.86,
+      "vertical_anchor": "center",
+      "z": 8,
+      "max_width_frac": 0.72
+    },
+    {
+      "role": "generative_sequence",
+      "text": "Santorini coastal village at sunset \u00b7 Walking along the waterfront promenade",
+      "effect": "static",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "position": "center",
+      "text_size": "small",
+      "text_anchor": "right",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFFFFF",
+      "subject_substitute": false,
+      "font_family": "Inter",
+      "position_x_frac": 0.86,
+      "position_y_frac": 0.86,
+      "vertical_anchor": "center",
+      "z": 8,
+      "max_width_frac": 0.72
+    },
+    {
+      "role": "generative_sequence",
+      "text": "Saint Petersburg historic waterfront and riverside walkway \u00b7 Walking the old waterfront promenade with friends at sunset",
+      "effect": "static",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "position": "center",
+      "text_size": "small",
+      "text_anchor": "right",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFFFFF",
+      "subject_substitute": false,
+      "font_family": "Inter",
+      "position_x_frac": 0.86,
+      "position_y_frac": 0.86,
+      "vertical_anchor": "center",
+      "z": 8,
+      "max_width_frac": 0.72
+    }
+  ]
+}

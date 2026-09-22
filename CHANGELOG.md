@@ -2,6 +2,91 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.136.0] - 2026-09-22
+
+### Changed
+- refactor: replace typed labels with sourced clip intents (KRI-156) (#1142) <!-- release-pr: 1142 -->
+
+## [0.76.135.0] - 2026-09-22
+
+### Changed
+- chore(deploy): gate Vercel builds to main + web-affecting commits (#1150) <!-- release-pr: 1150 -->
+
+## [0.76.134.0] - 2026-09-22
+
+### Changed
+- feat(chat): automatically name new chats from the first prompt (KRI-162) (#1148) <!-- release-pr: 1148 -->
+
+## [0.76.133.0] - 2026-09-22
+
+### Fixed
+- fix: deliver background creator replies during chat polling (#1147) <!-- release-pr: 1147 -->
+
+## [0.76.132.0] - 2026-09-22
+
+### Fixed
+- fix(ios): keep Text tab stable and enable panel expansion (#1146) <!-- release-pr: 1146 -->
+
+## [0.76.131.0] - 2026-09-22
+
+### Fixed
+- fix: preserve general clip instructions and grounded labels (#1145) <!-- release-pr: 1145 -->
+
+## [0.76.130.0] - 2026-09-22
+
+### Fixed
+- fix(ios): connect editor tool panels and animate text previews (KRI-148) (#1144) <!-- release-pr: 1144 -->
+
+## [0.76.129.0] - 2026-09-22
+
+### Changed
+- fix: continue clip-intent vision queries asynchronously (KRI-154) (#1138) <!-- release-pr: 1138 -->
+
+## [0.76.128.0] - 2026-09-22
+
+### Changed
+- fix: make iOS chat chronological with one Send action (KRI-150) (#1141) <!-- release-pr: 1141 -->
+
+## [0.76.127.0] - 2026-09-22
+
+### Fixed
+- fix: preserve explicit clip selections in long creator requests (#1143) <!-- release-pr: 1143 -->
+
+## [0.76.126.0] - 2026-09-22
+
+### Fixed
+- fix: start phone narration renders and recover failed dispatches (#1140) <!-- release-pr: 1140 -->
+
+## [0.76.125.0] - 2026-09-22
+
+### Fixed
+- fix: preserve clip understanding in generative cache (KRI-157) (#1137) <!-- release-pr: 1137 -->
+
+## [0.76.124.0] - 2026-09-22
+
+### Changed
+- test: exclude placeholder icons from gallery poster count (#1139) <!-- release-pr: 1139 -->
+
+## [0.76.123.0] - 2026-09-22
+
+### Fixed
+- fix: prepare creator clips before planning (KRI-151) (#1135) <!-- release-pr: 1135 -->
+
+## [0.76.122.0] - 2026-09-22
+
+### Changed
+- fix: reject ambiguous classic clip label mappings (KRI-158) (#1136) <!-- release-pr: 1136 -->
+
+## [0.76.121.0] - 2026-09-22
+
+### Changed
+- feat(planner): separate semantic proposals from exact frame scheduling (KRI-133) (#1131) <!-- release-pr: 1131 -->
+
+## [0.76.120.0] - 2026-09-22
+
+### Fixed
+- fix: make native text saves and device render retries reliable (KRI-153) (#1134) <!-- release-pr: 1134 -->
+
 ## [0.76.119.0] - 2026-09-22
 
 ### Changed

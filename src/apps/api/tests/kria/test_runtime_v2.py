@@ -66,6 +66,7 @@ def _thread(*, revision: int = 3) -> SimpleNamespace:
         id=uuid.uuid4(),
         creator_id=uuid.uuid4(),
         runtime_version=2,
+        title="Existing chat",
         status="active",
         revision=revision,
         active_creator_agent_session_id=None,
@@ -116,6 +117,7 @@ def _turn_for(approval) -> SimpleNamespace:  # noqa: ANN001
 def _delta_event(sequence: int) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
+        client_event_id=f"client-{sequence}",
         sequence=sequence,
         revision=sequence + 1,
         role="assistant",
@@ -314,6 +316,7 @@ async def test_read_delta_paginates_archived_thread_without_hiding_events() -> N
     assert response.status == "archived"
     assert response.thread_revision == 14
     assert [event.sequence for event in response.events] == [5, 6]
+    assert [event.client_event_id for event in response.events] == ["client-5", "client-6"]
     assert response.after_sequence == 4
     assert response.next_after_sequence == 6
     assert response.has_more is True
@@ -1244,3 +1247,44 @@ def test_failed_turn_publishes_its_promoted_successor() -> None:
     publish.assert_called_once_with(
         args=[successor_id], task_id=successor_id, queue="agent-control"
     )
+
+
+@pytest.mark.asyncio
+async def test_first_inert_prompt_also_reserves_title_generation():
+    thread = _thread(revision=2)
+    thread.title = "Untitled video"
+    added = []
+
+    async def flush():
+        for row in added:
+            if getattr(row, "id", None) is None:
+                row.id = uuid.uuid4()
+
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                _Result(scalar=thread),
+                _Result(scalar=None),
+                _Result(scalars=[]),
+                _Result(scalar=1),
+                _Result(scalar=2),
+            ]
+        ),
+        scalar=AsyncMock(return_value=None),
+        add=MagicMock(side_effect=added.append),
+        flush=AsyncMock(side_effect=flush),
+        commit=AsyncMock(),
+    )
+    accepted, publish = await submit_turn(
+        db,
+        thread_id=thread.id,
+        creator_id=thread.creator_id,
+        body=SubmitTurnBody(
+            message="What can you do?", client_event_id="first-help", expected_thread_revision=2
+        ),
+    )
+    assert accepted.status == "completed"
+    assert publish is False
+    assert thread.title == "What can you do?"
+    assert thread.state["title_generation"] == "pending"
+    db.commit.assert_awaited_once()

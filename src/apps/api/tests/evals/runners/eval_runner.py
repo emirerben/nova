@@ -90,11 +90,15 @@ def build_eval_run_context(
     *,
     is_live: bool,
     invocation: str = "primary",
+    request_id_suffix: str | None = None,
 ) -> RunContext:
     """Build the one attributed context shared by every live-eval call path."""
 
+    request_id = f"eval:{fixture_id}:{invocation}"
+    if request_id_suffix:
+        request_id = f"{request_id}:{request_id_suffix}"
     return RunContext(
-        request_id=f"eval:{fixture_id}:{invocation}",
+        request_id=request_id,
         usage_purpose=(os.environ.get("NOVA_EVAL_USAGE_PURPOSE") if is_live else None),
         test_run_id=(os.environ.get("NOVA_EVAL_TEST_RUN_ID") if is_live else None),
         estimated_max_cost_usd=(
@@ -347,6 +351,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.edit_proposal import EditProposalAgent
 
         return EditProposalAgent
+    if agent_name == "nova.plan.semantic_edit_proposal":
+        from app.agents.semantic_edit_proposal import SemanticEditProposalAgent
+
+        return SemanticEditProposalAgent
     if agent_name == "nova.plan.edit_guide":
         from app.agents.edit_guide import EditGuideAgent
 
@@ -411,6 +419,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.clip_request_resolver import ClipRequestResolverAgent
 
         return ClipRequestResolverAgent
+    if agent_name == "nova.plan.clip_intent_planner":
+        from app.agents.clip_intent_planner import ClipIntentPlannerAgent
+
+        return ClipIntentPlannerAgent
     if agent_name == "nova.video.clip_question":
         from app.agents.clip_question import ClipQuestionAgent
 
@@ -460,6 +472,7 @@ def run_eval(
     rubric_dir: Path = RUBRIC_ROOT,
     shadow_prompts_dir: Path | None = None,
     live_input_normalizer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    request_id_suffix: str | None = None,
 ) -> EvalResult:
     """Run one fixture end-to-end.
 
@@ -484,7 +497,11 @@ def run_eval(
     # `skip_agent_run_persist` keeps eval rows out of the prod `agent_run`
     # table — the admin debug view filters by job_id and eval runs have no
     # job, so persisting them would just be noise on the way to nowhere.
-    eval_ctx = build_eval_run_context(fixture.fixture_id, is_live=is_live)
+    eval_ctx = build_eval_run_context(
+        fixture.fixture_id,
+        is_live=is_live,
+        request_id_suffix=request_id_suffix,
+    )
 
     effective_input = fixture.input
     if live_input_normalizer is not None and model_client is not None:
@@ -501,6 +518,36 @@ def run_eval(
     try:
         output = agent.run(effective_input, ctx=eval_ctx)
     except Exception as exc:
+        capture_root = os.environ.get("NOVA_EVAL_CAPTURE_DIR")
+        if recording_client is not None and capture_root and recording_client.invocations:
+            capture_stem = fixture.path.stem
+            if request_id_suffix:
+                capture_stem = f"{capture_stem}--{request_id_suffix.replace('/', '-')}"
+            capture_path = (
+                Path(capture_root) / fixture.path.parent.name / f"{capture_stem}--failed.json"
+            )
+            capture_path.parent.mkdir(parents=True, exist_ok=True)
+            capture_path.write_text(
+                json.dumps(
+                    {
+                        "agent": fixture.agent,
+                        "prompt_version": agent.spec.prompt_version,
+                        "input": fixture.input,
+                        "error": f"agent.run failed: {exc}",
+                        "raw_texts": [
+                            invocation.raw_text for invocation in recording_client.invocations
+                        ],
+                        "meta": {
+                            **fixture.meta,
+                            "source": "provider_failure_diagnostic",
+                            "test_run_id": os.environ.get("NOVA_EVAL_TEST_RUN_ID"),
+                        },
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
         return EvalResult(
             fixture_id=fixture.fixture_id,
             agent=fixture.agent,
@@ -541,7 +588,10 @@ def run_eval(
 
     capture_root = os.environ.get("NOVA_EVAL_CAPTURE_DIR")
     if result.passed and recording_client is not None and capture_root:
-        capture_path = Path(capture_root) / fixture.path.parent.name / f"{fixture.path.stem}.json"
+        capture_stem = fixture.path.stem
+        if request_id_suffix:
+            capture_stem = f"{capture_stem}--{request_id_suffix.replace('/', '-')}"
+        capture_path = Path(capture_root) / fixture.path.parent.name / f"{capture_stem}.json"
         capture_path.parent.mkdir(parents=True, exist_ok=True)
         capture = {
             "agent": fixture.agent,
@@ -565,7 +615,13 @@ def run_eval(
         try:
             with _shadow_prompts(shadow_prompts_dir):
                 shadow_agent = agent_cls(model_client)
-                shadow_output = shadow_agent.run(effective_input, ctx=eval_ctx)
+                shadow_ctx = build_eval_run_context(
+                    fixture.fixture_id,
+                    is_live=is_live,
+                    invocation="shadow",
+                    request_id_suffix=request_id_suffix,
+                )
+                shadow_output = shadow_agent.run(effective_input, ctx=shadow_ctx)
             result.shadow_structural_failures = run_structural(
                 fixture.agent, shadow_output, validated_input, fixture_id=fixture.fixture_id
             )

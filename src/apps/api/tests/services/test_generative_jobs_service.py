@@ -10,12 +10,14 @@ import uuid
 
 import pytest
 
+from app.kria.media_sources import OriginalMediaDescriptor
 from app.schemas.montage_preset import coerce_montage_preset
 from app.services.generative_jobs import (
     CONTENT_PLAN_ORIGINAL_VARIANT_POLICY,
     CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
     build_generative_job,
 )
+from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 
 
 def test_build_default_generative_job() -> None:
@@ -397,6 +399,151 @@ def test_public_job_rejects_creation_thread_voiceover() -> None:
             user_id=user_id,
             clip_paths=["slot-uploads/clip.mp4"],
             voiceover_gcs_path=voiceover_path,
+        )
+
+
+def _phone_binding(user_id: uuid.UUID, thread_id: uuid.UUID) -> PhoneSourceBinding:
+    return PhoneSourceBinding(
+        media_id="phone-source",
+        proxy_path=f"users/{user_id}/creation-threads/{thread_id}/analysis-proxy-source.mp4",
+        generation="17",
+        original=OriginalMediaDescriptor(
+            sha256="a" * 64,
+            byte_count=1000,
+            duration_s=12,
+            width=1920,
+            height=1080,
+            has_audio=True,
+        ),
+    )
+
+
+def _phone_voiceover_args(user_id: uuid.UUID, *, edit_format: str = "montage") -> dict:
+    thread_id = uuid.uuid4()
+    binding = _phone_binding(user_id, thread_id)
+    return {
+        "user_id": user_id,
+        "clip_paths": [binding.proxy_path],
+        "mode": "content_plan",
+        "content_plan_item_id": uuid.uuid4(),
+        "content_plan_ownership_epoch": 0,
+        "edit_format": edit_format,
+        "voiceover_gcs_path": f"users/{user_id}/creation-threads/{thread_id}/voice.m4a",
+        "phone_sources": (binding,),
+    }
+
+
+@pytest.mark.parametrize(
+    ("edit_format", "creator_strategy"),
+    [
+        ("montage", None),
+        ("narrated_planned", None),
+        (
+            "narrated_planned",
+            {
+                "execution_contract": "guided_voiceover_v1",
+                "render_program": "guided",
+                "audio_strategy": "voiceover",
+            },
+        ),
+    ],
+    ids=["montage_voiceover", "narrated_voiceover", "guided_voiceover"],
+)
+def test_phone_voiceover_constructor_accepts_live_supported_lanes(
+    monkeypatch: pytest.MonkeyPatch, edit_format: str, creator_strategy: dict | None
+) -> None:
+    """The constructor must agree with dispatch on every live narration lane."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_guided_narration_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_narrated_rendering_enabled", True)
+    monkeypatch.setattr(settings, "narrated_archetype_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["narrationAudio"])
+    user_id = uuid.uuid4()
+
+    job = build_generative_job(
+        **_phone_voiceover_args(user_id, edit_format=edit_format),
+        creator_strategy=creator_strategy,
+    )
+
+    assert job.all_candidates["voiceover_gcs_path"].endswith("/voice.m4a")
+    assert job.assembly_plan[PHONE_SOURCES_FIELD][0]["media_id"] == "phone-source"
+
+
+def test_phone_voiceover_constructor_preserves_rollout_and_source_gates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.config import settings
+
+    user_id = uuid.uuid4()
+    args = _phone_voiceover_args(user_id)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "phone_narration_rendering_enabled", False)
+    monkeypatch.setattr(settings, "phone_render_verified_features", [])
+
+    with pytest.raises(ValueError, match="phone planning is unavailable"):
+        build_generative_job(**args)
+
+    monkeypatch.setattr(settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["narrationAudio"])
+    invalid_source_args = dict(args)
+    invalid_source_args["clip_paths"] = ["slot-uploads/not-the-bound-proxy.mp4"]
+    with pytest.raises(ValueError, match="exactly bind"):
+        build_generative_job(**invalid_source_args)
+
+    invalid_voiceover_args = dict(args)
+    invalid_voiceover_args["voiceover_gcs_path"] = (
+        f"users/{uuid.uuid4()}/creation-threads/{uuid.uuid4()}/voice.m4a"
+    )
+    with pytest.raises(ValueError, match="owner mismatch"):
+        build_generative_job(**invalid_voiceover_args)
+
+    proxy_voiceover_args = dict(args)
+    proxy_voiceover_args["voiceover_gcs_path"] = args["clip_paths"][0]
+    with pytest.raises(ValueError, match="analysis proxies"):
+        build_generative_job(**proxy_voiceover_args)
+
+
+@pytest.mark.parametrize(
+    ("edit_format", "creator_strategy", "disable_guided"),
+    [
+        (
+            "narrated_planned",
+            {
+                "execution_contract": "guided_voiceover_v1",
+                "render_program": "guided",
+                "audio_strategy": "voiceover",
+            },
+            True,
+        ),
+        ("talking_head", None, False),
+    ],
+    ids=["guided_rollout_disabled", "unsupported_format"],
+)
+def test_phone_voiceover_constructor_rejects_unavailable_lane(
+    monkeypatch: pytest.MonkeyPatch,
+    edit_format: str,
+    creator_strategy: dict | None,
+    disable_guided: bool,
+) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_guided_narration_rendering_enabled", not disable_guided)
+    monkeypatch.setattr(settings, "phone_narrated_rendering_enabled", True)
+    monkeypatch.setattr(settings, "narrated_archetype_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["narrationAudio"])
+
+    with pytest.raises(ValueError, match="phone planning is unavailable"):
+        build_generative_job(
+            **_phone_voiceover_args(uuid.uuid4(), edit_format=edit_format),
+            creator_strategy=creator_strategy,
         )
 
 

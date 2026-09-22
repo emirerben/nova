@@ -273,8 +273,14 @@ private struct CreationWorkspaceView: View {
     @State private var prompt = ""
     @State private var events: [ThreadEvent] = []
     @State private var initialConversationLoaded = false
-    @State private var initialConversationRevealed = false
-    @State private var pendingMessages: [PendingChatMessage] = []
+    @State private var pendingMessages: [ChatPendingMessage] = []
+    @State private var submissionAnchor: ChatPendingMessage?
+    @State private var uploadAnchors: [UUID: ChatPendingUpload] = [:]
+    @State private var nextLocalOrder = 0
+    @State private var scrollRequest = 0
+    @State private var hasHistoryBaseline = false
+    @StateObject private var responsePresentation = ChatResponsePresentation()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var approval: ApprovalSnapshot?
     @State private var approvalNotice: String?
@@ -323,8 +329,173 @@ private struct CreationWorkspaceView: View {
         model.projects.first(where: { $0.id == project.id }) ?? project
     }
 
-    private var transcript: [ChatTranscriptMessage] {
-        events.compactMap(ChatTranscriptMessage.from(event:)) + pendingMessages.map(\.transcriptMessage)
+    private var canAttachMedia: Bool {
+        selectedFormat != nil && !isSending && !isActing && !isThinking
+            && currentProject.status != .rendering && currentProject.status != .ready
+    }
+
+    private var readyMediaCount: Int {
+        guard workspaceStage == .footage else { return 0 }
+        if attachedClipCount > 0 { return attachedClipCount }
+        let destination = ProjectUploadDestination.resolve(
+            capabilities: capabilities?.phoneRendering, capabilitiesLoaded: capabilitiesAreAuthoritative,
+            sourcePurposes: [], role: .visual
+        )
+        return selectedFormat == .montage && destination.visualKinds != nil ? fullThread?.deviceReadyVisualCount ?? 0 : 0
+    }
+
+    private var hasUploadFailures: Bool {
+        uploadFailures.contains { $0.projectID == project.id }
+    }
+
+    private var activeProposalEvent: ThreadEvent? {
+        if let approval {
+            return events.last { $0.eventType == "draft_applied" && $0.payload?["turn_id"]?.stringValue == approval.turnID }
+        }
+        guard let thread = fullThread else { return nil }
+        let planHash = thread.creatorAgent?["plan_hash"]?.stringValue
+        return events.last {
+            ["assistant_strategy", "agent_assistant_strategy"].contains($0.eventType)
+                && (planHash == nil || $0.payload?["plan_hash"]?.stringValue == planHash)
+        }
+    }
+
+    /// A stage belongs beside the event that introduced it, not below every
+    /// subsequent message. This is also stable when a poll arrives during Send.
+    private var stageAnchor: ChatTimelineStageAnchor? {
+        guard fullThread != nil || isUITesting else { return nil }
+        let anchor: ThreadEvent?
+        switch workspaceStage {
+        case .format:
+            anchor = events.last { $0.eventType == "format_prompt" }
+        case .footage:
+            anchor = events.last { ["action_select_format", "media_prompt", "upload_prompt"].contains($0.eventType) }
+        case .direction:
+            anchor = activeProposalEvent ?? events.last { $0.eventType == "approval_requested" }
+        case .rendering:
+            anchor = events.last { ["action_generate", "action_retry", "agent_assistant_execution", "render_started", "generation_started", "render_queued"].contains($0.eventType) }
+        case .ready:
+            anchor = events.last { ["agent_assistant_review", "assistant_review", "generation_ready"].contains($0.eventType) }
+        case .failed:
+            anchor = events.last { ["agent_assistant_error", "assistant_error", "agent_assistant_render_failed", "assistant_render_failed", "generation_failed"].contains($0.eventType) }
+        }
+        return ChatTimelineStageAnchor(id: "stage-\(workspaceStage)", afterSequence: anchor?.sequence ?? afterSequence)
+    }
+
+    private var suppressedTimelineMessages: Set<String> {
+        if workspaceStage == .format, let event = events.last(where: { $0.eventType == "format_prompt" }) {
+            return [event.id]
+        }
+        if workspaceStage == .direction, let event = activeProposalEvent { return [event.id] }
+        return []
+    }
+
+    private var activeUploadIDs: Set<UUID> {
+        var ids = Set(uploadRecords.filter { $0.projectID == project.id }.map(\.id))
+        ids.formUnion(uploadInFlight.filter { $0.value.projectID == project.id }.keys)
+        if let selection = photoSelections[project.id.uuidString] {
+            ids.formUnion(selection.entries.values.filter { $0.mediaID == nil }.map(\.recordID))
+        }
+        return ids
+    }
+
+    private var timeline: [ChatTimelineEntry] {
+        ChatTimeline.build(
+            events: events, pending: pendingMessages, stage: stageAnchor,
+            suppressedMessageIDs: suppressedTimelineMessages,
+            uploads: activeUploadIDs.compactMap { uploadAnchors[$0] }
+        )
+    }
+
+    private var timelineUpdateToken: String {
+        timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
+    }
+
+    @ViewBuilder private var conversationContent: some View {
+        ForEach(ChatTimelineGroup.group(timeline)) { group in
+            if case .media = group.entries[0].content {
+                mediaReceipts(group.entries)
+            } else {
+                timelineRow(group.entries[0])
+            }
+        }
+        if (isThinking || isSending) && workspaceStage != .rendering { ThinkingRow().id("thinking") }
+        if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
+        if let failure {
+            RecoveryCard(failure: failure) { Task { await refreshCapabilities(); await refreshNow() } }
+                .id("recovery")
+        }
+    }
+
+    @ViewBuilder private func timelineRow(_ entry: ChatTimelineEntry) -> some View {
+        switch entry.content {
+        case .message(let message):
+            ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } },
+                           responseStartedAt: responsePresentation.startTime(for: message.id))
+                .id(entry.id)
+        case .stage:
+            stageContent.id(entry.id)
+        case .pendingUpload(let recordID):
+            HStack(spacing: 10) {
+                CreationRecordThumbnail(recordID: recordID, version: previewVersion)
+                Text(uploadRecords.first { $0.id == recordID }.map { BackgroundUploadCoordinator.displayFilename($0.filename) }
+                     ?? uploadInFlight[recordID]?.filename ?? "Preparing media…")
+                    .font(KriaFont.body(12)).lineLimit(1)
+                Spacer()
+                ProgressView(value: uploadProgress[recordID] ?? 0).frame(width: 60).tint(KriaColor.ink)
+            }
+            .accessibilityIdentifier("chat-upload-\(recordID.uuidString)")
+            .id(entry.id)
+        case .media:
+            EmptyView() // Consecutive receipts are rendered together above.
+        }
+    }
+
+    private func mediaReceipts(_ entries: [ChatTimelineEntry]) -> some View {
+        let media = entries.flatMap { entry -> [CreationAttachedMedia] in
+            guard case .media(let event) = entry.content else { return [] }
+            let current = Dictionary(CreationAttachedMedia.parse(threadState).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+            return CreationAttachedMedia.parse(event.payload ?? [:]).map { current[$0.id] ?? $0 }
+        }
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(Array(media.enumerated()), id: \.offset) { _, attachment in
+                    VStack(alignment: .leading, spacing: 5) {
+                        CreationAttachmentThumbnail(media: attachment)
+                        Text(attachment.filename).font(KriaFont.body(11)).lineLimit(2)
+                    }
+                    .frame(width: 92, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Uploaded \(attachment.filename)")
+                    .accessibilityIdentifier("chat-media-\(attachment.id)")
+                }
+            }
+        }
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(key: DrawerGestureExclusionPreference.self, value: [geometry.frame(in: .global)])
+            }
+        }
+    }
+
+    private func openAttachments() {
+        guard canAttachMedia else { return }
+        scrollRequest += 1
+        showsAttachments = true
+    }
+
+    private func rememberUploadAnchors() {
+        let newIDs = activeUploadIDs.subtracting(uploadAnchors.keys)
+        for id in newIDs.sorted(by: { $0.uuidString < $1.uuidString }) {
+            nextLocalOrder += 1
+            uploadAnchors[id] = ChatPendingUpload(id: id, afterSequence: afterSequence, localOrder: nextLocalOrder)
+        }
+    }
+
+    private func observeResponses() {
+        responsePresentation.observe(events: events, isInitialLoad: !hasHistoryBaseline,
+                                     isActive: scenePhase == .active && !projectsDrawerOpen && !showsAttachments)
+        hasHistoryBaseline = true
     }
 
     private var attachedClipCount: Int {
@@ -365,7 +536,9 @@ private struct CreationWorkspaceView: View {
             status: currentProject.status,
             awaitsNewPlanConfirmation: awaitsNewPlanConfirmation,
             isChoosingFormat: isChoosingFormat,
-            hasFormat: selectedFormat != nil
+            hasFormat: selectedFormat != nil,
+            preparationIsActive: fullThread?.preparationIsActive == true,
+            preparationFailed: fullThread?.preparationFailed == true
         )
     }
 
@@ -383,68 +556,24 @@ private struct CreationWorkspaceView: View {
             )
             .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
 
-            ScrollViewReader { proxy in
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 20) {
-                        ForEach(Array(transcript.enumerated()), id: \.element.id) { index, message in
-                            ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } }).id(message.id)
-                                .modifier(ConversationEntrance(visible: initialConversationRevealed, order: index))
-                        }
-
-                        if fullThread != nil || isUITesting {
-                            stageContent
-                                .modifier(ConversationEntrance(visible: initialConversationRevealed, order: transcript.count))
-                        }
-
-                        if (isThinking || isSending) && workspaceStage != .rendering {
-                            ThinkingRow().id("thinking")
-                        }
-
-                        if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
-
-                        if let failure {
-                            RecoveryCard(failure: failure) { Task { await refreshCapabilities(); await refreshNow() } }
-                                .id("recovery")
-                        }
-
-                        Color.clear.frame(height: 1).id("conversation-end")
-                    }
-                    .frame(maxWidth: 620, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 20)
-                    .padding(.bottom, 28)
-                    .frame(maxWidth: .infinity)
-                }
-                .defaultScrollAnchor(.bottom, for: .initialOffset)
-                .defaultScrollAnchor(.bottom, for: .sizeChanges)
-                .opacity(initialConversationLoaded ? 1 : 0)
-                .task(id: initialConversationLoaded) {
-                    guard initialConversationLoaded else { return }
-                    scrollToEnd(proxy)
-                    await Task.yield()
-                    guard !Task.isCancelled else { return }
-                    initialConversationRevealed = true
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Conversation history")
-                .onChange(of: events.count) { _, _ in scrollToEnd(proxy) }
-                .onChange(of: pendingMessages.count) { _, _ in scrollToEnd(proxy) }
-                .onChange(of: isThinking) { _, _ in scrollToEnd(proxy) }
-                .onChange(of: isSending) { _, _ in scrollToEnd(proxy) }
+            ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
+                conversationContent
             }
             .accessibilityHidden(projectsDrawerOpen)
             .allowsHitTesting(!projectsDrawerOpen)
         }
         .background(WorkspaceSurface())
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: responsePresentation.hapticToken)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
                 text: $prompt,
                 isSending: isSending || isActing,
-                canAttach: selectedFormat != nil && currentProject.status != .rendering && currentProject.status != .ready,
+                canAttach: canAttachMedia,
+                canSendWithoutText: readyMediaCount > 0,
+                blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures,
+                placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
                 isFocused: $composerFocused,
-                attach: { if selectedFormat != nil { showsAttachments = true } },
+                attach: openAttachments,
                 send: { Task { await send() } }
             )
             .accessibilityHidden(projectsDrawerOpen)
@@ -461,9 +590,9 @@ private struct CreationWorkspaceView: View {
         .onChange(of: currentProject.serverRevision) { _, revision in
             threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: revision)
         }
-        .onReceive(model.uploads.$records) { uploadRecords = $0 }
-        .onReceive(model.uploads.$inFlight) { uploadInFlight = $0 }
-        .onReceive(model.uploads.$photoSelections) { photoSelections = $0 }
+        .onReceive(model.uploads.$records) { uploadRecords = $0; rememberUploadAnchors() }
+        .onReceive(model.uploads.$inFlight) { uploadInFlight = $0; rememberUploadAnchors() }
+        .onReceive(model.uploads.$photoSelections) { photoSelections = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$failures) { uploadFailures = $0 }
         .onReceive(model.uploads.$previewVersion) { previewVersion = $0 }
         .onReceive(model.uploads.$progress) { uploadProgress = $0 }
@@ -503,29 +632,12 @@ private struct CreationWorkspaceView: View {
         VStack(spacing: 0) {
             Text("Kria").font(KriaFont.body(17).weight(.semibold)).padding(.top, 20)
                 .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
-            ScrollViewReader { proxy in
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 20) {
-                        ForEach(transcript) { message in ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } }).id(message.id) }
-                        if approval != nil { stageContent }
-                        if isThinking || isSending { ThinkingRow() }
-                        if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
-                        if let failure {
-                            Text(failure.message).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
-                        }
-                        Color.clear.frame(height: 1).id("conversation-end")
-                    }.padding(16)
-                }
-                .defaultScrollAnchor(.bottom, for: .initialOffset)
-                .defaultScrollAnchor(.bottom, for: .sizeChanges)
-                .scrollDismissesKeyboard(.interactively)
-                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
-                .onChange(of: events.count) { _, _ in scrollToEnd(proxy) }
-                .onChange(of: pendingMessages.count) { _, _ in scrollToEnd(proxy) }
+            ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
+                conversationContent
             }
             ChatComposer(
                 text: $prompt, isSending: isSending || isActing,
-                canAttach: false, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
+                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
             )
         }
         .background(KriaColor.paper)
@@ -542,38 +654,28 @@ private struct CreationWorkspaceView: View {
                 ProgressView("Loading formats…")
             }
         case .footage:
-            if transcript.last(where: { $0.role == .user }) == nil, let selectedFormat {
-                ChatMessageRow(message: .syntheticUser(selectedFormat.choiceSentence))
-            }
             if let selectedFormat {
                 FootageStage(
                     format: selectedFormat,
                     mediaCount: attachedClipCount,
                     maximumClipCount: selectedMaximumClipCount,
-                    uploads: uploadRecords.filter { $0.projectID == project.id },
-                    preparingCount: preparingUploadCount,
+                    uploads: [],
+                    preparingCount: 0,
                     previewVersion: previewVersion,
                     progress: uploadProgress,
-                    addFootage: { showsAttachments = true },
-                    continueWithFootage: {
-                        Task { await send(message: "Continue with \(attachedClipCount) clips") }
-                    },
+                    addFootage: openAttachments,
                     changeFormat: { isChoosingFormat = true },
-                    attachedMedia: CreationAttachedMedia.parse(threadState),
-                    isBusy: isSending || isActing,
+                    attachedMedia: [],
+                    isBusy: isSending || isActing || isThinking,
                     removeMedia: { mediaID in performAction("remove_media", payload: ["media_id": .string(mediaID)]) },
-                    failures: uploadFailures.filter { $0.projectID == project.id && $0.role == .clip },
+                    failures: uploadFailures.filter { $0.projectID == project.id },
                     dismissFailure: { model.uploads.dismissFailure(id: $0) },
                     // Only a project this iPhone renders can be made of Visuals
                     // alone, and only from the Visuals the server's rule counts.
                     visualCount: ProjectUploadDestination.resolve(
                         capabilities: capabilities?.phoneRendering, capabilitiesLoaded: capabilitiesAreAuthoritative,
                         sourcePurposes: [], role: .visual
-                    ).visualKinds == nil ? 0 : fullThread?.deviceReadyVisualCount ?? 0,
-                    continueWithVisuals: {
-                        let count = fullThread?.deviceReadyVisualCount ?? 0
-                        Task { await send(message: "Continue with my \(count) \(count == 1 ? "visual" : "visuals")") }
-                    }
+                    ).visualKinds == nil ? 0 : fullThread?.deviceReadyVisualCount ?? 0
                 )
                 .id("upload-prompt")
             }
@@ -583,6 +685,7 @@ private struct CreationWorkspaceView: View {
                     approval: approval,
                     format: selectedFormat,
                     isBusy: isActing || pendingUploadCount > 0,
+                    responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     decide: decide
                 )
                 .id("approval-\(approval.id)")
@@ -590,6 +693,7 @@ private struct CreationWorkspaceView: View {
                 CreationConfirmationStage(
                     thread: thread,
                     isBusy: isActing || isSending || pendingUploadCount > 0,
+                    responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     conflict: visibleConfirmationConflict(for: thread),
                     refreshDirection: refreshDirection,
                     action: performAction
@@ -611,7 +715,12 @@ private struct CreationWorkspaceView: View {
                     await refreshDeviceRender(retry: true)
                 }
             } else {
-                RenderingStage(isPreparing: currentProject.activeJobID == nil).id("rendering")
+                RenderingStage(
+                    isPreparing: currentProject.activeJobID == nil,
+                    preparationMessage: fullThread?.preparationMessage,
+                    preparationCompleted: fullThread?.preparationCompleted ?? 0,
+                    preparationTotal: fullThread?.preparationTotal ?? 0
+                ).id("rendering")
             }
         case .ready:
             ReadyStage(
@@ -638,12 +747,22 @@ private struct CreationWorkspaceView: View {
                 CreationConfirmationStage(
                     thread: thread,
                     isBusy: isActing || isSending || pendingUploadCount > 0,
+                    responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     conflict: visibleConfirmationConflict(for: thread),
                     refreshDirection: refreshDirection,
                     action: performAction
                 )
             } else {
-                FailedStage(retry: { Task { await send(message: "Try generating this edit again") } }).id("failed")
+                if fullThread?.preparationFailed == true {
+                    FailedStage(
+                        title: "Clip preparation needs another try",
+                        bodyText: fullThread?.preparationMessage ?? fullThread?.lastAssistantErrorMessage ?? "Kria couldn’t prepare your clips. Your direction and footage are still saved.",
+                        retryLabel: "Retry preparing clips",
+                        retry: fullThread?.preparationRetryable == true ? { Task { await send(message: "Retry preparing my clips.") } } : nil
+                    ).id("failed-preparation")
+                } else {
+                    FailedStage(retry: { Task { await send(message: "Try generating this edit again") } }).id("failed")
+                }
             }
         }
     }
@@ -669,18 +788,13 @@ private struct CreationWorkspaceView: View {
         Task { await send(message: CreationConfirmationConflict.refreshDirectionMessage) }
     }
 
-    private func scrollToEnd(_ proxy: ScrollViewProxy) {
-        // History arrives asynchronously when switching chats. Position it in
-        // the same layout transaction instead of showing a catch-up scroll.
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { proxy.scrollTo("conversation-end", anchor: .bottom) }
-    }
-
     private func send(message submittedMessage: String? = nil) async {
-        guard !isSending, !isActing else { return }
-        let message = (submittedMessage ?? prompt).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty else { return }
+        guard !isSending, !isActing, !isThinking,
+              let message = ChatSubmission.message(
+                text: submittedMessage ?? prompt, readyMediaCount: readyMediaCount,
+                pendingUploadCount: pendingUploadCount, hasUploadFailures: hasUploadFailures
+              ) else { return }
+        let draftToRestore = submittedMessage == nil ? prompt : message
         isSending = true
         failure = nil
         confirmationConflict = nil
@@ -697,10 +811,19 @@ private struct CreationWorkspaceView: View {
             pendingTurnSubmission, for: message, expectedRevision: threadRevision
         )
         pendingTurnSubmission = submission
+        let optimistic: ChatPendingMessage
+        if let previous = submissionAnchor, previous.clientEventID == submission.clientEventID {
+            optimistic = previous
+        } else {
+            nextLocalOrder += 1
+            optimistic = ChatPendingMessage(content: message, clientEventID: submission.clientEventID,
+                                            afterSequence: afterSequence, localOrder: nextLocalOrder)
+        }
+        submissionAnchor = optimistic
+        if !pendingMessages.contains(where: { $0.id == optimistic.id }) { pendingMessages.append(optimistic) }
+        prompt = ""
+        scrollRequest += 1
         if currentProject.runtimeVersion != 2 {
-            let optimistic = PendingChatMessage(content: message)
-            pendingMessages.append(optimistic)
-            prompt = ""
             let requestSequence = projectionOrder.begin()
             do {
                 let thread = try await model.api.sendCreationMessage(threadID: project.id, message: message, expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID)
@@ -710,13 +833,14 @@ private struct CreationWorkspaceView: View {
                 await editorSession.synchronizePromptRevision()
             } catch APIError.conflict {
                 pendingMessages.removeAll { $0.id == optimistic.id }
-                prompt = message
+                if prompt.isEmpty { prompt = draftToRestore }
                 pendingTurnSubmission = nil
+                submissionAnchor = nil
                 await refreshNow()
                 failure = ChatFailure("This conversation changed. Your message is still here; review the latest direction and send again.")
             } catch {
                 pendingMessages.removeAll { $0.id == optimistic.id }
-                prompt = message
+                if prompt.isEmpty { prompt = draftToRestore }
                 failure = ChatFailure(
                     "Kria couldn’t confirm that message. Your draft is saved here; retry to check it safely.",
                     cause: RequestFailureCause(error)
@@ -727,26 +851,25 @@ private struct CreationWorkspaceView: View {
         let accepted: TurnAccepted
         do {
             accepted = try await model.api.submitTurn(
-                threadID: project.id,
-                message: message,
-                expectedRevision: submission.expectedRevision,
-                clientEventID: submission.clientEventID
+                threadID: project.id, message: message,
+                expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID
             )
         } catch APIError.conflict {
+            pendingMessages.removeAll { $0.id == optimistic.id }
+            if prompt.isEmpty { prompt = draftToRestore }
             pendingTurnSubmission = nil
-            if let thread = try? await model.api.project(threadID: project.id) {
-                apply(thread)
-            }
+            submissionAnchor = nil
+            if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
             failure = ChatFailure("This conversation changed while you were sending. Review it and try again.")
             return
         } catch {
-            failure = ChatFailure("Your message wasn’t sent.", error: error)
+            pendingMessages.removeAll { $0.id == optimistic.id }
+            if prompt.isEmpty { prompt = draftToRestore }
+            failure = ChatFailure("Kria couldn’t confirm that message. Your draft is saved here; retry to check it safely.", error: error)
             return
         }
         pendingTurnSubmission = nil
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
-        pendingMessages.append(PendingChatMessage(content: message))
-        prompt = ""
         conversationAcceptedID = UUID()
         isThinking = true
         failure = await acceptedMutationRefreshError(
@@ -850,7 +973,7 @@ private struct CreationWorkspaceView: View {
             do {
                 let changed = try await refreshDelta()
                 await refreshDeviceRender()
-                delay = changed || isSending || isActing || currentProject.status == .rendering
+                delay = changed || isSending || isActing || currentProject.status == .rendering || fullThread?.preparationIsActive == true
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
             } catch is CancellationError {
                 return
@@ -914,6 +1037,7 @@ private struct CreationWorkspaceView: View {
             incoming: thread.revision
         )
         events = ChatTranscriptHistory.merge(events, with: thread.events)
+        observeResponses()
 
         afterSequence = ChatTranscriptHistory.nextAfterSequence(
             current: afterSequence,
@@ -946,10 +1070,17 @@ private struct CreationWorkspaceView: View {
             return changed
         }
         let delta = try await model.api.threadDelta(threadID: project.id, afterSequence: afterSequence)
+        let revisionBeforeDelta = threadRevision
+        // `threadRevision` advances as soon as the delta is acknowledged, even
+        // if the subsequent full-projection request fails. Keep the revision
+        // of the last successfully applied projection separately so the next
+        // idle delta retries a title (or another mutable projection) sync.
+        let lastFullProjectionRevision = fullThread?.revision ?? project.serverRevision
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: delta.threadRevision)
         let known = Set(events.map(\.id))
         let fresh = delta.events.filter { !known.contains($0.id) }
         events = ChatTranscriptHistory.merge(events, with: fresh)
+        observeResponses()
         afterSequence = ChatTranscriptHistory.nextAfterSequence(
             current: afterSequence,
             response: delta.nextAfterSequence,
@@ -975,23 +1106,36 @@ private struct CreationWorkspaceView: View {
         // successfully.
         clearChatRefreshRecoveryMessage(&failure)
         try await synchronizeApproval()
-        if !fresh.isEmpty || currentProject.status == .rendering {
+        // A background mutation, such as assigning the first-prompt title,
+        // advances the thread revision but may intentionally be a system event
+        // that does not produce a chat row. Delta responses do not contain the
+        // mutable thread projection (including `title`), so fetch it whenever
+        // the revision advances as well as for ordinary conversational updates.
+        if ThreadProjectionRefresh.requiresFullProjection(
+            lastFullProjectionRevision: lastFullProjectionRevision,
+            incomingRevision: delta.threadRevision,
+            receivedEvents: fresh,
+            isRendering: currentProject.status == .rendering
+        ) {
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
         }
         if !fresh.isEmpty, !isThinking { await editorSession.synchronizePromptRevision() }
-        return !fresh.isEmpty
+        return !fresh.isEmpty || threadRevision > revisionBeforeDelta
     }
 
     private func reconcilePendingMessages() {
-        let durable = Set(events.compactMap { event -> String? in
-            guard event.role == "user", event.eventType == "user_message" else { return nil }
-            return event.content?.normalizedChatText
-        })
-        pendingMessages.removeAll { durable.contains($0.content.normalizedChatText) }
-        if let submission = pendingTurnSubmission,
-           durable.contains(submission.message.normalizedChatText) {
-            pendingTurnSubmission = nil
-            if prompt.normalizedChatText == submission.message.normalizedChatText { prompt = "" }
+        var candidates = pendingMessages
+        if let submissionAnchor, !candidates.contains(where: { $0.id == submissionAnchor.id }) {
+            candidates.append(submissionAnchor)
+        }
+        let acknowledged = ChatPendingReconciliation.acknowledged(candidates, events: events)
+        pendingMessages.removeAll { acknowledged.contains($0.id) }
+        if let submissionAnchor, acknowledged.contains(submissionAnchor.id) {
+            if let submission = pendingTurnSubmission, submission.clientEventID == submissionAnchor.clientEventID {
+                pendingTurnSubmission = nil
+                if prompt.normalizedChatText == submission.message.normalizedChatText { prompt = "" }
+            }
+            self.submissionAnchor = nil
         }
     }
 
@@ -1066,8 +1210,12 @@ enum WorkspaceStage {
         status: ProjectStatus,
         awaitsNewPlanConfirmation: Bool,
         isChoosingFormat: Bool,
-        hasFormat: Bool
+        hasFormat: Bool,
+        preparationIsActive: Bool = false,
+        preparationFailed: Bool = false
     ) -> WorkspaceStage {
+        if preparationIsActive { return .rendering }
+        if preparationFailed { return .failed }
         switch status {
         case .rendering:
             // A render already in flight wins even over a freshly proposed
@@ -1128,11 +1276,29 @@ enum ThreadRevisionOrder {
     static func acceptsProjection(current: Int, incoming: Int) -> Bool { incoming >= current }
 }
 
+/// Deltas carry append-only events and a revision, while a full thread carries
+/// mutable fields such as the user-visible title. Keep the decision pure so a
+/// non-conversational background update cannot leave the workspace header or
+/// Recent chats stale. The comparison is with the last *applied full*
+/// projection, not the last delta, because a transient projection-fetch
+/// failure must retry on the next otherwise-idle delta.
+enum ThreadProjectionRefresh {
+    static func requiresFullProjection(
+        lastFullProjectionRevision: Int,
+        incomingRevision: Int,
+        receivedEvents: [ThreadEvent],
+        isRendering: Bool
+    ) -> Bool {
+        incomingRevision > lastFullProjectionRevision || !receivedEvents.isEmpty || isRendering
+    }
+}
+
 struct ChatTranscriptMessage: Identifiable, Equatable {
     let id: String
     let role: ChatMessageRole
     let content: String
     var isPending = false
+    var isProposal = false
     /// A clarifying question's exact, tappable reply choices. Sending one back
     /// verbatim is required — the backend matches it by casefolded,
     /// whitespace-collapsed equality against the fenced mapping it sent with
@@ -1156,6 +1322,9 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
             "agent_assistant_review", "agent_assistant_error", "agent_assistant_render_failed",
             "agent_assistant_execution", "assistant_execution"
         ]
+        if event.eventType == "action_select_format", let format = CreationFormat(event: event) {
+            return Self(id: event.id, role: .user, content: format.choiceSentence)
+        }
         let role: ChatMessageRole
         if event.role == "user" && event.eventType == "user_message" {
             role = .user
@@ -1164,7 +1333,10 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
         } else {
             return nil
         }
-        let rawContent = event.content ?? event.payload?["message"]?.stringValue
+        let isProposal = ["assistant_strategy", "agent_assistant_strategy"].contains(event.eventType)
+        let proposalSummary = isProposal ? event.payload?["proposal_summary"]?.stringValue : nil
+        let rawContent = [proposalSummary, event.content, event.payload?["message"]?.stringValue]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
         guard let content = rawContent?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty else { return nil }
         var options: [String] = []
         var recommendedOption: String?
@@ -1173,17 +1345,10 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             recommendedOption = event.payload?["recommended_option"]?.stringValue
         }
-        return Self(id: event.id, role: role, content: content, options: options, recommendedOption: recommendedOption)
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption)
     }
 }
 
-private struct PendingChatMessage: Identifiable {
-    let id = UUID()
-    let content: String
-    var transcriptMessage: ChatTranscriptMessage {
-        ChatTranscriptMessage(id: "pending-\(id.uuidString)", role: .user, content: content, isPending: true)
-    }
-}
 
 enum CreationFormat: String, CaseIterable, Identifiable {
     case montage

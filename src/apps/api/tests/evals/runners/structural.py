@@ -25,6 +25,7 @@ from app.agents.camera_emphasis import (
     CameraEmphasisInput,
     CameraEmphasisOutput,
 )
+from app.agents.clip_intent_planner import ClipIntentPlannerInput, ClipIntentPlannerOutput
 from app.agents.clip_metadata import (
     _BALL_BLACKLIST,
     _BALL_WHITELIST,
@@ -1190,6 +1191,25 @@ def check_clip_plan_matcher(
             )
         last_score = a.score
 
+    return failures
+
+
+def check_clip_intent_planner(
+    output: ClipIntentPlannerOutput,
+    input: ClipIntentPlannerInput,  # noqa: A002
+) -> list[str]:
+    failures: list[str] = []
+    sources = (input.creator_request, input.latest_user_message or "")
+    if output.question is not None and output.intents:
+        failures.append("question accompanies a partial intent inventory")
+    for intent in output.intents:
+        if not any(intent.source_quote in source for source in sources):
+            failures.append(f"intent {intent.intent_id}: source_quote is not creator text")
+        if intent.creator_text and (
+            intent.creator_text not in intent.source_quote
+            or not any(intent.creator_text in source for source in sources)
+        ):
+            failures.append(f"intent {intent.intent_id}: creator_text is not source-backed")
     return failures
 
 
@@ -2902,6 +2922,10 @@ def run_structural(
                 if any(claim in lowered for claim in unsupported_personal_claims):
                     failures.append(f"beat {index}: invents an unsupported personal experience")
         return failures
+    if agent_name == "nova.plan.semantic_edit_proposal":
+        known = {media.media_id for media in input.media}
+        used = {source.media_id for chapter in output.chapters for source in chapter.sources}
+        return [] if used <= known else ["semantic plan references unknown media"]
     if agent_name == "nova.plan.edit_guide":
         failures: list[str] = []
         if not output.reply.strip():
@@ -3011,6 +3035,8 @@ def run_structural(
         return check_clip_plan_matcher(output, input)
     if agent_name == "nova.plan.clip_request_resolver":
         return check_clip_request_resolver(output, input)
+    if agent_name == "nova.plan.clip_intent_planner":
+        return check_clip_intent_planner(output, input)
     if agent_name == "nova.video.clip_question":
         return check_clip_question(output, input)
     if agent_name == "nova.video.clip_router":
@@ -3064,23 +3090,23 @@ def run_structural(
             action.strategy.audio_strategy in {"original_audio", "voiceover"}
             and action.strategy.render_program != "native"
             and not guided_source_audio
+            and not (
+                action.strategy.execution_contract == "guided_voiceover_v1"
+                and input.capability_manifest.narration is not None
+                and input.capability_manifest.capabilities.get("guided_voiceover") is not None
+                and input.capability_manifest.capabilities["guided_voiceover"].available
+            )
         ):
             failures.append("audio-led strategy is not native")
         normalized_request = " ".join(input.user_message.casefold().split())
         if "sport" in normalized_request and (
             "bottom right" in normalized_request or "bottom-right" in normalized_request
         ):
-            context_label = action.strategy.context_label
-            if context_label is None:
-                failures.append("explicit per-clip sport label request was dropped")
-            elif (
-                context_label.kind != "sport"
-                or context_label.source != "clip_metadata"
-                or context_label.placement != "bottom_right"
-                or context_label.size != "small"
-                or context_label.per_clip is not True
+            intents = action.strategy.clip_intents or []
+            if not any(
+                intent.op == "label" and intent.label_source == "clip" for intent in intents
             ):
-                failures.append("sport label request was not preserved exactly")
+                failures.append("explicit per-clip label request was dropped")
         if "emir olympics" in normalized_request:
             expected_title = (
                 "Emir Olympics. Ann Arbor 2022."

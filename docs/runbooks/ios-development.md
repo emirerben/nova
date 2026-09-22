@@ -146,6 +146,14 @@ instead of substituting preview videos, including in Debug builds. For an
 authenticated, count-only device check, launch Debug with
 `-native-library-audit -native-library-inventory-audit` and inspect
 `Library/Caches/native-library-audit.json`; this does not open videos or render.
+New chats reserve automatic naming only when the first non-empty user message is
+committed. `services/creation_thread_titles.py` saves a prompt-based fallback,
+then makes one bounded background summary request in the prompt's language.
+The durable claim prevents repeat calls; manual renames take precedence under
+the thread lock. Success appends `thread_title_generated`, and the native poller
+refreshes until that full projection is applied, retrying transient read failures.
+Only an intervening automatic title revision is exempt from action conflicts.
+
 Project actions reuse the authenticated creation-thread PATCH/DELETE contracts,
 including revision checks and rename idempotency. Deletion is confirmed and
 blocked during rendering or pending uploads. Microphone chat input is deferred.
@@ -196,6 +204,38 @@ pure, nonisolated function so `NativeEditorIslandMetricsTests` can cover it
 without SwiftUI. The island itself always sits `bottomPadding` (6pt) above the
 real safe-area inset, never inside `bottomClearance`'s own padding budget.
 
+### Connected editor panels (KRI-148)
+
+Text, Captions, Visuals, and Sounds share one bottom-connected panel shell and
+one tool-rail selection. Opening a panel keeps the preview and rail geometry
+stable; the retained timeline remains visually present under the shell but is
+disabled for scrolling, hit testing, and accessibility while covered. The
+Text tab opens without taking keyboard focus; tapping its input starts typing.
+Its unfinished draft survives tab switches, and tapping the active tool
+collapses the shell. The panel's visible grabber and the divider beneath the
+preview both resize the same panel/preview split, with a 44pt drag target and
+an accessibility adjustment action. The
+timeline is clipped to its available editor area while the keyboard is open,
+so text entry cannot let it paint over the source preview. Compact text presets
+use the current `Menu` control, and the text animation picker samples the
+media-engine animation phases from one shared display-link clock. Preview
+autoplay pauses for Reduce Motion and panel lifecycle changes, while manual
+play remains available.
+
+Panel-local authoring state is shared across panel switches so unfinished text
+card, motion composition, and music track ID inputs survive navigation. The
+outgoing panel flushes editing transactions before the next panel registers its
+cleanup, preventing a delayed `onDisappear` from clearing the replacement's
+state. Existing controls, session mutations, capability checks, undo behavior,
+and save contracts remain unchanged.
+
+`NativeEditorInspectorUITests` covers panel switching (including Text), dragging
+the visible panel grabber up and back down, compact presets, preview
+play/pause, and keyboard visibility (including a source-pixel check).
+`NativeEditorPanelLifecycleTests` and `NativeTextAnimationPreviewTests` cover
+cleanup ownership and preview timing; `AppleTextAccessibilityUITests` exercises
+the controls at 320pt width with accessibility text sizes.
+
 ## Native chat creation (KRI-24)
 
 The capabilities endpoint advertises `formats`, per-role `media` limits,
@@ -213,6 +253,19 @@ edit capability. Voice recording is available for Narrated and requires
 microphone permission (the account's AI consent already covers voices). Legacy upload recovery records
 without a role remain primary clips. Pending records block generation, and failed
 attachments retry without uploading the original again.
+
+The chat timeline has one Send action. A prompt is optional once media is ready;
+clips-only sends use the neutral `Suggest an edit.` message through the existing
+nonempty transport. Durable media receipts follow server sequence order,
+contiguous receipts share one strip, and text between them keeps later receipts
+in a separate group. Events with no `client_event_id` use the local
+after-sequence and normalized-text fallback when replacing optimistic rows.
+Proposal summaries are shown once, either in the proposal stage or as the
+conversation message. Newly received assistant batches reveal at 35ms per word
+with a two-second cap, show the full text immediately for Reduce Motion or
+VoiceOver, and trigger one light sensory-feedback batch pulse while the chat is
+active. Conversation polling follows the latest message only while the reader
+is near the bottom; reading older messages does not force a jump.
 
 The Debug API URL must escape the second slash (`http:/$()/localhost:8000`) in
 xcconfig. `make ios-verify` checks the resolved URL, while allowing a complete

@@ -126,6 +126,11 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ),
     # KRI-127 Lane C: open-vocabulary clip-intent resolution.
     (
+        "nova.plan.clip_intent_planner",
+        "app.agents.clip_intent_planner",
+        "ClipIntentPlannerAgent",
+    ),
+    (
         "nova.plan.clip_request_resolver",
         "app.agents.clip_request_resolver",
         "ClipRequestResolverAgent",

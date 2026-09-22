@@ -403,12 +403,16 @@ class Settings(BaseSettings):
     # generic label/group/order/include intents, a resolver matches them to clips
     # from the shared understanding record (with a capped vision re-query), and
     # on-screen labels must pass the grounding fence in app/schemas/clip_intents.py.
-    # False (default) => legacy sport_labels/context_label path, byte-identical.
+    # False (default) disables visual clip intents. Transcript label intents
+    # retain their separate pinned-narration materializer. No sport-regex fallback.
     # See docs/pipelines/clip-understanding.md. Apply: `fly secrets set
     # CLIP_INTENTS_ENABLED=true --app nova-video` + restart api + worker.
     clip_intents_enabled: bool = False
+    # KRI-151: durable semantic preparation before the first footage-based plan.
+    creator_clip_preparation_enabled: bool = False
     # Chat-turn budget for the on-demand vision re-query (download + File API
-    # upload per clip). Over the cap or the deadline => ask the creator instead.
+    # upload per clip). Cacheable overflow continues in Celery (KRI-154);
+    # technical failures stay distinct from visual uncertainty (KRI-151).
     clip_intents_max_vision_requeries: int = Field(default=4, ge=0, le=12)
     clip_intents_vision_deadline_s: float = Field(default=25.0, gt=0, le=60)
 
@@ -1049,6 +1053,14 @@ class Settings(BaseSettings):
             "Expose the optional planner's inferred-direction confirmation for compatibility. "
             "The primary automatic Generate path never waits for this confirmation. Read by "
             "the API and worker; changing it requires API and worker restarts."
+        ),
+    )
+    edit_proposal_semantic_enabled: bool = Field(
+        default=False,
+        description=(
+            "KRI-133: plan new edits with semantic intent and the deterministic frame scheduler. "
+            "Enable only after every API/worker supports compiler v8. Disabling affects new "
+            "drafts only; approved v8 schedules remain readable and renderable."
         ),
     )
     guided_auto_design_enabled: bool = Field(

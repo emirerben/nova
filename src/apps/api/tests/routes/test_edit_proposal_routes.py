@@ -27,6 +27,7 @@ from app.schemas.edit_proposal import (
     parse_edit_proposal,
 )
 from app.services.edit_proposals import infer_direction_guidance
+from app.services.proposal_planning import SemanticPlanningError
 
 
 def _snapshot() -> EditProposalSnapshot:
@@ -1388,6 +1389,72 @@ async def test_review_mixed_media_capacity_failure_is_actionable(monkeypatch) ->
     persisted = parse_edit_proposal(item.edit_proposal)
     assert persisted is not None and persisted.conversation_attempt is None
     assert db.commit.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_semantic_replan_rejection_persists_private_diagnostics(monkeypatch) -> None:
+    item = _draft_item()
+    item.idea = "Corfu trip"
+    item.theme = "Corfu"
+    monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    monkeypatch.setattr(
+        "app.agents.edit_guide.EditGuideAgent.run",
+        lambda _self, _input, **_kwargs: EditGuideOutput(
+            reply="I changed this to a fast montage.",
+            suggestions=[],
+            brief=ProposalBrief(direction="fast_montage", pace="fast", duration_s=24),
+            ready_to_plan=True,
+            revision=EditGuideRevision(
+                direction="fast_montage",
+                goal="Show the strongest moments.",
+                pace="fast",
+                duration_s=24,
+                title="Corfu highlights",
+                story_beats=[
+                    EditGuideRevisionBeat(
+                        beat_id="coast",
+                        topic="Coast",
+                        thought="The coast starts the montage.",
+                        layout="fullscreen",
+                        duration_s=4,
+                        media_refs=["media_1"],
+                    )
+                ],
+            ),
+        ),
+    )
+    diagnostics = {"outcome": "schedule_rejected", "failure_reason": "private"}
+    monkeypatch.setattr(
+        "app.services.edit_direction_planner.plan_direction_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            SemanticPlanningError("semantic_edit_infeasible", "Not enough footage.", diagnostics)
+        ),
+    )
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalars=lambda: [])
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items.edit_proposal_conversation_turn(
+            _request(),
+            str(item.id),
+            plan_items.EditGuideTurnBody(
+                expected_proposal_version=2,
+                message="Make it a fast montage.",
+            ),
+            SimpleNamespace(id=uuid.uuid4()),
+            db,
+        )
+
+    assert exc.value.detail["code"] == "semantic_edit_infeasible"
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.proposal_version == 3
+    assert persisted.conversation_attempt is None
+    assert persisted.planning_diagnostics == diagnostics
+    assert [turn.role for turn in persisted.conversation[-2:]] == ["user", "agent"]
 
 
 @pytest.mark.asyncio

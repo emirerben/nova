@@ -1,0 +1,35 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-09-22.2",
+  "input": {
+    "creator_request": "Label each sport and group the pub clips.",
+    "latest_user_message": "Remove the sport labels; keep the pub group.",
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\":[{\"intent_id\":\"i1\",\"op\":\"group\",\"attribute\":\"pub clips\",\"creator_text\":null,\"caption_attribute\":null,\"position\":null,\"source_quote\":\"group the pub clips\"}],\"question\":null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i1",
+        "op": "group",
+        "attribute": "pub clips",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "group the pub clips"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_intents": [
+      {
+        "op": "group",
+        "source_quote_keywords": ["group", "pub"]
+      }
+    ],
+    "expect_any": true,
+    "expect_absent_ops": ["label"]
+  }
+}

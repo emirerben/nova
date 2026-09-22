@@ -49,6 +49,8 @@ log = structlog.get_logger()
 # rather than a change to v6.
 COMPILER_VERSION = 7
 VOICEOVER_COMPILER_VERSION = 7
+# Only snapshots carrying an approved frame schedule opt into v8.
+SCHEDULED_COMPILER_VERSION = 8
 VARIANT_ID = "guided_story"
 _FRAME_S = 1.0 / 30.0
 _ALLOCATION_EPSILON_S = 0.0005
@@ -185,7 +187,7 @@ class GuidedStoryExecutionPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7]
+    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7, 8]
     proposal_version: int = Field(ge=1)
     media_digest: str = Field(min_length=64, max_length=64)
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
@@ -202,7 +204,10 @@ class GuidedStoryExecutionPlan(BaseModel):
     # Server-derived contextual labels are kept in their own lane. They are
     # not editor-authored text and therefore must not become part of the
     # approved text identity set, but they are still receipt-verified pixels.
-    context_label_intent: dict[str, Any] | None = None
+    # Keep the historical null key in compiler receipts so v1-v7 replay hashes
+    # remain byte-identical. Read adapters discard old values; no render lane
+    # accepts this retired intent.
+    context_label_intent: None = None
     context_label_text_elements: list[TextElement] = Field(default_factory=list)
     narration_label_text_elements: list[TextElement] = Field(default_factory=list)
     narration_label_receipt: dict[str, Any] | None = None
@@ -1257,7 +1262,7 @@ def _text_elements(
     beat_windows: list[dict],
     policy: dict,
     *,
-    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7],
+    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7, 8],
 ) -> list[dict]:
     total_s = (
         canonical_narration_duration_s(snapshot.narration.duration_s)
@@ -1574,15 +1579,282 @@ def _narration_caption_elements(snapshot: EditProposalSnapshot) -> list[dict]:
     return elements
 
 
+def validate_frame_schedule(snapshot: EditProposalSnapshot) -> None:
+    """Fence server-authored frame timing against the approved editorial contract."""
+
+    from app.schemas.edit_frame_schedule import EditFrameSchedule
+
+    schedule = snapshot.frame_schedule
+    if schedule is None:
+        return
+    # model_copy() is intentionally not validation; all writers must pass this
+    # fence before the copied snapshot can become an approval/render contract.
+    try:
+        schedule = EditFrameSchedule.model_validate(schedule.model_dump())
+    except ValueError as exc:
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid", "The frame schedule is invalid."
+        ) from exc
+    if (
+        schedule.direction != snapshot.direction
+        or abs(schedule.total_frames / 30 - float(snapshot.duration_s)) > 0.000001
+    ):
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid",
+            "The schedule no longer matches the edit length or direction.",
+        )
+    if (
+        snapshot.narration is not None
+        and abs(
+            schedule.total_frames / 30
+            - canonical_narration_duration_s(snapshot.narration.duration_s)
+        )
+        > 0.000001
+    ):
+        raise GuidedStoryError(
+            "guided_story_duration_impossible", "The schedule must preserve the full narration."
+        )
+    transition_type, transition_s = guided_transition_params(
+        snapshot.direction, snapshot.pace, snapshot.mixed_media_timing
+    )
+    expected_overlap = round(transition_s * 30) if transition_type != "none" else 0
+    if len(schedule.moments) == 1:
+        expected_overlap = 0
+    if schedule.transition_frames != expected_overlap:
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid",
+            "The schedule no longer matches the approved transitions.",
+        )
+    by_id = {ref.media_id: ref for ref in snapshot.media}
+    seen_ids: set[str] = set()
+    windows: dict[str, list[tuple[int, int]]] = {}
+    for moment in schedule.moments:
+        ref = by_id.get(moment.media_id)
+        if ref is None or moment.moment_id in seen_ids:
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid",
+                "The schedule has missing media or duplicate moments.",
+            )
+        seen_ids.add(moment.moment_id)
+        if ref.kind == "video":
+            if (
+                ref.duration_s is None
+                or moment.source_end_frame / 30 > float(ref.duration_s) + 0.000001
+            ):
+                raise GuidedStoryError(
+                    "guided_story_duration_impossible",
+                    "A scheduled source window exceeds the uploaded video.",
+                )
+            windows.setdefault(ref.media_id, []).append(
+                (moment.source_start_frame, moment.source_end_frame)
+            )
+        expected_layout = (
+            snapshot.image_layout if ref.kind == "image" and snapshot.image_layout else None
+        )
+        if expected_layout is not None and moment.layout != expected_layout:
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid",
+                "The schedule no longer matches the approved photo layout.",
+            )
+    reuse = snapshot.video_reuse_policy or "once"
+    for source_windows in windows.values():
+        if reuse == "once" and len(source_windows) != 1:
+            raise GuidedStoryError("guided_story_snapshot_invalid", "A video may appear only once.")
+        if reuse != "allow_repeat":
+            ordered = sorted(source_windows)
+            if any(right[0] < left[1] for left, right in zip(ordered, ordered[1:])):
+                raise GuidedStoryError(
+                    "guided_story_snapshot_invalid",
+                    "Scheduled source windows overlap without permission.",
+                )
+    if snapshot.direction == "fast_montage":
+        cuts = snapshot.fast_cuts or []
+        if len(cuts) != len(schedule.moments):
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid", "The schedule no longer matches the approved cuts."
+            )
+        for cut, moment in zip(cuts, schedule.moments, strict=True):
+            if (cut.cut_id, cut.media_id) != (
+                moment.moment_id,
+                moment.media_id,
+            ) or moment.beat_id != cut.cut_id:
+                raise GuidedStoryError(
+                    "guided_story_snapshot_invalid",
+                    "The schedule no longer matches the approved cut order.",
+                )
+            pairs = (
+                (cut.source_start_s, moment.source_start_frame),
+                (cut.source_end_s, moment.source_end_frame),
+                (cut.output_duration_s, moment.output_end_frame - moment.output_start_frame),
+            )
+            if any(abs(seconds - frames / 30) > 0.000001 for seconds, frames in pairs):
+                raise GuidedStoryError(
+                    "guided_story_snapshot_invalid",
+                    "The schedule no longer matches the approved source windows.",
+                )
+    else:
+        expected = [
+            (beat.beat_id, media_id, beat.layout)
+            for beat in snapshot.story_beats
+            for media_id in beat.media_ids
+        ]
+        actual = [(moment.beat_id, moment.media_id, moment.layout) for moment in schedule.moments]
+        # The global image layout is applied at final normalization.
+        expected = [
+            (
+                beat_id,
+                media_id,
+                snapshot.image_layout
+                if by_id[media_id].kind == "image" and snapshot.image_layout
+                else layout,
+            )
+            for beat_id, media_id, layout in expected
+        ]
+        if expected != actual:
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid",
+                "The schedule no longer matches the approved chapters.",
+            )
+    selected = set(_selected_media_ids(snapshot))
+    if selected != {moment.media_id for moment in schedule.moments}:
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid", "The schedule dropped approved media."
+        )
+
+
+def _compile_scheduled_execution_plan(
+    snapshot: EditProposalSnapshot,
+    *,
+    proposal_version: int,
+    media_digest: str,
+    track: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Compiler v8 is a projection of approved frames, never another allocator."""
+
+    if snapshot.frame_schedule is None:
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid", "Compiler v8 needs an approved frame schedule."
+        )
+    validate_frame_schedule(snapshot)
+    schedule = snapshot.frame_schedule
+    by_id = {ref.media_id: ref for ref in snapshot.media}
+    beats = {beat.beat_id: beat for beat in snapshot.story_beats}
+    moments: list[dict[str, Any]] = []
+    for moment in schedule.moments:
+        ref = by_id[moment.media_id]
+        beat = beats.get(moment.beat_id)
+        moments.append(
+            {
+                "moment_id": moment.moment_id,
+                "beat_id": moment.beat_id,
+                "topic": beat.topic if beat is not None else moment.role,
+                "media_id": moment.media_id,
+                "lane": ref.lane,
+                "kind": ref.kind,
+                "gcs_path": ref.gcs_path,
+                "generation": ref.generation,
+                "layout": moment.layout,
+                "source_start_s": moment.source_start_frame / 30,
+                "source_end_s": moment.source_end_frame / 30,
+                "output_start_s": moment.output_start_frame / 30,
+                "output_end_s": moment.output_end_frame / 30,
+                "duration_s": (moment.output_end_frame - moment.output_start_frame) / 30,
+                "image_motion": None,
+                "required": True,
+            }
+        )
+    beat_windows: list[dict[str, Any]] = []
+    groups: list[tuple[str, int, int]] = []
+    for moment in schedule.moments:
+        if groups and groups[-1][0] == moment.beat_id:
+            groups[-1] = (moment.beat_id, groups[-1][1], moment.output_end_frame)
+        else:
+            groups.append((moment.beat_id, moment.output_start_frame, moment.output_end_frame))
+    for index, (beat_id, start, _end) in enumerate(groups):
+        end = groups[index + 1][1] if index + 1 < len(groups) else schedule.total_frames
+        beat_windows.append(
+            {
+                "beat_id": beat_id,
+                "approved_duration_s": (end - start) / 30,
+                "resolved_duration_s": (end - start) / 30,
+                "start_s": start / 30,
+                "end_s": end / 30,
+            }
+        )
+    policy = _DIRECTION_POLICY[snapshot.direction]
+    text_elements = _text_elements(snapshot, beat_windows, policy, compiler_version=8)
+    if snapshot.direction == "fast_montage" and snapshot.montage_text_bindings:
+        # v1-7 chose either title or labels. Both are named requirements for a
+        # scheduled edit; preserve the title, exact labels, and narration lane.
+        title_snapshot = snapshot.model_copy(update={"montage_text_bindings": []})
+        text_elements = _text_elements(title_snapshot, beat_windows, policy, compiler_version=8)
+        binding_snapshot = snapshot.model_copy(update={"opening_title": None, "narration": None})
+        bindings = _text_elements(binding_snapshot, beat_windows, policy, compiler_version=8)
+        text_elements.extend(
+            element for element in bindings if element["id"].startswith("montage-text-")
+        )
+    total_s = schedule.total_frames / 30
+    song_reference = _song_reference(track, duration_s=total_s)
+    compiled = GuidedStoryExecutionPlan(
+        compiler_version=8,
+        proposal_version=proposal_version,
+        media_digest=media_digest,
+        direction=snapshot.direction,
+        goal=snapshot.goal,
+        pace=snapshot.pace,
+        approved_duration_s=float(snapshot.duration_s),
+        resolved_duration_s=total_s,
+        output_orientation=snapshot.output_orientation or "portrait",
+        output_orientation_reason=snapshot.output_orientation_reason,
+        selected_media_ids=_selected_media_ids(snapshot),
+        story_timeline=moments,
+        beat_windows=beat_windows,
+        text_elements=text_elements,
+        transition_policy={
+            "type": "crossfade" if schedule.transition_frames else "none",
+            "duration_s": schedule.transition_frames / 30,
+        },
+        mixed_media_timing=snapshot.mixed_media_timing,
+        montage_cadence=snapshot.montage_cadence,
+        montage_text_bindings=[
+            binding.model_dump(mode="json") for binding in snapshot.montage_text_bindings
+        ],
+        montage_audio=snapshot.montage_audio.model_dump(mode="json")
+        if snapshot.montage_audio
+        else None,
+        licensed_sfx_intent=snapshot.licensed_sfx.model_dump(mode="json")
+        if snapshot.licensed_sfx
+        else None,
+        typography={"style_id": "guided_story_v2", "font": snapshot.font_family or "Fraunces"},
+        music=None,
+        song_reference=song_reference,
+        song_reference_track_duration_s=float(
+            track.get("catalog_duration_s") or track.get("duration_s")
+        )
+        if song_reference and track
+        else None,
+        narration=snapshot.narration,
+    )
+    return compiled.model_dump(mode="json", exclude_none=False)
+
+
 def _compile_execution_plan_version(
     guided_snapshot: object,
     *,
     track: dict[str, Any] | None,
-    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7],
+    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7, 8],
 ) -> dict[str, Any]:
     """Compile a deterministic plan with an explicitly versioned allocator."""
 
     proposal_version, media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
+    if compiler_version == SCHEDULED_COMPILER_VERSION:
+        return _compile_scheduled_execution_plan(
+            snapshot, proposal_version=proposal_version, media_digest=media_digest, track=track
+        )
+    if snapshot.frame_schedule is not None:
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid", "A scheduled edit needs compiler v8."
+        )
     policy = _DIRECTION_POLICY[snapshot.direction]
     mixed_timing = snapshot.mixed_media_timing
     selected_ids = _selected_media_ids(snapshot)
@@ -1947,7 +2219,11 @@ def compile_execution_plan(
         guided_snapshot,
         track=track,
         compiler_version=(
-            VOICEOVER_COMPILER_VERSION if snapshot.narration is not None else COMPILER_VERSION
+            SCHEDULED_COMPILER_VERSION
+            if snapshot.frame_schedule is not None
+            else VOICEOVER_COMPILER_VERSION
+            if snapshot.narration is not None
+            else COMPILER_VERSION
         ),
     )
 
@@ -2023,7 +2299,13 @@ def validate_proposal_compiles(snapshot: EditProposalSnapshot) -> None:
 def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, Any]:
     proposal_version, media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
     try:
-        validated = GuidedStoryExecutionPlan.model_validate(plan)
+        # Old approved plans can retain the retired raw intent alongside their
+        # final rendered label snapshots. Ignore only that obsolete input so
+        # retries preserve the snapshots without reviving the legacy lane.
+        plan_payload = dict(plan) if isinstance(plan, dict) else plan
+        if isinstance(plan_payload, dict):
+            plan_payload.pop("context_label_intent", None)
+        validated = GuidedStoryExecutionPlan.model_validate(plan_payload)
     except Exception as exc:  # noqa: BLE001
         raise GuidedStoryError(
             "guided_story_snapshot_invalid", "The saved render plan is incomplete."
@@ -2081,18 +2363,12 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
     canonical.pop("narration_label_text_elements", None)
     normalized.pop("narration_label_receipt", None)
     canonical.pop("narration_label_receipt", None)
-    # The intent is persisted by the Creator dispatch envelope rather than the
-    # proposal compiler. It is independently constrained by the worker's
-    # closed allowlist before any label can reach pixels.
-    normalized.pop("context_label_intent", None)
-    canonical.pop("context_label_intent", None)
     runtime_sfx = list(normalized.pop("editor_sound_effects", []) or [])
     canonical.pop("editor_sound_effects", None)
     if normalized != canonical:
         raise GuidedStoryError(
             "guided_story_snapshot_invalid", "The saved render plan was changed after approval."
         )
-    normalized["context_label_intent"] = validated.context_label_intent
     normalized["context_label_text_elements"] = [
         element.model_dump(mode="json") for element in validated.context_label_text_elements
     ]
@@ -2262,7 +2538,12 @@ def compile_guided_runtime_plan(
     )
 
     try:
-        canonical = GuidedStoryExecutionPlan.model_validate(canonical_plan)
+        canonical_payload = (
+            dict(canonical_plan) if isinstance(canonical_plan, dict) else canonical_plan
+        )
+        if isinstance(canonical_payload, dict):
+            canonical_payload.pop("context_label_intent", None)
+        canonical = GuidedStoryExecutionPlan.model_validate(canonical_payload)
         proposal_version, media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
         normalized_revision = normalize_guided_editor_revision(
             revision,
@@ -2564,55 +2845,79 @@ def compile_guided_runtime_plan(
                 "editor_approved_text_ids": approved_text_ids,
             }
         )
-        # A timeline revision can split, reorder, or reuse sources. Rebuild the
-        # server-derived labels against the revision's output windows so a label
-        # never leaks into a neighboring segment. The raw intent carries no
-        # copy; sport text is resolved from the approved clip metadata only.
-        context_intent = runtime_payload.get("context_label_intent")
-        # KRI-127: resolved open-vocabulary label intents take the same lane,
-        # re-grounded at this edge exactly like the first render (flag-gated).
+        # A timeline revision can split, reorder, or reuse sources. Rebuild
+        # grounded clip labels against its output windows so a label never leaks
+        # into a neighboring segment.
         grounded_intents = [
             intent
             for intent in (snapshot.clip_intents or [])
-            if intent.op == "label" and intent.status == "resolved"
+            if intent.op == "label"
+            and intent.status == "resolved"
+            and getattr(intent, "label_source", "clip") == "clip"
         ]
         if not settings.clip_intents_enabled:
             grounded_intents = []
-        if (context_intent or grounded_intents) and canonical.narration is None:
+        if grounded_intents:
             from app.tasks.generative_build import (  # noqa: PLC0415
-                _canonical_context_sport_labels,
+                _CONTEXT_LABEL_COMBINED_MAX_CHARS,
                 _compact_context_sport_text_elements,
                 _grounded_context_labels,
-                _merge_context_label_rows,
             )
 
             clip_id_to_gcs = {ref.media_id: ref.gcs_path for ref in snapshot.media}
-            labels = _merge_context_label_rows(
-                _grounded_context_labels(
-                    grounded_intents,
-                    clip_id_to_gcs,
-                    matcher_clip_metas(snapshot),
-                    media_refs=list(snapshot.media),
-                )
-                if grounded_intents
-                else None,
-                _canonical_context_sport_labels(
-                    context_intent,
-                    clip_id_to_gcs,
-                    matcher_clip_metas(snapshot),
-                )
-                if context_intent
-                else [],
+            labels = _grounded_context_labels(
+                grounded_intents,
+                clip_id_to_gcs,
+                matcher_clip_metas(snapshot),
+                media_refs=list(snapshot.media),
             )
-            by_clip_row = {row["clip_id"]: row for row in labels}
+            by_clip_rows: dict[str, list[dict[str, Any]]] = {}
+            for row in labels:
+                clip_id = row.get("clip_id") if isinstance(row, dict) else None
+                if isinstance(clip_id, str) and row.get("source") == "grounded_label":
+                    by_clip_rows.setdefault(clip_id, []).append(row)
             context_elements: list[dict[str, Any]] = []
             for index, moment in enumerate(moments):
-                row = by_clip_row.get(str(moment.get("media_id") or "")) or {}
-                sport = row.get("sport")
+                clip_id = str(moment.get("media_id") or "")
+                rendered_rows: list[dict[str, Any]] = []
+                seen_texts: set[str] = set()
+                for row in by_clip_rows.get(clip_id, []):
+                    text = row.get("sport")
+                    if not isinstance(text, str) or not text or text in seen_texts:
+                        continue
+                    seen_texts.add(text)
+                    rendered_rows.append(row)
+                sport = " · ".join(str(row["sport"]) for row in rendered_rows)
                 start_s = float(moment.get("output_start_s") or 0.0)
                 end_s = float(moment.get("output_end_s") or 0.0)
                 if not sport or end_s <= start_s:
                     continue
+                if len(sport) > _CONTEXT_LABEL_COMBINED_MAX_CHARS:
+                    raise ValueError(
+                        "Combined context labels for clip "
+                        f"{clip_id!r} exceed the "
+                        f"{_CONTEXT_LABEL_COMBINED_MAX_CHARS}-character limit"
+                    )
+                row = rendered_rows[0]
+                source_params: dict[str, Any] = {
+                    "source": "context_sport",
+                    "key": f"{clip_id}:{index}:{start_s:.3f}:{end_s:.3f}",
+                    "identity": f"context_sport:{clip_id}:{index}:{start_s:.3f}:{end_s:.3f}",
+                    "source_clip_id": clip_id,
+                    "grounding": row.get("grounding"),
+                    "confidence": row.get("confidence"),
+                    "intent_id": row.get("intent_id") or "",
+                }
+                if len(rendered_rows) > 1:
+                    source_params["context_label_provenance"] = [
+                        {
+                            "text": candidate["sport"],
+                            "grounding": candidate.get("grounding"),
+                            "confidence": candidate.get("confidence"),
+                            "intent_id": candidate.get("intent_id") or "",
+                        }
+                        for candidate in rendered_rows
+                    ]
                 context_elements.append(
                     TextElement(
                         id=f"context-sport-{index}-{str(moment.get('moment_id') or '')}",
@@ -2625,29 +2930,14 @@ def compile_guided_runtime_plan(
                         # 0.86 leaves enough bottom margin for the same label
                         # on both portrait and landscape canvases.
                         y_frac=0.86,
-                        font_family="Inter-Bold",
+                        font_family="Inter",
                         size_class="small",
                         color="#FFFFFF",
                         highlight_color="#FFFFFF",
                         alignment="right",
                         effect="static",
                         z=8,
-                        source_params={
-                            "source": "context_sport",
-                            "context_label_source": "detected_sport",
-                            "context_label_position": "bottom_right",
-                            "context_label_size": "small",
-                            "source_clip_id": str(moment.get("media_id") or ""),
-                            **(
-                                {
-                                    "grounding": row.get("grounding"),
-                                    "confidence": row.get("confidence"),
-                                    "intent_id": row.get("intent_id") or "",
-                                }
-                                if row.get("grounding")
-                                else {}
-                            ),
-                        },
+                        source_params=source_params,
                     ).model_dump(mode="json", exclude_none=True)
                 )
             runtime_payload["context_label_text_elements"] = _compact_context_sport_text_elements(
@@ -2874,6 +3164,69 @@ def _enforce_strict_story_duration(source: str, output: str, *, target_s: float)
         raise GuidedStoryError(
             "guided_story_receipt_mismatch",
             "The rendered story duration no longer matches its approved plan.",
+        )
+    return output
+
+
+def _enforce_scheduled_video_frames(source: str, output: str, *, frame_count: int) -> str:
+    """v8-only fence for Skia/AAC mux tail frames; never stretches video."""
+    target_s = frame_count / 30
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            source,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        actual_s = float(probe.stdout.strip())
+    except ValueError as exc:
+        raise GuidedStoryError(
+            "guided_story_receipt_mismatch", "The scheduled video stream is unreadable."
+        ) from exc
+    delta_s = actual_s - target_s
+    if abs(delta_s) <= 1e-6:
+        return source
+    if delta_s < 0 or delta_s > STRICT_MIXED_MEDIA_MAX_CFR_OVERRUN_S:
+        raise GuidedStoryError(
+            "guided_story_receipt_mismatch",
+            "The scheduled video frames no longer match the approved plan.",
+        )
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-i",
+            source,
+            "-map",
+            "0",
+            "-frames:v",
+            str(frame_count),
+            "-t",
+            f"{target_s:.6f}",
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            "-y",
+            output,
+        ],
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    if result.returncode != 0 or not os.path.exists(output):
+        raise GuidedStoryError(
+            "guided_story_receipt_mismatch", "The scheduled video frame fence failed."
         )
     return output
 
@@ -4730,6 +5083,12 @@ def render_execution_plan(
             final_path,
             os.path.join(tmpdir, "guided_story_final_duration_capped.mp4"),
             target_s=float(plan["resolved_duration_s"]),
+        )
+    if plan.get("compiler_version") == 8 and plan.get("editor_revision_number") is None:
+        final_path = _enforce_scheduled_video_frames(
+            final_path,
+            os.path.join(tmpdir, "guided_story_final_scheduled_frames.mp4"),
+            frame_count=round(float(plan["resolved_duration_s"]) * 30),
         )
     receipt = _verify_receipt(
         plan,

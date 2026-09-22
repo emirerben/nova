@@ -1016,6 +1016,12 @@
       },
       "DeltaEvent": {
         "properties": {
+          "client_event_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Client Event Id",
+            "type": "string"
+          },
           "content": {
             "default": null,
             "nullable": true,
@@ -1402,6 +1408,12 @@
               "needs_attention"
             ],
             "title": "Phase",
+            "type": "string"
+          },
+          "published_generation": {
+            "default": null,
+            "nullable": true,
+            "title": "Published Generation",
             "type": "string"
           },
           "reason": {
@@ -2520,6 +2532,12 @@
       },
       "EventOut": {
         "properties": {
+          "client_event_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Client Event Id",
+            "type": "string"
+          },
           "content": {
             "default": null,
             "nullable": true,

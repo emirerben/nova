@@ -929,6 +929,7 @@ struct NativeMiniStrip: View {
     /// the last lane can always scroll clear of the floating tool island
     /// (KRI-131). Zero at other call sites, where there is no island.
     let bottomClearance: CGFloat
+    let isCovered: Bool
     @State private var zoom: CGFloat = 1
     @State private var pinchAnchor: CGFloat = 1
     @State private var isPinching = false
@@ -960,9 +961,10 @@ struct NativeMiniStrip: View {
     private let secondaryLaneHeight: CGFloat = 44
     private let rowGap: CGFloat = 6
 
-    init(session: NativeEditorSession, bottomClearance: CGFloat = 0) {
+    init(session: NativeEditorSession, bottomClearance: CGFloat = 0, isCovered: Bool = false) {
         self.session = session
         self.bottomClearance = bottomClearance
+        self.isCovered = isCovered
         _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
@@ -1056,7 +1058,11 @@ struct NativeMiniStrip: View {
     /// nudges that row into view so it can't land underneath the capsule.
     var body: some View {
         VStack(spacing: 6) {
-            controls
+            if isCovered {
+                Color.clear.frame(height: 44).accessibilityHidden(true)
+            } else {
+                controls
+            }
             if let message = session.addClipUnavailableMessage {
                 Text(message).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1078,6 +1084,7 @@ struct NativeMiniStrip: View {
                     .contentMargins(.bottom, bottomClearance, for: .scrollIndicators)
                     .scrollBounceBehavior(.basedOnSize)
                     .accessibilityIdentifier("native-editor-lane-scroll")
+                    .accessibilityHidden(isCovered)
                     .onChange(of: session.selectionRequest) { _, _ in
                         scrollSelectionClearOfIsland(proxy: proxy)
                     }

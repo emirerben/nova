@@ -42,7 +42,14 @@ def device_record(job: Any, variant_id: str) -> dict:
 
 
 def device_status(job: Any, variant_id: str) -> DeviceRenderStatus:
-    return DeviceRenderStatus.model_validate(device_record(job, variant_id)["status"])
+    record = device_record(job, variant_id)
+    status = DeviceRenderStatus.model_validate(record["status"])
+    if status.phase != "published":
+        return status.model_copy(update={"published_generation": None})
+    published_attempt = record.get("published_attempt")
+    return status.model_copy(
+        update={"published_generation": str(published_attempt) if published_attempt else None}
+    )
 
 
 def save_device_record(job: Any, variant_id: str, record: dict) -> None:

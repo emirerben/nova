@@ -26,6 +26,7 @@ from typing import Any
 
 import structlog
 
+from app.agents._provider_errors import classify_provider_error
 from app.agents._runtime import (
     ModelClient,
     ModelInvocation,
@@ -100,6 +101,9 @@ class GeminiClient(ModelClient):
                 file_ref = client.files.upload(file=path)
                 break
             except genai_errors.APIError as exc:
+                quota_error = classify_provider_error(exc)
+                if quota_error is not None:
+                    raise quota_error from exc
                 if not _is_genai_transient(exc):
                     raise TerminalError(f"gemini upload failed: {exc}") from exc
                 if attempt >= self._UPLOAD_MAX_ATTEMPTS - 1:
@@ -127,6 +131,9 @@ class GeminiClient(ModelClient):
                 file_ref = client.files.get(name=file_ref.name)
                 poll_attempt = 0
             except genai_errors.APIError as exc:
+                quota_error = classify_provider_error(exc)
+                if quota_error is not None:
+                    raise quota_error from exc
                 if not _is_genai_transient(exc):
                     raise TerminalError(f"gemini poll failed: {exc}") from exc
                 backoff = self._DEFAULT_BACKOFF[min(poll_attempt, len(self._DEFAULT_BACKOFF) - 1)]
@@ -230,6 +237,9 @@ class GeminiClient(ModelClient):
                 f"gemini provider outcome unknown after {timeout_s:.1f}s"
             ) from exc
         except genai_errors.APIError as exc:
+            quota_error = classify_provider_error(exc)
+            if quota_error is not None:
+                raise quota_error from exc
             if _is_genai_transient(exc):
                 raise TransientError(f"gemini transient: {exc}") from exc
             raise TerminalError(f"gemini terminal: {exc}") from exc

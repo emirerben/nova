@@ -178,7 +178,7 @@ struct DeviceRenderStatusCard: View {
             }
             if DeviceRenderAttentionCopy.showsRetryButton(phase: presentation.phase, reasonCode: presentation.reasonCode) {
                 Button(presentation.localFile == nil ? "Try again" : "Retry sync") {
-                    guard presentation.phase == .needsAttention, let retryNeedsAttention else {
+                    guard presentation.requiresServerRetry, let retryNeedsAttention else {
                         retry(); return
                     }
                     Task {

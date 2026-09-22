@@ -4,6 +4,57 @@ Guided edit separates creative approval from rendering. It is the review contrac
 uploaded plan-item media and the strict story renderer. Planning and approval create the contract;
 the story assembler consumes the approved Job snapshot directly.
 
+## Semantic planning and exact frames (KRI-133)
+
+`EDIT_PROPOSAL_SEMANTIC_ENABLED` defaults to `false`. With the flag enabled,
+`plan_edit_proposal` checks source capacity before calling the semantic proposal
+agent. The model returns ordered chapters, source/candidate references, relative
+weights, and text placement intent. It does not author timestamps or duration totals.
+`semantic_edit_scheduler` allocates integer frames at 30fps, includes transition
+overlap, preserves required media and reuse policy, and expands late candidate
+windows backward within the uploaded source when needed. Narration rounds upward
+to the next complete frame. Capacity clamps record requested and effective frames;
+incompatible coverage or pinned timing fails with a specific reason.
+
+New snapshots include a versioned, server-owned `frame_schedule`. Compiler v8
+projects those approved boundaries without beat snapping or reallocating footage.
+Legacy snapshots omit the field entirely and keep compiler versions 1–7.
+PATCH ignores client-provided schedules and rebuilds timing from the corrected
+editorial contract. Text-only changes retain trusted source windows. Direction
+changes and conversational timing revisions use the same scheduler, and final
+phone/photo layout normalization updates the schedule before approval validation.
+A scheduled proposal still uses this path when the new-draft flag is rolled back.
+
+Semantic planning never replaces a rejected plan with a weakened legacy fallback.
+Failures retain `main_creator_fail_closed`, including automatic creation. Exact
+creator titles and captions remain immutable; resolved clip labels stay in the
+existing worker grounding lane. Resolved caption intents and legacy group copy bind
+only to their assigned, contiguous source chapters; model echoes on other sources
+are removed. Structured shot labels take precedence over quotation detection.
+An unambiguous misplaced caption-group member can move into its existing exclusive
+chapter while retaining its candidate and scheduling priority. Ambiguous targets,
+overlapping groups, source reuse, conflicting copy, or unsafe moves still fail closed.
+Private `planning_diagnostics` contains semantic
+intent, feasibility, schedule, repairs and failure reasons. Ordinary responses omit
+it. Pre-render model runs use `AgentRun.plan_item_id`; inspect them with
+`python scripts/admin.py GET plan-items/<id>/proposal-trace`.
+
+Rollout: deploy migration 0107 and v8-compatible API **and every worker** with the
+flag off, verify replay/render gates, then enable the flag and restart those
+processes. Verify a production regeneration's trace and exact output duration.
+Rollback sets the flag false; retain the compatible binaries while v8 approvals
+exist. Never remove their schedules or down-convert approved timing.
+
+Focused gates include `test_semantic_edit_scheduler.py`,
+`test_proposal_planning.py`, `test_semantic_schedule_compiler.py` (baseline hashes
+for v1–7), semantic proposal route/task tests, and
+`tests/evals/test_semantic_edit_proposal_evals.py`. The live eval gate includes all
+existing fixture families plus five repetitions of the real KRI-129 16-clip case,
+each requiring 1,800 frames, grouping, exact title/caption, grounded labels and
+original audio. Use the cost-capped harness described in `tests/evals/README.md`.
+
+The following product-flow details describe the flag-off legacy planner.
+
 ## Product flow
 
 The primary clip-only path is **Upload clips → Create video → AI analyzes and builds in the
@@ -251,10 +302,15 @@ uses the automatic design path instead of requiring a proposal review:
    - `failed`, pool assets present → **no fallback**. Registered pool media is never silently
      dropped behind a clip-only render (the 2026-08-15 pool-media incident invariant) — the failure
      stays exactly as persisted, retryable.
-   - dispatch itself fails (`publish_failed`, `guided_edit_bypass_unsafe`, etc.) → the proposal stays
-     in whatever state already committed (`approved`, or `failed`+`design_fallback`). The next manual
-     Generate click either dispatches directly (approved reads identically regardless of
-     `approval_mode`) or re-triggers auto-design (failed) — never wedged.
+   - Main Creator dispatch is rejected, raises, or loses its confirmed dispatch context → an
+     approved attempt with no bound Job becomes retryable `failed` with `creator_dispatch_failed`.
+     Settlement rechecks the owner, ownership epoch, exact attempt, and executing session under
+     locks, so it cannot replace a newer attempt or an existing Job. It retains the approved
+     snapshot, draft, speech choice, and retry budget. The next full thread/session poll reconciles
+     the matching execution receipt and displays failure instead of remaining in preparation.
+   - Legacy dispatch itself fails (`publish_failed`, `guided_edit_bypass_unsafe`, etc.) → the
+     proposal keeps its committed state (`approved`, or `failed`+`design_fallback`). The next manual
+     Generate click either dispatches directly or re-triggers auto-design.
 
 **Duration feasibility is renderer-aware end to end** (P2-1). `feasible_guided_duration_s` credits a
 video its own probed duration only when that duration clears the renderer's own per-moment minimum
@@ -551,8 +607,9 @@ detail and proposal mutation responses carry the full review payload, keeping li
   `tests/routes/test_plan_item_generation.py`
 - Draft-attempt crash regressions, duration-adaptation clamp, large mixed-media
   snapshot preservation, renderer-validated deterministic recovery, and the
-  `auto_finalize` state machine (approve+dispatch, dispatch failure, clip-only
-  montage fallback, pool-assets-present no-fallback):
+  `auto_finalize` state machine (approve+dispatch, Creator dispatch failure and native retry
+  eligibility for both speech choices, stale-attempt protection, clip-only montage fallback,
+  pool-assets-present no-fallback):
   `tests/tasks/test_edit_proposal_build.py`
 - Source-diversity, target-capacity-aware mixed-media floors, 32-source alias
   shortlisting/resolution, distinct-chapter, non-overlapping fast-cut repair,

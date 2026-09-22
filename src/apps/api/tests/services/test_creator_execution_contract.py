@@ -93,3 +93,23 @@ def test_same_path_replacement_duration_and_audio_changes_invalidate_approval(fi
     assert narration_matches_item(narration, item)
     setattr(item, field, value)
     assert not narration_matches_item(narration, item)
+
+
+def test_legacy_label_migration_preserves_original_approval_hashes():
+    from app.agents._schemas.creator_agent import CreativeStrategy
+
+    legacy, snapshot = binding()
+    legacy.update(participant_labels="single_subject", score_labels=True, sport_labels=True)
+    edit_plan = snapshot["creator_execution_identity"]["edit_plan"]
+    active = {"edit_plan": edit_plan, "plan_hash": canonical_context_hash(edit_plan)}
+    migrated = CreativeStrategy.model_validate(legacy).model_dump(mode="json", exclude_none=True)
+    identity = execution_identity(active, migrated)
+    assert identity["edit_plan"]["strategy"] == legacy
+    assert identity["edit_plan_hash"] == canonical_context_hash(edit_plan)
+    snapshot["creator_execution_identity"] = identity
+    assert validate_execution_binding(snapshot, migrated, "users/u/take.mp3")
+    modified = {**migrated, "clip_intents": []}
+    with pytest.raises(ValueError, match="differs"):
+        execution_identity(active, modified)
+    with pytest.raises(ValueError, match="changed"):
+        validate_execution_binding(snapshot, modified, "users/u/take.mp3")

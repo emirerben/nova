@@ -1,0 +1,19 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-09-22.2",
+  "input": {
+    "creator_request": "Make a fast 20 second edit with a punchy transition.",
+    "latest_user_message": null,
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\":[],\"question\":null}",
+  "output": {
+    "intents": [],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_intents": [],
+    "expect_any": false
+  }
+}

@@ -8,15 +8,20 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
     /// Added alongside `reason` once the server classifies a `needs_attention`
     /// failure. Optional so older/unrelated responses that omit the key still decode.
     let reasonCode: String?
-    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code" }
-    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil) {
-        self.phase = phase; self.request = request; self.reason = reason; self.reasonCode = reasonCode
+    /// Generation associated with the authoritative published attempt. Only
+    /// present for `published` responses; it fences editor polling from a
+    /// newer or unrelated device render.
+    let publishedGeneration: String?
+    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation" }
+    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil) {
+        self.phase = phase; self.request = request; self.reason = reason; self.reasonCode = reasonCode; self.publishedGeneration = publishedGeneration
     }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         phase = try container.decode(String.self, forKey: .phase)
         reason = try container.decodeIfPresent(String.self, forKey: .reason)
         reasonCode = try container.decodeIfPresent(String.self, forKey: .reasonCode)
+        publishedGeneration = try container.decodeIfPresent(String.self, forKey: .publishedGeneration)
         let raw = try container.decode(JSONValue.self, forKey: .request)
         request = try RecipeJSON.decoder().decode(DeviceRenderRequest.self, from: JSONEncoder().encode(raw))
         try request.recipe.validate()

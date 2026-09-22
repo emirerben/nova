@@ -1719,6 +1719,51 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges)
     }
 
+    func testDevicePublishedGenerationAndIdentityFenceReadyPreview() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        let statusBox = SessionTestStatus(DeviceRenderStatusResponse(phase: "published", request: request, publishedGeneration: "published-g2"))
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let renderSessions = DeviceRenderSessions(fetch: { _, _ in await statusBox.response }, factory: { _, request in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionTestExport(), sources: SessionTestSources(), publisher: SessionTestPublisher())
+        })
+        var authoritative = Self.variant(duration: 2, generation: "generation-1")
+        authoritative["render_destination"] = .string("device")
+        authoritative["editor_capabilities"] = .object(["timeline": .bool(true), "text_elements": .bool(true)])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: authoritative,
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil)
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        session.useDeviceRendering(renderSessions)
+        await session.load(api: fake, threadID: threadID)
+        session.selectClip(session.draft.clips[0].id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        await session.save()
+
+        let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
+        XCTAssertEqual(renderSessions.presentations[key]?.publishedGeneration, "published-g2")
+        await statusBox.set(DeviceRenderStatusResponse(phase: "published", request: deviceRenderRequest(jobID: jobID, revision: 2, digest: "b"), publishedGeneration: "published-g2"))
+        await renderSessions.reconcile(key, capabilities: .disabled)
+        XCTAssertFalse(session.applyPreviewVariant(["render_generation_id": .string("published-g2"), "render_status": .string("ready"), "output_url": .string("https://storage.example/g2.mp4")], generation: "g2"))
+        XCTAssertEqual(session.saveState, .previewPending)
+        await statusBox.set(DeviceRenderStatusResponse(phase: "published", request: request, publishedGeneration: "published-g2"))
+        await renderSessions.reconcile(key, capabilities: .disabled)
+        session.trimSelected(edge: .trailing, to: 1.25)
+        XCTAssertTrue(session.applyPreviewVariant(["render_generation_id": .string("published-g2"), "render_status": .string("ready"), "output_url": .string("https://storage.example/g2.mp4")], generation: "g2"))
+        XCTAssertEqual(session.saveState, .saved)
+        XCTAssertEqual(session.document.revision.baseGeneration, "published-g2")
+        XCTAssertTrue(session.hasUnsavedChanges)
+
+        // A subsequent save must use the published device generation.
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 3, revisionHash: "revision-3", expectedDuration: nil)
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "published-g2")
+        XCTAssertEqual(session.saveState, .previewPending)
+    }
+
     func testSaveKeepsNewerSameSectionEditDirtyWhileCommitIsInFlight() async {
         let threadID = UUID()
         let textID = "text-1"
@@ -1857,6 +1902,53 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(Self.object(fake.lastRequest?.textElements?.first)?["text"], .string("Submitted"))
         XCTAssertEqual(session.saveState, .previewPending)
         XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    func testPreviewPollIgnoresMismatchedGenerationAndAcceptsMatchingReadyGeneration() async {
+        let threadID = UUID()
+        let textID = "text-1"
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["text_elements": .array([.object(["id": .string(textID), "text": .string("Original"), "start_s": .number(0), "end_s": .number(1)])])])])]
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["text_elements": .bool(true)])],
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil)
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        session.updateTextContent(id: textID, content: "Submitted")
+        await session.save()
+
+        XCTAssertFalse(session.applyPreviewVariant(["render_generation_id": .string("old"), "render_status": .string("ready"), "output_url": .string("https://storage.example/old.mp4")], generation: "g2"))
+        XCTAssertEqual(session.saveState, .previewPending)
+        session.updateTextContent(id: textID, content: "Follow-up")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertTrue(session.applyPreviewVariant(["render_generation_id": .string("g2"), "render_status": .string("ready"), "output_url": .string("https://storage.example/g2.mp4")], generation: "g2"))
+        XCTAssertEqual(session.saveState, .saved)
+        XCTAssertTrue(session.hasUnsavedChanges, "A follow-up edit must survive installation of the ready render")
+    }
+
+    func testFailedPreviewPollKeepsAcknowledgedSectionsRetryable() async {
+        let threadID = UUID()
+        let textID = "text-1"
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["text_elements": .array([.object(["id": .string(textID), "text": .string("Original"), "start_s": .number(0), "end_s": .number(1)])])])])]
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["text_elements": .bool(true)])],
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil)
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        session.updateTextContent(id: textID, content: "Submitted")
+        await session.save()
+
+        XCTAssertTrue(session.applyPreviewVariant(["render_generation_id": .string("g2"), "render_status": .string("failed")], generation: "g2"))
+        XCTAssertEqual(session.saveState, .renderRetryNeeded("Your edit is saved, but its preview render failed. You can retry it safely."))
+
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 3, revisionHash: "revision-3", expectedDuration: nil)
+        await session.retryRender()
+        XCTAssertEqual(fake.commitCount, 2)
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
+        XCTAssertEqual(session.saveState, .previewPending)
     }
 
     func testSaveConflictPreservesLocalDocumentSelectionAndUndo() async {
@@ -2527,6 +2619,37 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.load(api: fake, threadID: threadID)
         return (session, fake)
     }
+}
+
+private func deviceRenderRequest(jobID: UUID, revision: Int, digest: String) -> DeviceRenderRequest {
+    DeviceRenderRequest(
+        identity: DeviceRenderIdentity(jobID: jobID, variantID: "variant", recipeRevision: revision, recipeDigest: String(repeating: digest, count: 64)),
+        recipe: KriaMediaEngine.EditRecipe(
+            assets: [MediaAsset(id: "source", relativePath: "source")],
+            tracks: [TimelineTrack(id: "video", kind: .video, clips: [TimelineClip(id: "clip", sourceAssetID: "source", sourceDuration: 2)])]
+        )
+    )
+}
+
+private actor SessionTestExport: LocalExporting {
+    func export(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
+        ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
+    }
+}
+
+private struct SessionTestSources: DeviceSourceResolving {
+    func resolve(for recipe: KriaMediaEngine.EditRecipe) async throws -> [String: URL] { [:] }
+}
+
+private actor SessionTestPublisher: DeviceRenderPublishing {
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
+}
+
+private actor SessionTestStatus {
+    private(set) var response: DeviceRenderStatusResponse
+    init(_ response: DeviceRenderStatusResponse) { self.response = response }
+    func set(_ response: DeviceRenderStatusResponse) { self.response = response }
 }
 
 final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {

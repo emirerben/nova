@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from app.agents._schemas.creator_agent import canonical_context_hash
+from app.agents._schemas.creator_agent import canonical_context_hash, creator_strategies_equal
 
 GUIDED_VOICEOVER_CONTRACT = "guided_voiceover_v1"
 CREATOR_FIDELITY_QUEUE = "creator-fidelity-v1"
@@ -47,7 +47,9 @@ def narration_matches_item(narration: object, item: Any) -> bool:
 def execution_identity(active_plan: Mapping[str, Any], strategy: Mapping[str, Any]) -> dict:
     """Retain the exact confirmed plan and its hashes across the queue boundary."""
     edit_plan = active_plan.get("edit_plan")
-    if not isinstance(edit_plan, Mapping) or edit_plan.get("strategy") != dict(strategy):
+    if not isinstance(edit_plan, Mapping) or not creator_strategies_equal(
+        edit_plan.get("strategy"), strategy
+    ):
         raise ValueError("Creator execution strategy differs from its confirmed plan")
     if not active_plan.get("plan_hash"):
         raise ValueError("Creator execution has no confirmed plan identity")
@@ -94,7 +96,7 @@ def validate_execution_binding(
         not isinstance(edit_plan, Mapping)
         or not identity.get("plan_hash")
         or canonical_context_hash(edit_plan) != identity.get("edit_plan_hash")
-        or edit_plan.get("strategy") != strategy
+        or not creator_strategies_equal(edit_plan.get("strategy"), strategy)
         or any(identity.get(key) != edit_plan.get(key) for key in ("manifest_hash", "context_hash"))
     ):
         raise ValueError("The confirmed creator execution plan changed")
