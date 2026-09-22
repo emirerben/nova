@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.112.0] - 2026-09-22
+
+### Changed
+- test(evals): make the KRI-127 clip_question and main_creator goldens runnable live (#1126) <!-- release-pr: 1126 -->
+
 ## [0.76.111.0] - 2026-09-22
 
 ### Changed
