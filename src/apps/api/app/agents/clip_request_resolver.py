@@ -30,7 +30,14 @@ Anti-hallucination / prompt-injection defenses, modeled on
 Label values are capped to <=3 words in ``parse()`` (reusing
 ``app.schemas.clip_intents.clean_label_text`` — the SAME rule the render-lane
 grounding fence enforces) and forced to ``None`` for membership ops
-(``group``/``order``/``include``): only ``label`` prints anything on screen.
+(``group``/``order``/``include``/``caption``): only ``label`` prints a
+per-clip value. ``caption`` (KRI-129) is membership-only at the assignment
+level too — its ONE authored on-screen phrase for the whole chapter lives on
+the intent-level ``caption`` output field instead, capped to <=10 words via
+``app.schemas.clip_intents.clean_caption_text``. A caption intent that quotes
+the creator's own words (``creator_text`` set) never authors anything here —
+the resolver only ever decides membership for it; the caller applies the
+creator's text verbatim.
 
 Unlike ``music_matcher``, an EMPTY result is valid per intent — a "group the
 pub videos" request over a clip batch with no pub clips returns no assignments
@@ -48,7 +55,12 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
-from app.schemas.clip_intents import LABEL_MAX_WORDS, clean_label_text
+from app.schemas.clip_intents import (
+    CAPTION_MAX_WORDS,
+    LABEL_MAX_WORDS,
+    clean_caption_text,
+    clean_label_text,
+)
 
 # ── Prompt-injection sanitization (creator-authored free text only; clip
 # records are pre-sanitized by ClipUnderstanding's own field validators) ─────
@@ -72,7 +84,7 @@ def _sanitize_text(s: str, *, limit: int = _MAX_FREE_TEXT_CHARS) -> str:
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
-ClipRequestIntentOp = Literal["label", "group", "order", "include"]
+ClipRequestIntentOp = Literal["label", "group", "order", "include", "caption"]
 
 
 class ResolverIntentIn(BaseModel):
@@ -82,6 +94,9 @@ class ResolverIntentIn(BaseModel):
     op: ClipRequestIntentOp
     attribute: str = Field(min_length=1, max_length=160)
     creator_text: str | None = Field(default=None, max_length=60)
+    # Only for op="caption" with no creator_text: what the caption should be
+    # ABOUT, as distinct from `attribute` (which clips it's for).
+    caption_attribute: str | None = Field(default=None, max_length=160)
     position: Literal["first", "last"] | None = None
 
 
@@ -125,6 +140,11 @@ class ResolverIntentOut(BaseModel):
     # Set when the INTENT ITSELF is ambiguous (e.g. the attribute doesn't map to
     # anything recognizable), independent of any per-clip vision question.
     question: str | None = Field(default=None, max_length=300)
+    # Only for op="caption" with no creator_text: the resolver's ONE authored
+    # phrase for the whole chapter (<=10 words, reusing only words already in
+    # the matched clips' records) — never set for any other op, and never used
+    # when the intent has a creator_text (the caller applies that verbatim).
+    caption: str | None = Field(default=None, max_length=200)
 
 
 class ClipRequestResolverOutput(BaseModel):
@@ -138,6 +158,8 @@ def _format_intent(intent: ResolverIntentIn) -> str:
     bits = [f'attribute="{_sanitize_text(intent.attribute, limit=160)}"']
     if intent.creator_text:
         bits.append(f'creator_text="{_sanitize_text(intent.creator_text, limit=60)}"')
+    if intent.caption_attribute:
+        bits.append(f'caption_attribute="{_sanitize_text(intent.caption_attribute, limit=160)}"')
     if intent.position:
         bits.append(f"position={intent.position}")
     return f"- intent_id={intent.intent_id} | op={intent.op} | " + " | ".join(bits)
@@ -153,7 +175,7 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_request_resolver",
         prompt_id="clip_request_resolver",
-        prompt_version="2026-09-21",
+        prompt_version="2026-09-22",  # KRI-129: added the "caption" op.
         # Text-only match against pre-computed clip records; flash + a small
         # thinking budget mirrors clip_plan_matcher's measured setting.
         model="gemini-2.5-flash",
@@ -283,12 +305,20 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
             question = entry.get("question")
             question = question.strip() if isinstance(question, str) and question.strip() else None
 
+            # An authored `caption` only ever means anything for op="caption"
+            # with no creator_text (a quoted caption's text is the creator's
+            # own words, applied verbatim by the caller — nothing to author).
+            caption: str | None = None
+            if op == "caption" and not by_id[intent_id].creator_text:
+                caption = clean_caption_text(entry.get("caption"))
+
             kept_intents.append(
                 ResolverIntentOut(
                     intent_id=intent_id,
                     assignments=assignments,
                     needs_vision=needs_vision,
                     question=question,
+                    caption=caption,
                 )
             )
 
@@ -307,7 +337,14 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
             "appear in that clip's record. If a clip's record does not name "
             "the thing being asked about, put it in `needs_vision` instead of "
             "guessing. If nothing in the batch matches an intent, return an "
-            "empty `assignments` list for it rather than forcing a weak match."
+            "empty `assignments` list for it rather than forcing a weak match. "
+            "A `caption` op's `assignments` decide MEMBERSHIP only (leave "
+            "`value` empty, like `group`); when the intent has no "
+            "`creator_text`, also fill the intent-level `caption` field with "
+            f"ONE phrase of {CAPTION_MAX_WORDS} words or fewer, reusing only "
+            "words already in the matched clips' records — never invent it. "
+            "When the intent HAS `creator_text`, leave `caption` null; that "
+            "text is applied verbatim by the caller."
         )
 
     def refusal_clarification(self) -> str:

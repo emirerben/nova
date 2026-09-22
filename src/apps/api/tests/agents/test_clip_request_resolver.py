@@ -227,3 +227,136 @@ def test_render_prompt_never_contains_a_media_id_field() -> None:
     the caller (clip_intent_resolution) only ever passes short aliases."""
     assert "media_id" not in ResolverClipIn.model_fields
     assert "media_id" not in ClipRequestResolverInput.model_fields
+
+
+# ── KRI-129: op="caption" ────────────────────────────────────────────────────
+
+
+def _caption_input() -> ClipRequestResolverInput:
+    return ClipRequestResolverInput(
+        creator_request='Say "post match feast" on the food clips. '
+        "Add a caption about the weather on the park clips.",
+        intents=[
+            ResolverIntentIn(
+                intent_id="i_food",
+                op="caption",
+                attribute="the food clips",
+                creator_text="post match feast",
+            ),
+            ResolverIntentIn(
+                intent_id="i_park",
+                op="caption",
+                attribute="the park clips",
+                caption_attribute="the weather",
+            ),
+        ],
+        clips=[
+            ResolverClipIn(
+                alias="m001",
+                kind="video",
+                record={"subject": "friends eating dinner", "setting": "a restaurant"},
+            ),
+            ResolverClipIn(
+                alias="m002",
+                kind="video",
+                record={"subject": "a rainy park bench", "activity": "sitting in the rain"},
+            ),
+        ],
+    )
+
+
+def test_parse_caption_assignment_membership_value_forced_none() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                {
+                    "intent_id": "i_food",
+                    "assignments": [
+                        {"media": "m001", "value": "Post Match Feast", "confidence": 0.9},
+                    ],
+                }
+            ]
+        }
+    )
+    out = _agent().parse(raw, _caption_input())
+    assert out.intents[0].assignments[0].value is None
+    assert out.intents[0].assignments[0].media == "m001"
+
+
+def test_parse_caption_authors_and_cleans_the_intent_level_phrase() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                {
+                    "intent_id": "i_park",
+                    "assignments": [{"media": "m002", "confidence": 0.9}],
+                    "caption": "  rainy   in the park  ",
+                }
+            ]
+        }
+    )
+    out = _agent().parse(raw, _caption_input())
+    assert out.intents[0].caption == "rainy in the park"
+
+
+def test_parse_caption_drops_an_overlong_authored_phrase() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                {
+                    "intent_id": "i_park",
+                    "assignments": [{"media": "m002", "confidence": 0.9}],
+                    "caption": "this authored caption phrase has way more than ten words in it",
+                }
+            ]
+        }
+    )
+    out = _agent().parse(raw, _caption_input())
+    assert out.intents[0].caption is None
+
+
+def test_parse_caption_field_forced_none_when_intent_has_creator_text() -> None:
+    """A quoted caption's text is applied verbatim by the caller — the resolver
+    only ever decides membership for it, even if the model tries to author one."""
+    raw = json.dumps(
+        {
+            "intents": [
+                {
+                    "intent_id": "i_food",
+                    "assignments": [{"media": "m001", "confidence": 0.9}],
+                    "caption": "a paraphrase the model invented",
+                }
+            ]
+        }
+    )
+    out = _agent().parse(raw, _caption_input())
+    assert out.intents[0].caption is None
+
+
+def test_parse_caption_field_forced_none_for_non_caption_ops() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                {
+                    "intent_id": "i_sport",
+                    "assignments": [{"media": "m001", "value": "Soccer", "confidence": 0.9}],
+                    "caption": "should never survive on a label op",
+                }
+            ]
+        }
+    )
+    out = _agent().parse(raw, _input())
+    assert out.intents[0].caption is None
+    # The label path itself is untouched by the caption field's existence.
+    assert out.intents[0].assignments[0].value == "Soccer"
+
+
+def test_format_intent_includes_caption_attribute() -> None:
+    prompt = _agent().render_prompt(_caption_input())
+    assert 'caption_attribute="the weather"' in prompt
+    assert "op=caption" in prompt
+
+
+def test_schema_clarification_mentions_caption() -> None:
+    clarification = _agent().schema_clarification()
+    assert "caption" in clarification.casefold()

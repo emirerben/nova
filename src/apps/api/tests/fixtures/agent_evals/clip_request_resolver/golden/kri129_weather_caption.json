@@ -1,0 +1,89 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-09-22",
+  "input": {
+    "creator_request": "Add a caption about the weather on the park clips.",
+    "intents": [
+      {
+        "intent_id": "i_weather",
+        "op": "caption",
+        "attribute": "the park clips",
+        "creator_text": null,
+        "caption_attribute": "the weather",
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "a rainy park bench",
+          "summary": "A wide shot of an empty, rain-soaked park bench under grey clouds.",
+          "setting": "a public park",
+          "activity": "sitting alone in the rain"
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "leaves blowing across a path",
+          "summary": "A very windy afternoon sends dry leaves swirling across a park path.",
+          "setting": "a public park",
+          "activity": "walking through the wind"
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "friends at an indoor birthday party",
+          "summary": "A group of friends sing happy birthday around a cake indoors.",
+          "setting": "a living room",
+          "activity": "celebrating a birthday"
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"i_weather\", \"assignments\": [{\"media\": \"m001\", \"evidence\": \"rain-soaked park bench under grey clouds\", \"confidence\": 0.9}, {\"media\": \"m002\", \"evidence\": \"a very windy afternoon\", \"confidence\": 0.85}], \"needs_vision\": [], \"caption\": \"rainy windy\"}]}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i_weather",
+        "assignments": [
+          {
+            "media": "m001",
+            "value": null,
+            "evidence": "rain-soaked park bench under grey clouds",
+            "confidence": 0.9
+          },
+          {
+            "media": "m002",
+            "value": null,
+            "evidence": "a very windy afternoon",
+            "confidence": 0.85
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": "rainy windy"
+      }
+    ]
+  },
+  "meta": {
+    "source": "kri129-caption-lane",
+    "expect_covered": {
+      "i_weather": [
+        "m001",
+        "m002"
+      ]
+    },
+    "expect_not_assigned": {
+      "i_weather": [
+        "m003"
+      ]
+    },
+    "case": "op=\"caption\" with no creator_text (a described caption): membership decided like `group` (m003's indoor birthday party is correctly excluded), and the resolver additionally authors ONE short phrase for the whole chapter from the union of m001+m002's records -- 'rainy' comes from m001's record, 'windy' from m002's; neither clip's record alone contains both words."
+  }
+}
