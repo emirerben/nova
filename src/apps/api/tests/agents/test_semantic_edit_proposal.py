@@ -1,15 +1,17 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from app.agents._runtime import SchemaError
+from app.agents._runtime import ModelInvocation, SchemaError
 from app.agents.edit_proposal import (
     EditProposalAgent,
     EditProposalAgentInput,
     EditProposalMedia,
 )
 from app.agents.semantic_edit_proposal import (
+    _GROUP_RETRY_HINT,
     SemanticEditProposalAgent,
     semantic_plan_from_legacy,
 )
@@ -486,6 +488,48 @@ def test_clip_intent_group_and_order_require_every_source_in_exact_sequence() ->
         SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
             json.dumps(bad), _input(creator_request="", clip_intents=intents)
         )
+
+
+def test_group_schema_retry_names_exclusive_aliases_without_model_output() -> None:
+    class FakeClient:
+        def __init__(self, responses: list[str]) -> None:
+            self.responses = responses
+            self.prompts: list[str] = []
+
+        def invoke(self, **kwargs: object) -> ModelInvocation:
+            self.prompts.append(str(kwargs["prompt"]))
+            return ModelInvocation(raw_text=self.responses.pop(0))
+
+    group = ResolvedClipIntent(
+        intent_id="park-only",
+        op="group",
+        attribute="park together",
+        assignments=[ClipAssignment(media_id="park")],
+    )
+    invalid = json.loads(_raw())
+    invalid["chapters"][0]["topic"] = "MODEL_ONLY_POLLUTION"
+    invalid["chapters"][0]["sources"] = [{"media_id": "m001"}, {"media_id": "m002"}]
+    client = FakeClient([json.dumps(invalid), _raw()])
+    agent = SemanticEditProposalAgent(client)  # type: ignore[arg-type]
+    agent.spec = replace(agent.spec, model="test-model", max_attempts=2)
+
+    plan = agent.run(_input(creator_request="", clip_intents=[group]))
+
+    assert [chapter.chapter_id for chapter in plan.chapters] == ["one", "two"]
+    assert len(client.prompts) == 2
+    assert (
+        '"exclusive_group_aliases": [{"intent_id": "park-only", "aliases": ["m001"]}]'
+        in (client.prompts[0])
+    )
+    assert _GROUP_RETRY_HINT not in client.prompts[0]
+    assert _GROUP_RETRY_HINT in client.prompts[1]
+    assert "MODEL_ONLY_POLLUTION" not in client.prompts[1]
+    assert _GROUP_RETRY_HINT not in agent.schema_clarification()
+
+
+def test_semantic_schema_clarification_is_safe_before_any_parse() -> None:
+    clarification = SemanticEditProposalAgent(None).schema_clarification()  # type: ignore[arg-type]
+    assert _GROUP_RETRY_HINT not in clarification
 
 
 @pytest.mark.parametrize(

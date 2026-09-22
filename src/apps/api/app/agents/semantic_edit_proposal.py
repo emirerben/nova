@@ -33,6 +33,13 @@ _QUOTED_TEXT_RE = re.compile(
 _FORBIDDEN_TIMING_KEYS = frozenset(
     {"duration_s", "start_s", "end_s", "source_start_s", "source_end_s", "output_duration_s"}
 )
+_GROUP_SPLIT_ERROR = "semantic_edit_proposal: clip intent group was split"
+_GROUP_UNRELATED_ERROR = "semantic_edit_proposal: clip intent group has unrelated sources"
+_GROUP_RETRY_HINT = (
+    "Correction: every resolved GROUP is an exclusive contiguous block. Use exactly its "
+    "assigned aliases in its block; keep every other alias outside that block, even when "
+    "the setting is similar."
+)
 
 
 def _validate_reuse_once(plan: SemanticEditPlan, input: EditProposalAgentInput) -> None:  # noqa: A002
@@ -194,6 +201,7 @@ def _semantic_constraint_block(
         return [id_to_alias[media_id] for media_id in ids if media_id in id_to_alias]
 
     intents = []
+    exclusive_groups = []
     for intent in input.clip_intents or []:
         data = intent.model_dump(mode="json")
         data["assignments"] = [
@@ -204,6 +212,13 @@ def _semantic_constraint_block(
             for assignment in data["assignments"]
         ]
         intents.append(data)
+        if intent.status == "resolved" and intent.op == "group":
+            exclusive_groups.append(
+                {
+                    "intent_id": intent.intent_id,
+                    "aliases": aliases([assignment.media_id for assignment in intent.assignments]),
+                }
+            )
     cadence = input.montage_cadence
     return {
         "media_scope": input.media_scope,
@@ -219,6 +234,7 @@ def _semantic_constraint_block(
             else None
         ),
         "clip_intents": intents,
+        "exclusive_group_aliases": exclusive_groups,
         "cadence": (
             {
                 "mode": cadence.mode,
@@ -331,7 +347,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.semantic_edit_proposal",
         prompt_id="semantic_edit_proposal",
-        prompt_version="2.0.6",
+        prompt_version="2.0.7",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -364,6 +380,19 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         )
 
     def parse(self, raw_text: str, input: EditProposalAgentInput) -> SemanticEditPlan:  # noqa: A002
+        self._schema_retry_hint: str | None = None
+        try:
+            return self._parse(raw_text, input)
+        except SchemaError as exc:
+            if str(exc) in {_GROUP_SPLIT_ERROR, _GROUP_UNRELATED_ERROR}:
+                self._schema_retry_hint = _GROUP_RETRY_HINT
+            raise
+
+    def schema_clarification(self) -> str:
+        suffix = getattr(self, "_schema_retry_hint", None)
+        return super().schema_clarification() + (f"\n\n{suffix}" if suffix else "")
+
+    def _parse(self, raw_text: str, input: EditProposalAgentInput) -> SemanticEditPlan:  # noqa: A002
         try:
             payload = json.loads(raw_text)
         except (TypeError, ValueError) as exc:
