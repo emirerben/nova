@@ -6,12 +6,14 @@ deadline + graceful-degradation logic only.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 from app.agents._runtime import (
     AiBudgetExceededError,
+    ProviderOutcomeUnknownError,
     ProviderQuotaExceededError,
     RunContext,
     TerminalError,
@@ -671,7 +673,279 @@ async def test_caption_text_authoring_respects_the_shared_per_turn_vision_cap(mo
     resolved = result.intents[0]
     assert resolved.status == "needs_creator"
     assert resolved.caption_text is None
-    assert result.question == "What should the caption on the park clips say?. Could you clarify?"
+    assert result.status == "pending"
+    assert result.question is None
+    assert not result.needs_creator
+
+
+async def test_caption_authoring_quota_returns_budget_exhausted_without_question(
+    monkeypatch,
+) -> None:
+    intent = ClipIntent(
+        intent_id="i_weather",
+        op="caption",
+        attribute="park clips",
+        caption_attribute="the weather",
+    )
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_weather",
+                    assignments=[ResolverAssignment(media="m001", confidence=0.9)],
+                    caption="cold and rainy",
+                )
+            ]
+        ),
+    )
+    calls: list[str] = []
+
+    async def _quota(candidate, clip, *, question_agent, run_context):  # noqa: ANN001
+        calls.append(candidate.media_id)
+        raise ProviderQuotaExceededError(provider="gemini")
+
+    monkeypatch.setattr("app.services.clip_intent_resolution._run_vision_candidate", _quota)
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="Add a caption about the weather on the park clips",
+        clips=[_video_clip("m1", subject="people at a park")],
+        run_context=RunContext(),
+    )
+
+    assert calls == ["m1"]
+    assert result.status == "budget_exhausted"
+    assert result.error_code == "provider_quota_exceeded"
+    assert result.question is None
+    assert not result.needs_creator
+
+
+async def test_caption_authoring_is_skipped_after_membership_quota(monkeypatch) -> None:
+    intent = ClipIntent(
+        intent_id="i_weather",
+        op="caption",
+        attribute="park clips",
+        caption_attribute="the weather",
+    )
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_weather",
+                    needs_vision=[ResolverVisionQuestion(media="m001", question="Who is here?")],
+                    caption="cold and rainy",
+                )
+            ]
+        ),
+    )
+    calls: list[str] = []
+
+    async def _quota(candidate, clip, *, question_agent, run_context):  # noqa: ANN001
+        calls.append(candidate.question)
+        raise ProviderQuotaExceededError(provider="gemini")
+
+    monkeypatch.setattr("app.services.clip_intent_resolution._run_vision_candidate", _quota)
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="Add a caption about the weather on the park clips",
+        clips=[_video_clip("m1", subject="people at a park")],
+        run_context=RunContext(),
+    )
+
+    assert calls == [
+        'Does this clip match this description: "park clips"? Answer only "yes" or "no".'
+    ]
+    assert result.status == "budget_exhausted"
+    assert result.question is None
+    assert result.intents[0].caption_text is None
+
+
+async def test_caption_authoring_timeout_preserves_completed_sibling(monkeypatch) -> None:
+    intents = [
+        ClipIntent(
+            intent_id="i_one",
+            op="caption",
+            attribute="first park clips",
+            caption_attribute="the weather",
+        ),
+        ClipIntent(
+            intent_id="i_two",
+            op="caption",
+            attribute="second park clips",
+            caption_attribute="the weather",
+        ),
+    ]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_one",
+                    assignments=[ResolverAssignment(media="m001", confidence=0.9)],
+                    caption="cold and rainy",
+                ),
+                ResolverIntentOut(
+                    intent_id="i_two",
+                    assignments=[ResolverAssignment(media="m002", confidence=0.9)],
+                    caption="cold and rainy",
+                ),
+            ]
+        ),
+    )
+
+    async def _partial(candidate, clip, *, question_agent, run_context):  # noqa: ANN001
+        if candidate.intent_id == "i_two":
+            raise TimeoutError("caption provider timed out")
+        return ClipQuestionOutput(answer="cold and rainy", confidence=0.9, evidence="seen")
+
+    monkeypatch.setattr("app.services.clip_intent_resolution._run_vision_candidate", _partial)
+    result = await resolve_clip_intents_for_turn(
+        intents=intents,
+        creator_request="Add weather captions",
+        clips=[
+            _video_clip("m1", subject="people at a park"),
+            _video_clip("m2", subject="people at a park"),
+        ],
+        run_context=RunContext(),
+    )
+
+    by_id = {item.intent_id: item for item in result.intents}
+    assert result.status == "provider_unavailable"
+    assert by_id["i_one"].caption_text == "cold and rainy"
+    assert by_id["i_two"].caption_text is None
+
+
+async def test_background_caption_authoring_concurrency_is_capped_at_four(monkeypatch) -> None:
+    intents = [
+        ClipIntent(
+            intent_id=f"i_{i}",
+            op="caption",
+            attribute=f"park clips {i}",
+            caption_attribute="the weather",
+        )
+        for i in range(6)
+    ]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id=f"i_{i}",
+                    assignments=[ResolverAssignment(media=f"m{i + 1:03d}", confidence=0.9)],
+                    caption="cold and rainy",
+                )
+                for i in range(6)
+            ]
+        ),
+    )
+    active = 0
+    max_active = 0
+
+    async def _concurrent(candidate, clip, *, question_agent, run_context):  # noqa: ANN001
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return ClipQuestionOutput(answer="cold and rainy", confidence=0.9, evidence="seen")
+
+    monkeypatch.setattr("app.services.clip_intent_resolution._run_vision_candidate", _concurrent)
+    result = await resolve_clip_intents_for_turn(
+        intents=intents,
+        creator_request="Add weather captions",
+        clips=[_video_clip(f"m{i + 1}", subject="people at a park") for i in range(6)],
+        run_context=RunContext(),
+        background=True,
+    )
+
+    assert max_active <= 4
+    assert result.status == "resolved"
+
+
+async def test_generation_pinned_caption_cache_and_checkpoint(monkeypatch) -> None:
+    from app.services.clip_intent_resolution import _caption_authoring_question
+
+    cached_intent = ClipIntent(
+        intent_id="i_cached",
+        op="caption",
+        attribute="cached park clips",
+        caption_attribute="the weather",
+    )
+    fresh_intent = ClipIntent(
+        intent_id="i_fresh",
+        op="caption",
+        attribute="fresh park clips",
+        caption_attribute="the weather",
+    )
+    question = _caption_authoring_question(cached_intent)
+    cached_clip = IntentClip(
+        media_id="m1",
+        kind="video",
+        gcs_path="users/u/m1.mp4",
+        generation="generation-1",
+        analysis={
+            **_record_analysis(subject="people at a park"),
+            ANSWERS_KEY: {
+                normalize_question(question): {
+                    "answer": "sunny day",
+                    "confidence": 0.9,
+                    "evidence": "bright sky",
+                    "generation": "generation-1",
+                }
+            },
+        },
+    )
+    fresh_clip = IntentClip(
+        media_id="m2",
+        kind="video",
+        gcs_path="users/u/m2.mp4",
+        generation="generation-2",
+        analysis=_record_analysis(subject="people at a park"),
+    )
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_cached",
+                    assignments=[ResolverAssignment(media="m001", confidence=0.9)],
+                    caption="sunny day",
+                ),
+                ResolverIntentOut(
+                    intent_id="i_fresh",
+                    assignments=[ResolverAssignment(media="m002", confidence=0.9)],
+                    caption="windy afternoon",
+                ),
+            ]
+        ),
+    )
+    calls: list[str] = []
+    checkpointed: list[dict] = []
+
+    async def _fresh(candidate, clip, *, question_agent, run_context):  # noqa: ANN001
+        calls.append(candidate.media_id)
+        return ClipQuestionOutput(answer="windy afternoon", confidence=0.9, evidence="trees moving")
+
+    async def _checkpoint(answers):  # noqa: ANN001
+        checkpointed.append(answers.copy())
+
+    monkeypatch.setattr("app.services.clip_intent_resolution._run_vision_candidate", _fresh)
+    result = await resolve_clip_intents_for_turn(
+        intents=[cached_intent, fresh_intent],
+        creator_request="Add weather captions",
+        clips=[cached_clip, fresh_clip],
+        run_context=RunContext(),
+        background=True,
+        checkpoint=_checkpoint,
+    )
+
+    assert calls == ["m2"]
+    assert result.status == "resolved"
+    assert result.intents[0].caption_text == "sunny day"
+    assert result.intents[1].caption_text == "windy afternoon"
+    assert result.vision_answers["m2"][normalize_question(question)]["generation"] == "generation-2"
+    assert checkpointed[-1]["m2"][normalize_question(question)]["generation"] == "generation-2"
 
 
 def test_membership_vision_checks_are_closed_yes_no_questions() -> None:
@@ -951,6 +1225,56 @@ async def test_background_quota_stops_later_batches_and_keeps_first_batch_succes
     assert result.status == "budget_exhausted"
     assert result.error_code == "provider_quota_exceeded"
     assert set(result.vision_answers) == {"m2", "m3", "m4"}
+
+
+async def test_background_provider_outcome_unknown_stops_19_candidates_and_keeps_done(
+    monkeypatch,
+) -> None:
+    intent = ClipIntent(intent_id="i_sport", op="label", attribute="sport")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_sport",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question="What sport?")
+                        for i in range(1, 20)
+                    ],
+                )
+            ]
+        ),
+    )
+    calls: list[str] = []
+
+    async def _unknown_first_batch(candidate, clip, *, question_agent, run_context):  # noqa: ANN001
+        calls.append(candidate.media_id)
+        if candidate.media_id == "m1":
+            raise ProviderOutcomeUnknownError()
+        return ClipQuestionOutput(answer="Soccer", confidence=0.9, evidence="seen")
+
+    monkeypatch.setattr(
+        "app.services.clip_intent_resolution._run_vision_candidate", _unknown_first_batch
+    )
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label each sport",
+        clips=[_video_clip(f"m{i}", subject="people playing a ball game") for i in range(1, 20)],
+        run_context=RunContext(),
+        background=True,
+    )
+
+    assert len(calls) <= 4
+    assert set(calls) == {"m1", "m2", "m3", "m4"}
+    assert result.status == "provider_unavailable"
+    assert result.error_code == "provider_outcome_unknown"
+    assert result.question is None
+    assert not result.needs_creator
+    assert {assignment.media_id for assignment in result.intents[0].assignments} == {
+        "m2",
+        "m3",
+        "m4",
+    }
 
 
 async def test_clarification_unions_duplicate_attribute_refs_with_bounded_tail(monkeypatch) -> None:

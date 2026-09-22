@@ -286,7 +286,9 @@ async def finish_preparation(db: AsyncSession, session: CreatorAgentSession) -> 
             int(state.get("completed", 0)),
             int(state.get("total", 0)),
             error_code=attempt.error_code,
-            retryable=failed,
+            retryable=failed
+            and attempt.error_code
+            not in {"provider_outcome_unknown", "media_unavailable", "clip_media_unavailable"},
         )
 
 

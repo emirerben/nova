@@ -248,3 +248,57 @@ def test_resume_uses_original_request_and_completes_receipt_atomically(graph, mo
     with sync_session() as db:
         assert db.get(CreatorPlanningAttempt, aid).status == "completed"
         assert db.get(CreatorAgentSession, sid).status == "awaiting_confirmation"
+
+
+@pytest.mark.parametrize("source_form", ["legacy_paths", "assignment_without_id"])
+def test_checkpoint_preserves_source_identity_across_legacy_normalization(graph, source_form):
+    _uid, _pid, iid, _sid, aid = graph
+    with sync_session() as db:
+        item = db.get(PlanItem, iid)
+        if source_form == "legacy_paths":
+            item.clip_assignments = []
+        else:
+            item.clip_assignments = [
+                {k: v for k, v in item.clip_assignments[0].items() if k != "media_id"}
+            ]
+        db.get(CreatorPlanningAttempt, aid).source_digest = source_digest(source_snapshot(item, []))
+        db.commit()
+    token, _inputs, sources, *_ = task._claim(aid)
+    task._checkpoint(
+        aid,
+        token,
+        {
+            **sources[0],
+            "generation": "42",
+            "analysis": {
+                "source": "clip_metadata",
+                "analysis_version": ANALYSIS_VERSION,
+                "subject": "coast",
+            },
+        },
+    )
+    with sync_session() as db:
+        item = db.get(PlanItem, iid)
+        assert item.clip_assignments[0]["media_id"] == sources[0]["media_id"]
+        assert (
+            source_digest(source_snapshot(item, []))
+            == db.get(CreatorPlanningAttempt, aid).source_digest
+        )
+    # A following checkpoint must still own the exact manifest.
+    task._checkpoint(
+        aid, token, {**sources[0], "generation": "42", "analysis": {"subject": "coast"}}
+    )
+
+
+def test_expired_lease_cannot_checkpoint_before_reclaim(graph):
+    _uid, _pid, iid, _sid, aid = graph
+    token, _inputs, sources, *_ = task._claim(aid)
+    with sync_session() as db:
+        db.get(CreatorPlanningAttempt, aid).lease_until = datetime.now(UTC) - timedelta(seconds=1)
+        db.commit()
+    with pytest.raises(task.PreparationStale):
+        task._checkpoint(
+            aid, token, {**sources[0], "generation": "42", "analysis": {"subject": "late"}}
+        )
+    with sync_session() as db:
+        assert db.get(PlanItem, iid).clip_assignments[0].get("analysis") is None

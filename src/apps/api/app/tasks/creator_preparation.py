@@ -77,7 +77,12 @@ def _locked(db, identifier: uuid.UUID, *, token: str | None = None):
     )
     if not plan or not item or not session or not attempt:
         return None
-    if token is not None and (attempt.status != "running" or attempt.lease_token != token):
+    if token is not None and (
+        attempt.status != "running"
+        or attempt.lease_token != token
+        or not attempt.lease_until
+        or attempt.lease_until <= datetime.now(UTC)
+    ):
         return None
     assets = list(db.execute(asset_query(item, attempt.creator_id)).scalars())
     sources = source_snapshot(item, assets)
