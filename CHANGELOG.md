@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.135.0] - 2026-09-22
+
+### Changed
+- chore(deploy): gate Vercel builds to main + web-affecting commits (#1150) <!-- release-pr: 1150 -->
+
 ## [0.76.134.0] - 2026-09-22
 
 ### Changed
