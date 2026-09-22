@@ -36,7 +36,7 @@ _FORBIDDEN_TIMING_KEYS = frozenset(
 _GROUP_SPLIT_ERROR = "semantic_edit_proposal: clip intent group was split"
 _GROUP_UNRELATED_ERROR = "semantic_edit_proposal: clip intent group has unrelated sources"
 _GROUP_RETRY_HINT = (
-    "Correction: every resolved GROUP is an exclusive contiguous block. Use exactly its "
+    "Correction: every resolved GROUP or CAPTION is an exclusive contiguous block. Use exactly its "
     "assigned aliases in its block; keep every other alias outside that block, even when "
     "the setting is similar."
 )
@@ -128,11 +128,44 @@ def _semantic_required_media_ids(input: EditProposalAgentInput) -> set[str]:  # 
 
 def _creator_captions(input: EditProposalAgentInput) -> dict[str, list[str]]:  # noqa: A002
     """Creator-quoted captions are a complete allowlist (KRI-129)."""
+    if input.shot_labels:
+        return {}
+    resolved = [
+        intent.caption_text
+        for intent in input.clip_intents or []
+        if intent.status == "resolved" and intent.op == "caption" and intent.caption_text
+    ]
+    if resolved:
+        resolved.extend(
+            intent.creator_text
+            for intent in input.clip_intents or []
+            if intent.status == "resolved" and intent.op == "group" and intent.creator_text
+        )
+        phrases: dict[str, list[str]] = {}
+        for text in resolved:
+            key = creator_copy_match_key(text)
+            if text not in phrases.setdefault(key, []):
+                phrases[key].append(text)
+        return phrases
     phrases: dict[str, list[str]] = {}
     for match in _QUOTED_TEXT_RE.finditer(input.creator_request):
         text = (match.group(1) or match.group(2) or "").strip()
         key = creator_copy_match_key(text)
         if key:
+            if text not in phrases.setdefault(key, []):
+                phrases[key].append(text)
+    for intent in input.clip_intents or []:
+        if intent.status != "resolved":
+            continue
+        text = (
+            intent.caption_text
+            if intent.op == "caption"
+            else intent.creator_text
+            if intent.op == "group"
+            else None
+        )
+        if text:
+            key = creator_copy_match_key(text)
             if text not in phrases.setdefault(key, []):
                 phrases[key].append(text)
     for title in (input.opening_title, input.closing_title):
@@ -247,7 +280,7 @@ def _semantic_constraint_block(
             for assignment in data["assignments"]
         ]
         intents.append(data)
-        if intent.status == "resolved" and intent.op == "group":
+        if intent.status == "resolved" and intent.op in {"group", "caption"}:
             exclusive_groups.append(
                 {
                     "intent_id": intent.intent_id,
@@ -259,6 +292,7 @@ def _semantic_constraint_block(
         "media_scope": input.media_scope,
         "required_media_ids": aliases(sorted(_semantic_required_media_ids(input))),
         "video_reuse_policy": input.video_reuse_policy,
+        "required_chapter_count": len(input.shot_labels) if input.shot_labels else None,
         "montage_audio": (
             {
                 "preserve_source_audio": input.montage_audio.preserve_source_audio,
@@ -382,7 +416,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.semantic_edit_proposal",
         prompt_id="semantic_edit_proposal",
-        prompt_version="2.0.9",
+        prompt_version="2.0.11",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -400,7 +434,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         prompt_media, aliases, id_to_alias = _semantic_prompt_media(input)
         group_ids_by_alias = {row.media_id: [] for row in prompt_media}
         for intent in input.clip_intents or []:
-            if intent.status != "resolved" or intent.op != "group":
+            if intent.status != "resolved" or intent.op not in {"group", "caption"}:
                 continue
             for assignment in intent.assignments:
                 alias = id_to_alias.get(assignment.media_id)
@@ -430,8 +464,27 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         try:
             return self._parse(raw_text, input)
         except SchemaError as exc:
-            if str(exc) in {_GROUP_SPLIT_ERROR, _GROUP_UNRELATED_ERROR}:
+            if str(exc) in {
+                _GROUP_SPLIT_ERROR,
+                _GROUP_UNRELATED_ERROR,
+                "semantic_edit_proposal: caption intent has unrelated sources",
+            }:
                 self._schema_retry_hint = _GROUP_RETRY_HINT
+            elif str(exc) in {
+                "semantic_edit_proposal: creator shot labels need one chapter each",
+                "semantic_edit_proposal: a video appears more than once under once reuse",
+                "semantic_edit_proposal: requested media coverage was dropped",
+            }:
+                self._schema_retry_hint = (
+                    "Correction: include every alias in required_media_ids. Under once reuse, "
+                    "each video alias can appear only once across the entire chapters array."
+                )
+                if input.shot_labels:
+                    self._schema_retry_hint += (
+                        f" Return exactly {len(input.shot_labels)} chapters, one per shot label "
+                        "in order. Put opening footage inside the first labeled chapter; "
+                        "do not add an introduction or ending chapter."
+                    )
             raise
 
     def schema_clarification(self) -> str:
@@ -590,6 +643,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
                         plan.text_bindings.append(
                             SemanticTextBinding(text=exact, chapter_ids=[chapter.chapter_id])
                         )
+        self._apply_resolved_caption_intents(plan, input, alias_to_id)
         self._add_creator_caption_bindings(plan, input)
         self._enforce_creator_text_bindings(plan, input)
         if len(plan.text_bindings) > 12:
@@ -643,6 +697,69 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
                 existing.add(key)
 
     @staticmethod
+    def _apply_resolved_caption_intents(
+        plan: SemanticEditPlan, input: EditProposalAgentInput, aliases: dict[str, str]
+    ) -> None:
+        """Bind trusted resolved captions to their exclusive assigned chapter(s)."""
+        if input.shot_labels:
+            return
+        assigned: dict[str, str] = {}
+        caption_texts = {
+            intent.caption_text
+            for intent in input.clip_intents or []
+            if intent.status == "resolved" and intent.op == "caption" and intent.caption_text
+        }
+        bound_texts = caption_texts | {
+            intent.creator_text
+            for intent in input.clip_intents or []
+            if intent.status == "resolved" and intent.op == "group" and intent.creator_text
+        }
+        for chapter in plan.chapters:
+            if chapter.thought in bound_texts:
+                chapter.thought = ""
+        plan.text_bindings = [
+            binding for binding in plan.text_bindings if binding.text not in bound_texts
+        ]
+        for intent in input.clip_intents or []:
+            if intent.status != "resolved":
+                continue
+            text = (
+                intent.caption_text
+                if intent.op == "caption"
+                else intent.creator_text
+                if intent.op == "group"
+                else None
+            )
+            if not text:
+                continue
+            ids = {aliases.get(item.media_id, item.media_id) for item in intent.assignments}
+            indexes = [
+                index
+                for index, chapter in enumerate(plan.chapters)
+                if any(source.media_id in ids for source in chapter.sources)
+            ]
+            if not indexes:
+                raise SchemaError("semantic_edit_proposal: caption intent source was dropped")
+            for index in indexes:
+                if any(source.media_id not in ids for source in plan.chapters[index].sources):
+                    raise SchemaError(
+                        "semantic_edit_proposal: caption intent has unrelated sources"
+                    )
+                prior = assigned.get(plan.chapters[index].chapter_id)
+                if prior is not None and prior != text:
+                    raise SchemaError(
+                        "semantic_edit_proposal: caption intents conflict on a chapter"
+                    )
+                assigned[plan.chapters[index].chapter_id] = text
+        for chapter in plan.chapters:
+            if text := assigned.get(chapter.chapter_id):
+                chapter.thought = text
+                if input.direction == "fast_montage":
+                    plan.text_bindings.append(
+                        SemanticTextBinding(text=text, chapter_ids=[chapter.chapter_id])
+                    )
+
+    @staticmethod
     def _enforce_creator_text_bindings(
         plan: SemanticEditPlan, input: EditProposalAgentInput
     ) -> None:
@@ -676,9 +793,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             if text
         ]
         required_captions = _caption_texts(captions) - label_texts
-        if any(
-            not any(caption in rendered for rendered in present) for caption in required_captions
-        ):
+        if not required_captions <= set(present):
             raise SchemaError("semantic_edit_proposal: creator caption was dropped")
 
     @staticmethod
@@ -699,7 +814,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             ids = [aliases.get(item.media_id, item.media_id) for item in intent.assignments]
             if not all(media_id in positions for media_id in ids):
                 raise SchemaError("semantic_edit_proposal: clip intent source was dropped")
-            if intent.op == "group":
+            if intent.op in {"group", "caption"}:
                 indexes = sorted(
                     {index for media_id in ids for index in positions.get(media_id, [])}
                 )

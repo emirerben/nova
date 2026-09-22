@@ -28,7 +28,10 @@ A scheduled proposal still uses this path when the new-draft flag is rolled back
 Semantic planning never replaces a rejected plan with a weakened legacy fallback.
 Failures retain `main_creator_fail_closed`, including automatic creation. Exact
 creator titles and captions remain immutable; resolved clip labels stay in the
-existing worker grounding lane. Private `planning_diagnostics` contains semantic
+existing worker grounding lane. Resolved caption intents and legacy group copy bind
+only to their assigned, contiguous source chapters; model echoes on other sources
+are removed. Structured shot labels take precedence over quotation detection.
+Private `planning_diagnostics` contains semantic
 intent, feasibility, schedule, repairs and failure reasons. Ordinary responses omit
 it. Pre-render model runs use `AgentRun.plan_item_id`; inspect them with
 `python scripts/admin.py GET plan-items/<id>/proposal-trace`.

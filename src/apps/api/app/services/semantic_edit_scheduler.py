@@ -448,6 +448,20 @@ def _source_windows(slots: list[_Slot], input: EditProposalAgentInput) -> list[t
     return windows
 
 
+def _server_confirmed_user_thoughts(input: EditProposalAgentInput) -> set[str]:
+    """Return exact copy that the server has confirmed as creator-authored."""
+
+    thoughts = set(input.shot_labels or [])
+    for intent in input.clip_intents or []:
+        if intent.status != "resolved":
+            continue
+        if intent.op == "caption" and intent.caption_text:
+            thoughts.add(intent.caption_text)
+        elif intent.op != "label" and intent.creator_text:
+            thoughts.add(intent.creator_text)
+    return thoughts
+
+
 def schedule_semantic_edit(plan: SemanticEditPlan, input: EditProposalAgentInput) -> ScheduleResult:
     """Materialize semantic intent as one canonical 30fps edit schedule."""
 
@@ -639,6 +653,7 @@ def schedule_semantic_edit(plan: SemanticEditPlan, input: EditProposalAgentInput
 
     # Keep chapters together and split only renderer-limited >4 source beats.
     beats: list[StoryBeat] = []
+    user_thoughts = _server_confirmed_user_thoughts(input)
     for chapter_index, chapter in enumerate(plan.chapters):
         chapter_slots = [slot for slot in slots if slot.chapter_index == chapter_index]
         for group_index in range(0, len(chapter_slots), 4):
@@ -654,9 +669,7 @@ def schedule_semantic_edit(plan: SemanticEditPlan, input: EditProposalAgentInput
                     beat_id=beat_id,
                     topic=chapter.topic,
                     thought=chapter.thought,
-                    thought_source="user"
-                    if chapter.thought in (input.shot_labels or [])
-                    else "ai_draft",
+                    thought_source=("user" if chapter.thought in user_thoughts else "ai_draft"),
                     media_ids=[slot.media_id for slot in group],
                     layout=chapter.layout,
                     duration_s=max(1.0, frames / FPS),

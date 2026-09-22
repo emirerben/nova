@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.agents.edit_proposal import EditProposalAgentInput, EditProposalMedia
+from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
 from app.schemas.edit_proposal import MixedMediaTimingProfile, MontageCadenceConstraint
 from app.schemas.semantic_edit import SemanticEditPlan
 from app.services.semantic_edit_scheduler import (
@@ -258,6 +259,73 @@ def test_creator_labels_retain_user_provenance():
         chapter.thought = label
     result = schedule_semantic_edit(plan, _input(direction="guided_story", shot_labels=labels))
     assert [beat.thought_source for beat in result.story_beats] == ["user"] * 3
+
+
+def test_resolved_caption_text_retain_user_provenance_without_quoted_request():
+    intent = ResolvedClipIntent(
+        intent_id="caption-1",
+        op="caption",
+        attribute="park clips",
+        caption_text="At the park",
+        assignments=[ClipAssignment(media_id="clip-0")],
+    )
+    input = _input(
+        direction="guided_story",
+        target=3,
+        creator_request="",
+        clip_intents=[intent],
+        media=[EditProposalMedia(media_id="clip-0", lane="clip", kind="video", duration_s=10)],
+    )
+    plan = _plan(("clip-0",), candidate=False)
+    plan.chapters[0].thought = "At the park"
+
+    result = schedule_semantic_edit(plan, input)
+
+    assert result.story_beats[0].thought_source == "user"
+
+
+def test_unmatched_model_thought_remains_ai_draft_for_resolved_intent():
+    intent = ResolvedClipIntent(
+        intent_id="caption-1",
+        op="caption",
+        attribute="park clips",
+        caption_text="At the park",
+        assignments=[ClipAssignment(media_id="clip-0")],
+    )
+    input = _input(
+        direction="guided_story",
+        target=3,
+        clip_intents=[intent],
+        media=[EditProposalMedia(media_id="clip-0", lane="clip", kind="video", duration_s=10)],
+    )
+    plan = _plan(("clip-0",), candidate=False)
+    plan.chapters[0].thought = "A sunny day"
+
+    result = schedule_semantic_edit(plan, input)
+
+    assert result.story_beats[0].thought_source == "ai_draft"
+
+
+def test_resolved_nonlabel_creator_text_retain_user_provenance():
+    intent = ResolvedClipIntent(
+        intent_id="group-1",
+        op="group",
+        attribute="park clips",
+        creator_text="My park day",
+        assignments=[ClipAssignment(media_id="clip-0")],
+    )
+    input = _input(
+        direction="guided_story",
+        target=3,
+        clip_intents=[intent],
+        media=[EditProposalMedia(media_id="clip-0", lane="clip", kind="video", duration_s=10)],
+    )
+    plan = _plan(("clip-0",), candidate=False)
+    plan.chapters[0].thought = "My park day"
+
+    result = schedule_semantic_edit(plan, input)
+
+    assert result.story_beats[0].thought_source == "user"
 
 
 def test_subframe_short_source_can_be_saved_without_overrun():

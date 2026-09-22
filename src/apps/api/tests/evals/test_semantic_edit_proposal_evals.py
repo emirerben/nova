@@ -204,6 +204,20 @@ def test_semantic_edit_proposal_eval(
     if fixture_path == KRI129_LIVE_FIXTURE:
         _assert_kri129_compiler_contract(result.output, fixture, input)
         _assert_kri129_grounded_label_contract(fixture, input)
+    if caption_targets := fixture.meta.get("expected_caption_targets"):
+        for chapter in plan.chapters:
+            expected = {caption_targets.get(source.media_id, "") for source in chapter.sources}
+            assert expected == {chapter.thought}
+        materialized = schedule_semantic_edit(plan, input)
+        assert materialized.schedule.total_frames == fixture.meta["expected_frames"]
+        for beat in materialized.story_beats:
+            if beat.thought:
+                assert beat.thought_source == "user"
+        compiled = _compile_semantic_result(plan, input)
+        assert compiled["compiler_version"] == 8
+        assert compiled["resolved_duration_s"] == fixture.meta["expected_frames"] / 30
+        texts = {row["text"] for row in compiled["text_elements"]}
+        assert texts == {input.opening_title, *caption_targets.values()}
 
 
 @pytest.mark.parametrize("repeat", range(5), ids=lambda index: f"run-{index + 1}")

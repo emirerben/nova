@@ -447,6 +447,40 @@ def test_distinct_creator_caption_variant_must_not_be_missing_or_ambiguous() -> 
         SemanticEditProposalAgent(None).parse(json.dumps(ambiguous), input)  # type: ignore[arg-type]
 
 
+def test_short_caption_is_not_satisfied_by_another_caption_containing_it() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = "USA"
+    raw["chapters"][1]["thought"] = ""
+    with pytest.raises(SchemaError, match="creator caption was dropped"):
+        SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+            json.dumps(raw), _input(creator_request='Show "US" and "USA".')
+        )
+
+
+@pytest.mark.parametrize("direction", ["guided_story", "fast_montage"])
+@pytest.mark.parametrize("op", ["caption", "group"])
+def test_resolved_caption_echo_cannot_remain_on_unrelated_media(direction, op) -> None:
+    intent = ResolvedClipIntent(
+        intent_id="caption",
+        op=op,
+        attribute="pub",
+        caption_text="After the match" if op == "caption" else None,
+        creator_text="After the match",
+        assignments=[ClipAssignment(media_id="pub")],
+    )
+    raw = json.loads(_raw())
+    for chapter in raw["chapters"]:
+        chapter["thought"] = "After the match"
+    raw["text_bindings"] = [{"text": "After the match", "media_ids": ["park"]}]
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw), _input(direction=direction, creator_request="", clip_intents=[intent])
+    )
+    assert [chapter.thought for chapter in plan.chapters] == ["", "After the match"]
+    assert [
+        (binding.text, binding.chapter_ids, binding.media_ids) for binding in plan.text_bindings
+    ] == ([("After the match", ["two"], [])] if direction == "fast_montage" else [])
+
+
 def test_quoted_caption_without_cue_words_is_enforced_for_non_english_request() -> None:
     input = _input(creator_request="“maç sonrası pub” pub çekimleri için.")
     raw = json.loads(_raw())
@@ -460,6 +494,87 @@ def test_quoted_caption_without_cue_words_is_enforced_for_non_english_request() 
     missing["chapters"][1]["thought"] = ""
     with pytest.raises(SchemaError, match="creator caption was dropped"):
         SemanticEditProposalAgent(None).parse(json.dumps(missing), input)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("pub_op", ["caption", "group"])
+def test_resolved_caption_intents_override_only_assigned_guided_chapters(pub_op) -> None:
+    intents = [
+        ResolvedClipIntent(
+            intent_id="creator-caption",
+            op="caption",
+            attribute="park",
+            creator_text="Park intro",
+            caption_text="Park intro",
+            assignments=[ClipAssignment(media_id="park")],
+        ),
+        ResolvedClipIntent(
+            intent_id="grounded-caption",
+            op=pub_op,
+            attribute="pub",
+            caption_text="After the match" if pub_op == "caption" else None,
+            creator_text="After the match" if pub_op == "group" else None,
+            assignments=[ClipAssignment(media_id="pub")],
+        ),
+    ]
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = "Wrong model copy"
+    raw["chapters"][1]["thought"] = "Also wrong"
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw), _input(creator_request="", clip_intents=intents)
+    )
+    assert [chapter.thought for chapter in plan.chapters] == ["Park intro", "After the match"]
+
+
+def test_resolved_caption_intents_fast_bind_only_their_assigned_chapters() -> None:
+    intent = ResolvedClipIntent(
+        intent_id="caption",
+        op="caption",
+        attribute="pub",
+        caption_text="After the match",
+        assignments=[ClipAssignment(media_id="pub")],
+    )
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        _raw(), _input(direction="fast_montage", creator_request="", clip_intents=[intent])
+    )
+    assert [(binding.text, binding.chapter_ids) for binding in plan.text_bindings] == [
+        ("After the match", ["two"])
+    ]
+
+
+def test_resolved_caption_intents_reject_conflicting_or_missing_members() -> None:
+    conflict = [
+        ResolvedClipIntent(
+            intent_id="one",
+            op="caption",
+            attribute="park",
+            caption_text="One",
+            assignments=[ClipAssignment(media_id="park")],
+        ),
+        ResolvedClipIntent(
+            intent_id="two",
+            op="caption",
+            attribute="park",
+            caption_text="Two",
+            assignments=[ClipAssignment(media_id="park")],
+        ),
+    ]
+    with pytest.raises(SchemaError, match="caption intents conflict"):
+        SemanticEditProposalAgent(None).parse(
+            _raw(), _input(creator_request="", clip_intents=conflict)
+        )  # type: ignore[arg-type]
+    missing = [
+        ResolvedClipIntent(
+            intent_id="missing",
+            op="caption",
+            attribute="missing",
+            caption_text="Missing",
+            assignments=[ClipAssignment(media_id="missing")],
+        )
+    ]
+    with pytest.raises(SchemaError, match="requested media coverage was dropped"):
+        SemanticEditProposalAgent(None).parse(
+            _raw(), _input(creator_request="", clip_intents=missing)
+        )  # type: ignore[arg-type]
 
 
 def test_resolved_label_generic_text_binding_is_dropped_for_grounded_lane() -> None:
@@ -584,12 +699,13 @@ def test_semantic_prompt_aliases_every_input_media_in_stable_order() -> None:
     assert "clip-034" not in prompt
 
 
-def test_semantic_prompt_marks_only_resolved_group_members_per_media() -> None:
+@pytest.mark.parametrize("op", ["group", "caption"])
+def test_semantic_prompt_marks_only_resolved_group_members_per_media(op) -> None:
     input = _input(
         clip_intents=[
             ResolvedClipIntent(
                 intent_id="park-only",
-                op="group",
+                op=op,
                 attribute="park together",
                 assignments=[ClipAssignment(media_id="park")],
             ),
@@ -658,7 +774,8 @@ def test_exclusive_group_rejects_mixed_chapter_even_with_server_annotation() -> 
         )
 
 
-def test_group_schema_retry_names_exclusive_aliases_without_model_output() -> None:
+@pytest.mark.parametrize("op", ["group", "caption"])
+def test_group_schema_retry_names_exclusive_aliases_without_model_output(op) -> None:
     class FakeClient:
         def __init__(self, responses: list[str]) -> None:
             self.responses = responses
@@ -670,8 +787,9 @@ def test_group_schema_retry_names_exclusive_aliases_without_model_output() -> No
 
     group = ResolvedClipIntent(
         intent_id="park-only",
-        op="group",
+        op=op,
         attribute="park together",
+        caption_text="Park" if op == "caption" else None,
         assignments=[ClipAssignment(media_id="park")],
     )
     invalid = json.loads(_raw())
@@ -698,6 +816,18 @@ def test_group_schema_retry_names_exclusive_aliases_without_model_output() -> No
 def test_semantic_schema_clarification_is_safe_before_any_parse() -> None:
     clarification = SemanticEditProposalAgent(None).schema_clarification()  # type: ignore[arg-type]
     assert _GROUP_RETRY_HINT not in clarification
+
+
+def test_label_count_retry_includes_exact_count_without_echoing_model_output() -> None:
+    agent = SemanticEditProposalAgent(None)  # type: ignore[arg-type]
+    raw = json.loads(_raw())
+    raw["chapters"].append({**raw["chapters"][0], "chapter_id": "MODEL_ONLY_POLLUTION"})
+    with pytest.raises(SchemaError, match="one chapter each"):
+        agent.parse(json.dumps(raw), _input(shot_labels=["First", "Second"]))
+    hint = agent.schema_clarification()
+    assert "Return exactly 2 chapters" in hint
+    assert "each video alias can appear only once" in hint
+    assert "MODEL_ONLY_POLLUTION" not in hint
 
 
 @pytest.mark.parametrize(

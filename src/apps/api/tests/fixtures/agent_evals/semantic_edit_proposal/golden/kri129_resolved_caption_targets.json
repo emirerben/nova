@@ -1,0 +1,85 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.11",
+  "input": {
+    "direction": "guided_story",
+    "pace": "fast",
+    "target_duration_s": 20,
+    "media_scope": "all",
+    "video_reuse_policy": "once",
+    "creator_request": "Use London Day as the title. Add a caption about the weather to the park clips. Put post match pub on the pub clips. The unrelated song is called \u201cBackground music\u201d.",
+    "opening_title": "London Day",
+    "clip_intents": [
+      {
+        "intent_id": "park-caption",
+        "op": "caption",
+        "attribute": "park clips",
+        "caption_text": "Sunny park",
+        "caption_grounding": "record_span",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "park",
+            "confidence": 1,
+            "grounding": "record_span",
+            "evidence": "sunny green park"
+          }
+        ]
+      },
+      {
+        "intent_id": "pub-caption",
+        "op": "caption",
+        "attribute": "pub clips",
+        "caption_text": "post match pub",
+        "caption_grounding": "creator_text",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "pub",
+            "confidence": 1,
+            "grounding": "creator_text",
+            "evidence": "friends at a pub"
+          }
+        ],
+        "creator_text": "post match pub"
+      }
+    ],
+    "media": [
+      {
+        "media_id": "park",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 10,
+        "subject": "sunny green park",
+        "description": "sunny green park"
+      },
+      {
+        "media_id": "sport",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 10,
+        "subject": "soccer players",
+        "description": "soccer players"
+      },
+      {
+        "media_id": "pub",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 10,
+        "subject": "friends at a pub",
+        "description": "friends at a pub"
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"London Day\", \"chapters\": [{\"chapter_id\": \"park\", \"topic\": \"park\", \"thought\": \"POST MATCH PUB\", \"role\": \"hook\", \"sources\": [{\"media_id\": \"m001\"}]}, {\"chapter_id\": \"sport\", \"topic\": \"sport\", \"thought\": \"Sunny park\", \"role\": \"build\", \"sources\": [{\"media_id\": \"m002\"}]}, {\"chapter_id\": \"pub\", \"topic\": \"pub\", \"thought\": \"Invented wording\", \"role\": \"payoff\", \"sources\": [{\"media_id\": \"m003\"}]}], \"text_bindings\": [{\"text\": \"post match pub\", \"media_ids\": [\"m001\"]}]}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Resolved caption intent exact targets override raw quote fallback and remove wrong-target model echoes",
+    "expected_title": "London Day",
+    "expected_caption_targets": {
+      "park": "Sunny park",
+      "pub": "post match pub"
+    },
+    "expected_frames": 600
+  }
+}
