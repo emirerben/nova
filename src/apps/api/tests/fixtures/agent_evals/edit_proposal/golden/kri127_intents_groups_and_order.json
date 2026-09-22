@@ -1,141 +1,141 @@
 {
-  "agent": "nova.plan.edit_proposal",
-  "prompt_version": "1.13.0",
-  "input": {
-    "idea": "A day out with friends",
-    "theme": "Park then pub",
-    "direction": "guided_story",
-    "goal": "Group the footage the way the creator described it",
-    "creator_request": "Group the pub videos together and call that chapter 'post match pub', order the park clips where nobody is playing first, make sure the part where I talk to the camera is included, and label each sport being played.",
-    "pace": "balanced",
-    "target_duration_s": 25,
-    "clip_intents": [
-      {
-        "intent_id": "i-park-first",
-        "op": "order",
-        "attribute": "park clips where nobody is playing",
-        "position": "first",
-        "status": "resolved",
-        "assignments": [
-          {
-            "media_id": "clip_park",
-            "evidence": "empty park path, no players or equipment visible",
-            "confidence": 0.82,
-            "grounding": "record_span"
-          }
-        ]
-      },
-      {
-        "intent_id": "i-pub-group",
-        "op": "group",
-        "attribute": "pub videos",
-        "creator_text": "post match pub",
-        "status": "resolved",
-        "assignments": [
-          {
-            "media_id": "clip_pub",
-            "evidence": "group raising glasses in a neighborhood pub",
-            "confidence": 0.78,
-            "grounding": "record_span"
-          }
-        ]
-      },
-      {
-        "intent_id": "i-speech-include",
-        "op": "include",
-        "attribute": "where I talk to the camera",
-        "status": "resolved",
-        "assignments": [
-          {
-            "media_id": "clip_speech",
-            "evidence": "speaks directly to the camera",
-            "confidence": 0.75,
-            "grounding": "record_span"
-          }
-        ]
-      },
-      {
-        "intent_id": "i-sport-label",
-        "op": "label",
-        "attribute": "sport being played",
-        "status": "resolved",
-        "assignments": [
-          {
-            "media_id": "clip_soccer",
-            "value": "Soccer",
-            "evidence": "soccer ball and goal visible",
-            "confidence": 0.85,
-            "grounding": "vision_verified"
-          },
-          {
-            "media_id": "clip_volleyball",
-            "value": "Volleyball",
-            "evidence": "volleyball net and players visible",
-            "confidence": 0.85,
-            "grounding": "vision_verified"
-          }
-        ]
-      }
-    ],
-    "media": [
-      {
-        "media_id": "clip_park",
-        "lane": "clip",
-        "kind": "video",
-        "duration_s": 5.0,
-        "subject": "a quiet park path",
-        "setting": "a city park",
-        "activity": "walking outdoors"
-      },
-      {
-        "media_id": "clip_soccer",
-        "lane": "clip",
-        "kind": "video",
-        "duration_s": 5.0,
-        "subject": "a soccer match",
-        "setting": "a sports field",
-        "activity": "playing soccer"
-      },
-      {
-        "media_id": "clip_volleyball",
-        "lane": "clip",
-        "kind": "video",
-        "duration_s": 5.0,
-        "subject": "a volleyball rally",
-        "setting": "a sports field",
-        "activity": "playing volleyball"
-      },
-      {
-        "media_id": "clip_speech",
-        "lane": "clip",
-        "kind": "video",
-        "duration_s": 5.0,
-        "subject": "a person talking to the camera",
-        "setting": "a park bench",
-        "activity": "talking to the camera",
-        "speaks_to_camera": true,
-        "transcript": "hey everyone, quick update"
-      },
-      {
-        "media_id": "clip_pub",
-        "lane": "clip",
-        "kind": "video",
-        "duration_s": 5.0,
-        "subject": "a group raising glasses",
-        "setting": "a neighborhood pub",
-        "activity": "celebrating with drinks"
-      }
+ "agent": "nova.plan.edit_proposal",
+ "prompt_version": "1.15.0",
+ "input": {
+  "idea": "A day out with friends",
+  "theme": "Park then pub",
+  "direction": "guided_story",
+  "goal": "Group the footage the way the creator described it",
+  "creator_request": "Group the pub videos together and call that chapter 'post match pub', order the park clips where nobody is playing first, make sure the part where I talk to the camera is included, and label each sport being played.",
+  "pace": "balanced",
+  "target_duration_s": 25,
+  "clip_intents": [
+   {
+    "intent_id": "i-park-first",
+    "op": "order",
+    "attribute": "park clips where nobody is playing",
+    "position": "first",
+    "status": "resolved",
+    "assignments": [
+     {
+      "media_id": "clip_park",
+      "evidence": "empty park path, no players or equipment visible",
+      "confidence": 0.82,
+      "grounding": "record_span"
+     }
     ]
-  },
-  "raw_text": "{\"title\":\"Park then pub\",\"duration_s\":25,\"story_beats\":[{\"topic\":\"Park\",\"thought\":\"A quiet stretch of the park with no one around.\",\"media_ids\":[\"clip_park\"],\"layout\":\"fullscreen\",\"duration_s\":5},{\"topic\":\"Soccer\",\"thought\":\"A soccer match plays out on the field.\",\"media_ids\":[\"clip_soccer\"],\"layout\":\"fullscreen\",\"duration_s\":5},{\"topic\":\"Volleyball\",\"thought\":\"A volleyball rally continues nearby.\",\"media_ids\":[\"clip_volleyball\"],\"layout\":\"fullscreen\",\"duration_s\":5},{\"topic\":\"Talking\",\"thought\":\"A moment talking straight to the camera.\",\"media_ids\":[\"clip_speech\"],\"layout\":\"fullscreen\",\"duration_s\":5},{\"topic\":\"Pub\",\"thought\":\"post match pub\",\"media_ids\":[\"clip_pub\"],\"layout\":\"fullscreen\",\"duration_s\":5}],\"mixed_media_timing\":null,\"montage_text_bindings\":[],\"montage_audio\":null,\"fast_cuts\":null}",
-  "meta": {
-    "source": "hand-authored-kri127-lane-p-regression",
-    "expected_topics": [
-      "park",
-      "soccer",
-      "volleyball",
-      "pub"
-    ],
-    "contract": "KRI-127 Lane P: the chat turn already resolved 'the pub videos' (group, creator_text='post match pub'), 'park clips where nobody is playing' (order first), 'where I talk to the camera' (include), and per-clip sport labels into clip_intents. The planner must honor group/order/include as binding constraints -- app.agents.edit_proposal._validate_clip_intents structurally enforces this in parse() -- and must NOT write the label values into beat thoughts or split them into one beat per clip (labels are rendered by another lane)."
-  }
+   },
+   {
+    "intent_id": "i-pub-group",
+    "op": "group",
+    "attribute": "pub videos",
+    "creator_text": "post match pub",
+    "status": "resolved",
+    "assignments": [
+     {
+      "media_id": "clip_pub",
+      "evidence": "group raising glasses in a neighborhood pub",
+      "confidence": 0.78,
+      "grounding": "record_span"
+     }
+    ]
+   },
+   {
+    "intent_id": "i-speech-include",
+    "op": "include",
+    "attribute": "where I talk to the camera",
+    "status": "resolved",
+    "assignments": [
+     {
+      "media_id": "clip_speech",
+      "evidence": "speaks directly to the camera",
+      "confidence": 0.75,
+      "grounding": "record_span"
+     }
+    ]
+   },
+   {
+    "intent_id": "i-sport-label",
+    "op": "label",
+    "attribute": "sport being played",
+    "status": "resolved",
+    "assignments": [
+     {
+      "media_id": "clip_soccer",
+      "value": "Soccer",
+      "evidence": "soccer ball and goal visible",
+      "confidence": 0.85,
+      "grounding": "vision_verified"
+     },
+     {
+      "media_id": "clip_volleyball",
+      "value": "Volleyball",
+      "evidence": "volleyball net and players visible",
+      "confidence": 0.85,
+      "grounding": "vision_verified"
+     }
+    ]
+   }
+  ],
+  "media": [
+   {
+    "media_id": "clip_park",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 5.0,
+    "subject": "a quiet park path",
+    "setting": "a city park",
+    "activity": "walking outdoors"
+   },
+   {
+    "media_id": "clip_soccer",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 5.0,
+    "subject": "a soccer match",
+    "setting": "a sports field",
+    "activity": "playing soccer"
+   },
+   {
+    "media_id": "clip_volleyball",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 5.0,
+    "subject": "a volleyball rally",
+    "setting": "a sports field",
+    "activity": "playing volleyball"
+   },
+   {
+    "media_id": "clip_speech",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 5.0,
+    "subject": "a person talking to the camera",
+    "setting": "a park bench",
+    "activity": "talking to the camera",
+    "speaks_to_camera": true,
+    "transcript": "hey everyone, quick update"
+   },
+   {
+    "media_id": "clip_pub",
+    "lane": "clip",
+    "kind": "video",
+    "duration_s": 5.0,
+    "subject": "a group raising glasses",
+    "setting": "a neighborhood pub",
+    "activity": "celebrating with drinks"
+   }
+  ]
+ },
+ "raw_text": "{\"title\":\"Park then pub\",\"duration_s\":25,\"story_beats\":[{\"topic\":\"Park\",\"thought\":\"A quiet stretch of the park with no one around.\",\"media_ids\":[\"clip_park\"],\"layout\":\"fullscreen\",\"duration_s\":5},{\"topic\":\"Soccer\",\"thought\":\"A soccer match plays out on the field.\",\"media_ids\":[\"clip_soccer\"],\"layout\":\"fullscreen\",\"duration_s\":5},{\"topic\":\"Volleyball\",\"thought\":\"A volleyball rally continues nearby.\",\"media_ids\":[\"clip_volleyball\"],\"layout\":\"fullscreen\",\"duration_s\":5},{\"topic\":\"Talking\",\"thought\":\"A moment talking straight to the camera.\",\"media_ids\":[\"clip_speech\"],\"layout\":\"fullscreen\",\"duration_s\":5},{\"topic\":\"Pub\",\"thought\":\"post match pub\",\"media_ids\":[\"clip_pub\"],\"layout\":\"fullscreen\",\"duration_s\":5}],\"mixed_media_timing\":null,\"montage_text_bindings\":[],\"montage_audio\":null,\"fast_cuts\":null}",
+ "meta": {
+  "source": "hand-authored-kri127-lane-p-regression",
+  "expected_topics": [
+   "park",
+   "soccer",
+   "volleyball",
+   "pub"
+  ],
+  "contract": "KRI-127 Lane P: the chat turn already resolved 'the pub videos' (group, creator_text='post match pub'), 'park clips where nobody is playing' (order first), 'where I talk to the camera' (include), and per-clip sport labels into clip_intents. The planner must honor group/order/include as binding constraints -- app.agents.edit_proposal._validate_clip_intents structurally enforces this in parse() -- and must NOT write the label values into beat thoughts or split them into one beat per clip (labels are rendered by another lane)."
+ }
 }
