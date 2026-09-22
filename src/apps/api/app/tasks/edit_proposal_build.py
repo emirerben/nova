@@ -1092,6 +1092,62 @@ def _checkpoint_analyzed_assignment(
             publish_preflight_after_commit(preflight_analysis_id)
 
 
+def _settle_creator_dispatch_failure(
+    *,
+    item_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    attempt_id: str,
+    ownership_epoch: int,
+) -> bool:
+    """Fail an unbound Creator attempt without discarding its approved inputs.
+
+    Existing poll reconciliation fails the exact execution receipt/session and
+    projects the chat failure from this envelope. No second thread updater or
+    thread lock inversion is needed; native retries retain their budget.
+    """
+    with sync_session() as db:
+        locked = _locked_item(db, item_id, ownership_epoch)
+        if locked is None:
+            return False
+        item, locked_owner_id = locked
+        current = parse_edit_proposal(item.edit_proposal)
+        if (
+            locked_owner_id != owner_id
+            or getattr(item, "current_job_id", None) is not None
+            or current is None
+            or current.generation_attempt_id != attempt_id
+            or current.status != "approved"
+            or current.design_fallback != MAIN_CREATOR_FAIL_CLOSED
+        ):
+            return False
+        sessions = list(
+            db.execute(
+                select(CreatorAgentSession)
+                .where(
+                    CreatorAgentSession.creator_id == owner_id,
+                    CreatorAgentSession.plan_item_id == item_id,
+                    CreatorAgentSession.ownership_epoch == ownership_epoch,
+                )
+                .with_for_update()
+            ).scalars()
+        )
+        matching = [
+            session
+            for session in sessions
+            if (
+                isinstance(session.active_plan, dict)
+                and session.active_plan.get("guided_generation_attempt_id") == attempt_id
+                and getattr(session, "status", None) == "executing"
+                and getattr(session, "target_job_id", None) is None
+            )
+        ]
+        if len(matching) != 1:
+            return False
+        _fail(item, current, "creator_dispatch_failed", "Kria couldn't start this edit. Try again.")
+        db.commit()
+        return True
+
+
 def _dispatch_after_auto_design(
     iid: uuid.UUID, item_id: str, attempt_id: str, ownership_epoch: int
 ) -> DispatchResult | None:
@@ -1174,13 +1230,21 @@ def _dispatch_after_auto_design(
                     item_id=item_id,
                     attempt_id=attempt_id,
                 )
-                return
             creator_request = _creator_request_for_guided_attempt(
                 db,
                 item_id=item.id,
                 owner_id=owner_id,
                 attempt_id=attempt_id,
             )
+
+    if current.design_fallback == MAIN_CREATOR_FAIL_CLOSED and creator_dispatch_context is None:
+        _settle_creator_dispatch_failure(
+            item_id=iid,
+            owner_id=owner_id,
+            attempt_id=attempt_id,
+            ownership_epoch=ownership_epoch,
+        )
+        return
 
     dispatch_kwargs = {"bypass_guided_edit_gate": bypass}
     dispatch_kwargs["creator_guided_attempt_id"] = attempt_id
@@ -1196,7 +1260,18 @@ def _dispatch_after_auto_design(
     dispatch_kwargs["reject_active_creator_session"] = (
         current.design_fallback != MAIN_CREATOR_FAIL_CLOSED
     )
-    result = dispatch_item_render_for(item_id, ownership_epoch, **dispatch_kwargs)
+    try:
+        result = dispatch_item_render_for(item_id, ownership_epoch, **dispatch_kwargs)
+    except Exception:
+        if creator_dispatch_context is not None:
+            _settle_creator_dispatch_failure(
+                item_id=iid,
+                owner_id=owner_id,
+                attempt_id=attempt_id,
+                ownership_epoch=ownership_epoch,
+            )
+        raise
+
     if owner_id is not None and result.outcome in {"dispatched", "already_active"}:
         bound = _bind_creator_job_after_auto_design(
             item_id=iid,
@@ -1213,10 +1288,14 @@ def _dispatch_after_auto_design(
                 job_id=getattr(result, "job_id", None),
             )
     if result.outcome not in {"dispatched", "already_active"}:
-        # The proposal is already committed (approved, or failed+design_fallback)
-        # — leave it there. The next manual Generate click dispatches directly
-        # (approved reads identically regardless of approval_mode) or
-        # re-triggers auto-design (failed), never wedged.
+        if creator_dispatch_context is not None:
+            _settle_creator_dispatch_failure(
+                item_id=iid,
+                owner_id=owner_id,
+                attempt_id=attempt_id,
+                ownership_epoch=ownership_epoch,
+            )
+        # Legacy auto-design keeps its existing manual Generate behavior.
         log.warning(
             "edit_proposal.auto_finalize_dispatch_failed",
             item_id=item_id,
