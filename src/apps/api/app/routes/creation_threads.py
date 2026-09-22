@@ -77,6 +77,12 @@ from app.routes.plan_items import (
     _pool_asset_counts_toward_capacity,
 )
 from app.schemas.edit_proposal import EditProposal, parse_edit_proposal
+from app.services.creation_thread_titles import (
+    matches_conversation_revision,
+    prepare_message_title,
+    prepare_title,
+    start_title_generation,
+)
 from app.services.creator_direction_receipts import project_direction_receipt
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.creator_sessions import reconcile_render_state
@@ -1538,6 +1544,8 @@ async def _append(
     payload: dict[str, Any] | None = None,
     client_event_id: str | None = None,
 ) -> CreationThreadEvent:
+    if role == "user" and event_type == "user_message" and content and isinstance(db, AsyncSession):
+        await prepare_message_title(db, thread, content)
     sequence = (
         int(
             (
@@ -2420,7 +2428,7 @@ async def _fill_default_title_if_needed(
     if (getattr(thread, "title", None) or _DEFAULT_TITLE) != _DEFAULT_TITLE:
         return
     state = dict(thread.state or {})
-    if state.get("title_source") == "user":
+    if state.get("title_source") == "user" or state.get("title_generation"):
         return
     active_plan = (
         session.active_plan
@@ -2441,6 +2449,8 @@ async def _fill_default_title_if_needed(
 
 
 async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadOut:
+    if isinstance(db, AsyncSession) and (thread.state or {}).get("title_generation") == "pending":
+        start_title_generation(thread.id)
     # Degraded: an incoherent render-graph edge is dropped, never 404ed, so
     # the thread's own row and its full chat transcript stay reachable. See
     # KRI-26 / agents/DECISIONS.md.
@@ -2842,18 +2852,18 @@ async def create_thread(
     state: dict[str, Any] = {
         "media": [],
         "media_count": 0,
-        **({"title_source": "first_prompt"} if body.message else {}),
     }
     thread = CreationThread(
         creator_id=user.id,
         runtime_version=body.runtime_version,
         content_plan_id=plan.id,
         active_plan_item_id=item.id,
-        title=(body.message[:_MAX_TITLE_LENGTH] if body.message else _DEFAULT_TITLE),
+        title=_DEFAULT_TITLE,
         # A project made in the iPhone app on a pilot account renders there
         # even when it never gets device footage (Visuals only, KRI-121).
         state=with_device_intent(state, native_client=native_client, user_id=user.id) or state,
     )
+    prepare_title(thread, body.message)
     db.add(thread)
     await db.flush()
     if body.runtime_version == 2:
@@ -3268,7 +3278,7 @@ async def message_thread(
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         await db.rollback()
         return await _response(db, await _load(thread_id, user, db))
-    if thread.revision != body.expected_revision:
+    if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     # Editor actions own their user-message admission so the model call can
     # release locks without committing an incomplete idempotency receipt.
@@ -3364,12 +3374,6 @@ async def message_thread(
     if not state.get("intent"):
         state["intent"] = body.message[:2000]
         thread.state = state
-        if (getattr(thread, "title", None) or _DEFAULT_TITLE) == _DEFAULT_TITLE and state.get(
-            "title_source"
-        ) != "user":
-            thread.title = body.message[:_MAX_TITLE_LENGTH]
-            state["title_source"] = "first_prompt"
-            thread.state = state
     # Never mutate an in-flight render. Preserve the creator's message as a
     # pending revision intent even if this is an older thread whose format
     # projection has not been hydrated yet.
@@ -3556,7 +3560,7 @@ async def action_thread(
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         await db.rollback()
         return await _response(db, await _load(thread_id, user, db))
-    if thread.revision != body.expected_revision:
+    if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     _stamp_device_intent(thread, user, native_client)
     state = dict(thread.state or {})
@@ -4497,7 +4501,7 @@ async def attach_media(
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         await db.rollback()
         return await _response(db, await _load(thread_id, user, db))
-    if thread.revision != body.expected_revision:
+    if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     if any(media.kind == "image" for media in body.media):
         raise HTTPException(
@@ -4763,7 +4767,7 @@ async def rename_thread(
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         await db.rollback()
         return await _response(db, await _load(thread_id, user, db))
-    if thread.revision != body.expected_revision:
+    if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     thread.title = body.title
     thread.state = {**dict(getattr(thread, "state", None) or {}), "title_source": "user"}
@@ -5045,7 +5049,7 @@ async def delete_thread(
         raise HTTPException(status_code=409, detail="Project has an active publication")
 
     locked_thread = thread
-    if locked_thread.revision != expected_revision:
+    if not matches_conversation_revision(locked_thread, expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     if (
         locked_thread.active_plan_item_id
@@ -5243,7 +5247,7 @@ async def archive_thread(
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         await db.rollback()
         return await _response(db, await _load(thread_id, user, db))
-    if thread.revision != body.expected_revision:
+    if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     thread.status = "archived"
     await _append(

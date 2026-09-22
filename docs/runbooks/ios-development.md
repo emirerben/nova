@@ -139,6 +139,14 @@ instead of substituting preview videos, including in Debug builds. For an
 authenticated, count-only device check, launch Debug with
 `-native-library-audit -native-library-inventory-audit` and inspect
 `Library/Caches/native-library-audit.json`; this does not open videos or render.
+New chats reserve automatic naming only when the first non-empty user message is
+committed. `services/creation_thread_titles.py` saves a prompt-based fallback,
+then makes one bounded background summary request in the prompt's language.
+The durable claim prevents repeat calls; manual renames take precedence under
+the thread lock. Success appends `thread_title_generated`, and the native poller
+refreshes until that full projection is applied, retrying transient read failures.
+Only an intervening automatic title revision is exempt from action conflicts.
+
 Project actions reuse the authenticated creation-thread PATCH/DELETE contracts,
 including revision checks and rename idempotency. Deletion is confirmed and
 blocked during rendering or pending uploads. Microphone chat input is deferred.

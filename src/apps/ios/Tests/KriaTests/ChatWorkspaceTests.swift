@@ -67,6 +67,30 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertTrue(ThreadRevisionOrder.acceptsProjection(current: revisionAfterAction, incoming: 10))
     }
 
+    func testTitleProjectionRefreshRetriesUntilFullProjectionIsApplied() {
+        // Acknowledging the delta or turn acceptance does not apply its title.
+        // Even after a failed fetch consumes the event, an idle poll must retry.
+        for _ in 0..<2 {
+            XCTAssertTrue(
+                ThreadProjectionRefresh.requiresFullProjection(
+                    lastFullProjectionRevision: 4,
+                    incomingRevision: 5,
+                    receivedEvents: [],
+                    isRendering: false
+                )
+            )
+        }
+        // Once the full projection succeeds, unchanged idle polls stay cheap.
+        XCTAssertFalse(
+            ThreadProjectionRefresh.requiresFullProjection(
+                lastFullProjectionRevision: 5,
+                incomingRevision: 5,
+                receivedEvents: [],
+                isRendering: false
+            )
+        )
+    }
+
     func testFormatPromptExposesOnlyServerAvailableChoices() {
         let prompt = ThreadEvent(
             id: "format-prompt",
