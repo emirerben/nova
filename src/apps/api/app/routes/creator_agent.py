@@ -993,10 +993,14 @@ def _apply_explicit_render_intent(
 
     # This is intent, not model-authored copy. The trusted render pipeline
     # must resolve the actual label from server-side evidence before rendering.
-    # KRI-127: once the model has already committed to the generic, open-
-    # vocabulary path (flag on, `clip_intents` present) the resolver owns
-    # this label; the regex must not also force the legacy coded field.
-    generic_clip_intents_owns_labels = settings.clip_intents_enabled and bool(strategy.clip_intents)
+    # KRI-127: once the model has committed to a generic label intent, that
+    # resolver owns this label; the regex must not also force the legacy coded
+    # field. Other generic intent operations (caption/group/order/include) do
+    # not resolve a per-clip label and must not suppress an explicit sports
+    # label request.
+    generic_clip_intents_owns_labels = settings.clip_intents_enabled and any(
+        intent.op == "label" for intent in strategy.clip_intents or []
+    )
     sport_label_requested = bool(
         re.search(
             r"\b(?:name|label|text)\s+(?:of\s+)?(?:the\s+)?sports?\b"

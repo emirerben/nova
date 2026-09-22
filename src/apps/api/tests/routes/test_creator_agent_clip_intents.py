@@ -27,6 +27,7 @@ from app.routes.creator_agent import _apply_explicit_render_intent, _seed_guided
 from app.schemas.clip_intents import ClipAssignment, ClipIntent, ResolvedClipIntent
 from app.services.clip_intent_resolution import ANSWERS_KEY, IntentClip, IntentResolution
 from app.services.creator_capabilities import compile_strategy_to_plan, resolve_creator_manifest
+from app.services.creator_sessions import compile_active_plan
 
 
 def _manifest():
@@ -416,6 +417,38 @@ def test_sport_regex_yields_to_generic_clip_intents_when_flag_on(monkeypatch) ->
     )
     assert strategy.sport_labels is False
     assert strategy.context_label is None
+
+
+def test_sport_regex_keeps_legacy_label_with_unrelated_generic_intents(monkeypatch) -> None:
+    monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", True)
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(
+            render_program="native",
+            selected_media_ids=["clip-1"],
+            clip_intents=[
+                ClipIntent(intent_id="pub", op="caption", attribute="pub clips"),
+                ClipIntent(intent_id="park", op="order", attribute="park clips", position="first"),
+                ClipIntent(intent_id="sport-group", op="group", attribute="sports clips"),
+            ],
+        ),
+        "Add the name of each sport on the bottom right.",
+    )
+
+    # These intents retain their independently resolved membership work while
+    # the requested sport name uses the server-grounded legacy label lane.
+    assert [intent.op for intent in strategy.clip_intents or []] == ["caption", "order", "group"]
+    assert strategy.sport_labels is True
+    assert strategy.context_label is not None
+    assert strategy.context_label.kind == "sport"
+
+    active_plan = compile_active_plan(
+        _session(),
+        manifest=_manifest(),
+        strategy=strategy,
+        summary="Keep the explicit sport labels.",
+    )
+    assert active_plan["context_label"]["kind"] == "sport"
+    assert active_plan["edit_plan"]["strategy"]["context_label"]["kind"] == "sport"
 
 
 def test_sport_regex_still_applies_when_flag_on_but_no_clip_intents(monkeypatch) -> None:
