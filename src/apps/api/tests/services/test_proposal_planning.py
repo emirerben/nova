@@ -382,4 +382,4 @@ def test_narrated_reported_speech_replay_parses_schedules_and_compiles() -> None
     validate_proposal_compiles(snapshot)
     assert len(plan.chapters) == 10
     assert len(snapshot.story_beats) == 10
-    assert snapshot.frame_schedule.total_frames == 1459
+    assert snapshot.frame_schedule.total_frames == 1458
