@@ -27,6 +27,7 @@ from app.models import (
     CreatorAgentSession,
     CreatorPlanningAttempt,
     PlanItem,
+    PlanItemAsset,
 )
 from app.schemas.edit_proposal import MediaRef
 from app.services.creator_clip_analysis import (
@@ -48,6 +49,8 @@ from app.worker import celery_app
 log = structlog.get_logger()
 LEASE_SECONDS = 1830  # exceeds the hard task limit; a live provider call is never reclaimed
 MAX_ATTEMPTS = 3
+POOL_REDISPATCH_AFTER = timedelta(minutes=2)
+POOL_REDISPATCH_BATCH = 10
 
 
 class PreparationStale(RuntimeError):
@@ -372,6 +375,66 @@ def _fail(identifier: uuid.UUID, token: str, code: str, *, retryable: bool) -> N
         db.commit()
 
 
+def _pending_pool_dispatches(
+    assets: list[PlanItemAsset], now: datetime
+) -> list[tuple[str, str, str | None]]:
+    """Re-send old unclaimed receipts without invalidating broker backlog.
+
+    Called under the owned preparation's Plan/Item locks, which also fence
+    pool claims. Commit these cooldowns before publishing outside the locks.
+    The ten-minute preparation deadline bounds retries for each original token.
+    """
+    dispatches = []
+    for asset in assets:
+        dispatched_at = asset.analysis_last_dispatched_at or asset.created_at
+        if (
+            asset.status != "queued"
+            or asset.analysis_started_at is not None
+            or not asset.analysis_attempt_token
+            or not asset.gcs_generation
+            or dispatched_at is None
+            or dispatched_at > now - POOL_REDISPATCH_AFTER
+        ):
+            continue
+        asset.analysis_last_dispatched_at = now
+        dispatches.append((str(asset.id), asset.analysis_attempt_token, asset.correlation_id))
+        if len(dispatches) >= POOL_REDISPATCH_BATCH:
+            break
+    return dispatches
+
+
+def _publish_pending_pool_dispatches(
+    attempt_id: str, dispatches: list[tuple[str, str, str | None]]
+) -> None:
+    if not dispatches:
+        return
+    from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
+
+    for asset_id, token, correlation_id in dispatches:
+        headers = {"pool_asset_attempt_token": token}
+        if correlation_id:
+            headers["x-correlation-id"] = correlation_id
+        try:
+            receipt = analyze_pool_asset.apply_async(
+                args=[asset_id, False],
+                queue=settings.pool_asset_analysis_queue,
+                headers=headers,
+            )
+            log.info(
+                "creator_preparation.pool_redispatched",
+                attempt_id=attempt_id,
+                asset_id=asset_id,
+                task_id=receipt.id,
+            )
+        except Exception as exc:  # noqa: BLE001 — retry after the persisted cooldown
+            log.warning(
+                "creator_preparation.pool_redispatch_failed",
+                attempt_id=attempt_id,
+                asset_id=asset_id,
+                error_type=type(exc).__name__,
+            )
+
+
 @celery_app.task(
     name="tasks.prepare_creator_clips",
     soft_time_limit=1740,
@@ -408,7 +471,10 @@ def prepare_creator_clips(attempt_id: str) -> None:
             asyncio.run(_resume(identifier, token, inputs, creator_id, session_id))
     except PreparationPending:
         # Pool tasks already own this work. Recheck later without spending
-        # provider budget or consuming a crash-recovery attempt.
+        # provider budget or consuming a crash-recovery attempt. A queued
+        # receipt can outlive a lost broker message: re-send the same token,
+        # whose locked claim prevents duplicate provider work.
+        dispatches = []
         with sync_session() as db:
             graph = _locked(db, identifier, token=token)
             if graph:
@@ -421,7 +487,9 @@ def prepare_creator_clips(attempt_id: str) -> None:
                     attempt.status = "queued"
                     attempt.attempts -= 1
                     attempt.lease_until = None
+                    dispatches = _pending_pool_dispatches(graph[5], datetime.now(UTC))
                 db.commit()
+        _publish_pending_pool_dispatches(attempt_id, dispatches)
     except ProviderQuotaExceededError as exc:
         log.warning(
             "creator_preparation.provider_denied",
