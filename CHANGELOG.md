@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.114.0] - 2026-09-22
+
+### Fixed
+- Fix gallery titles and thumbnail placeholders (KRI-149) (#1130) <!-- release-pr: 1130 -->
+
 ## [0.76.113.0] - 2026-09-22
 
 ### Changed
