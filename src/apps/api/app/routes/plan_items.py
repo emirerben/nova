@@ -4620,13 +4620,18 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         return False
     if len(set(expected_ids)) != len(expected_ids) or len(set(rendered_ids)) != len(rendered_ids):
         return False
-    if set(rendered_ids) != set(expected_ids):
+    if rendered_ids != expected_ids:
         return False
     return all(
         isinstance(row.get("asset_gcs_path"), str) and bool(row["asset_gcs_path"].strip())
         for row in rendered
         if isinstance(row, dict)
     )
+
+
+def _slide_post_job_outputs_allowed(job: Job | None) -> bool:
+    """Match the library/status contract: terminal cancelled jobs expose no media."""
+    return job is not None and job.status not in {"cancelled", "superseded"}
 
 
 @router.get("/{item_id}/slide-post", response_model=SlidePostState)
@@ -4673,7 +4678,9 @@ async def get_slide_post_state(
         for entry in raw_validation.get("errors", [])
         if isinstance(entry, dict) and entry.get("code") and entry.get("message")
     ]
-    export_current = _slide_post_export_is_current(draft, variant)
+    export_current = _slide_post_job_outputs_allowed(job) and _slide_post_export_is_current(
+        draft, variant
+    )
     asset_by_id = {out.id: out for out in asset_outs}
     rendered_by_asset = {
         str(row.get("asset_id")): row
@@ -4721,7 +4728,9 @@ async def get_slide_post_state(
         draft=draft,
         assets=projected_assets,
         render_status=str(
-            (variant or {}).get("render_status") or (job.status if job else "not_rendered")
+            job.status
+            if job is not None and not _slide_post_job_outputs_allowed(job)
+            else (variant or {}).get("render_status") or (job.status if job else "not_rendered")
         ),
         rendered_version=draft.rendered_version if draft else None,
         slides=slides,
@@ -4741,6 +4750,8 @@ async def get_slide_post_bundle_url(
     profile-validation errors — export is refused, not silently partial."""
     _require_slide_posts()
     job = await _locked_owned_item_render_job(item_id, user.id, db)
+    if job.status == "superseded":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not ready yet")
     item = await _load_owned_item(item_id, user.id, db)
     variant = _find_variant(job, variant_id)
     if variant is None or variant.get("resolved_archetype") != "slides":

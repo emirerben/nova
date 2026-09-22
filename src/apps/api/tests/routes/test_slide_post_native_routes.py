@@ -38,6 +38,12 @@ def test_native_state_schema_cannot_serialize_storage_paths() -> None:
     assert "assembly_plan" not in state_fields
 
 
+@pytest.mark.parametrize("status", ["cancelled", "superseded"])
+def test_native_slide_state_never_exposes_outputs_for_terminal_job(status: str) -> None:
+    assert not plan_items._slide_post_job_outputs_allowed(SimpleNamespace(status=status))
+    assert plan_items._slide_post_job_outputs_allowed(SimpleNamespace(status="template_ready"))
+
+
 @pytest.mark.asyncio
 async def test_native_state_does_not_continue_after_ownership_rejection(
     monkeypatch: pytest.MonkeyPatch,
