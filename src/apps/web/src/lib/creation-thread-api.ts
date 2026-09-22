@@ -591,6 +591,9 @@ function generationStatus(thread: CreationThread): string | null {
 
 /** Whether the Creator/renderer still owns an in-flight turn. */
 export function creationThreadInProgress(thread: CreationThread): boolean {
+  // A fresh preparation belongs to the current request and must keep polling
+  // even when the previous Job is terminally failed.
+  if (creationPreparationActive(thread)) return true;
   if (creationJobFailed(thread)) return false;
   const jobActive = Boolean(thread.active_job_id && (!thread.job || !creationJobSettled(thread)));
   const variantActive = Boolean(thread.job?.variants.some((variant) =>
@@ -599,8 +602,7 @@ export function creationThreadInProgress(thread: CreationThread): boolean {
   return jobActive
     || variantActive
     || GENERATION_PROGRESS_STATES.has(generationStatus(thread) ?? "")
-    || CREATOR_PROGRESS_STATES.has(creatorStatus(thread) ?? "")
-    || creationPreparationActive(thread);
+    || CREATOR_PROGRESS_STATES.has(creatorStatus(thread) ?? "");
 }
 
 /** Whether the current automatic speech preflight still needs detail polling. */

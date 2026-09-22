@@ -659,6 +659,20 @@ describe("creation thread projection", () => {
     expect(creationThreadInProgress(preparing)).toBe(true);
   });
 
+  it("keeps polling fresh preparation after a previous Job failed", () => {
+    const preparing = thread({
+      active_job_id: "failed-job",
+      job: { id: "failed-job", status: "processing_failed", variants: [] },
+      creator_agent: {
+        status: "planning",
+        preparation: { status: "analyzing", completed: 1, total: 3, message: "Reading your clips…", error_code: null, retryable: true },
+      },
+    });
+    expect(creationJobFailed(preparing)).toBe(true);
+    expect(creationThreadInProgress(preparing)).toBe(true);
+    expect(creationThreadNeedsPolling(preparing)).toBe(true);
+  });
+
   it("recognizes a failed preparation while the creator returns to briefing", () => {
     const failed = thread({
       creator_agent: {
