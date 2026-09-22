@@ -347,6 +347,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.edit_proposal import EditProposalAgent
 
         return EditProposalAgent
+    if agent_name == "nova.plan.semantic_edit_proposal":
+        from app.agents.semantic_edit_proposal import SemanticEditProposalAgent
+
+        return SemanticEditProposalAgent
     if agent_name == "nova.plan.edit_guide":
         from app.agents.edit_guide import EditGuideAgent
 

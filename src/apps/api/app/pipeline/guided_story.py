@@ -49,6 +49,8 @@ log = structlog.get_logger()
 # rather than a change to v6.
 COMPILER_VERSION = 7
 VOICEOVER_COMPILER_VERSION = 7
+# Only snapshots carrying an approved frame schedule opt into v8.
+SCHEDULED_COMPILER_VERSION = 8
 VARIANT_ID = "guided_story"
 _FRAME_S = 1.0 / 30.0
 _ALLOCATION_EPSILON_S = 0.0005
@@ -185,7 +187,7 @@ class GuidedStoryExecutionPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7]
+    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7, 8]
     proposal_version: int = Field(ge=1)
     media_digest: str = Field(min_length=64, max_length=64)
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
@@ -1257,7 +1259,7 @@ def _text_elements(
     beat_windows: list[dict],
     policy: dict,
     *,
-    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7],
+    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7, 8],
 ) -> list[dict]:
     total_s = (
         canonical_narration_duration_s(snapshot.narration.duration_s)
@@ -1574,15 +1576,282 @@ def _narration_caption_elements(snapshot: EditProposalSnapshot) -> list[dict]:
     return elements
 
 
+def validate_frame_schedule(snapshot: EditProposalSnapshot) -> None:
+    """Fence server-authored frame timing against the approved editorial contract."""
+
+    from app.schemas.edit_frame_schedule import EditFrameSchedule
+
+    schedule = snapshot.frame_schedule
+    if schedule is None:
+        return
+    # model_copy() is intentionally not validation; all writers must pass this
+    # fence before the copied snapshot can become an approval/render contract.
+    try:
+        schedule = EditFrameSchedule.model_validate(schedule.model_dump())
+    except ValueError as exc:
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid", "The frame schedule is invalid."
+        ) from exc
+    if (
+        schedule.direction != snapshot.direction
+        or abs(schedule.total_frames / 30 - float(snapshot.duration_s)) > 0.000001
+    ):
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid",
+            "The schedule no longer matches the edit length or direction.",
+        )
+    if (
+        snapshot.narration is not None
+        and abs(
+            schedule.total_frames / 30
+            - canonical_narration_duration_s(snapshot.narration.duration_s)
+        )
+        > 0.000001
+    ):
+        raise GuidedStoryError(
+            "guided_story_duration_impossible", "The schedule must preserve the full narration."
+        )
+    transition_type, transition_s = guided_transition_params(
+        snapshot.direction, snapshot.pace, snapshot.mixed_media_timing
+    )
+    expected_overlap = round(transition_s * 30) if transition_type != "none" else 0
+    if len(schedule.moments) == 1:
+        expected_overlap = 0
+    if schedule.transition_frames != expected_overlap:
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid",
+            "The schedule no longer matches the approved transitions.",
+        )
+    by_id = {ref.media_id: ref for ref in snapshot.media}
+    seen_ids: set[str] = set()
+    windows: dict[str, list[tuple[int, int]]] = {}
+    for moment in schedule.moments:
+        ref = by_id.get(moment.media_id)
+        if ref is None or moment.moment_id in seen_ids:
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid",
+                "The schedule has missing media or duplicate moments.",
+            )
+        seen_ids.add(moment.moment_id)
+        if ref.kind == "video":
+            if (
+                ref.duration_s is None
+                or moment.source_end_frame / 30 > float(ref.duration_s) + 0.000001
+            ):
+                raise GuidedStoryError(
+                    "guided_story_duration_impossible",
+                    "A scheduled source window exceeds the uploaded video.",
+                )
+            windows.setdefault(ref.media_id, []).append(
+                (moment.source_start_frame, moment.source_end_frame)
+            )
+        expected_layout = (
+            snapshot.image_layout if ref.kind == "image" and snapshot.image_layout else None
+        )
+        if expected_layout is not None and moment.layout != expected_layout:
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid",
+                "The schedule no longer matches the approved photo layout.",
+            )
+    reuse = snapshot.video_reuse_policy or "once"
+    for source_windows in windows.values():
+        if reuse == "once" and len(source_windows) != 1:
+            raise GuidedStoryError("guided_story_snapshot_invalid", "A video may appear only once.")
+        if reuse != "allow_repeat":
+            ordered = sorted(source_windows)
+            if any(right[0] < left[1] for left, right in zip(ordered, ordered[1:])):
+                raise GuidedStoryError(
+                    "guided_story_snapshot_invalid",
+                    "Scheduled source windows overlap without permission.",
+                )
+    if snapshot.direction == "fast_montage":
+        cuts = snapshot.fast_cuts or []
+        if len(cuts) != len(schedule.moments):
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid", "The schedule no longer matches the approved cuts."
+            )
+        for cut, moment in zip(cuts, schedule.moments, strict=True):
+            if (cut.cut_id, cut.media_id) != (
+                moment.moment_id,
+                moment.media_id,
+            ) or moment.beat_id != cut.cut_id:
+                raise GuidedStoryError(
+                    "guided_story_snapshot_invalid",
+                    "The schedule no longer matches the approved cut order.",
+                )
+            pairs = (
+                (cut.source_start_s, moment.source_start_frame),
+                (cut.source_end_s, moment.source_end_frame),
+                (cut.output_duration_s, moment.output_end_frame - moment.output_start_frame),
+            )
+            if any(abs(seconds - frames / 30) > 0.000001 for seconds, frames in pairs):
+                raise GuidedStoryError(
+                    "guided_story_snapshot_invalid",
+                    "The schedule no longer matches the approved source windows.",
+                )
+    else:
+        expected = [
+            (beat.beat_id, media_id, beat.layout)
+            for beat in snapshot.story_beats
+            for media_id in beat.media_ids
+        ]
+        actual = [(moment.beat_id, moment.media_id, moment.layout) for moment in schedule.moments]
+        # The global image layout is applied at final normalization.
+        expected = [
+            (
+                beat_id,
+                media_id,
+                snapshot.image_layout
+                if by_id[media_id].kind == "image" and snapshot.image_layout
+                else layout,
+            )
+            for beat_id, media_id, layout in expected
+        ]
+        if expected != actual:
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid",
+                "The schedule no longer matches the approved chapters.",
+            )
+    selected = set(_selected_media_ids(snapshot))
+    if selected != {moment.media_id for moment in schedule.moments}:
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid", "The schedule dropped approved media."
+        )
+
+
+def _compile_scheduled_execution_plan(
+    snapshot: EditProposalSnapshot,
+    *,
+    proposal_version: int,
+    media_digest: str,
+    track: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Compiler v8 is a projection of approved frames, never another allocator."""
+
+    if snapshot.frame_schedule is None:
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid", "Compiler v8 needs an approved frame schedule."
+        )
+    validate_frame_schedule(snapshot)
+    schedule = snapshot.frame_schedule
+    by_id = {ref.media_id: ref for ref in snapshot.media}
+    beats = {beat.beat_id: beat for beat in snapshot.story_beats}
+    moments: list[dict[str, Any]] = []
+    for moment in schedule.moments:
+        ref = by_id[moment.media_id]
+        beat = beats.get(moment.beat_id)
+        moments.append(
+            {
+                "moment_id": moment.moment_id,
+                "beat_id": moment.beat_id,
+                "topic": beat.topic if beat is not None else moment.role,
+                "media_id": moment.media_id,
+                "lane": ref.lane,
+                "kind": ref.kind,
+                "gcs_path": ref.gcs_path,
+                "generation": ref.generation,
+                "layout": moment.layout,
+                "source_start_s": moment.source_start_frame / 30,
+                "source_end_s": moment.source_end_frame / 30,
+                "output_start_s": moment.output_start_frame / 30,
+                "output_end_s": moment.output_end_frame / 30,
+                "duration_s": (moment.output_end_frame - moment.output_start_frame) / 30,
+                "image_motion": None,
+                "required": True,
+            }
+        )
+    beat_windows: list[dict[str, Any]] = []
+    groups: list[tuple[str, int, int]] = []
+    for moment in schedule.moments:
+        if groups and groups[-1][0] == moment.beat_id:
+            groups[-1] = (moment.beat_id, groups[-1][1], moment.output_end_frame)
+        else:
+            groups.append((moment.beat_id, moment.output_start_frame, moment.output_end_frame))
+    for index, (beat_id, start, _end) in enumerate(groups):
+        end = groups[index + 1][1] if index + 1 < len(groups) else schedule.total_frames
+        beat_windows.append(
+            {
+                "beat_id": beat_id,
+                "approved_duration_s": (end - start) / 30,
+                "resolved_duration_s": (end - start) / 30,
+                "start_s": start / 30,
+                "end_s": end / 30,
+            }
+        )
+    policy = _DIRECTION_POLICY[snapshot.direction]
+    text_elements = _text_elements(snapshot, beat_windows, policy, compiler_version=8)
+    if snapshot.direction == "fast_montage" and snapshot.montage_text_bindings:
+        # v1-7 chose either title or labels. Both are named requirements for a
+        # scheduled edit; preserve the title, exact labels, and narration lane.
+        title_snapshot = snapshot.model_copy(update={"montage_text_bindings": []})
+        text_elements = _text_elements(title_snapshot, beat_windows, policy, compiler_version=8)
+        binding_snapshot = snapshot.model_copy(update={"opening_title": None, "narration": None})
+        bindings = _text_elements(binding_snapshot, beat_windows, policy, compiler_version=8)
+        text_elements.extend(
+            element for element in bindings if element["id"].startswith("montage-text-")
+        )
+    total_s = schedule.total_frames / 30
+    song_reference = _song_reference(track, duration_s=total_s)
+    compiled = GuidedStoryExecutionPlan(
+        compiler_version=8,
+        proposal_version=proposal_version,
+        media_digest=media_digest,
+        direction=snapshot.direction,
+        goal=snapshot.goal,
+        pace=snapshot.pace,
+        approved_duration_s=float(snapshot.duration_s),
+        resolved_duration_s=total_s,
+        output_orientation=snapshot.output_orientation or "portrait",
+        output_orientation_reason=snapshot.output_orientation_reason,
+        selected_media_ids=_selected_media_ids(snapshot),
+        story_timeline=moments,
+        beat_windows=beat_windows,
+        text_elements=text_elements,
+        transition_policy={
+            "type": "crossfade" if schedule.transition_frames else "none",
+            "duration_s": schedule.transition_frames / 30,
+        },
+        mixed_media_timing=snapshot.mixed_media_timing,
+        montage_cadence=snapshot.montage_cadence,
+        montage_text_bindings=[
+            binding.model_dump(mode="json") for binding in snapshot.montage_text_bindings
+        ],
+        montage_audio=snapshot.montage_audio.model_dump(mode="json")
+        if snapshot.montage_audio
+        else None,
+        licensed_sfx_intent=snapshot.licensed_sfx.model_dump(mode="json")
+        if snapshot.licensed_sfx
+        else None,
+        typography={"style_id": "guided_story_v2", "font": snapshot.font_family or "Fraunces"},
+        music=None,
+        song_reference=song_reference,
+        song_reference_track_duration_s=float(
+            track.get("catalog_duration_s") or track.get("duration_s")
+        )
+        if song_reference and track
+        else None,
+        narration=snapshot.narration,
+    )
+    return compiled.model_dump(mode="json", exclude_none=False)
+
+
 def _compile_execution_plan_version(
     guided_snapshot: object,
     *,
     track: dict[str, Any] | None,
-    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7],
+    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7, 8],
 ) -> dict[str, Any]:
     """Compile a deterministic plan with an explicitly versioned allocator."""
 
     proposal_version, media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
+    if compiler_version == SCHEDULED_COMPILER_VERSION:
+        return _compile_scheduled_execution_plan(
+            snapshot, proposal_version=proposal_version, media_digest=media_digest, track=track
+        )
+    if snapshot.frame_schedule is not None:
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid", "A scheduled edit needs compiler v8."
+        )
     policy = _DIRECTION_POLICY[snapshot.direction]
     mixed_timing = snapshot.mixed_media_timing
     selected_ids = _selected_media_ids(snapshot)
@@ -1947,7 +2216,11 @@ def compile_execution_plan(
         guided_snapshot,
         track=track,
         compiler_version=(
-            VOICEOVER_COMPILER_VERSION if snapshot.narration is not None else COMPILER_VERSION
+            SCHEDULED_COMPILER_VERSION
+            if snapshot.frame_schedule is not None
+            else VOICEOVER_COMPILER_VERSION
+            if snapshot.narration is not None
+            else COMPILER_VERSION
         ),
     )
 
@@ -2858,6 +3131,69 @@ def _enforce_strict_story_duration(source: str, output: str, *, target_s: float)
         raise GuidedStoryError(
             "guided_story_receipt_mismatch",
             "The rendered story duration no longer matches its approved plan.",
+        )
+    return output
+
+
+def _enforce_scheduled_video_frames(source: str, output: str, *, frame_count: int) -> str:
+    """v8-only fence for Skia/AAC mux tail frames; never stretches video."""
+    target_s = frame_count / 30
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            source,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        actual_s = float(probe.stdout.strip())
+    except ValueError as exc:
+        raise GuidedStoryError(
+            "guided_story_receipt_mismatch", "The scheduled video stream is unreadable."
+        ) from exc
+    delta_s = actual_s - target_s
+    if abs(delta_s) <= 1e-6:
+        return source
+    if delta_s < 0 or delta_s > STRICT_MIXED_MEDIA_MAX_CFR_OVERRUN_S:
+        raise GuidedStoryError(
+            "guided_story_receipt_mismatch",
+            "The scheduled video frames no longer match the approved plan.",
+        )
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-i",
+            source,
+            "-map",
+            "0",
+            "-frames:v",
+            str(frame_count),
+            "-t",
+            f"{target_s:.6f}",
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            "-y",
+            output,
+        ],
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    if result.returncode != 0 or not os.path.exists(output):
+        raise GuidedStoryError(
+            "guided_story_receipt_mismatch", "The scheduled video frame fence failed."
         )
     return output
 
@@ -4714,6 +5050,12 @@ def render_execution_plan(
             final_path,
             os.path.join(tmpdir, "guided_story_final_duration_capped.mp4"),
             target_s=float(plan["resolved_duration_s"]),
+        )
+    if plan.get("compiler_version") == 8 and plan.get("editor_revision_number") is None:
+        final_path = _enforce_scheduled_video_frames(
+            final_path,
+            os.path.join(tmpdir, "guided_story_final_scheduled_frames.mp4"),
+            frame_count=round(float(plan["resolved_duration_s"]) * 30),
         )
     receipt = _verify_receipt(
         plan,

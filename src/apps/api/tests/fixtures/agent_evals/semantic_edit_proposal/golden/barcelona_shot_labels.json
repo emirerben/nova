@@ -1,0 +1,173 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.1",
+  "input": {
+    "idea": "",
+    "theme": "",
+    "direction": "guided_story",
+    "goal": "Hook: Show '1 CITY. 7 DAYS. 7 VIDEOS.' for exactly 2 seconds.; Body: 6 fast-paced clips cut to the beat at 1.5 seconds each, featuring specific daily text labels.; Outro: Conclude with 'BARCELONA WEEK STARTS MONDAY'.",
+    "creator_request": "13-second trailer. Open with '1 CITY. 7 DAYS. 7 VIDEOS.' for 2 seconds, then 6 shots of 1.5 seconds each with a small day label (MON · 5 LEGENDS, TUE · SAGRADA FAMÍLIA, WED · HIDDEN IN PLAIN SIGHT, THU · HUMAN TOWERS, FRI · MESSI'S NAPKIN, SAT · TOURIST MISTAKES). End on 'BARCELONA WEEK STARTS MONDAY'. Cut on the beat, warm grade.",
+    "pace": "fast",
+    "target_duration_s": 13,
+    "video_reuse_policy": "once",
+    "opening_title": "1 CITY. 7 DAYS. 7 VIDEOS.",
+    "opening_title_duration_s": 2.0,
+    "shot_labels": [
+      "MON · 5 LEGENDS",
+      "TUE · SAGRADA FAMÍLIA",
+      "WED · HIDDEN IN PLAIN SIGHT",
+      "THU · HUMAN TOWERS",
+      "FRI · MESSI'S NAPKIN",
+      "SAT · TOURIST MISTAKES"
+    ],
+    "closing_title": "BARCELONA WEEK STARTS MONDAY",
+    "media": [
+      {
+        "media_id": "square",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 10.05424,
+        "subject": "public square with palm trees and people"
+      },
+      {
+        "media_id": "sagrada-aerial",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 14.326712,
+        "subject": "Sagrada Familia"
+      },
+      {
+        "media_id": "sagrada-interior",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 16.695147,
+        "subject": "interior of Sagrada Familia cathedral"
+      },
+      {
+        "media_id": "castell",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 12.863855,
+        "subject": "human tower (Castell)"
+      },
+      {
+        "media_id": "rambla",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 17.995465,
+        "subject": "crowded street"
+      },
+      {
+        "media_id": "gaudi-portrait",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "Portrait of a bearded man"
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"1 CITY. 7 DAYS. 7 VIDEOS.\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"Legends\", \"thought\": \"MON · 5 LEGENDS\", \"role\": \"hook\", \"weight\": 0.2692307692307692, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"gaudi-portrait\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-2\", \"topic\": \"Sagrada Familia\", \"thought\": \"TUE · SAGRADA FAMÍLIA\", \"role\": \"build\", \"weight\": 0.11538461538461539, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"sagrada-aerial\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-3\", \"topic\": \"Interior\", \"thought\": \"WED · HIDDEN IN PLAIN SIGHT\", \"role\": \"build\", \"weight\": 0.11538461538461539, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"sagrada-interior\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-4\", \"topic\": \"Human towers\", \"thought\": \"THU · HUMAN TOWERS\", \"role\": \"build\", \"weight\": 0.11538461538461539, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"castell\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-5\", \"topic\": \"Street\", \"thought\": \"FRI · MESSI'S NAPKIN\", \"role\": \"build\", \"weight\": 0.11538461538461539, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"rambla\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-6\", \"topic\": \"Square\", \"thought\": \"SAT · TOURIST MISTAKES\", \"role\": \"payoff\", \"weight\": 0.2692307692307692, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"square\", \"candidate_index\": null, \"weight\": 1.0}]}], \"montage_audio\": null, \"text_bindings\": [], \"repairs\": []}",
+  "output": {
+    "schema_version": 1,
+    "title": "1 CITY. 7 DAYS. 7 VIDEOS.",
+    "chapters": [
+      {
+        "chapter_id": "chapter-1",
+        "topic": "Legends",
+        "thought": "MON · 5 LEGENDS",
+        "role": "hook",
+        "weight": 0.2692307692307692,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "gaudi-portrait",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-2",
+        "topic": "Sagrada Familia",
+        "thought": "TUE · SAGRADA FAMÍLIA",
+        "role": "build",
+        "weight": 0.11538461538461539,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "sagrada-aerial",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-3",
+        "topic": "Interior",
+        "thought": "WED · HIDDEN IN PLAIN SIGHT",
+        "role": "build",
+        "weight": 0.11538461538461539,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "sagrada-interior",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-4",
+        "topic": "Human towers",
+        "thought": "THU · HUMAN TOWERS",
+        "role": "build",
+        "weight": 0.11538461538461539,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "castell",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-5",
+        "topic": "Street",
+        "thought": "FRI · MESSI'S NAPKIN",
+        "role": "build",
+        "weight": 0.11538461538461539,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "rambla",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-6",
+        "topic": "Square",
+        "thought": "SAT · TOURIST MISTAKES",
+        "role": "payoff",
+        "weight": 0.2692307692307692,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "square",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      }
+    ],
+    "montage_audio": null,
+    "text_bindings": [],
+    "repairs": []
+  },
+  "meta": {
+    "source": "legacy_fixture_semantic_projection",
+    "case": "barcelona_shot_labels",
+    "note": "Prod job ac795019: exact creator shot labels must bind verbatim, one per shot."
+  }
+}

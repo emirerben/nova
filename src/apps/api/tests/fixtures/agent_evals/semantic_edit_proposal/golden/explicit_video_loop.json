@@ -1,0 +1,50 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.1",
+  "input": {
+    "idea": "Summer in Madrid",
+    "direction": "fast_montage",
+    "creator_request": "Loop the video to make a six second edit",
+    "pace": "fast",
+    "target_duration_s": 6,
+    "video_reuse_policy": "allow_repeat",
+    "media": [
+      {
+        "media_id": "clip-0",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 3.733,
+        "subject": "Madrid street"
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"Madrid on repeat\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"Montage\", \"thought\": \"\", \"role\": \"hook\", \"weight\": 1.0, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-0\", \"candidate_index\": null, \"weight\": 1.0}]}], \"montage_audio\": null, \"text_bindings\": [], \"repairs\": []}",
+  "output": {
+    "schema_version": 1,
+    "title": "Madrid on repeat",
+    "chapters": [
+      {
+        "chapter_id": "chapter-1",
+        "topic": "Montage",
+        "thought": "",
+        "role": "hook",
+        "weight": 1.0,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip-0",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      }
+    ],
+    "montage_audio": null,
+    "text_bindings": [],
+    "repairs": []
+  },
+  "meta": {
+    "source": "legacy_fixture_semantic_projection",
+    "case": "Explicit loop request permits adjacent overlapping windows of one video"
+  }
+}

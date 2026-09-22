@@ -20,6 +20,7 @@ from app.agents.edit_proposal import (
     maximum_distinct_sources,
     minimum_required_sources,
 )
+from app.config import settings
 from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     GUIDED_TITLE_HOLD_S,
@@ -39,6 +40,7 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
     uses_quick_photo_long_video_timing,
 )
+from app.services.proposal_planning import SemanticPlanningError, plan_edit_proposal
 
 log = structlog.get_logger()
 
@@ -1335,7 +1337,9 @@ def plan_direction_snapshot(
     idea: str = "",
     theme: str = "",
     job_id: str | None = None,
+    plan_item_id: str | None = None,
     creator_request: str = "",
+    planning_diagnostics_out: dict | None = None,
 ) -> EditProposalSnapshot:
     """Run the canonical proposal planner using the already-analyzed media.
 
@@ -1371,47 +1375,57 @@ def plan_direction_snapshot(
     if video_reuse_policy == "once":
         montage_cadence = None
     narrated = source.narration is not None
+    force_semantic = source.frame_schedule is not None
+    semantic_enabled = force_semantic or settings.edit_proposal_semantic_enabled
     planning_duration_s = (
         max(3, min(MAX_PROPOSAL_DURATION_S, duration_s))
-        if narrated and direction == "fast_montage"
+        if semantic_enabled or (narrated and direction == "fast_montage")
         else clamp_fast_montage_target_duration_s(
             media, duration_s, mixed_media_timing, video_reuse_policy
         )
         if direction == "fast_montage"
         else max(3, min(MAX_PROPOSAL_DURATION_S, duration_s))
     )
+    agent_input = EditProposalAgentInput(
+        idea=idea[:500],
+        theme=theme[:500],
+        direction=direction,
+        goal=goal[:500],
+        creator_request=creator_request[:12000],
+        video_reuse_policy=video_reuse_policy,
+        pace=pace,
+        target_duration_s=planning_duration_s,
+        media_scope=source.media_scope,
+        selected_media_ids=source.selected_media_ids,
+        narration_duration_s=source.narration.duration_s if source.narration else None,
+        narration_words=(
+            [word.model_dump(mode="json") for word in source.narration.words]
+            if source.narration
+            else []
+        ),
+        mixed_media_timing=mixed_media_timing,
+        montage_audio=montage_audio,
+        montage_cadence=montage_cadence,
+        opening_title=source.opening_title,
+        opening_title_duration_s=source.opening_title_duration_s,
+        shot_labels=source.shot_labels,
+        closing_title=source.closing_title,
+        clip_intents=source.clip_intents,
+        media=media,
+    )
+    ctx = RunContext(job_id=job_id, plan_item_id=plan_item_id) if (job_id or plan_item_id) else None
     output = None
     used_fallback = False
     try:
-        output = EditProposalAgent(default_client()).run(
-            EditProposalAgentInput(
-                idea=idea[:500],
-                theme=theme[:500],
-                direction=direction,
-                goal=goal[:500],
-                creator_request=creator_request[:12000],
-                video_reuse_policy=video_reuse_policy,
-                pace=pace,
-                target_duration_s=planning_duration_s,
-                media_scope=source.media_scope,
-                selected_media_ids=source.selected_media_ids,
-                narration_duration_s=source.narration.duration_s if source.narration else None,
-                narration_words=(
-                    [word.model_dump(mode="json") for word in source.narration.words]
-                    if source.narration
-                    else []
-                ),
-                mixed_media_timing=mixed_media_timing,
-                montage_audio=montage_audio,
-                montage_cadence=montage_cadence,
-                opening_title=source.opening_title,
-                opening_title_duration_s=source.opening_title_duration_s,
-                shot_labels=source.shot_labels,
-                closing_title=source.closing_title,
-                media=media,
-            ),
-            ctx=RunContext(job_id=job_id) if job_id else None,
+        output = (
+            plan_edit_proposal(agent_input, ctx=ctx, force_semantic=force_semantic)
+            if semantic_enabled
+            else EditProposalAgent(default_client()).run(agent_input, ctx=ctx)
         )
+    except SemanticPlanningError as exc:
+        if planning_diagnostics_out is not None:
+            planning_diagnostics_out["planning_diagnostics"] = exc.diagnostics
+        raise
     except TerminalError as exc:
         if direction == "text_explainer" or (
             narrated
@@ -1453,6 +1467,8 @@ def plan_direction_snapshot(
         if not cuts:
             raise ValueError("fast montage planner returned no source-aware cuts")
         beats = _compatibility_beats(cuts)
+    elif output is not None and output.frame_schedule is not None:
+        beats = output.scheduled_story_beats or []
     elif output is None and source.shot_labels:
         beats = deterministic_labeled_beats(
             source.media,
@@ -1502,9 +1518,13 @@ def plan_direction_snapshot(
             "direction": direction,
             "goal": goal,
             "pace": pace,
-            "duration_s": planning_duration_s
-            if output is None or direction == "fast_montage"
-            else output.duration_s,
+            "duration_s": (
+                output.duration_s
+                if output is not None and output.frame_schedule is not None
+                else planning_duration_s
+                if output is None or direction == "fast_montage"
+                else output.duration_s
+            ),
             # A confirmed creator title is immutable across direction changes;
             # the renderer burns ``title``, so never let generated copy replace it.
             "title": source.opening_title or (output.title if output is not None else source.title),
@@ -1524,9 +1544,12 @@ def plan_direction_snapshot(
             "narration": source.narration,
             "media_scope": source.media_scope,
             "selected_media_ids": source.selected_media_ids,
+            "frame_schedule": output.frame_schedule if output is not None else None,
         }
     )
     result = EditProposalSnapshot.model_validate(planned.model_dump(mode="json"))
+    if planning_diagnostics_out is not None and output is not None:
+        planning_diagnostics_out["planning_diagnostics"] = output.planning_diagnostics
     if used_fallback:
         from app.pipeline.guided_story import validate_proposal_timing  # noqa: PLC0415
 

@@ -483,6 +483,7 @@ def _edit_proposal_response(item: PlanItem) -> dict | None:
         payload["failure"].pop("detail", None)
     # Same rule for the planner-fallback marker (KRI-126): admin debug only.
     payload["planner_fallback"] = None
+    payload.pop("planning_diagnostics", None)
     attempt = proposal.conversation_attempt
     if attempt is not None:
         from app.services.edit_proposals import (  # noqa: PLC0415
@@ -2686,7 +2687,7 @@ def _snapshot_from_edit_guide_revision(  # noqa: ANN001
                 duration_s=revised.duration_s,
             )
         )
-    return EditProposalSnapshot(
+    snapshot = EditProposalSnapshot(
         direction=revision.direction,
         goal=revision.goal,
         pace=revision.pace,
@@ -2701,6 +2702,10 @@ def _snapshot_from_edit_guide_revision(  # noqa: ANN001
         image_layout=current.image_layout,
         licensed_sfx=current.licensed_sfx,
         media=current.media,
+        media_scope=current.media_scope,
+        selected_media_ids=current.selected_media_ids,
+        narration=current.narration,
+        clip_intents=current.clip_intents,
         story_beats=beats,
         fast_cuts=current.fast_cuts if revision.direction == "fast_montage" else None,
         mixed_media_timing=current.mixed_media_timing,
@@ -2712,6 +2717,12 @@ def _snapshot_from_edit_guide_revision(  # noqa: ANN001
         video_reuse_policy=current.video_reuse_policy,
         output_orientation=output_orientation,
     )
+
+    if current.frame_schedule is not None or settings.edit_proposal_semantic_enabled:
+        from app.services.proposal_planning import refresh_snapshot_schedule
+
+        snapshot = refresh_snapshot_schedule(snapshot, previous=current)
+    return snapshot
 
 
 def _proposal_analysis_queue(proposal) -> str:  # noqa: ANN001
@@ -3539,10 +3550,12 @@ async def edit_proposal_conversation_turn(
     # A clarifying review answer cannot mutate the brief independently from
     # the approved/draft render contract. Only a complete revision may do so.
     saved_brief = brief if review_snapshot else result.brief
+    replan_planning_diagnostics: dict | None = None
     if review_snapshot and result.revision:
         from app.pipeline.guided_story import (  # noqa: PLC0415
             validate_proposal_timing,
         )
+        from app.services.proposal_planning import SemanticPlanningError  # noqa: PLC0415
 
         try:
             requested_mixed_media_timing = _review_mixed_media_timing(
@@ -3566,6 +3579,7 @@ async def edit_proposal_conversation_turn(
                     plan_direction_snapshot,
                 )
 
+                replan_metadata: dict = {}
                 revised_snapshot = await asyncio.to_thread(
                     plan_direction_snapshot,
                     review_snapshot,
@@ -3576,6 +3590,7 @@ async def edit_proposal_conversation_turn(
                     duration_s=result.revision.duration_s,
                     idea=idea,
                     theme=theme,
+                    plan_item_id=item_id,
                     mixed_media_timing=requested_mixed_media_timing,
                     montage_audio=(
                         brief.montage_audio if result.revision.direction == "fast_montage" else None
@@ -3585,7 +3600,9 @@ async def edit_proposal_conversation_turn(
                         if result.revision.direction == "fast_montage"
                         else None
                     ),
+                    planning_diagnostics_out=replan_metadata,
                 )
+                replan_planning_diagnostics = replan_metadata.get("planning_diagnostics")
             else:
                 revised_snapshot = _snapshot_from_edit_guide_revision(
                     review_snapshot,
@@ -3599,6 +3616,40 @@ async def edit_proposal_conversation_turn(
                 revised_snapshot, owner_id, visuals_only_device=visuals_only_device
             )
             validate_proposal_timing(revised_snapshot)
+        except SemanticPlanningError as exc:
+            # The semantic compiler has classified the failed replan. Retain
+            # that private evidence and the conversational turn under the
+            # reservation CAS, while preserving the current renderable draft.
+            locked = await _load_owned_item(item_id, owner_id, db, for_update=True)
+            try:
+                reserved_current = require_edit_conversation_attempt(
+                    locked, token=conversation_token
+                )
+                save_edit_conversation_turn(
+                    locked,
+                    expected_version=reserved_current.proposal_version,
+                    brief=brief,
+                    user_message=body.message,
+                    agent_reply=result.reply,
+                    suggestions=result.suggestions,
+                    ready_to_plan=result.ready_to_plan,
+                    conversation_phase=phase,
+                    planning_diagnostics=exc.diagnostics,
+                )
+            except ProposalConflictError as conflict:
+                if release_edit_conversation_attempt(locked, token=conversation_token):
+                    await db.commit()
+                else:
+                    await db.rollback()
+                raise _proposal_http_conflict("proposal_conflict", str(conflict)) from conflict
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": exc.code,
+                    "message": exc.reason,
+                },
+            ) from exc
         except Exception as exc:  # noqa: BLE001 - every invalid revision must release its fence
             log.warning("edit_guide.timing_invalid", item_id=item_id, error=str(exc)[:300])
             await release_reservation()
@@ -3655,6 +3706,7 @@ async def edit_proposal_conversation_turn(
             ready_to_plan=result.ready_to_plan,
             conversation_phase=phase,
             revised_snapshot=revised_snapshot,
+            planning_diagnostics=replan_planning_diagnostics,
         )
     except ProposalConflictError as exc:
         if release_edit_conversation_attempt(locked, token=conversation_token):
@@ -3940,6 +3992,7 @@ async def update_item_edit_proposal(
     _require_guided_edit()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     _require_guided_edit_applicable(item)
+    from app.pipeline.guided_story import GuidedStoryError
     from app.schemas.edit_proposal import canonical_media_digest  # noqa: PLC0415
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
@@ -3971,6 +4024,7 @@ async def update_item_edit_proposal(
             {
                 **body.snapshot.model_dump(mode="json"),
                 "media": [ref.model_dump(mode="json") for ref in current.draft.media],
+                "frame_schedule": None,
             }
         )
         if (
@@ -4003,7 +4057,7 @@ async def update_item_edit_proposal(
         )
     except ProposalConflictError as exc:
         raise _proposal_service_conflict(exc) from exc
-    except ValidationError as exc:
+    except (ValueError, GuidedStoryError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
@@ -5053,6 +5107,7 @@ async def plan_item_copilot_turn(
             idea=str(item.idea or ""),
             theme=str(item.theme or ""),
             job_id=str(job.id),
+            plan_item_id=item_id,
         )
         cuts = planned.fast_cuts or []
         if not cuts:

@@ -1,0 +1,104 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.1",
+  "input": {
+    "idea": "Summer in Madrid",
+    "direction": "guided_story",
+    "goal": "Label each clip with its supplied location name",
+    "creator_request": "Make a 12.7-second edit with each video appearing once. Use only the location names from the clip descriptions as the three labels.",
+    "pace": "fast",
+    "target_duration_s": 12.7,
+    "video_reuse_policy": "once",
+    "media_scope": "all",
+    "selected_media_ids": [
+      "clip-0",
+      "clip-1",
+      "clip-2"
+    ],
+    "media": [
+      {
+        "media_id": "clip-0",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 4.068333,
+        "subject": "Fountain",
+        "description": "Fountain"
+      },
+      {
+        "media_id": "clip-1",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 4.9,
+        "subject": "Royal Palace of Madrid",
+        "description": "Royal Palace of Madrid"
+      },
+      {
+        "media_id": "clip-2",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 3.733333,
+        "subject": "Retiro Park",
+        "description": "Retiro Park"
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"Summer in Madrid\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"Royal Palace of Madrid\", \"thought\": \"Royal Palace of Madrid\", \"role\": \"hook\", \"weight\": 0.3858267716535433, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-1\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-2\", \"topic\": \"Retiro Park\", \"thought\": \"Retiro Park\", \"role\": \"build\", \"weight\": 0.2937007874015748, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-2\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-3\", \"topic\": \"Fountain\", \"thought\": \"Fountain\", \"role\": \"payoff\", \"weight\": 0.32047244094488186, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-0\", \"candidate_index\": null, \"weight\": 1.0}]}], \"montage_audio\": null, \"text_bindings\": [], \"repairs\": []}",
+  "output": {
+    "schema_version": 1,
+    "title": "Summer in Madrid",
+    "chapters": [
+      {
+        "chapter_id": "chapter-1",
+        "topic": "Royal Palace of Madrid",
+        "thought": "Royal Palace of Madrid",
+        "role": "hook",
+        "weight": 0.3858267716535433,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip-1",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-2",
+        "topic": "Retiro Park",
+        "thought": "Retiro Park",
+        "role": "build",
+        "weight": 0.2937007874015748,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip-2",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-3",
+        "topic": "Fountain",
+        "thought": "Fountain",
+        "role": "payoff",
+        "weight": 0.32047244094488186,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip-0",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      }
+    ],
+    "montage_audio": null,
+    "text_bindings": [],
+    "repairs": []
+  },
+  "meta": {
+    "source": "legacy_fixture_semantic_projection",
+    "case": "Fractional total and reordered chapters retain all three clips without a schema retry"
+  }
+}

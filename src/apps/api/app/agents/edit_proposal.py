@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import ResolvedClipIntent
+from app.schemas.edit_frame_schedule import EditFrameSchedule
 from app.schemas.edit_proposal import (
     CREATOR_TITLE_MAX_CHARS,
     GUIDED_STORY_MIN_MOMENT_S,
@@ -31,6 +32,7 @@ from app.schemas.edit_proposal import (
     MontageCadenceConstraint,
     MontageTextBinding,
     ProposalDuration,
+    StoryBeat,
     VideoReusePolicy,
     canonical_narration_duration_s,
     clean_creator_shot_labels,
@@ -1117,6 +1119,12 @@ class EditProposalAgentOutput(BaseModel):
     # rejecting (KRI-129), e.g. "split_beat:3:6->4+2", "truncated_thought:2",
     # "scaled_durations". Observability only -- not plumbed further.
     repairs: list[str] = Field(default_factory=list, max_length=64)
+    # Filled only by the server planning facade, never trusted from the legacy
+    # model. Optional to keep legacy callers and recorded evals compatible.
+    frame_schedule: EditFrameSchedule | None = Field(default=None, exclude=True)
+    semantic_plan: dict | None = Field(default=None, exclude=True)
+    planning_diagnostics: dict | None = Field(default=None, exclude=True)
+    scheduled_story_beats: list[StoryBeat] | None = Field(default=None, exclude=True)
 
 
 def _clamp_fast_cut_windows(
@@ -2204,6 +2212,13 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             raise SchemaError(f"edit_proposal: invalid output — {exc}") from exc
         if not isinstance(payload, dict):
             raise SchemaError("edit_proposal: invalid output — expected an object")
+        for server_field in (
+            "frame_schedule",
+            "semantic_plan",
+            "planning_diagnostics",
+            "scheduled_story_beats",
+        ):
+            payload.pop(server_field, None)
         creator_labels = input.shot_labels if input.direction != "fast_montage" else None
         if creator_labels:
             # Story beats are the only lane that can carry per-shot copy. The

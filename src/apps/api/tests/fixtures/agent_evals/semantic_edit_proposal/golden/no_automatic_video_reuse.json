@@ -1,0 +1,74 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.1",
+  "input": {
+    "idea": "Summer in Madrid",
+    "direction": "fast_montage",
+    "creator_request": "Create a slow edit with pastel yellow text saying Summer in Madrid",
+    "pace": "relaxed",
+    "target_duration_s": 12,
+    "video_reuse_policy": "once",
+    "media": [
+      {
+        "media_id": "clip-0",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 3.733,
+        "subject": "Madrid street"
+      },
+      {
+        "media_id": "clip-1",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 4.9,
+        "subject": "Madrid plaza"
+      },
+      {
+        "media_id": "clip-2",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 4.068,
+        "subject": "Madrid sunset"
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"Summer in Madrid\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"Montage\", \"thought\": \"\", \"role\": \"hook\", \"weight\": 12.0, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"clip-0\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-1\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"clip-2\", \"candidate_index\": null, \"weight\": 1.0}]}], \"montage_audio\": null, \"text_bindings\": [], \"repairs\": []}",
+  "output": {
+    "schema_version": 1,
+    "title": "Summer in Madrid",
+    "chapters": [
+      {
+        "chapter_id": "chapter-1",
+        "topic": "Montage",
+        "thought": "",
+        "role": "hook",
+        "weight": 12.0,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "clip-0",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "clip-1",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "clip-2",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      }
+    ],
+    "montage_audio": null,
+    "text_bindings": [],
+    "repairs": []
+  },
+  "meta": {
+    "source": "legacy_fixture_semantic_projection",
+    "case": "Three videos must appear once each, even when longer cuts are needed"
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.1",
+  "input": {
+    "direction": "fast_montage",
+    "pace": "fast",
+    "target_duration_s": 60,
+    "media_scope": "all",
+    "selected_media_ids": [
+      "park",
+      "pub-1",
+      "pub-2"
+    ],
+    "video_reuse_policy": "once",
+    "creator_request": "Open with the title London Edition. Label the running clips Running. Group the pub clips and say “post match pub”, preserving their audio.",
+    "opening_title": "London Edition",
+    "montage_audio": {
+      "preserve_source_audio": true,
+      "preview_source_beds": false,
+      "source_media_ids": [
+        "pub-1",
+        "pub-2"
+      ]
+    },
+    "clip_intents": [
+      {
+        "intent_id": "sport",
+        "op": "label",
+        "attribute": "sport being played",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "park",
+            "value": "Running",
+            "evidence": "running",
+            "confidence": 1,
+            "grounding": "creator_text"
+          }
+        ]
+      },
+      {
+        "intent_id": "pub",
+        "op": "group",
+        "attribute": "pub clips",
+        "creator_text": "post match pub",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "pub-1",
+            "evidence": "pub",
+            "confidence": 1,
+            "grounding": "creator_text"
+          },
+          {
+            "media_id": "pub-2",
+            "evidence": "pub",
+            "confidence": 1,
+            "grounding": "creator_text"
+          }
+        ]
+      }
+    ],
+    "media": [
+      {
+        "media_id": "park",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 21,
+        "summary": "people walk in a park",
+        "best_moments": [
+          {
+            "start_s": 0.0,
+            "end_s": 2.0
+          }
+        ]
+      },
+      {
+        "media_id": "pub-1",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 21,
+        "setting": "pub",
+        "activity": "conversation",
+        "best_moments": [
+          {
+            "start_s": 1.0,
+            "end_s": 3.0
+          }
+        ]
+      },
+      {
+        "media_id": "pub-2",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 21,
+        "setting": "pub",
+        "activity": "conversation",
+        "best_moments": [
+          {
+            "start_s": 2.0,
+            "end_s": 4.0
+          }
+        ]
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"wrong title\", \"chapters\": [{\"chapter_id\": \"park\", \"topic\": \"Park\", \"thought\": \"A made up caption\", \"role\": \"hook\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m001\", \"candidate_index\": 0, \"weight\": 1}]}, {\"chapter_id\": \"pub\", \"topic\": \"Pub\", \"thought\": \"POST MATCH PUB\", \"role\": \"payoff\", \"weight\": 2, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m002\", \"candidate_index\": 0, \"weight\": 1}, {\"media_id\": \"m003\", \"candidate_index\": 0, \"weight\": 1}]}], \"text_bindings\": []}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-129 title, sport-label, grouped pub-caption, source-audio, and all-media semantic coverage",
+    "expected_title": "London Edition",
+    "expected_bindings": [
+      "post match pub"
+    ],
+    "expected_audio_ids": [
+      "pub-1",
+      "pub-2"
+    ],
+    "expected_frames": 1800,
+    "expected_group": [
+      "pub-1",
+      "pub-2"
+    ]
+  }
+}

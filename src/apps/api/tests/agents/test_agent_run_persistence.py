@@ -175,6 +175,35 @@ def test_persist_routes_creator_agent_session_without_job_id():
     assert captured[0]["creator_agent_session_id"] == str(session_uuid)
 
 
+def test_persist_routes_plan_item_without_job_id():
+    """Pre-render proposal planning has a durable item but no render Job."""
+    engine, captured = _fake_engine_capturing()
+    item_uuid = uuid.uuid4()
+    with patch("app.database.sync_engine", engine):
+        persist_agent_run(
+            job_id=None,
+            plan_item_id=str(item_uuid),
+            segment_idx=None,
+            agent_name="nova.compose.semantic_edit",
+            prompt_version="kri133",
+            model="m",
+            outcome="schema_error",
+            attempts=1,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            latency_ms=10,
+            input_dict={"frames": 5},
+            output_dict=None,
+            raw_text='{"invalid": true}',
+            error="semantic output rejected",
+        )
+    assert len(captured) == 1
+    assert captured[0]["job_id"] is None
+    assert captured[0]["plan_item_id"] == str(item_uuid)
+    assert captured[0]["raw_text"] == '{"invalid": true}'
+
+
 def test_persist_routes_template_prefix_to_template_id():
     engine, captured = _fake_engine_capturing()
     tpl = uuid.uuid4()
@@ -498,6 +527,23 @@ def test_agent_run_threads_creator_agent_session_to_persistence():
 
     assert len(captured) == 1
     assert captured[0]["creator_agent_session_id"] == str(session_uuid)
+
+
+def test_agent_run_threads_plan_item_to_persistence():
+    engine, captured = _fake_engine_capturing()
+    item_uuid = uuid.uuid4()
+    mock_client = MockModelClient()
+    sample_agent = SampleAgent(mock_client)
+    mock_client.queue("gemini-2.5-flash", {"answer": "ok", "score": 50})
+    with patch("app.database.sync_engine", engine):
+        sample_agent.run(
+            SampleInput(topic="x"),
+            ctx=RunContext(plan_item_id=str(item_uuid)),
+        )
+
+    assert len(captured) == 1
+    assert captured[0]["plan_item_id"] == str(item_uuid)
+    assert captured[0]["job_id"] is None
 
 
 def test_agent_run_persists_track_context_to_music_track_id(

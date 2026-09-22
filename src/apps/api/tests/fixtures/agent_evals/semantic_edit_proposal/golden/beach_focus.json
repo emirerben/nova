@@ -1,0 +1,134 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.1",
+  "input": {
+    "idea": "Corfu coast",
+    "theme": "A day by the water",
+    "direction": "fast_montage",
+    "goal": "Make a quick coastal sequence that still has a beginning and ending",
+    "pace": "fast",
+    "target_duration_s": 7,
+    "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "video_hold": "longer",
+      "boundary_style": "cut"
+    },
+    "media": [
+      {
+        "media_id": "b1",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5,
+        "subject": "sailboat leaving harbor"
+      },
+      {
+        "media_id": "b2",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "rocky beach"
+      },
+      {
+        "media_id": "b3",
+        "lane": "asset",
+        "kind": "video",
+        "duration_s": 5,
+        "subject": "swimming underwater"
+      },
+      {
+        "media_id": "b4",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "boats at anchor"
+      },
+      {
+        "media_id": "b5",
+        "lane": "asset",
+        "kind": "video",
+        "duration_s": 5,
+        "subject": "waves at shore"
+      },
+      {
+        "media_id": "b6",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "coastline viewpoint"
+      },
+      {
+        "media_id": "b7",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "sunset over sea"
+      }
+    ]
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"Corfu by the water\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"Montage\", \"thought\": \"\", \"role\": \"hook\", \"weight\": 4.25, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"b1\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"b2\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"b3\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"b4\", \"candidate_index\": null, \"weight\": 1.0}]}, {\"chapter_id\": \"chapter-2\", \"topic\": \"Montage\", \"thought\": \"\", \"role\": \"payoff\", \"weight\": 2.75, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"b5\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"b6\", \"candidate_index\": null, \"weight\": 1.0}, {\"media_id\": \"b7\", \"candidate_index\": null, \"weight\": 1.0}]}], \"montage_audio\": null, \"text_bindings\": [], \"repairs\": []}",
+  "output": {
+    "schema_version": 1,
+    "title": "Corfu by the water",
+    "chapters": [
+      {
+        "chapter_id": "chapter-1",
+        "topic": "Montage",
+        "thought": "",
+        "role": "hook",
+        "weight": 4.25,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "b1",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "b2",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "b3",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "b4",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      },
+      {
+        "chapter_id": "chapter-2",
+        "topic": "Montage",
+        "thought": "",
+        "role": "payoff",
+        "weight": 2.75,
+        "layout": "fullscreen",
+        "sources": [
+          {
+            "media_id": "b5",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "b6",
+            "candidate_index": null,
+            "weight": 1.0
+          },
+          {
+            "media_id": "b7",
+            "candidate_index": null,
+            "weight": 1.0
+          }
+        ]
+      }
+    ],
+    "montage_audio": null,
+    "text_bindings": [],
+    "repairs": []
+  },
+  "meta": {
+    "source": "legacy_fixture_semantic_projection",
+    "case": "source-aware fast montage cut program",
+    "contract": "the specialist emits prompt-visible aliases that resolve to owned media; source-aware fast cuts remain bounded, non-adjacent, and renderable within the complete 150-item guided-edit universe"
+  }
+}
