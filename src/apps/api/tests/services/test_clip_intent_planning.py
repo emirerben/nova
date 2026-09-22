@@ -4,10 +4,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.agents._runtime import RunContext
+from app.agents._runtime import (
+    ModelInvocation,
+    ProviderQuotaExceededError,
+    RunContext,
+    TerminalError,
+    TerminalSchemaError,
+)
 from app.agents.clip_intent_planner import ClipIntentPlannerOutput, PlannedClipIntent
+from app.schemas.clip_intents import ClipIntent
 from app.services import clip_intent_planning as service
 from app.services.clip_intent_resolution import IntentResolution
+from tests.agents.conftest import MockModelClient, max_tokens_response
 
 
 def wire(monkeypatch, output):
@@ -90,6 +98,91 @@ async def test_provider_failure_never_falls_back_to_partial_candidates(monkeypat
             clips=[],
             run_context=RunContext(),
         )
+    resolver.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_planner_schema_failure_requests_clarification_without_partial_candidates(
+    monkeypatch,
+):
+    client = MockModelClient()
+    invalid_response = {"intents": "not-a-list", "question": None}
+    client.queue("gemini-2.5-flash", invalid_response, invalid_response)
+    monkeypatch.setattr(service, "default_client", lambda: client)
+    resolver = AsyncMock(return_value=IntentResolution())
+    monkeypatch.setattr(service, "resolve_clip_intents_for_turn", resolver)
+
+    result = await service.plan_and_resolve_clip_intents(
+        creator_request="Group the Paris clips and label each location.",
+        latest_user_message=None,
+        candidate_intents=[ClipIntent(intent_id="candidate", op="label", attribute="city")],
+        clips=[],
+        run_context=RunContext(),
+        background=True,
+    )
+
+    assert result.requested_intents == []
+    assert result.resolution.needs_creator
+    assert "restate" in (result.resolution.question or "").lower()
+    assert len(client.invocations) == 2
+    resolver.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_planner_output_truncation_remains_a_retryable_preparation_failure(monkeypatch):
+    client = MockModelClient()
+    client.queue(
+        "gemini-2.5-flash",
+        ModelInvocation(
+            raw_text="",
+            raw_response=max_tokens_response(),
+            tokens_in=10,
+            tokens_out=0,
+        ),
+    )
+    monkeypatch.setattr(service, "default_client", lambda: client)
+    resolver = AsyncMock(return_value=IntentResolution())
+    monkeypatch.setattr(service, "resolve_clip_intents_for_turn", resolver)
+
+    with pytest.raises(TerminalError) as caught:
+        await service.plan_and_resolve_clip_intents(
+            creator_request="Group the Paris clips and label each location.",
+            latest_user_message=None,
+            candidate_intents=None,
+            clips=[],
+            run_context=RunContext(),
+            background=True,
+        )
+
+    assert not isinstance(caught.value, TerminalSchemaError)
+    assert len(client.invocations) == 1
+    resolver.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TerminalError("nova.plan.clip_intent_planner: refusal"),
+        TerminalError("nova.plan.clip_intent_planner: exhausted 1 model after retries"),
+        ProviderQuotaExceededError(provider="gemini", reason="monthly_cap"),
+    ],
+)
+async def test_non_schema_terminal_failures_still_propagate(monkeypatch, failure):
+    agent, resolver = wire(monkeypatch, ClipIntentPlannerOutput())
+    agent.run.side_effect = failure
+
+    with pytest.raises(type(failure)) as caught:
+        await service.plan_and_resolve_clip_intents(
+            creator_request="Group the Paris clips and label each location.",
+            latest_user_message=None,
+            candidate_intents=None,
+            clips=[],
+            run_context=RunContext(),
+            background=True,
+        )
+
+    assert caught.value is failure
     resolver.assert_not_called()
 
 

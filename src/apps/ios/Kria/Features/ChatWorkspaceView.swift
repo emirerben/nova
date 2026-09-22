@@ -781,7 +781,7 @@ private struct CreationWorkspaceView: View {
                 }
             }
         case .failed:
-            if let thread = fullThread, thread.runtimeVersion == 1 {
+            if failedWorkspacePresentation == .legacyCreationConfirmation, let thread = fullThread {
                 CreationConfirmationStage(
                     thread: thread,
                     isBusy: isActing || isSending || pendingUploadCount > 0,
@@ -791,7 +791,7 @@ private struct CreationWorkspaceView: View {
                     action: performAction
                 )
             } else {
-                if fullThread?.preparationFailed == true {
+                if failedWorkspacePresentation == .preparationRetry {
                     FailedStage(
                         title: "Clip preparation needs another try",
                         bodyText: fullThread?.preparationMessage ?? fullThread?.lastAssistantErrorMessage ?? "Kria couldn’t prepare your clips. Your direction and footage are still saved.",
@@ -805,12 +805,20 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    private var failedWorkspacePresentation: FailedWorkspacePresentation {
+        FailedWorkspacePresentation.resolve(
+            runtimeVersion: fullThread?.runtimeVersion,
+            preparationFailed: fullThread?.preparationFailed == true,
+            hasConfirmablePlan: fullThread?.creatorAgent?["plan_hash"]?.stringValue?.isEmpty == false
+        )
+    }
+
     /// Mirrors `stageContent`: whether the runtime-v1 confirmation card is on screen.
     private var showsCreationConfirmation: Bool {
-        guard let fullThread else { return false }
+        guard fullThread != nil else { return false }
         switch workspaceStage {
         case .direction: return approval == nil
-        case .failed: return fullThread.runtimeVersion == 1
+        case .failed: return failedWorkspacePresentation == .legacyCreationConfirmation
         default: return false
         }
     }
@@ -1278,6 +1286,25 @@ enum WorkspaceStage {
             if hasFormat { return .footage }
             return .format
         }
+    }
+}
+
+enum FailedWorkspacePresentation: Equatable {
+    case preparationRetry
+    case legacyCreationConfirmation
+    case genericFailure
+
+    /// Preparation can fail before runtime-v1 has a valid Creator direction.
+    /// That recovery path must outrank the legacy confirmation card, which
+    /// otherwise exposes create actions backed by no active plan.
+    static func resolve(
+        runtimeVersion: Int?,
+        preparationFailed: Bool,
+        hasConfirmablePlan: Bool
+    ) -> Self {
+        if preparationFailed { return .preparationRetry }
+        if runtimeVersion == 1 && hasConfirmablePlan { return .legacyCreationConfirmation }
+        return .genericFailure
     }
 }
 
