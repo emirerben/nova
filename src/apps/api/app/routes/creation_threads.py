@@ -3430,9 +3430,17 @@ async def _failed_planning_attempt(
     """
 
     attempt_id = (session.active_plan or {}).get("guided_generation_attempt_id")
-    if not isinstance(attempt_id, str) or not attempt_id or not thread.active_plan_item_id:
+    if (
+        not isinstance(attempt_id, str)
+        or not attempt_id
+        or not thread.active_plan_item_id
+        or thread.active_job_id is not None
+        or session.target_job_id is not None
+    ):
         return None
     item = await db.get(PlanItem, thread.active_plan_item_id)
+    if item is None or getattr(item, "current_job_id", None) is not None:
+        return None
     proposal = parse_edit_proposal(getattr(item, "edit_proposal", None))
     if (
         proposal is None
@@ -3895,21 +3903,34 @@ async def action_thread(
                 status_code=409,
                 detail="Kria must prepare a direction in the selected Paper format",
             )
-        if body.action == "retry" or recovery_action == "disable_and_create":
+        # Both native speech-choice buttons submit generate, even when the
+        # preceding planning attempt failed before creating a Job. Reuse the
+        # bounded retry preparation while preserving the newly selected choice
+        # and its normal preflight/confirmation fences below.
+        retrying_planning_choice = (
+            body.action in {"generate", "confirm_generation"}
+            and payload.get("speech_cleanup_choice") in {"clean", "keep_original"}
+            and session.status == "failed"
+        )
+        if (
+            body.action == "retry"
+            or retrying_planning_choice
+            or recovery_action == "disable_and_create"
+        ):
             # A failed render (or a partial ready cut) is terminal at the Job
             # layer, but the exact Creator plan remains the source of truth
             # for a bounded retry. Reconcile first, then reopen confirmation
             # so the normal manifest/hash/ownership fences and dispatcher are
             # reused rather than creating a second retry state machine.
             failed_before_dispatch = (
-                body.action == "retry"
+                (body.action == "retry" or retrying_planning_choice)
                 and current_job is None
                 and session.status == "failed"
                 and bool((session.active_plan or {}).get("plan_hash"))
             )
-            if (
-                failed_before_dispatch
-                and (getattr(session, "last_error", None) or {}).get("code") != "execution_failed"
+            if failed_before_dispatch and (
+                retrying_planning_choice
+                or (getattr(session, "last_error", None) or {}).get("code") != "execution_failed"
             ):
                 # Guided planning failed before any Job existed. Confirming
                 # again mints a fresh attempt, so planning reruns behind the
