@@ -84,6 +84,27 @@ def test_clip_request_resolver_eval(
         wrong = sorted({a["media"] for a in got.get("assignments", [])} & set(aliases))
         assert not wrong, f"{result.fixture_id}: intent {intent_id} wrongly assigned {wrong}"
 
+    # Explicit creator selections are stronger than generic coverage: they must
+    # become assignments (not a vision deferral), with no extra members.
+    for intent_id, aliases in (fixture.meta.get("expect_assignment_set") or {}).items():
+        got = by_intent.get(intent_id) or {}
+        assigned = {a["media"] for a in got.get("assignments", [])}
+        assert assigned == set(aliases), (
+            f"{result.fixture_id}: intent {intent_id} assigned {sorted(assigned)}, "
+            f"expected exactly {sorted(aliases)}"
+        )
+        assert not got.get("needs_vision", []), (
+            f"{result.fixture_id}: explicit selection {intent_id} must not defer to vision"
+        )
+
+    if fixture.meta.get("expect_no_question"):
+        questioned = [
+            intent_out["intent_id"]
+            for intent_out in output.get("intents", [])
+            if intent_out.get("question")
+        ]
+        assert not questioned, f"{result.fixture_id}: unexpected clarification for {questioned}"
+
     if fixture.meta.get("expect_needs_vision_nonempty"):
         total_needs_vision = sum(
             len(intent_out.get("needs_vision", [])) for intent_out in output.get("intents", [])

@@ -54,6 +54,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
+from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import (
     CAPTION_MAX_WORDS,
@@ -109,7 +110,7 @@ class ResolverClipIn(BaseModel):
 
 
 class ClipRequestResolverInput(BaseModel):
-    creator_request: str = Field(default="", max_length=2000)
+    creator_request: str = Field(default="", max_length=CREATOR_REQUEST_MAX_CHARS)
     intents: list[ResolverIntentIn]
     clips: list[ResolverClipIn]
 
@@ -175,7 +176,7 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_request_resolver",
         prompt_id="clip_request_resolver",
-        prompt_version="2026-09-22",  # KRI-129: added the "caption" op.
+        prompt_version="2026-09-22.1",  # KRI-133: preserve the full creator request.
         # Text-only match against pre-computed clip records; flash + a small
         # thinking budget mirrors clip_plan_matcher's measured setting.
         model="gemini-2.5-flash",
@@ -201,7 +202,7 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
         valid_intent_ids = ", ".join(i.intent_id for i in input.intents)
         return load_prompt(
             "clip_request_resolver",
-            creator_request=_sanitize_text(input.creator_request, limit=2000),
+            creator_request=_sanitize_text(input.creator_request, limit=CREATOR_REQUEST_MAX_CHARS),
             intent_count=str(len(input.intents)),
             clip_count=str(len(input.clips)),
             intent_lines=intent_lines,
