@@ -4015,9 +4015,28 @@ async def confirm_creator_plan_controller(
             # any background work. A process crash after enqueue can then
             # resume against the exact proposal attempt instead of a mutable
             # proposal_version that advances during draft + approval.
+            guided_generation_attempt_id = str(uuid.uuid4())
+            guided_speech_cleanup = (
+                {
+                    "generation_attempt_id": guided_generation_attempt_id,
+                    "analysis_id": (
+                        str(body.speech_cleanup_analysis_id)
+                        if body.speech_cleanup_analysis_id is not None
+                        else None
+                    ),
+                    "choice": body.speech_cleanup_choice,
+                }
+                if body.speech_cleanup_analysis_id is not None
+                or body.speech_cleanup_choice is not None
+                else None
+            )
             session.active_plan = {
                 **active,
-                "guided_generation_attempt_id": str(uuid.uuid4()),
+                "guided_generation_attempt_id": guided_generation_attempt_id,
+                # This is scoped to this newly minted attempt.  Setting it to
+                # None on an ordinary confirmation prevents a later worker
+                # from borrowing consent recorded for an older attempt.
+                "guided_speech_cleanup": guided_speech_cleanup,
             }
         session.status = "executing"
         session.render_attempts += 1
