@@ -148,6 +148,42 @@ def _narrated_guided_job():
     return job
 
 
+@pytest.mark.parametrize(
+    "style, expected",
+    [
+        ("editorial", "sentence"),
+        ("clean", "sentence"),
+        ("kinetic", "word"),
+        ("auto", None),
+    ],
+)
+def test_legacy_narration_recovers_confirmed_caption_style_without_rewriting_approval(
+    monkeypatch, style, expected
+):
+    _arm(monkeypatch)
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(gj, "_TEXT_ELEMENTS_ENABLED", True)
+    job = _narrated_guided_job()
+    job.assembly_plan["guided_edit"]["creator_execution_identity"] = {
+        "edit_plan": {"strategy": {"caption_style": style}}
+    }
+    before = copy.deepcopy(job.assembly_plan)
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    meta = {"style": expected, "y_frac": 0.7} if expected else None
+    assert revision.get("caption_meta") == meta
+    response = gj._variants_for_response(job)[0]
+    assert response["caption_meta"] == meta
+    assert revision["text_elements"] == before["guided_story_execution_plan"]["text_elements"]
+    assert job.assembly_plan == before
+
+    # User edits (including turning captions off) must survive reopening.
+    revision["caption_meta"] = {"style": "word", "enabled": False, "y_frac": 0.6}
+    revision["state_hash"] = ""
+    variant["guided_edit_revision"] = revision
+    assert gj._variants_for_response(job)[0]["caption_meta"] == revision["caption_meta"]
+
+
 @pytest.mark.parametrize("section", ["text", "timeline"])
 def test_narrated_guided_editor_opens_and_saves_full_caption_lane(monkeypatch, section):
     from app.config import settings

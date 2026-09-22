@@ -6,6 +6,44 @@ import XCTest
 
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
+    func testDeviceNarrationRequestUsesPublishedGenerationAndExactTarget() throws {
+        let jobID = UUID()
+        let base = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        var recipe = base.recipe
+        recipe.audio.narrationAssetID = "voiceover-item"
+        let request = DeviceRenderRequest(identity: base.identity, recipe: recipe)
+        let status = DeviceRenderStatusResponse(
+            phase: "published", request: request, publishedGeneration: "generation-1"
+        )
+
+        XCTAssertEqual(
+            try NativeEditorSession.currentDeviceNarrationRequest(
+                status, jobID: jobID, variantID: "variant", generation: "generation-1"
+            ),
+            request
+        )
+        XCTAssertThrowsError(try NativeEditorSession.currentDeviceNarrationRequest(
+            status, jobID: jobID, variantID: "variant", generation: "generation-2"
+        )) { XCTAssertEqual($0 as? APIError, .conflict) }
+        XCTAssertThrowsError(try NativeEditorSession.currentDeviceNarrationRequest(
+            status, jobID: UUID(), variantID: "variant", generation: "generation-1"
+        )) { XCTAssertEqual($0 as? APIError, .conflict) }
+        XCTAssertThrowsError(try NativeEditorSession.currentDeviceNarrationRequest(
+            status, jobID: jobID, variantID: "another-variant", generation: "generation-1"
+        )) { XCTAssertEqual($0 as? APIError, .conflict) }
+    }
+
+    func testDeviceRecipeWithoutNarrationDoesNotInventAnAudioSource() throws {
+        let jobID = UUID()
+        let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        let status = DeviceRenderStatusResponse(
+            phase: "published", request: request, publishedGeneration: "generation-1"
+        )
+        XCTAssertNil(try NativeEditorSession.currentDeviceNarrationRequest(
+            status, jobID: jobID, variantID: "variant", generation: "generation-1"
+        ))
+    }
+
     func testDeviceTimelineDurationUsesShorterOriginalAndKeepsEOFMargin() throws {
         XCTAssertEqual(try XCTUnwrap(NativeEditorSession.deviceTimelineDuration(proxyDuration: 2.2, localDuration: 2.0, minimum: 0.1)),
                        1.95, accuracy: 0.0001)
@@ -1752,10 +1790,16 @@ final class NativeEditorSessionTests: XCTestCase {
         await statusBox.set(DeviceRenderStatusResponse(phase: "published", request: request, publishedGeneration: "published-g2"))
         await renderSessions.reconcile(key, capabilities: .disabled)
         session.trimSelected(edge: .trailing, to: 1.25)
+        let localDuration = try XCTUnwrap(session.document.clips.first?.durationS)
+        let refreshedSources = expectation(description: "Dirty device rebase invalidates generation-owned sources")
+        fake.sourcePoolExpectation = refreshedSources
         XCTAssertTrue(session.applyPreviewVariant(["render_generation_id": .string("published-g2"), "render_status": .string("ready"), "output_url": .string("https://storage.example/g2.mp4")], generation: "g2"))
         XCTAssertEqual(session.saveState, .saved)
         XCTAssertEqual(session.document.revision.baseGeneration, "published-g2")
         XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(session.document.clips.first?.durationS, localDuration, "Refreshing generation-owned inputs must retain the follow-up edit")
+        await fulfillment(of: [refreshedSources], timeout: 3)
+        XCTAssertEqual(fake.sourcePoolCallCount, 2, "The dirty rebase must not reuse sources, including narration, from the prior generation")
 
         // A subsequent save must use the published device generation.
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 3, revisionHash: "revision-3", expectedDuration: nil)

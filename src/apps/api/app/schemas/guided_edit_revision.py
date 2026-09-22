@@ -579,5 +579,6 @@ def guided_editor_revision_from_approval(
             segments=segments,
             audio=audio,
             text_elements=text_elements,
+            caption_meta=execution_plan.get("editor_caption_meta"),
         )
     )

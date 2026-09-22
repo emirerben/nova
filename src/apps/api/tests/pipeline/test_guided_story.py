@@ -1900,6 +1900,43 @@ def test_runtime_legacy_revision_resolves_layout_by_segment_identity_before_medi
     ]
 
 
+def test_approved_narration_caption_style_survives_compile_editor_and_runtime() -> None:
+    guided = _guided_snapshot()
+    snapshot = EditProposalSnapshot.model_validate(guided["approved_proposal"])
+    narration = NarrationTrack(
+        gcs_path="voiceover/take.m4a",
+        generation="4",
+        duration_s=18,
+        caption_style="sentence",
+        words=[{"text": "Spoken.", "start_s": 0.2, "end_s": 0.6}],
+    )
+    snapshot = snapshot.model_copy(update={"narration": narration})
+    guided["approved_proposal"] = snapshot.model_dump(mode="json")
+    guided["media_digest"] = canonical_media_digest(snapshot.media, snapshot.narration)
+    canonical = compile_execution_plan(guided, track=None)
+    expected = {"style": "sentence", "y_frac": 0.7}
+    assert canonical["editor_caption_meta"] == expected
+    validate_execution_plan(canonical, guided)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+    assert revision["caption_meta"] == expected
+    runtime = compile_guided_runtime_plan(canonical, guided, revision)
+    assert runtime["editor_caption_meta"] == expected
+    assert runtime["text_elements"] == canonical["text_elements"]
+    legacy_narration = narration.model_copy(update={"caption_style": None})
+    assert "caption_style" not in legacy_narration.model_dump(mode="json")
+    legacy = copy.deepcopy(guided)
+    legacy["approved_proposal"]["narration"] = legacy_narration.model_dump(mode="json")
+    legacy_plan = compile_execution_plan(legacy, track=None)
+    assert legacy_plan["editor_caption_meta"] is None
+    assert legacy_plan["text_elements"] == canonical["text_elements"]
+    validate_execution_plan(legacy_plan, legacy)
+
+
 def test_runtime_revision_preserves_narration_caption_text_and_style_but_pins_timing() -> None:
     guided = _guided_snapshot()
     snapshot = EditProposalSnapshot.model_validate(guided["approved_proposal"]).model_copy(

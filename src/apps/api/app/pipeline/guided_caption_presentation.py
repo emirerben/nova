@@ -2,19 +2,36 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from typing import Any
 
+_SENTENCE_END_RE = re.compile(r"[.!?]+[\"'’”)\]]*$")
 
-def project_guided_caption_overlays(
-    overlays: list[dict[str, Any]], meta: dict[str, Any] | None
-) -> list[dict[str, Any]]:
-    if not meta:
-        return overlays
-    captions = sorted(
-        (row for row in overlays if row.get("role") == "generative_narration_caption"),
-        key=lambda row: (float(row["start_s"]), str(row.get("element_id", ""))),
-    )
+
+def _sentence_groups(captions: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Keep every spoken sentence together without changing cue receipts.
+
+    A terminal mark must close the token, so decimal tokens such as ``172.5``
+    never split a sentence. Closing quotes/brackets are accepted.
+    """
+    groups: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    for row in captions:
+        text = str(row.get("text") or "").strip()
+        if not text:
+            continue
+        current.append(row)
+        if _SENTENCE_END_RE.search(text):
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _legacy_groups(captions: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Retain the pre-presentation grouping for word-mode compatibility."""
     groups: list[list[dict[str, Any]]] = []
     for row in captions:
         text = str(row.get("text") or "").strip()
@@ -31,12 +48,33 @@ def project_guided_caption_overlays(
             groups.append([row])
         else:
             group.append(row)
+    return groups
+
+
+def project_guided_caption_overlays(
+    overlays: list[dict[str, Any]], meta: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """Project display-only grouping while keeping canonical cue IDs/timing.
+
+    Sentence display repeats the complete sentence across each source cue's
+    adjacent interval. The intervals meet at the next spoken word, preventing
+    a mid-sentence flicker while the persisted per-word elements stay intact.
+    """
+    if not meta:
+        return overlays
+    captions = sorted(
+        (row for row in overlays if row.get("role") == "generative_narration_caption"),
+        key=lambda row: (float(row["start_s"]), str(row.get("element_id", ""))),
+    )
+    sentence_style = meta.get("style") == "sentence"
+    groups = _sentence_groups(captions) if sentence_style else _legacy_groups(captions)
     output = [row for row in overlays if row.get("role") != "generative_narration_caption"]
     word_style = meta.get("style") == "word"
     appearance = meta.get("appearance") or {}
     highlight = appearance.get("highlight_spoken_word") is True
     for group in groups:
         group_words = [word for row in group for word in str(row["text"]).split()]
+        display_text = " ".join(group_words)
         offset = 0
         for index, original in enumerate(group):
             words = str(original["text"]).split()
@@ -49,7 +87,7 @@ def project_guided_caption_overlays(
             end = max(start + 0.01, end)
             if not word_style and not highlight:
                 row = deepcopy(original)
-                row.update(text=" ".join(group_words), start_s=start, end_s=end, effect="static")
+                row.update(text=display_text, start_s=start, end_s=end, effect="static")
                 row.pop("word_timings", None)
                 row.pop("animation_phases", None)
                 output.append(row)
@@ -61,7 +99,7 @@ def project_guided_caption_overlays(
                     begin = start + (end - start) * word_index / len(words)
                     stop = start + (end - start) * (word_index + 1) / len(words)
                     row.update(
-                        text=word if word_style else " ".join(group_words),
+                        text=word if word_style else display_text,
                         start_s=begin,
                         end_s=stop,
                         effect="static",

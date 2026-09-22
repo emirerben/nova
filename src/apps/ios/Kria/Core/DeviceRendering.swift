@@ -213,6 +213,45 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
     /// Visuals photo, so a photo-heavy render waits out the window instead of failing.
     var rateLimitBackoff: Duration = .seconds(20)
 
+    /// Resolves just the pinned voiceover that a native-editor reconstruction
+    /// needs. Unlike `resolve(for:)`, this deliberately does not touch the
+    /// recipe's originals, Visuals, fonts, or music: reopening an editor must
+    /// not ask the creator to relink every source simply to restore narration.
+    /// The request remains the server-authorized, immutable device recipe, so
+    /// the grant and the content-addressed cache retain the same trust boundary
+    /// as a full device render.
+    func resolveNarration() async throws -> URL {
+        guard let narrationID = request.recipe.audio.narrationAssetID,
+              let manifest = request.recipe.assetManifest,
+              let asset = manifest.assets.first(where: { $0.id == narrationID }),
+              case .voiceover = asset.source else {
+            throw MediaEngineError.missingAsset("narration")
+        }
+        guard request.recipe.assets.contains(where: { $0.id == narrationID && $0.fingerprint == asset.fingerprint.assetFingerprint }) else {
+            throw APIError.invalidResponse
+        }
+        let verified: URL
+        do {
+            verified = try await library.resolve(asset)
+        } catch RenderAssetError.missingLibraryAsset, RenderAssetError.changedLibraryAsset {
+            let grant = try await grant(for: asset)
+            guard grant.assetID == asset.id, grant.downloadURL.scheme == "https", grant.expiresAt > Date() else {
+                throw APIError.invalidResponse
+            }
+            let (file, response) = try await downloadSession.download(from: grant.downloadURL)
+            defer { try? FileManager.default.removeItem(at: file) }
+            guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard response.statusCode == 200 else { throw APIError.requestFailed(status: response.statusCode) }
+            try Task.checkCancellation()
+            verified = try await library.install(downloadedFile: file, for: asset)
+        }
+        let project = await library.root.deletingLastPathComponent()
+        let playableAudio = project.appending(path: "playable-audio", directoryHint: .isDirectory)
+        return try await Task.detached {
+            try PlayableAudioFile.prepare(source: verified, fingerprint: asset.fingerprint, directory: playableAudio)
+        }.value
+    }
+
     func resolve(for recipe: KriaMediaEngine.EditRecipe) async throws -> [String: URL] {
         guard recipe == request.recipe else { throw APIError.conflict }
         try recipe.validate()
