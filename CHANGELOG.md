@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.131.0] - 2026-09-22
+
+### Fixed
+- fix: preserve general clip instructions and grounded labels (#1145) <!-- release-pr: 1145 -->
+
 ## [0.76.130.0] - 2026-09-22
 
 ### Fixed
