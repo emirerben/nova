@@ -403,7 +403,8 @@ class Settings(BaseSettings):
     # generic label/group/order/include intents, a resolver matches them to clips
     # from the shared understanding record (with a capped vision re-query), and
     # on-screen labels must pass the grounding fence in app/schemas/clip_intents.py.
-    # False (default) => legacy sport_labels/context_label path, byte-identical.
+    # False (default) disables visual clip intents. Transcript label intents
+    # retain their separate pinned-narration materializer. No sport-regex fallback.
     # See docs/pipelines/clip-understanding.md. Apply: `fly secrets set
     # CLIP_INTENTS_ENABLED=true --app nova-video` + restart api + worker.
     clip_intents_enabled: bool = False

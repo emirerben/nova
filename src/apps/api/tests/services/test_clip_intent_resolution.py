@@ -1410,3 +1410,30 @@ async def test_generation_cache_mismatch_is_not_reused_and_new_answer_is_pinned(
     assert (
         result.vision_answers["m1"][normalize_question(question)]["generation"] == "new-generation"
     )
+
+
+@pytest.mark.asyncio
+async def test_transcript_intents_never_call_visual_resolver(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app.schemas.clip_intents import ClipIntent
+    from app.services import clip_intent_resolution as service
+
+    agent = MagicMock()
+    monkeypatch.setattr(service, "ClipRequestResolverAgent", agent)
+    result = await service.resolve_clip_intents_for_turn(
+        intents=[
+            ClipIntent(
+                intent_id="score",
+                op="label",
+                attribute="spoken score",
+                label_source="transcript",
+                transcript_kind="score",
+            )
+        ],
+        creator_request="Show the spoken score",
+        clips=[],
+        run_context=None,
+    )
+    assert result.needs_creator
+    agent.assert_not_called()

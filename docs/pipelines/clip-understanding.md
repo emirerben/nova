@@ -36,10 +36,9 @@ transcripts are third-party text that ends up in agent prompts.
   field with one of those names silently switches that code path on with no
   flag. Such fields are named `clip_*` on `ClipMeta`. Guard:
   `tests/pipeline/test_clip_meta_dormant_readers.py`.
-- **The record does not feed `matcher_clip_metas`.** Its `detected_subject`
-  drives the on-screen sport-label keyword matcher and the music matcher prompt.
-  Replaying the real KRI-126 clips showed free-text `activity` gains a wrong
-  label and loses a correct one. Guard:
+- **The record does not replace `matcher_clip_metas.detected_subject`.** That
+  field still feeds the music matcher. Visual labels use the persisted clip
+  record at their grounding boundary. Guard:
   `tests/pipeline/test_guided_story_clip_understanding.py`.
 - **Versioning.** `ANALYSIS_VERSION = 8` is video-only; photos stay fresh at 6
   (`_MIN_FRESH_ANALYSIS_VERSION_BY_KIND`). Re-analysis is lazy. `clip_cache`
@@ -56,18 +55,25 @@ strings are redacted before anything is written).
 
 ## Open-vocabulary clip intents (`CLIP_INTENTS_ENABLED`, default `false`)
 
-One generic intent replaces the per-feature strategy fields (`sport_labels`,
-`context_label.kind`): **label / group / order / include clips by an attribute
-the creator described in their own words**. No enum, no keyword list. Flag off is
-byte-identical to the legacy path (prompts, events, stored strategy/brief/snapshot;
-pinned by prompt-hash and serializer tests).
+Generic `clip_intents` replace `sport_labels`, `context_label`,
+`participant_labels`, and `score_labels` on `CreativeStrategy` (KRI-156).
+`label_source="clip"` (the default, omitted in serialized legacy-compatible
+intents) uses visual evidence. `label_source="transcript"` selects the pinned
+narration materializer and requires `op="label"` plus `transcript_kind`:
+`participant`, `score`, or `topic`. These kinds select existing deterministic
+narration grammars; the requested attribute stays free text.
+
+The flag gates visual resolution/rendering only. Transcript requests retain their
+existing guided voiceover path with the flag off. There is no sport keyword
+fallback or sport allowlist. New strategies and the frontend mirror contain none
+of the retired per-feature fields.
 
 Flow (flag on):
 
 1. **Chat.** `MainCreatorAgent` emits `strategy.clip_intents`
    (`app/schemas/clip_intents.py::ClipIntent`). It never authors per-clip answers
-   or label text; `creator_text` only carries the creator's exact words. The
-   sport regex in `_apply_explicit_render_intent` stops forcing `context_label`.
+   or label text; `creator_text` only carries the creator's exact words.
+   `_apply_explicit_render_intent` never creates label requests from regexes.
    `resolved_clip_intents` is server-owned: every entry point that accepts a
    model-authored strategy clears it (creator route, Kria `apply_strategy`), and
    both fields are hidden from derived JSON schemas (`SkipJsonSchema`) so the
@@ -112,10 +118,11 @@ cannot distinguish even different generations of a shared path. Supporting
 labels on these repeated sources requires threading stable media identity
 through that lane. Guard: `tests/tasks/test_grounded_context_labels.py`.
 
-### The on-screen text fence (replaces `_CONTEXT_SPORT_ALIASES`)
+### Visual label grounding
 
-`ground_label()` is the only rule by which AI-derived text may reach pixels. A
-label renders only when it is, in order:
+For clip-sourced intents, `ground_label()` owns the grounding rule. Transcript
+intents are rejected at the visual resolver and worker boundary, even if they
+carry forged resolved assignments. A visual label renders only when it is, in order:
 
 - `creator_text` — the creator's own words: whole words, in order, contiguous in
   the confirmed request (not a letters-only substring);
@@ -133,13 +140,46 @@ transcript-only evidence), and the offline acceptance replay on the real KRI-126
 clips `tests/services/test_kri126_clip_intents_acceptance.py`.
 `TestNoGeminiTextLeaks` is unchanged.
 
+### Transcript labels and legacy strategies
+
+Transcript intents stay on the confirmed `CreativeStrategy`; they are not sent
+to the clip resolver or used as vision-derived per-clip answers. Confirmation
+requires the existing `guided_voiceover_v1` contract and pinned narration.
+`guided_narration_labels.py` derives internal materializer requirements after
+both the transcript and final visual timeline are immutable. Score copy comes
+from exact word spans (never the annotation model's text); participant labels
+still require typed single-subject focus and retain asset-local identity. Topic
+labels require a transcript span. Visual and transcript intents can coexist on
+a narrated edit, but neither source can authorize the other's text.
+
+`CreativeStrategy` decodes legacy JSON through `legacy_clip_intents()` before
+strict validation, without writing to stored rows. Participant/score fields map
+to transcript intents; sport maps to a visual intent, or a transcript topic for
+guided voiceover strategies. Modern visual requests do not suppress legacy
+participant/score requirements. Strategy equality normalizes both sides, while
+execution receipts retain and verify their original approved payload hashes.
+
+Already materialized context/narration label elements continue to replay. Old
+narration receipt requirement shapes are compared semantically before reuse;
+changed requirements regenerate instead of reusing stale labels. The retired
+raw `context_label_intent` is accepted only for decoding old execution plans,
+not as authority to generate fresh labels. An old unresolved visual request
+must pass through chat resolution before a fresh label can render.
+
+Guards: `test_label_intent_migration.py`, `test_creator_agent_clip_intents.py`,
+`test_creator_execution_contract.py`, `test_guided_narration_labels.py`,
+`test_narration_labels.py`, and the grounded-label/guided revision tests.
+
 ### Rollout / rollback
 
 Server-only flag (no `NEXT_PUBLIC` twin; questions render through the existing
 chat event). Enable: `fly secrets set CLIP_INTENTS_ENABLED=true --app nova-video`
-+ restart api + worker. Rollback: set it `false`; stored intents are ignored
-(chat clears them, the build task and the worker gate on the flag) and
-already-confirmed label elements keep replaying by value. Before enabling, run
++ restart api + worker. Rollback: set it `false`; visual intents are ignored
+(chat clears them, the build task and worker gate on the flag). Transcript
+intents and already-confirmed label elements keep their existing behavior.
+Retirement must not be deployed until the KRI-127 flag-on observation period
+requested by KRI-156 has been reviewed; this code change does not enable the flag
+or establish production observation evidence. Before enabling, run
 the live evals: `tests/evals/test_clip_request_resolver_evals.py`,
 `test_clip_question_evals.py`, `test_main_creator_evals.py`,
 `test_edit_proposal_evals.py` (`--eval-mode=live`, no judge).
@@ -149,8 +189,6 @@ the live evals: `tests/evals/test_clip_request_resolver_evals.py`,
 - Vision re-query is video-only and per-turn capped; more vague clips than the
   cap means a question. An async (Celery) re-query is a follow-up.
 - Vision answers are cached for pool assets only, not raw `clip_assignments`.
-- `participant_labels` / `score_labels` stay on the transcript-grounded narration
-  lane; retiring them is a follow-up.
 - `generative_build._clip_meta_from_cache` drops the `clip_*` fields on the
   fast-reburn cache round trip, so the non-guided lane can only ground from a
   fresh analysis.

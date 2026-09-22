@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 from app.agents._schemas.text_element import merge_projected_text_elements_for_variant
 from app.tasks.generative_build import (
-    _canonical_context_sport_labels,
     _compact_context_sport_text_elements,
     _context_output_slot_windows,
     _context_sport_burn_dicts,
@@ -73,49 +72,6 @@ def test_context_sport_compaction_keeps_malformed_rows_and_real_gaps_separate() 
     assert compact[0]["source_params"] is not source_params
 
 
-def test_context_sport_labels_are_allowlisted_and_confidence_gated():
-    labels = _canonical_context_sport_labels(
-        [
-            {
-                "source": "detected_sport",
-                "clip_index": 0,
-                "sport": "basketball",
-                "position": "bottom_right",
-                "size": "small",
-                "confidence": 0.96,
-            },
-            {
-                "source": "detected_sport",
-                "clip_index": 1,
-                "sport": "tennis",
-                "position": "bottom_right",
-                "size": "small",
-                "confidence": 0.79,
-            },
-            {
-                "source": "detected_sport",
-                "clip_index": 1,
-                "sport": "a made-up sport from clip prose",
-                "position": "bottom_right",
-                "size": "small",
-                "confidence": 0.99,
-            },
-        ],
-        {"clip-a": "users/a.mp4", "clip-b": "users/b.mp4"},
-    )
-
-    assert labels == [
-        {
-            "clip_id": "clip-a",
-            "sport": "Basketball",
-            "source": "detected_sport",
-            "position": "bottom_right",
-            "size": "small",
-            "confidence": 0.96,
-        }
-    ]
-
-
 def test_context_sport_elements_follow_resolved_slots_without_timeline_ripple():
     steps = [
         SimpleNamespace(clip_id="clip-a"),
@@ -125,19 +81,20 @@ def test_context_sport_elements_follow_resolved_slots_without_timeline_ripple():
     plans = [{"duration_s": 2.0}, {"duration_s": 3.0}, {"duration_s": 1.0}]
     labels = [
         {
-            "source": "detected_sport",
-            "clip_index": 0,
-            "sport": "basketball",
-            "position": "bottom_right",
-            "size": "small",
+            "clip_id": "clip-a",
+            "sport": "Basketball",
+            "source": "grounded_label",
+            "grounding": "record_span",
             "confidence": 0.96,
+            "intent_id": "i1",
         },
         {
-            "source": "detected_sport",
             "clip_id": "clip-b",
-            "sport": "tennis",
-            "position": "bottom_right",
-            "size": "small",
+            "sport": "Tennis",
+            "source": "grounded_label",
+            "grounding": "record_span",
+            "confidence": 0.9,
+            "intent_id": "i2",
         },
     ]
 
@@ -145,7 +102,6 @@ def test_context_sport_elements_follow_resolved_slots_without_timeline_ripple():
         labels,
         steps=steps,
         resolved_plans=plans,
-        clip_id_to_gcs={"clip-a": "users/a.mp4", "clip-b": "users/b.mp4"},
         video_duration_s=6.0,
     )
 
@@ -182,28 +138,6 @@ def test_context_sport_elements_follow_resolved_slots_without_timeline_ripple():
     )
     assert projected is not None
     assert {row["text"] for row in projected} == {"Emir Olympics", "Basketball", "Tennis"}
-
-
-def test_typed_context_label_intent_resolves_only_structured_clip_sports():
-    intent = {
-        "kind": "sport",
-        "source": "clip_metadata",
-        "placement": "bottom_right",
-        "size": "small",
-        "per_clip": True,
-    }
-    metas = [
-        SimpleNamespace(clip_id="clip-a", detected_subject="basketball player on court"),
-        SimpleNamespace(clip_id="clip-b", detected_subject="a person outdoors"),
-    ]
-
-    labels = _canonical_context_sport_labels(
-        intent,
-        {"clip-a": "users/a.mp4", "clip-b": "users/b.mp4"},
-        metas,
-    )
-
-    assert [(row["clip_id"], row["sport"]) for row in labels] == [("clip-a", "Basketball")]
 
 
 def test_context_label_windows_mirror_crossfade_output_clock():

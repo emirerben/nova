@@ -3068,23 +3068,23 @@ def run_structural(
             action.strategy.audio_strategy in {"original_audio", "voiceover"}
             and action.strategy.render_program != "native"
             and not guided_source_audio
+            and not (
+                action.strategy.execution_contract == "guided_voiceover_v1"
+                and input.capability_manifest.narration is not None
+                and input.capability_manifest.capabilities.get("guided_voiceover") is not None
+                and input.capability_manifest.capabilities["guided_voiceover"].available
+            )
         ):
             failures.append("audio-led strategy is not native")
         normalized_request = " ".join(input.user_message.casefold().split())
         if "sport" in normalized_request and (
             "bottom right" in normalized_request or "bottom-right" in normalized_request
         ):
-            context_label = action.strategy.context_label
-            if context_label is None:
-                failures.append("explicit per-clip sport label request was dropped")
-            elif (
-                context_label.kind != "sport"
-                or context_label.source != "clip_metadata"
-                or context_label.placement != "bottom_right"
-                or context_label.size != "small"
-                or context_label.per_clip is not True
+            intents = action.strategy.clip_intents or []
+            if not any(
+                intent.op == "label" and intent.label_source == "clip" for intent in intents
             ):
-                failures.append("sport label request was not preserved exactly")
+                failures.append("explicit per-clip label request was dropped")
         if "emir olympics" in normalized_request:
             expected_title = (
                 "Emir Olympics. Ann Arbor 2022."

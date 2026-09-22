@@ -102,6 +102,19 @@ def test_main_creator_eval(
             assert "assignments" not in intent
             assert "media_id" not in intent
 
+    transcript_kinds = fixture.meta.get("transcript_label_kinds")
+    if transcript_kinds:
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert strategy["execution_contract"] == "guided_voiceover_v1"
+        intents = strategy.get("clip_intents") or []
+        assert {intent.get("transcript_kind") for intent in intents} == set(transcript_kinds)
+        assert all(intent.get("label_source") == "transcript" for intent in intents)
+        assert all(intent["op"] == "label" and not intent.get("creator_text") for intent in intents)
+        assert strategy.get("resolved_clip_intents") is None
+
     exact_copy = fixture.meta.get("exact_copy_intent")
     if exact_copy:
         from app.agents._schemas.creator_agent import (

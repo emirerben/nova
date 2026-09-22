@@ -285,3 +285,29 @@ def test_explicit_server_editor_action_retains_exact_render_approval() -> None:
         "render.request",
     ]
     assert plan.intents[1].depends_on == ["apply-editor-ops"]
+
+
+def test_strategy_adapter_keeps_only_deferred_transcript_intents():
+    from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
+
+    transcript = ClipIntent(
+        intent_id="score",
+        op="label",
+        attribute="spoken score",
+        label_source="transcript",
+        transcript_kind="score",
+    )
+    visual = ClipIntent(intent_id="sport", op="label", attribute="the sport shown")
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            clip_intents=[transcript, visual],
+            resolved_clip_intents=[ResolvedClipIntent(**visual.model_dump())],
+        ),
+        summary="Show the requested labels.",
+    )
+    plan = adapt_creator_action(action)
+    strategy = plan.intents[0].arguments["strategy"]
+    assert len(strategy["clip_intents"]) == 1
+    assert strategy["clip_intents"][0]["label_source"] == "transcript"
+    assert "resolved_clip_intents" not in strategy

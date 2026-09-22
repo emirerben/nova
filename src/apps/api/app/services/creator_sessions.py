@@ -21,6 +21,7 @@ from app.agents._schemas.creator_agent import (
     CreatorMediaRef,
     CreatorNarrationIdentity,
     canonical_context_hash,
+    creator_strategies_equal,
 )
 from app.config import settings
 from app.kria.media_sources import is_analysis_proxy_path
@@ -702,9 +703,6 @@ def compile_active_plan(
         ),
         "execution_contract": strategy.execution_contract,
         "media_scope": strategy.media_scope,
-        "participant_labels": strategy.participant_labels,
-        "score_labels": strategy.score_labels,
-        "sport_labels": strategy.sport_labels,
         "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
         # A render retry changes ``current_edit`` identity. Keep the exact,
         # opaque snapshot that this plan was approved against so the
@@ -724,8 +722,6 @@ def compile_active_plan(
         receipt["creator_request"] = clean_request
     if strategy.mixed_media_timing is not None:
         receipt["mixed_media_timing"] = strategy.mixed_media_timing.model_dump(mode="json")
-    if strategy.context_label is not None:
-        receipt["context_label"] = strategy.context_label.model_dump(mode="json")
     if strategy.image_layout is not None:
         receipt["image_layout"] = strategy.image_layout
     if strategy.montage_cadence is not None:
@@ -790,8 +786,9 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
                 )
                 or (
                     expected_program == "native"
-                    and (candidate.all_candidates or {}).get("creator_strategy")
-                    == expected_strategy
+                    and creator_strategies_equal(
+                        (candidate.all_candidates or {}).get("creator_strategy"), expected_strategy
+                    )
                 )
             )
         )

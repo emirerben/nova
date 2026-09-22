@@ -1445,18 +1445,17 @@ export interface CreatorAgentPlanPreview {
     strategy?: {
       execution_contract?: "guided_voiceover_v1" | null;
       media_scope?: "all" | "selected" | null;
-      participant_labels?: "none" | "single_subject";
-      score_labels?: boolean;
-      sport_labels?: boolean;
       /**
-       * KRI-127 (flag `clip_intents_enabled`, dark). Server-resolved
-       * open-vocabulary label/group/order/include intents; null/absent while
-       * the flag is off or nothing resolved this turn.
+       * Generic label/group/order/include/caption requests. Transcript labels
+       * are grounded later against the recorded narration and final timeline.
        */
       clip_intents?: Array<{
         intent_id: string;
-        op: "label" | "group" | "order" | "include";
+        op: "label" | "group" | "order" | "include" | "caption";
         attribute: string;
+        label_source?: "clip" | "transcript";
+        transcript_kind?: "participant" | "score" | "topic" | null;
+        caption_attribute?: string | null;
         creator_text?: string | null;
         position?: "first" | "last" | null;
         status?: "resolved" | "needs_creator";

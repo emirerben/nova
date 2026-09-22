@@ -138,7 +138,7 @@ def grounded_labels(intents: list[ResolvedClipIntent] | None) -> list[GroundedLa
     """Flatten resolved label intents into the only shape the render lane accepts."""
     labels: list[GroundedLabel] = []
     for intent in intents or []:
-        if intent.op != "label" or intent.status != "resolved":
+        if intent.op != "label" or intent.status != "resolved" or intent.label_source != "clip":
             continue
         for a in intent.assignments:
             if a.value and a.grounding:
@@ -442,6 +442,12 @@ async def resolve_clip_intents_for_turn(
     """Resolve ``intents`` against ``clips``."""
     ctx: RunContext = run_context if isinstance(run_context, RunContext) else RunContext()
 
+    # This resolver has no pinned narration/timeline authority. Never send
+    # transcript requests (including forged assignments) to a vision model.
+    if any(intent.label_source != "clip" for intent in intents):
+        return IntentResolution(
+            question="Narration labels must be resolved against the recorded voiceover."
+        )
     if not intents:
         return IntentResolution(intents=[], question=None, vision_answers={})
 

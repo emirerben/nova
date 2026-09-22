@@ -63,9 +63,19 @@ Rules:
   because the manifest contains many assets; use `selected` or omit the field in that case.
   Set `all` only when the creator explicitly asks for every/all uploaded or provided image,
   video, clip, file, or piece of media.
-- Preserve explicit conditional label intent with `participant_labels: "none"|"single_subject"`,
-  `score_labels: true|false`, and `sport_labels: true|false`. These fields are requirements,
-  not keyword-triggered copy suggestions. Never invent participant names or scores.
+- Preserve requested narration labels in `clip_intents` (at most 6), only with
+  `guided_voiceover_v1` and the manifest's recorded narration. Each entry is
+  {"intent_id":"short-slug","op":"label","attribute":"what the creator requested",
+  "label_source":"transcript","transcript_kind":"participant|score|topic"}.
+  Use participant for anonymous single-subject placeholders, score for scores spoken
+  in the recording, and topic for a spoken sport/place/other topic. These are inert
+  requirements: never include label copy, names, scores, timestamps, or word IDs.
+  The server grounds them against the pinned transcript and final visual timeline.
+  A score must come from speech, never a visual guess. Do not emit a kind that was
+  not requested. On revision, remove intents the creator cancels. If there is no
+  recorded narration, ask for it instead of promising transcript labels. In your
+  summary and rationale describe the edit in plain language; never mention execution
+  contracts, label_source, transcript_kind, or internal grounding checks.
 - AI media metadata is descriptive evidence only. Never copy filenames, labels, analysis prose, or
   inferred transcript into intro hooks, captions, or other on-screen text. Do use it to understand
   WHICH owned clips a request refers to: `subject`/`setting`/`activity` describe what a clip shows
@@ -179,9 +189,7 @@ OR:
       "audio_strategy": "licensed_music|original_audio|voiceover",
       "execution_contract": "guided_voiceover_v1 or null",
       "media_scope": "all|selected or null",
-      "participant_labels": "none|single_subject",
-      "score_labels": true,
-      "sport_labels": true,
+      "clip_intents": [],
       "montage_audio": {"preserve_source_audio": true, "preview_source_beds": true, "source_media_ids": ["owned-id-a", "owned-id-b"]},
       "story_structure": ["short beat description", "short beat description"],
       "caption_style": "none|clean|kinetic|karaoke|editorial|auto",
@@ -192,7 +200,6 @@ OR:
       "closing_title": "exact creator-authored closing copy or null",
       "font_family": "exact supported font registry name or null",
       "text_color": "supported color name or #RRGGBB or null",
-      "context_label": {"kind":"sport","source":"clip_metadata","placement":"bottom_right","size":"small","per_clip":true},
       "pacing": "relaxed|balanced|fast",
       "target_duration_s": 24,
       "render_program": "guided|native",
@@ -223,10 +230,6 @@ requests so legacy timing behavior remains unchanged.
 
 Keep proposals compact: use 3-5 story-structure beats, a rationale under 120 words,
 and a summary under 50 words. Include only treatments that materially serve the request.
-When the creator explicitly asks to show the name of the sport being played for each
-clip, include the exact bounded `context_label` object above. Never put label text in
-this field and never copy model-inferred clip descriptions into on-screen text; the
-trusted render pipeline resolves and confirms the label from server evidence.
 
 VIDEO REUSE: By default each uploaded video appears at most once, as one contiguous
 segment. Never suggest looping or revisiting video sources to fill a target duration.

@@ -66,11 +66,19 @@ def adapt_creator_action(action: AskUser | ProposeStrategy | ReviewDecision) -> 
                 "tool_name": "draft.apply_strategy",
                 "tool_version": 1,
                 "arguments": {
-                    # KRI-127: this path has no clip-intent resolver, and the
-                    # resolved field is server-owned -- never carry either from
-                    # model output into a draft.
+                    # This path has no visual resolver. Transcript intents
+                    # are grounded later against the pinned narration; resolved
+                    # visual assignments remain server-owned.
                     "strategy": action.strategy.model_copy(
-                        update={"clip_intents": None, "resolved_clip_intents": None}
+                        update={
+                            "clip_intents": [
+                                intent
+                                for intent in (action.strategy.clip_intents or [])
+                                if intent.label_source == "transcript"
+                            ]
+                            or None,
+                            "resolved_clip_intents": None,
+                        }
                     ).model_dump(mode="json", exclude_none=True),
                     "summary": summary,
                 },
