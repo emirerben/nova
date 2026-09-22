@@ -189,12 +189,26 @@ struct CreationConfirmationStage: View {
                     .buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
             } else if cleanup["requires_choice"]?.booleanValue == true {
                 Text("Choose whether to remove the detected pauses and retakes.")
-                Button("Clean up speech and create") {
+                Button {
                     action("generate", payload.merging(["speech_cleanup_choice": .string("clean")]) { _, new in new })
-                }.buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
-                Button("Keep original speech and create") {
+                } label: {
+                    Text("Clean up speech and create")
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(CanonicalPrimaryButtonStyle())
+                .disabled(isBusy || !hasVideo)
+                Button {
                     action("generate", payload.merging(["speech_cleanup_choice": .string("keep_original")]) { _, new in new })
-                }.disabled(isBusy || !hasVideo)
+                } label: {
+                    Text("Keep original speech and create")
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(CanonicalSecondaryButtonStyle())
+                .disabled(isBusy || !hasVideo)
             } else {
                 retryOrCreateButton(payload: payload)
             }
