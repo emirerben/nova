@@ -140,3 +140,7 @@ the live evals: `tests/evals/test_clip_request_resolver_evals.py`,
 - `generative_build._clip_meta_from_cache` drops the `clip_*` fields on the
   fast-reburn cache round trip, so the non-guided lane can only ground from a
   fresh analysis.
+- Non-guided lane id mapping falls back to the clip's GCS path
+  (`_resolve_clip_id_for_media_id`); two clips sharing one identical source
+  path can receive each other's label. The fence still re-grounds against the
+  clip it lands on, so this misplaces but never invents text.
