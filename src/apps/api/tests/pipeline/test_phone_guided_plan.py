@@ -196,7 +196,12 @@ def test_editor_media_video_compiles_to_silent_ordered_overlay_with_exact_trim_g
         0.3,
         2,
     )
-    assert {"visualBlocks", "visualVideos"} <= recipe.required_capabilities
+    assert {
+        "visualBlocks",
+        "visualVideos",
+        "alphaOverlay",
+        "audioMix",
+    } <= recipe.required_capabilities
 
 
 def test_editor_media_video_rejects_a_window_past_trimmed_source():

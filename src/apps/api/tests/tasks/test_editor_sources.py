@@ -3,10 +3,13 @@
 import copy
 import uuid
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import DBAPIError
 
 from app.models import CreationThread, CreationThreadUploadReservation, Job, PlanItem, PlanItemAsset
 from app.routes import generative_jobs
@@ -330,3 +333,123 @@ def test_final_footage_recheck_rejects_other_project(world):
         pytest.raises(task.AdmissionError, match="source_reservation_invalid"),
     ):
         task._recheck_source(db, world.job, record, source("one", gcs_path=raw["gcs_path"]), {})
+
+
+@pytest.fixture
+def footage_world(world, monkeypatch):
+    from app.services.phone_sources import bind_phone_sources
+
+    raw = receipt("one")
+    raw["storage_generation"] = "42"
+    binding = bind_phone_sources([raw], [raw["gcs_path"]])[0]
+    world.source = source("one", gcs_path=raw["gcs_path"], duration_s=10)
+    world.binding = binding.model_dump(mode="json")
+    world.reservation = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=world.job.user_id,
+        object_path=raw["gcs_path"],
+        media_id="one",
+        thread_id=uuid.uuid4(),
+        upload_contract=raw["upload_contract"],
+        expires_at=datetime.now(UTC) + timedelta(minutes=15),
+    )
+    world.objects[CreationThreadUploadReservation] = world.reservation
+    world.objects[CreationThread] = SimpleNamespace(
+        creator_id=world.job.user_id,
+        active_plan_item_id=world.job.content_plan_item_id,
+    )
+    result(world).update(
+        source_kind="footage", source_id="one", reservation_id=str(world.reservation.id)
+    )
+    world.prepare = Mock(return_value=(world.source, binding))
+    monkeypatch.setattr(task, "_prepare_footage", world.prepare)
+    return world
+
+
+def test_success_consumes_upload_lease_but_retains_reservation_for_parallel_import(footage_world):
+    world = footage_world
+    before = datetime.now(UTC)
+    run(world)
+    assert result(world)["status"] == "ready"
+    assert before <= world.reservation.expires_at <= datetime.now(UTC)
+    assert world.objects[CreationThreadUploadReservation] is world.reservation
+    # Another already-preparing import still has a reservation to recheck.
+    expires = world.reservation.expires_at
+    run(world, begin_attempt(result(world)))
+    assert result(world)["status"] == "ready"
+    assert world.reservation.expires_at == expires
+    assert len(world.variant[EDITOR_SOURCES_FIELD]["sources"]) == 1
+
+
+@pytest.mark.parametrize("failure", ["prepare", "recheck", "admit"])
+def test_failed_admission_does_not_consume_upload_lease(footage_world, monkeypatch, failure):
+    world = footage_world
+    before = world.reservation.expires_at
+    if failure == "prepare":
+        world.prepare.side_effect = task.AdmissionError("source_upload_unavailable", retryable=True)
+    elif failure == "recheck":
+        world.objects[CreationThread].active_plan_item_id = uuid.uuid4()
+    else:
+        monkeypatch.setattr(
+            task, "_admit", Mock(side_effect=task.AdmissionError("editor_source_limit"))
+        )
+    run(world)
+    assert result(world)["status"] == "failed"
+    assert world.reservation.expires_at == before
+    assert world.variant[EDITOR_SOURCES_FIELD]["sources"] == []
+
+
+@pytest.mark.parametrize("code", ["55P03", "23505", "40P01"])
+def test_final_reservation_nowait_releases_failed_session_before_recording_busy(
+    footage_world, monkeypatch, code
+):
+    world = footage_world
+    original = Exception("private lock detail")
+    original.pgcode = code
+    error = DBAPIError("private SQL", {}, original)
+    active = 0
+    queries = []
+
+    @contextmanager
+    def session():
+        nonlocal active
+        active += 1
+        try:
+            with world.session() as db:
+                execute = db.execute
+
+                def locked_execute(query):
+                    if query.column_descriptions[0]["entity"] is CreationThreadUploadReservation:
+                        queries.append(str(query.compile(dialect=postgresql.dialect())))
+                        raise error
+                    return execute(query)
+
+                db.execute = locked_execute
+                yield db
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(task, "sync_session", session)
+    real_fail = task._fail
+    failures = []
+
+    def fail(*args, **kwargs):
+        assert active == 0, "failed transaction must close before failure update"
+        failures.append(kwargs)
+        real_fail(*args, **kwargs)
+
+    monkeypatch.setattr(task, "_fail", fail)
+    expires = world.reservation.expires_at
+    if code == "55P03":
+        run(world)
+        assert result(world)["reason_code"] == "source_reservation_busy"
+        assert result(world)["retryable"] is True
+        assert failures == [{"code": "source_reservation_busy", "retryable": True}]
+    else:
+        with pytest.raises(DBAPIError) as exc:
+            run(world)
+        assert exc.value is error
+        assert failures == []
+    assert queries and all("FOR UPDATE NOWAIT" in query for query in queries)
+    assert world.reservation.expires_at == expires
+    assert world.variant[EDITOR_SOURCES_FIELD]["sources"] == []

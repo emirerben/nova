@@ -528,6 +528,9 @@ def compile_phone_guided_plan(
             else set()
         )
         | ({"audioMix"} if preserve_audio else set())
+        # Match the native engine's content-derived requirements for every
+        # silent overlay track, including a full-frame opaque media block.
+        | ({"visualBlocks", "alphaOverlay", "audioMix"} if plan.editor_visual_blocks else set())
     )
     if plan.narration is not None:
         # `narration is not None` always holds here (the checks at the top of

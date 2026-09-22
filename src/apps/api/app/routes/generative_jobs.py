@@ -6175,7 +6175,7 @@ def _phone_editor_media_available(job: Job, variant: dict) -> bool:
         and settings.visual_blocks_enabled
         and variant.get("render_destination") == "device"
         and variant.get("resolved_archetype") == "guided_story"
-        and {"stillImages", "visualVideos", "visualBlocks"}.issubset(
+        and {"stillImages", "visualVideos", "visualBlocks", "alphaOverlay", "audioMix"}.issubset(
             settings.phone_render_verified_features
         )
         and _guided_v2_revision(job, variant) is not None

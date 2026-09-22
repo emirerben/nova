@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import copy
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm.attributes import flag_modified
 
 from app import storage
@@ -165,14 +167,28 @@ class AdmissionError(ValueError):
         self.retryable = retryable
 
 
-def _recheck_source(db: Any, job: Job, record: dict, source: dict, receipt: dict) -> None:
+def reservation_lock_busy(exc: DBAPIError) -> bool:
+    """Recognize PostgreSQL NOWAIT contention across psycopg/asyncpg adapters."""
+    return (getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)) == "55P03"
+
+
+def _recheck_source(
+    db: Any, job: Job, record: dict, source: dict, receipt: dict
+) -> CreationThreadUploadReservation | None:
     """Re-read DB identity under the job lock after slow preparation completed."""
     if record["source_kind"] == "footage":
-        reservation = db.execute(
-            select(CreationThreadUploadReservation)
-            .where(CreationThreadUploadReservation.id == record["reservation_id"])
-            .with_for_update()
-        ).scalar_one_or_none()
+        try:
+            reservation = db.execute(
+                select(CreationThreadUploadReservation)
+                .where(CreationThreadUploadReservation.id == record["reservation_id"])
+                .with_for_update(nowait=True)
+            ).scalar_one_or_none()
+        except DBAPIError as exc:
+            if not reservation_lock_busy(exc):
+                raise
+            # The enclosing session must exit before _fail opens another
+            # transaction; PostgreSQL marks this transaction failed on NOWAIT.
+            raise AdmissionError("source_reservation_busy", retryable=True) from exc
         if reservation is None:
             raise AdmissionError("source_reservation_missing")
         thread = db.get(CreationThread, reservation.thread_id)
@@ -192,6 +208,7 @@ def _recheck_source(db: Any, job: Job, record: dict, source: dict, receipt: dict
             or contract.proxy.original.model_dump(mode="json") != receipt["original"]
         ):
             raise AdmissionError("source_reservation_changed")
+        return reservation
     else:
         asset = db.get(
             PlanItemAsset, source["media_id"], with_for_update=True, populate_existing=True
@@ -206,6 +223,7 @@ def _recheck_source(db: Any, job: Job, record: dict, source: dict, receipt: dict
             or str(asset.gcs_generation or "") != source["generation"]
         ):
             raise AdmissionError("visual_changed")
+    return None
 
 
 def _admit(
@@ -305,7 +323,7 @@ def prepare_phone_editor_source(
                 raise AdmissionError("source_revision_stale")
             if not _guard_matches(job, variant, current):
                 raise AdmissionError("source_revision_stale")
-            _recheck_source(db, job, current, source, receipt)
+            reservation = _recheck_source(db, job, current, source, receipt)
             catalog = (_guided_v2_revision(job, variant) or {})["sources"]
             index, source = _admit(
                 registry,
@@ -315,6 +333,11 @@ def prepare_phone_editor_source(
                 receipt=receipt,
                 assembly=job.assembly_plan,
             )
+            if reservation is not None:
+                # Admission consumes this upload just like project attachment.
+                # Retain the row for another already-preparing import, but no
+                # longer block project deletion for the 15-minute PUT lease.
+                reservation.expires_at = min(reservation.expires_at, datetime.now(UTC))
             current.update(
                 status="ready",
                 source_index=index,
@@ -329,6 +352,10 @@ def prepare_phone_editor_source(
             db.commit()
     except AdmissionError as exc:
         _fail(job_id, variant_id, import_id, attempt_id, code=exc.code, retryable=exc.retryable)
+    except DBAPIError:
+        # Do not mislabel unrelated database faults as source contention. The
+        # durable attempt lease makes an interrupted completion recoverable.
+        raise
     except ValueError:
         _fail(
             job_id,

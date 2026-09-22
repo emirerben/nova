@@ -1,17 +1,21 @@
 import copy
 import uuid
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException, Response
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import DBAPIError
 
-from app.models import Job
+from app.models import CreationThread, CreationThreadUploadReservation, Job, PlanItem
 from app.routes import editor_sources as routes
 from app.services.phone_editor_sources import EDITOR_SOURCES_FIELD
 from app.tasks import editor_sources as task
 from tests.services.test_phone_editor_sources import admitted, source
+from tests.services.test_phone_sources import receipt
 
 
 @pytest.fixture
@@ -213,7 +217,7 @@ async def test_reservation_query_is_scoped_to_item_project(admission):
     query = str(a.db.execute.call_args.args[0].compile(dialect=postgresql.dialect()))
     assert "creation_threads.active_plan_item_id =" in query
     assert "creation_threads.creator_id =" in query
-    assert "FOR UPDATE OF creation_thread_upload_reservations" in query
+    assert "FOR UPDATE OF creation_thread_upload_reservations NOWAIT" in query
 
 
 @pytest.mark.asyncio
@@ -288,6 +292,114 @@ async def test_existing_bound_footage_reuses_index_without_consumed_reservation(
 
 
 @pytest.mark.asyncio
+async def test_footage_admission_runs_post_prepare_get_and_save_validation(admission, monkeypatch):
+    """Exercise the real route, task, and durable-receipt save gate together.
+
+    The boundary doubles are deliberately limited to DB/storage/ffprobe: route
+    reservation ownership, task proxy validation, registry merge, readback,
+    and the subsequent save-time receipt validation all remain real.
+    """
+    a = admission
+    raw = receipt("new-footage")
+    thread = SimpleNamespace(id=uuid.uuid4(), creator_id=a.user.id, active_plan_item_id=a.item.id)
+    reservation = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=a.user.id,
+        thread_id=thread.id,
+        object_path=raw["gcs_path"],
+        media_id="new-footage",
+        expires_at=datetime.now(UTC) + timedelta(minutes=15),
+        upload_contract=raw["upload_contract"],
+    )
+    # POST takes the job lock then the owned-reservation lock.
+    a.db.execute = AsyncMock(
+        side_effect=[
+            SimpleNamespace(scalar_one_or_none=lambda: a.job),
+            SimpleNamespace(scalar_one_or_none=lambda: reservation),
+        ]
+    )
+    a.db.get = AsyncMock(return_value=a.job)
+    body = a.body.model_copy(update={"source_kind": "footage", "source_id": "new-footage"})
+    out, response = await post(a, body)
+    assert (out.status, response.status_code) == ("preparing", 202)
+    record = a.variant[EDITOR_SOURCES_FIELD]["imports"][str(body.client_import_id)]
+    assert record["reservation_id"] == str(reservation.id)
+
+    objects = {
+        Job: a.job,
+        PlanItem: a.item,
+        CreationThread: thread,
+        CreationThreadUploadReservation: reservation,
+    }
+
+    class Session:
+        def get(self, model, *args, **kwargs):
+            return objects.get(model)
+
+        def execute(self, query):
+            model = query.column_descriptions[0]["entity"]
+            return SimpleNamespace(scalar_one_or_none=lambda: objects.get(model))
+
+        def commit(self):
+            return None
+
+    @contextmanager
+    def session():
+        yield Session()
+
+    probe = SimpleNamespace(
+        width=640,
+        height=360,
+        fps=15,
+        rotation_degrees=0,
+        duration_s=10,
+        has_audio=True,
+        codec="h264",
+        pix_fmt="yuv420p",
+    )
+    monkeypatch.setattr(task, "sync_session", session)
+    monkeypatch.setattr(task, "flag_modified", Mock())
+
+    def signed_url(*args, **kwargs):
+        return "signed"
+
+    def metadata(path):
+        return SimpleNamespace(generation="42", size=1000)
+
+    monkeypatch.setattr(task.storage, "signed_get_url_for_generation", signed_url)
+    monkeypatch.setattr(task.storage, "object_metadata", metadata)
+    monkeypatch.setattr(routes.storage, "object_metadata", metadata)
+    monkeypatch.setattr(task, "probe_video", lambda url: probe)
+    from app.routes import generative_jobs
+    from app.services.phone_editor_sources import merge_editor_sources
+
+    monkeypatch.setattr(
+        generative_jobs,
+        "_guided_v2_revision",
+        lambda job, variant: {
+            "revision_number": 1,
+            "sources": merge_editor_sources([source()], variant),
+        },
+    )
+    monkeypatch.setattr(generative_jobs, "_phone_editor_media_available", lambda *args: True)
+    task.prepare_phone_editor_source.run(
+        str(a.job.id), "v", str(body.client_import_id), record["attempt_id"]
+    )
+
+    readback = await routes.get_editor_source(
+        str(a.item.id), "v", body.client_import_id, a.user, a.db
+    )
+    assert readback.status == "ready", readback.reason_code
+    assert readback.source_index == 1
+    assert readback.source.media_id == "new-footage"
+    assert readback.source.gcs_path == raw["gcs_path"]
+    assert reservation.expires_at <= datetime.now(UTC)
+    await routes.validate_editor_sources(
+        a.db, job=a.job, variant=a.variant, used_media_ids={"new-footage"}
+    )
+
+
+@pytest.mark.asyncio
 async def test_save_accepts_real_photo_receipt_with_omitted_default_kind(admission):
     from app.services.phone_sources import PhoneVisualBinding
 
@@ -325,3 +437,40 @@ async def test_save_accepts_real_photo_receipt_with_omitted_default_kind(admissi
         await routes.validate_editor_sources(
             a.db, job=a.job, variant=a.variant, used_media_ids={str(a.asset.id)}
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attribute", ["pgcode", "sqlstate"])
+async def test_reservation_nowait_conflict_releases_transaction_and_is_retryable(
+    admission, attribute
+):
+    a = admission
+    original = Exception("private lock owner and SQL detail")
+    setattr(original, attribute, "55P03")
+    a.db.execute.side_effect = DBAPIError("private SQL", {}, original)
+    a.db.rollback = AsyncMock()
+    with pytest.raises(HTTPException) as exc:
+        await routes._owned_proxy_reservation(
+            a.db, user_id=a.user.id, source_id="clip", item_id=a.item.id
+        )
+    assert exc.value.status_code == 503
+    assert exc.value.detail == {"code": "source_reservation_busy", "retryable": True}
+    a.db.rollback.assert_awaited_once()
+    a.db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["23505", "40P01", None])
+async def test_other_reservation_database_failures_are_not_disguised_as_busy(admission, code):
+    a = admission
+    original = Exception("unrelated database fault")
+    original.sqlstate = code
+    failure = DBAPIError("query", {}, original)
+    a.db.execute.side_effect = failure
+    a.db.rollback = AsyncMock()
+    with pytest.raises(DBAPIError) as exc:
+        await routes._owned_proxy_reservation(
+            a.db, user_id=a.user.id, source_id="clip", item_id=a.item.id
+        )
+    assert exc.value is failure
+    a.db.rollback.assert_not_called()

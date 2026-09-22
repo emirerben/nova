@@ -39,6 +39,7 @@ def media_job(monkeypatch):
             "stillImages",
             "visualVideos",
             "visualBlocks",
+            "alphaOverlay",
             "authoredText",
         ],
     )
@@ -258,6 +259,73 @@ def test_media_visual_save_is_atomic_and_survives_text_resave(monkeypatch):
     resaved = device_status(job, "guided_story").request.recipe
     assert resaved.tracks == saved.tracks
     assert resaved.audio == saved.audio
+
+
+def test_removing_media_block_does_not_resurrect_on_later_text_save(monkeypatch):
+    job, variant = media_job(monkeypatch)
+    admit_photo(variant)
+    revision = gj._guided_v2_revision(job, variant)
+    block = {
+        "id": "remove-me",
+        "kind": "media",
+        "asset_id": photos.PHOTO_ID,
+        "src_gcs_path": photos.PHOTO_PATH,
+        "media_kind": "image",
+        "start_s": 0.5,
+        "end_s": 1.5,
+    }
+    assets = {
+        photos.PHOTO_ID: {
+            "status": "ready",
+            "gcs_path": photos.PHOTO_PATH,
+            "kind": "image",
+        }
+    }
+    added = gj.prepare_editor_commit(
+        job,
+        "guided_story",
+        gj.EditorCommitRequest(
+            base_generation="first",
+            guided_revision_number=revision["revision_number"],
+            visual_blocks=[block],
+        ),
+        visual_assets=assets,
+    )
+    with_media = device_status(job, "guided_story").request.recipe
+    assert any(track.kind == "overlay" for track in with_media.tracks)
+
+    removed = gj.prepare_editor_commit(
+        job,
+        "guided_story",
+        gj.EditorCommitRequest(
+            base_generation=added["generation"],
+            guided_revision_number=added["revision_number"],
+            visual_blocks=[],
+        ),
+    )
+    without_media = device_status(job, "guided_story").request.recipe
+    assert not any(track.kind == "overlay" for track in without_media.tracks)
+    assert without_media.tracks[0] == with_media.tracks[0]
+    assert without_media.audio == with_media.audio
+    assert without_media.text_layers == with_media.text_layers
+
+    variant = job.assembly_plan["variants"][0]
+    gj.prepare_editor_commit(
+        job,
+        "guided_story",
+        gj.EditorCommitRequest(
+            base_generation=removed["generation"],
+            guided_revision_number=removed["revision_number"],
+            text_elements=[
+                {**row, "text": "Updated text"}
+                for row in gj._guided_text_state_for_response(job, variant)[0]
+            ],
+        ),
+    )
+    reopened = device_status(job, "guided_story").request.recipe
+    assert not any(track.kind == "overlay" for track in reopened.tracks)
+    assert reopened.tracks[0] == without_media.tracks[0]
+    assert reopened.audio == without_media.audio
 
 
 def test_capabilities_are_qualified_and_only_open_media(monkeypatch):

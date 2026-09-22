@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -40,7 +41,7 @@ from app.services.phone_sources import (
     PhoneSourceBinding,
     PhoneVisualBinding,
 )
-from app.tasks.editor_sources import prepare_phone_editor_source
+from app.tasks.editor_sources import prepare_phone_editor_source, reservation_lock_busy
 
 router = APIRouter()
 
@@ -111,19 +112,30 @@ def _fence(job: Job, variant: dict[str, Any], body: EditorSourceRequest) -> None
 async def _owned_proxy_reservation(
     db: AsyncSession, *, user_id: uuid.UUID, source_id: str, item_id: uuid.UUID
 ) -> CreationThreadUploadReservation:
-    row = (
-        await db.execute(
-            select(CreationThreadUploadReservation)
-            .join(CreationThread, CreationThread.id == CreationThreadUploadReservation.thread_id)
-            .where(
-                CreationThreadUploadReservation.creator_id == user_id,
-                CreationThread.creator_id == user_id,
-                CreationThread.active_plan_item_id == item_id,
-                CreationThreadUploadReservation.media_id == source_id,
+    try:
+        row = (
+            await db.execute(
+                select(CreationThreadUploadReservation)
+                .join(
+                    CreationThread, CreationThread.id == CreationThreadUploadReservation.thread_id
+                )
+                .where(
+                    CreationThreadUploadReservation.creator_id == user_id,
+                    CreationThread.creator_id == user_id,
+                    CreationThread.active_plan_item_id == item_id,
+                    CreationThreadUploadReservation.media_id == source_id,
+                )
+                .with_for_update(of=CreationThreadUploadReservation, nowait=True)
             )
-            .with_for_update(of=CreationThreadUploadReservation)
-        )
-    ).scalar_one_or_none()
+        ).scalar_one_or_none()
+    except DBAPIError as exc:
+        if not reservation_lock_busy(exc):
+            raise
+        await db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "source_reservation_busy", "retryable": True},
+        ) from exc
     if row is None:
         raise HTTPException(status_code=409, detail="source_reservation_missing")
     try:
