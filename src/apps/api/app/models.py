@@ -1389,6 +1389,7 @@ class CreatorAgentSession(Base):
     last_review: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     last_good: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     last_error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    preparation: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
@@ -1449,6 +1450,53 @@ class CreatorAgentSession(Base):
                 "target_job_id IS NOT NULL AND target_variant_id IS NOT NULL "
                 "AND target_generation_id IS NOT NULL"
             ),
+        ),
+    )
+
+
+class CreatorPlanningAttempt(Base):
+    """Durable pre-planning work; one receipt per original creator message."""
+
+    __tablename__ = "creator_planning_attempts"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_event_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_events.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    creator_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    session_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    planning_action: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    inputs: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    lease_token: Mapped[str | None] = mapped_column(Text)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    last_dispatched_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    error_code: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued','running','completed','failed','superseded')",
+            name="ck_creator_planning_attempt_status",
+        ),
+        Index(
+            "idx_creator_planning_attempt_recovery", "status", "lease_until", "last_dispatched_at"
         ),
     )
 

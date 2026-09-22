@@ -312,6 +312,7 @@ async def test_flag_on_needs_creator_asks_and_never_proposes_strategy(monkeypatc
     resolve.assert_awaited_once()
     assert session.active_plan is None
     assert session.status == "briefing"
+    assert session.last_error is None
     append_event.assert_awaited_once()
     call = append_event.await_args
     assert call.kwargs["event_type"] == "assistant_question"
@@ -320,7 +321,9 @@ async def test_flag_on_needs_creator_asks_and_never_proposes_strategy(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_resolver_exception_degrades_to_a_question_never_a_500(monkeypatch) -> None:
+async def test_resolver_exception_is_a_technical_failure_never_a_genuine_no_match(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", True)
     manifest = _manifest()
     item = SimpleNamespace(id=uuid.uuid4())
@@ -369,9 +372,15 @@ async def test_resolver_exception_degrades_to_a_question_never_a_500(monkeypatch
     assert result is response
     assert session.active_plan is None
     assert session.status == "briefing"
+    assert session.last_error == {"code": "provider_unavailable"}
     call = append_event.await_args
-    assert call.kwargs["event_type"] == "assistant_question"
-    assert call.kwargs["payload"]["reason_code"] == "clip_intent_unresolved"
+    assert call.kwargs["event_type"] == "assistant_error"
+    assert call.kwargs["payload"] == {
+        "message": (
+            "Clip analysis is unavailable right now. Your request is saved; try again later."
+        ),
+        "code": "provider_unavailable",
+    }
 
 
 # ---------------------------------------------------------------------------

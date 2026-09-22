@@ -46,6 +46,7 @@ from app.schemas.edit_proposal import (
 )
 from app.services.clip_understanding import clip_record
 from app.services.content_plan_persona import load_owned_plan_persona_sync
+from app.services.creator_clip_analysis import analyze_clip_assignment
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.edit_direction_planner import (
     clamp_fast_montage_target_duration_s,
@@ -649,80 +650,21 @@ def _pool_refs(db, item: PlanItem, owner_id: uuid.UUID) -> list[MediaRef]:  # no
     ]
 
 
-def _analyze_clip_assignment(raw: dict, pool_by_path: dict[str, MediaRef]) -> tuple[dict, MediaRef]:
-    from app import storage  # noqa: PLC0415
-    from app.tasks.autoplace import (  # noqa: PLC0415
-        ANALYSIS_VERSION,
-        analysis_is_stale,
-        analyze_pool_image,
-        analyze_pool_video,
-    )
+def _analyze_clip_assignment(
+    raw: dict,
+    pool_by_path: dict[str, MediaRef],
+    *,
+    run_context=None,  # noqa: ANN001 - supplied by the parent preparation worker
+    require_semantic: bool = False,
+) -> tuple[dict, MediaRef]:
+    """Compatibility wrapper; task callers/tests may still patch this name."""
 
-    entry = dict(raw)
-    path = str(entry["gcs_path"])
-    media_id = str(entry["media_id"])
-    if path in pool_by_path:
-        pooled = pool_by_path[path]
-        ref = pooled.model_copy(update={"lane": "clip", "media_id": media_id})
-        entry.update(
-            {
-                "generation": ref.generation,
-                "kind": ref.kind,
-                "duration_s": ref.duration_s,
-                "aspect": ref.aspect,
-                "analysis": ref.analysis,
-            }
-        )
-        return entry, ref
-
-    metadata = storage.object_metadata(path)
-    kind = _kind(metadata.content_type, path)
-    cached = entry.get("analysis") if entry.get("generation") == metadata.generation else None
-    analysis = dict(cached or {})
-    if analysis and kind == "video" and analysis_is_stale(analysis, kind=kind):
-        analysis = {}  # rotation-naive pre-v6 row -- fall through to re-derive display dims
-    duration = entry.get("duration_s")
-    aspect = entry.get("aspect")
-    if not analysis:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            local = os.path.join(tmpdir, Path(path).name or "media")
-            storage.download_generation_to_file(path, local, generation=metadata.generation)
-            if kind == "image":
-                result, aspect, dims, has_alpha = analyze_pool_image(local, media_id)
-                analysis = result or {}
-                if dims:
-                    analysis.update({"width": dims[0], "height": dims[1]})
-                analysis["has_alpha"] = has_alpha
-            else:
-                result, aspect, duration, dims = analyze_pool_video(local)
-                analysis = result or {}
-                if dims:
-                    analysis.update({"width": dims[0], "height": dims[1]})
-                analysis.setdefault("analysis_version", ANALYSIS_VERSION)
-                analysis.setdefault("source", "probe_only")
-    entry.update(
-        {
-            "generation": metadata.generation,
-            "kind": kind,
-            "duration_s": duration,
-            "aspect": aspect,
-            "analysis": analysis,
-        }
+    return analyze_clip_assignment(
+        raw,
+        pool_by_path,
+        run_context=run_context,
+        require_semantic=require_semantic,
     )
-    raw_name = Path(path).name
-    ref = MediaRef(
-        lane="clip",
-        media_id=media_id,
-        gcs_path=path,
-        generation=metadata.generation,
-        kind=kind,
-        source_filename=raw_name.split("-", 1)[-1],
-        duration_s=float(duration) if duration else None,
-        aspect=float(aspect) if aspect else None,
-        user_context=str(entry.get("user_note") or ""),
-        analysis=analysis,
-    )
-    return entry, ref
 
 
 def _analyze_clip_assignments(
@@ -1092,6 +1034,62 @@ def _checkpoint_analyzed_assignment(
             publish_preflight_after_commit(preflight_analysis_id)
 
 
+def _settle_creator_dispatch_failure(
+    *,
+    item_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    attempt_id: str,
+    ownership_epoch: int,
+) -> bool:
+    """Fail an unbound Creator attempt without discarding its approved inputs.
+
+    Existing poll reconciliation fails the exact execution receipt/session and
+    projects the chat failure from this envelope. No second thread updater or
+    thread lock inversion is needed; native retries retain their budget.
+    """
+    with sync_session() as db:
+        locked = _locked_item(db, item_id, ownership_epoch)
+        if locked is None:
+            return False
+        item, locked_owner_id = locked
+        current = parse_edit_proposal(item.edit_proposal)
+        if (
+            locked_owner_id != owner_id
+            or getattr(item, "current_job_id", None) is not None
+            or current is None
+            or current.generation_attempt_id != attempt_id
+            or current.status != "approved"
+            or current.design_fallback != MAIN_CREATOR_FAIL_CLOSED
+        ):
+            return False
+        sessions = list(
+            db.execute(
+                select(CreatorAgentSession)
+                .where(
+                    CreatorAgentSession.creator_id == owner_id,
+                    CreatorAgentSession.plan_item_id == item_id,
+                    CreatorAgentSession.ownership_epoch == ownership_epoch,
+                )
+                .with_for_update()
+            ).scalars()
+        )
+        matching = [
+            session
+            for session in sessions
+            if (
+                isinstance(session.active_plan, dict)
+                and session.active_plan.get("guided_generation_attempt_id") == attempt_id
+                and getattr(session, "status", None) == "executing"
+                and getattr(session, "target_job_id", None) is None
+            )
+        ]
+        if len(matching) != 1:
+            return False
+        _fail(item, current, "creator_dispatch_failed", "Kria couldn't start this edit. Try again.")
+        db.commit()
+        return True
+
+
 def _dispatch_after_auto_design(
     iid: uuid.UUID, item_id: str, attempt_id: str, ownership_epoch: int
 ) -> DispatchResult | None:
@@ -1174,13 +1172,21 @@ def _dispatch_after_auto_design(
                     item_id=item_id,
                     attempt_id=attempt_id,
                 )
-                return
             creator_request = _creator_request_for_guided_attempt(
                 db,
                 item_id=item.id,
                 owner_id=owner_id,
                 attempt_id=attempt_id,
             )
+
+    if current.design_fallback == MAIN_CREATOR_FAIL_CLOSED and creator_dispatch_context is None:
+        _settle_creator_dispatch_failure(
+            item_id=iid,
+            owner_id=owner_id,
+            attempt_id=attempt_id,
+            ownership_epoch=ownership_epoch,
+        )
+        return
 
     dispatch_kwargs = {"bypass_guided_edit_gate": bypass}
     dispatch_kwargs["creator_guided_attempt_id"] = attempt_id
@@ -1196,7 +1202,18 @@ def _dispatch_after_auto_design(
     dispatch_kwargs["reject_active_creator_session"] = (
         current.design_fallback != MAIN_CREATOR_FAIL_CLOSED
     )
-    result = dispatch_item_render_for(item_id, ownership_epoch, **dispatch_kwargs)
+    try:
+        result = dispatch_item_render_for(item_id, ownership_epoch, **dispatch_kwargs)
+    except Exception:
+        if creator_dispatch_context is not None:
+            _settle_creator_dispatch_failure(
+                item_id=iid,
+                owner_id=owner_id,
+                attempt_id=attempt_id,
+                ownership_epoch=ownership_epoch,
+            )
+        raise
+
     if owner_id is not None and result.outcome in {"dispatched", "already_active"}:
         bound = _bind_creator_job_after_auto_design(
             item_id=iid,
@@ -1213,10 +1230,14 @@ def _dispatch_after_auto_design(
                 job_id=getattr(result, "job_id", None),
             )
     if result.outcome not in {"dispatched", "already_active"}:
-        # The proposal is already committed (approved, or failed+design_fallback)
-        # — leave it there. The next manual Generate click dispatches directly
-        # (approved reads identically regardless of approval_mode) or
-        # re-triggers auto-design (failed), never wedged.
+        if creator_dispatch_context is not None:
+            _settle_creator_dispatch_failure(
+                item_id=iid,
+                owner_id=owner_id,
+                attempt_id=attempt_id,
+                ownership_epoch=ownership_epoch,
+            )
+        # Legacy auto-design keeps its existing manual Generate behavior.
         log.warning(
             "edit_proposal.auto_finalize_dispatch_failed",
             item_id=item_id,
