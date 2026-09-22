@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.111.0] - 2026-09-22
+
+### Changed
+- docs(kri-127): note the shared-source-path label mapping gap (#1124) <!-- release-pr: 1124 -->
+
 ## [0.76.110.0] - 2026-09-22
 
 ### Changed
