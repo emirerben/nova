@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.145.0] - 2026-09-22
+
+### Changed
+- Fix creator clip preparation deadlocks (#1163) <!-- release-pr: 1163 -->
+
 ## [0.76.144.0] - 2026-09-22
 
 ### Changed
