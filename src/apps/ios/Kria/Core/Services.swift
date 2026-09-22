@@ -391,12 +391,16 @@ struct CreationJob: Codable, Sendable {
     let status: String
     let currentPhase: String?
     let failureReason: String?
+    /// A human sentence for `failureReason`, never the raw taxonomy code
+    /// (KRI-163) -- prefer this over `failureReason` in any user-facing copy.
+    let failureMessage: String?
     let variants: [CreationVariant]
 
     enum CodingKeys: String, CodingKey {
         case id, status, variants
         case currentPhase = "current_phase"
         case failureReason = "failure_reason"
+        case failureMessage = "failure_message"
     }
 
     init(from decoder: Decoder) throws {
@@ -405,6 +409,7 @@ struct CreationJob: Codable, Sendable {
         status = try values.decode(String.self, forKey: .status)
         currentPhase = try values.decodeIfPresent(String.self, forKey: .currentPhase)
         failureReason = try values.decodeIfPresent(String.self, forKey: .failureReason)
+        failureMessage = try values.decodeIfPresent(String.self, forKey: .failureMessage)
         variants = try values.decodeIfPresent([CreationVariant].self, forKey: .variants) ?? []
     }
 }

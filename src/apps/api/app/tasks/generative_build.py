@@ -1956,7 +1956,13 @@ def orchestrate_generative_job(self, job_id: str) -> None:
                 return
             log.error("generative_job_failed", job_id=job_id, error=str(exc), exc_info=True)
             mark_failed_phase(job_id)
-            terminalized = _fail_job(job_id, str(exc))
+            # Blanket fallback for anything that isn't a GuidedStoryError above:
+            # without a failure_reason here the row is NULL-reasoned and the
+            # client's failure card has nothing to show (KRI-163 — this was
+            # the majority shape of every prod failure since Sept 1). "unknown"
+            # matches the reaper's own convention (tasks/reaper.py) for the
+            # same gap: classifiable as "something broke", not silently blank.
+            terminalized = _fail_job(job_id, str(exc), failure_reason="unknown")
             if not terminalized:
                 raise
         finally:
@@ -2237,6 +2243,9 @@ def _run_generative_job_impl(
             job.error_detail = (
                 "Analysis proxies require on-device rendering; originals were not uploaded."
             )
+            # Named rather than left NULL (KRI-163) — a NULL failure_reason
+            # leaves the client's failure card with nothing to show.
+            job.failure_reason = "originals_not_uploaded"
             db.commit()
             return
         assembly = dict(job.assembly_plan or {})
@@ -26725,10 +26734,20 @@ def _finalize_job_decision(
             ),
         },
         merge_finalized_variants=True,
+        # `variants_failed` with a NULL failure_reason left the client's
+        # failure card with nothing to show (KRI-163 — this was the majority
+        # shape of every prod failure since Sept 1). Fall back to the first
+        # failed variant's own `error_class` (`_classify_error`'s public,
+        # user-safe taxonomy, already surfaced per-variant just above) before
+        # giving up and recording "unknown".
         failure_reason=(
             "speech_cleanup_failed"
             if terminal == "variants_failed" and cleanup_failure_reason
-            else None
+            else (
+                str(failures[0].get("error_class") or "unknown")
+                if terminal == "variants_failed" and failures
+                else None
+            )
         ),
         required_speech_results=required_speech_results,
         required_speech_outcomes=required_speech_outcomes,
