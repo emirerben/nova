@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import tempfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -159,6 +160,31 @@ def grounded_labels(intents: list[ResolvedClipIntent] | None) -> list[GroundedLa
 
 def _alias_for(index: int) -> str:
     return f"m{index + 1:03d}"
+
+
+def _replace_known_media_ids_with_aliases(
+    creator_request: str,
+    alias_to_media: dict[str, str],
+) -> str:
+    """Make explicit, owned media-id selections legible to the aliased resolver.
+
+    The resolver prompt deliberately never includes opaque media ids. When a
+    creator explicitly names one of the clips in this turn, replace that exact
+    known id with its short alias before constructing the bounded agent input.
+    Unknown ids remain untouched: they cannot create membership or bypass the
+    resolver's record/vision grounding checks.
+    """
+    media_to_alias = {media_id: alias for alias, media_id in alias_to_media.items() if media_id}
+    if not creator_request or not media_to_alias:
+        return creator_request
+
+    # Longest first prevents a known id that is a prefix of another known id
+    # from taking its shorter alias. The surrounding token guard keeps an id
+    # embedded in a different identifier untouched.
+    ordered_media_ids = sorted(media_to_alias, key=len, reverse=True)
+    alternatives = "|".join(re.escape(media_id) for media_id in ordered_media_ids)
+    pattern = re.compile(rf"(?<![A-Za-z0-9_-])({alternatives})(?![A-Za-z0-9_-])")
+    return pattern.sub(lambda match: media_to_alias[match.group(1)], creator_request)
 
 
 @dataclass
@@ -410,7 +436,9 @@ def _build_resolver_input(
         for i in intents
     ]
     resolver_input = ClipRequestResolverInput(
-        creator_request=creator_request or "",
+        creator_request=_replace_known_media_ids_with_aliases(
+            creator_request or "", alias_to_media
+        ),
         intents=resolver_intents,
         clips=resolver_clips,
     )

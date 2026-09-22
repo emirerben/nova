@@ -1,0 +1,171 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-09-22.1",
+  "input": {
+    "creator_request": "Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. Earlier edit context remains unchanged. For this chapter, explicitly select m001 and m013 only; do not add any other clips.",
+    "intents": [
+      {
+        "intent_id": "i_explicit_selection",
+        "op": "group",
+        "attribute": "the selected chapter clips",
+        "creator_text": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "a phone on a desk",
+          "setting": "indoor office",
+          "activity": "ringing"
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "park activity 2",
+          "setting": "outdoor park",
+          "activity": "walking"
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "park activity 3",
+          "setting": "outdoor park",
+          "activity": "walking"
+        }
+      },
+      {
+        "alias": "m004",
+        "kind": "video",
+        "record": {
+          "subject": "park activity 4",
+          "setting": "outdoor park",
+          "activity": "walking"
+        }
+      },
+      {
+        "alias": "m005",
+        "kind": "video",
+        "record": {
+          "subject": "park activity 5",
+          "setting": "outdoor park",
+          "activity": "walking"
+        }
+      },
+      {
+        "alias": "m006",
+        "kind": "video",
+        "record": {
+          "subject": "park activity 6",
+          "setting": "outdoor park",
+          "activity": "walking"
+        }
+      },
+      {
+        "alias": "m007",
+        "kind": "video",
+        "record": {
+          "subject": "park activity 7",
+          "setting": "outdoor park",
+          "activity": "walking"
+        }
+      },
+      {
+        "alias": "m008",
+        "kind": "video",
+        "record": {
+          "subject": "park activity 8",
+          "setting": "outdoor park",
+          "activity": "walking"
+        }
+      },
+      {
+        "alias": "m009",
+        "kind": "video",
+        "record": {
+          "subject": "park activity 9",
+          "setting": "outdoor park",
+          "activity": "walking"
+        }
+      },
+      {
+        "alias": "m010",
+        "kind": "video",
+        "record": {
+          "subject": "park activity 10",
+          "setting": "outdoor park",
+          "activity": "walking"
+        }
+      },
+      {
+        "alias": "m011",
+        "kind": "video",
+        "record": {
+          "subject": "park activity 11",
+          "setting": "outdoor park",
+          "activity": "walking"
+        }
+      },
+      {
+        "alias": "m012",
+        "kind": "video",
+        "record": {
+          "subject": "park activity 12",
+          "setting": "outdoor park",
+          "activity": "walking"
+        }
+      },
+      {
+        "alias": "m013",
+        "kind": "video",
+        "record": {
+          "subject": "a city street at night",
+          "setting": "downtown street",
+          "activity": "walking"
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\":[{\"intent_id\":\"i_explicit_selection\",\"assignments\":[{\"media\":\"m001\",\"value\":null,\"evidence\":\"creator explicitly selected m001\",\"confidence\":1},{\"media\":\"m013\",\"value\":null,\"evidence\":\"creator explicitly selected m013\",\"confidence\":1}],\"needs_vision\":[],\"question\":null,\"caption\":null}]}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i_explicit_selection",
+        "assignments": [
+          {
+            "media": "m001",
+            "value": null,
+            "evidence": "creator explicitly selected m001",
+            "confidence": 1
+          },
+          {
+            "media": "m013",
+            "value": null,
+            "evidence": "creator explicitly selected m013",
+            "confidence": 1
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Synthetic 2k+ cumulative creator request whose final instruction explicitly selects two known resolver aliases. The resolver must retain the late selection, assign exactly those non-matching aliases, and require no clarification.",
+    "expect_assignment_set": {
+      "i_explicit_selection": [
+        "m001",
+        "m013"
+      ]
+    },
+    "expect_no_question": true
+  }
+}

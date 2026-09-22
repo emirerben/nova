@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.clip_request_resolver",
-  "prompt_version": "2026-09-22",
+  "prompt_version": "2026-09-22.1",
   "input": {
     "creator_request": "Add a caption about the weather on the park clips.",
     "intents": [

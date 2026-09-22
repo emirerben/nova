@@ -32,6 +32,7 @@ from app.services.clip_intent_resolution import (
     ANSWERS_KEY,
     IntentClip,
     IntentResolution,
+    _build_resolver_input,
     grounded_labels,
     normalize_question,
     resolve_clip_intents_for_turn,
@@ -51,6 +52,24 @@ def _video_clip(media_id: str, *, subject: str = "", gcs_path: str | None = None
         analysis=_record_analysis(subject=subject),
         gcs_path=gcs_path or f"users/u/clips/{media_id}.mp4",
     )
+
+
+def test_build_resolver_input_replaces_only_known_media_ids_with_aliases() -> None:
+    clips = [
+        _video_clip("asset-pub-01", subject="friends in a pub"),
+        _video_clip("asset-pub-13", subject="friends at a cafe"),
+    ]
+    request = (
+        "Use asset-pub-01 and asset-pub-13 for the pub chapter; "
+        "do not infer unknown-media-id or asset-pub-130."
+    )
+
+    resolver_input, alias_to_media, _aliases = _build_resolver_input([], request, clips)
+
+    assert alias_to_media == {"m001": "asset-pub-01", "m002": "asset-pub-13"}
+    assert "m001 and m002" in resolver_input.creator_request
+    assert "unknown-media-id" in resolver_input.creator_request
+    assert "asset-pub-130" in resolver_input.creator_request
 
 
 def _patch_resolver(monkeypatch: pytest.MonkeyPatch, output: ClipRequestResolverOutput) -> None:
