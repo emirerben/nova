@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.144.0] - 2026-09-22
+
+### Changed
+- Fix narrated workflow planning recovery (#1160) <!-- release-pr: 1160 -->
+
 ## [0.76.143.0] - 2026-09-22
 
 ### Added
