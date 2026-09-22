@@ -4,7 +4,57 @@ import XCTest
 import KriaMediaEngine
 @testable import Kria
 
+private final class EditorAdmissionRequestLog: @unchecked Sendable {
+    var paths: [String] = []
+}
+
 final class DeviceRenderingContractTests: XCTestCase {
+    @MainActor func testTimelinePhotoWaitsForPoolReadinessThenAdmitsWithoutChatAttachment() async throws {
+        let key = "editor-photo-recovery-\(UUID().uuidString)"
+        defer {
+            NativeEditorURLProtocol.handler = nil
+            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: key + ".editor-source-placements")
+        }
+        let target = EditorSourceRegistrationTarget(itemID: "item", variantID: "variant", clientImportID: UUID(),
+            baseGeneration: "g1", guidedRevisionNumber: 1, sourceKind: .visual)
+        let id = UUID()
+        let record = UploadRecoveryRecord(id: id, projectID: UUID(), localFilePath: "/nonexistent/editor-photo.jpg", filename: "photo.jpg",
+            source: .files, purpose: .cloudRenderSource, uploadContract: nil, reservationID: nil, clientUploadID: "upload",
+            mediaID: nil, gcsPath: "pool/photo.jpg", contentType: "image/jpeg", uploadCompleted: true, retentionExpiresAt: nil,
+            taskIdentifier: 1, retryCount: 0, mediaRole: .visual, itemID: "item", visualReservationID: "reservation",
+            editorSourceTarget: target)
+        UserDefaults.standard.set(try JSONEncoder().encode([record]), forKey: key)
+        let calls = EditorAdmissionRequestLog()
+        NativeEditorURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            calls.paths.append("\(request.httpMethod ?? "") \(path)")
+            if path == "/plan-items/item/assets", request.httpMethod == "POST" {
+                return (200, Data(#"{"id":"photo","kind":"image","status":"queued"}"#.utf8))
+            }
+            if path == "/plan-items/item/assets", request.httpMethod == "GET" {
+                return (200, Data(#"{"assets":[{"id":"photo","kind":"image","status":"ready"}],"max_assets":20}"#.utf8))
+            }
+            XCTAssertEqual(path, "/plan-items/item/variants/variant/editor-sources")
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
+            XCTAssertEqual(body["source_id"] as? String, "photo")
+            return (200, Data("""
+            {"import_id":"\(target.clientImportID.uuidString)","status":"ready","source_id":"photo","source_index":4,"source":{"kind":"image"},"retryable":false}
+            """.utf8))
+        }
+        let uploads = BackgroundUploadCoordinator(api: NativeEditorTestSupport.api(), defaultsKey: key, sessionConfiguration: .ephemeral)
+        uploads.beginEditorPlacement(.init(id: id, target: target, lane: .timeline, visual: nil, localDurationS: nil))
+        await uploads.retryAttachment(recordID: id)
+        XCTAssertEqual(calls.paths, ["POST /plan-items/item/assets", "GET /plan-items/item/assets", "POST /plan-items/item/variants/variant/editor-sources"])
+        XCTAssertEqual(uploads.pendingEditorPlacements.first?.status, "ready")
+        XCTAssertEqual(uploads.records.count, 1)
+        let reopened = BackgroundUploadCoordinator(api: NativeEditorTestSupport.api(), defaultsKey: key, sessionConfiguration: .ephemeral)
+        XCTAssertEqual(reopened.pendingEditorPlacements.first?.status, "ready")
+        reopened.acknowledgeEditorPlacement(id)
+        XCTAssertTrue(reopened.records.isEmpty)
+        XCTAssertTrue(reopened.pendingEditorPlacements.isEmpty)
+    }
+
     func testLibraryGrantUsesOpaqueAssetAndRevisionIdentity() throws {
         let identity = DeviceRenderIdentity(jobID: UUID(), variantID: "first", recipeRevision: 3, recipeDigest: String(repeating: "a", count: 64))
         let body = DeviceAssetDownloadBody(identity: identity, assetID: "music-1")
@@ -126,6 +176,74 @@ final class DeviceRenderingContractTests: XCTestCase {
         let original = try XCTUnwrap(payload["original"] as? [String: Any])
         XCTAssertEqual(original["byte_count"] as? Int, 4_000)
         XCTAssertEqual(original["has_audio"] as? Bool, true)
+    }
+
+    func testEditorSourceTargetAndResponseRoundTripUseVariantScopedWireNames() throws {
+        let target = EditorSourceRegistrationTarget(itemID: "item", variantID: "song_text", clientImportID: UUID(),
+            baseGeneration: "generation", guidedRevisionNumber: 9, sourceKind: .footage)
+        let targetJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(target)) as? [String: Any])
+        XCTAssertEqual(targetJSON["itemID"] as? String, "item") // Stored recovery metadata is device-only.
+        XCTAssertEqual(targetJSON["sourceKind"] as? String, "footage")
+
+        let response = try JSONDecoder().decode(EditorSourceRegistrationResponse.self, from: Data("""
+        {"import_id":"\(target.clientImportID.uuidString)","status":"ready","source_id":"analysis-proxy-1",
+         "source_index":4,"source":{"lane":"clip","duration_s":1.25},"error":null,"reason_code":null,"retryable":false}
+        """.utf8))
+        XCTAssertTrue(response.isTerminal)
+        XCTAssertEqual(response.sourceIndex, 4)
+        XCTAssertEqual(response.source?["duration_s"], .number(1.25))
+
+        let record = UploadRecoveryRecord(id: UUID(), projectID: UUID(), localFilePath: "/proxy.mp4", filename: "clip.mp4",
+            source: .files, purpose: .analysisProxy, uploadContract: nil, reservationID: nil, clientUploadID: nil,
+            mediaID: nil, gcsPath: nil, contentType: nil, uploadCompleted: nil, retentionExpiresAt: nil,
+            taskIdentifier: 1, retryCount: 0, mediaRole: nil, itemID: nil, visualReservationID: nil,
+            editorSourceTarget: target)
+        let restored = try JSONDecoder().decode(UploadRecoveryRecord.self, from: JSONEncoder().encode(record))
+        XCTAssertEqual(restored.editorSourceTarget, target)
+
+        let visual = CreationVisual(id: "visual-id", kind: "image", status: "ready", sourceFilename: "image.png",
+            displayURL: URL(string: "https://example.com/original.png"), previewURL: nil, retryable: nil,
+            gcsPath: "users/test/image.png")
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .visual, visual: visual, localDurationS: nil)
+        let restoredPlacement = try JSONDecoder().decode(PendingEditorSourcePlacement.self, from: JSONEncoder().encode(placement))
+        XCTAssertEqual(restoredPlacement.id, placement.id)
+        XCTAssertEqual(restoredPlacement.target, target)
+        XCTAssertEqual(restoredPlacement.lane, .visual)
+        XCTAssertEqual(restoredPlacement.visual?.id, visual.id)
+    }
+
+    @MainActor func testPendingEditorPlacementSurvivesCoordinatorRecreationUntilAcknowledged() async throws {
+        let key = "editor-placement-test-\(UUID().uuidString)"
+        defer {
+            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: key + ".editor-source-placements")
+        }
+        let target = EditorSourceRegistrationTarget(itemID: "item", variantID: "song_text", clientImportID: UUID(),
+            baseGeneration: "generation", guidedRevisionNumber: 3, sourceKind: .footage)
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
+        let first = BackgroundUploadCoordinator(api: NativeEditorTestSupport.api(), defaultsKey: key,
+            sessionConfiguration: .ephemeral)
+        first.beginEditorPlacement(placement)
+        let reopened = BackgroundUploadCoordinator(api: NativeEditorTestSupport.api(), defaultsKey: key,
+            sessionConfiguration: .ephemeral)
+        XCTAssertEqual(reopened.editorPlacements(itemID: "item", variantID: "song_text", baseGeneration: "generation").map(\.id), [placement.id])
+        reopened.acknowledgeEditorPlacement(placement.id)
+        XCTAssertTrue(reopened.editorPlacements(itemID: "item", variantID: "song_text", baseGeneration: "generation").isEmpty)
+    }
+
+    @MainActor func testFailedPendingPlacementPersistsRetryStateAcrossRelaunch() async throws {
+        let key = "failed-editor-placement-test-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: key); UserDefaults.standard.removeObject(forKey: key + ".editor-source-placements") }
+        let target = EditorSourceRegistrationTarget(itemID: "item", variantID: "song_text", clientImportID: UUID(),
+            baseGeneration: "generation", guidedRevisionNumber: 3, sourceKind: .footage)
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
+        let coordinator = BackgroundUploadCoordinator(api: NativeEditorTestSupport.api(), defaultsKey: key, sessionConfiguration: .ephemeral)
+        coordinator.beginEditorPlacement(placement)
+        coordinator.recordEditorSourceResult(placementID: placement.id, response: .init(importID: target.clientImportID,
+            status: "failed", sourceID: "proxy", sourceIndex: nil, source: nil, error: "probe failed", reasonCode: "probe_failed", retryable: true))
+        let reopened = BackgroundUploadCoordinator(api: NativeEditorTestSupport.api(), defaultsKey: key, sessionConfiguration: .ephemeral)
+        let restored = try XCTUnwrap(reopened.editorPlacements(itemID: "item", variantID: "song_text", baseGeneration: "generation").first)
+        XCTAssertEqual(restored.status, "failed"); XCTAssertEqual(restored.error, "probe failed"); XCTAssertTrue(restored.retryable)
     }
 
     // MARK: - KRI-93: narration/voiceover (audio-kind) proxy descriptors

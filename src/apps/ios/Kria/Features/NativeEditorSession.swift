@@ -327,6 +327,14 @@ struct NativeEditorTemporaryVideo {
     }
 
     func useDeviceRendering(_ sessions: DeviceRenderSessions) { deviceRenders = sessions }
+    /// Upload records outlive this screen. The session only observes their
+    /// results and turns a ready source into one local document transaction.
+    func useMediaUploads(_ uploads: BackgroundUploadCoordinator) { mediaUploads = uploads }
+    func suspendEditorImports() { editorImportsActive = false }
+    func resumeEditorImports() async {
+        editorImportsActive = true
+        await resumePendingEditorPlacements()
+    }
 
     func refreshDeviceRender(retry: Bool = false) async {
         guard let key = deviceRenderKey, let api, let deviceRenders else { return }
@@ -375,6 +383,9 @@ struct NativeEditorTemporaryVideo {
     private var redoStack: [EditorDocument] = []
     private var cleanDocument: EditorDocument
     private var api: (any KriaAPIClient)?
+    private weak var mediaUploads: BackgroundUploadCoordinator?
+    private var pendingPlacementIDs: Set<UUID> = []
+    private var editorImportsActive = true
     private var threadID: UUID?
     private var itemID: String?
     var visualItemID: String? { itemID }
@@ -888,6 +899,7 @@ struct NativeEditorTemporaryVideo {
             }
             loadState = .loaded
             await prepareSourcePreview()
+            await resumePendingEditorPlacements()
         } catch {
             #if DEBUG
             NativePreviewDiagnostics.failure("editor-load-failed", error: error)
@@ -2051,13 +2063,20 @@ struct NativeEditorTemporaryVideo {
     /// take seconds when the asset lives in iCloud. Running it here, rather than before the call,
     /// keeps `isAddingClip` true throughout, so the editor can show progress after the picker sheet
     /// has already dismissed instead of holding the user on it.
-    func addClip(source: @MainActor () async throws -> URL) async {
+    func addClip(source: @MainActor () async throws -> URL, uploadSource: UploadSource = .files) async {
         // 20 mirrors the server's `_MAX_CLIPS` pool cap — an early, friendly
         // no-op instead of a round trip that would 422 anyway.
         guard !isAddingClip else { return }
         // The sheet is already gone by now, so a silent return would drop the user's pick with no signal.
         guard !rendersOnDevice else {
-            addClipError = "Adding media isn’t available yet for edits rendered on this iPhone. Add media in Visuals before you generate."
+            isAddingClip = true
+            defer { isAddingClip = false }
+            do {
+                let url = try await source()
+                await addDeviceTimelineMedia(fileURL: url, source: uploadSource, alreadyPreparing: true)
+            } catch {
+                addClipError = "This file couldn’t be read. Try Files or choose it again."
+            }
             return
         }
         guard canEditTimeline, let api, let jobID else {
@@ -2302,12 +2321,28 @@ struct NativeEditorTemporaryVideo {
     // Basic media and cards use the existing lane contract. Only edits that
     // introduce editor_style need the newer styling capability.
     var canAuthorVisuals: Bool { canEditSection(.visualBlocks) }
+    private var phoneEditorMedia: [String: JSONValue] {
+        Self.object(Self.object(previewVariant["editor_capabilities"])?["phone_editor_media"] ?? .null) ?? [:]
+    }
+    private var canRegisterPhoneSources: Bool {
+        rendersOnDevice && phoneEditorMedia["enabled"] == .bool(true)
+            && phoneEditorMedia["source_registration"] == .bool(true)
+            && !document.revision.baseGeneration.isEmpty && guidedRevisionNumber != nil
+    }
+    private func phoneAllowsVisualKind(_ kind: String) -> Bool {
+        guard let allowed = phoneEditorMedia["visual_kinds"]?.arrayValue?.compactMap(\.stringValue) else { return false }
+        return allowed.contains(kind)
+    }
     // Visual blocks and motion scenes have no on-device lane yet, so an edit
     // rendered on this iPhone can't take new visuals after it was planned.
-    var canImportVisuals: Bool { itemID != nil && !rendersOnDevice && (canAuthorVisuals || canEditSection(.motionScenes)) }
+    var canImportVisuals: Bool {
+        guard itemID != nil else { return false }
+        if rendersOnDevice { return canRegisterPhoneSources && canAuthorVisuals }
+        return canAuthorVisuals || canEditSection(.motionScenes)
+    }
     var visualImportUnavailableMessage: String? {
         if itemID == nil { return "Open a saved edit to add photos or videos." }
-        if rendersOnDevice { return "Adding media isn’t available yet for edits rendered on this iPhone. Add media in Visuals before you generate." }
+        if rendersOnDevice && !canImportVisuals { return "Adding media isn’t available for this edit on this iPhone." }
         if !canImportVisuals { return "Adding visuals isn’t available for this edit." }
         return nil
     }
@@ -2318,10 +2353,225 @@ struct NativeEditorTemporaryVideo {
     /// never save. Same reasoning as `visualImportUnavailableMessage`'s `rendersOnDevice`
     /// case, surfaced separately since the timeline and Visuals import gate independently.
     var addClipUnavailableMessage: String? {
-        rendersOnDevice ? "Adding a clip isn’t available yet for edits rendered on this iPhone. Add or swap footage before you generate." : nil
+        rendersOnDevice && !canRegisterPhoneSources ? "Adding media isn’t available for this edit on this iPhone." : nil
+    }
+
+    var canAddTimelineMedia: Bool {
+        canEditTimeline && draft.clips.count < 20 && (!rendersOnDevice || canRegisterPhoneSources)
+    }
+
+    private func editorSourceTarget(kind: EditorSourceRegistrationTarget.SourceKind) -> EditorSourceRegistrationTarget? {
+        guard let itemID, let variantKey, let guidedRevisionNumber else { return nil }
+        return .init(itemID: itemID, variantID: variantKey, clientImportID: UUID(),
+                     baseGeneration: document.revision.baseGeneration, guidedRevisionNumber: guidedRevisionNumber, sourceKind: kind)
+    }
+
+    private func sourceDuration(_ response: EditorSourceRegistrationResponse) -> Double? {
+        response.source?["duration_s"]?.numberValue
+    }
+
+    static func deviceTimelineDuration(proxyDuration: Double?, localDuration: Double?, minimum: Double) -> Double? {
+        guard let shortest = [proxyDuration, localDuration].compactMap({ $0 }).min(), shortest.isFinite else { return nil }
+        let usable = shortest - 0.05
+        return usable >= minimum ? usable : nil
+    }
+
+    private func waitForEditorSource(_ target: EditorSourceRegistrationTarget, recordID: UUID, uploads: BackgroundUploadCoordinator) async throws -> EditorSourceRegistrationResponse {
+        // Source probing can run for the server lease window. Keep the durable
+        // placement intent on any timeout/cancellation; reopen resumes it.
+        for _ in 0..<420 {
+            guard editorImportsActive, uploads.containsEditorPlacement(recordID), !Task.isCancelled else {
+                throw CancellationError()
+            }
+            if let result = uploads.editorSourceResults[recordID] {
+                uploads.recordEditorSourceResult(placementID: recordID, response: result)
+                if result.isTerminal { return result }
+            }
+            if let api, let result = try? await api.editorSource(itemID: target.itemID, variantID: target.variantID, importID: target.clientImportID) {
+                uploads.recordEditorSourceResult(placementID: recordID, response: result)
+                if result.isTerminal { return result }
+            }
+            try await Task.sleep(for: .seconds(1))
+        }
+        uploads.failEditorPlacement(recordID, error: "Preparation is taking longer than expected. Try again.")
+        throw APIError.offline
+    }
+
+    func placeEditorSource(_ placement: PendingEditorSourcePlacement, response: EditorSourceRegistrationResponse) async throws {
+        guard editorImportsActive, mediaUploads?.containsEditorPlacement(placement.id) == true,
+              response.status == "ready", document.revision.baseGeneration == placement.target.baseGeneration,
+              !Task.isCancelled else { return }
+        let placementID = placement.id.uuidString
+        switch placement.lane {
+        case .timeline:
+            guard canAddTimelineMedia else { throw APIError.unsupported }
+            guard let index = response.sourceIndex else { throw APIError.invalidResponse }
+            guard !document.clips.contains(where: { $0.raw["editor_source_placement_id"] == .string(placementID) }) else {
+                mediaUploads?.acknowledgeEditorPlacement(placement.id); return
+            }
+            let duration: Double
+            if placement.target.sourceKind == .visual {
+                // Timeline photos have no temporal probe. Preserve the
+                // standard still-image window rather than applying a video
+                // EOF margin to an absent duration.
+                duration = Self.addedClipDurationS
+            } else {
+                guard let usable = Self.deviceTimelineDuration(proxyDuration: sourceDuration(response), localDuration: placement.localDurationS,
+                                                               minimum: minimumClipDuration) else { throw APIError.invalidResponse }
+                duration = usable
+            }
+            transactDocument(section: .timeline) {
+                $0.clips.append(EditorTimelineSlot(clipIndex: index, inS: 0, durationS: min(Self.addedClipDurationS, duration), raw: [
+                    "source_duration_s": .number(sourceDuration(response) ?? placement.localDurationS ?? duration + 0.05),
+                    "editor_source_placement_id": .string(placementID),
+                ]))
+            }
+        case .visual:
+            guard canImportVisuals, document.visualBlocks.count < 20,
+                  let storedAsset = placement.visual, phoneAllowsVisualKind(storedAsset.kind),
+                  let sourceResolver, let api else { throw APIError.invalidResponse }
+            guard !document.visualBlocks.contains(where: { $0.raw["editor_source_placement_id"] == .string(placementID) }) else {
+                mediaUploads?.acknowledgeEditorPlacement(placement.id); return
+            }
+            // An interrupted import may resume after its signed URL expires.
+            // Refresh the same pool identity before resolving its original.
+            let library = try await api.visuals(itemID: placement.target.itemID)
+            guard let asset = library.assets.first(where: { $0.id == storedAsset.id && $0.status == "ready" }),
+                  asset.kind == storedAsset.kind, let originalURL = asset.originalMediaURL,
+                  editorImportsActive, mediaUploads?.containsEditorPlacement(placement.id) == true,
+                  document.revision.baseGeneration == placement.target.baseGeneration else { throw APIError.invalidResponse }
+            let admittedPath = response.source?["gcs_path"]?.stringValue ?? asset.gcsPath
+            guard let admittedPath, !admittedPath.isEmpty else { throw APIError.invalidResponse }
+            let admitted = CreationVisual(id: asset.id, kind: response.source?["kind"]?.stringValue ?? asset.kind,
+                status: "ready", sourceFilename: asset.sourceFilename, displayURL: asset.displayURL, previewURL: asset.previewURL,
+                retryable: nil, gcsPath: admittedPath, sourceURL: asset.sourceURL,
+                durationS: sourceDuration(response) ?? asset.durationS, mediaStatus: asset.mediaStatus)
+            let maxDuration = admitted.kind == "video" ? admitted.durationS ?? 0 : Self.addedClipDurationS
+            guard maxDuration >= minimumClipDuration,
+                  let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection,
+                    preferred: min(Self.addedClipDurationS, maxDuration)),
+                  var block = NativeVisualAuthoring.media(asset: admitted, start: window.start,
+                    end: min(window.end, window.start + maxDuration),
+                    z: Int(document.visualBlocks.compactMap { $0.raw["z"]?.numberValue }.max() ?? 0) + 1) else { throw APIError.invalidResponse }
+            let source = try await sourceResolver.resolveMedia(id: asset.id, url: originalURL, generation: placement.target.baseGeneration)
+            guard editorImportsActive, mediaUploads?.containsEditorPlacement(placement.id) == true,
+                  !Task.isCancelled, document.revision.baseGeneration == placement.target.baseGeneration else { return }
+            guard canImportVisuals, document.visualBlocks.count < 20 else { throw APIError.unsupported }
+            guard !document.visualBlocks.contains(where: { $0.raw["editor_source_placement_id"] == .string(placementID) }) else { return }
+            block.raw["editor_source_placement_id"] = .string(placementID)
+            authoredVisualSources["visual:" + block.id + ":" + block.id] = source
+            transactDocument(section: .visualBlocks) { $0.visualBlocks.append(block) }
+            select(.init(kind: .visualBlock, id: block.id))
+        }
+        mediaUploads?.acknowledgeEditorPlacement(placement.id)
+        await prepareSourcePreview()
+    }
+
+    func resumePendingEditorPlacements() async {
+        guard editorImportsActive, let uploads = mediaUploads, let itemID, let variantKey, api != nil else { return }
+        let allPlacements = uploads.editorPlacements(itemID: itemID, variantID: variantKey, baseGeneration: nil)
+        let placements = allPlacements.filter { $0.target.baseGeneration == document.revision.baseGeneration }
+        for stale in allPlacements where stale.target.baseGeneration != document.revision.baseGeneration {
+            await uploads.discardEditorPlacement(stale.id)
+            addClipError = "A pending import belongs to an older version of this edit and was removed."
+        }
+        for placement in placements where placement.status != "failed" && pendingPlacementIDs.insert(placement.id).inserted {
+            Task { @MainActor [weak self] in
+                defer { self?.pendingPlacementIDs.remove(placement.id) }
+                guard let self else { return }
+                do {
+                    let response = try await self.waitForEditorSource(placement.target, recordID: placement.id, uploads: uploads)
+                    try await self.placeEditorSource(placement, response: response)
+                } catch {
+                    if self.editorImportsActive && !(error is CancellationError) {
+                        uploads.failEditorPlacement(placement.id, error: "This import couldn’t be added. Try again.")
+                    }
+                }
+            }
+        }
+    }
+
+    var pendingEditorImports: [PendingEditorSourcePlacement] {
+        guard let uploads = mediaUploads, let itemID, let variantKey else { return [] }
+        return uploads.editorPlacements(itemID: itemID, variantID: variantKey, baseGeneration: document.revision.baseGeneration)
+    }
+
+    func retryPendingEditorImport(_ placement: PendingEditorSourcePlacement) async {
+        guard let uploads = mediaUploads else { return }
+        await uploads.retryEditorPlacement(placement)
+        // Keep the existing waiter token; it will consume the freshly posted
+        // response without concurrent placement work.
+        if !pendingPlacementIDs.contains(placement.id) { await resumePendingEditorPlacements() }
+    }
+
+    func dismissPendingEditorImport(_ placement: PendingEditorSourcePlacement) async {
+        await mediaUploads?.discardEditorPlacement(placement.id)
+        if placement.lane == .timeline { addClipError = nil } else { visualError = nil }
+    }
+
+    /// Device renders retain a local footage original and send only its
+    /// analysis proxy through the existing project reservation.  Completion is
+    /// admitted to this variant, never attached to its creation thread.
+    func addDeviceTimelineMedia(fileURL: URL, source: UploadSource, alreadyPreparing: Bool = false) async {
+        guard canAddTimelineMedia, let uploads = mediaUploads else {
+            addClipError = "Adding media isn’t available for this edit right now."
+            return
+        }
+        guard !isAddingClip || alreadyPreparing else { return }
+        if !alreadyPreparing { isAddingClip = true }
+        addClipError = nil
+        defer { if !alreadyPreparing { isAddingClip = false } }
+        var importID: UUID?
+        do {
+            let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+            guard let size = values.fileSize, size > 0 else { throw APIError.invalidResponse }
+            let contentType = values.contentType?.preferredMIMEType ?? "application/octet-stream"
+            let isImage = contentType.hasPrefix("image/") || NativeDownloadedMedia.isStillImage(fileURL)
+            let kind: EditorSourceRegistrationTarget.SourceKind = isImage ? .visual : .footage
+            let localDuration: Double?
+            if kind == .footage {
+                let value = try await AVURLAsset(url: fileURL).load(.duration).seconds
+                localDuration = value.isFinite && value > 0 ? value : nil
+            } else { localDuration = nil }
+            guard kind == .footage || phoneAllowsVisualKind("image") else { throw APIError.unsupported }
+            let target = editorSourceTarget(kind: kind)!
+            let recordID = UUID()
+            let placement = PendingEditorSourcePlacement(id: recordID, target: target, lane: .timeline, visual: nil,
+                                                         localDurationS: localDuration)
+            uploads.beginEditorPlacement(placement)
+            importID = placement.id
+            pendingPlacementIDs.insert(placement.id)
+            defer { pendingPlacementIDs.remove(placement.id) }
+            let accepted = await uploads.enqueue(fileURL: fileURL, projectID: threadID ?? projectID, source: source,
+                consentGiven: true, purpose: kind == .footage ? .analysisProxy : .cloudRenderSource,
+                role: kind == .footage ? .clip : .visual, itemID: itemID, editorSourceTarget: target, recordID: recordID)
+            guard accepted else { throw APIError.invalidResponse }
+            let response = try await waitForEditorSource(target, recordID: recordID, uploads: uploads)
+            guard response.status == "ready", response.sourceIndex != nil,
+                  document.revision.baseGeneration == target.baseGeneration else {
+                throw APIError.invalidResponse
+            }
+            // The server normally returns the exact probe duration. Keep the
+            // local original's duration as a conservative fallback so a short
+            // video never receives a 3s held tail before the refreshed pool
+            // arrives.
+            // The service validates against the retained original with a
+            // 50-ms EOF margin. A proxy may be fractionally longer, so use
+            // the shorter measured duration and reserve that same margin
+            // before proposing the timeline slot.
+            try await placeEditorSource(placement, response: response)
+        } catch {
+            guard editorImportsActive, !(error is CancellationError) else { return }
+            if let importID { uploads.failEditorPlacement(importID, error: "This media couldn’t be added. Try again.") }
+            addClipError = "This media couldn’t be added. Your edit is unchanged. " + error.localizedDescription
+        }
     }
 
     func addLibraryVisual(_ asset: CreationVisual) async {
+        if rendersOnDevice {
+            await admitDeviceVisual(asset)
+            return
+        }
         guard canAuthorVisuals, !isAddingVisual, document.visualBlocks.count < 20,
               let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection,
                 preferred: min(3, asset.kind == "video" ? asset.durationS ?? 0 : 3)),
@@ -2342,6 +2592,47 @@ struct NativeEditorTemporaryVideo {
             visualError = nil
             select(.init(kind: .visualBlock, id: block.id))
         } catch { visualError = "This visual couldn’t be opened. Your edit is unchanged. " + error.localizedDescription }
+    }
+
+    /// Visual-pool bytes are already registered by the shared background
+    /// uploader.  Device editing still needs an explicit variant admission
+    /// before a media block can reference them; posting it here keeps a pool
+    /// upload from changing an approved edit until the creator places it.
+    private func admitDeviceVisual(_ asset: CreationVisual) async {
+        guard canImportVisuals, !isAddingVisual, document.visualBlocks.count < 20, asset.status == "ready",
+              phoneAllowsVisualKind(asset.kind), let target = editorSourceTarget(kind: .visual),
+              let api else {
+            visualError = "This visual isn’t available for this edit on this iPhone."
+            return
+        }
+        isAddingVisual = true
+        defer { isAddingVisual = false }
+        var importID: UUID?
+        do {
+            let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .visual, visual: asset, localDurationS: nil)
+            importID = placement.id
+            mediaUploads?.beginEditorPlacement(placement)
+            pendingPlacementIDs.insert(placement.id)
+            defer { pendingPlacementIDs.remove(placement.id) }
+            var response = try await api.registerEditorSource(target, sourceID: asset.id)
+            mediaUploads?.recordEditorSourceResult(placementID: placement.id, response: response)
+            for _ in 0..<420 where response.status == "preparing" {
+                guard editorImportsActive, mediaUploads?.containsEditorPlacement(placement.id) == true, !Task.isCancelled else { throw CancellationError() }
+                try await Task.sleep(for: .seconds(1))
+                response = try await api.editorSource(itemID: target.itemID, variantID: target.variantID, importID: target.clientImportID)
+                mediaUploads?.recordEditorSourceResult(placementID: placement.id, response: response)
+            }
+            guard response.status == "ready", document.revision.baseGeneration == target.baseGeneration else {
+                throw APIError.invalidResponse
+            }
+            guard !Task.isCancelled, document.revision.baseGeneration == target.baseGeneration else { return }
+            try await placeEditorSource(placement, response: response)
+            visualError = nil
+        } catch {
+            guard editorImportsActive, !(error is CancellationError) else { return }
+            if let importID { mediaUploads?.failEditorPlacement(importID, error: "This visual couldn’t be added. Try again.") }
+            visualError = "This visual couldn’t be added. Your edit is unchanged. " + error.localizedDescription
+        }
     }
 
     @discardableResult func addTextCard(text: String, bold: Bool) -> EditorSelection? {

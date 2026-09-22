@@ -1046,7 +1046,7 @@ struct NativeMiniStrip: View {
     // An edit rendered on this iPhone only knows the originals bound when it was
     // planned; adding a clip would upload a full original to the cloud for an
     // edit the phone can never save.
-    private var canAddClip: Bool { session.canEditTimeline && !session.rendersOnDevice && session.draft.clips.count < 20 }
+    private var canAddClip: Bool { session.canAddTimelineMedia }
 
     /// KRI-131: the floating Edit text/Deselect context capsule appears
     /// directly above the tool island whenever a text element is selected.

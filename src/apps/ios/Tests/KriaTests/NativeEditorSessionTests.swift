@@ -6,6 +6,116 @@ import XCTest
 
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
+    func testDeviceTimelineDurationUsesShorterOriginalAndKeepsEOFMargin() throws {
+        XCTAssertEqual(try XCTUnwrap(NativeEditorSession.deviceTimelineDuration(proxyDuration: 2.2, localDuration: 2.0, minimum: 0.1)),
+                       1.95, accuracy: 0.0001)
+        XCTAssertNil(NativeEditorSession.deviceTimelineDuration(proxyDuration: 0.14, localDuration: 0.14, minimum: 0.1))
+        XCTAssertNil(NativeEditorSession.deviceTimelineDuration(proxyDuration: nil, localDuration: nil, minimum: 0.1))
+    }
+
+    func testAdmittedTimelinePhotoAppendsThreeSecondPlacementAndUndoRedo() async throws {
+        let threadID = UUID()
+        var authoritative = Self.variant(duration: 2, generation: "generation-1")
+        authoritative["render_destination"] = .string("device")
+        authoritative["editor_revision_number"] = .number(7)
+        authoritative["editor_capabilities"] = .object([
+            "timeline": .bool(true), "text_elements": .bool(true),
+            "phone_editor_media": .object([
+                "enabled": .bool(true), "source_registration": .bool(true),
+                "visual_kinds": .array([.string("image")]),
+            ]),
+        ])
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant",
+            draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: UUID().uuidString, baseGenerationID: "generation-1",
+            snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: authoritative)
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        let target = EditorSourceRegistrationTarget(itemID: "item", variantID: "variant", clientImportID: UUID(),
+            baseGeneration: "generation-1", guidedRevisionNumber: 7, sourceKind: .visual)
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil)
+        let uploads = BackgroundUploadCoordinator(api: fake, defaultsKey: "timeline-placement-\(UUID().uuidString)", sessionConfiguration: .ephemeral)
+        uploads.beginEditorPlacement(placement)
+        session.useMediaUploads(uploads)
+        let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "photo",
+            sourceIndex: 4, source: nil, error: nil, reasonCode: nil, retryable: false)
+        let before = session.document.clips.count
+        try await session.placeEditorSource(placement, response: response)
+        let inserted = try XCTUnwrap(session.document.clips.last)
+        XCTAssertEqual(session.document.clips.count, before + 1)
+        XCTAssertEqual(inserted.durationS, 3)
+        XCTAssertEqual(inserted.raw["editor_source_placement_id"], .string(placement.id.uuidString))
+        session.undo(); XCTAssertEqual(session.document.clips.count, before)
+        session.redo(); XCTAssertEqual(session.document.clips.count, before + 1)
+    }
+
+    func testAdmittedFootageUsesShorterOriginalWithEOFMarginAndDeduplicatesReadyCallback() async throws {
+        let (session, uploads, target) = await Self.devicePlacementSession()
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 1)
+        uploads.beginEditorPlacement(placement)
+        let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "proxy",
+            sourceIndex: 9, source: ["duration_s": .number(1.2)], error: nil, reasonCode: nil, retryable: false)
+        let before = session.document.clips.count
+        try await session.placeEditorSource(placement, response: response)
+        XCTAssertEqual(session.document.clips.count, before + 1)
+        XCTAssertEqual(try XCTUnwrap(session.document.clips.last?.durationS), 0.95, accuracy: 0.0001)
+        // The acknowledgement removes the ledger intent; a duplicated ready
+        // callback must not resurrect a user-visible slot.
+        try await session.placeEditorSource(placement, response: response)
+        XCTAssertEqual(session.document.clips.count, before + 1)
+    }
+
+    func testCanceledOrStalePlacementNeverAppends() async throws {
+        let (session, uploads, target) = await Self.devicePlacementSession()
+        let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "proxy",
+            sourceIndex: 9, source: ["duration_s": .number(2)], error: nil, reasonCode: nil, retryable: false)
+        let canceled = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
+        uploads.beginEditorPlacement(canceled)
+        await uploads.discardEditorPlacement(canceled.id)
+        let before = session.document.clips.count
+        try await session.placeEditorSource(canceled, response: response)
+        XCTAssertEqual(session.document.clips.count, before)
+        var staleTarget = target
+        staleTarget = EditorSourceRegistrationTarget(itemID: staleTarget.itemID, variantID: staleTarget.variantID,
+            clientImportID: UUID(), baseGeneration: "stale", guidedRevisionNumber: staleTarget.guidedRevisionNumber, sourceKind: .footage)
+        let stale = PendingEditorSourcePlacement(id: UUID(), target: staleTarget, lane: .timeline, visual: nil, localDurationS: 2)
+        uploads.beginEditorPlacement(stale)
+        try await session.placeEditorSource(stale, response: response)
+        XCTAssertEqual(session.document.clips.count, before)
+    }
+
+    func testLeavingEditorKeepsReadyImportPendingWithoutAppendingToHiddenDocument() async throws {
+        let (session, uploads, target) = await Self.devicePlacementSession()
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
+        uploads.beginEditorPlacement(placement)
+        session.suspendEditorImports()
+        let before = session.document.clips.count
+        try await session.placeEditorSource(placement, response: .init(importID: target.clientImportID, status: "ready",
+            sourceID: "proxy", sourceIndex: 9, source: ["duration_s": .number(2)], error: nil, reasonCode: nil, retryable: false))
+        XCTAssertEqual(session.document.clips.count, before)
+        XCTAssertTrue(uploads.containsEditorPlacement(placement.id))
+    }
+
+    func testReadyImportRechecksCapacityAfterOtherPlacementsFillTimeline() async throws {
+        let (session, uploads, target) = await Self.devicePlacementSession()
+        let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "proxy",
+            sourceIndex: 9, source: ["duration_s": .number(1)], error: nil, reasonCode: nil, retryable: false)
+        while session.document.clips.count < 20 {
+            let nextTarget = EditorSourceRegistrationTarget(itemID: target.itemID, variantID: target.variantID,
+                clientImportID: UUID(), baseGeneration: target.baseGeneration, guidedRevisionNumber: 7, sourceKind: .footage)
+            let placement = PendingEditorSourcePlacement(id: UUID(), target: nextTarget, lane: .timeline, visual: nil, localDurationS: 1)
+            uploads.beginEditorPlacement(placement)
+            try await session.placeEditorSource(placement, response: response)
+        }
+        let late = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 1)
+        uploads.beginEditorPlacement(late)
+        do {
+            try await session.placeEditorSource(late, response: response)
+            XCTFail("A ready import must not exceed the current twenty-clip limit")
+        } catch {}
+        XCTAssertEqual(session.document.clips.count, 20)
+        XCTAssertTrue(uploads.containsEditorPlacement(late.id))
+    }
+
     func testFootageEditsPersistAndUndoWithoutChangingTimelineWindows() throws {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
         let original = session.document
@@ -2372,6 +2482,27 @@ final class NativeEditorSessionTests: XCTestCase {
             "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]),
             "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(duration), "source_duration_s": .number(4), "removed": .bool(false)])])]),
         ]
+    }
+
+    private static func devicePlacementSession() async -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget) {
+        let threadID = UUID()
+        var authoritative = variant(duration: 2, generation: "generation-1")
+        authoritative["render_destination"] = .string("device")
+        authoritative["editor_revision_number"] = .number(7)
+        authoritative["editor_capabilities"] = .object([
+            "timeline": .bool(true), "text_elements": .bool(true),
+            "phone_editor_media": .object(["enabled": .bool(true), "source_registration": .bool(true),
+                "visual_kinds": .array([.string("image")])]),
+        ])
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant",
+            draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: UUID().uuidString, baseGenerationID: "generation-1",
+            snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: authoritative)
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        let uploads = BackgroundUploadCoordinator(api: fake, defaultsKey: "placement-\(UUID().uuidString)", sessionConfiguration: .ephemeral)
+        session.useMediaUploads(uploads)
+        return (session, uploads, .init(itemID: "item", variantID: "variant", clientImportID: UUID(),
+            baseGeneration: "generation-1", guidedRevisionNumber: 7, sourceKind: .footage))
     }
 
     /// Loads one clip slot (plus `extras`) under the server's per-clip
