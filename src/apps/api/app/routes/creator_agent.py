@@ -2033,7 +2033,9 @@ async def _persist_clip_intent_vision_answers(
                     asset_uuid = uuid.UUID(media_id.removeprefix("asset-"))
                 except ValueError:
                     continue
-                asset = await db.get(PlanItemAsset, asset_uuid)
+                asset = await db.get(
+                    PlanItemAsset, asset_uuid, with_for_update=True, populate_existing=True
+                )
                 if asset is None or asset.plan_item_id != item.id:
                     continue
                 analysis = dict(asset.analysis) if isinstance(asset.analysis, dict) else {}
@@ -2741,22 +2743,39 @@ async def _run_planning_turn(
                     # re-lock, re-check the revision fence) before writing
                     # anything the resolution decided back onto the session.
                     await db.commit()
+                    background_pending = False
+                    intent_context = RunContext(
+                        creator_agent_session_id=str(session.id),
+                        creator_id=str(user.id),
+                        request_id=str(expected_revision),
+                        usage_purpose=usage_purpose,
+                        test_run_id=test_run_id,
+                        estimated_max_cost_usd=estimated_max_cost_usd,
+                        reservation_approved=reservation_approved,
+                        release_canary_id=release_canary_id,
+                    )
                     try:
                         resolution = await resolve_clip_intents_for_turn(
                             intents=effective_clip_intents,
                             creator_request=creator_request,
                             clips=intent_clips,
-                            run_context=RunContext(
-                                creator_agent_session_id=str(session.id),
-                                creator_id=str(user.id),
-                                request_id=str(expected_revision),
-                                usage_purpose=usage_purpose,
-                                test_run_id=test_run_id,
-                                estimated_max_cost_usd=estimated_max_cost_usd,
-                                reservation_approved=reservation_approved,
-                                release_canary_id=release_canary_id,
-                            ),
+                            run_context=intent_context,
                         )
+                        if resolution.deferred_queries:
+                            from app.tasks.clip_intent_requery import (  # noqa: PLC0415
+                                enqueue_clip_intent_requeries,
+                            )
+
+                            background_pending = await asyncio.to_thread(
+                                enqueue_clip_intent_requeries,
+                                plan_id=str(plan.id),
+                                item_id=str(item.id),
+                                user_id=str(user.id),
+                                ownership_epoch=int(plan.ownership_epoch or 0),
+                                clips=intent_clips,
+                                queries=resolution.deferred_queries,
+                                context=intent_context,
+                            )
                     except Exception as exc:  # noqa: BLE001
                         # Never a 500 for a resolver failure. Asking is the safe
                         # degrade -- it can never print an unverified label.
@@ -2788,8 +2807,17 @@ async def _run_planning_turn(
                             event_type="assistant_question",
                             role="assistant",
                             payload={
-                                "message": resolution.question,
-                                "reason_code": "clip_intent_unresolved",
+                                "message": (
+                                    "I'm taking a closer look at the remaining clips. "
+                                    "Send another message in a moment and I'll use what I find."
+                                    if background_pending
+                                    else resolution.question
+                                ),
+                                "reason_code": (
+                                    "clip_intent_pending"
+                                    if background_pending
+                                    else "clip_intent_unresolved"
+                                ),
                             },
                         )
                         return await _response(db, locked)

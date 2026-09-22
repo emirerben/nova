@@ -408,7 +408,7 @@ class Settings(BaseSettings):
     # CLIP_INTENTS_ENABLED=true --app nova-video` + restart api + worker.
     clip_intents_enabled: bool = False
     # Chat-turn budget for the on-demand vision re-query (download + File API
-    # upload per clip). Over the cap or the deadline => ask the creator instead.
+    # upload per clip). Cacheable overflow/deadlines continue in Celery (KRI-154).
     clip_intents_max_vision_requeries: int = Field(default=4, ge=0, le=12)
     clip_intents_vision_deadline_s: float = Field(default=25.0, gt=0, le=60)
 

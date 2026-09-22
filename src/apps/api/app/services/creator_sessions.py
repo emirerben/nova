@@ -597,6 +597,7 @@ async def load_intent_clips_for_item(
                     analysis=analysis,
                     gcs_path=asset.gcs_path,
                     asset_id=str(asset.id),
+                    gcs_generation=getattr(asset, "gcs_generation", None),
                 )
             )
 

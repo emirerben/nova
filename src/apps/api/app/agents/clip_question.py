@@ -1,7 +1,8 @@
 """nova.video.clip_question — ask one short, targeted question about ONE clip
 (KRI-127 Lane C).
 
-The vision re-query step: `app.services.clip_intent_resolution` calls this,
+The vision re-query step: `app.services.clip_intent_resolution` and the
+KRI-154 background worker `app.tasks.clip_intent_requery` call this,
 per clip, ONLY when the stored, shared clip-understanding record
 (`app.services.clip_understanding.clip_record`) cannot answer an open-vocabulary
 intent (e.g. the record says "playing a ball game" but the creator asked

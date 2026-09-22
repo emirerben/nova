@@ -658,3 +658,91 @@ def test_specialist_brief_intents_use_planner_media_ids():
     assert intent.media_ids()[0].startswith("asset-")  # the stored strategy is not mutated
     assert _specialist_clip_intents(None) is None
     assert _specialist_clip_intents([]) is None
+
+
+@pytest.mark.parametrize("queued", [True, False])
+async def test_async_overflow_receipt_and_enqueue_failure_fallback(monkeypatch, queued):
+    from app.services.clip_intent_resolution import DeferredVisionQuery
+    from app.tasks import clip_intent_requery
+
+    monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", True)
+    item, persona, session = (
+        SimpleNamespace(id=uuid.uuid4()),
+        SimpleNamespace(user_id=uuid.uuid4()),
+        _session(),
+    )
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=3)
+    response, events = SimpleNamespace(status="briefing"), AsyncMock()
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            direction="fast_montage",
+            edit_format="montage",
+            render_program="native",
+            selected_media_ids=["clip-1", "clip-2"],
+            target_duration_s=20,
+            clip_intents=[
+                ClipIntent(intent_id="sport", op="label", attribute="sport being played")
+            ],
+        ),
+        summary="Label the sports.",
+    )
+    _wire_common_turn_mocks(
+        monkeypatch,
+        item=item,
+        persona=persona,
+        session=session,
+        manifest=_manifest(),
+        action=action,
+        response=response,
+        append_event=events,
+    )
+    monkeypatch.setattr(
+        creator_routes, "_owned_context", AsyncMock(return_value=(item, plan, persona))
+    )
+    clips = [IntentClip(media_id="clip-1", asset_id=str(uuid.uuid4()), kind="video", analysis={})]
+    monkeypatch.setattr(creator_routes, "load_intent_clips_for_item", AsyncMock(return_value=clips))
+    resolution = IntentResolution(
+        question="Which sport?",
+        deferred_queries=[
+            DeferredVisionQuery("clip-1", "What sport?"),
+        ],
+    )
+    monkeypatch.setattr(
+        creator_routes, "resolve_clip_intents_for_turn", AsyncMock(return_value=resolution)
+    )
+    persist = AsyncMock()
+    monkeypatch.setattr(creator_routes, "_persist_clip_intent_vision_answers", persist)
+    enqueue = MagicMock(return_value=queued)
+    monkeypatch.setattr(clip_intent_requery, "enqueue_clip_intent_requeries", enqueue)
+    db = AsyncMock()
+
+    async def to_thread(func, *args, **kwargs):
+        if func is enqueue:
+            assert db.commit.await_count >= 1
+            assert creator_routes._load_session.await_args.kwargs.get("for_update") is True
+            return enqueue(*args, **kwargs)
+        return SimpleNamespace(action=action)
+
+    monkeypatch.setattr(creator_routes.asyncio, "to_thread", to_thread)
+    await creator_routes._run_planning_turn(
+        db,
+        item_id=str(item.id),
+        user=SimpleNamespace(id=persona.user_id),
+        session_id=session.id,
+        expected_revision=1,
+        user_message="label the sport",
+    )
+    enqueue.assert_called_once()
+    assert enqueue.call_args.kwargs["queries"] == resolution.deferred_queries
+    assert enqueue.call_args.kwargs["ownership_epoch"] == 3
+    assert session.active_plan is None
+    assert session.status == "briefing"
+    payload = events.await_args.kwargs["payload"]
+    assert payload["reason_code"] == ("clip_intent_pending" if queued else "clip_intent_unresolved")
+    assert payload["message"] == (
+        "I'm taking a closer look at the remaining clips. "
+        "Send another message in a moment and I'll use what I find."
+        if queued
+        else "Which sport?"
+    )
