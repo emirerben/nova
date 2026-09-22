@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.137.0] - 2026-09-22
+
+### Fixed
+- fix: restore exported voiceover and sentence captions (#1149) <!-- release-pr: 1149 -->
+
 ## [0.76.136.0] - 2026-09-22
 
 ### Changed
