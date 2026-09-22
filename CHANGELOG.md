@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.134.0] - 2026-09-22
+
+### Changed
+- feat(chat): automatically name new chats from the first prompt (KRI-162) (#1148) <!-- release-pr: 1148 -->
+
 ## [0.76.133.0] - 2026-09-22
 
 ### Fixed
