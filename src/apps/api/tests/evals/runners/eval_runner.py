@@ -514,6 +514,36 @@ def run_eval(
     try:
         output = agent.run(effective_input, ctx=eval_ctx)
     except Exception as exc:
+        capture_root = os.environ.get("NOVA_EVAL_CAPTURE_DIR")
+        if recording_client is not None and capture_root and recording_client.invocations:
+            capture_stem = fixture.path.stem
+            if request_id_suffix:
+                capture_stem = f"{capture_stem}--{request_id_suffix.replace('/', '-')}"
+            capture_path = (
+                Path(capture_root) / fixture.path.parent.name / f"{capture_stem}--failed.json"
+            )
+            capture_path.parent.mkdir(parents=True, exist_ok=True)
+            capture_path.write_text(
+                json.dumps(
+                    {
+                        "agent": fixture.agent,
+                        "prompt_version": agent.spec.prompt_version,
+                        "input": fixture.input,
+                        "error": f"agent.run failed: {exc}",
+                        "raw_texts": [
+                            invocation.raw_text for invocation in recording_client.invocations
+                        ],
+                        "meta": {
+                            **fixture.meta,
+                            "source": "provider_failure_diagnostic",
+                            "test_run_id": os.environ.get("NOVA_EVAL_TEST_RUN_ID"),
+                        },
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
         return EvalResult(
             fixture_id=fixture.fixture_id,
             agent=fixture.agent,

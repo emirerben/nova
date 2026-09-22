@@ -61,23 +61,33 @@ def _canonicalize_text_bindings(
     plan: SemanticEditPlan, input: EditProposalAgentInput, repairs: list[str]
 ) -> None:  # noqa: A002
     """Keep server-owned and unrequested copy out of the generic text lane."""
-    server_owned = {
-        creator_copy_match_key(text) for text in (input.opening_title, input.closing_title) if text
-    }
+    server_owned = {text for text in (input.opening_title, input.closing_title) if text}
+    server_owned_keys = {creator_copy_match_key(text) for text in server_owned}
     if input.direction != "fast_montage":
-        server_owned.update(creator_copy_match_key(label) for label in input.shot_labels or [])
+        server_owned.update(input.shot_labels or [])
+        server_owned_keys.update(creator_copy_match_key(label) for label in input.shot_labels or [])
     label_keys = _resolved_label_keys(input)
+    label_texts = _resolved_label_texts(input)
     captions = _creator_captions(input)
+    caption_texts = _caption_texts(captions)
     retained: list[SemanticTextBinding] = []
     for index, binding in enumerate(plan.text_bindings):
         key = creator_copy_match_key(binding.text)
-        if key in label_keys:
+        if binding.text in label_texts or (key in label_keys and binding.text not in caption_texts):
             repairs.append(f"dropped_grounded_label_text_binding:{index}")
-        elif key in server_owned:
+        elif binding.text in server_owned or (key in server_owned_keys and key not in captions):
             repairs.append(f"dropped_server_owned_text_binding:{index}")
         elif captions and key not in captions:
             repairs.append(f"dropped_unrequested_text_binding:{index}")
         else:
+            exact_creator_copy = (
+                _resolve_creator_caption(binding.text, captions) if captions else None
+            )
+            if captions and key in captions and exact_creator_copy is None:
+                raise SchemaError("semantic_edit_proposal: creator caption variants are ambiguous")
+            if exact_creator_copy and binding.text != exact_creator_copy:
+                binding = binding.model_copy(update={"text": exact_creator_copy})
+                repairs.append(f"canonicalized_creator_caption_binding:{index}")
             retained.append(binding)
     plan.text_bindings = retained
 
@@ -116,9 +126,9 @@ def _semantic_required_media_ids(input: EditProposalAgentInput) -> set[str]:  # 
     return required
 
 
-def _creator_captions(input: EditProposalAgentInput) -> dict[str, str]:  # noqa: A002
+def _creator_captions(input: EditProposalAgentInput) -> dict[str, list[str]]:  # noqa: A002
     """Creator-quoted captions are a complete allowlist (KRI-129)."""
-    phrases: dict[str, str] = {}
+    phrases: dict[str, list[str]] = {}
     for match in _QUOTED_TEXT_RE.finditer(input.creator_request):
         text = (match.group(1) or match.group(2) or "").strip()
         # A quotation can be factual evidence (for example a song title) as
@@ -129,17 +139,43 @@ def _creator_captions(input: EditProposalAgentInput) -> dict[str, str]:  # noqa:
             continue
         key = creator_copy_match_key(text)
         if key:
-            phrases.setdefault(key, text)
+            if text not in phrases.setdefault(key, []):
+                phrases[key].append(text)
     for title in (input.opening_title, input.closing_title):
         if title:
-            phrases.pop(creator_copy_match_key(title), None)
+            key = creator_copy_match_key(title)
+            phrases[key] = [text for text in phrases.get(key, []) if text != title]
+            if not phrases[key]:
+                phrases.pop(key)
     return phrases
+
+
+def _resolve_creator_caption(text: str, captions: dict[str, list[str]]) -> str | None:
+    """Return exact creator copy, or None when normalized variants are ambiguous."""
+    variants = captions.get(creator_copy_match_key(text), [])
+    if text in variants:
+        return text
+    return variants[0] if len(variants) == 1 else None
+
+
+def _caption_texts(captions: dict[str, list[str]]) -> set[str]:
+    return {text for variants in captions.values() for text in variants}
 
 
 def _resolved_label_keys(input: EditProposalAgentInput) -> set[str]:  # noqa: A002
     """Exact copy already owned by the worker's grounded-label render lane."""
     return {
         creator_copy_match_key(assignment.value)
+        for intent in input.clip_intents or []
+        if intent.status == "resolved" and intent.op == "label"
+        for assignment in intent.assignments
+        if assignment.value
+    }
+
+
+def _resolved_label_texts(input: EditProposalAgentInput) -> set[str]:  # noqa: A002
+    return {
+        assignment.value
         for intent in input.clip_intents or []
         if intent.status == "resolved" and intent.op == "label"
         for assignment in intent.assignments
@@ -154,8 +190,13 @@ def _blank_grounded_label_thoughts(
     if input.shot_labels:
         return
     label_keys = _resolved_label_keys(input)
+    label_texts = _resolved_label_texts(input)
+    caption_texts = _caption_texts(_creator_captions(input))
     for index, chapter in enumerate(plan.chapters):
-        if creator_copy_match_key(chapter.thought) in label_keys:
+        if chapter.thought in label_texts or (
+            creator_copy_match_key(chapter.thought) in label_keys
+            and chapter.thought not in caption_texts
+        ):
             chapter.thought = ""
             repairs.append(f"blanked_grounded_label_thought:{index}")
 
@@ -333,7 +374,7 @@ def semantic_plan_from_legacy(
             if creator_copy_match_key(chapter.thought) in label_keys:
                 chapter.thought = ""
                 continue
-            exact = captions.get(creator_copy_match_key(chapter.thought))
+            exact = _resolve_creator_caption(chapter.thought, captions)
             chapter.thought = exact if exact is not None else ""
     SemanticEditProposalAgent._add_creator_caption_bindings(plan, input)
     if len(plan.text_bindings) > 12:
@@ -347,7 +388,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.semantic_edit_proposal",
         prompt_id="semantic_edit_proposal",
-        prompt_version="2.0.7",
+        prompt_version="2.0.9",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -362,7 +403,20 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         return ["chapters"]
 
     def render_prompt(self, input: EditProposalAgentInput) -> str:  # noqa: A002
-        prompt_media, aliases, _ids = _semantic_prompt_media(input)
+        prompt_media, aliases, id_to_alias = _semantic_prompt_media(input)
+        group_ids_by_alias = {row.media_id: [] for row in prompt_media}
+        for intent in input.clip_intents or []:
+            if intent.status != "resolved" or intent.op != "group":
+                continue
+            for assignment in intent.assignments:
+                alias = id_to_alias.get(assignment.media_id)
+                if alias is not None:
+                    group_ids_by_alias[alias].append(intent.intent_id)
+        media_rows = []
+        for row in prompt_media:
+            projection = _media_prompt_dict(row)
+            projection["server_exclusive_group_ids"] = group_ids_by_alias[row.media_id]
+            media_rows.append(projection)
         return load_prompt(
             "semantic_edit_proposal",
             direction=input.direction,
@@ -374,9 +428,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             constraints_json=json.dumps(
                 _semantic_constraint_block(input, aliases), ensure_ascii=False
             ),
-            media_json=json.dumps(
-                [_media_prompt_dict(row) for row in prompt_media], ensure_ascii=False
-            ),
+            media_json=json.dumps(media_rows, ensure_ascii=False),
         )
 
     def parse(self, raw_text: str, input: EditProposalAgentInput) -> SemanticEditPlan:  # noqa: A002
@@ -529,7 +581,12 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         _canonicalize_text_bindings(plan, input, repairs)
         if not input.shot_labels and (captions := _creator_captions(input)):
             for index, chapter in enumerate(plan.chapters):
-                exact = captions.get(creator_copy_match_key(chapter.thought))
+                key = creator_copy_match_key(chapter.thought)
+                exact = _resolve_creator_caption(chapter.thought, captions)
+                if chapter.thought and key in captions and exact is None:
+                    raise SchemaError(
+                        "semantic_edit_proposal: creator caption variants are ambiguous"
+                    )
                 if chapter.thought and exact is None:
                     chapter.thought = ""
                     repairs.append(f"blanked_unrequested_thought:{index}")
@@ -577,17 +634,16 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         for intent in input.clip_intents or []:
             if intent.status != "resolved" or intent.op == "label" or not intent.creator_text:
                 continue
-            text = captions.get(creator_copy_match_key(intent.creator_text))
+            text = _resolve_creator_caption(intent.creator_text, captions)
+            if creator_copy_match_key(intent.creator_text) in captions and text is None:
+                raise SchemaError("semantic_edit_proposal: creator caption variants are ambiguous")
             targets = [
                 assignment.media_id
                 for assignment in intent.assignments
                 if assignment.media_id in scheduled
             ]
             key = (text or "", tuple(targets))
-            same_text_exists = any(
-                creator_copy_match_key(binding.text) == creator_copy_match_key(text or "")
-                for binding in plan.text_bindings
-            )
+            same_text_exists = any(binding.text == text for binding in plan.text_bindings)
             if text and targets and key not in existing and not same_text_exists:
                 plan.text_bindings.append(SemanticTextBinding(text=text, media_ids=targets))
                 existing.add(key)
@@ -599,12 +655,15 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         """Quoted creator captions form a complete text-binding allowlist."""
         captions = _creator_captions(input)
         label_keys = _resolved_label_keys(input)
+        label_texts = _resolved_label_texts(input)
         # Resolved labels are re-grounded by the worker's dedicated context
         # lane.  They must never become generic montage text, even if the
         # model copied a server-resolved value verbatim.
         for binding in plan.text_bindings:
             key = creator_copy_match_key(binding.text)
-            if key in label_keys:
+            if binding.text in label_texts or (
+                key in label_keys and binding.text not in _caption_texts(captions)
+            ):
                 raise SchemaError(
                     "semantic_edit_proposal: resolved label belongs to the grounded label lane"
                 )
@@ -612,18 +671,18 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             return
         for binding in plan.text_bindings:
             key = creator_copy_match_key(binding.text)
-            if key not in captions:
+            if key not in captions or binding.text not in captions[key]:
                 raise SchemaError("semantic_edit_proposal: unrequested text binding was invented")
         present = {
-            creator_copy_match_key(text)
+            text
             for text in [
                 *(chapter.thought for chapter in plan.chapters),
                 *(binding.text for binding in plan.text_bindings),
             ]
             if text
         }
-        required_caption_keys = set(captions) - label_keys
-        if not required_caption_keys <= present:
+        required_captions = _caption_texts(captions) - label_texts
+        if not required_captions <= present:
             raise SchemaError("semantic_edit_proposal: creator caption was dropped")
 
     @staticmethod

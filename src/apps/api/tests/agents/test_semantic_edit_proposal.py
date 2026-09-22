@@ -16,6 +16,7 @@ from app.agents.semantic_edit_proposal import (
     semantic_plan_from_legacy,
 )
 from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
+from app.services.semantic_edit_scheduler import schedule_semantic_edit
 
 
 def _input(**updates: object) -> EditProposalAgentInput:
@@ -291,6 +292,24 @@ def test_server_owned_title_and_shot_label_bindings_are_removed_with_repairs() -
     ]
 
 
+def test_normalized_server_title_echo_drops_without_explicit_caption_variant() -> None:
+    raw = _raw(text_bindings=[{"text": "LONDON DAY", "chapter_ids": ["one"]}])
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        raw, _input(creator_request="")
+    )
+    assert plan.text_bindings == []
+    assert "dropped_server_owned_text_binding:0" in plan.repairs
+
+
+def test_distinct_caption_variant_of_server_title_is_preserved() -> None:
+    raw = _raw(text_bindings=[{"text": "us", "chapter_ids": ["one"]}])
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        raw,
+        _input(opening_title="US", creator_request='Show "us" on the first clip.'),
+    )
+    assert [binding.text for binding in plan.text_bindings] == ["us"]
+
+
 def test_prompt_rewrites_server_constraints_to_short_aliases() -> None:
     input = _input(
         montage_audio={"source_media_ids": ["pub"], "preserve_source_audio": True},
@@ -331,6 +350,101 @@ def test_fast_caption_binding_resolves_aliases_to_scheduled_media() -> None:
     plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
     assert {binding.text for binding in plan.text_bindings} == {"post match pub"}
     assert all(set(binding.media_ids) <= {"park", "pub"} for binding in plan.text_bindings)
+
+
+def test_fast_caption_intents_keep_distinct_exact_variants() -> None:
+    intents = [
+        ResolvedClipIntent(
+            intent_id="upper",
+            op="include",
+            attribute="park",
+            creator_text="US",
+            assignments=[ClipAssignment(media_id="park")],
+        ),
+        ResolvedClipIntent(
+            intent_id="lower",
+            op="include",
+            attribute="pub",
+            creator_text="us",
+            assignments=[ClipAssignment(media_id="pub")],
+        ),
+    ]
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = ""
+    raw["chapters"][1]["thought"] = ""
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw),
+        _input(
+            direction="fast_montage",
+            creator_request='Show "US" on the first clip and show "us" on the second clip.',
+            clip_intents=intents,
+        ),
+    )
+    assert [binding.text for binding in plan.text_bindings] == ["US", "us"]
+
+
+def test_creator_caption_binding_is_canonicalized_before_scheduler_deduplication() -> None:
+    raw = json.loads(_raw(text_bindings=[{"text": "POST-MATCH PUB", "chapter_ids": ["two"]}]))
+    input = _input(
+        direction="fast_montage",
+        target_duration_s=4,
+        media=[
+            EditProposalMedia(
+                media_id="park",
+                lane="clip",
+                kind="video",
+                duration_s=4,
+                best_moments=[{"start_s": 0, "end_s": 4}],
+            ),
+            EditProposalMedia(
+                media_id="pub",
+                lane="clip",
+                kind="video",
+                duration_s=4,
+                best_moments=[{"start_s": 0, "end_s": 4}],
+            ),
+        ],
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [binding.text for binding in plan.text_bindings] == ["post match pub", "post match pub"]
+    assert "canonicalized_creator_caption_binding:0" in plan.repairs
+
+    scheduled = schedule_semantic_edit(plan, input)
+    assert [(binding.media_id, binding.text) for binding in scheduled.montage_text_bindings] == [
+        ("pub", "post match pub")
+    ]
+
+
+def test_distinct_exact_creator_caption_variants_survive_thoughts_and_bindings() -> None:
+    raw = json.loads(
+        _raw(
+            text_bindings=[
+                {"text": "US", "chapter_ids": ["one"]},
+                {"text": "us", "chapter_ids": ["two"]},
+            ]
+        )
+    )
+    raw["chapters"][0]["thought"] = "US"
+    raw["chapters"][1]["thought"] = "us"
+    input = _input(creator_request='Show "US" on first clip and show "us" on second clip.')
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["US", "us"]
+    assert [binding.text for binding in plan.text_bindings] == ["US", "us"]
+
+
+def test_distinct_creator_caption_variant_must_not_be_missing_or_ambiguous() -> None:
+    input = _input(creator_request='Show "US" on first clip and show "us" on second clip.')
+    missing = json.loads(_raw())
+    missing["chapters"][0]["thought"] = "US"
+    missing["chapters"][1]["thought"] = "US"
+    with pytest.raises(SchemaError, match="creator caption was dropped"):
+        SemanticEditProposalAgent(None).parse(json.dumps(missing), input)  # type: ignore[arg-type]
+
+    ambiguous = json.loads(_raw())
+    ambiguous["chapters"][0]["thought"] = "Us"
+    ambiguous["chapters"][1]["thought"] = "us"
+    with pytest.raises(SchemaError, match="variants are ambiguous"):
+        SemanticEditProposalAgent(None).parse(json.dumps(ambiguous), input)  # type: ignore[arg-type]
 
 
 def test_resolved_label_generic_text_binding_is_dropped_for_grounded_lane() -> None:
@@ -455,6 +569,30 @@ def test_semantic_prompt_aliases_every_input_media_in_stable_order() -> None:
     assert "clip-034" not in prompt
 
 
+def test_semantic_prompt_marks_only_resolved_group_members_per_media() -> None:
+    input = _input(
+        clip_intents=[
+            ResolvedClipIntent(
+                intent_id="park-only",
+                op="group",
+                attribute="park together",
+                assignments=[ClipAssignment(media_id="park")],
+            ),
+            ResolvedClipIntent(
+                intent_id="ignored",
+                op="group",
+                attribute="pub maybe",
+                status="needs_creator",
+                assignments=[ClipAssignment(media_id="pub")],
+            ),
+        ]
+    )
+    prompt = SemanticEditProposalAgent(None).render_prompt(input)  # type: ignore[arg-type]
+    media_json = prompt.split("AVAILABLE MEDIA: ", 1)[1].split("\n\nUse only", 1)[0]
+    rows = {row["media_id"]: row["server_exclusive_group_ids"] for row in json.loads(media_json)}
+    assert rows == {"m001": ["park-only"], "m002": []}
+
+
 def test_semantic_prompt_makes_images_eligible_and_once_video_rule_explicit() -> None:
     prompt = SemanticEditProposalAgent(None).render_prompt(  # type: ignore[arg-type]
         _input(video_reuse_policy="once")
@@ -487,6 +625,21 @@ def test_clip_intent_group_and_order_require_every_source_in_exact_sequence() ->
     with pytest.raises(SchemaError, match="order changed"):
         SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
             json.dumps(bad), _input(creator_request="", clip_intents=intents)
+        )
+
+
+def test_exclusive_group_rejects_mixed_chapter_even_with_server_annotation() -> None:
+    group = ResolvedClipIntent(
+        intent_id="park-only",
+        op="group",
+        attribute="park together",
+        assignments=[ClipAssignment(media_id="park")],
+    )
+    raw = json.loads(_raw())
+    raw["chapters"][0]["sources"] = [{"media_id": "m001"}, {"media_id": "m002"}]
+    with pytest.raises(SchemaError, match="group has unrelated sources"):
+        SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+            json.dumps(raw), _input(creator_request="", clip_intents=[group])
         )
 
 
