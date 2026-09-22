@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.138.0] - 2026-09-22
+
+### Fixed
+- fix(creator): acknowledge preparation and recover unclaimed analysis (#1152) <!-- release-pr: 1152 -->
+
 ## [0.76.137.0] - 2026-09-22
 
 ### Fixed
