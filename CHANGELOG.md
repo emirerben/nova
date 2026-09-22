@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.119.0] - 2026-09-22
+
+### Changed
+- fix(ios): make original speech choice a secondary button (KRI-147) (#1132) <!-- release-pr: 1132 -->
+
 ## [0.76.118.0] - 2026-09-22
 
 ### Fixed
