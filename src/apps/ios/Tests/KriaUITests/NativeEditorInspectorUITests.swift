@@ -203,6 +203,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let first = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.05))
         first.press(forDuration: 0.05, thenDragTo: first.withOffset(CGVector(dx: -20, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.1)
         XCTAssertEqual(play.label, "Play preview", "Scrubbing must stop the playback clock")
+        var verifiedFirstClip = false
+        var verifiedSecondClip = false
+        var verifiedBrandOutro = false
+        var verifiedContentAfterOutro = false
         func assertDisplayedClip() {
             let screenshot = app.screenshot()
             let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch.frame
@@ -216,11 +220,20 @@ final class NativeEditorInspectorUITests: XCTestCase {
             let label = app.descendants(matching: .any)["native-editor-current-time"].firstMatch.value as? String ?? ""
             let time = Double(label.split(separator: ":").last ?? "0") ?? 0
             let previewDiagnostic = app.descendants(matching: .any)["native-editor-preview"].firstMatch.value as? String ?? ""
-            // The accessibility time rounds to a tenth; skip the ambiguous
-            // sample exactly on the cut and verify the frames on either side.
-            if abs(time - 2) > 0.1 {
-                XCTAssertGreaterThan(rgba[time < 2 ? 0 : 2], 220, "Wrong clip displayed at \(label): \(rgba), preview: \(previewDiagnostic)")
-                XCTAssertLessThan(rgba[time < 2 ? 2 : 0], 40, "Stale clip displayed at \(label): \(rgba), preview: \(previewDiagnostic)")
+            // The accessibility time rounds to a tenth, so skip samples on
+            // either cut. Source content is red then blue; the branded tail
+            // is white at this stable point in the bundled outro.
+            if time > 4.1 {
+                XCTAssertGreaterThan(rgba[0], 220, "Brand outro was not displayed at \(label): \(rgba), preview: \(previewDiagnostic)")
+                XCTAssertGreaterThan(rgba[1], 220, "Brand outro was not displayed at \(label): \(rgba), preview: \(previewDiagnostic)")
+                XCTAssertGreaterThan(rgba[2], 220, "Brand outro was not displayed at \(label): \(rgba), preview: \(previewDiagnostic)")
+                verifiedBrandOutro = true
+            } else if time < 3.9, abs(time - 2) > 0.1 {
+                let isFirstClip = time < 2
+                XCTAssertGreaterThan(rgba[isFirstClip ? 0 : 2], 220, "Wrong clip displayed at \(label): \(rgba), preview: \(previewDiagnostic)")
+                XCTAssertLessThan(rgba[isFirstClip ? 2 : 0], 40, "Stale clip displayed at \(label): \(rgba), preview: \(previewDiagnostic)")
+                if isFirstClip { verifiedFirstClip = true } else { verifiedSecondClip = true }
+                if verifiedBrandOutro { verifiedContentAfterOutro = true }
             }
         }
         for index in 0..<8 {
@@ -258,6 +271,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.tap()
         XCTAssertEqual(app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.value as? String, "2.000")
         XCTAssertEqual(app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.value as? String, "2.000")
+        XCTAssertTrue(verifiedFirstClip, "Scrubbing must display the first content clip")
+        XCTAssertTrue(verifiedSecondClip, "Scrubbing must display the second content clip")
+        XCTAssertTrue(verifiedBrandOutro, "Scrubbing must display the branded outro")
+        XCTAssertTrue(verifiedContentAfterOutro, "Reverse scrubbing must return from the outro to content")
         play.tap()
         let time = app.descendants(matching: .any)["native-editor-current-time"].firstMatch
         let advanced = NSPredicate { _, _ in
@@ -271,7 +288,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         waitForExpectations(timeout: 15)
         let previewState = app.descendants(matching: .any)["native-editor-preview"].firstMatch
         let finalFrame = NSPredicate { _, _ in
-            time.value as? String == "0:04.0" && play.label == "Play preview"
+            time.value as? String == "0:05.6" && play.label == "Play preview"
                 && (previewState.value as? String ?? "").contains("stillFrameReady:true")
         }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: finalFrame, object: previewState)], timeout: 15), .completed)
