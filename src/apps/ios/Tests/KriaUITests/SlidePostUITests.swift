@@ -24,6 +24,14 @@ import XCTest
         XCTAssertTrue(apply.waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["slidepost-save-photos"].exists)
         scrollTo(apply, app: app); apply.tap()
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        let viewport = app.windows.firstMatch.frame
+        XCTAssertLessThanOrEqual(preview.frame.width, viewport.width)
+        XCTAssertLessThanOrEqual(preview.frame.height, viewport.height)
+        XCTAssertEqual(preview.frame.width / preview.frame.height, 4.0 / 5.0, accuracy: 0.06)
+        XCTAssertTrue(app.buttons["slidepost-openkria"].isHittable)
+        let draftPreview = XCTAttachment(screenshot: app.screenshot()); draftPreview.name = "Native slide draft preview"; draftPreview.lifetime = .keepAlways; add(draftPreview)
         let create = app.buttons["slidepost-create"]
         scrollTo(create, app: app)
         XCTAssertTrue(create.waitForExistence(timeout: 6)); create.tap()
@@ -33,7 +41,7 @@ import XCTest
         let ready = XCTAttachment(screenshot: app.screenshot()); ready.name = "Native slide post ready"; ready.lifetime = .keepAlways; add(ready)
         for _ in 0..<5 where !app.buttons["slidepost-openkria"].isHittable { app.swipeDown() }
         app.buttons["slidepost-openkria"].tap()
-        let prompt = app.textFields["Describe the post"].firstMatch
+        let prompt = app.descendants(matching: .any)["slidepost-prompt"].firstMatch
         XCTAssertTrue(prompt.waitForExistence(timeout: 5))
         prompt.tap(); prompt.typeText(" End on the view.")
         app.buttons["slidepost-ask"].tap()

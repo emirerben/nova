@@ -184,6 +184,9 @@ private struct SlidePostItemResponse: Decodable {
     private var undoDraft: SlidePostDraft?
     private var itemID: String?
     private var restoring = false
+    private var mutationGeneration = 0
+    private var refreshSequence = 0
+    private var appliedRefreshSequence = 0
     private let defaults: UserDefaults
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
@@ -201,8 +204,14 @@ private struct SlidePostItemResponse: Decodable {
 
     func refresh(api: any KriaAPIClient, itemID: String) async {
         guard !isBusy else { return }
+        let generation = mutationGeneration
+        refreshSequence += 1
+        let sequence = refreshSequence
         do {
             let result = try await api.slidePost(itemID: itemID)
+            // An upload refresh must not roll a completed save back, or let an
+            // older poll replace a more recent render/status projection.
+            guard generation == mutationGeneration, !isBusy, sequence >= appliedRefreshSequence else { return }
             guard result.schemaVersion == 1, result.itemID == itemID else { throw APIError.invalidResponse }
             if self.itemID != itemID {
                 restoring = true
@@ -210,12 +219,29 @@ private struct SlidePostItemResponse: Decodable {
                 restore()
                 restoring = false
             }
+            appliedRefreshSequence = sequence
             adopt(result)
         } catch is CancellationError { } catch { self.error = error.localizedDescription }
     }
 
+    /// Export requires an authoritative check; a cached ready projection is
+    /// insufficient when another device can save a newer version.
+    func revalidateForExport(api: any KriaAPIClient, itemID: String) async throws {
+        guard !isBusy, !hasUnsavedChanges, !hasConflict else { throw APIError.conflict }
+        let generation = mutationGeneration
+        let result = try await api.slidePost(itemID: itemID)
+        guard result.schemaVersion == 1, result.itemID == itemID else { throw APIError.invalidResponse }
+        guard generation == mutationGeneration, !isBusy, !hasUnsavedChanges, !hasConflict,
+              (result.draft?.version ?? 0) >= baseVersion else { throw APIError.conflict }
+        // Invalidate background GETs that began before this authoritative read.
+        mutationGeneration += 1
+        adopt(result)
+        guard canExport else { throw APIError.conflict }
+    }
+
     private func adopt(_ result: SlidePostState) {
         let remoteVersion = result.draft?.version ?? 0
+        guard remoteVersion >= baseVersion else { return }
         let wasDirty = draft.map { local in baselineDraft.map { !local.hasSameContent(as: $0) } ?? true } ?? false
         state = result
         baselineDraft = result.draft
@@ -245,6 +271,7 @@ private struct SlidePostItemResponse: Decodable {
         let prompt = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, prompt.count <= 2000 else { error = "Tell Kria your direction in 2,000 characters or fewer."; return }
         guard !readyAssets.isEmpty else { error = "Add photos or videos and wait for them to finish preparing."; return }
+        mutationGeneration += 1
         self.instruction = instruction; isBusy = true; error = nil; operationMessage = "Kria is arranging your post…"
         defer { isBusy = false; operationMessage = nil }
         do {
@@ -274,6 +301,7 @@ private struct SlidePostItemResponse: Decodable {
     }
 
     private func persistDraft(_ value: SlidePostDraft, api: any KriaAPIClient, itemID: String) async {
+        mutationGeneration += 1
         isBusy = true; error = nil; operationMessage = "Saving your post…"
         defer { isBusy = false; operationMessage = nil }
         do {
@@ -296,6 +324,7 @@ private struct SlidePostItemResponse: Decodable {
         else if hasUnsavedChanges { await save(api: api, itemID: itemID) }
         guard error == nil, let draft, draft.validationMessage == nil else { return }
         if isRendering { return }
+        mutationGeneration += 1
         isBusy = true; error = nil; operationMessage = "Creating your post…"
         defer { isBusy = false; operationMessage = nil }
         do {

@@ -342,12 +342,17 @@ private struct SlidePostFormatCard: View {
                     SlidePostFormatCover(paused: $paused)
                         .frame(width: 156, height: 156)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(isBusy)
                 .accessibilityIdentifier("format-slides")
                 .accessibilityLabel("Photo & video post")
                 .accessibilityHint("Choose Photo & video post as this creation format")
+                // The moving strip has four visual frames. Keep its children
+                // out of Accessibility so this card's frame stays at 156pt and
+                // cannot overlap the narrated card beside it.
+                .accessibilityElement(children: .ignore)
 
                 // This is a sibling of the format-selection button. Nesting a
                 // Button inside a Button sends the pause tap to the card too.

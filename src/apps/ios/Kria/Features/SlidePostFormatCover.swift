@@ -11,6 +11,7 @@ struct SlidePostFormatCover: View {
     @State private var mostlyVisible = true
     private let size = CGSize(width: 156, height: 156)
     private var advances: Bool { !reduceMotion && !paused && mostlyVisible && scenePhase == .active }
+    private var displayedIndex: Int { index % 3 }
 
     var body: some View {
         GeometryReader { proxy in
@@ -30,9 +31,9 @@ struct SlidePostFormatCover: View {
                 .offset(x: -CGFloat(index) * size.width)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.6), value: index)
                 HStack(spacing: 6) {
-                    Text("\(index + 1)/3").font(KriaFont.body(11).weight(.semibold)).monospacedDigit()
+                    Text("\(displayedIndex + 1)/3").font(KriaFont.body(11).weight(.semibold)).monospacedDigit()
                     ForEach(0..<3, id: \.self) { item in
-                        Capsule().fill(item == index ? Color.white : Color.white.opacity(0.5)).frame(width: item == index ? 12 : 5, height: 5)
+                        Capsule().fill(item == displayedIndex ? Color.white : Color.white.opacity(0.5)).frame(width: item == displayedIndex ? 12 : 5, height: 5)
                     }
                     Spacer(minLength: 0)
                 }
@@ -42,6 +43,7 @@ struct SlidePostFormatCover: View {
             .onAppear { visibility(proxy.frame(in: .global)) }
             .onChange(of: proxy.frame(in: .global)) { _, frame in visibility(frame) }
         }
+        .allowsHitTesting(false)
         .task(id: advances) {
             guard advances else { return }
             // An app/background pause can cancel the task during the duplicate

@@ -144,6 +144,37 @@ import XCTest
         XCTAssertEqual(session.draft?.caption, "Keep this edit")
         XCTAssertFalse(session.canExport)
     }
+    func testOlderRefreshCannotRollBackAcceptedVersionOrExports() async throws {
+        var remote = fixture(version: 3, rendered: false)
+        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(remote)) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        remote = fixture(version: 2)
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(session.draft?.version, 3)
+        XCTAssertFalse(session.canExport)
+        XCTAssertTrue(session.isRendering)
+    }
+    func testExportRevalidationAdoptsRemoteVersionAndRejectsUnavailableOutput() async throws {
+        var remote = fixture()
+        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(remote)) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        remote = fixture(version: 2, rendered: false)
+        do {
+            try await session.revalidateForExport(api: api, itemID: itemID)
+            XCTFail("A newer unrendered draft must block export")
+        } catch { XCTAssertEqual(error as? APIError, .conflict) }
+        XCTAssertEqual(session.draft?.version, 2)
+        XCTAssertFalse(session.canExport)
+        NativeEditorURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
+        do {
+            try await session.revalidateForExport(api: api, itemID: itemID)
+            XCTFail("A failed authoritative read must block export")
+        } catch { }
+    }
     func testGalleryKeepsSlideItemIdentity() async throws {
         NativeEditorURLProtocol.handler = { _ in
             (200, Data(#"{"jobs":[{"id":"22222222-2222-2222-2222-222222222222","title":"Weekend","status":"ready","output_variant_id":"slides","content_plan_item_id":"11111111-1111-1111-1111-111111111111","created_at":"2026-09-22T12:00:00Z"}],"next_cursor":null}"#.utf8))

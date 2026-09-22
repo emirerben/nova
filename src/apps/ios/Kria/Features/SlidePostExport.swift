@@ -4,54 +4,88 @@ import SwiftUI
 import UIKit
 
 @MainActor final class SlidePostExporter: ObservableObject {
+    typealias Download = (URL) async throws -> (URL, URLResponse)
+    typealias PhotosAuthorization = () async -> PHAuthorizationStatus
+    typealias AtomicPhotoWrite = ([(URL, String)]) async throws -> Void
+    typealias Revalidate = () async throws -> Void
     @Published private(set) var message: String?
     @Published private(set) var isWorking = false
     @Published var shareItems: [URL] = []
     @Published var isSharing = false
+    private let downloadFile: Download
+    private let authorizePhotos: PhotosAuthorization
+    private let writePhotos: AtomicPhotoWrite
+    private let defaults: UserDefaults
 
-    func saveToPhotos(session: SlidePostSession) async {
-        guard !isWorking, let snapshot = snapshot(from: session) else { return }
-        if receiptExists(itemID: snapshot.itemID, version: snapshot.version) {
-            message = "This version is already saved to Photos."
-            return
-        }
+    init(
+        downloadFile: @escaping Download = { try await URLSession.shared.download(from: $0) },
+        authorizePhotos: @escaping PhotosAuthorization = { await PHPhotoLibrary.requestAuthorization(for: .addOnly) },
+        writePhotos: @escaping AtomicPhotoWrite = { resources in
+            try await PHPhotoLibrary.shared().performChanges {
+                for (url, kind) in resources {
+                    let request = PHAssetCreationRequest.forAsset()
+                    request.addResource(with: kind == "video" ? .video : .photo, fileURL: url, options: nil)
+                }
+            }
+        },
+        defaults: UserDefaults = .standard
+    ) {
+        self.downloadFile = downloadFile; self.authorizePhotos = authorizePhotos
+        self.writePhotos = writePhotos; self.defaults = defaults
+    }
+
+    func saveToPhotos(session: SlidePostSession, revalidate: Revalidate) async {
+        guard !isWorking else { return }
         isWorking = true; defer { isWorking = false }
         do {
-            let permission = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+            let permission = await authorizePhotos()
             guard permission == .authorized || permission == .limited else { throw SlidePostExportError.photosDenied }
+            try await revalidate()
+            guard let snapshot = snapshot(from: session) else { return }
+            if receiptExists(itemID: snapshot.itemID, version: snapshot.version) {
+                message = "This version is already saved to Photos."
+                return
+            }
             let files = try await download(snapshot)
             defer { try? FileManager.default.removeItem(at: files.directory) }
+            try await revalidate()
             // Do not commit a now-obsolete render after a refresh/edit landed
             // while its ordered media was downloading.
             guard session.canExport, session.state?.draft?.version == snapshot.version else {
                 message = "A newer post version is ready. Download it before saving."
                 return
             }
-            try await PHPhotoLibrary.shared().performChanges {
-                for file in files.ordered {
-                    let request = PHAssetCreationRequest.forAsset()
-                    request.addResource(with: file.kind == "video" ? .video : .photo, fileURL: file.url, options: nil)
-                }
-            }
+            try await writePhotos(files.ordered.map { ($0.url, $0.kind) })
             saveReceipt(itemID: snapshot.itemID, version: snapshot.version)
             message = "Saved \(files.ordered.count) slides to Photos."
         } catch { message = error.localizedDescription }
     }
 
-    func prepareShare(session: SlidePostSession) async {
-        guard !isWorking, let snapshot = snapshot(from: session) else { return }
+    func prepareShare(session: SlidePostSession, revalidate: Revalidate) async {
+        guard !isWorking else { return }
         isWorking = true; defer { isWorking = false }
         do {
+            try await revalidate()
+            guard let snapshot = snapshot(from: session) else { return }
             let files = try await download(snapshot)
+            var retainsDirectoryForShare = false
+            defer {
+                if !retainsDirectoryForShare { try? FileManager.default.removeItem(at: files.directory) }
+            }
+            try await revalidate()
             guard session.canExport, session.state?.draft?.version == snapshot.version else {
-                try? FileManager.default.removeItem(at: files.directory)
                 message = "A newer post version is ready. Download it before sharing."
                 return
             }
             let caption = files.directory.appending(path: "caption.txt")
-            guard let captionData = snapshot.caption.data(using: .utf8) else { throw SlidePostExportError.downloadFailed }
-            try captionData.write(to: caption, options: .atomic)
+            do {
+                guard let captionData = snapshot.caption.data(using: .utf8) else { throw SlidePostExportError.downloadFailed }
+                try captionData.write(to: caption, options: .atomic)
+            } catch {
+                throw error
+            }
             shareItems = files.ordered.map(\.url) + [caption]; isSharing = true
+            retainsDirectoryForShare = true
         } catch { message = error.localizedDescription }
     }
 
@@ -80,7 +114,7 @@ import UIKit
         do {
             var ordered: [Downloaded] = []
             for item in snapshot.items {
-                let (temporary, response) = try await URLSession.shared.download(from: item.url)
+                let (temporary, response) = try await downloadFile(item.url)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw SlidePostExportError.downloadFailed }
                 let ext = item.url.pathExtension.isEmpty ? (item.kind == "video" ? "mov" : "jpg") : item.url.pathExtension
                 let target = directory.appending(path: String(format: "%02d", item.index + 1) + "." + ext)
@@ -94,8 +128,8 @@ import UIKit
         }
     }
 
-    private func receiptExists(itemID: String, version: Int) -> Bool { UserDefaults.standard.bool(forKey: "kria.slide-post.photos.\(itemID).\(version)") }
-    private func saveReceipt(itemID: String, version: Int) { UserDefaults.standard.set(true, forKey: "kria.slide-post.photos.\(itemID).\(version)") }
+    private func receiptExists(itemID: String, version: Int) -> Bool { defaults.bool(forKey: "kria.slide-post.photos.\(itemID).\(version)") }
+    private func saveReceipt(itemID: String, version: Int) { defaults.set(true, forKey: "kria.slide-post.photos.\(itemID).\(version)") }
     private struct Snapshot { let itemID: String; let version: Int; let caption: String; let items: [Item] }
     private struct Item { let url: URL; let kind: String; let index: Int }
     private struct Downloaded { let url: URL; let kind: String }

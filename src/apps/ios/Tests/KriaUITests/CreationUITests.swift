@@ -116,7 +116,7 @@ final class CreationUITests: XCTestCase {
         let gallery = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Gallery'" )).firstMatch
         XCTAssertTrue(gallery.exists)
         gallery.tap()
-        XCTAssertTrue(app.staticTexts["Your finished videos"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Your videos and posts"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["All"].exists)
         XCTAssertTrue(app.buttons["Ready"].exists)
     }

@@ -27,6 +27,8 @@ struct SlidePostWorkspaceView: View {
     @State private var selectedProfile = "instagram_carousel"
     @State private var pendingUploads: [UploadRecoveryRecord] = []
     @State private var uploadFailures: [UploadFailure] = []
+    @State private var uploadInFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload] = [:]
+    @State private var photoSelections: [String: ProjectPhotoSelection] = [:]
     @State private var previewPlayer: AVPlayer?
     @State private var previewRetry = 0
     @State private var resolvedThread: CreationThread?
@@ -58,8 +60,12 @@ struct SlidePostWorkspaceView: View {
     private var itemID: String? { ownerThread?.activePlanItemID ?? project.activePlanItemID ?? session.state?.itemID }
     private var isRendering: Bool { session.isRendering }
     private var uploadProjectID: UUID { ownerThread.flatMap { UUID(uuidString: $0.id) } ?? project.id }
-    private var hasPendingAssets: Bool { session.state?.assets.contains { $0.status != "ready" } == true || pendingUploads.contains { $0.projectID == uploadProjectID } }
-    private var hasFailedUploads: Bool { uploadFailures.contains { $0.projectID == uploadProjectID } }
+    private var hasPendingAssets: Bool {
+        session.state?.assets.contains { ["pending", "queued", "uploaded", "processing", "analyzing", "uploading"].contains($0.status) } == true
+            || pendingUploads.contains { $0.projectID == uploadProjectID }
+            || BackgroundUploadCoordinator.reservedCount(projectID: uploadProjectID, role: .visual, inFlight: uploadInFlight, records: pendingUploads, selections: photoSelections) > 0
+    }
+    private var hasFailedUploads: Bool { uploadFailures.contains { $0.projectID == uploadProjectID } || session.state?.assets.contains { $0.status == "failed" || ["missing", "expired"].contains($0.mediaStatus ?? "") } == true }
     private var canRequestProposal: Bool { !session.isBusy && !session.hasConflict && !hasPendingAssets && !hasFailedUploads && !session.readyAssets.isEmpty }
 
     private var canCreateRender: Bool {
@@ -96,12 +102,16 @@ struct SlidePostWorkspaceView: View {
         }
         .background(KriaColor.paper)
         .sheet(isPresented: $showsConversation) {
-            SlidePostAssistantSheet(session: session, api: model.api, itemID: itemID)
+            SlidePostAssistantSheet(
+                session: session, api: model.api, itemID: itemID,
+                canRequestProposal: canRequestProposal,
+                uploadGuidance: hasFailedUploads ? "Resolve or remove failed photos and videos before asking Kria." : hasPendingAssets ? "Wait for every photo and video to finish importing before asking Kria." : nil
+            )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showsInspector) { inspector }
-        .sheet(isPresented: $showsAttachments) {
+        .sheet(isPresented: $showsAttachments, onDismiss: { Task { await refresh() } }) {
             AttachmentSheet(projectID: uploadProjectID, maximumClipCount: 35, attachedClipCount: 0, format: .slides,
                             thread: ownerThread, capabilities: effectiveCapabilities,
                             capabilitiesLoaded: effectiveCapabilities != nil,
@@ -112,7 +122,14 @@ struct SlidePostWorkspaceView: View {
         .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.discardShareDirectory) {
             SlidePostShareSheet(items: exporter.shareItems)
         }
-        .onReceive(model.uploads.$records) { pendingUploads = $0 }
+        .onReceive(model.uploads.$records) { records in
+            let previous = Set(pendingUploads.filter { $0.projectID == uploadProjectID }.map(\.id))
+            pendingUploads = records
+            let current = Set(records.filter { $0.projectID == uploadProjectID }.map(\.id))
+            if previous != current { Task { await refresh() } }
+        }
+        .onReceive(model.uploads.$inFlight) { uploadInFlight = $0 }
+        .onReceive(model.uploads.$photoSelections) { photoSelections = $0 }
         .onReceive(model.uploads.$failures) { uploadFailures = $0 }
         .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
         .onChange(of: session.selectedID) { _, _ in loadInspectorValues() }
@@ -234,10 +251,10 @@ struct SlidePostWorkspaceView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Your ordered slides and caption are ready.").font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
                     HStack {
-                        Button(exporter.isWorking ? "Preparing…" : "Save to Photos") { Task { await exporter.saveToPhotos(session: session) } }
+                        Button(exporter.isWorking ? "Preparing…" : "Save to Photos") { Task { await saveToPhotos() } }
                             .buttonStyle(KriaPrimaryButtonStyle()).disabled(exporter.isWorking)
                             .accessibilityIdentifier("slidepost-save-photos")
-                        Button("Share files") { Task { await exporter.prepareShare(session: session) } }
+                        Button("Share files") { Task { await prepareShare() } }
                             .buttonStyle(KriaSecondaryButtonStyle()).disabled(exporter.isWorking)
                             .accessibilityIdentifier("slidepost-share-files")
                     }
@@ -249,15 +266,18 @@ struct SlidePostWorkspaceView: View {
 
     private func preview(_ draft: SlidePostDraft) -> some View {
         let asset = session.selectedAsset
-        return ZStack {
-            Rectangle().fill(KriaColor.softZinc)
+        return Rectangle().fill(KriaColor.softZinc)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Slide preview")
+            .accessibilityIdentifier("slidepost-preview")
+            .overlay {
             if let url = previewURL {
                 if asset?.kind == "video" { VideoPlayer(player: previewPlayer) }
-                else if url.isFileURL, let image = UIImage(contentsOfFile: url.path) { Image(uiImage: image).resizable().scaledToFill() }
+                else if url.isFileURL, let image = UIImage(contentsOfFile: url.path) { Image(uiImage: image).resizable().scaledToFill().accessibilityHidden(true) }
                 else {
                     AsyncImage(url: url) { phase in
                         switch phase {
-                        case .success(let image): image.resizable().scaledToFill()
+                        case .success(let image): image.resizable().scaledToFill().accessibilityHidden(true)
                         case .failure:
                             VStack(spacing: 8) {
                                 Image(systemName: "exclamationmark.triangle").foregroundStyle(KriaColor.zinc)
@@ -274,6 +294,7 @@ struct SlidePostWorkspaceView: View {
         }
         .aspectRatio(draft.platformProfile == "instagram_carousel" ? CGFloat(4) / 5 : CGFloat(9) / 16, contentMode: .fit)
         .clipped()
+        .contentShape(Rectangle())
         .overlay(alignment: textAlignment) { if !session.canExport, let text = session.selectedSlide?.edits?.text, !text.content.isEmpty { Text(text.content).font(KriaFont.display(26)).multilineTextAlignment(.center).padding(12).foregroundStyle(.white).shadow(radius: 3).padding(16) } }
         .overlay(alignment: .topLeading) { Text("Preview").font(KriaFont.body(11).weight(.semibold)).padding(8).background(.black.opacity(0.45), in: Capsule()).foregroundStyle(.white).padding(10) }
         .task(id: previewURL) {
@@ -401,6 +422,18 @@ struct SlidePostWorkspaceView: View {
         await refresh()
     }
     private func addMedia() { if let onAddMedia { onAddMedia() } else if ownerThread != nil { showsAttachments = true } }
+    private func saveToPhotos() async {
+        guard let itemID else { return }
+        await exporter.saveToPhotos(session: session) {
+            try await session.revalidateForExport(api: model.api, itemID: itemID)
+        }
+    }
+    private func prepareShare() async {
+        guard let itemID else { return }
+        await exporter.prepareShare(session: session) {
+            try await session.revalidateForExport(api: model.api, itemID: itemID)
+        }
+    }
     private func propose() async {
         guard let itemID, canRequestProposal else { return }
         let selected = SlidePostDraft(version: 1, platformProfile: selectedProfile, slides: session.readyAssets.map { .init(id: $0.id, assetID: $0.id, kind: $0.kind) })
@@ -452,6 +485,8 @@ private struct SlidePostAssistantSheet: View {
     @ObservedObject var session: SlidePostSession
     let api: any KriaAPIClient
     let itemID: String?
+    let canRequestProposal: Bool
+    let uploadGuidance: String?
     @State private var prompt = ""
 
     var body: some View {
@@ -459,11 +494,16 @@ private struct SlidePostAssistantSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Kria").font(KriaFont.display(24))
                 TextField("Describe the post", text: $prompt, axis: .vertical)
+                    .accessibilityLabel("Describe the post")
+                    .accessibilityIdentifier("slidepost-prompt")
                     .lineLimit(2...5).padding(12).overlay(RoundedRectangle(cornerRadius: 12).stroke(KriaColor.border))
                 Button(session.isBusy ? "Thinking…" : "Propose changes") { Task { await propose() } }
                     .buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity)
-                    .disabled(session.isBusy || itemID == nil || session.readyAssets.isEmpty)
+                    .disabled(!canRequestProposal)
                     .accessibilityIdentifier("slidepost-ask")
+                if let uploadGuidance {
+                    Text(uploadGuidance).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                }
                 if let proposal = session.proposal {
                     Text(proposal.summary).font(KriaFont.body(14))
                     Text(proposal.draft.caption)
@@ -486,7 +526,7 @@ private struct SlidePostAssistantSheet: View {
     }
 
     private func propose() async {
-        guard let itemID else { return }
+        guard canRequestProposal, let itemID else { return }
         let brief = prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Arrange these photos and videos into a cohesive post." : prompt
         session.instruction = brief
         await session.propose(api: api, itemID: itemID, instruction: brief)
