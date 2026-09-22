@@ -114,6 +114,38 @@ final class EditorUITests: XCTestCase {
         waitForExpectations(timeout: 4)
     }
 
+    func testFirstSourcePreviewPlaysBrandOutroAndReplays() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text"]
+        app.launch()
+
+        let play = app.buttons["native-editor-play-pause"]
+        let clock = app.staticTexts["native-editor-current-time"]
+        let duration = app.staticTexts["native-editor-duration"]
+        XCTAssertTrue(play.waitForExistence(timeout: 8))
+        // Four editable seconds plus the bundled 1.6-second brand outro,
+        // visible on first open without saving or exporting.
+        expectation(for: NSPredicate(format: "value == %@", "0:05.6"), evaluatedWith: duration)
+        waitForExpectations(timeout: 15)
+        let first = XCTAttachment(screenshot: app.screenshot())
+        first.name = "Branded first preview"
+        first.lifetime = .keepAlways
+        add(first)
+
+        play.tap()
+        expectation(for: NSPredicate(format: "value == %@", "0:05.6"), evaluatedWith: clock)
+        waitForExpectations(timeout: 12)
+        XCTAssertEqual(play.label, "Play preview")
+        let tail = XCTAttachment(screenshot: app.screenshot())
+        tail.name = "Branded outro before export"
+        tail.lifetime = .keepAlways
+        add(tail)
+
+        play.tap()
+        expectation(for: NSPredicate(format: "value != %@", "0:05.6"), evaluatedWith: clock)
+        waitForExpectations(timeout: 5)
+    }
+
     func testNativeEditorLongTextEditPreservesDurationAndClipGeometry() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor"]

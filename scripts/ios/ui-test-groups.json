@@ -35,6 +35,7 @@
       "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface",
       "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock",
       "KriaUITests/EditorUITests/testNativeEditorPlaysTheRenderedAssetThroughItsRealEndAndReplays",
+      "KriaUITests/EditorUITests/testFirstSourcePreviewPlaysBrandOutroAndReplays",
       "KriaUITests/EditorUITests/testNativeEditorLongTextEditPreservesDurationAndClipGeometry",
       "KriaUITests/EditorUITests/testNativeEditorTrimHandleShortensExtendsAndUndoesAsOneGesture",
       "KriaUITests/EditorUITests/testNativeEditorNamedFixturesLaunchWithoutAnAccount",
