@@ -160,10 +160,13 @@ def _status(
     visuals: tuple[PhoneVisualBinding, ...],
     *,
     narration: PhoneNarrationBed | None = None,
+    allow_editor_media: bool = False,
 ) -> tuple[dict, EditRecipeV2]:
     kwargs = {"narration": narration} if narration is not None else {}
-    recipe = compile_phone_guided_plan(plan, sources, visuals, **kwargs)
-    validate_phone_pilot_recipe(recipe)
+    recipe = compile_phone_guided_plan(
+        plan, sources, visuals, allow_editor_media=allow_editor_media, **kwargs
+    )
+    validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
     request = make_device_request(
         job_id=uuid.uuid4(), variant_id="guided_story", revision=1, recipe=recipe
     )
@@ -177,7 +180,11 @@ def main() -> None:
     )
     out.mkdir(parents=True, exist_ok=True)
     video, photo = out / "video.mp4", out / "photo.jpg"
-    pool_video, cutout = out / "pool-video.mp4", out / "cutout.png"
+    pool_video, editor_video, cutout = (
+        out / "pool-video.mp4",
+        out / "editor-video.mp4",
+        out / "cutout.png",
+    )
     # Blue footage and a yellow Visuals video, both with a tone. A landscape
     # photo whose halves are red and green, so cover-cropping onto the portrait
     # canvas keeps both halves and the card shows the whole photo. A cutout
@@ -200,6 +207,21 @@ def main() -> None:
                 str(path),
             ),
         )
+    # Four one-second color bars make the editor-overlay video's source trim
+    # observable: the [2s, 4s] trim below must render cyan, never the first
+    # red/yellow seconds or a frozen terminal frame.
+    _ffmpeg(
+        *(
+            "-f", "lavfi", "-i",
+            "color=c=red:s=1080x1920:r=30:d=1",
+            "-f", "lavfi", "-i",
+            "color=c=yellow:s=1080x1920:r=30:d=1",
+            "-f", "lavfi", "-i",
+            "color=c=cyan:s=1080x1920:r=30:d=2",
+            "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1:a=0",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(editor_video),
+        )
+    )
     _ffmpeg(
         *("-f", "lavfi", "-i", "color=c=red:s=2016x3024"),
         *("-f", "lavfi", "-i", "color=c=0x00ff00:s=2016x3024"),
@@ -239,6 +261,7 @@ def main() -> None:
     )
     still, art_still = visual(photo), visual(cutout)
     clip = visual(pool_video, kind="video", duration_s=10, width=1080, height=1920)
+    editor_clip = visual(editor_video, kind="video", duration_s=4, width=1080, height=1920)
 
     def pooled(
         binding: PhoneVisualBinding, moment_id: str, start: float, end: float, **fields
@@ -261,6 +284,8 @@ def main() -> None:
         *VERIFIED,
         "stillImages",
         "visualVideos",
+        "visualBlocks",
+        "alphaOverlay",
         # KRI-132: the narrated_story case's hard-replace voiceover track and
         # its (fade-in) title text. "authoredText" is required too -- the
         # title's "Fraunces" face is a variable font, so its compiled run
@@ -305,6 +330,48 @@ def main() -> None:
     (out / "status.json").write_text(json.dumps(mixed_status, indent=2))
     visuals_only_status, _ = _status(visuals_only, (), (still, clip))
     (out / "status-visuals-only.json").write_text(json.dumps(visuals_only_status, indent=2))
+
+    # Opt-in native editor-media qualification: both image transforms use the
+    # same pooled photo, and a z=2 video overlays the contained image between
+    # 2s and 3s. The video trim is exactly [2s, 4s], whose cyan source bars
+    # let the device test prove that it honors the server-approved trim.
+    editor_media_plan = _plan(
+        [
+            _moment(
+                "editor-base", 0, 6, media_id=source.media_id, lane="clip", kind="video",
+                gcs_path=source.proxy_path, generation=source.generation,
+                source_start_s=2, source_end_s=8,
+            )
+        ],
+        [source.media_id],
+        source_audio=True,
+    )
+    editor_media_plan.editor_visual_blocks = [
+        {
+            "id": "contain-photo", "kind": "media", "asset_id": still.media_id,
+            "src_gcs_path": still.gcs_path, "media_kind": "image",
+            "start_s": 1, "end_s": 3, "display_mode": "fullscreen", "z": 1,
+            "transform": {"fit_mode": "contain", "focal_x": 0.5, "focal_y": 0.5, "zoom": 1},
+        },
+        {
+            "id": "trimmed-video", "kind": "media", "asset_id": editor_clip.media_id,
+            "src_gcs_path": editor_clip.gcs_path, "media_kind": "video",
+            "source_duration_s": 4, "trim_start_s": 2, "trim_end_s": 4,
+            "start_s": 2, "end_s": 4, "display_mode": "overlay", "x_frac": 0.5,
+            "y_frac": 0.5, "scale": 0.4, "z": 2,
+            "transform": {"fit_mode": "cover", "focal_x": 0.5, "focal_y": 0.5, "zoom": 1},
+        },
+        {
+            "id": "cover-photo", "kind": "media", "asset_id": still.media_id,
+            "src_gcs_path": still.gcs_path, "media_kind": "image",
+            "start_s": 4, "end_s": 5, "display_mode": "fullscreen", "z": 1,
+            "transform": {"fit_mode": "cover", "focal_x": 0.5, "focal_y": 0.5, "zoom": 1},
+        },
+    ]
+    editor_media_status, editor_media_recipe = _status(
+        editor_media_plan, (source,), (still, editor_clip), allow_editor_media=True
+    )
+    (out / "status-editor-media.json").write_text(json.dumps(editor_media_status, indent=2))
 
     # --- KRI-132: narrated_story -- a voiceover-timed guided story --------
     # 5 clips + 5 Visuals-pool photos tile the whole 48s narration duration
@@ -580,10 +647,27 @@ def main() -> None:
                     still.render_asset().id: photo.name,
                     clip.render_asset().id: pool_video.name,
                     art_still.render_asset().id: cutout.name,
+                    editor_clip.render_asset().id: editor_video.name,
                     **{
                         binding.render_asset().id: path.name
                         for binding, path in zip(narrated_photo_bindings, narrated_photo_paths)
                     },
+                },
+                "editor_media": {
+                    "status_file": "status-editor-media.json",
+                    "duration_s": editor_media_recipe.duration,
+                    "required_capabilities": sorted(editor_media_recipe.required_capabilities),
+                    "drop_capability": "visualBlocks",
+                    "samples": [
+                        {"name": "base-before", "t": 0.5, "x": 540, "y": 960, "rgb": [0, 0, 255]},
+                        {"name": "contain-left", "t": 1.5, "x": 180, "y": 960, "rgb": [255, 0, 0]},
+                        {"name": "contain-right", "t": 1.5, "x": 900, "y": 960, "rgb": [0, 255, 0]},
+                        {"name": "overlap-video", "t": 2.5, "x": 540, "y": 960, "rgb": [0, 255, 255]},
+                        {"name": "overlap-photo", "t": 2.5, "x": 180, "y": 960, "rgb": [255, 0, 0]},
+                        {"name": "cover-left", "t": 4.5, "x": 270, "y": 960, "rgb": [255, 0, 0]},
+                        {"name": "cover-right", "t": 4.5, "x": 810, "y": 960, "rgb": [0, 255, 0]},
+                        {"name": "base-after", "t": 5.5, "x": 540, "y": 960, "rgb": [0, 0, 255]},
+                    ],
                 },
                 "narrated_story": narrated_story_entry,
             },

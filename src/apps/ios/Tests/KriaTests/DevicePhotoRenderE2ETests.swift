@@ -60,6 +60,50 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         XCTAssertTrue(isColor(pixel(try XCTUnwrap(frames["only-pool-video"]), x: 540, y: 960), [255, 255, 0]))
     }
 
+    /// Opt-in editor-media proof: the server compiles the raw editor visual
+    /// blocks into a separate overlay track. It contains a full-frame photo
+    /// in both contain and cover modes, plus a higher-z video whose exact
+    /// [2s, 4s] source trim is cyan. The fixture metadata carries all sample
+    /// points so changing the fixture does not leave this test's assertions
+    /// pointed at a stale recipe.
+    func testServerCompiledEditorMediaRendersOnTheIPhone() async throws {
+        let input = try inputDirectory()
+        let meta = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: input.appendingPathComponent("e2e.json"))) as? [String: Any]
+        )
+        let caseMeta = try XCTUnwrap(meta["editor_media"] as? [String: Any])
+        let statusFile = try XCTUnwrap(caseMeta["status_file"] as? String)
+        let samples = try XCTUnwrap(caseMeta["samples"] as? [[String: Any]])
+        let times = try Dictionary(uniqueKeysWithValues: samples.map { sample in
+            (try XCTUnwrap(sample["name"] as? String), try XCTUnwrap(sample["t"] as? Double))
+        })
+
+        let status = try JSONDecoder().decode(
+            DeviceRenderStatusResponse.self,
+            from: Data(contentsOf: input.appendingPathComponent(statusFile))
+        )
+        let overlay = try XCTUnwrap(status.request.recipe.tracks.first { $0.id == "editor-media" })
+        let trimmedVideo = try XCTUnwrap(overlay.clips.first { $0.id == "editor-media-trimmed-video" })
+        XCTAssertEqual(trimmedVideo.sourceStart, 2, accuracy: 0.001)
+        XCTAssertEqual(trimmedVideo.sourceDuration, 2, accuracy: 0.001)
+        XCTAssertEqual(trimmedVideo.visualPlacement?.contain, false)
+
+        let frames = try await render(
+            status: statusFile, input: input, bindsFootage: true, output: "editor-media", at: times,
+            requiredEffectiveCapabilities: [.stillImages, .visualVideos, .visualBlocks],
+            dropCapabilityChecks: [try XCTUnwrap(caseMeta["drop_capability"] as? String)]
+        )
+        for sample in samples {
+            let name = try XCTUnwrap(sample["name"] as? String)
+            let image = try XCTUnwrap(frames[name])
+            let expected = try XCTUnwrap(sample["rgb"] as? RGB)
+            XCTAssertTrue(
+                isColor(pixel(image, x: try XCTUnwrap(sample["x"] as? Int), y: try XCTUnwrap(sample["y"] as? Int)), expected),
+                "\(name) did not match \(expected)"
+            )
+        }
+    }
+
     /// KRI-132: a voiceover-timed guided story -- 5 clips + 5 Visuals-pool
     /// photos tile the whole 48s narration duration
     /// (`compile_phone_guided_plan`'s new `narration:` parameter), a
@@ -120,7 +164,8 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             DeviceRenderSessions.decision(recipe, capabilities: PhoneRenderingCapabilities(enabled: true, recipeVersions: [2], verifiedFeatures: features)).route
         }
         XCTAssertTrue(recipe.effectiveCapabilities.isSuperset(of: requiredEffectiveCapabilities))
-        XCTAssertEqual(route(verified), .local)
+        let decision = DeviceRenderSessions.decision(recipe, capabilities: PhoneRenderingCapabilities(enabled: true, recipeVersions: [2], verifiedFeatures: verified))
+        XCTAssertEqual(decision.route, .local, "\(decision.reason ?? "") missing=\(decision.missingCapabilities)")
         for capability in dropCapabilityChecks {
             XCTAssertEqual(route(verified.filter { $0 != capability }), .cloud, "dropping \(capability)")
         }

@@ -144,6 +144,21 @@ def bind_phone_visuals(
     for any stale, foreign, or unreadable visual.
     """
     pins = _timeline_visuals(story_timeline, kinds)
+    return bind_phone_visual_assets(open_session, job_id=job_id, pins=pins)
+
+
+def bind_phone_visual_assets(
+    open_session: Callable[[], AbstractContextManager[Session]],
+    *,
+    job_id: str,
+    pins: dict[str, tuple[str, str, str]],
+) -> tuple[PhoneVisualBinding, ...]:
+    """Bind selected ready pool assets without requiring a story timeline.
+
+    Admission uses this same receipt path for editor-added photos and videos.
+    Callers pass only server-derived rows; it still rechecks owner, item, exact
+    generation, and the pool namespace before downloading any bytes.
+    """
     if not pins:
         return ()
     ids: dict[str, uuid.UUID] = {}

@@ -18,7 +18,13 @@ from app.pipeline.guided_story import (
     song_reference_variant_fields,
 )
 from app.pipeline.phone_guided_plan import compile_phone_guided_plan
+from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 from app.services.device_render import device_status, pin_device_request
+from app.services.phone_editor_sources import (
+    editor_source_bindings,
+    editor_sources_for_variant,
+    editor_visual_bindings,
+)
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import (
     PHONE_SOURCES_FIELD,
@@ -28,6 +34,7 @@ from app.services.phone_sources import (
 )
 
 log = structlog.get_logger()
+PHONE_EDITOR_PLAN_FIELD = "_phone_editor_plan_v1"
 
 
 class _StagedJob:
@@ -54,7 +61,9 @@ def prepare_phone_editor_commit(
         previous = device_status(job, variant_id).request
         assembly = staged.assembly_plan
         variant = next(v for v in assembly["variants"] if v.get("variant_id") == variant_id)
-        plan = copy.deepcopy(assembly["guided_story_execution_plan"])
+        plan = copy.deepcopy(
+            variant.get(PHONE_EDITOR_PLAN_FIELD) or assembly["guided_story_execution_plan"]
+        )
         revision = prep.get("guided_revision")
         render_sections = {key for key, value in prep["sections"].items() if value}
         if not (render_sections - {"text_elements"}):
@@ -70,22 +79,48 @@ def prepare_phone_editor_commit(
             # contextual and narration label lanes, are preserved untouched.
             plan["text_elements"] = variant.get("text_elements") or []
         elif revision is not None:
-            plan = compile_guided_runtime_plan(plan, assembly["guided_edit"], revision)
+            plan = compile_guided_runtime_plan(
+                assembly["guided_story_execution_plan"],
+                assembly["guided_edit"],
+                revision,
+                admitted_sources=editor_sources_for_variant(variant),
+            )
         else:
             raise ValueError("phone editor requires a canonical guided revision")
         bindings = tuple(
             PhoneSourceBinding.model_validate(row) for row in assembly[PHONE_SOURCES_FIELD]
-        )
-        # Photos reuse the worker's pinned receipts; this request path never
-        # hashes, so a photo placed after planning has none and fails closed.
+        ) + editor_source_bindings(variant)
+        # Reuse approved and asynchronously admitted receipts; Save never
+        # downloads or hashes media while holding its database locks.
         visuals = tuple(
             PhoneVisualBinding.model_validate(row)
             for row in assembly.get(PHONE_VISUALS_FIELD) or []
-        )
+        ) + editor_visual_bindings(variant)
+        # Narration is already pinned in the previous immutable recipe. Never
+        # re-download/hash on Save, nor silently drop its audio when adding media.
+        narration = None
+        if plan.get("narration") is not None:
+            voice = next(
+                asset
+                for asset in previous.recipe.asset_manifest.assets
+                if asset.kind == "voiceover"
+            )
+            media = next(asset for asset in previous.recipe.assets if asset.id == voice.id)
+            narration = PhoneNarrationBed(
+                plan_item_id=voice.plan_item_id,
+                generation=voice.generation,
+                fingerprint=voice.fingerprint,
+                duration_s=media.duration,
+            )
+        allow_editor_media = bool(plan.get("editor_visual_blocks"))
         recipe = compile_phone_guided_plan(
-            GuidedStoryExecutionPlan.model_validate(plan), bindings, visuals=visuals
+            GuidedStoryExecutionPlan.model_validate(plan),
+            bindings,
+            visuals=visuals,
+            narration=narration,
+            allow_editor_media=allow_editor_media,
         )
-        validate_phone_pilot_recipe(recipe)
+        validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
         request = make_device_request(
             job_id=job.id,
             variant_id=variant_id,
@@ -98,6 +133,7 @@ def prepare_phone_editor_commit(
                 variant["render_status"] = "awaiting_device"
                 variant["render_destination"] = "device"
                 variant["duration_s"] = plan["resolved_duration_s"]
+                variant[PHONE_EDITOR_PLAN_FIELD] = plan
                 variant.update(song_reference_variant_fields(plan))
         staged.status = "awaiting_device"
     except (KeyError, StopIteration, TypeError, ValueError, GuidedStoryError) as exc:

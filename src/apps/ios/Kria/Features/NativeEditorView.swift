@@ -174,8 +174,12 @@ struct NativeEditorView: View {
             } message: {
                 Text("Unsaved editor changes are stored only on this device until you save.")
             }
-            .task { await loadEditor() }
+            .task { await loadEditor(); await session.resumeEditorImports() }
+            .onReceive(model.uploads.$pendingEditorPlacements) { _ in
+                Task { await session.resumePendingEditorPlacements() }
+            }
             .onDisappear {
+                session.suspendEditorImports()
                 session.pausePlayback()
                 exporter.removeSharedFile()
             }
@@ -279,7 +283,7 @@ struct NativeEditorView: View {
             let bottomInset = viewport.safeAreaInsets.bottom
             let islandClearance = NativeEditorIslandMetrics.bottomClearance(showsContext: showsContext, safeAreaBottom: bottomInset)
             ZStack(alignment: .bottom) {
-                NativeEditorTimeline(session: session, bottomClearance: islandClearance)
+                NativeEditorTimeline(session: session, uploads: model.uploads, bottomClearance: islandClearance)
                     .ignoresSafeArea(.container, edges: .bottom)
 
                 // `NativeEditorIslandScrim` has a fixed `.frame(height:)`, so
@@ -397,6 +401,7 @@ struct NativeEditorView: View {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }
         #endif
         session.useDeviceRendering(model.deviceRenders)
+        session.useMediaUploads(model.uploads)
         guard session.needsReload(for: project) else { return }
         if let libraryJobID {
             await session.load(libraryJobID: libraryJobID, api: model.api)

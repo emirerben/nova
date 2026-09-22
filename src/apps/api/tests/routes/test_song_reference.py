@@ -111,9 +111,12 @@ def test_phone_revision_replaces_reference_timing_with_new_recipe(monkeypatch):
     revised["song_reference"]["end_s"] = 12
     revised["story_timeline"][0].update(source_end_s=4, output_end_s=2, duration_s=2)
     revised["beat_windows"][0].update(resolved_duration_s=2, end_s=2)
-    monkeypatch.setattr(
-        "app.services.phone_editor.compile_guided_runtime_plan", lambda *_args: revised
-    )
+
+    def compile_revision(*_args, admitted_sources):
+        assert admitted_sources == []
+        return revised
+
+    monkeypatch.setattr("app.services.phone_editor.compile_guided_runtime_plan", compile_revision)
     prepare_phone_editor_commit(
         job,
         "guided_story",

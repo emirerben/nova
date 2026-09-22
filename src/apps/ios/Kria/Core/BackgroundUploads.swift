@@ -37,7 +37,41 @@ struct UploadRecoveryRecord: Codable, Identifiable, Sendable, Equatable {
     var mediaRole: CreationMediaRole? = nil
     var itemID: String? = nil
     var visualReservationID: String? = nil
+    /// Completion stays within the approved editor variant.  It must never be
+    /// converted into a creation-thread media attachment.
+    var editorSourceTarget: EditorSourceRegistrationTarget? = nil
     var role: CreationMediaRole { mediaRole ?? .clip }
+}
+
+/// A source admission can finish after the editor that initiated it has gone
+/// away. Keep the desired local document mutation separately from the upload
+/// record so a ready server source is never silently orphaned on relaunch.
+struct PendingEditorSourcePlacement: Codable, Identifiable, Sendable {
+    enum Lane: String, Codable, Sendable { case timeline, visual }
+    let id: UUID
+    let target: EditorSourceRegistrationTarget
+    let lane: Lane
+    let visual: CreationVisual?
+    let localDurationS: Double?
+    var status: String
+    var error: String?
+    var retryable: Bool
+
+    init(id: UUID, target: EditorSourceRegistrationTarget, lane: Lane, visual: CreationVisual?, localDurationS: Double?, status: String = "preparing", error: String? = nil, retryable: Bool = true) {
+        self.id = id; self.target = target; self.lane = lane; self.visual = visual; self.localDurationS = localDurationS
+        self.status = status; self.error = error; self.retryable = retryable
+    }
+
+    enum CodingKeys: String, CodingKey { case id, target, lane, visual, localDurationS, status, error, retryable }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id); target = try c.decode(EditorSourceRegistrationTarget.self, forKey: .target)
+        lane = try c.decode(Lane.self, forKey: .lane); visual = try c.decodeIfPresent(CreationVisual.self, forKey: .visual)
+        localDurationS = try c.decodeIfPresent(Double.self, forKey: .localDurationS)
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "preparing"
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        retryable = try c.decodeIfPresent(Bool.self, forKey: .retryable) ?? true
+    }
 }
 
 enum UploadRecoveryAction: Equatable, Sendable { case retry, keepForManualRetry, chooseFileAgain }
@@ -108,6 +142,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     let purpose: UploadPurpose
     let role: CreationMediaRole
     let itemID: String?
+    let editorSourceTarget: EditorSourceRegistrationTarget?
     var state: PreparationState
     var lastHeartbeatAt: Date
     /// Identifies the process that most recently wrote/touched this entry.
@@ -115,7 +150,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// still-running preparation from an orphaned one (see type doc above).
     var launchToken: UUID
 
-    init(id: UUID, projectID: UUID, localFilePath: String, filename: String, source: UploadSource, purpose: UploadPurpose, role: CreationMediaRole, itemID: String?, state: PreparationState = .preparing, lastHeartbeatAt: Date = Date(), launchToken: UUID) {
+    init(id: UUID, projectID: UUID, localFilePath: String, filename: String, source: UploadSource, purpose: UploadPurpose, role: CreationMediaRole, itemID: String?, editorSourceTarget: EditorSourceRegistrationTarget? = nil, state: PreparationState = .preparing, lastHeartbeatAt: Date = Date(), launchToken: UUID) {
         self.id = id
         self.projectID = projectID
         self.localFilePath = localFilePath
@@ -124,6 +159,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         self.purpose = purpose
         self.role = role
         self.itemID = itemID
+        self.editorSourceTarget = editorSourceTarget
         self.state = state
         self.lastHeartbeatAt = lastHeartbeatAt
         self.launchToken = launchToken
@@ -147,6 +183,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         purpose = try container.decode(UploadPurpose.self, forKey: .purpose)
         role = try container.decode(CreationMediaRole.self, forKey: .role)
         itemID = try container.decodeIfPresent(String.self, forKey: .itemID)
+        editorSourceTarget = try container.decodeIfPresent(EditorSourceRegistrationTarget.self, forKey: .editorSourceTarget)
         state = try container.decodeIfPresent(PreparationState.self, forKey: .state) ?? .interrupted
         lastHeartbeatAt = try container.decodeIfPresent(Date.self, forKey: .lastHeartbeatAt) ?? .distantPast
         launchToken = try container.decodeIfPresent(UUID.self, forKey: .launchToken) ?? UUID()
@@ -186,6 +223,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     @Published private(set) var inFlight: [UUID: InFlightUpload] = [:]
     /// Per-clip failures. `lastError` is one global string that any sibling's success would erase.
     @Published private(set) var failures: [UploadFailure] = []
+    /// Terminal admission responses for active editor sessions. The durable
+    /// recovery authority is the record's `editorSourceTarget` plus the server
+    /// catalog; this is only the in-process handoff used to place a new item.
+    @Published private(set) var editorSourceResults: [UUID: EditorSourceRegistrationResponse] = [:]
+    @Published private(set) var pendingEditorPlacements: [PendingEditorSourcePlacement] = []
 
     struct InFlightUpload: Equatable, Sendable {
         let projectID: UUID
@@ -244,6 +286,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         self.proxyGate = UploadAdmissionGate(limit: maxConcurrentProxyPreparations)
         super.init()
         records = Self.restoreRecords(key: defaultsKey)
+        pendingEditorPlacements = Self.restoreEditorPlacements(key: defaultsKey)
         photoSelections = Self.restorePhotoSelections(key: defaultsKey)
         pruneOrphanedClaims()
         let configuration = sessionConfiguration ?? URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
@@ -251,6 +294,84 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         configuration.sessionSendsLaunchEvents = true
         configuration.waitsForConnectivity = true
         backgroundSession = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+    }
+
+    func beginEditorPlacement(_ placement: PendingEditorSourcePlacement) {
+        guard !pendingEditorPlacements.contains(where: { $0.id == placement.id || $0.target.clientImportID == placement.target.clientImportID }) else { return }
+        pendingEditorPlacements.append(placement)
+        persistEditorPlacements()
+    }
+
+    func editorPlacements(itemID: String, variantID: String, baseGeneration: String?) -> [PendingEditorSourcePlacement] {
+        pendingEditorPlacements.filter {
+            $0.target.itemID == itemID && $0.target.variantID == variantID
+                && (baseGeneration == nil || $0.target.baseGeneration == baseGeneration)
+        }
+    }
+
+    func containsEditorPlacement(_ id: UUID) -> Bool {
+        pendingEditorPlacements.contains { $0.id == id }
+    }
+
+    func retryEditorPlacement(_ placement: PendingEditorSourcePlacement) async {
+        guard containsEditorPlacement(placement.id), placement.retryable else { return }
+        editorSourceResults[placement.id] = nil
+        updateEditorPlacement(placement.id, status: "preparing", error: nil, retryable: true)
+        if let record = records.first(where: { $0.editorSourceTarget?.clientImportID == placement.target.clientImportID }) {
+            await retryUpload(recordID: record.id)
+        } else if let sourceID = placement.visual?.id {
+            do { recordEditorSourceResult(placementID: placement.id, response: try await api.registerEditorSource(placement.target, sourceID: sourceID)) }
+            catch { failEditorPlacement(placement.id, error: "This import couldn’t be prepared. Try again.") }
+        } else if let staged = Self.restorePreparingUploads(key: defaultsKey).first(where: { $0.id == placement.id }) {
+            if !activePreparationIDs.contains(placement.id) { await resumePreparation(staged).value }
+        } else {
+            failEditorPlacement(placement.id, error: "Choose this file again to finish importing.", retryable: false)
+        }
+    }
+
+    func failEditorPlacement(_ id: UUID, error: String, retryable: Bool = true) {
+        guard pendingEditorPlacements.first(where: { $0.id == id })?.status != "failed" else { return }
+        updateEditorPlacement(id, status: "failed", error: error, retryable: retryable)
+    }
+
+    func recordEditorSourceResult(placementID: UUID, response: EditorSourceRegistrationResponse) {
+        if let previous = editorSourceResults[placementID], previous.status == response.status,
+           previous.sourceIndex == response.sourceIndex, previous.error == response.error,
+           previous.retryable == response.retryable { return }
+        editorSourceResults[placementID] = response
+        updateEditorPlacement(placementID, status: response.status, error: response.error, retryable: response.retryable)
+    }
+
+    private func updateEditorPlacement(_ id: UUID, status: String, error: String?, retryable: Bool) {
+        guard let index = pendingEditorPlacements.firstIndex(where: { $0.id == id }) else { return }
+        let previous = pendingEditorPlacements[index]
+        guard previous.status != status || previous.error != error || previous.retryable != retryable else { return }
+        pendingEditorPlacements[index].status = status; pendingEditorPlacements[index].error = error; pendingEditorPlacements[index].retryable = retryable
+        persistEditorPlacements()
+    }
+
+    /// Remove the durable intent only after the editor has committed its local
+    /// document transaction. Any matching completed upload may now be deleted.
+    func acknowledgeEditorPlacement(_ id: UUID) {
+        guard let placement = pendingEditorPlacements.first(where: { $0.id == id }) else { return }
+        pendingEditorPlacements.removeAll { $0.id == id }
+        editorSourceResults[id] = nil
+        persistEditorPlacements()
+        if let record = records.first(where: { $0.editorSourceTarget?.clientImportID == placement.target.clientImportID }) {
+            remove(record.id, deleteLocalFile: true)
+        }
+    }
+
+    func discardEditorPlacement(_ id: UUID) async {
+        guard let placement = pendingEditorPlacements.first(where: { $0.id == id }) else { return }
+        pendingEditorPlacements.removeAll { $0.id == id }
+        editorSourceResults[id] = nil
+        persistEditorPlacements()
+        resumeTasks[id]?.cancel()
+        Self.clearPreparingUpload(id: id, key: defaultsKey, deleteLocalFile: true)
+        if let record = records.first(where: { $0.editorSourceTarget?.clientImportID == placement.target.clientImportID }) {
+            await cancel(recordID: record.id)
+        }
     }
 
     #if DEBUG
@@ -267,7 +388,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// clip's `enqueue` would erase an earlier clip's failure before anyone saw it. Callers that
     /// want a clean slate call `clearLastError()` once per batch.
     @discardableResult
-    func enqueue(fileURL: URL, projectID: UUID, source: UploadSource, consentGiven: Bool, purpose: UploadPurpose, role: CreationMediaRole = .clip, itemID: String? = nil, limit: CreationMediaLimit? = nil, recordID: UUID = UUID()) async -> Bool {
+    func enqueue(fileURL: URL, projectID: UUID, source: UploadSource, consentGiven: Bool, purpose: UploadPurpose, role: CreationMediaRole = .clip, itemID: String? = nil, limit: CreationMediaLimit? = nil, editorSourceTarget: EditorSourceRegistrationTarget? = nil, recordID: UUID = UUID()) async -> Bool {
         var recoveryCopy: URL?
         var accepted = false
         var staged = false
@@ -322,7 +443,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 stagedURL = copy
                 startEarlyPreview(of: copy, recordID: recordID)
                 Self.persistPreparingUpload(PreparingUpload(id: recordID, projectID: projectID, localFilePath: copy.path,
-                    filename: fileURL.lastPathComponent, source: source, purpose: purpose, role: role, itemID: itemID, launchToken: launchToken), key: defaultsKey)
+                    filename: fileURL.lastPathComponent, source: source, purpose: purpose, role: role, itemID: itemID, editorSourceTarget: editorSourceTarget, launchToken: launchToken), key: defaultsKey)
                 staged = true
                 activePreparationIDs.insert(recordID)
                 backgroundTaskID = backgroundActivity.begin(name: Self.preparationBackgroundTaskName) { [weak self] in
@@ -340,6 +461,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             // synchronous copy + hash); a cancel during it only lands here, so it still costs that
             // work but never reaches the server.
             try Task.checkCancellation()
+            if editorSourceTarget != nil && !containsEditorPlacement(recordID) { throw CancellationError() }
             try Self.validateProjectUploadPurpose(purpose, contract: prepared.2)
             let preparedURL = prepared.0
             let localURL = try Self.linkIntoRecoveryDirectory(preparedURL)
@@ -378,9 +500,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 purpose: purpose,
                 reservation: reservation,
                 clientUploadID: clientUploadID,
-                retryCount: 0, role: role, itemID: itemID, visualReservationID: visualReservationID, uploadContract: prepared.2
+                retryCount: 0, role: role, itemID: itemID, visualReservationID: visualReservationID, uploadContract: prepared.2, editorSourceTarget: editorSourceTarget
             )
             accepted = true
+            if editorSourceTarget != nil && !containsEditorPlacement(recordID) {
+                await cancel(recordID: recordID)
+                return false
+            }
             return true
         } catch {
             // An un-chosen clip is not a failure: surfacing "Swift.CancellationError error 1" would
@@ -819,6 +945,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             preparedToDiscard = (prepared.0, prepared.1)
             // Same two checkpoints as `enqueue`: an un-chosen clip must not reach the server.
             try Task.checkCancellation()
+            if entry.editorSourceTarget != nil && !containsEditorPlacement(recordID) { throw CancellationError() }
             try Self.validateProjectUploadPurpose(entry.purpose, contract: prepared.2)
             let preparedURL = prepared.0
             let localURL = try Self.linkIntoRecoveryDirectory(preparedURL)
@@ -847,8 +974,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 purpose: entry.purpose,
                 reservation: reservation,
                 clientUploadID: clientUploadID,
-                retryCount: 0, role: entry.role, itemID: entry.itemID, visualReservationID: visualReservationID, uploadContract: prepared.2
+                retryCount: 0, role: entry.role, itemID: entry.itemID, visualReservationID: visualReservationID, uploadContract: prepared.2, editorSourceTarget: entry.editorSourceTarget
             )
+            if entry.editorSourceTarget != nil && !containsEditorPlacement(recordID) { await cancel(recordID: recordID) }
         } catch {
             if let recoveryCopy { try? FileManager.default.removeItem(at: recoveryCopy) }
             if let preparedToDiscard { Self.discardPrepared(preparedToDiscard.0, asset: preparedToDiscard.1, project: entry.projectID) }
@@ -1059,7 +1187,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 purpose: record.purpose,
                 reservation: reservation,
                 clientUploadID: clientUploadID,
-                retryCount: record.retryCount + 1, role: record.role, itemID: record.itemID, visualReservationID: visualReservationID, uploadContract: record.uploadContract
+                retryCount: record.retryCount + 1, role: record.role, itemID: record.itemID, visualReservationID: visualReservationID, uploadContract: record.uploadContract, editorSourceTarget: record.editorSourceTarget
             )
         } catch { lastError = error.localizedDescription }
     }
@@ -1091,12 +1219,39 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             do {
                 guard let itemID = record.itemID, let reservationID = record.visualReservationID,
                       let path = record.gcsPath, let contentType = record.contentType else { throw APIError.invalidResponse }
-                _ = try await api.registerVisual(itemID: itemID, reservationID: reservationID, gcsPath: path, contentType: contentType, filename: record.filename)
+                var visual = try await api.registerVisual(itemID: itemID, reservationID: reservationID, gcsPath: path, contentType: contentType, filename: record.filename)
+                if let target = record.editorSourceTarget {
+                    guard target.sourceKind == .visual else { throw APIError.invalidResponse }
+                    // Pool registration queues analysis. Admission requires
+                    // its ready row, including for a timeline photo.
+                    for _ in 0..<360 where visual.status != "ready" {
+                        guard containsEditorPlacement(record.id), !Task.isCancelled else { return }
+                        if visual.status == "failed" {
+                            failEditorPlacement(record.id, error: "This visual couldn’t be prepared. Choose it again.", retryable: false)
+                            return
+                        }
+                        let library = try await api.visuals(itemID: itemID)
+                        guard let refreshed = library.assets.first(where: { $0.id == visual.id }) else { throw APIError.invalidResponse }
+                        visual = refreshed
+                        if visual.status != "ready" { try await Task.sleep(for: .seconds(1)) }
+                    }
+                    guard visual.status == "ready" else {
+                        failEditorPlacement(record.id, error: "Preparation is taking longer than expected. Try again.")
+                        return
+                    }
+                    _ = try await finishEditorSource(record, target: target, sourceID: visual.id)
+                    // Keep the completed record until the placement consumes
+                    // it; no creation-thread attachment is part of this path.
+                    return
+                }
                 attachedThreads[record.projectID] = try await api.project(threadID: record.projectID)
                 bindSelection(recordID: record.id, projectID: record.projectID, mediaID: reservationID)
                 CreationMediaPreview.discard(recordID: record.id)   // visuals show the server's own preview
                 remove(record.id, deleteLocalFile: true)
-            } catch { lastError = error.localizedDescription }
+            } catch {
+                lastError = error.localizedDescription
+                if record.editorSourceTarget != nil { failEditorPlacement(record.id, error: "This import couldn’t be prepared. Try again.") }
+            }
             return
         }
         guard
@@ -1105,6 +1260,17 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             let contentType = record.contentType
         else {
             lastError = "This upload was created by an older build. Choose the file again."
+            return
+        }
+        if let target = record.editorSourceTarget {
+            do {
+                guard target.sourceKind == .footage else { throw APIError.invalidResponse }
+                guard try await finishEditorSource(record, target: target, sourceID: mediaID) else { return }
+                remove(record.id, deleteLocalFile: true)
+            } catch {
+                lastError = error.localizedDescription
+                failEditorPlacement(record.id, error: "This import couldn’t be prepared. Try again.")
+            }
             return
         }
         var lastAttachmentError: (any Error)?
@@ -1141,7 +1307,27 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         lastError = lastAttachmentError?.localizedDescription ?? "The uploaded footage could not be attached to this project."
     }
 
-    private func startTask(recordID: UUID, localURL: URL, filename: String, projectID: UUID, source: UploadSource, purpose: UploadPurpose, reservation: ProjectUploadReservation, clientUploadID: String, retryCount: Int, role: CreationMediaRole, itemID: String?, visualReservationID: String?, uploadContract: ProjectMediaUploadContract? = nil) throws {
+    /// Posts (or idempotently re-posts) admission and waits briefly for the
+    /// server-side probe.  A non-terminal response leaves the persisted upload
+    /// record in place; recovery will continue with the same import UUID after
+    /// relaunch.  This is intentionally separate from `attachProjectMedia`.
+    private func finishEditorSource(_ record: UploadRecoveryRecord, target: EditorSourceRegistrationTarget, sourceID: String) async throws -> Bool {
+        var response = try await api.registerEditorSource(target, sourceID: sourceID)
+        for _ in 0..<15 where response.status == "preparing" {
+            try await Task.sleep(for: .seconds(1))
+            response = try await api.editorSource(itemID: target.itemID, variantID: target.variantID, importID: target.clientImportID)
+        }
+        recordEditorSourceResult(placementID: record.id, response: response)
+        // The editor owns the final local placement. Retain this upload until
+        // it acknowledges that transaction, including across a process death.
+        if response.status == "ready" { return false }
+        if response.status == "failed", response.retryable == false {
+            remove(record.id, deleteLocalFile: true)
+        }
+        return false
+    }
+
+    private func startTask(recordID: UUID, localURL: URL, filename: String, projectID: UUID, source: UploadSource, purpose: UploadPurpose, reservation: ProjectUploadReservation, clientUploadID: String, retryCount: Int, role: CreationMediaRole, itemID: String?, visualReservationID: String?, uploadContract: ProjectMediaUploadContract? = nil, editorSourceTarget: EditorSourceRegistrationTarget? = nil) throws {
         var request = URLRequest(url: reservation.uploadURL)
         request.httpMethod = "PUT"
         request.setValue(reservation.contentType, forHTTPHeaderField: "Content-Type")
@@ -1163,7 +1349,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             uploadCompleted: false,
             retentionExpiresAt: nil,
             taskIdentifier: task.taskIdentifier,
-            retryCount: retryCount, mediaRole: role, itemID: itemID, visualReservationID: visualReservationID
+            retryCount: retryCount, mediaRole: role, itemID: itemID, visualReservationID: visualReservationID,
+            editorSourceTarget: editorSourceTarget
         )
         records.append(record)
         persist()
@@ -1237,6 +1424,18 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private func persist() {
         guard let data = try? JSONEncoder().encode(records) else { return }
         UserDefaults.standard.set(data, forKey: defaultsKey)
+    }
+
+    private static func editorPlacementsKey(_ key: String) -> String { "\(key).editor-source-placements" }
+
+    private static func restoreEditorPlacements(key: String) -> [PendingEditorSourcePlacement] {
+        guard let data = UserDefaults.standard.data(forKey: editorPlacementsKey(key)) else { return [] }
+        return (try? JSONDecoder().decode([PendingEditorSourcePlacement].self, from: data)) ?? []
+    }
+
+    private func persistEditorPlacements() {
+        guard let data = try? JSONEncoder().encode(pendingEditorPlacements) else { return }
+        UserDefaults.standard.set(data, forKey: Self.editorPlacementsKey(defaultsKey))
     }
 
     private static func restoreRecords(key: String) -> [UploadRecoveryRecord] {
