@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.130.0] - 2026-09-22
+
+### Fixed
+- fix(ios): connect editor tool panels and animate text previews (KRI-148) (#1144) <!-- release-pr: 1144 -->
+
 ## [0.76.129.0] - 2026-09-22
 
 ### Changed
