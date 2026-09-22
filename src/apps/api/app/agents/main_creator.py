@@ -42,11 +42,34 @@ from app.schemas.edit_proposal import (
 # `test_main_creator_prompt_flag_off_is_byte_identical_to_pre_kri127`. There is
 # no repo precedent for a second, flag-conditional prompt_version, so this is a
 # single bump covering both prompt states.
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-22-v30"
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-22-v31"
 
 # KRI-127 (flag `clip_intents_enabled`). Kept out of prompts/main_creator.txt's
 # unconditional JSON envelope so a flag-off render never differs by even one
 # example line; only ever substituted into the one optional template slot.
+# Rendered INSIDE the exact-on-screen-copy rule (the `$described_text_exception`
+# slot in prompts/main_creator.txt) when clip intents are on, "" when off.
+# Position matters: appended after the rule the model kept asking the creator
+# for exact words (6/6 live runs); stated at the rule it proposes (6/6).
+_DESCRIBED_TEXT_EXCEPTION = (
+    " EXCEPTION -- described text: when the creator asks for on-screen text they DESCRIBE"
+    ' rather than dictate ("the name of the dish on each food clip", "a caption about the'
+    ' weather on the park clips"), the missing words are not yours to write and NOT a reason'
+    " to ask: emit a `clip_intents` entry (see OPEN-VOCABULARY CLIP INTENTS; `op` is exactly"
+    " one of label, group, order, include, caption -- a per-clip tag is `label`, one phrase"
+    " over a group of clips is `caption`) and propose the strategy; the server reads the"
+    " footage to fill in the words and asks the creator only when the footage cannot answer."
+    ' For caption/group/order/include, `attribute` says WHICH clips ("the food clips");'
+    ' for label it says WHAT to name on each clip ("the dish shown in the clip"); never'
+    ' the word "text". Example: \'Say "post match feast" on the food clips, and add a caption'
+    ' about the weather on the park clips\' => [{"intent_id": "feast", "op": "caption",'
+    ' "attribute": "the food clips", "creator_text": "post match feast", "caption_attribute":'
+    ' null}, {"intent_id": "weather", "op": "caption", "attribute": "the park clips",'
+    ' "creator_text": null, "caption_attribute": "the weather"}]; "the name of the dish on'
+    ' each food clip" => {"op": "label", "attribute": "the dish shown in the clip",'
+    ' "creator_text": null}.'
+)
+
 _CLIP_INTENTS_PROMPT_SECTION = """
 OPEN-VOCABULARY CLIP INTENTS
 When the creator asks to label, name, group, order, include, or caption clips by ANY
@@ -77,6 +100,9 @@ per-clip value, so its `attribute` still names which clips it's for while
 `caption_attribute` (only when there is no `creator_text`) names what the one phrase should
 say. `analysis_only_not_copy` evidence may inform which owned clips an attribute or
 `caption_attribute` is about, but you never author the label or caption text yourself.
+Not having that text is NEVER a reason to ask the creator: a described label or caption is
+complete as an intent, the server reads each clip's footage to fill in the value, and it asks
+the creator itself only when the footage cannot answer. Propose the strategy with the intent.
 """.strip("\n")
 
 
@@ -142,6 +168,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             # occupies, so the rest of the prompt is untouched byte-for-byte.
             clip_intents_section=(
                 _CLIP_INTENTS_PROMPT_SECTION if settings.clip_intents_enabled else ""
+            ),
+            described_text_exception=(
+                _DESCRIBED_TEXT_EXCEPTION if settings.clip_intents_enabled else ""
             ),
         )
 
