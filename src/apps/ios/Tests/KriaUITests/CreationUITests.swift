@@ -208,7 +208,13 @@ final class CreationUITests: XCTestCase {
         let yBeforeResponse = earlierReply.frame.minY
 
         let response = app.staticTexts["Kria: Open on the laugh and keep the pacing quick."]
-        XCTAssertTrue(response.waitForExistence(timeout: 12))
+        // The reply is intentionally outside LazyVStack's visible region.
+        // The persistent composer changes when the proposal projection arrives.
+        let proposalArrived = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Tell Kria what you want…"),
+            object: app.textFields["Message Kria"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [proposalArrived], timeout: 12), .completed)
         XCTAssertEqual(earlierReply.frame.minY, yBeforeResponse, accuracy: 2)
 
         app.buttons["chat-jump-to-latest"].tap()
@@ -217,6 +223,7 @@ final class CreationUITests: XCTestCase {
             object: app.buttons["chat-jump-to-latest"]
         )
         XCTAssertEqual(XCTWaiter.wait(for: [latestDismissed], timeout: 3), .completed)
+        XCTAssertTrue(response.waitForExistence(timeout: 3))
         XCTAssertTrue(response.isHittable)
     }
 
@@ -231,8 +238,9 @@ final class CreationUITests: XCTestCase {
 
         let receipt = app.descendants(matching: .any)["chat-media-fixture-clip"]
         XCTAssertTrue(receipt.waitForExistence(timeout: 5))
-        let composer = app.textFields["Add instructions (optional)"]
+        let composer = app.textFields["Message Kria"]
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertEqual(composer.value as? String, "Add instructions (optional)")
         composer.tap()
         composer.typeText("Make it cinematic")
         let send = app.buttons["Send message"]

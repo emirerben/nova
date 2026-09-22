@@ -64,6 +64,7 @@ struct ChatResponseText: View {
         let revealed = shouldReveal ? revealedWordCount : tokens.wordCount
         Self.attributedText(tokens: tokens, revealedWordCount: revealed)
             .accessibilityElement()
+            .accessibilityAddTraits(.isStaticText)
             .accessibilityLabel(content)
             .task(id: startedAt) {
                 await reveal(tokens: tokens, startedAt: startedAt, enabled: shouldReveal)
