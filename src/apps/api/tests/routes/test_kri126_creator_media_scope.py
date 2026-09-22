@@ -11,13 +11,16 @@ These tests cover:
       treated the same as the word "all"; a count that is a duration or that
       is less than the manifest is not;
   (b) once such a request resolves to ``media_scope == "all"``, a target
-      duration that cannot fit every clip (here: 4 of 30 clips are shorter
-      than ``GUIDED_STORY_MIN_MOMENT_S``) is handled by the existing
+      duration that is genuinely too tight is handled by the existing
       all-media-capacity question rather than raising or silently dropping
-      clips;
-  (c) is documented as a no-op in the report -- ``selected_media_ids`` can
-      never reach ``_seed_guided_specialist_brief`` non-empty for a guided
-      program, so nothing to forward there.
+      clips. A short clip (here: 4 of 30 clips are shorter than
+      ``GUIDED_STORY_MIN_MOMENT_S``) is never, by itself, a reason to ask or
+      to exclude that clip -- it plays at its own length
+      (``guided_source_floor_s``, product mandate KRI-129);
+  (c) KRI-129 fix: an explicit ``media_scope == "selected"`` now survives
+      ``normalize_creator_strategy_media`` for a guided program too, so
+      ``_seed_guided_specialist_brief`` can forward the creator's real
+      selection instead of always widening to the whole manifest.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.agents._schemas.creator_agent import CreativeStrategy
+from app.agents._schemas.creator_policy import normalize_creator_strategy_media
 from app.routes import creator_agent as creator_routes
 from app.routes.creator_agent import (
     _apply_explicit_render_intent,
@@ -194,17 +198,21 @@ def test_seed_guided_specialist_brief_carries_all_media_scope() -> None:
     assert "selected_media_ids" not in item.edit_proposal["brief"]
 
 
-def test_guided_selected_scope_never_carries_real_ids_to_the_brief() -> None:
-    """(c) finding: a real "selected" id list can never reach the brief.
+def test_guided_selected_scope_now_carries_real_ids_to_the_brief() -> None:
+    """(c) finding, now fixed by KRI-129: a real "selected" id list survives.
 
-    normalize_creator_strategy_media empties selected_media_ids whenever the
-    effective render_program is guided and media_scope == "selected"
-    (creator_policy.py ~264-303 only populates it for the native branch), so
-    there is never a non-empty list for _seed_guided_specialist_brief to
-    forward alongside "selected" scope.
+    This test used to pin the opposite: normalize_creator_strategy_media
+    emptied selected_media_ids whenever the effective render_program was
+    guided and media_scope == "selected" (creator_policy.py previously only
+    populated it for the native branch), so _seed_guided_specialist_brief
+    never had a non-empty list to forward alongside "selected" scope and the
+    guided specialist received required_media_ids=None -- free to pick any
+    media it liked, silently discarding an explicit creator selection. That
+    was a bug, not a design decision; both are fixed now.
     """
 
     fixture, manifest = _fixture_manifest()
+    selected_ids = [ref.media_id for ref in manifest.media][:5]
     plan = compile_strategy_to_plan(
         manifest,
         CreativeStrategy(
@@ -214,28 +222,59 @@ def test_guided_selected_scope_never_carries_real_ids_to_the_brief() -> None:
             # is not one of effective_render_program's guided triggers.
             render_program="guided",
             media_scope="selected",
-            selected_media_ids=[ref.media_id for ref in manifest.media][:5],
+            selected_media_ids=selected_ids,
             target_duration_s=fixture["duration_s"],
             audio_strategy="licensed_music",
         ),
     )
     assert plan.strategy.render_program == "guided"
-    assert plan.strategy.selected_media_ids == []
+    assert plan.strategy.selected_media_ids == selected_ids
 
     item = SimpleNamespace(edit_proposal=None)
     _seed_guided_specialist_brief(
         item, plan, summary="Group by sport", creator_request=fixture["creator_request"]
     )
 
-    assert "media_scope" not in item.edit_proposal["brief"]
-    assert "selected_media_ids" not in item.edit_proposal["brief"]
+    assert item.edit_proposal["brief"]["media_scope"] == "selected"
+    assert item.edit_proposal["brief"]["selected_media_ids"] == selected_ids
+
+
+def test_guided_selected_scope_drops_unknown_ids_only_under_repair() -> None:
+    """Unknown ids in an explicit guided "selected" scope: strict by default.
+
+    Matches the native branch's existing contract -- an unresolved id from
+    the model raises unless repair_model_output=True repairs it away.
+    """
+
+    fixture, manifest = _fixture_manifest()
+    valid_ids = [ref.media_id for ref in manifest.media][:3]
+    strategy = CreativeStrategy(
+        direction="guided_story",
+        render_program="guided",
+        media_scope="selected",
+        selected_media_ids=[*valid_ids, "not-a-real-id"],
+        target_duration_s=fixture["duration_s"],
+        audio_strategy="licensed_music",
+    )
+
+    with pytest.raises(ValueError, match="selected_media_ids must reference manifest media"):
+        normalize_creator_strategy_media(manifest, strategy)
+
+    repaired = normalize_creator_strategy_media(manifest, strategy, repair_model_output=True)
+    assert repaired.selected_media_ids == valid_ids
 
 
 # --- (b) graceful handling of an infeasible all-media guided request -------
 
 
-def test_all_media_capacity_question_handles_sub_floor_clips_gracefully() -> None:
-    """30 clips at 45s with 4 sub-floor clips must ask, never raise or drop silently."""
+def test_all_media_capacity_question_no_longer_fires_for_short_clips_alone() -> None:
+    """A short clip plays at its own length -- it is never, by itself, a
+    reason to ask a capacity question or to leave it out of an explicit
+    "all" (product mandate, KRI-129). ``assess_all_media_capacity`` now
+    counts each source's floor at its own duration when it is shorter than
+    the guided minimum moment (``guided_source_floor_s``), so this fixture's
+    4 sub-floor clips no longer make the full 30-clip request infeasible at
+    its original 45s target."""
 
     fixture, manifest = _fixture_manifest()
     short_ids = {
@@ -253,23 +292,20 @@ def test_all_media_capacity_question_handles_sub_floor_clips_gracefully() -> Non
         audio_strategy="original_audio",
     )
 
-    question = creator_routes._all_media_capacity_question(manifest, strategy)
-
-    assert question is not None
-    assert question["reason_code"] == "all_media_capacity"
-    assert f"all {len(manifest.media)} clips" in question["message"]
-
-    for mapping in question["all_media_capacity"]["option_mappings"]:
-        mapped_ids = set(mapping["strategy"]["selected_media_ids"])
-        # The recommended/alternate subsets never require a sub-floor clip.
-        assert not (mapped_ids & short_ids) or mapping["strategy"]["media_scope"] != "selected"
-
-    recommended = question["all_media_capacity"]["option_mappings"][0]
-    assert recommended["strategy"]["media_scope"] == "selected"
-    assert not (set(recommended["strategy"]["selected_media_ids"]) & short_ids)
+    assert creator_routes._all_media_capacity_question(manifest, strategy) is None
+    # No resolution needed: the explicit "all" scope stands untouched, short
+    # clips included (a guided "all" scope takes every manifest media --
+    # `normalize_creator_strategy_media` never narrows it).
+    normalized = normalize_creator_strategy_media(manifest, strategy)
+    assert normalized.media_scope == "all"
 
 
-def test_all_media_capacity_choice_resolves_to_floor_safe_subset() -> None:
+def test_all_media_capacity_choice_can_include_short_clips_when_still_infeasible() -> None:
+    """When "all" is genuinely infeasible for a reason OTHER than clip
+    shortness (here: too many clips for a tighter 30s target), the
+    strength-ranked recommendation may legitimately include a short clip --
+    ranking by strength is fine, excluding for shortness is not."""
+
     fixture, manifest = _fixture_manifest()
     short_ids = {
         item["media_id"]
@@ -280,16 +316,17 @@ def test_all_media_capacity_choice_resolves_to_floor_safe_subset() -> None:
         direction="guided_story",
         media_scope="all",
         selected_media_ids=[ref.media_id for ref in manifest.media],
-        target_duration_s=fixture["duration_s"],
+        target_duration_s=30,
         audio_strategy="original_audio",
     )
     question = creator_routes._all_media_capacity_question(manifest, strategy)
-    assert question is not None
+    assert question is not None  # still infeasible at this tighter target
 
     chosen = creator_routes._all_media_capacity_choice(
         question["all_media_capacity"], question["options"][0], manifest
     )
 
     assert chosen is not None
-    assert not (set(chosen.selected_media_ids) & short_ids)
+    # The recommended subset is no longer required to exclude short clips.
+    assert set(chosen.selected_media_ids) & short_ids
     assert creator_routes._all_media_capacity_question(manifest, chosen) is None

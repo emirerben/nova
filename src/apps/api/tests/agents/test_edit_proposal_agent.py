@@ -1,4 +1,5 @@
 import json
+import math
 
 import pytest
 
@@ -55,13 +56,15 @@ def _raw(media_ids: list[str]) -> str:
     )
 
 
-def test_requires_seven_distinct_sources_when_available() -> None:
+def test_accepts_fewer_than_seven_distinct_sources_when_available() -> None:
+    # KRI-129: the distinct-source floor is a variety preference, not a
+    # render requirement. Three distinct sources, none repeated, used to be
+    # rejected outright ("need at least 7"); it is now accepted as-is.
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
-    # Three distinct sources, none repeated, so this exercises the minimum-
-    # source floor in isolation rather than the (separately tested) reuse
-    # guard.
-    with pytest.raises(SchemaError, match="need at least 7"):
-        agent.parse(_raw(["media-0", "media-1", "media-2"]), _input())
+    output = agent.parse(_raw(["media-0", "media-1", "media-2"]), _input())
+    used = {media_id for beat in output.story_beats for media_id in beat.media_ids}
+    assert used == {"media-0", "media-1", "media-2"}
+    assert output.repairs == []
 
 
 def test_accepts_every_source_for_a_small_upload() -> None:
@@ -538,7 +541,7 @@ def test_mixed_timing_prompt_uses_target_capacity_source_floor() -> None:
     )
     prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
 
-    assert "must reference at least 4 distinct AVAILABLE MEDIA aliases" in prompt
+    assert "aim to reference at least 4 distinct AVAILABLE MEDIA aliases" in prompt
     assert "capped by the target duration" in prompt
 
 
@@ -856,7 +859,9 @@ def test_fast_montage_splits_and_interleaves_recoverable_overlong_windows() -> N
             lambda cut: cut.update(source_end_s=cut["source_end_s"] + 0.2),
             "must match its source window",
         ),
-        (lambda cut: cut.update(source_start_s=29.0, source_end_s=30.4), "exceeds video"),
+        # A window that runs past the end of its clip is no longer a material
+        # violation: it is pulled back inside the clip (KRI-129), pinned by
+        # test_fast_cut_window_past_the_end_of_its_clip_is_pulled_back_not_rejected.
         (lambda cut: cut.update(transition="dissolve"), "Input should be 'none'"),
         (
             lambda cut: cut.update(output_duration_s=0.3, source_end_s=0.3),
@@ -934,7 +939,7 @@ def test_production_45_plus_58_shape_uses_bounded_alias_prompt_and_rejects_unkno
 
     prompt = agent.render_prompt(agent_input)
     assert prompt.count('"media_id": "m') == 32
-    assert "must reference at least 7 distinct AVAILABLE MEDIA aliases" in prompt
+    assert "aim to reference at least 7 distinct AVAILABLE MEDIA aliases" in prompt
     assert agent_input.media[0].media_id not in prompt
     assert agent_input.media[-1].media_id not in prompt
 
@@ -1071,15 +1076,26 @@ def test_fast_montage_uses_valid_cut_total_over_provider_declared_arithmetic() -
     assert cuts[-1].beat_align is True
 
 
-def test_fast_montage_rejects_material_duration_drift() -> None:
-    with pytest.raises(SchemaError, match="too far from the server target"):
-        EditProposalAgent(None).parse(  # type: ignore[arg-type]
-            json.dumps(_fractional_fast_payload(declared_duration_s=20)),
-            _fractional_fast_input(),
-        )
+def test_fast_montage_ignores_provider_declared_duration_and_uses_cut_total() -> None:
+    # KRI-129: the provider's self-reported duration_s plays no role in
+    # validation any more -- only the actual cuts matter. A wildly wrong
+    # declaration (20 vs a 14s target) no longer rejects a plan whose real
+    # cuts (totalling 14.2s) reconcile to the target just fine.
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(_fractional_fast_payload(declared_duration_s=20)),
+        _fractional_fast_input(),
+    )
+
+    assert output.duration_s == 14
+    assert sum(cut.output_duration_s for cut in output.fast_cuts or []) == pytest.approx(14)
 
 
-def test_fast_montage_rejects_unreconcilable_duration_drift() -> None:
+def test_fast_montage_accepts_capacity_bound_short_total() -> None:
+    # KRI-129: cuts that are individually valid but total less than the
+    # target, with no capacity left to extend (every source already used to
+    # its full length under the default "once" reuse policy), are accepted
+    # at their own achievable total instead of discarding an otherwise
+    # faithful, request-following edit.
     media = [
         EditProposalMedia(
             media_id=f"media-{index}",
@@ -1107,25 +1123,30 @@ def test_fast_montage_rejects_unreconcilable_duration_drift() -> None:
         for index in range(10)
     ]
 
-    with pytest.raises(SchemaError, match="cannot fit the server target"):
-        EditProposalAgent(None).parse(  # type: ignore[arg-type]
-            json.dumps(
-                {
-                    "title": "A quick cut",
-                    # The declaration matches the server target, but the ten
-                    # source-pinned cuts total only 11.6s and cannot extend.
-                    # Removing the declaration-vs-cuts check must not make this
-                    # unsafe schedule acceptable.
-                    "duration_s": 12,
-                    "story_beats": [],
-                    "fast_cuts": cuts,
-                }
-            ),
-            agent_input,
-        )
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(
+            {
+                "title": "A quick cut",
+                # The declaration matches the server target, but the ten
+                # source-pinned cuts total only 11.6s and cannot extend --
+                # every source is already used to its full length.
+                "duration_s": 12,
+                "story_beats": [],
+                "fast_cuts": cuts,
+            }
+        ),
+        agent_input,
+    )
+
+    assert output.duration_s == pytest.approx(11.6)
+    assert sum(cut.output_duration_s for cut in output.fast_cuts or []) == pytest.approx(11.6)
+    assert "accepted_short_fast_montage_total" in output.repairs
 
 
-def test_fast_montage_duration_repair_never_reuses_source_footage() -> None:
+def test_fast_montage_short_total_repair_never_reuses_source_footage() -> None:
+    # KRI-129: accepting a capacity-bound short total must never come at the
+    # cost of reusing or overlapping source footage that a distinct-windows
+    # policy forbids -- the cuts are accepted exactly as authored, unchanged.
     agent_input = EditProposalAgentInput(
         video_reuse_policy="distinct_windows",
         direction="fast_montage",
@@ -1160,8 +1181,21 @@ def test_fast_montage_duration_repair_never_reuses_source_footage() -> None:
         ],
     }
 
-    with pytest.raises(SchemaError, match="cannot fit the server target"):
-        EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
+    output = EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
+
+    result_cuts = output.fast_cuts or []
+    assert output.duration_s == pytest.approx(3.2)
+    assert sum(cut.output_duration_s for cut in result_cuts) == pytest.approx(3.2)
+    windows_by_media: dict[str, list[tuple[float, float]]] = {}
+    for cut in result_cuts:
+        windows_by_media.setdefault(cut.media_id, []).append((cut.source_start_s, cut.source_end_s))
+    for windows in windows_by_media.values():
+        windows.sort()
+        assert all(
+            current[0] >= previous[1]
+            for previous, current in zip(windows, windows[1:], strict=False)
+        )
+    assert "accepted_short_fast_montage_total" in output.repairs
 
 
 def test_fast_montage_rejects_existing_overlapping_source_footage() -> None:
@@ -1244,60 +1278,80 @@ def test_accepts_one_intentionally_unused_source_from_six() -> None:
     assert {media_id for beat in output.story_beats for media_id in beat.media_ids} == set(selected)
 
 
-def test_rejects_two_unused_sources_from_six() -> None:
+def test_accepts_two_unused_sources_from_six() -> None:
+    # KRI-129: the distinct-source floor is a variety preference now, not a
+    # rejection. Required coverage (media_scope/selected_media_ids) is still
+    # enforced separately -- see test_all_media_scope_requires_every_available_source.
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    output = agent.parse(_raw([f"media-{index}" for index in range(4)]), _input(6))
+    used = {media_id for beat in output.story_beats for media_id in beat.media_ids}
+    assert used == {f"media-{index}" for index in range(4)}
 
-    with pytest.raises(SchemaError, match="need at least 5"):
-        agent.parse(_raw([f"media-{index}" for index in range(4)]), _input(6))
 
-
-def test_rejects_repeated_chapter_topics() -> None:
+def test_accepts_repeated_chapter_topics() -> None:
+    # KRI-129: the distinct-topic floor was pure taste; the creator's request
+    # decides how many distinct chapters/topics an edit needs.
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
     for beat in payload["story_beats"]:
         beat["topic"] = "Architecture"
 
-    with pytest.raises(SchemaError, match="at least 3 distinct topics"):
-        agent.parse(json.dumps(payload), _input())
+    output = agent.parse(json.dumps(payload), _input())
+
+    assert {beat.topic for beat in output.story_beats} == {"Architecture"}
 
 
-def test_rejects_more_than_ten_chapters() -> None:
+def test_accepts_more_than_ten_chapters_up_to_the_real_ceiling() -> None:
+    # KRI-129: the real ceiling is the persisted snapshot's limit (20 today),
+    # not a taste cap at 10 -- 11 chapters now parses. A declared total that
+    # disagrees with the beats' own weights is repaired (scaled to the
+    # target), never rejected.
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
+    # media-1/3/5 are the image slots in _input()'s alternating kind pattern;
+    # only images repeat here so the still-enforced once-per-video reuse
+    # guard stays out of scope for this beat-count test.
     payload["story_beats"] = [
         {
             "topic": f"Chapter {index}",
             "thought": "A visible detail connects this part of the story.",
-            "media_ids": [
-                f"media-{index % 7}",
-                f"media-{(index + 1) % 7}",
-            ],
+            "media_ids": [f"media-{1 + (index % 3) * 2}"],
             "layout": "fullscreen",
             "duration_s": 4,
         }
         for index in range(11)
     ]
 
-    with pytest.raises(SchemaError, match="at most 10 items"):
-        agent.parse(json.dumps(payload), _input())
+    output = agent.parse(json.dumps(payload), _input())
+
+    assert len(output.story_beats) == 11
+    assert output.duration_s == 24
+    assert math.isclose(sum(beat.duration_s for beat in output.story_beats), 24, abs_tol=0.01)
+    assert "scaled_durations" in output.repairs
 
 
-def test_rejects_unsupported_personal_draft_without_creator_context() -> None:
+def test_blanks_unsupported_personal_draft_without_creator_context() -> None:
+    # KRI-129: an invented first-person claim must never render, but the
+    # plan survives -- the thought is blanked, not rejected.
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
     payload["story_beats"][0]["thought"] = "Enjoying a delicious meal by the water."
 
-    with pytest.raises(SchemaError, match="unsupported personal experience"):
-        agent.parse(json.dumps(payload), _input())
+    output = agent.parse(json.dumps(payload), _input())
+
+    assert output.story_beats[0].thought == ""
+    assert "blanked_thought:0" in output.repairs
 
 
-def test_rejects_context_free_action_lead() -> None:
+def test_blanks_context_free_action_lead() -> None:
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
     payload["story_beats"][0]["thought"] = "Exploring the narrow streets at sunset."
 
-    with pytest.raises(SchemaError, match="unsupported personal experience"):
-        agent.parse(json.dumps(payload), _input())
+    output = agent.parse(json.dumps(payload), _input())
+
+    assert output.story_beats[0].thought == ""
+    assert "blanked_thought:0" in output.repairs
 
 
 def test_accepts_neutral_observation_with_wandering_gerund() -> None:
@@ -1354,31 +1408,59 @@ def test_creator_context_can_authorize_a_personal_draft() -> None:
     assert output.story_beats[0].thought == "I loved this meal by the water."
 
 
-@pytest.mark.parametrize(
-    ("mutate", "message"),
-    [
-        (lambda payload: payload["story_beats"][0].update(thought=""), "thoughts cannot be empty"),
-        (lambda payload: payload.update(duration_s=35), "creator's target"),
-        (
-            lambda payload: [beat.update(duration_s=1) for beat in payload["story_beats"]],
-            "beat durations do not fit",
-        ),
-        (
-            lambda payload: payload["story_beats"][0].update(
-                thought="one two three four five six seven eight nine ten eleven twelve thirteen "
-                "fourteen fifteen sixteen seventeen eighteen nineteen"
-            ),
-            "exceeds 18 words",
-        ),
-    ],
-)
-def test_rejects_render_critical_story_contradictions(mutate, message: str) -> None:  # noqa: ANN001
+def test_accepts_empty_thought() -> None:
+    # KRI-129: an empty thought simply renders no on-screen caption; it is no
+    # longer a rejection.
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     payload = json.loads(_raw(["media-0", "media-1", "media-2"]))
-    mutate(payload)
+    payload["story_beats"][0].update(thought="")
 
-    with pytest.raises(SchemaError, match=message):
-        agent.parse(json.dumps(payload), _input(3))
+    output = agent.parse(json.dumps(payload), _input(3))
+
+    assert output.story_beats[0].thought == ""
+
+
+def test_repairs_declared_duration_far_from_target() -> None:
+    # KRI-129: a mismatched declared duration is scaled to the target, never
+    # rejected.
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    payload = json.loads(_raw(["media-0", "media-1", "media-2"]))
+    payload.update(duration_s=35)
+
+    output = agent.parse(json.dumps(payload), _input(3))
+
+    assert output.duration_s == 24
+    assert math.isclose(sum(beat.duration_s for beat in output.story_beats), 24, abs_tol=0.01)
+    assert "scaled_durations" in output.repairs
+
+
+def test_repairs_beat_durations_that_do_not_fit_declared_duration() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    payload = json.loads(_raw(["media-0", "media-1", "media-2"]))
+    for beat in payload["story_beats"]:
+        beat.update(duration_s=1)
+
+    output = agent.parse(json.dumps(payload), _input(3))
+
+    assert output.duration_s == 24
+    assert math.isclose(sum(beat.duration_s for beat in output.story_beats), 24, abs_tol=0.01)
+    assert all(beat.duration_s >= 1.0 for beat in output.story_beats)
+    assert "scaled_durations" in output.repairs
+
+
+def test_truncates_a_thought_over_18_words() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    payload = json.loads(_raw(["media-0", "media-1", "media-2"]))
+    payload["story_beats"][0].update(
+        thought="one two three four five six seven eight nine ten eleven twelve thirteen "
+        "fourteen fifteen sixteen seventeen eighteen nineteen"
+    )
+
+    output = agent.parse(json.dumps(payload), _input(3))
+
+    assert len(output.story_beats[0].thought.split()) == 18
+    assert output.story_beats[0].thought.startswith("one two three")
+    assert "truncated_thought:0" in output.repairs
 
 
 def test_narrated_long_window_is_not_split_or_interleaved():
@@ -1397,8 +1479,11 @@ def test_narrated_long_window_is_not_split_or_interleaved():
     cuts, repaired, duration = _compile_fast_cuts(raw, narrated=True)
     assert len(cuts) == 1 and cuts[0].output_duration_s == 7
     assert not repaired and duration == 7
-    with pytest.raises(SchemaError, match="non-narrated"):
-        _compile_fast_cuts(raw)
+    # KRI-129: a non-narrated cut above 3s used to be rejected outright; it is
+    # now split like any other overlong window instead.
+    cuts, repaired, duration = _compile_fast_cuts(raw)
+    assert len(cuts) > 1
+    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(7)
 
 
 def test_fast_montage_prompt_pins_hook_role_and_per_source_duration() -> None:

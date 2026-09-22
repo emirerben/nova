@@ -56,7 +56,6 @@ _UNSUPPORTED_ACTION_LEAD = re.compile(
     re.IGNORECASE,
 )
 _FAST_CUT_TOTAL_TOLERANCE_S = 0.15
-_FAST_DURATION_RECONCILE_TOLERANCE_S = 0.5
 _FAST_DURATION_EPSILON_S = 0.001
 EDIT_PROPOSAL_AGENT_MEDIA_LIMIT = 32
 
@@ -700,10 +699,33 @@ class EditProposalAgentInput(BaseModel):
         return self
 
 
-def _required_media_ids(input: EditProposalAgentInput) -> set[str]:
+# Every direction shows a short clip for its own length (KRI-129: a short
+# video is never left out for being short), so the only video that cannot be
+# planned is one too short for the cut schema to express (its 0.1 s minimum).
+_MIN_PLANNABLE_VIDEO_S = 0.1
+
+
+def _is_plannable(media: EditProposalMedia, direction: str) -> bool:  # noqa: ARG001
+    return not (
+        media.kind == "video"
+        and media.duration_s is not None
+        and float(media.duration_s) < _MIN_PLANNABLE_VIDEO_S - _FAST_DURATION_EPSILON_S
+    )
+
+
+def _required_media_ids(input: EditProposalAgentInput) -> set[str]:  # noqa: A002
     if input.media_scope == "all":
         return {media.media_id for media in input.media}
-    return set(input.selected_media_ids or ())
+    # A selected clip the planner cannot show is never offered to the model
+    # (see shortlist_edit_proposal_media), so it cannot be required either:
+    # requiring it used to crash prompt rendering with a KeyError on its
+    # missing alias, and would otherwise reject every faithful plan.
+    selected = set(input.selected_media_ids or ())
+    return {
+        media.media_id
+        for media in input.media
+        if media.media_id in selected and _is_plannable(media, input.direction)
+    }
 
 
 def _effective_target_duration_s(input: EditProposalAgentInput) -> float:
@@ -737,12 +759,7 @@ def shortlist_edit_proposal_media(
         return list(input.media)
     eligible: list[tuple[int, EditProposalMedia]] = []
     for index, media in enumerate(input.media):
-        minimum_video_s = 0.4 if input.direction == "fast_montage" else GUIDED_STORY_MIN_MOMENT_S
-        if (
-            media.kind == "video"
-            and media.duration_s is not None
-            and float(media.duration_s) < minimum_video_s
-        ):
+        if not _is_plannable(media, input.direction):
             continue
         eligible.append((index, media))
     if not eligible:
@@ -766,6 +783,9 @@ def shortlist_edit_proposal_media(
         for media_id in (
             (input.montage_audio.source_media_ids if input.montage_audio else [])
             + (input.montage_cadence.source_media_ids if input.montage_cadence else [])
+            # The creator's own selection must always be visible to the model,
+            # whatever the diversity shortlist below would have kept.
+            + (list(input.selected_media_ids or []) if input.media_scope == "selected" else [])
         )
         if media_id in {media.media_id for _index, media in eligible}
     }
@@ -1027,20 +1047,17 @@ def _resolve_model_media_references(
                 )
                 if media_id is not None and media_id not in resolved_sources:
                     resolved_sources.append(media_id)
-            if (
-                input.direction != "fast_montage"
-                and input.montage_audio is not None
-                and not input.montage_audio.source_media_ids
-            ):
-                # Story-beat directions author montage_audio identity
-                # server-side: when the creator requested no specific audio
-                # sources, the model sometimes echoes the clips its timeline
-                # used instead of the (empty) requested list. That both
-                # invents an unrequested contract and can exceed the
-                # <=12-item schema ceiling on a large upload (KRI-126: a
-                # 30-clip guided_story echoed 17-23 used clips here). Coerce
-                # back to the requested list; a genuine source mismatch when
-                # specific sources WERE requested still raises below.
+            if input.montage_audio is not None and not input.montage_audio.source_media_ids:
+                # montage_audio identity is server-authored: when the creator
+                # requested no specific audio sources (an empty list means
+                # "every video keeps its audio"), the model often echoes the
+                # clips its timeline used. That invents an unrequested
+                # contract and exceeds the <=12-item schema ceiling on any
+                # upload larger than 12 clips, which discarded the whole plan
+                # (KRI-126: 30-clip guided_story; KRI-129: 16-clip fast
+                # montage, whose prompt even asks for that list). Coerce back
+                # to the requested list for every direction; a genuine
+                # mismatch when specific sources WERE requested still raises.
                 resolved_sources = []
             raw_audio["source_media_ids"] = resolved_sources
         raw_audio["preserve_source_audio"] = bool(raw_audio.get("preserve_source_audio", True))
@@ -1068,11 +1085,19 @@ class DraftStoryBeat(BaseModel):
 
 
 LEGACY_GUIDED_DRAFT_BEATS = 5
-# One beat per creator shot label plus an optional unlabeled hold beat for
-# each server-burned opening/closing title. Must not exceed the specialist's
-# 10-beat output limit (GUIDED_STORY_MAX_BEATS in edit_direction_planner).
-MAX_GUIDED_DRAFT_BEATS = MAX_CREATOR_SHOT_LABELS + 2
+# The real ceiling: the persisted EditProposalSnapshot allows up to 20 beats
+# (app.schemas.edit_proposal.EditProposalSnapshot.story_beats). Below that,
+# beat count is decided by the creator's requested grouping, not a taste cap
+# (KRI-129, "the planner never overrides the prompt"): a request that names
+# more chapters than a "simple" 3-5-beat edit is followed, not rejected.
+# MAX_CREATOR_SHOT_LABELS + 2 (one beat per label plus both title-hold beats)
+# stays comfortably inside this ceiling.
+MAX_GUIDED_DRAFT_BEATS = 20
 # Mirrors DraftStoryBeat.media_ids's own max_length above -- keep them equal.
+# A beat with more media than this is split into consecutive beats instead
+# of rejected (see `_split_oversized_beats`); nothing downstream requires a
+# beat to hold this few media -- it only bounds how large a single split
+# part is.
 GUIDED_DRAFT_MEDIA_PER_BEAT = 4
 
 
@@ -1088,33 +1113,312 @@ class EditProposalAgentOutput(BaseModel):
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_text_bindings: list[MontageTextBinding] = Field(default_factory=list, max_length=12)
     montage_audio: MontageAudioPlan | None = None
+    # Short machine strings recording what parse() repaired instead of
+    # rejecting (KRI-129), e.g. "split_beat:3:6->4+2", "truncated_thought:2",
+    # "scaled_durations". Observability only -- not plumbed further.
+    repairs: list[str] = Field(default_factory=list, max_length=64)
 
 
-def _guided_beat_ceiling(input: EditProposalAgentInput) -> int:  # noqa: A002
-    """Ordinary story-beat plans top out at LEGACY_GUIDED_DRAFT_BEATS (5).
+def _clamp_fast_cut_windows(
+    payload: dict,
+    input: EditProposalAgentInput,  # noqa: A002
+) -> list[str]:
+    """Pull a fast cut's source window back inside its clip instead of rejecting.
 
-    Raise the ceiling, up to MAX_GUIDED_DRAFT_BEATS, only when the upload is
-    larger than 5 beats holding GUIDED_DRAFT_MEDIA_PER_BEAT media each can
-    address. That is measured on the sources the plan MUST cover when a scope
-    requires them, and otherwise on the sources available to it: a creator
-    who uploads 30 clips and names six chapters (KRI-126: park, football,
-    volleyball, field sports, speech, pub) was rejected at 5 beats on a live
-    replay even though no scope was set, which dropped the whole plan to the
-    request-blind deterministic fallback.
+    A window a fraction of a second past the end of its video used to discard
+    the whole authored montage ("fast cut source window exceeds video"). The
+    window keeps its length and slides earlier; only when it is longer than
+    the clip itself does it shrink, and the duration normalizer that runs next
+    reconciles the total.
     """
 
-    count = _guided_beat_ceiling_source_count(input)
-    if count <= LEGACY_GUIDED_DRAFT_BEATS * GUIDED_DRAFT_MEDIA_PER_BEAT:
-        return LEGACY_GUIDED_DRAFT_BEATS
-    return min(MAX_GUIDED_DRAFT_BEATS, math.ceil(count / GUIDED_DRAFT_MEDIA_PER_BEAT))
+    raw_cuts = payload.get("fast_cuts")
+    if not isinstance(raw_cuts, list):
+        return []
+    durations = {
+        media.media_id: float(media.duration_s or 0.0)
+        for media in input.media
+        if media.kind == "video"
+    }
+    repairs: list[str] = []
+    for index, cut in enumerate(raw_cuts):
+        if not isinstance(cut, dict):
+            continue
+        source_s = durations.get(str(cut.get("media_id")))
+        try:
+            start_s = float(cut.get("source_start_s"))
+            end_s = float(cut.get("source_end_s"))
+        except (TypeError, ValueError):
+            continue
+        if not source_s or end_s <= source_s + 0.001 or end_s <= start_s:
+            continue
+        length_s = end_s - start_s
+        if length_s <= source_s:
+            cut["source_start_s"] = round(source_s - length_s, 3)
+            cut["source_end_s"] = round(source_s, 3)
+        else:
+            cut["source_start_s"] = 0.0
+            cut["source_end_s"] = round(source_s, 3)
+            try:
+                output_s = float(cut.get("output_duration_s"))
+            except (TypeError, ValueError):
+                output_s = length_s
+            cut["output_duration_s"] = round(max(0.0, output_s - (length_s - source_s)), 3)
+        repairs.append(f"clamped_cut_window:{index}")
+    return repairs
 
 
-def _guided_beat_ceiling_source_count(input: EditProposalAgentInput) -> int:  # noqa: A002
-    required_ids = _required_media_ids(input)
-    if required_ids:
-        return len(required_ids)
-    prompt_media, _alias_to_id, _id_to_alias = _prompt_media(input)
-    return len(prompt_media)
+def _split_oversized_beats(raw_beats: list) -> tuple[list, list[str]]:  # noqa: ANN401
+    """Split a beat with more than GUIDED_DRAFT_MEDIA_PER_BEAT media instead of
+    rejecting the plan (KRI-129).
+
+    Nothing downstream (`guided_story._allocate_beat_windows`, the moment
+    loop, `phone_guided_plan.py`) requires a beat to hold at most four media
+    -- only the model's own output schema does. A request such as "group the
+    pub videos together" over 16 clips, ~10 of them pub shots, has no
+    faithful plan that keeps every pub clip in one <=4-media beat. Split into
+    consecutive same-topic beats instead: every source and every second of
+    the authored duration is preserved, just spread across more chapters.
+    """
+
+    split: list = []
+    repairs: list[str] = []
+    for beat_index, raw_beat in enumerate(raw_beats):
+        if not isinstance(raw_beat, dict):
+            split.append(raw_beat)
+            continue
+        media_ids = raw_beat.get("media_ids")
+        if not isinstance(media_ids, list) or len(media_ids) <= GUIDED_DRAFT_MEDIA_PER_BEAT:
+            split.append(raw_beat)
+            continue
+        chunks = [
+            media_ids[offset : offset + GUIDED_DRAFT_MEDIA_PER_BEAT]
+            for offset in range(0, len(media_ids), GUIDED_DRAFT_MEDIA_PER_BEAT)
+        ]
+        try:
+            total_duration = float(raw_beat.get("duration_s") or 0.0)
+        except (TypeError, ValueError):
+            total_duration = 0.0
+        total_media = len(media_ids)
+        part_sizes: list[int] = []
+        allocated = 0.0
+        for chunk_index, chunk in enumerate(chunks):
+            if chunk_index == len(chunks) - 1:
+                part_duration = round(total_duration - allocated, 3)
+            else:
+                part_duration = round(total_duration * len(chunk) / total_media, 3)
+                allocated = round(allocated + part_duration, 3)
+            part_duration = max(1.0, part_duration)
+            split.append(
+                {
+                    **raw_beat,
+                    "media_ids": chunk,
+                    "duration_s": part_duration,
+                    # Confirmed creator copy lives on the first part only; the
+                    # renderer treats an empty thought as no on-screen caption.
+                    "thought": raw_beat.get("thought", "") if chunk_index == 0 else "",
+                }
+            )
+            part_sizes.append(len(chunk))
+        repairs.append(
+            f"split_beat:{beat_index}:{total_media}->" + "+".join(str(size) for size in part_sizes)
+        )
+    return split, repairs
+
+
+def _merge_excess_beats(raw_beats: list, *, limit: int) -> tuple[list, list[str]]:  # noqa: ANN401
+    """Merge the smallest adjacent same-topic beats when a split pushed the
+    beat count over the persisted snapshot's ceiling.
+
+    Only ever needed after `_split_oversized_beats` fans a handful of
+    overloaded beats out into many small ones on an already beat-dense plan.
+    Raises only as a last resort, when no adjacent pair can be recombined
+    without itself exceeding GUIDED_DRAFT_MEDIA_PER_BEAT.
+    """
+
+    beats = list(raw_beats)
+    repairs: list[str] = []
+    while len(beats) > limit:
+        merge_index: int | None = None
+        merge_size: int | None = None
+        for index in range(len(beats) - 1):
+            left, right = beats[index], beats[index + 1]
+            if not isinstance(left, dict) or not isinstance(right, dict):
+                continue
+            if left.get("topic") != right.get("topic"):
+                continue
+            combined = len(left.get("media_ids") or []) + len(right.get("media_ids") or [])
+            if combined > GUIDED_DRAFT_MEDIA_PER_BEAT:
+                continue
+            if merge_size is None or combined < merge_size:
+                merge_size = combined
+                merge_index = index
+        if merge_index is None:
+            raise SchemaError(
+                f"edit_proposal: invalid output — too many story beats for the specialist "
+                f"output limit ({limit})"
+            )
+        left, right = beats[merge_index], beats[merge_index + 1]
+        merged = {
+            **left,
+            "media_ids": [*(left.get("media_ids") or []), *(right.get("media_ids") or [])],
+            "duration_s": round(
+                float(left.get("duration_s") or 0.0) + float(right.get("duration_s") or 0.0), 3
+            ),
+        }
+        beats[merge_index : merge_index + 2] = [merged]
+        repairs.append(f"merged_beat:{merge_index}")
+    return beats, repairs
+
+
+def _creator_protected_media_ids(input: EditProposalAgentInput) -> set[str]:  # noqa: A002
+    """Clips the creator asked for by scope or by a resolved clip intent
+    (KRI-127 group/order/include). A repair may never drop one of these."""
+
+    protected = set(_required_media_ids(input))
+    if input.shot_labels or not input.clip_intents:
+        return protected
+    _prompt, _alias_to_id, id_to_alias = _prompt_media(input)
+    for intent in input.clip_intents:
+        if intent.status == "resolved":
+            protected.update(_clip_intent_alias_ids(intent, id_to_alias))
+    return protected
+
+
+def _trim_media_to_moment_budget(
+    beats: list[DraftStoryBeat],
+    *,
+    target_s: float,
+    min_moment_s: float,
+    required_ids: set[str],
+    durations: dict[str, float],
+) -> list[str]:
+    """Keep an authored story renderable when it names more clips than its length can show.
+
+    The compiler treats beat durations as weights and gives each clip the
+    minimum moment, or its own length when it is shorter. A story whose clips
+    need more screen time than `target_s` cannot be allocated ("too short to
+    show all approved media clearly"), and that used to surface only in the
+    render worker, after the creator had approved. Drop clips the creator did
+    not require, from the fullest beats first, until the story fits.
+
+    A short clip is never the one dropped for being short: it costs the least
+    screen time, and leaving short clips out is exactly what creators object
+    to. Required clips are never dropped; when they alone cannot fit, the plan
+    is infeasible and must not be saved.
+    """
+
+    def floor_s(media_id: str) -> float:
+        duration_s = durations.get(media_id, 0.0)
+        return min(min_moment_s, duration_s) if duration_s > 0 else min_moment_s
+
+    def needed_s() -> float:
+        return math.fsum(floor_s(media_id) for beat in beats for media_id in beat.media_ids)
+
+    dropped: list[str] = []
+    while needed_s() > target_s + 1e-6:
+        candidates = [
+            (len(beat.media_ids), index)
+            for index, beat in enumerate(beats)
+            if any(media_id not in required_ids for media_id in beat.media_ids)
+            and (len(beat.media_ids) > 1 or len(beats) > 1)
+        ]
+        if not candidates:
+            raise SchemaError("edit_proposal: the required clips cannot fit the target duration")
+        _size, index = max(candidates)
+        beat = beats[index]
+        droppable = [media_id for media_id in beat.media_ids if media_id not in required_ids]
+        # Prefer a clip that frees a full moment; among those, the last listed.
+        full_moment = [media_id for media_id in droppable if floor_s(media_id) >= min_moment_s]
+        victim = (full_moment or droppable)[-1]
+        beat.media_ids.remove(victim)
+        dropped.append(victim)
+        if not beat.media_ids:
+            beats.pop(index)
+    return [f"dropped_media_for_duration:{len(dropped)}"] if dropped else []
+
+
+def _scale_beat_durations(
+    beats: list[DraftStoryBeat], target_s: float, *, minimum_s: float = 1.0
+) -> None:
+    """Rescale beat durations in place so they sum to target_s exactly.
+
+    Keeps each beat's relative weight, respects the schema's per-beat floor,
+    and fixes rounding drift on the last beat (KRI-129: the creator's
+    requested duration always wins over the model's own arithmetic, so a
+    mismatched total is repaired, never rejected).
+    """
+
+    if not beats:
+        return
+    current_total = math.fsum(beat.duration_s for beat in beats)
+    if current_total <= 0:
+        share = max(minimum_s, round(target_s / len(beats), 3))
+        for beat in beats:
+            beat.duration_s = share
+    else:
+        scale = target_s / current_total
+        for beat in beats:
+            beat.duration_s = max(minimum_s, round(beat.duration_s * scale, 3))
+    drift = round(target_s - math.fsum(beat.duration_s for beat in beats), 3)
+    if drift:
+        beats[-1].duration_s = max(minimum_s, round(beats[-1].duration_s + drift, 3))
+
+
+def _resolve_adjacent_source_repeats(
+    cuts: list[FastMontageCut],
+) -> tuple[list[FastMontageCut], bool]:
+    """Reorder cuts to avoid an adjacent same-source repeat when a trivial
+    swap exists; accept a remaining repeat rather than reject (KRI-129).
+    """
+
+    ordered = list(cuts)
+    changed = False
+    for index in range(1, len(ordered)):
+        if ordered[index].media_id != ordered[index - 1].media_id:
+            continue
+        for swap_index in range(index + 1, len(ordered)):
+            candidate = ordered[swap_index]
+            if candidate.media_id == ordered[index - 1].media_id:
+                continue
+            if (
+                swap_index + 1 < len(ordered)
+                and ordered[swap_index + 1].media_id == ordered[index].media_id
+            ):
+                continue
+            ordered[index], ordered[swap_index] = ordered[swap_index], ordered[index]
+            changed = True
+            break
+    return ordered, changed
+
+
+def _repair_fast_cut_roles_and_order(
+    cuts: list[FastMontageCut], *, allow_adjacent_repeat: bool
+) -> tuple[list[FastMontageCut], list[str]]:
+    """Reorder to avoid adjacent repeats, then relabel roles by position.
+
+    Replaces the former hard rejections for a missing hook/payoff role and
+    for an unavoidable adjacent repeat (KRI-129): both are now repaired.
+    """
+
+    repairs: list[str] = []
+    ordered = list(cuts)
+    if not allow_adjacent_repeat and len(ordered) > 1:
+        reordered, changed = _resolve_adjacent_source_repeats(ordered)
+        if changed:
+            ordered = reordered
+            repairs.append("reordered_adjacent_sources")
+    relabelled = False
+    result: list[FastMontageCut] = []
+    for index, cut in enumerate(ordered):
+        role = "hook" if index == 0 else "payoff" if index == len(ordered) - 1 else "build"
+        if role != cut.role:
+            relabelled = True
+            cut = cut.model_copy(update={"role": role})
+        result.append(cut)
+    if relabelled:
+        repairs.append("relabelled_roles")
+    return result, repairs
 
 
 class _RawFastMontageCut(BaseModel):
@@ -1295,8 +1599,11 @@ def _compile_fast_cuts(
     raw_total_s = sum(cut.output_duration_s for cut in relaxed)
     if narrated or single_appearance:
         return [_strict_fast_cut(cut) for cut in relaxed], set(), raw_total_s
-    if any(cut.output_duration_s > 3.0 for cut in relaxed):
-        raise SchemaError("edit_proposal: non-narrated fast cuts must not exceed 3 seconds")
+    # A cut above 3s used to fail the whole plan outright. Nothing downstream
+    # requires that ceiling (the persisted EditProposalSnapshot only bounds
+    # >1.2s cuts when video_reuse_policy is unset, which a modern proposal
+    # never leaves unset) -- the split loop below still normalizes it to the
+    # active per-cut limit (KRI-129).
     if all(cut.output_duration_s <= split_limit_s for cut in relaxed):
         return [_strict_fast_cut(cut) for cut in relaxed], set(), raw_total_s
 
@@ -1344,7 +1651,11 @@ def _compile_fast_cuts(
             media_id for media_id, queue in lanes.items() if queue and media_id != previous_media_id
         ]
         if not candidates:
-            raise SchemaError("edit_proposal: split fast cuts cannot avoid adjacent sources")
+            # Every remaining part shares the previous source. Accept the
+            # forced adjacency instead of discarding an otherwise valid split
+            # plan (KRI-129) -- this only happens when one source's windows
+            # are the only material left to place.
+            candidates = [media_id for media_id, queue in lanes.items() if queue]
         media_id = min(
             candidates,
             key=lambda candidate: (-len(lanes[candidate]), source_order[candidate]),
@@ -1365,14 +1676,18 @@ def _compile_fast_cuts(
 def _normalize_fast_montage_duration(
     payload: dict,
     input: EditProposalAgentInput,  # noqa: A002
-) -> tuple[dict, set[str]]:
+) -> tuple[dict, set[str], bool]:
     """Reconcile harmless provider decimal drift to the server-owned target.
 
     Fast cuts are render-critical, so this validates their original shape and
     then fits their total to the server-owned target with bounded, deterministic
-    tail-first adjustments. The provider's declared duration is only an intent
-    check: LLM arithmetic may disagree with the valid cut windows it emitted.
-    Story directions deliberately keep the legacy strict-integer contract.
+    tail-first adjustments. The provider's *declared* ``duration_s`` plays no
+    role beyond a basic finiteness check -- it is not otherwise trusted, so a
+    provider that honestly reports a capacity-bound shorter total is no
+    longer rejected for disagreeing with the target before its cuts are even
+    examined (KRI-129). Story directions deliberately keep the legacy
+    strict-integer contract. Returns whether the plan was accepted at a
+    shorter authored total (see the final tail-adjustment below).
     """
 
     declared_duration = payload.get("duration_s")
@@ -1382,17 +1697,13 @@ def _normalize_fast_montage_duration(
         or not math.isfinite(float(declared_duration))
     ):
         raise SchemaError("edit_proposal: fast montage duration must be finite and numeric")
-    declared_duration_s = float(declared_duration)
     target_duration_s = _effective_target_duration_s(input)
-    target_delta_s = target_duration_s - declared_duration_s
     quick_mixed_timing = uses_quick_photo_long_video_timing(input.mixed_media_timing)
-    if not quick_mixed_timing and abs(target_delta_s) > _FAST_DURATION_RECONCILE_TOLERANCE_S:
-        raise SchemaError("edit_proposal: fast montage duration is too far from the server target")
 
     raw_cuts = payload.get("fast_cuts")
     if not isinstance(raw_cuts, list) or not raw_cuts:
         # Let the normal output model retain its established missing/shape error.
-        return payload, set()
+        return payload, set(), False
     raw_cuts = _quantize_quick_mixed_cuts_to_frames(raw_cuts, input)
     payload["fast_cuts"] = raw_cuts
     split_limit_s = (
@@ -1463,7 +1774,11 @@ def _normalize_fast_montage_duration(
                 )
             else:
                 minimum_duration_s = (
-                    0.8 if media.kind == "video" and source_duration_s >= 0.8 else 0.4
+                    0.8
+                    if media.kind == "video" and source_duration_s >= 0.8
+                    else min(0.4, source_duration_s)
+                    if media.kind == "video" and source_duration_s > 0
+                    else 0.4
                 )
             capacity_s = cut.output_duration_s - minimum_duration_s
             adjustment_s = -min(-remaining_s, max(0.0, capacity_s))
@@ -1519,6 +1834,29 @@ def _normalize_fast_montage_duration(
         )
 
     if abs(remaining_s) > _FAST_DURATION_EPSILON_S:
+        if remaining_s > 0 and input.narration_duration_s is None and input.montage_cadence is None:
+            # The cuts are valid but capacity-bound short of the target (e.g.
+            # a once-reuse montage over source-limited footage that has
+            # nothing left to extend). Accept the plan at its own achievable
+            # total instead of discarding an otherwise faithful,
+            # request-following edit (KRI-129). Never shrink a pinned
+            # narration or an exact round-robin cadence -- both must match
+            # their contract exactly, so those still raise below.
+            assert_video_windows_do_not_overlap()
+            achieved_duration_s = round(sum(cut.output_duration_s for cut in normalized_cuts), 3)
+            if achieved_duration_s < 3:
+                raise SchemaError(
+                    "edit_proposal: fast montage duration cannot fit the server target"
+                )
+            return (
+                {
+                    **payload,
+                    "duration_s": achieved_duration_s,
+                    "fast_cuts": [cut.model_dump() for cut in normalized_cuts],
+                },
+                repaired_cut_ids,
+                True,
+            )
         raise SchemaError("edit_proposal: fast montage duration cannot fit the server target")
 
     assert_video_windows_do_not_overlap()
@@ -1530,6 +1868,7 @@ def _normalize_fast_montage_duration(
             "fast_cuts": [cut.model_dump() for cut in normalized_cuts],
         },
         repaired_cut_ids,
+        False,
     )
 
 
@@ -1537,7 +1876,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.13.0",
+        prompt_version="1.14.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -1784,35 +2123,32 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             )
         )
         source_floor_note = (
-            "SCHEMA SOURCE FLOOR: This response must reference at least "
-            f"{source_floor} distinct AVAILABLE MEDIA aliases across story_beats or fast_cuts. "
-            "Count them before returning JSON. A fullscreen story beat may list multiple "
-            + (
-                # fast_montage authors fast_cuts, so its wording stays as it
-                # was: per-beat packing guidance is story-beat-only (KRI-126).
-                "distinct aliases: if the required source count exceeds your beat count, assign "
-                "multiple sources to some beats. "
-                if input.direction == "fast_montage"
-                else f"distinct aliases (a hard cap of {GUIDED_DRAFT_MEDIA_PER_BEAT} per beat): "
-                "if the required source count exceeds your beat count, spread the extra sources "
-                "evenly across beats -- never exceed the per-beat cap and never pile them onto "
-                "one beat. "
-            )
-            + "Reusing one alias does not increase coverage."
+            # This used to be phrased as a hard schema requirement; the server
+            # no longer rejects an output for falling short of it (KRI-129) --
+            # it is a variety preference the creator's own request always
+            # outranks. Required coverage is still enforced separately below.
+            "SOURCE VARIETY (guidance, not a hard requirement): aim to reference at least "
+            f"{source_floor} distinct AVAILABLE MEDIA aliases across story_beats or fast_cuts for "
+            "a varied edit. A fullscreen story beat may list multiple distinct aliases -- prefer "
+            f"at most {GUIDED_DRAFT_MEDIA_PER_BEAT} per beat when practical, but a beat that needs "
+            'more to honor the creator\'s requested grouping (e.g. "group the X clips together") '
+            "is fine; an oversized beat is split automatically, never rejected. Never sacrifice "
+            "the creator's requested grouping or coverage just to hit this number."
         )
         if uses_quick_photo_long_video_timing(input.mixed_media_timing):
             source_floor_note += (
-                " This floor is capped by the target duration and the profile's minimum holds; "
+                " This guidance is capped by the target duration and the profile's minimum holds; "
                 "do not force more sources than can fit."
             )
         if required_media_ids:
             source_floor_note += " Reference every alias at least once: " + ", ".join(
                 id_to_alias[media.media_id]
                 for media in input.media
-                if media.media_id in required_media_ids
+                if media.media_id in required_media_ids and media.media_id in id_to_alias
             )
-            source_floor_note += "."
-        beat_ceiling = _guided_beat_ceiling(input)
+            source_floor_note += (
+                ". This part IS required -- the server rejects an output that drops one."
+            )
         if input.direction == "fast_montage":
             # story_beats are compatibility-only here (the edit is fast_cuts);
             # never hand a fast montage story-beat packing rules (KRI-126).
@@ -1820,30 +2156,14 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "Longer all-media edits may use up to 10 beats so every meaningful source has "
                 "enough room."
             )
-        elif beat_ceiling > LEGACY_GUIDED_DRAFT_BEATS and not required_media_ids:
-            # Large upload, nothing required: more chapters are allowed, not
-            # demanded -- the coverage/packing rules below do not apply.
-            beat_count_note = (
-                f"This is a large upload: return at most {beat_ceiling} story beats, one per "
-                "chapter the request actually describes (3-5 is still right for a simple "
-                f"request). Every beat holds at most {GUIDED_DRAFT_MEDIA_PER_BEAT} media_ids -- "
-                "the schema rejects a longer list."
-            )
-        elif beat_ceiling > LEGACY_GUIDED_DRAFT_BEATS:
-            beat_count_note = (
-                f"HARD CAP: every beat holds at most {GUIDED_DRAFT_MEDIA_PER_BEAT} media_ids -- "
-                "never more, even to fit everything in; the schema rejects a longer list. This "
-                f"edit must cover more required sources than {LEGACY_GUIDED_DRAFT_BEATS} beats "
-                f"of {GUIDED_DRAFT_MEDIA_PER_BEAT} media each can hold, so return up to "
-                f"{beat_ceiling} story beats (never more) and spread the required sources "
-                "evenly across all of them -- never dump the remainder into the last beat. "
-                "Packing this many sources means each beat's screen time is necessarily brief: "
-                "give every beat a short, compressed duration_s (not its full real-world "
-                "length) so the sum of every beat's duration_s equals the declared duration_s "
-                "exactly -- do not let realistic per-source pacing overshoot the target."
-            )
         else:
-            beat_count_note = f"Return at most {beat_ceiling} story beats for this edit."
+            beat_count_note = (
+                "3-5 beats is right for a simple request. Beyond that, the creator's requested "
+                "grouping decides how many chapters this edit needs "
+                f"(up to {MAX_GUIDED_DRAFT_BEATS}) and how many clips each one holds -- follow "
+                "their request even when it means more chapters, or more media in a beat, than a "
+                "simple edit would use."
+            )
         return load_prompt(
             "edit_proposal",
             idea=input.idea[:500],
@@ -1891,9 +2211,25 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             # also sketches them must not fail the labeled plan (job ac795019).
             payload = {**payload, "fast_cuts": None, "montage_text_bindings": []}
         payload = _resolve_model_media_references(payload, input)
+        repairs: list[str] = []
+        if not creator_labels and input.direction != "fast_montage":
+            raw_beats = payload.get("story_beats")
+            if isinstance(raw_beats, list):
+                raw_beats, split_repairs = _split_oversized_beats(raw_beats)
+                repairs.extend(split_repairs)
+                if len(raw_beats) > MAX_GUIDED_DRAFT_BEATS:
+                    raw_beats, merge_repairs = _merge_excess_beats(
+                        raw_beats, limit=MAX_GUIDED_DRAFT_BEATS
+                    )
+                    repairs.extend(merge_repairs)
+                payload["story_beats"] = raw_beats
         repaired_cut_ids: set[str] = set()
+        accepted_short_total = False
         if input.direction == "fast_montage":
-            payload, repaired_cut_ids = _normalize_fast_montage_duration(payload, input)
+            repairs.extend(_clamp_fast_cut_windows(payload, input))
+            payload, repaired_cut_ids, accepted_short_total = _normalize_fast_montage_duration(
+                payload, input
+            )
         if input.mixed_media_timing is not None:
             payload["mixed_media_timing"] = input.mixed_media_timing.model_dump(mode="json")
         else:
@@ -1902,13 +2238,10 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             output = EditProposalAgentOutput.model_validate(payload)
         except Exception as exc:  # noqa: BLE001
             raise SchemaError(f"edit_proposal: invalid output — {exc}") from exc
-        if not creator_labels:
-            beat_ceiling = _guided_beat_ceiling(input)
-            if len(output.story_beats) > beat_ceiling:
-                raise SchemaError(
-                    "edit_proposal: invalid output — story_beats: List should have at most "
-                    f"{beat_ceiling} items after validation"
-                )
+        if repaired_cut_ids:
+            repairs.append(f"split_fast_cuts:{len(repaired_cut_ids)}")
+        if accepted_short_total:
+            repairs.append("accepted_short_fast_montage_total")
         if input.montage_audio is not None:
             returned_audio = output.montage_audio
             if returned_audio is None:
@@ -1938,45 +2271,38 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         allowed = {m.media_id for m in input.media}
         media_by_id = {media.media_id: media for media in input.media}
         used: set[str] = set()
-        for beat in output.story_beats:
+        for dedupe_index, beat in enumerate(output.story_beats):
             if not set(beat.media_ids) <= allowed:
                 raise SchemaError("edit_proposal: beat references unknown media")
             if len(beat.media_ids) != len(set(beat.media_ids)):
-                raise SchemaError("edit_proposal: beat repeats the same media")
+                # Repair rather than reject: de-duplicate within the beat and
+                # keep the plan (KRI-129).
+                beat.media_ids = list(dict.fromkeys(beat.media_ids))
+                repairs.append(f"deduped_beat_media:{dedupe_index}")
             if input.direction != "fast_montage" and input.video_reuse_policy == "once":
                 repeated = [media_id for media_id in beat.media_ids if media_id in used]
                 if any(media_by_id[media_id].kind == "video" for media_id in repeated):
                     raise SchemaError("edit_proposal: video source may appear only once")
-                # A photo may repeat only as a genuine last resort, once every
-                # distinct source has already been shown — never while an
-                # unused source could have carried this beat instead (a
-                # confirmed guided story with 11 sources for 7 chapters
-                # otherwise reused an already-shown Messi photo instead of the
-                # untouched Camp Nou clip still sitting idle, plan item
-                # 5016d555).
-                if repeated and (allowed - used):
-                    raise SchemaError(
-                        "edit_proposal: photo repeated while an unused source was available"
-                    )
             used.update(beat.media_ids)
         cuts = output.fast_cuts or []
         if input.direction == "fast_montage" and not cuts:
             raise SchemaError("edit_proposal: new fast montage proposals require fast_cuts")
         if input.direction == "fast_montage" and cuts:
-            if cuts[0].role != "hook":
-                raise SchemaError("edit_proposal: fast montage must open with a hook cut")
-            if len(cuts) > 1 and cuts[-1].role != "payoff":
-                raise SchemaError("edit_proposal: fast montage must end with a payoff cut")
-            previous_media_id: str | None = None
+            # A missing hook/payoff role and an unavoidable adjacent repeat
+            # used to reject the whole plan. Repair instead: reorder when a
+            # trivial swap breaks the adjacency, then relabel roles by
+            # position (KRI-129).
+            cuts, role_repairs = _repair_fast_cut_roles_and_order(
+                cuts, allow_adjacent_repeat=input.video_reuse_policy == "allow_repeat"
+            )
+            repairs.extend(role_repairs)
+            output.fast_cuts = cuts
             cut_sources: set[str] = set()
             total_cut_duration = 0.0
             for cut in cuts:
                 media = media_by_id.get(cut.media_id)
                 if media is None:
                     raise SchemaError("edit_proposal: fast cut references unknown media")
-                if previous_media_id == cut.media_id and input.video_reuse_policy != "allow_repeat":
-                    raise SchemaError("edit_proposal: fast montage cannot repeat adjacent sources")
-                previous_media_id = cut.media_id
                 cut_sources.add(cut.media_id)
                 total_cut_duration += cut.output_duration_s
                 source_duration = float(media.duration_s or 0.0)
@@ -2012,13 +2338,18 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                             "edit_proposal: mixed-media timing profile was not honored"
                         )
                 else:
-                    if input.video_reuse_policy == "allow_repeat" and cut.output_duration_s >= 0.4:
-                        continue
-                    if cut.output_duration_s >= 0.8 or cut.cut_id in repaired_cut_ids:
-                        continue
-                    if source_duration >= 0.8 or cut.output_duration_s < 0.4:
+                    # The former 0.8-1.2s taste band (except for truly short
+                    # sources) is now advice, not a rejection -- only the real
+                    # persisted-schema floor remains a guard (KRI-129).
+                    # ...and a cut may be shorter than it when it shows the
+                    # whole of a clip that is itself shorter.
+                    minimum_legacy_video_s = (
+                        min(0.4, source_duration) if source_duration > 0 else 0.4
+                    )
+                    if cut.output_duration_s < minimum_legacy_video_s - _FAST_DURATION_EPSILON_S:
                         raise SchemaError(
-                            "edit_proposal: fast cuts target 0.8-1.2s except truly short sources"
+                            "edit_proposal: fast montage video cuts must be at least "
+                            f"{minimum_legacy_video_s:g}s"
                         )
             if input.mixed_media_timing is not None:
                 _validate_requested_mixed_media_sequence(
@@ -2026,43 +2357,15 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                     media_by_id,
                     input.mixed_media_timing,
                 )
-            minimum = (
-                len(input.montage_cadence.source_media_ids)
-                if input.montage_cadence is not None
-                else maximum_distinct_sources(
-                    input.media,
-                    target_duration_s=input.target_duration_s,
-                    mixed_media_timing=input.mixed_media_timing,
-                )
-                if uses_quick_photo_long_video_timing(input.mixed_media_timing)
-                else minimum_required_sources(len(input.media))
+            # The generic distinct-source floor is a variety preference, not a
+            # render requirement (KRI-129): required coverage is still
+            # enforced below via `_required_media_ids`.
+            effective_target_s = (
+                output.duration_s if accepted_short_total else _effective_target_duration_s(input)
             )
-            if len(cut_sources) < minimum:
-                raise SchemaError(
-                    f"edit_proposal: fast montage selected {len(cut_sources)} distinct sources; "
-                    f"need at least {minimum}"
-                )
-            if (
-                abs(total_cut_duration - _effective_target_duration_s(input))
-                > _FAST_CUT_TOTAL_TOLERANCE_S
-            ):
+            if abs(total_cut_duration - effective_target_s) > _FAST_CUT_TOTAL_TOLERANCE_S:
                 raise SchemaError(
                     "edit_proposal: fast cut durations do not fit the declared duration"
-                )
-        else:
-            minimum = (
-                len(_required_media_ids(input))
-                if _required_media_ids(input)
-                else minimum_required_sources(
-                    len(input.media),
-                    target_duration_s=input.target_duration_s,
-                    media=input.media,
-                    mixed_media_timing=input.mixed_media_timing,
-                )
-            )
-            if len(used) < minimum:
-                raise SchemaError(
-                    f"edit_proposal: selected {len(used)} distinct sources; need at least {minimum}"
                 )
         if input.direction == "fast_montage":
             available_kinds = {
@@ -2071,7 +2374,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 if media.kind == "image"
                 or (
                     media.duration_s is not None
-                    and float(media.duration_s) >= 0.4 - _FAST_DURATION_EPSILON_S
+                    and float(media.duration_s) >= _MIN_PLANNABLE_VIDEO_S - _FAST_DURATION_EPSILON_S
                 )
             }
         else:
@@ -2083,7 +2386,11 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         if required_ids and not required_ids <= variety_ids:
             raise SchemaError("edit_proposal: requested media coverage was dropped")
         used_kinds = {media.kind for media in input.media if media.media_id in variety_ids}
-        if len(available_kinds) > 1 and used_kinds != available_kinds:
+        if (
+            input.direction == "fast_montage"
+            and len(available_kinds) > 1
+            and used_kinds != available_kinds
+        ):
             raise SchemaError("edit_proposal: story must use both photos and videos")
         creator_beat_indexes: set[int] = set()
         if input.direction in {"guided_story", "text_explainer"}:
@@ -2092,20 +2399,25 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             if creator_labels:
                 creator_beat_indexes = _apply_creator_shot_labels(output, input)
             else:
-                minimum_beats = min(3, len(input.media))
-                if len(output.story_beats) < minimum_beats:
-                    raise SchemaError(
-                        f"edit_proposal: guided story needs at least {minimum_beats} beats"
+                repairs.extend(
+                    _trim_media_to_moment_budget(
+                        output.story_beats,
+                        target_s=float(input.target_duration_s),
+                        min_moment_s=(
+                            1.8
+                            if input.direction == "text_explainer"
+                            else GUIDED_STORY_MIN_MOMENT_S
+                        ),
+                        required_ids=_creator_protected_media_ids(input),
+                        durations={
+                            media.media_id: float(media.duration_s or 0.0) for media in input.media
+                        },
                     )
-                if any(not beat.thought.strip() for beat in output.story_beats):
-                    raise SchemaError("edit_proposal: guided story thoughts cannot be empty")
-        if input.direction != "fast_montage" and not creator_labels:
-            minimum_topics = min(3, len(input.media))
-            distinct_topics = {beat.topic.strip().casefold() for beat in output.story_beats}
-            if len(distinct_topics) < minimum_topics:
-                raise SchemaError(
-                    f"edit_proposal: story needs at least {minimum_topics} distinct topics"
                 )
+            # The minimum-beat-count, empty-thought, and distinct-topic
+            # rejections below this point are removed (KRI-129): the
+            # creator's requested grouping decides beat count and topics, and
+            # an empty thought simply renders no on-screen caption.
         for beat_index, beat in enumerate(output.story_beats):
             if beat_index in creator_beat_indexes or (creator_labels and not beat.thought.strip()):
                 # Confirmed creator copy is not an AI draft: it is never
@@ -2116,37 +2428,67 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             )
             if not has_creator_context:
                 beat.thought = _neutralize_sensory_modifier(beat.thought)
-            if len(beat.thought.split()) > 18:
-                raise SchemaError("edit_proposal: draft thought exceeds 18 words")
+            words = beat.thought.split()
+            if len(words) > 18:
+                # Repair rather than reject: truncate at the word boundary
+                # and keep the plan (KRI-129).
+                beat.thought = " ".join(words[:18])
+                repairs.append(f"truncated_thought:{beat_index}")
             if not has_creator_context and ai_draft_thought_has_unsupported_claim(beat.thought):
-                raise SchemaError(
-                    "edit_proposal: draft thought invents an unsupported personal experience"
-                )
+                # An invented first-person claim must never render, but the
+                # plan itself survives: blank just this thought (KRI-129).
+                beat.thought = ""
+                repairs.append(f"blanked_thought:{beat_index}")
         if creator_labels:
             # The label contract asks for each shot's requested seconds AND puts
             # the title hold on top, so a faithful draft can overshoot the target
             # it was asked for (3+5+5+5+5+5+2s plus a 3.2s title = 33.2s against
             # 30s, plan item 5016d555). Beat durations are weights the compiler
             # scales to the server target, so the model's declared total adds
-            # nothing: bound the beats themselves and pin the total to the target.
+            # nothing: rescale the beats themselves to the target instead of
+            # rejecting the plan (KRI-129).
+            target_s = _effective_target_duration_s(input)
             beat_duration = math.fsum(beat.duration_s for beat in output.story_beats)
-            if abs(beat_duration - _effective_target_duration_s(input)) > 5:
-                raise SchemaError(
-                    "edit_proposal: labeled beat durations are too far from the creator's target"
-                )
+            if abs(beat_duration - target_s) > 5:
+                _scale_beat_durations(output.story_beats, target_s)
+                repairs.append("scaled_durations")
             output.duration_s = input.target_duration_s
+            output.repairs = repairs
             return output
-        if abs(output.duration_s - _effective_target_duration_s(input)) > 5:
-            raise SchemaError("edit_proposal: duration is too far from the creator's target")
         if input.direction != "fast_montage":
+            target_s = _effective_target_duration_s(input)
             beat_duration = math.fsum(beat.duration_s for beat in output.story_beats)
             max_intro_gap = max(6.0, output.duration_s * 0.3)
             # Source metadata can carry more precision than the declared total;
             # allow at most one output frame of drift before compilation.
-            if (
+            needs_duration_repair = abs(output.duration_s - target_s) > 5 or (
                 beat_duration - output.duration_s > 1 / 30 + 1e-6
                 or output.duration_s - beat_duration > max_intro_gap
-            ):
-                raise SchemaError("edit_proposal: beat durations do not fit the declared duration")
+            )
+            if needs_duration_repair and beat_duration > 0:
+                # The declared duration and the beat weights disagreeing used
+                # to reject the plan outright. Rescale to the server target
+                # instead (KRI-129): the creator's requested duration always
+                # wins over the model's own arithmetic.
+                _scale_beat_durations(output.story_beats, target_s)
+                output.duration_s = input.target_duration_s
+                repairs.append("scaled_durations")
         _validate_clip_intents(output, input)
+        if input.direction in {"guided_story", "text_explainer"} and not creator_labels:
+            # The INCLUDE repair above can add a clip back; keep the story
+            # within what its length can show, never at the creator's expense.
+            repairs.extend(
+                _trim_media_to_moment_budget(
+                    output.story_beats,
+                    target_s=float(input.target_duration_s),
+                    min_moment_s=(
+                        1.8 if input.direction == "text_explainer" else GUIDED_STORY_MIN_MOMENT_S
+                    ),
+                    required_ids=_creator_protected_media_ids(input),
+                    durations={
+                        media.media_id: float(media.duration_s or 0.0) for media in input.media
+                    },
+                )
+            )
+        output.repairs = repairs
         return output

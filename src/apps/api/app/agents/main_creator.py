@@ -153,6 +153,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 # echoes opaque IDs, while native planning remains bounded to
                 # owned non-asset media.
                 from app.agents._schemas.creator_policy import (  # noqa: PLC0415
+                    explicit_scope_from_stated_media_count,
                     normalize_creator_strategy_media,
                 )
 
@@ -190,13 +191,38 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     reuse = resolve_video_reuse_policy(message, reuse)
                 reuse = resolve_video_reuse_policy(input.user_message, reuse, cadence)
                 if reuse == "once":
+                    # A numeric cadence structurally requires reusing (or at
+                    # least re-cutting between) the same two sources more
+                    # than once; "once" only happens here when the creator's
+                    # own latest wording explicitly forbade any repeat/loop,
+                    # which is incompatible with that cadence. Falling back
+                    # to an ordinary montage (not erroring) mirrors the
+                    # route's identical rule (creator_agent.py, same "once"
+                    # check), so this is existing, intentional policy rather
+                    # than a silent drop of unrelated creator intent.
                     cadence = None
+                # KRI-129 part C: the regex is evidence FOR an explicit scope,
+                # never a veto over what the model itself read from the full
+                # conversation. Regex silence must not erase a model-authored
+                # "all"/"selected" the creator did state some other way.
+                explicit_scope = _explicit_media_scope_from_request(combined_request)
+                if explicit_scope is None and explicit_scope_from_stated_media_count(
+                    combined_request, input.capability_manifest
+                ):
+                    # "Continue with 16 clips" naming the whole manifest size
+                    # is just as explicit as literally saying "all" -- apply
+                    # the same rule the route applies post-hoc, so it holds
+                    # even before `_apply_explicit_render_intent` runs.
+                    explicit_scope = "all"
+                resolved_scope = (
+                    explicit_scope if explicit_scope is not None else action.strategy.media_scope
+                )
                 strategy = action.strategy.model_copy(
                     update={
                         "mixed_media_timing": timing,
                         "montage_cadence": cadence,
                         "video_reuse_policy": reuse,
-                        "media_scope": _explicit_media_scope_from_request(combined_request),
+                        "media_scope": resolved_scope,
                     }
                 )
                 action = action.model_copy(

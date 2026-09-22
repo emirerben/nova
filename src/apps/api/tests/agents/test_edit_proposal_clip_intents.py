@@ -19,10 +19,12 @@ from app.agents._runtime import SchemaError
 from app.agents.edit_proposal import EditProposalAgent, EditProposalAgentInput, EditProposalMedia
 from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
 
-# Computed against src/apps/api/app/agents/edit_proposal.py at the commit
-# preceding this Lane P change (git show HEAD:...), for exactly the input
-# `_canonical_input()` builds below with clip_intents left unset.
-_PRE_KRI127_PROMPT_SHA256 = "b23989c538ab3b266a9c0775b84998f09776fc7db8ec741a0593881e6697da1d"
+# The no-intents prompt, for exactly the input `_canonical_input()` builds
+# below with clip_intents left unset. It pins that an absent/empty intent list
+# adds NOTHING to the prompt. Re-baselined for KRI-129 (prompt 1.14.0), which
+# changed the base prompt itself (creator-request-outranks-guidelines rule,
+# advisory beat/source guidance); recompute it whenever the base prompt changes.
+_PRE_KRI127_PROMPT_SHA256 = "9766fafc638ed80edf2faed729764316db8476f2b55aacc08bc178bc90016a5e"
 
 
 def _canonical_input(**overrides: object) -> EditProposalAgentInput:
@@ -464,7 +466,9 @@ def test_include_missing_entirely_raises_when_no_beat_has_room() -> None:
     agent_input = EditProposalAgentInput(
         direction="guided_story",
         pace="balanced",
-        target_duration_s=16,
+        # 12 clips need 12 x 1.4 s = 16.8 s. Below that the planner sheds an optional
+        # clip to stay renderable (KRI-129), which would open a slot for the INCLUDE.
+        target_duration_s=20,
         media=media,
         clip_intents=[_include_intent(["speech"])],
     )

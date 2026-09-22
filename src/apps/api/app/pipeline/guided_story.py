@@ -883,6 +883,20 @@ def guided_transition_params(
     return transition_type, transition_duration_s
 
 
+# A video shorter than this after paying its transition overlap has no frames
+# left to show; anything longer plays for its own length (see
+# `guided_moment_floor_s`).
+_MIN_RENDERABLE_MOMENT_S = 2 * _FRAME_S
+
+
+def guided_moment_floor_s(min_moment_s: float, capacity_s: float) -> float:
+    """Minimum screen time one source needs: `min_moment_s`, or its own usable
+    length when it is shorter. A short clip is never excluded for being short;
+    it simply plays in full."""
+
+    return min(min_moment_s, capacity_s)
+
+
 def guided_moment_capacity_s(ref: Any, *, overlap_s: float) -> float:
     """Usable duration a single beat moment (one media source) can supply.
 
@@ -946,7 +960,9 @@ def _allocate_beat_windows(
             for ref, overlap in zip(beat_refs, overlaps_s, strict=True)
         ]
         if not quick_mixed_timing:
-            floors.append(min_moment_s * len(beat.media_ids))
+            floors.append(
+                sum(guided_moment_floor_s(min_moment_s, capacity) for capacity in capacities_b)
+            )
         else:
             floors.append(
                 sum(
@@ -1077,7 +1093,10 @@ def _allocate_beat_durations(
 
     quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
     floor_total = (
-        min_moment_s * len(refs)
+        sum(
+            guided_moment_floor_s(min_moment_s, guided_moment_capacity_s(ref, overlap_s=overlap))
+            for ref, overlap in zip(refs, overlaps_s, strict=True)
+        )
         if not quick_mixed_timing
         else sum(
             mixed_media_hold_bounds(ref.kind, mixed_media_timing).minimum_s
@@ -1111,10 +1130,10 @@ def _allocate_beat_durations(
                 f"Video {ref.source_filename or ref.media_id} has no usable duration.",
             )
         capacity = max(0.0, source_duration - overlap)
-        if capacity + _FRAME_S < min_moment_s:
+        if capacity < _MIN_RENDERABLE_MOMENT_S:
             raise GuidedStoryError(
                 "guided_story_duration_impossible",
-                f"Video {ref.source_filename or ref.media_id} is too short to show clearly.",
+                f"Video {ref.source_filename or ref.media_id} has no frames left to show.",
             )
         capacities.append(
             min(mixed_media_hold_bounds(ref.kind, mixed_media_timing).maximum_s, capacity)
@@ -1123,7 +1142,7 @@ def _allocate_beat_durations(
         )
 
     if not quick_mixed_timing:
-        allocated = [min_moment_s for _ref in refs]
+        allocated = [guided_moment_floor_s(min_moment_s, capacity) for capacity in capacities]
     else:
         allocated = [
             mixed_media_hold_bounds(ref.kind, mixed_media_timing).preferred_s
@@ -1967,6 +1986,18 @@ def validate_proposal_timing(snapshot: EditProposalSnapshot) -> None:
                             "guided_story_snapshot_invalid",
                             "Fast montage cuts cannot reuse overlapping video footage.",
                         )
+
+    validate_proposal_compiles(snapshot)
+
+
+def validate_proposal_compiles(snapshot: EditProposalSnapshot) -> None:
+    """Dry-run the strict compiler: can the renderer allocate this proposal at all?
+
+    Narrower than `validate_proposal_timing`, which also applies editorial
+    fast-cut rules meant for creator revisions. Every freshly planned draft is
+    checked with this before it is saved, so a plan the renderer cannot
+    allocate fails at planning time instead of after approval (KRI-129).
+    """
 
     media_digest = canonical_media_digest(snapshot.media, snapshot.narration)
     compile_execution_plan(

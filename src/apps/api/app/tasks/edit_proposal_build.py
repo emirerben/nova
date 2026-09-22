@@ -1835,156 +1835,215 @@ def _run_draft_attempt(
                     )
                     db.commit()
             return
-        if output is None and brief.direction == "fast_montage":
-            fallback_cuts = deterministic_fast_cuts(
-                media,
-                target_duration_s,
-                brief.mixed_media_timing,
-                brief.montage_cadence,
-                video_reuse_policy=video_reuse_policy,
-                narration_duration_s=narration.duration_s if narration else None,
-                required_media_ids=(
-                    [ref.media_id for ref in media]
-                    if brief.media_scope == "all"
-                    else brief.selected_media_ids
-                    if brief.media_scope == "selected"
-                    else None
-                ),
-            )
-            fallback_beats = _fast_story_beats(fallback_cuts)
-        elif output is None and brief.shot_labels:
-            # Recovery keeps the creator's exact labels; generic fallback copy
-            # must never replace them (Barcelona trailer, job ac795019).
-            fallback_cuts = None
-            try:
-                fallback_beats = deterministic_labeled_beats(
-                    media,
-                    target_duration_s,
-                    shot_labels=brief.shot_labels,
-                    opening_title=brief.opening_title,
-                    opening_title_duration_s=brief.opening_title_duration_s,
-                    closing_title=brief.closing_title,
-                    required_media_ids=(
-                        [ref.media_id for ref in media]
-                        if brief.media_scope == "all"
-                        else brief.selected_media_ids
-                        if brief.media_scope == "selected"
-                        else None
-                    ),
-                )
-            except CreatorTextInfeasibleError as exc:
-                with sync_session() as db:
-                    locked = _locked_item(db, iid, ownership_epoch)
-                    item = locked[0] if locked else None
-                    current = parse_edit_proposal(item.edit_proposal) if item else None
-                    if (
-                        item
-                        and current
-                        and current.generation_attempt_id == attempt_id
-                        and current.status == "drafting"
-                    ):
-                        _fail(
-                            item,
-                            current,
-                            "creator_text_infeasible",
-                            f"Kria couldn't fit your {len(brief.shot_labels)} shot labels onto "
-                            "these clips. Add clips or shorten the video, then try again.",
-                            detail=_exc_detail(exc),
-                        )
-                        db.commit()
-                return
-        else:
-            fallback_cuts = None
-            fallback_beats = (
-                deterministic_guided_beats(
-                    media,
-                    target_duration_s,
-                    required_media_ids=(
-                        [ref.media_id for ref in media]
-                        if brief.media_scope == "all"
-                        else brief.selected_media_ids
-                        if brief.media_scope == "selected"
-                        else None
-                    ),
-                    pace=brief.pace,
-                    mixed_media_timing=brief.mixed_media_timing,
-                )
-                if output is None
-                else None
-            )
-        snapshot = EditProposalSnapshot(
-            # KRI-127: the render worker re-grounds every label from these.
-            clip_intents=_resolved_clip_intents(brief),
-            direction=brief.direction,
-            goal=brief.goal,
-            pace=brief.pace,
-            duration_s=target_duration_s,
-            # A confirmed Main Creator title is immutable and beats any
-            # specialist/copy-writer title for every render.
-            title=brief.opening_title or (output.title if output is not None else "A few moments"),
-            opening_title=brief.opening_title,
-            opening_title_duration_s=brief.opening_title_duration_s,
-            shot_labels=brief.shot_labels,
-            closing_title=brief.closing_title,
-            font_family=brief.font_family,
-            text_color=brief.text_color,
-            image_layout=brief.image_layout,
-            licensed_sfx=brief.licensed_sfx,
-            media=media,
-            story_beats=(
-                [
-                    StoryBeat(
-                        beat_id=str(uuid.uuid4()),
-                        topic=beat.topic,
-                        thought=beat.thought,
-                        # parse() already bound labeled beats to the exact
-                        # confirmed labels; they are creator copy, not drafts.
-                        thought_source=(
-                            "user"
-                            if brief.shot_labels and beat.thought in brief.shot_labels
-                            else "ai_draft"
-                        ),
-                        media_ids=beat.media_ids,
-                        layout=beat.layout,
-                        duration_s=beat.duration_s,
-                    )
-                    for beat in output.story_beats
-                ]
-                if output is not None and brief.direction != "fast_montage"
-                else _fast_story_beats(output.fast_cuts or [])
-                if output is not None
-                else fallback_beats
-            ),
-            fast_cuts=(
-                [cut.model_dump(mode="json") for cut in output.fast_cuts]
-                if output is not None and brief.direction == "fast_montage" and output.fast_cuts
-                else fallback_cuts
-            ),
-            mixed_media_timing=brief.mixed_media_timing,
-            media_scope=brief.media_scope,
-            selected_media_ids=brief.selected_media_ids
-            or ([ref.media_id for ref in media] if brief.media_scope == "all" else None),
-            narration=narration,
-            montage_text_bindings=(
-                getattr(output, "montage_text_bindings", [])
-                if output is not None and getattr(output, "montage_text_bindings", [])
-                else []
-            ),
-            montage_audio=(
-                getattr(output, "montage_audio", None)
-                if output is not None and getattr(output, "montage_audio", None) is not None
-                else brief.montage_audio
-            ),
-            montage_cadence=brief.montage_cadence,
-            video_reuse_policy=video_reuse_policy,
-            output_orientation=brief.output_orientation,
-        )
-        snapshot = phone_story_layouts(snapshot, owner_id, visuals_only_device=visuals_only_device)
-        if fallback_used:
-            # Never auto-approve a deterministic recovery that the strict
-            # renderer cannot compile from the complete accepted media set.
-            from app.pipeline.guided_story import validate_proposal_timing  # noqa: PLC0415
 
+        def _snapshot_for(output):  # noqa: ANN001, ANN202
+            """Build the draft snapshot from the planner output, or from the
+            deterministic fallback when `output` is None. Returns None when the
+            attempt was already failed and persisted (labeled-plan infeasible)."""
+
+            if output is None and brief.direction == "fast_montage":
+                fallback_cuts = deterministic_fast_cuts(
+                    media,
+                    target_duration_s,
+                    brief.mixed_media_timing,
+                    brief.montage_cadence,
+                    video_reuse_policy=video_reuse_policy,
+                    narration_duration_s=narration.duration_s if narration else None,
+                    required_media_ids=(
+                        [ref.media_id for ref in media]
+                        if brief.media_scope == "all"
+                        else brief.selected_media_ids
+                        if brief.media_scope == "selected"
+                        else None
+                    ),
+                )
+                fallback_beats = _fast_story_beats(fallback_cuts)
+            elif output is None and brief.shot_labels:
+                # Recovery keeps the creator's exact labels; generic fallback copy
+                # must never replace them (Barcelona trailer, job ac795019).
+                fallback_cuts = None
+                try:
+                    fallback_beats = deterministic_labeled_beats(
+                        media,
+                        target_duration_s,
+                        shot_labels=brief.shot_labels,
+                        opening_title=brief.opening_title,
+                        opening_title_duration_s=brief.opening_title_duration_s,
+                        closing_title=brief.closing_title,
+                        required_media_ids=(
+                            [ref.media_id for ref in media]
+                            if brief.media_scope == "all"
+                            else brief.selected_media_ids
+                            if brief.media_scope == "selected"
+                            else None
+                        ),
+                    )
+                except CreatorTextInfeasibleError as exc:
+                    with sync_session() as db:
+                        locked = _locked_item(db, iid, ownership_epoch)
+                        item = locked[0] if locked else None
+                        current = parse_edit_proposal(item.edit_proposal) if item else None
+                        if (
+                            item
+                            and current
+                            and current.generation_attempt_id == attempt_id
+                            and current.status == "drafting"
+                        ):
+                            _fail(
+                                item,
+                                current,
+                                "creator_text_infeasible",
+                                f"Kria couldn't fit your {len(brief.shot_labels)} shot labels onto "
+                                "these clips. Add clips or shorten the video, then try again.",
+                                detail=_exc_detail(exc),
+                            )
+                            db.commit()
+                    return None
+            else:
+                fallback_cuts = None
+                fallback_beats = (
+                    deterministic_guided_beats(
+                        media,
+                        target_duration_s,
+                        required_media_ids=(
+                            [ref.media_id for ref in media]
+                            if brief.media_scope == "all"
+                            else brief.selected_media_ids
+                            if brief.media_scope == "selected"
+                            else None
+                        ),
+                        pace=brief.pace,
+                        mixed_media_timing=brief.mixed_media_timing,
+                    )
+                    if output is None
+                    else None
+                )
+            snapshot = EditProposalSnapshot(
+                # KRI-127: the render worker re-grounds every label from these.
+                clip_intents=_resolved_clip_intents(brief),
+                direction=brief.direction,
+                goal=brief.goal,
+                pace=brief.pace,
+                # An authored fast montage may land a little short of the target
+                # when the footage cannot fill it; the planner accepts that total
+                # instead of discarding the creator's plan (KRI-129), and the
+                # snapshot requires its cuts to sum to this number.
+                duration_s=(
+                    output.duration_s
+                    if output is not None and brief.direction == "fast_montage"
+                    else target_duration_s
+                ),
+                # A confirmed Main Creator title is immutable and beats any
+                # specialist/copy-writer title for every render.
+                title=brief.opening_title
+                or (output.title if output is not None else "A few moments"),
+                opening_title=brief.opening_title,
+                opening_title_duration_s=brief.opening_title_duration_s,
+                shot_labels=brief.shot_labels,
+                closing_title=brief.closing_title,
+                font_family=brief.font_family,
+                text_color=brief.text_color,
+                image_layout=brief.image_layout,
+                licensed_sfx=brief.licensed_sfx,
+                media=media,
+                story_beats=(
+                    [
+                        StoryBeat(
+                            beat_id=str(uuid.uuid4()),
+                            topic=beat.topic,
+                            thought=beat.thought,
+                            # parse() already bound labeled beats to the exact
+                            # confirmed labels; they are creator copy, not drafts.
+                            thought_source=(
+                                "user"
+                                if brief.shot_labels and beat.thought in brief.shot_labels
+                                else "ai_draft"
+                            ),
+                            media_ids=beat.media_ids,
+                            layout=beat.layout,
+                            duration_s=beat.duration_s,
+                        )
+                        for beat in output.story_beats
+                    ]
+                    if output is not None and brief.direction != "fast_montage"
+                    else _fast_story_beats(output.fast_cuts or [])
+                    if output is not None
+                    else fallback_beats
+                ),
+                fast_cuts=(
+                    [cut.model_dump(mode="json") for cut in output.fast_cuts]
+                    if output is not None and brief.direction == "fast_montage" and output.fast_cuts
+                    else fallback_cuts
+                ),
+                mixed_media_timing=brief.mixed_media_timing,
+                media_scope=brief.media_scope,
+                selected_media_ids=brief.selected_media_ids
+                or ([ref.media_id for ref in media] if brief.media_scope == "all" else None),
+                narration=narration,
+                montage_text_bindings=(
+                    getattr(output, "montage_text_bindings", [])
+                    if output is not None and getattr(output, "montage_text_bindings", [])
+                    else []
+                ),
+                montage_audio=(
+                    getattr(output, "montage_audio", None)
+                    if output is not None and getattr(output, "montage_audio", None) is not None
+                    else brief.montage_audio
+                ),
+                montage_cadence=brief.montage_cadence,
+                video_reuse_policy=video_reuse_policy,
+                output_orientation=brief.output_orientation,
+            )
+            return snapshot
+
+        from app.pipeline.guided_story import (  # noqa: PLC0415
+            GuidedStoryError,
+            validate_proposal_compiles,
+            validate_proposal_timing,
+        )
+
+        snapshot = _snapshot_for(output)
+        if snapshot is None:
+            return
+        snapshot = phone_story_layouts(snapshot, owner_id, visuals_only_device=visuals_only_device)
+        # Dry-run the strict compiler on EVERY draft, not only on recoveries. The
+        # planner now repairs an authored plan instead of rejecting it (KRI-129);
+        # without this, a repaired plan the renderer cannot allocate would be
+        # saved, approved, and fail in the render worker after approval.
+        try:
+            if fallback_used:
+                # A deterministic recovery also has to satisfy the stricter
+                # revision rules before it may be auto-approved.
+                validate_proposal_timing(snapshot)
+            else:
+                validate_proposal_compiles(snapshot)
+        except GuidedStoryError as exc:
+            if (
+                output is None
+                or brief.direction == "text_explainer"
+                or (
+                    narration is not None
+                    and not uses_quick_photo_long_video_timing(brief.mixed_media_timing)
+                )
+            ):
+                # A recovery the renderer cannot compile is never auto-approved,
+                # and these directions have no deterministic recovery.
+                raise
+            fallback_used = True
+            fallback_reason = f"authored plan failed the render dry run: {exc}"[:500]
+            log.warning(
+                "edit_proposal.deterministic_fallback",
+                item_id=item_id,
+                direction=brief.direction,
+                error=fallback_reason,
+            )
+            output = None
+            snapshot = _snapshot_for(None)
+            if snapshot is None:
+                return
+            snapshot = phone_story_layouts(
+                snapshot, owner_id, visuals_only_device=visuals_only_device
+            )
             validate_proposal_timing(snapshot)
         with sync_session() as db:
             locked = _locked_item(db, iid, ownership_epoch)

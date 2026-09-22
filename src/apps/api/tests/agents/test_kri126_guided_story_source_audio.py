@@ -20,11 +20,13 @@ Fixes covered here:
      `EditProposalAgentOutput.model_validate`, so it never trips the
      <=12-item ceiling. A genuine mismatch when sources WERE requested still
      raises.
-  3. The story-beat count ceiling (LEGACY_GUIDED_DRAFT_BEATS=5) is raised, up
-     to MAX_GUIDED_DRAFT_BEATS, when the required source count cannot fit in
-     5 beats x 4 media each (media_scope="all" over a large upload).
-  4. render_prompt states the concrete beat ceiling for the request instead
-     of vague prose.
+  3. (KRI-129 update) The story-beat count ceiling is no longer a taste cap
+     that scales with required source count -- it is the real persisted
+     limit (MAX_GUIDED_DRAFT_BEATS, today 20), so a large upload or a request
+     naming many chapters is never rejected for beat count alone.
+  4. (KRI-129 update) render_prompt states the beat count as advisory
+     guidance ("3-5 is right for a simple request; the creator's requested
+     grouping decides") instead of a computed ceiling.
 """
 
 from __future__ import annotations
@@ -36,7 +38,6 @@ import pytest
 
 from app.agents._runtime import SchemaError
 from app.agents.edit_proposal import (
-    LEGACY_GUIDED_DRAFT_BEATS,
     EditProposalAgent,
     EditProposalAgentInput,
     EditProposalMedia,
@@ -237,8 +238,10 @@ def test_parse_still_rejects_a_genuine_montage_audio_mismatch() -> None:
         EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
 
 
-def test_parse_rejects_more_than_twelve_sources_without_the_fix_context() -> None:
-    """Sanity check: fast_montage keeps the old, stricter behavior untouched."""
+def test_fast_montage_echoing_more_than_twelve_audio_sources_is_coerced_not_rejected() -> None:
+    """KRI-129: the same echo discarded a 16-clip fast montage on its first
+    attempt. When the creator requested no specific audio sources, the echoed
+    list is coerced to the requested empty list for every direction."""
 
     agent_input = EditProposalAgentInput(
         direction="fast_montage",
@@ -274,8 +277,11 @@ def test_parse_rejects_more_than_twelve_sources_without_the_fix_context() -> Non
         },
     }
 
-    with pytest.raises(SchemaError):
-        EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
+    output = EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
+
+    assert output.montage_audio is not None
+    assert output.montage_audio.source_media_ids == []
+    assert len(output.fast_cuts or []) == 20
 
 
 # ---------------------------------------------------------------------------
@@ -284,17 +290,18 @@ def test_parse_rejects_more_than_twelve_sources_without_the_fix_context() -> Non
 
 
 def test_parse_allows_higher_beat_ceiling_for_media_scope_all_thirty_clips() -> None:
+    # 30 required clips need 30 x 1.4 s = 42 s of screen time, so the target must exceed it.
     media = _load_thirty_clip_media()
     agent_input = EditProposalAgentInput(
         direction="guided_story",
         pace="balanced",
-        target_duration_s=40.0,
+        target_duration_s=45.0,
         media_scope="all",
         selected_media_ids=[item.media_id for item in media],
         media=media,
     )
     ids = [item.media_id for item in media]
-    payload = _story_payload(ids, duration_s=40.0, beat_count=8)
+    payload = _story_payload(ids, duration_s=45.0, beat_count=8)
 
     output = EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
 
@@ -303,7 +310,10 @@ def test_parse_allows_higher_beat_ceiling_for_media_scope_all_thirty_clips() -> 
     assert used == set(ids)
 
 
-def test_parse_rejects_excess_beats_for_a_small_media_scope_all_request() -> None:
+def test_parse_accepts_excess_beats_for_a_small_media_scope_all_request() -> None:
+    # KRI-129: 8 beats over a 6-clip upload used to fail at the old
+    # LEGACY_GUIDED_DRAFT_BEATS=5 ceiling; the real ceiling is now the
+    # persisted snapshot's limit (20), so 8 beats parses fine.
     media = [
         EditProposalMedia(media_id=f"clip-{index}", lane="clip", kind="video", duration_s=5.0)
         for index in range(6)
@@ -314,6 +324,7 @@ def test_parse_rejects_excess_beats_for_a_small_media_scope_all_request() -> Non
         target_duration_s=40.0,
         media_scope="all",
         selected_media_ids=[item.media_id for item in media],
+        video_reuse_policy="allow_repeat",
         media=media,
     )
     ids = [item.media_id for item in media]
@@ -324,21 +335,25 @@ def test_parse_rejects_excess_beats_for_a_small_media_scope_all_request() -> Non
     for index, beat in enumerate(payload["story_beats"]):
         beat["media_ids"] = [ids[index % len(ids)]]
 
-    with pytest.raises(SchemaError, match=f"at most {LEGACY_GUIDED_DRAFT_BEATS} items"):
-        EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
+    output = EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
+
+    assert len(output.story_beats) == 8
+    used = {media_id for beat in output.story_beats for media_id in beat.media_ids}
+    assert used == set(ids)
 
 
 # ---------------------------------------------------------------------------
-# render_prompt: concrete beat ceiling, not vague prose.
+# render_prompt: beat-count guidance is now advisory, not a computed ceiling.
 # ---------------------------------------------------------------------------
 
 
-def test_render_prompt_states_concrete_beat_ceiling_for_an_ordinary_request() -> None:
+def test_render_prompt_states_beat_count_guidance_for_an_ordinary_request() -> None:
     agent_input = _guided_input(7)
 
     prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
 
-    assert f"Return at most {LEGACY_GUIDED_DRAFT_BEATS} story beats for this edit." in prompt
+    assert "3-5 beats is right for a simple request" in prompt
+    assert "the creator's requested grouping decides" in prompt
 
 
 def test_large_unscoped_upload_may_use_more_than_five_chapters() -> None:
@@ -356,8 +371,9 @@ def test_large_unscoped_upload_may_use_more_than_five_chapters() -> None:
 
     prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
 
-    # 26 of the 30 clips are long enough to plan with: ceil(26 / 4) = 7.
-    assert "return at most 7 story beats" in prompt
+    # KRI-129: beat count is advisory guidance now, not a computed ceiling --
+    # the creator's requested grouping decides how many chapters to use.
+    assert "the creator's requested grouping decides" in prompt
     assert "HARD CAP" not in prompt
 
     # Four clips are under the 1.4s moment floor and are never offered to the model.
@@ -381,7 +397,8 @@ def test_render_prompt_states_concrete_beat_ceiling_for_media_scope_all() -> Non
 
     prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
 
-    assert "return up to 8 story beats (never more)" in prompt
+    assert "the creator's requested grouping decides" in prompt
+    assert "HARD CAP" not in prompt
 
 
 # ---------------------------------------------------------------------------

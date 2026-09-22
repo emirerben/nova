@@ -151,16 +151,23 @@ def test_main_creator_recognizes_mixed_media_timing_request() -> None:
 
 
 @pytest.mark.parametrize(
-    ("request_text", "expected_scope"),
+    ("request_text", "model_scope", "expected_scope"),
     [
-        ("Create an edit of the best moments.", None),
-        ("Use all uploaded media.", "all"),
-        ("Use these 17 clips, keep their original sound, and prepare a fresh edit.", "all"),
-        ("Don't use all media; use only the selected clips.", "selected"),
+        # KRI-129: the regex is evidence FOR an explicit scope, never a veto.
+        # When it finds nothing, the model's own read of the full
+        # conversation now survives instead of being overwritten with None.
+        ("Create an edit of the best moments.", "all", "all"),
+        ("Create an edit of the best moments.", "selected", "selected"),
+        ("Create an edit of the best moments.", None, None),
+        # When the regex DOES fire, it still wins over whatever the model
+        # said -- these three are unchanged from before KRI-129.
+        ("Use all uploaded media.", "selected", "all"),
+        ("Use these 17 clips, keep their original sound, and prepare a fresh edit.", None, "all"),
+        ("Don't use all media; use only the selected clips.", "all", "selected"),
     ],
 )
 def test_main_creator_normalizes_media_scope_against_actual_request(
-    request_text: str, expected_scope: str | None
+    request_text: str, model_scope: str | None, expected_scope: str | None
 ) -> None:
     agent_input = _input().model_copy(update={"user_message": request_text})
     raw = json.dumps(
@@ -171,7 +178,7 @@ def test_main_creator_normalizes_media_scope_against_actual_request(
                     "direction": "native",
                     "edit_format": "montage",
                     "audio_strategy": "licensed_music",
-                    "media_scope": "all",
+                    "media_scope": model_scope,
                     "render_program": "native",
                     "selected_media_ids": [agent_input.capability_manifest.media[0].media_id],
                     "target_duration_s": 24,

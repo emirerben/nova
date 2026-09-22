@@ -3,7 +3,7 @@ import random
 
 import pytest
 
-from app.agents._runtime import SchemaError, TerminalError
+from app.agents._runtime import TerminalError
 from app.agents.edit_proposal import (
     EditProposalAgent,
     EditProposalAgentInput,
@@ -345,16 +345,17 @@ def test_deterministic_guided_beats_lets_a_long_clip_hold_its_full_capacity() ->
 
 
 def test_guided_story_capacity_s_uses_every_eligible_source_and_clamps_when_short() -> None:
-    # The incident footage's structural capacity (all 8 eligible >=1.4s clips,
-    # 7 crossfade overlaps of 0.12s) comfortably covers the 45s brief -- the
-    # incident's root cause was fallback *selection* picking only 7 of the 8
-    # eligible sources (see the b2242487 regression test above), not a
-    # genuine capacity shortfall. The clamp is therefore a no-op here.
+    # The incident footage's structural capacity comfortably covers the 45s
+    # brief -- the incident's root cause was fallback *selection* (see the
+    # b2242487 regression test above), not a genuine capacity shortfall. The
+    # clamp is therefore a no-op here. All 10 clips count: a clip shorter
+    # than the 1.4s minimum moment is never left out, it plays in full
+    # (KRI-129), so there are 9 crossfade overlaps of 0.12s.
     incident_media = _guided_snapshot_media(
         [1.27, 2.57, 2.0, 6.3, 10.27, 5.07, 11.2, 6.7, 1.2, 2.83]
     )
     capacity = edit_direction_planner.guided_story_capacity_s(incident_media, pace="balanced")
-    expected = sum([11.2, 10.27, 6.7, 6.3, 5.07, 2.83, 2.57, 2.0]) - 7 * 0.12
+    expected = sum([1.27, 2.57, 2.0, 6.3, 10.27, 5.07, 11.2, 6.7, 1.2, 2.83]) - 9 * 0.12
     assert capacity == pytest.approx(expected, abs=0.01)
     assert capacity > 45
     assert max(3, min(45, capacity)) == 45
@@ -1653,22 +1654,79 @@ def test_mixed_media_agent_rejects_sparse_repeated_sources_when_more_fit() -> No
             }
         )
 
-    with pytest.raises(SchemaError, match="need at least 39"):
-        EditProposalAgent(None).parse(  # type: ignore[arg-type]
-            json.dumps(
-                {
-                    "title": "Sparse repeated edit",
-                    "duration_s": 30,
-                    "story_beats": [],
-                    "fast_cuts": cuts,
-                }
-            ),
-            EditProposalAgentInput(
-                video_reuse_policy="distinct_windows",
-                direction="fast_montage",
-                pace="fast",
-                target_duration_s=30,
-                mixed_media_timing=profile,
-                media=media,
-            ),
-        )
+    # KRI-129: the distinct-source floor ("need at least 39") was a variety
+    # preference, not a render requirement, and has been removed -- these
+    # cuts (7 distinct sources: 3 photos + 4 videos, video-0 sparsely
+    # repeated under a non-overlapping distinct_windows policy) now parse
+    # and reach the full target via the normal tail-adjustment extension.
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(
+            {
+                "title": "Sparse repeated edit",
+                "duration_s": 30,
+                "story_beats": [],
+                "fast_cuts": cuts,
+            }
+        ),
+        EditProposalAgentInput(
+            video_reuse_policy="distinct_windows",
+            direction="fast_montage",
+            pace="fast",
+            target_duration_s=30,
+            mixed_media_timing=profile,
+            media=media,
+        ),
+    )
+
+    assert output.duration_s == 30
+    assert sum(cut.output_duration_s for cut in output.fast_cuts or []) == pytest.approx(30)
+
+
+def test_a_short_clip_never_makes_using_every_clip_infeasible() -> None:
+    """KRI-129 prod case: 16 clips, one of them 1.27 s, 60 s target. The single
+    clip under the 1.4 s minimum moment used to make "use all my videos"
+    infeasible, and the creator's scope was then downgraded. A short clip plays
+    for its own length, so the whole upload fits."""
+
+    durations = [8.93, 8.0, 4.53, 1.27, 10.3, 3.77, 2.57, 1.67, 1.43, 2.17, 1.87, 2.0, 7.87, 6.3]
+    media = _guided_snapshot_media([*durations, 5.0, 9.03])
+
+    capacity = edit_direction_planner.assess_all_media_capacity(media, 60)
+    assert capacity.guided_feasible is True
+
+    beats = edit_direction_planner.deterministic_guided_beats(
+        media, 60, required_media_ids=[ref.media_id for ref in media]
+    )
+    assert sorted(media_id for beat in beats for media_id in beat.media_ids) == sorted(
+        ref.media_id for ref in media
+    )
+
+    # Genuinely too many clips for the time is still reported as infeasible.
+    assert edit_direction_planner.assess_all_media_capacity(media, 15).guided_feasible is False
+
+
+def test_fast_montage_keeps_a_clip_shorter_than_the_cut_floor() -> None:
+    """A 0.3 s clip is under the ordinary 0.4 s fast-cut floor. It used to be
+    "unusable", which made an all-media montage infeasible and the required
+    fallback fail. It now plays for its own length, in the capacity check, in
+    the deterministic cuts, and in the persisted snapshot's validator."""
+
+    media = _guided_snapshot_media([4.0, 3.5, 0.3, 5.0, 2.5, 3.0, 4.5])
+    short_id = media[2].media_id
+
+    capacity = edit_direction_planner.assess_all_media_capacity(media, 12)
+    assert capacity.reason != "unusable_source"
+    assert capacity.fast_montage_feasible is True
+
+    cuts = edit_direction_planner.deterministic_fast_cuts(
+        media,
+        12,
+        None,
+        None,
+        video_reuse_policy="once",
+        required_media_ids=[ref.media_id for ref in media],
+    )
+    short_cuts = [cut for cut in cuts if cut.media_id == short_id]
+    assert len(short_cuts) == 1
+    assert short_cuts[0].output_duration_s == pytest.approx(0.3, abs=0.04)
+    assert {cut.media_id for cut in cuts} == {ref.media_id for ref in media}
