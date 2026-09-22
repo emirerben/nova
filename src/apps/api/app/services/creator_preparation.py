@@ -15,6 +15,7 @@ from typing import Any
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import (
     ContentPlan,
@@ -239,7 +240,13 @@ async def require_current_attempt(
     )
     item = await db.get(PlanItem, ref.plan_item_id, with_for_update=True, populate_existing=True)
     session = await db.get(
-        CreatorAgentSession, ref.session_id, with_for_update=True, populate_existing=True
+        CreatorAgentSession,
+        ref.session_id,
+        with_for_update=True,
+        populate_existing=True,
+        # Refreshing the row also unloads relationships. Planning reads the
+        # saved conversation synchronously, so reload it within this await.
+        options=[selectinload(CreatorAgentSession.events)],
     )
     attempt = await db.get(
         CreatorPlanningAttempt, ref.id, with_for_update=True, populate_existing=True

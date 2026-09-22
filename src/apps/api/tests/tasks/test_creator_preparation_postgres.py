@@ -250,6 +250,32 @@ def test_resume_uses_original_request_and_completes_receipt_atomically(graph, mo
         assert db.get(CreatorAgentSession, sid).status == "awaiting_confirmation"
 
 
+def test_attempt_fence_preserves_loaded_conversation_for_planning(graph):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.routes.creator_agent import _load_session
+    from app.services.creator_preparation import require_current_attempt
+
+    uid, _pid, iid, sid, aid = graph
+    token, *_ = task._claim(aid)
+
+    async def check():
+        engine = create_async_engine(settings.asyncpg_database_url)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                session = await _load_session(db, sid, uid, iid)
+                for _ in range(2):
+                    await require_current_attempt(db, str(aid), token)
+                    await db.commit()
+                    assert [event.payload["message"] for event in session.events] == [
+                        "Keep the coast clips first"
+                    ]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(check())
+
+
 @pytest.mark.parametrize("source_form", ["legacy_paths", "assignment_without_id"])
 def test_checkpoint_preserves_source_identity_across_legacy_normalization(graph, source_form):
     _uid, _pid, iid, _sid, aid = graph
