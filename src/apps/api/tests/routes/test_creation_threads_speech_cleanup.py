@@ -32,7 +32,8 @@ def _request() -> Request:
             "path": "/creation-threads/thread/actions",
             "headers": [],
             "query_string": b"",
-            "client": ("127.0.0.1", 1),
+            # Unit calls need independent keys for the decorated route's limiter.
+            "client": (str(uuid.uuid4()), 1),
             "server": ("test", 80),
             "scheme": "http",
         }
@@ -1138,8 +1139,9 @@ async def _run_generate_action(
     analysis: SimpleNamespace | None,
     payload: dict[str, object],
     action: str = "generate",
+    graph: tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace] | None = None,
 ) -> tuple[object, AsyncMock]:
-    thread, session, item = _action_graph()
+    thread, session, item = graph or _action_graph()
     if analysis is not None:
         analysis.plan_item_id = item.id
     result_job_id = uuid.uuid4()
@@ -1202,6 +1204,113 @@ async def _run_generate_action(
         _request(), str(thread.id), body, SimpleNamespace(id=thread.creator_id), db
     )
     return output, controller
+
+
+def _failed_planning_graph() -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
+    from app.schemas.edit_proposal import MAIN_CREATOR_FAIL_CLOSED
+
+    thread, session, item = _action_graph()
+    session.status = "failed"
+    session.render_attempts = 1
+    session.max_render_attempts = 2
+    session.last_error = {"code": "guided_edit_infeasible"}
+    session.active_plan["guided_generation_attempt_id"] = "narrated-attempt"
+    item.current_job_id = None
+    item.edit_proposal = {
+        "proposal_version": 3,
+        "generation_attempt_id": "narrated-attempt",
+        "status": "failed",
+        "design_fallback": MAIN_CREATOR_FAIL_CLOSED,
+        "failure": {
+            "code": "guided_edit_infeasible",
+            "message": "Kria's draft ran longer than the actual footage allows.",
+            "retryable": True,
+        },
+    }
+    return thread, session, item
+
+
+@pytest.mark.parametrize("action", ["generate", "confirm_generation"])
+@pytest.mark.parametrize("choice", ["clean", "keep_original"])
+async def test_speech_choice_reopens_exact_failed_planning_attempt(monkeypatch, action, choice):
+    graph = _failed_planning_graph()
+    thread, session, _item = graph
+    row = _analysis(thread.active_plan_item_id)
+
+    output, controller = await _run_generate_action(
+        monkeypatch,
+        graph=graph,
+        analysis=row,
+        action=action,
+        payload={"speech_cleanup_analysis_id": str(row.id), "speech_cleanup_choice": choice},
+    )
+
+    # The real controller requires awaiting_confirmation before accepting a
+    # new receipt. The route must reopen it, not merely forward the choice.
+    assert session.status == "awaiting_confirmation"
+    controller.assert_awaited_once()
+    confirmation = controller.await_args.args[1]
+    assert confirmation.speech_cleanup_analysis_id == row.id
+    assert confirmation.speech_cleanup_choice == choice
+    assert confirmation.expected_revision == session.revision
+    assert confirmation.plan_hash == "a" * 64
+    assert confirmation.plan_version == 1
+    assert controller.await_args.kwargs["retry_target_job_id"] is None
+    assert session.render_attempts == 1  # budget remains owned by the controller
+    assert output.active_job_id is not None
+
+
+@pytest.mark.parametrize("choice", ["clean", "keep_original"])
+@pytest.mark.parametrize(
+    "rejection",
+    ["other_attempt", "nonretryable", "budget", "thread_job", "session_job", "item_job"],
+)
+async def test_speech_choice_does_not_reopen_ineligible_failure(monkeypatch, choice, rejection):
+    graph = _failed_planning_graph()
+    thread, session, item = graph
+    if rejection == "other_attempt":
+        item.edit_proposal["generation_attempt_id"] = "other-attempt"
+    elif rejection == "nonretryable":
+        item.edit_proposal["failure"]["retryable"] = False
+    elif rejection == "budget":
+        session.render_attempts = session.max_render_attempts
+    elif rejection == "thread_job":
+        thread.active_job_id = uuid.uuid4()
+    elif rejection == "session_job":
+        session.target_job_id = uuid.uuid4()
+    else:
+        item.current_job_id = uuid.uuid4()
+    row = _analysis(item.id)
+
+    with pytest.raises(HTTPException) as exc:
+        await _run_generate_action(
+            monkeypatch,
+            graph=graph,
+            analysis=row,
+            payload={"speech_cleanup_analysis_id": str(row.id), "speech_cleanup_choice": choice},
+        )
+
+    assert exc.value.status_code == 409
+    assert session.status == "failed"
+    routes.creator_agent.confirm_creator_plan_controller.assert_not_awaited()
+
+
+@pytest.mark.parametrize("choice", ["clean", "keep_original"])
+async def test_failed_planning_speech_choice_still_requires_current_analysis(monkeypatch, choice):
+    graph = _failed_planning_graph()
+    row = _analysis(graph[2].id)
+    with pytest.raises(HTTPException) as exc:
+        await _run_generate_action(
+            monkeypatch,
+            graph=graph,
+            analysis=row,
+            payload={
+                "speech_cleanup_analysis_id": str(uuid.uuid4()),
+                "speech_cleanup_choice": choice,
+            },
+        )
+    assert exc.value.detail == "speech_cleanup_analysis_changed"
+    routes.creator_agent.confirm_creator_plan_controller.assert_not_awaited()
 
 
 @pytest.mark.asyncio
