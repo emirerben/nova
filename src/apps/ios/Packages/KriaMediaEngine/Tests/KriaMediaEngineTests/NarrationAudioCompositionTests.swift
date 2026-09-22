@@ -53,7 +53,13 @@ final class NarrationAudioCompositionTests: XCTestCase {
         XCTAssertEqual(TimelineMath.totalDuration(of: recipe), videoDuration)
 
         let output = directory.appendingPathComponent("narration.mp4")
-        let checkpoint = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
+        // Unbranded on purpose: the subject here is the narration mix, and the
+        // production default (`.standard`) appends the outro, which would make
+        // the duration below the outro's length rather than the timeline's.
+        // `BrandingTests` owns both the branded and unbranded export durations.
+        let checkpoint = try await AVFoundationLocalExporter(
+            stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")),
+            branding: .none)
             .export(recipe: recipe, assetURLs: urls, outputURL: output)
         XCTAssertEqual(checkpoint.status, .completed)
 
