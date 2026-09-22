@@ -2190,6 +2190,7 @@ def test_validate_execution_plan_replays_final_context_elements_from_legacy_plan
     validated = validate_execution_plan(canonical, guided)
 
     assert validated["context_label_text_elements"] == final_elements
+    assert validated["context_label_intent"] is None
 
 
 def test_runtime_revision_accepts_user_added_text_and_preserves_approval_provenance() -> None:

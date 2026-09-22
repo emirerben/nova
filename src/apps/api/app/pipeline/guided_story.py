@@ -204,6 +204,10 @@ class GuidedStoryExecutionPlan(BaseModel):
     # Server-derived contextual labels are kept in their own lane. They are
     # not editor-authored text and therefore must not become part of the
     # approved text identity set, but they are still receipt-verified pixels.
+    # Keep the historical null key in compiler receipts so v1-v7 replay hashes
+    # remain byte-identical. Read adapters discard old values; no render lane
+    # accepts this retired intent.
+    context_label_intent: None = None
     context_label_text_elements: list[TextElement] = Field(default_factory=list)
     narration_label_text_elements: list[TextElement] = Field(default_factory=list)
     narration_label_receipt: dict[str, Any] | None = None

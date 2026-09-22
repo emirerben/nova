@@ -102,16 +102,13 @@ def test_classic_ambiguous_labels_never_render_but_unique_paths_still_do(
     assert [(row["clip_id"], row["sport"]) for row in rows] == [("clip_1", "Paella")]
 
     elements = _context_sport_text_elements(
-        None,
+        rows,
         steps=[
             SimpleNamespace(clip_id=clip_id, slot={"transition_in": "cut"})
             for clip_id in clip_id_to_gcs
         ],
         resolved_plans=[{"duration_s": 2.0}] * 3,
-        clip_id_to_gcs=clip_id_to_gcs,
-        clip_metas=metas,
         video_duration_s=6.0,
-        grounded_rows=rows,
     )
     assert [(e["text"], e["start_s"], e["end_s"]) for e in elements] == [("Paella", 2.0, 4.0)]
 
