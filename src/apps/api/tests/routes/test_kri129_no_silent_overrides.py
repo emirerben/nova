@@ -356,7 +356,10 @@ async def test_budget_exhausted_reapplies_the_creators_earlier_answer(monkeypatc
         session=session,
         model_strategy=strategy,
         model_summary="Building your edit.",
-        user_message="Please redo this using all the clips",
+        # Keep the latest turn neutral: this regression verifies reuse of the
+        # earlier subset answer, while an explicit new "all" instruction is a
+        # separate override path covered below.
+        user_message="Please redo this with the same direction",
     )
 
     resolved = session.active_plan["edit_plan"]["strategy"]
@@ -417,7 +420,10 @@ async def test_budget_exhausted_reapplies_the_kind_not_the_stale_values(monkeypa
         session=session,
         model_strategy=new_target_strategy,
         model_summary="Building your edit.",
-        user_message="actually keep it at 6 seconds, use all the clips",
+        # The regression changes duration only.  An explicit new "all" scope
+        # is a deliberate override of historical subset preference and has its
+        # own guard; it must not be conflated with stale-value protection.
+        user_message="actually keep it at 6 seconds",
     )
 
     resolved = session.active_plan["edit_plan"]["strategy"]
@@ -429,6 +435,50 @@ async def test_budget_exhausted_reapplies_the_kind_not_the_stale_values(monkeypa
     assert set(resolved["selected_media_ids"]) != set(stale_subset_ids)
     summary = session.active_plan["summary"]
     assert "earlier" in summary.lower()
+
+
+@pytest.mark.asyncio
+async def test_budget_exhausted_new_explicit_all_overrides_earlier_subset(monkeypatch) -> None:
+    manifest = _five_clip_manifest()
+    strategy = _five_clip_all_scope_strategy(manifest)
+    question = _all_media_capacity_question(manifest, strategy)
+    assert question is not None
+    subset_option = question["options"][0]
+    session = _base_session(
+        manifest=manifest,
+        events=[
+            _event(1, role="user", event_type="user_message", payload={"message": "use my clips"}),
+            _event(2, role="assistant", event_type="assistant_question", payload=question),
+            _event(
+                3,
+                role="user",
+                event_type="user_message",
+                payload={"message": subset_option},
+            ),
+            _event(
+                4,
+                role="assistant",
+                event_type="assistant_strategy",
+                payload={"message": "Applied.", "proposal_summary": "ok", "plan_hash": "x"},
+            ),
+        ],
+        question_count=2,
+        question_budget=2,
+    )
+
+    session = await _drive_planning_turn(
+        monkeypatch,
+        manifest=manifest,
+        session=session,
+        model_strategy=strategy,
+        model_summary="Building your edit.",
+        user_message="actually use all the clips",
+    )
+
+    resolved = session.active_plan["edit_plan"]["strategy"]
+    assert resolved["media_scope"] == "all"
+    assert resolved["direction"] == "fast_montage"
+    assert "earlier" not in session.active_plan["summary"].lower()
 
 
 @pytest.mark.asyncio
