@@ -3260,8 +3260,15 @@ def test_phone_gate_guided_voiceover_rejected_when_new_flag_off(
     assert warning_call.kwargs["phone_gate"] == "guided_voiceover_unavailable"
 
 
+@pytest.mark.parametrize(
+    ("cleanup_choice", "cleanup_contract"),
+    [("clean", "required_v1"), ("keep_original", "off_v1")],
+)
 def test_phone_gate_guided_voiceover_dispatches_when_supported(
     monkeypatch: pytest.MonkeyPatch,
+    prod_profile: list[str],
+    cleanup_choice: str,
+    cleanup_contract: str,
 ) -> None:
     """KRI-132 phone-voiceover-gate follow-up: an approved guided-voiceover
     proposal on a phone item dispatches (binds phone sources, mints the Job
@@ -3270,19 +3277,54 @@ def test_phone_gate_guided_voiceover_dispatches_when_supported(
     approved-proposal requirement (`unapproved_guided`) any other guided phone
     item is held to still applies; only the unconditional rejection is lifted.
     """
+    from app.config import settings
+    from app.kria.media_sources import OriginalMediaDescriptor
     from app.services.creator_execution_contract import GUIDED_VOICEOVER_CONTRACT
+    from app.services.generative_jobs import build_generative_job
+    from app.services.phone_sources import PhoneSourceBinding
 
     item, plan, session, creator_strategy, attempt_id = _guided_voiceover_dispatch_setup(
         monkeypatch, phone_guided_narration_rendering_enabled=True
     )
-    job = SimpleNamespace(id=uuid.uuid4(), assembly_plan={})
+    thread_id = uuid.uuid4()
+    binding = PhoneSourceBinding(
+        media_id="phone-source",
+        proxy_path=(f"users/{plan.user_id}/creation-threads/{thread_id}/analysis-proxy-source.mp4"),
+        generation="17",
+        original=OriginalMediaDescriptor(
+            sha256="a" * 64,
+            byte_count=1000,
+            duration_s=12,
+            width=1920,
+            height=1080,
+            has_audio=True,
+        ),
+    )
+    item.clip_gcs_paths = [binding.proxy_path]
+    item.clip_assignments = [
+        {
+            "media_id": binding.media_id,
+            "gcs_path": binding.proxy_path,
+            "storage_generation": binding.generation,
+            "duration_s": 12.0,
+            "has_audio": True,
+        }
+    ]
+    item.voiceover_gcs_path = f"users/{plan.user_id}/creation-threads/{thread_id}/voice.m4a"
+    cleanup = _cleanup_analysis(item)
+    cleanup.source_storage_path = binding.proxy_path
+    cleanup.source_generation = binding.generation
+    cleanup.source_media_identity = binding.media_id
+    session.get.return_value = cleanup
+    monkeypatch.setattr(settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_guided_narration_rendering_enabled", True)
     approved_proposal = {
         "proposal_version": 1,
         "media_digest": "d" * 64,
         "snapshot": {"narration": {}, "media": []},
     }
 
-    bind_mock = MagicMock(return_value=("bound-source",))
+    bind_mock = MagicMock(return_value=(binding,))
     with (
         patch(
             "app.services.smart_captions.resolve_smart_captions_context_sync",
@@ -3296,8 +3338,16 @@ def test_phone_gate_guided_voiceover_dispatches_when_supported(
             "app.services.creator_execution_contract.narration_matches_item",
             return_value=True,
         ),
+        patch(
+            "app.services.plan_item_media.resolve_item_narration",
+            return_value=SimpleNamespace(
+                source=SimpleNamespace(source_policy_fingerprint="active-source-fingerprint")
+            ),
+        ),
         patch("app.services.phone_sources.bind_phone_sources", bind_mock),
-        patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
+        patch(
+            "app.services.generative_jobs.build_generative_job", wraps=build_generative_job
+        ) as mock_build,
         patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
     ):
         result = _dispatch_item_render(
@@ -3308,10 +3358,16 @@ def test_phone_gate_guided_voiceover_dispatches_when_supported(
             ownership_epoch=0,
             creator_strategy=creator_strategy,
             creator_guided_attempt_id=attempt_id,
+            speech_cleanup_analysis_id=str(cleanup.id),
+            speech_cleanup_choice=cleanup_choice,
         )
 
     bind_mock.assert_called_once()
-    assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
+    assert mock_build.call_args.kwargs["phone_sources"] == (binding,)
     assert result.outcome == "dispatched"
+    job = session.add.call_args.args[0]
     assert job.assembly_plan["guided_edit"]["execution_contract"] == GUIDED_VOICEOVER_CONTRACT
     assert job.assembly_plan["guided_edit"]["approved_proposal"] == approved_proposal["snapshot"]
+    assert cleanup.decision == cleanup_choice
+    assert job.assembly_plan["speech_cleanup_contract"] == cleanup_contract
+    assert job.assembly_plan["speech_cleanup_requested"] is (cleanup_choice == "clean")

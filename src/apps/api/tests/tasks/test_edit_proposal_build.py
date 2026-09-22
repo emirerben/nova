@@ -2938,3 +2938,173 @@ def test_keyless_clip_analysis_stamps_version_so_it_never_reanalyzes(monkeypatch
 
     assert len(calls) == 1
     assert entry2["analysis"]["analysis_version"] == ANALYSIS_VERSION
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("choice", ["clean", "keep_original"])
+@pytest.mark.parametrize("outcome", ["invalid_clips", "context_missing", "exception"])
+async def test_rejected_creator_dispatch_supports_native_retry(monkeypatch, choice, outcome):
+    from copy import deepcopy
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock
+
+    from app.routes.creation_threads import _failed_planning_attempt, _render_projection
+    from app.schemas.edit_proposal import ApprovedProposalSnapshot, EditProposalSnapshot
+    from app.services import creator_sessions
+
+    item_id, owner_id = uuid.uuid4(), uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    item.current_job_id = None
+    item.content_plan_id = uuid.uuid4()
+    original = parse_edit_proposal(item.edit_proposal).model_copy(
+        update={
+            "status": "approved",
+            "design_fallback": "main_creator_fail_closed",
+        }
+    )
+    snapshot = EditProposalSnapshot(
+        title="Confirmed",
+        duration_s=6,
+        media=[
+            MediaRef(
+                lane="clip",
+                media_id="clip-1",
+                gcs_path="users/u/a.mov",
+                generation="7",
+                kind="video",
+                duration_s=6,
+            )
+        ],
+        story_beats=[
+            {"beat_id": "b1", "topic": "Opening", "media_ids": ["clip-1"], "duration_s": 6}
+        ],
+        narration=NarrationTrack(gcs_path="users/u/narration.m4a", generation="9", duration_s=6),
+        video_reuse_policy="allow_repeat",
+    )
+    original = original.model_copy(
+        update={
+            "draft": snapshot,
+            "last_approved": ApprovedProposalSnapshot(
+                proposal_version=1,
+                media_digest=canonical_media_digest(snapshot.media),
+                approved_at=datetime.now(UTC),
+                snapshot=snapshot,
+                approval_mode="auto",
+            ),
+        }
+    )
+    item.edit_proposal = original.model_dump(mode="json")
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=owner_id,
+        plan_item_id=item_id,
+        ownership_epoch=0,
+        status="executing",
+        phase="executing",
+        target_job_id=None,
+        revision=4,
+        render_attempts=1,
+        max_render_attempts=2,
+        last_review=None,
+        active_plan={
+            "guided_generation_attempt_id": "attempt-1",
+            "plan_hash": "confirmed",
+            "edit_plan": CreatorEditPlan(
+                manifest_hash="a" * 64, context_hash="b" * 64, strategy=CreativeStrategy()
+            ).model_dump(mode="json"),
+            "guided_speech_cleanup": {
+                "generation_attempt_id": "attempt-1",
+                "analysis_id": str(uuid.uuid4()),
+                "choice": choice,
+            },
+        },
+    )
+    active = deepcopy(session.active_plan)
+    db = _Db(_Result(rows=[session]))
+    monkeypatch.setattr(proposal_build, "sync_session", lambda: nullcontext(db))
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a: (item, owner_id))
+    if outcome == "context_missing":
+        monkeypatch.setattr(
+            proposal_build, "_creator_dispatch_context_for_guided_attempt", lambda *_a, **_kw: None
+        )
+    dispatch = Mock(return_value=SimpleNamespace(outcome="invalid_clips"))
+    if outcome == "exception":
+        dispatch.side_effect = RuntimeError("private provider diagnostic")
+    monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", dispatch)
+    if outcome == "exception":
+        with pytest.raises(RuntimeError):
+            proposal_build._dispatch_after_auto_design(item_id, str(item_id), "attempt-1", 0)
+    else:
+        proposal_build._dispatch_after_auto_design(item_id, str(item_id), "attempt-1", 0)
+    failed = parse_edit_proposal(item.edit_proposal)
+    assert failed.status == "failed"
+    assert failed.failure.code == "creator_dispatch_failed"
+    assert failed.failure.retryable
+    assert failed.last_approved == original.last_approved
+    assert failed.draft == original.draft
+    assert session.active_plan == active
+    assert (session.render_attempts, session.max_render_attempts) == (1, 2)
+    assert not proposal_build._settle_creator_dispatch_failure(
+        item_id=item_id, owner_id=owner_id, attempt_id="attempt-1", ownership_epoch=0
+    )
+    receipt = SimpleNamespace(status="succeeded")
+    adb = AsyncMock()
+    adb.get.return_value = item
+    result = Mock()
+    result.scalar_one_or_none.return_value = receipt
+    adb.execute.return_value = result
+    monkeypatch.setattr(creator_sessions, "append_event", AsyncMock())
+    assert await creator_sessions.reconcile_render_state(adb, session)
+    assert session.phase == "failed"
+    assert receipt.status == "failed"
+    session.status = session.phase  # Real ORM status aliases phase.
+    thread = SimpleNamespace(
+        creator_id=owner_id,
+        active_plan_item_id=item_id,
+        active_job_id=None,
+        content_plan_id=item.content_plan_id,
+    )
+    assert await _failed_planning_attempt(adb, thread, session) == failed
+    plan = SimpleNamespace(id=item.content_plan_id, user_id=owner_id, ownership_epoch=0)
+    assert (
+        _render_projection(thread, item=item, plan=plan, session=session, job=None)["status"]
+        == "failed"
+    )
+
+
+@pytest.mark.parametrize(
+    "fence", ["attempt", "owner", "job", "session_attempt", "session_job", "legacy"]
+)
+def test_creator_dispatch_failure_settlement_fences(monkeypatch, fence):
+    item_id, owner_id = uuid.uuid4(), uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    item.current_job_id = uuid.uuid4() if fence == "job" else None
+    item.edit_proposal = (
+        parse_edit_proposal(item.edit_proposal)
+        .model_copy(
+            update={
+                "status": "approved",
+                "design_fallback": None if fence == "legacy" else "main_creator_fail_closed",
+            }
+        )
+        .model_dump(mode="json")
+    )
+    session = SimpleNamespace(
+        status="executing",
+        target_job_id=uuid.uuid4() if fence == "session_job" else None,
+        active_plan={
+            "guided_generation_attempt_id": "old" if fence == "session_attempt" else "attempt-1"
+        },
+    )
+    db = _Db(_Result(rows=[session]))
+    original = dict(item.edit_proposal)
+    monkeypatch.setattr(proposal_build, "sync_session", lambda: nullcontext(db))
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a: (item, owner_id))
+    assert not proposal_build._settle_creator_dispatch_failure(
+        item_id=item_id,
+        owner_id=uuid.uuid4() if fence == "owner" else owner_id,
+        attempt_id="old" if fence == "attempt" else "attempt-1",
+        ownership_epoch=0,
+    )
+    assert item.edit_proposal == original
+    assert db.commits == 0

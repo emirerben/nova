@@ -18,6 +18,7 @@ from app.agents._schemas.edit_format import (
     DEFAULT_EDIT_FORMAT,
     EDIT_FORMATS,
     GUIDED_EDIT_FORMATS,
+    NARRATED_EDIT_FORMATS,
     SINGLE_HERO_RENDERER_VERSION,
     SLIDES_RENDERER_VERSION,
     coerce_edit_format,
@@ -249,6 +250,36 @@ def _build_smart_captions_context(raw: dict | None) -> dict[str, str] | None:
     return context
 
 
+def _phone_voiceover_supported(*, edit_format: str, creator_strategy: dict | None) -> bool:
+    """Return whether this phone job's requested voiceover lane is live.
+
+    Phone jobs with a recorded voiceover have three distinct render lanes.  Keep
+    this constructor in agreement with the dispatch gate: guided-story narration
+    uses its dedicated rollout predicate; narrated formats use the deployment
+    format resolver; the montage family uses the shared narration-audio gate.
+    This remains a defense-in-depth check -- source binding and owner/path
+    validation happen independently below.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.services.creator_execution_contract import requests_guided_voiceover  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_guided_narration_supported,
+        phone_render_supported_formats,
+    )
+
+    if requests_guided_voiceover(creator_strategy):
+        return phone_guided_narration_supported()
+
+    resolved_format = coerce_edit_format(edit_format)
+    if resolved_format in NARRATED_EDIT_FORMATS:
+        return resolved_format in phone_render_supported_formats()
+    return bool(
+        resolved_format in GUIDED_EDIT_FORMATS
+        and settings.phone_narration_rendering_enabled
+        and "narrationAudio" in settings.phone_render_verified_features
+    )
+
+
 def build_generative_job(
     *,
     user_id: uuid.UUID,
@@ -312,12 +343,18 @@ def build_generative_job(
     if phone_sources:
         from app.config import settings  # noqa: PLC0415
 
-        if (
-            not settings.phone_rendering_for(user_id)
-            or mode != "content_plan"
-            or voiceover_gcs_path
+        if not settings.phone_rendering_for(user_id) or mode != "content_plan":
+            raise ValueError("phone planning is unavailable for this job")
+        if voiceover_gcs_path and not _phone_voiceover_supported(
+            edit_format=edit_format, creator_strategy=creator_strategy
         ):
             raise ValueError("phone planning is unavailable for this job")
+        if voiceover_gcs_path:
+            # Phone footage intentionally uses private analysis proxies, but
+            # narration is downloaded by the worker and must remain a real
+            # cloud source. Do not let a proxy through the owner-only
+            # content-plan voiceover validator below.
+            require_cloud_source_paths([voiceover_gcs_path])
         if (
             [source.proxy_path for source in phone_sources] != clip_paths
             or len({source.media_id for source in phone_sources}) != len(phone_sources)
