@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -91,6 +92,57 @@ def test_live_eval_context_carries_shared_paid_attribution(monkeypatch: pytest.M
     assert ctx.test_run_id == "github-123-1"
     assert ctx.estimated_max_cost_usd == 2.0
     assert ctx.reservation_approved is True
+
+
+def test_run_eval_repeat_suffix_distinguishes_primary_and_shadow_contexts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Repeats are independent paid calls but remain inside one capped test run."""
+    from .runners import eval_runner as runner
+
+    monkeypatch.setenv("NOVA_EVAL_MODE", "live")
+    monkeypatch.setenv("NOVA_EVAL_TEST_RUN_ID", "batch-17")
+    contexts = []
+
+    class _Input:
+        @classmethod
+        def model_validate(cls, _value):
+            return {}
+
+    class _Output:
+        def model_dump(self):
+            return {"ok": True}
+
+    class _Agent:
+        Input = _Input
+        spec = SimpleNamespace(prompt_version="test")
+
+        def __init__(self, _client):
+            pass
+
+        def run(self, _input, *, ctx):
+            contexts.append(ctx)
+            return _Output()
+
+    monkeypatch.setattr(runner, "_build_agent_class_for", lambda _name: _Agent)
+    monkeypatch.setattr(runner, "run_structural", lambda *_args, **_kwargs: [])
+    fixture = _creative_direction_fixture(tmp_path, _GOOD_CD_TEXT)
+    shadow_dir = tmp_path / "shadow"
+    shadow_dir.mkdir()
+
+    result = run_eval(
+        fixture,
+        model_client=object(),  # type: ignore[arg-type]
+        shadow_prompts_dir=shadow_dir,
+        request_id_suffix="repeat-2",
+    )
+
+    assert result.passed
+    assert [context.request_id for context in contexts] == [
+        f"eval:{fixture.fixture_id}:primary:repeat-2",
+        f"eval:{fixture.fixture_id}:shadow:repeat-2",
+    ]
+    assert {context.test_run_id for context in contexts} == {"batch-17"}
 
 
 # ── run_eval ────────────────────────────────────────────────────────────────

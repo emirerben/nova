@@ -223,6 +223,7 @@ def test_kri129_caption_contract_live_five_times(
         model_client=live_model_client,
         shadow_prompts_dir=shadow_prompts_dir,
         live_input_normalizer=live_input_normalizer,
+        request_id_suffix=f"repeat-{repeat + 1}",
     )
     assert result.passed, f"run {repeat + 1}: {result.summary()} {result.structural_failures}"
     assert result.output is not None

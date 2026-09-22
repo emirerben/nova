@@ -117,10 +117,176 @@ def test_semantic_parse_rejects_scheduler_fields_and_ungrounded_sources(
         SemanticEditProposalAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
 
 
+def test_semantic_parse_drops_unavailable_default_candidate() -> None:
+    input = _input(
+        creator_request="",
+        media_scope="selected",
+        selected_media_ids=["park"],
+        media=[
+            EditProposalMedia(media_id="park", lane="clip", kind="video", summary="walk"),
+        ],
+    )
+    raw = json.dumps(
+        {
+            "title": "Walk",
+            "chapters": [
+                {
+                    "chapter_id": "one",
+                    "topic": "Park",
+                    "thought": "",
+                    "role": "hook",
+                    "weight": 1,
+                    "layout": "fullscreen",
+                    "sources": [{"media_id": "m001", "candidate_index": 0}],
+                }
+            ],
+        }
+    )
+    plan = SemanticEditProposalAgent(None).parse(raw, input)  # type: ignore[arg-type]
+    assert plan.chapters[0].sources[0].candidate_index is None
+    assert plan.repairs == ["dropped_unavailable_candidate:0:0"]
+
+
+def test_semantic_parse_drops_empty_title_only_chapter() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"].insert(
+        0,
+        {
+            "chapter_id": "server-title",
+            "topic": "Title",
+            "thought": "",
+            "role": "hook",
+            "weight": 1,
+            "layout": "fullscreen",
+            "sources": [],
+        },
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
+    assert [chapter.chapter_id for chapter in plan.chapters] == ["one", "two"]
+    assert "dropped_empty_chapter:0" in plan.repairs
+
+
+def test_semantic_parse_drops_empty_server_closing_title_chapter() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][0] = {
+        "chapter_id": "server-closing-title",
+        "topic": "Closing title",
+        "thought": "Wrap",
+        "role": "hook",
+        "weight": 1,
+        "layout": "fullscreen",
+        "sources": [],
+    }
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw),
+        _input(
+            creator_request="",
+            closing_title="Wrap",
+            media_scope="selected",
+            selected_media_ids=["pub"],
+        ),
+    )
+    assert [chapter.chapter_id for chapter in plan.chapters] == ["two"]
+    assert "dropped_empty_server_title_chapter:0" in plan.repairs
+
+
+def test_semantic_parse_rejects_empty_chapter_with_copy() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][0]["sources"] = []
+    with pytest.raises(SchemaError, match="chapter 0 needs sources"):
+        SemanticEditProposalAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
+
+
+def test_fast_montage_rejects_non_hook_after_dropping_empty_opening() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][0] = {
+        "chapter_id": "server-title",
+        "topic": "Title",
+        "thought": "",
+        "role": "hook",
+        "weight": 1,
+        "layout": "fullscreen",
+        "sources": [],
+    }
+    raw["chapters"][1]["role"] = "build"
+    with pytest.raises(SchemaError, match="first remaining chapter must be hook"):
+        SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+            json.dumps(raw), _input(direction="fast_montage")
+        )
+
+
+def test_guided_structured_labels_allow_first_build_after_opening_title() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][0]["role"] = "build"
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw),
+        _input(creator_request="", shot_labels=["Park Walk", "Pub Talk"]),
+    )
+    assert [chapter.role for chapter in plan.chapters] == ["build", "payoff"]
+    assert [chapter.thought for chapter in plan.chapters] == ["Park Walk", "Pub Talk"]
+
+
+def test_semantic_parse_rejects_duplicate_video_under_once_reuse() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][1]["sources"] = [{"media_id": "m001", "candidate_index": 0}]
+    with pytest.raises(SchemaError, match="appears more than once under once reuse"):
+        SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+            json.dumps(raw),
+            _input(video_reuse_policy="once", media_scope="selected", selected_media_ids=["park"]),
+        )
+
+
 def test_creator_labels_are_written_back_exactly() -> None:
     input = _input(creator_request="", shot_labels=["Park Walk", "Pub Talk"])
     plan = SemanticEditProposalAgent(None).parse(_raw(), input)  # type: ignore[arg-type]
     assert [chapter.thought for chapter in plan.chapters] == ["Park Walk", "Pub Talk"]
+
+
+def test_structured_shot_labels_replace_long_model_rationale_before_validation() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = "r" * 281
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw),
+        _input(creator_request="", shot_labels=["Park Walk", "Pub Talk"]),
+    )
+    assert [chapter.thought for chapter in plan.chapters] == ["Park Walk", "Pub Talk"]
+    assert plan.repairs == [
+        "replaced_server_owned_shot_label_thought:0",
+        "replaced_server_owned_shot_label_thought:1",
+    ]
+
+
+def test_nonlabel_long_thought_still_fails_schema_validation() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = "r" * 281
+    with pytest.raises(SchemaError, match="at most 280"):
+        SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+            json.dumps(raw), _input(creator_request="")
+        )
+
+
+def test_server_owned_title_and_shot_label_bindings_are_removed_with_repairs() -> None:
+    raw = json.loads(
+        _raw(
+            text_bindings=[
+                {"text": "London day", "chapter_ids": ["one"]},
+                {"text": "Park Walk", "chapter_ids": ["one"]},
+                {"text": "Wrap", "chapter_ids": ["two"]},
+                {"text": "post match pub", "chapter_ids": ["two"]},
+            ]
+        )
+    )
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw), _input(shot_labels=["Park Walk", "Pub Talk"], closing_title="Wrap")
+    )
+    assert [binding.text for binding in plan.text_bindings] == ["post match pub"]
+    assert plan.repairs == [
+        "replaced_server_owned_shot_label_thought:0",
+        "replaced_server_owned_shot_label_thought:1",
+        "dropped_server_owned_text_binding:0",
+        "dropped_server_owned_text_binding:1",
+        "dropped_server_owned_text_binding:2",
+    ]
 
 
 def test_prompt_rewrites_server_constraints_to_short_aliases() -> None:
@@ -165,7 +331,7 @@ def test_fast_caption_binding_resolves_aliases_to_scheduled_media() -> None:
     assert all(set(binding.media_ids) <= {"park", "pub"} for binding in plan.text_bindings)
 
 
-def test_resolved_label_cannot_enter_generic_text_binding() -> None:
+def test_resolved_label_generic_text_binding_is_dropped_for_grounded_lane() -> None:
     input = _input(
         creator_request="",
         clip_intents=[
@@ -178,8 +344,29 @@ def test_resolved_label_cannot_enter_generic_text_binding() -> None:
         ],
     )
     raw = json.loads(_raw(text_bindings=[{"text": "Running", "media_ids": ["m001"]}]))
-    with pytest.raises(SchemaError, match="grounded label lane"):
-        SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert plan.text_bindings == []
+    assert "dropped_grounded_label_text_binding:0" in plan.repairs
+
+
+def test_unrequested_generic_text_binding_is_dropped_when_captions_are_explicit() -> None:
+    raw = _raw(text_bindings=[{"text": "invented", "chapter_ids": ["one"]}])
+    plan = SemanticEditProposalAgent(None).parse(raw, _input())  # type: ignore[arg-type]
+    assert plan.text_bindings == []
+    assert "dropped_unrequested_text_binding:0" in plan.repairs
+
+
+def test_unrequested_binding_with_unknown_target_still_rejects() -> None:
+    raw = _raw(text_bindings=[{"text": "invented", "chapter_ids": ["missing"]}])
+    with pytest.raises(SchemaError, match="references unknown target"):
+        SemanticEditProposalAgent(None).parse(raw, _input())  # type: ignore[arg-type]
+
+
+def test_missing_explicit_creator_caption_still_rejects_after_binding_repair() -> None:
+    raw = json.loads(_raw(text_bindings=[{"text": "invented", "chapter_ids": ["one"]}]))
+    raw["chapters"][1]["thought"] = ""
+    with pytest.raises(SchemaError, match="creator caption was dropped"):
+        SemanticEditProposalAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
 
 
 def _exact_creator_label_input() -> EditProposalAgentInput:
@@ -264,6 +451,16 @@ def test_semantic_prompt_aliases_every_input_media_in_stable_order() -> None:
     assert '"media_id": "m001"' in prompt
     assert '"media_id": "m034"' in prompt
     assert "clip-034" not in prompt
+
+
+def test_semantic_prompt_makes_images_eligible_and_once_video_rule_explicit() -> None:
+    prompt = SemanticEditProposalAgent(None).render_prompt(  # type: ignore[arg-type]
+        _input(video_reuse_policy="once")
+    )
+    assert "Every listed video and image is an eligible editorial source." in prompt
+    assert "each video may appear in at most one chapter" in prompt
+    assert "For fast_montage, the first source chapter must have role hook." in prompt
+    assert "first source chapter may be build when the opening title provides the hook" in prompt
 
 
 def test_clip_intent_group_and_order_require_every_source_in_exact_sequence() -> None:

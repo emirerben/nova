@@ -35,6 +35,46 @@ _FORBIDDEN_TIMING_KEYS = frozenset(
 )
 
 
+def _validate_reuse_once(plan: SemanticEditPlan, input: EditProposalAgentInput) -> None:  # noqa: A002
+    """Reject duplicate video choices before the scheduler has to repair them."""
+    if input.video_reuse_policy != "once":
+        return
+    video_ids = {media.media_id for media in input.media if media.kind == "video"}
+    seen: set[str] = set()
+    for chapter in plan.chapters:
+        for source in chapter.sources:
+            if source.media_id in video_ids and source.media_id in seen:
+                raise SchemaError(
+                    "semantic_edit_proposal: a video appears more than once under once reuse"
+                )
+            seen.add(source.media_id)
+
+
+def _canonicalize_text_bindings(
+    plan: SemanticEditPlan, input: EditProposalAgentInput, repairs: list[str]
+) -> None:  # noqa: A002
+    """Keep server-owned and unrequested copy out of the generic text lane."""
+    server_owned = {
+        creator_copy_match_key(text) for text in (input.opening_title, input.closing_title) if text
+    }
+    if input.direction != "fast_montage":
+        server_owned.update(creator_copy_match_key(label) for label in input.shot_labels or [])
+    label_keys = _resolved_label_keys(input)
+    captions = _creator_captions(input)
+    retained: list[SemanticTextBinding] = []
+    for index, binding in enumerate(plan.text_bindings):
+        key = creator_copy_match_key(binding.text)
+        if key in label_keys:
+            repairs.append(f"dropped_grounded_label_text_binding:{index}")
+        elif key in server_owned:
+            repairs.append(f"dropped_server_owned_text_binding:{index}")
+        elif captions and key not in captions:
+            repairs.append(f"dropped_unrequested_text_binding:{index}")
+        else:
+            retained.append(binding)
+    plan.text_bindings = retained
+
+
 def _semantic_prompt_media(
     input: EditProposalAgentInput,  # noqa: A002
 ) -> tuple[list[EditProposalMedia], dict[str, str], dict[str, str]]:
@@ -291,7 +331,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.semantic_edit_proposal",
         prompt_id="semantic_edit_proposal",
-        prompt_version="2.0.1",
+        prompt_version="2.0.6",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -313,6 +353,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             goal=input.goal or input.idea or input.theme or "(none)",
             creator_request=input.creator_request or "(none)",
             opening_title=input.opening_title or "",
+            closing_title=input.closing_title or "",
             shot_labels_json=json.dumps(input.shot_labels or [], ensure_ascii=False),
             constraints_json=json.dumps(
                 _semantic_constraint_block(input, aliases), ensure_ascii=False
@@ -337,6 +378,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         _prompt_media_rows, alias_to_id, id_to_alias = _semantic_prompt_media(input)
         allowed = set(id_to_alias)
         normalized = {**payload, "montage_audio": input.montage_audio, "repairs": []}
+        parse_repairs: list[str] = []
         normalized_chapters: list[dict] = []
         for chapter_index, raw_chapter in enumerate(payload["chapters"]):
             if not isinstance(raw_chapter, dict):
@@ -348,6 +390,23 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             raw_sources = raw_chapter.get("sources")
             if not isinstance(raw_sources, list):
                 raise SchemaError(f"semantic_edit_proposal: chapter {chapter_index} needs sources")
+            if not raw_sources:
+                # The server renders titles separately. Gemini sometimes adds
+                # an otherwise-empty title/outro chapter despite that contract;
+                # it has no editorial source or copy to preserve, so omit it.
+                thought = str(raw_chapter.get("thought") or "").strip()
+                server_titles = {
+                    title for title in (input.opening_title, input.closing_title) if title
+                }
+                if thought and thought not in server_titles:
+                    raise SchemaError(
+                        f"semantic_edit_proposal: chapter {chapter_index} needs sources"
+                    )
+                repair = (
+                    "dropped_empty_server_title_chapter" if thought else "dropped_empty_chapter"
+                )
+                parse_repairs.append(f"{repair}:{chapter_index}")
+                continue
             sources: list[dict] = []
             for source_index, raw_source in enumerate(raw_sources):
                 if not isinstance(raw_source, dict):
@@ -361,15 +420,38 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
                     raise SchemaError("semantic_edit_proposal: source references unknown media")
                 candidate_index = raw_source.get("candidate_index")
                 moments = next(row.best_moments for row in input.media if row.media_id == media_id)
-                if candidate_index is not None and (
-                    isinstance(candidate_index, bool)
-                    or not isinstance(candidate_index, int)
-                    or candidate_index < 0
-                    or candidate_index >= len(moments)
-                ):
-                    raise SchemaError("semantic_edit_proposal: source references unknown candidate")
+                if candidate_index is not None:
+                    if isinstance(candidate_index, bool) or not isinstance(candidate_index, int):
+                        raise SchemaError(
+                            "semantic_edit_proposal: source references unknown candidate"
+                        )
+                    if not moments and candidate_index == 0:
+                        # No prompt-visible preferred window exists. Treat a
+                        # model's habitual candidate_index=0 as absent rather
+                        # than rejecting an otherwise grounded source.
+                        raw_source = {**raw_source, "candidate_index": None}
+                        parse_repairs.append(
+                            f"dropped_unavailable_candidate:{chapter_index}:{source_index}"
+                        )
+                    elif not moments or candidate_index < 0 or candidate_index >= len(moments):
+                        raise SchemaError(
+                            "semantic_edit_proposal: source references unknown candidate"
+                        )
                 sources.append({**raw_source, "media_id": media_id})
             normalized_chapters.append({**raw_chapter, "sources": sources})
+        if input.shot_labels and input.direction != "fast_montage":
+            if len(normalized_chapters) != len(input.shot_labels):
+                raise SchemaError(
+                    "semantic_edit_proposal: creator shot labels need one chapter each"
+                )
+            for chapter_index, (chapter, label) in enumerate(
+                zip(normalized_chapters, input.shot_labels, strict=True)
+            ):
+                if chapter.get("thought") != label:
+                    chapter["thought"] = label
+                    parse_repairs.append(
+                        f"replaced_server_owned_shot_label_thought:{chapter_index}"
+                    )
         normalized["chapters"] = normalized_chapters
         raw_bindings = payload.get("text_bindings", [])
         if not isinstance(raw_bindings, list):
@@ -399,22 +481,23 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         except Exception as exc:  # noqa: BLE001
             raise SchemaError(f"semantic_edit_proposal: invalid output — {exc}") from exc
 
+        if input.direction == "fast_montage" and plan.chapters[0].role != "hook":
+            raise SchemaError("semantic_edit_proposal: first remaining chapter must be hook")
+
+        # Canonicalization below may discard generic copy, but never invalid
+        # targets: reject those before deciding whether its text is server-owned.
+        self._validate_bindings(plan, input)
+
         used = {source.media_id for chapter in plan.chapters for source in chapter.sources}
         required = _semantic_required_media_ids(input)
         if required and not required <= used:
             raise SchemaError("semantic_edit_proposal: requested media coverage was dropped")
-        repairs: list[str] = []
+        repairs = parse_repairs
         if input.opening_title:
             plan.title = input.opening_title
-        if input.shot_labels and input.direction != "fast_montage":
-            if len(plan.chapters) != len(input.shot_labels):
-                raise SchemaError(
-                    "semantic_edit_proposal: creator shot labels need one chapter each"
-                )
-            for chapter, label in zip(plan.chapters, input.shot_labels, strict=True):
-                chapter.thought = label
-        else:
+        if not input.shot_labels or input.direction == "fast_montage":
             _blank_grounded_label_thoughts(plan, input, repairs)
+        _canonicalize_text_bindings(plan, input, repairs)
         if not input.shot_labels and (captions := _creator_captions(input)):
             for index, chapter in enumerate(plan.chapters):
                 exact = captions.get(creator_copy_match_key(chapter.thought))
@@ -433,6 +516,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             raise SchemaError("semantic_edit_proposal: creator bindings exceed the 12-item limit")
         plan.repairs.extend(repairs)
         self._validate_intents(plan, input, alias_to_id)
+        _validate_reuse_once(plan, input)
         self._validate_bindings(plan, input)
         return plan
 
