@@ -25,7 +25,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agents._model_client import default_client
-from app.agents._runtime import AiBudgetExceededError, RunContext, TerminalError
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    ProviderQuotaExceededError,
+    RunContext,
+    TerminalError,
+)
 from app.agents._schemas.creator_agent import (
     CREATOR_REQUEST_MAX_CHARS,
     ApplySpeechCutCommand,
@@ -58,7 +63,7 @@ from app.agents._schemas.creator_policy import (
     normalize_creator_strategy_media,
     states_explicit_media_narrowing_cue,
 )
-from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCreatorOutput
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
@@ -228,6 +233,7 @@ class CreatorSessionResponse(BaseModel):
     last_review: dict | None
     events: list[dict]
     auto_iteration: dict | None = None
+    preparation: dict | None = None
     created_at: str
     updated_at: str
 
@@ -399,6 +405,9 @@ async def _session_for_start_event(
 
 
 async def _response(db: AsyncSession, session: CreatorAgentSession) -> CreatorSessionResponse:
+    from app.services.creator_preparation import finish_preparation
+
+    await finish_preparation(db, session)
     await db.commit()
     loaded = await _load_session(db, session.id, session.creator_id, session.plan_item_id)
     return _creator_session_response(loaded)
@@ -2061,9 +2070,41 @@ async def _run_planning_turn(
     reservation_approved: bool = False,
     release_canary_id: str | None = None,
     previous_active_plan: dict[str, Any] | None = None,
+    preparation_attempt_id: str | None = None,
+    preparation_token: str | None = None,
 ) -> CreatorSessionResponse:
     item, plan, persona = await _owned_context(db, item_id, user.id)
     session = await _load_session(db, session_id, user.id, item.id)
+    from app.services.creator_preparation import maybe_prepare, require_current_attempt
+
+    prepared_attempt = None
+    if preparation_attempt_id:
+        prepared_attempt = await require_current_attempt(
+            db, preparation_attempt_id, preparation_token or ""
+        )
+        await db.commit()
+    elif settings.creator_clip_preparation_enabled:
+        item, plan, persona = await _owned_context(db, item_id, user.id, for_update=True)
+        session = await _load_session(db, session_id, user.id, item.id, for_update=True)
+        if session.revision != expected_revision or session.status not in {"planning", "revising"}:
+            raise HTTPException(409, "Creator session changed while preparing")
+        if await maybe_prepare(
+            db,
+            item=item,
+            plan=plan,
+            session=session,
+            inputs={
+                "user_message": user_message,
+                "allow_chat": allow_chat,
+                "previous_active_plan": previous_active_plan,
+                "usage_purpose": usage_purpose,
+                "test_run_id": test_run_id,
+                "estimated_max_cost_usd": estimated_max_cost_usd,
+                "reservation_approved": reservation_approved,
+                "release_canary_id": release_canary_id,
+            },
+        ):
+            return await _response(db, session)
     manifest, media_context = await resolve_item_creator_context(
         db,
         item,
@@ -2251,11 +2292,17 @@ async def _run_planning_turn(
             },
         )
         return await _response(db, locked)
+    if preparation_attempt_id:
+        await require_current_attempt(db, preparation_attempt_id, preparation_token or "")
     locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
     if locked.revision != expected_revision or locked.status not in {"planning", "revising"}:
         raise HTTPException(status_code=409, detail="Creator session changed while planning")
     action: AskUser | ProposeStrategy | ReviewDecision
-    if all_media_capacity_choice is not None:
+    if prepared_attempt is not None and prepared_attempt.planning_action:
+        action = MainCreatorOutput.model_validate(
+            {"action": prepared_attempt.planning_action}
+        ).action
+    elif all_media_capacity_choice is not None:
         # The displayed, hash-fenced mapping is authoritative. Applying it is
         # deterministic and must not spend another model call or fail against
         # the model-call budget.
@@ -2320,22 +2367,66 @@ async def _run_planning_turn(
                 action = action.model_copy(
                     update={"strategy": action.strategy.model_copy(update=strategy_hygiene)}
                 )
-        except AiBudgetExceededError:
+        except (AiBudgetExceededError, ProviderQuotaExceededError) as exc:
             locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
             if locked.revision == expected_revision and locked.status in {"planning", "revising"}:
                 locked.agent_call_count = max(0, locked.agent_call_count - 1)
-                locked.status = "briefing"
+                if not preparation_attempt_id:
+                    locked.status = "briefing"
+                    if isinstance(exc, ProviderQuotaExceededError):
+                        locked.last_error = {"code": "provider_quota_exceeded"}
+                        await append_event(
+                            db,
+                            locked,
+                            event_type="assistant_error",
+                            payload={
+                                "message": (
+                                    "Clip analysis is unavailable right now. "
+                                    "Your request is saved; try again later."
+                                ),
+                                "code": "provider_quota_exceeded",
+                            },
+                        )
+                        return await _response(db, locked)
                 await db.commit()
             raise
         except TerminalError as exc:
+            if preparation_attempt_id:
+                raise
+            locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+            if locked.revision != expected_revision or locked.status not in {
+                "planning",
+                "revising",
+            }:
+                raise HTTPException(409, "Creator session changed while planning")
+            locked.status = "briefing"
+            locked.last_error = {"code": "provider_unavailable"}
             log.warning(
-                "main_creator.planning_fallback", session_id=str(session.id), error=str(exc)[:300]
+                "main_creator.planning_failed",
+                session_id=str(session.id),
+                error_type=type(exc).__name__,
             )
-            action = ProposeStrategy(
-                kind="propose_strategy",
-                strategy=_fallback_strategy(manifest, user_message=creator_request),
-                summary=MAIN_CREATOR_FALLBACK_SUMMARY,
+            await append_event(
+                db,
+                locked,
+                event_type="assistant_error",
+                payload={
+                    "message": (
+                        "Clip analysis is unavailable right now. "
+                        "Your request is saved; try again later."
+                    ),
+                    "code": "provider_unavailable",
+                },
             )
+            return await _response(db, locked)
+
+    if preparation_attempt_id:
+        prepared_attempt = await require_current_attempt(
+            db, preparation_attempt_id, preparation_token or ""
+        )
+        prepared_attempt.planning_action = action.model_dump(mode="json")
+        await db.commit()
+        await require_current_attempt(db, preparation_attempt_id, preparation_token or "")
 
     locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
     if locked.revision != expected_revision or locked.status not in {"planning", "revising"}:
@@ -2741,8 +2832,21 @@ async def _run_planning_turn(
                     # re-lock, re-check the revision fence) before writing
                     # anything the resolution decided back onto the session.
                     await db.commit()
+
+                    async def save_answers(answers):
+                        from app.services.creator_preparation import checkpoint_answers
+
+                        await checkpoint_answers(
+                            db, preparation_attempt_id, preparation_token or "", answers
+                        )
+
                     try:
                         resolution = await resolve_clip_intents_for_turn(
+                            **(
+                                {"background": True, "checkpoint": save_answers}
+                                if preparation_attempt_id
+                                else {}
+                            ),
                             intents=effective_clip_intents,
                             creator_request=creator_request,
                             clips=intent_clips,
@@ -2758,18 +2862,26 @@ async def _run_planning_turn(
                             ),
                         )
                     except Exception as exc:  # noqa: BLE001
+                        if preparation_attempt_id:
+                            raise
                         # Never a 500 for a resolver failure. Asking is the safe
                         # degrade -- it can never print an unverified label.
                         log.warning(
                             "clip_intents.resolution_failed",
                             session_id=str(session.id),
-                            error=str(exc)[:300],
+                            error_type=type(exc).__name__,
                         )
                         resolution = IntentResolution(
+                            status="provider_unavailable",
+                            error_code="provider_unavailable",
                             question=(
                                 "I couldn't confidently match that to your clips. Which "
                                 "clips should it apply to, and what should each say?"
-                            )
+                            ),
+                        )
+                    if preparation_attempt_id:
+                        await require_current_attempt(
+                            db, preparation_attempt_id, preparation_token or ""
                         )
                     locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
                     if locked.revision != expected_revision or locked.status not in {
@@ -2779,7 +2891,27 @@ async def _run_planning_turn(
                         raise HTTPException(
                             status_code=409, detail="Creator session changed while planning"
                         )
-                    await _persist_clip_intent_vision_answers(db, item, resolution.vision_answers)
+                    if not preparation_attempt_id:
+                        await _persist_clip_intent_vision_answers(
+                            db, item, resolution.vision_answers
+                        )
+                    if resolution.status not in {"resolved", "needs_creator"}:
+                        locked.status = "briefing"
+                        locked.last_error = {"code": resolution.error_code or resolution.status}
+                        await append_event(
+                            db,
+                            locked,
+                            event_type="assistant_error",
+                            role="assistant",
+                            payload={
+                                "message": (
+                                    "Clip analysis is unavailable right now. "
+                                    "Your request is saved; try again later."
+                                ),
+                                "code": resolution.error_code or resolution.status,
+                            },
+                        )
+                        return await _response(db, locked)
                     if resolution.needs_creator:
                         locked.status = "briefing"
                         await append_event(
@@ -2941,6 +3073,7 @@ async def _run_planning_turn(
             )
         locked.manifest_hash = manifest.manifest_hash
         locked.status = "awaiting_confirmation"
+        locked.last_error = None
         await append_event(
             db,
             locked,
@@ -3126,6 +3259,8 @@ async def start_creator_session_controller(
         raise HTTPException(status_code=409, detail="Creator session is busy")
     session.status = "planning" if session.status != "awaiting_feedback" else "revising"
     previous_active_plan = session.active_plan if isinstance(session.active_plan, dict) else None
+    session.preparation = None
+    session.last_error = None
     _reset_render_target(session)
     await append_event(
         db,
@@ -3191,8 +3326,13 @@ async def creator_session_turn_controller(
         raise HTTPException(status_code=409, detail="Creator session changed")
     if session.status not in {"briefing", "awaiting_confirmation", "awaiting_feedback"}:
         raise HTTPException(status_code=409, detail="Creator session is not accepting feedback")
+    from app.services.creator_preparation import retry_inputs
+
+    saved_inputs = await retry_inputs(db, session, body.message)
     session.status = "revising" if session.render_attempts else "planning"
     previous_active_plan = session.active_plan if isinstance(session.active_plan, dict) else None
+    session.preparation = None
+    session.last_error = None
     _reset_render_target(session)
     await append_event(
         db,
@@ -3210,9 +3350,9 @@ async def creator_session_turn_controller(
         user=user,
         session_id=session.id,
         expected_revision=expected_revision,
-        user_message=body.message.strip(),
+        user_message=(saved_inputs or {}).get("user_message", body.message.strip()),
         allow_chat=allow_chat,
-        previous_active_plan=previous_active_plan,
+        previous_active_plan=(saved_inputs or {}).get("previous_active_plan", previous_active_plan),
         **cost_headers.as_kwargs(),
     )
 

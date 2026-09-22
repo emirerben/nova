@@ -17,13 +17,19 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 
 from app.agents._model_client import default_client
-from app.agents._runtime import RunContext, TerminalError
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    ProviderQuotaExceededError,
+    RunContext,
+    TerminalError,
+)
 from app.agents.clip_question import ClipQuestionAgent, ClipQuestionInput, ClipQuestionOutput
 from app.agents.clip_request_resolver import (
     ClipRequestResolverAgent,
@@ -49,6 +55,14 @@ log = structlog.get_logger()
 
 # Key on a stored clip analysis holding cached vision answers (see IntentResolution).
 ANSWERS_KEY = "answers"
+ResolutionStatus = Literal[
+    "resolved",
+    "needs_creator",
+    "pending",
+    "provider_unavailable",
+    "budget_exhausted",
+    "media_unavailable",
+]
 
 # Generic fallback used when every intent fails before we can say anything
 # more specific (resolver TerminalError, malformed clip data, etc.). Never a
@@ -79,6 +93,9 @@ class IntentClip:
     gcs_path: str | None = None
     # Persists a vision answer on the clip's stored analysis so a repeat is free.
     asset_id: str | None = None
+    # Storage generation captured with the clip. Generation-bearing cache
+    # entries are only valid for this exact media generation.
+    generation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,10 +108,15 @@ class IntentResolution:
     # clip's stored analysis under ANSWERS_KEY so a repeat question is free:
     # {media_id: {normalized_question: {"answer", "confidence", "evidence"}}}.
     vision_answers: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    status: ResolutionStatus = "resolved"
+    error_code: str | None = None
 
     @property
     def needs_creator(self) -> bool:
-        return self.question is not None
+        # ``status`` was added after callers already constructed this value
+        # from ``question`` alone. Preserve that legacy shape while ensuring
+        # technical terminal states never masquerade as creator questions.
+        return self.status in {"resolved", "needs_creator"} and self.question is not None
 
 
 def grounded_labels(intents: list[ResolvedClipIntent] | None) -> list[GroundedLabel]:
@@ -139,6 +161,7 @@ class _VisionCandidate:
     creator_text: str | None
     # The intent's own wording; membership checks are re-asked as yes/no about it.
     attribute: str = ""
+    generation: str | None = None
 
     @property
     def is_membership_check(self) -> bool:
@@ -168,6 +191,12 @@ class _IntentWork:
     # entry for this intent — distinguishes "asked, found nothing" from
     # "genuinely nothing in this batch matches" for the final question copy.
     had_any_candidate: bool = False
+    pending_media_ids: set[str] = field(default_factory=set)
+    provider_unavailable_media_ids: set[str] = field(default_factory=set)
+    ai_budget_exhausted_media_ids: set[str] = field(default_factory=set)
+    provider_quota_exhausted_media_ids: set[str] = field(default_factory=set)
+    budget_exhausted_media_ids: set[str] = field(default_factory=set)
+    media_unavailable_media_ids: set[str] = field(default_factory=set)
 
 
 def _cached_answer(clip: IntentClip, question_norm: str) -> dict[str, Any] | None:
@@ -178,7 +207,16 @@ def _cached_answer(clip: IntentClip, question_norm: str) -> dict[str, Any] | Non
     if not isinstance(answers, dict):
         return None
     hit = answers.get(question_norm)
-    return hit if isinstance(hit, dict) else None
+    if not isinstance(hit, dict):
+        return None
+    # A cache entry written for a generation must match exactly. Conversely,
+    # a generation-bearing clip may never reuse an old generationless entry.
+    cached_generation = hit.get("generation")
+    if clip.generation is not None and str(cached_generation or "") != str(clip.generation):
+        return None
+    if cached_generation is not None and clip.generation is None:
+        return None
+    return hit
 
 
 # The resolver's own spec allows 2 x 20s + 1s backoff; this is the hard stop the
@@ -209,20 +247,29 @@ async def _run_vision_candidate(
     *,
     question_agent: ClipQuestionAgent,
     run_context: RunContext,
-) -> ClipQuestionOutput | None:
-    """Download + upload + ask. Returns None on ANY failure (never raises) —
-    an individual clip's vision failure must never crash the whole turn."""
+) -> ClipQuestionOutput:
+    """Download + upload + ask, leaving failure classification to the caller."""
     from app.pipeline.agents.gemini_analyzer import gemini_upload_and_wait  # noqa: PLC0415
     from app.storage import download_to_file  # noqa: PLC0415
 
     if not clip.gcs_path or clip.kind != "video":
-        return None
+        raise FileNotFoundError("clip media is unavailable for vision")
     tmp_path: str | None = None
     try:
         suffix = os.path.splitext(clip.gcs_path)[1] or ".mp4"
         fd, tmp_path = tempfile.mkstemp(suffix=suffix)
         os.close(fd)
-        await asyncio.to_thread(download_to_file, clip.gcs_path, tmp_path)
+        if clip.generation:
+            from app.storage import download_generation_to_file  # noqa: PLC0415
+
+            await asyncio.to_thread(
+                download_generation_to_file,
+                clip.gcs_path,
+                tmp_path,
+                generation=clip.generation,
+            )
+        else:
+            await asyncio.to_thread(download_to_file, clip.gcs_path, tmp_path)
         file_ref = await asyncio.to_thread(gemini_upload_and_wait, tmp_path)
         mime = getattr(file_ref, "mime_type", None) or "video/mp4"
         out = await asyncio.to_thread(
@@ -231,14 +278,6 @@ async def _run_vision_candidate(
             ctx=run_context,
         )
         return out
-    except Exception as exc:  # noqa: BLE001 — one clip's vision failure asks, never crashes
-        log.warning(
-            "clip_intent_vision_query_failed",
-            media_id=candidate.media_id,
-            intent_id=candidate.intent_id,
-            error=str(exc),
-        )
-        return None
     finally:
         if tmp_path is not None:
             try:
@@ -247,32 +286,54 @@ async def _run_vision_candidate(
                 pass
 
 
-def _position_phrase(positions: list[int]) -> str:
+def _position_phrase(positions: list[int], *, max_refs: int = 5) -> str:
     ordered = sorted(set(positions))
     if len(ordered) == 1:
         return f"clip {ordered[0]}"
+    if len(ordered) > max_refs:
+        labels = ", ".join(str(p) for p in ordered[:max_refs])
+        return f"clips {labels} and {len(ordered) - max_refs} more"
     labels = [str(p) for p in ordered]
     return f"clips {', '.join(labels[:-1])} and {labels[-1]}"
 
 
 def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, int]) -> str:
     parts: list[str] = []
+    seen: set[str] = set()
+    part_indexes: dict[str, int] = {}
+    positions_by_phrase: dict[str, set[int]] = {}
     for work in work_items:
         if work.intent_question:
-            parts.append(work.intent_question)
+            if work.intent_question not in seen:
+                parts.append(work.intent_question)
+                seen.add(work.intent_question)
             continue
         positions = [position_by_media[m] for m in work.failed_media_ids if m in position_by_media]
         if positions:
-            parts.append(
-                f"I couldn't tell the {work.intent.attribute} for {_position_phrase(positions)}"
-            )
+            phrase = f"I couldn't tell the {work.intent.attribute}"
+            positions_by_phrase.setdefault(phrase, set()).update(positions)
+            if phrase not in part_indexes:
+                part_indexes[phrase] = len(parts)
+                parts.append(
+                    f"{phrase} for {_position_phrase(sorted(positions_by_phrase[phrase]))}"
+                )
+                seen.add(phrase)
+            else:
+                idx = part_indexes[phrase]
+                parts[idx] = f"{phrase} for {_position_phrase(sorted(positions_by_phrase[phrase]))}"
         elif not work.kept:
             label = work.intent.creator_text or work.intent.attribute
-            parts.append(f'I couldn\'t find any clips for "{label}"')
+            phrase = f'I couldn\'t find any clips for "{label}"'
+            if phrase not in seen:
+                parts.append(phrase)
+                seen.add(phrase)
     if not parts:
         return _GENERIC_QUESTION
+    suffix = ". Could you clarify?"
     joined = "; ".join(parts)
-    return f"{joined}. Could you clarify?"[:300]
+    if len(joined) + len(suffix) > 300:
+        return "I couldn't resolve all requested clip matches. Could you clarify?"
+    return f"{joined}{suffix}"
 
 
 def _build_resolver_input(
@@ -314,6 +375,14 @@ def _build_resolver_input(
     return resolver_input, alias_to_media, aliases
 
 
+def _failure_status_and_code(exc: BaseException) -> tuple[ResolutionStatus, str]:
+    if isinstance(exc, AiBudgetExceededError):
+        return "budget_exhausted", "ai_budget_exhausted"
+    if isinstance(exc, ProviderQuotaExceededError):
+        return "budget_exhausted", "provider_quota_exceeded"
+    return "provider_unavailable", "vision_provider_error"
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 
@@ -323,6 +392,8 @@ async def resolve_clip_intents_for_turn(
     creator_request: str,
     clips: list[IntentClip],
     run_context: Any,
+    background: bool = False,
+    checkpoint: Callable[[dict[str, dict[str, dict[str, Any]]]], Awaitable[None]] | None = None,
 ) -> IntentResolution:
     """Resolve ``intents`` against ``clips``."""
     ctx: RunContext = run_context if isinstance(run_context, RunContext) else RunContext()
@@ -340,19 +411,25 @@ async def resolve_clip_intents_for_turn(
 
     resolver_agent = ClipRequestResolverAgent(default_client())
     try:
-        resolver_output: ClipRequestResolverOutput = await asyncio.wait_for(
-            asyncio.to_thread(resolver_agent.run, resolver_input, ctx=ctx),
-            timeout=_RESOLVER_DEADLINE_S,
-        )
+        resolver_call = asyncio.to_thread(resolver_agent.run, resolver_input, ctx=ctx)
+        resolver_output: ClipRequestResolverOutput
+        if background:
+            resolver_output = await resolver_call
+        else:
+            resolver_output = await asyncio.wait_for(
+                resolver_call,
+                timeout=_RESOLVER_DEADLINE_S,
+            )
     except Exception as exc:  # noqa: BLE001 — degrade gracefully, never raise from a chat turn
         # Covers TerminalError (refusal/schema/transient-exhausted) and any
         # AI-cost-control TerminalError subclass (budget exhausted, policy
         # rejection) — none of those should ever surface as a 500 mid-chat.
         log.warning(
             "clip_intent_resolver_failed",
-            error=str(exc),
+            error_type=type(exc).__name__,
             is_terminal_error=isinstance(exc, TerminalError),
         )
+        status, error_code = _failure_status_and_code(exc)
         return IntentResolution(
             intents=[
                 ResolvedClipIntent(
@@ -369,6 +446,8 @@ async def resolve_clip_intents_for_turn(
             ],
             question=_GENERIC_QUESTION,
             vision_answers={},
+            status=status,
+            error_code=error_code,
         )
 
     resolver_by_id = {r.intent_id: r for r in resolver_output.intents}
@@ -391,7 +470,7 @@ async def resolve_clip_intents_for_turn(
         vision_media = {nv.media: nv.question for nv in resolved.needs_vision}
         work.had_any_candidate = bool(assignment_by_media or vision_media)
 
-        candidate_media = set(assignment_by_media) | set(vision_media)
+        candidate_media = list(dict.fromkeys([*assignment_by_media, *vision_media]))
         for alias in candidate_media:
             media_id = alias_to_media.get(alias)
             if media_id is None:
@@ -513,88 +592,194 @@ async def resolve_clip_intents_for_turn(
                 # on the resolver's own uncertainty, only on an explicit
                 # needs_vision entry (handled above).
 
-    # ── Capped, deadline-bounded vision re-query ─────────────────────────────
-    cap = settings.clip_intents_max_vision_requeries
-    to_call: list[_VisionCandidate] = []
+    # ── Deduplicated, fair, deadline-bounded vision re-query ────────────────
+    # Build a stable round-robin order so the first intent cannot consume the
+    # foreground budget, then collapse identical media/generation/question work.
+    by_intent: dict[str, list[_VisionCandidate]] = {i.intent_id: [] for i in intents}
     for candidate in vision_candidates:
+        by_intent.setdefault(candidate.intent_id, []).append(candidate)
+    ordered_candidates: list[_VisionCandidate] = []
+    while any(by_intent.values()):
+        for intent in intents:
+            pending = by_intent[intent.intent_id]
+            if pending:
+                ordered_candidates.append(pending.pop(0))
+
+    unique: list[_VisionCandidate] = []
+    dependents: dict[tuple[str, str, str], list[_VisionCandidate]] = {}
+    for candidate in ordered_candidates:
         clip = clip_by_id.get(candidate.media_id)
         if clip is None:
-            work_by_id[candidate.intent_id].failed_media_ids.add(candidate.media_id)
+            work_by_id[candidate.intent_id].media_unavailable_media_ids.add(candidate.media_id)
             continue
+        key = (
+            candidate.media_id,
+            str(clip.generation or ""),
+            normalize_question(candidate.question),
+        )
+        if key not in dependents:
+            unique.append(candidate)
+            dependents[key] = []
+        dependents[key].append(candidate)
+
+    to_call: list[_VisionCandidate] = []
+    for candidate in unique:
+        clip = clip_by_id[candidate.media_id]
         question_norm = normalize_question(candidate.question)
         cached = _cached_answer(clip, question_norm)
         if cached is not None:
-            _apply_vision_result(
-                candidate,
-                ClipQuestionOutput(
-                    answer=str(cached.get("answer", "") or ""),
-                    confidence=float(cached.get("confidence", 0.0) or 0.0),
-                    evidence=str(cached.get("evidence", "") or ""),
-                ),
-                work_by_id=work_by_id,
-                records_by_id=records_by_id,
-                creator_request=creator_request,
+            output = ClipQuestionOutput(
+                answer=str(cached.get("answer", "") or ""),
+                confidence=float(cached.get("confidence", 0.0) or 0.0),
+                evidence=str(cached.get("evidence", "") or ""),
             )
-            continue
-        if len(to_call) >= cap:
-            # Over the per-turn budget — ask rather than burn an unbounded
-            # number of File API uploads on one chat turn.
-            work_by_id[candidate.intent_id].failed_media_ids.add(candidate.media_id)
-            continue
-        to_call.append(candidate)
-
-    if to_call:
-        question_agent = ClipQuestionAgent(default_client())
-        tasks = [
-            asyncio.ensure_future(
-                _run_vision_candidate(
-                    c, clip_by_id[c.media_id], question_agent=question_agent, run_context=ctx
-                )
-            )
-            for c in to_call
-        ]
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=settings.clip_intents_vision_deadline_s,
-            )
-        except TimeoutError:
-            results = None
-            for t in tasks:
-                if not t.done():
-                    t.cancel()
-
-        if results is None:
-            # Deadline hit before every call finished — every candidate we
-            # attempted is unresolved this turn. No exception ever escapes.
-            for candidate in to_call:
-                work_by_id[candidate.intent_id].failed_media_ids.add(candidate.media_id)
-        else:
-            for candidate, result in zip(to_call, results, strict=True):
-                output = result if isinstance(result, ClipQuestionOutput) else None
-                if output is not None:
-                    question_norm = normalize_question(candidate.question)
-                    vision_answers.setdefault(candidate.media_id, {})[question_norm] = {
-                        "answer": output.answer,
-                        "confidence": output.confidence,
-                        "evidence": output.evidence,
-                    }
+            for dependent in dependents[
+                (candidate.media_id, str(clip.generation or ""), question_norm)
+            ]:
                 _apply_vision_result(
-                    candidate,
+                    dependent,
                     output,
                     work_by_id=work_by_id,
                     records_by_id=records_by_id,
                     creator_request=creator_request,
                 )
+            continue
+        if not clip.gcs_path or clip.kind != "video":
+            for dependent in dependents[
+                (candidate.media_id, str(clip.generation or ""), question_norm)
+            ]:
+                work_by_id[dependent.intent_id].media_unavailable_media_ids.add(dependent.media_id)
+            continue
+        to_call.append(candidate)
+
+    foreground_cap = min(4, settings.clip_intents_max_vision_requeries)
+    max_background_work = max(1, min(len(intents), 6) * 50)
+    allowed = len(to_call) if background else min(foreground_cap, len(to_call))
+    if background:
+        allowed = min(max_background_work, allowed)
+    for candidate in to_call[allowed:]:
+        key = (
+            candidate.media_id,
+            str(clip_by_id[candidate.media_id].generation or ""),
+            normalize_question(candidate.question),
+        )
+        for dependent in dependents[key]:
+            work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+    to_call = to_call[:allowed]
+
+    question_agent = ClipQuestionAgent(default_client())
+    batch_size = 4
+    batch_timeout = settings.clip_intents_vision_deadline_s
+    for offset in range(0, len(to_call), batch_size):
+        batch = to_call[offset : offset + batch_size]
+        tasks = [
+            asyncio.ensure_future(
+                _run_vision_candidate(
+                    candidate,
+                    clip_by_id[candidate.media_id],
+                    question_agent=question_agent,
+                    run_context=ctx,
+                )
+            )
+            for candidate in batch
+        ]
+        if background:
+            # The provider agent and its SDK calls have their own bounded
+            # runtime. Await the worker threads to completion so a retry cannot
+            # overlap an in-flight paid request after this resolver returns.
+            await asyncio.gather(*tasks, return_exceptions=True)
+            done = set(tasks)
+        else:
+            done, _pending = await asyncio.wait(tasks, timeout=batch_timeout)
+        # Fold completed siblings even if one slow provider call exhausts the
+        # batch deadline; cancelled thread work is intentionally left alone.
+        for candidate, task in zip(batch, tasks, strict=True):
+            key = (
+                candidate.media_id,
+                str(clip_by_id[candidate.media_id].generation or ""),
+                normalize_question(candidate.question),
+            )
+            dependents_for_candidate = dependents[key]
+            if task not in done:
+                for dependent in dependents_for_candidate:
+                    work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+                task.cancel()
+                continue
+            try:
+                output = task.result()
+            except Exception as exc:  # noqa: BLE001 — classify per candidate
+                for dependent in dependents_for_candidate:
+                    work = work_by_id[dependent.intent_id]
+                    if isinstance(exc, AiBudgetExceededError):
+                        work.ai_budget_exhausted_media_ids.add(dependent.media_id)
+                        work.budget_exhausted_media_ids.add(dependent.media_id)
+                    elif isinstance(exc, ProviderQuotaExceededError):
+                        work.provider_quota_exhausted_media_ids.add(dependent.media_id)
+                        work.budget_exhausted_media_ids.add(dependent.media_id)
+                    elif isinstance(exc, TimeoutError):
+                        work.provider_unavailable_media_ids.add(dependent.media_id)
+                    elif isinstance(exc, (FileNotFoundError, OSError)):
+                        work.media_unavailable_media_ids.add(dependent.media_id)
+                    else:
+                        work.provider_unavailable_media_ids.add(dependent.media_id)
+                continue
+            question_norm = normalize_question(candidate.question)
+            answer_record = {
+                "answer": output.answer,
+                "confidence": output.confidence,
+                "evidence": output.evidence,
+            }
+            if clip_by_id[candidate.media_id].generation is not None:
+                answer_record["generation"] = clip_by_id[candidate.media_id].generation
+            vision_answers.setdefault(candidate.media_id, {})[question_norm] = answer_record
+            for dependent in dependents_for_candidate:
+                _apply_vision_result(
+                    dependent,
+                    output,
+                    work_by_id=work_by_id,
+                    records_by_id=records_by_id,
+                    creator_request=creator_request,
+                )
+        if checkpoint is not None and background and done:
+            await checkpoint(vision_answers)
+        if background and any(
+            work.ai_budget_exhausted_media_ids or work.provider_quota_exhausted_media_ids
+            for work in work_by_id.values()
+        ):
+            for remaining in to_call[offset + batch_size :]:
+                remaining_key = (
+                    remaining.media_id,
+                    str(clip_by_id[remaining.media_id].generation or ""),
+                    normalize_question(remaining.question),
+                )
+                for dependent in dependents[remaining_key]:
+                    work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+            break
 
     # ── Assemble the result ──────────────────────────────────────────────────
     resolved_intents: list[ResolvedClipIntent] = []
     unresolved_work: list[_IntentWork] = []
+    creator_work: list[_IntentWork] = []
     for intent in intents:
         work = work_by_id[intent.intent_id]
-        is_unresolved = bool(work.intent_question) or bool(work.failed_media_ids) or not work.kept
+        has_non_creator_failure = bool(
+            work.pending_media_ids
+            or work.provider_unavailable_media_ids
+            or work.ai_budget_exhausted_media_ids
+            or work.provider_quota_exhausted_media_ids
+            or work.budget_exhausted_media_ids
+            or work.media_unavailable_media_ids
+        )
+        is_creator_unresolved = (
+            bool(work.intent_question)
+            or bool(work.failed_media_ids)
+            or (not work.kept and not has_non_creator_failure)
+        )
+        is_unresolved = is_creator_unresolved or has_non_creator_failure
         if is_unresolved:
             unresolved_work.append(work)
+            if is_creator_unresolved:
+                creator_work.append(work)
             resolved_intents.append(
                 ResolvedClipIntent(
                     intent_id=intent.intent_id,
@@ -622,16 +807,48 @@ async def resolve_clip_intents_for_turn(
 
     if not unresolved_work:
         return IntentResolution(
-            intents=resolved_intents, question=None, vision_answers=vision_answers
+            intents=resolved_intents,
+            question=None,
+            vision_answers=vision_answers,
+            status="resolved",
         )
 
-    turn_question = _build_question(unresolved_work, position_by_media)
+    if creator_work:
+        status = "needs_creator"
+        error_code = None
+    else:
+        status = "resolved"
+        error_code = None
+    if any(w.ai_budget_exhausted_media_ids for w in unresolved_work):
+        status = "budget_exhausted"
+        error_code = "ai_budget_exhausted"
+    elif any(w.provider_quota_exhausted_media_ids for w in unresolved_work):
+        status = "budget_exhausted"
+        error_code = "provider_quota_exceeded"
+    elif any(w.provider_unavailable_media_ids for w in unresolved_work):
+        status = "provider_unavailable"
+        error_code = "vision_provider_error"
+    elif any(w.media_unavailable_media_ids for w in unresolved_work):
+        status = "media_unavailable"
+        error_code = "clip_media_unavailable"
+    elif any(w.pending_media_ids for w in unresolved_work):
+        status = "pending"
+        error_code = "vision_batch_deadline_or_foreground_cap"
+    turn_question = (
+        _build_question(creator_work, position_by_media)
+        if status == "needs_creator" and creator_work
+        else None
+    )
     final_intents = [
         (i if i.status == "resolved" else i.model_copy(update={"question": turn_question}))
         for i in resolved_intents
     ]
     return IntentResolution(
-        intents=final_intents, question=turn_question, vision_answers=vision_answers
+        intents=final_intents,
+        question=turn_question,
+        vision_answers=vision_answers,
+        status=status,
+        error_code=error_code,
     )
 
 

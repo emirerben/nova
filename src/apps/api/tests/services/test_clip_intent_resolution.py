@@ -10,7 +10,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agents._runtime import RunContext, TerminalError
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    ProviderQuotaExceededError,
+    RunContext,
+    TerminalError,
+)
 from app.agents.clip_question import ClipQuestionAgent, ClipQuestionOutput
 from app.agents.clip_request_resolver import (
     ClipRequestResolverAgent,
@@ -24,6 +29,7 @@ from app.schemas.clip_intents import ClipIntent
 from app.services.clip_intent_resolution import (
     ANSWERS_KEY,
     IntentClip,
+    IntentResolution,
     grounded_labels,
     normalize_question,
     resolve_clip_intents_for_turn,
@@ -209,7 +215,9 @@ async def test_over_cap_candidates_ask_and_call_exactly_the_cap(monkeypatch) -> 
     )
 
     assert calls[0] == 2  # exactly the cap, never the full candidate count
-    assert result.question is not None
+    assert result.question is None
+    assert result.status == "pending"
+    assert not result.needs_creator
 
 
 async def test_deadline_exceeded_asks_without_raising(monkeypatch) -> None:
@@ -245,8 +253,10 @@ async def test_deadline_exceeded_asks_without_raising(monkeypatch) -> None:
         intents=[intent], creator_request="label each sport", clips=[clip], run_context=RunContext()
     )
 
-    assert result.question is not None
+    assert result.question is None
+    assert result.status == "pending"
     assert result.intents[0].status == "needs_creator"
+    assert not result.needs_creator
 
 
 async def test_vision_unknown_answer_asks(monkeypatch) -> None:
@@ -451,3 +461,382 @@ def test_membership_vision_checks_are_closed_yes_no_questions() -> None:
     assert _yes_no("no") is False
     assert _yes_no("volleyball") is None
     assert _yes_no("") is None
+
+
+async def test_duplicate_media_generation_question_is_queried_once_and_fanned_out(
+    monkeypatch,
+) -> None:
+    intents = [
+        ClipIntent(intent_id="i_one", op="label", attribute="sport being played"),
+        ClipIntent(intent_id="i_two", op="label", attribute="sport being played"),
+    ]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id=intent.intent_id,
+                    needs_vision=[ResolverVisionQuestion(media="m001", question="What sport?")],
+                )
+                for intent in intents
+            ]
+        ),
+    )
+    calls = _patch_vision_success(monkeypatch, "Soccer", 0.9, evidence="ball")
+
+    result = await resolve_clip_intents_for_turn(
+        intents=intents,
+        creator_request="label each sport",
+        clips=[_video_clip("m1", subject="people playing a ball game")],
+        run_context=RunContext(),
+    )
+
+    assert calls[0] == 1
+    assert result.status == "resolved"
+    assert all(intent.status == "resolved" for intent in result.intents)
+    assert all(intent.assignments[0].value == "Soccer" for intent in result.intents)
+
+
+async def test_foreground_cap_round_robins_intents_before_marking_pending(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "clip_intents_max_vision_requeries", 4)
+    intents = [
+        ClipIntent(intent_id="i_one", op="label", attribute="sport being played"),
+        ClipIntent(intent_id="i_two", op="label", attribute="activity"),
+    ]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_one",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question=f"What is clip {i}?")
+                        for i in range(1, 4)
+                    ],
+                ),
+                ResolverIntentOut(
+                    intent_id="i_two",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question=f"What is clip {i}?")
+                        for i in range(4, 7)
+                    ],
+                ),
+            ]
+        ),
+    )
+    asked: list[str] = []
+
+    async def _fake_run(candidate, clip, *, question_agent, run_context):  # noqa: ANN001
+        asked.append(candidate.media_id)
+        return ClipQuestionOutput(answer="Soccer", confidence=0.9, evidence="seen")
+
+    monkeypatch.setattr("app.services.clip_intent_resolution._run_vision_candidate", _fake_run)
+    clips = [_video_clip(f"m{i}", subject="people playing a ball game") for i in range(1, 7)]
+
+    result = await resolve_clip_intents_for_turn(
+        intents=intents,
+        creator_request="label the clips",
+        clips=clips,
+        run_context=RunContext(),
+    )
+
+    assert asked == ["m1", "m4", "m2", "m5"]
+    assert result.status == "pending"
+    assert not result.needs_creator
+
+
+async def test_background_batch_keeps_completed_siblings_and_checkpoints(monkeypatch) -> None:
+    intent = ClipIntent(intent_id="i_sport", op="label", attribute="sport being played")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_sport",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question="What sport?")
+                        for i in range(1, 5)
+                    ],
+                )
+            ]
+        ),
+    )
+    checkpointed: list[dict] = []
+
+    async def _fake_run(candidate, clip, *, question_agent, run_context):  # noqa: ANN001
+        if candidate.media_id == "m4":
+            raise TimeoutError("provider request timed out")
+        return ClipQuestionOutput(answer="Soccer", confidence=0.9, evidence="seen")
+
+    monkeypatch.setattr("app.services.clip_intent_resolution._run_vision_candidate", _fake_run)
+    clips = [_video_clip(f"m{i}", subject="people playing a ball game") for i in range(1, 5)]
+
+    async def _checkpoint(answers):  # noqa: ANN001
+        checkpointed.append(answers.copy())
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label each sport",
+        clips=clips,
+        run_context=RunContext(),
+        background=True,
+        checkpoint=_checkpoint,
+    )
+
+    assert result.status == "provider_unavailable"
+    assert set(result.vision_answers) == {"m1", "m2", "m3"}
+    assert checkpointed and set(checkpointed[-1]) == {"m1", "m2", "m3"}
+
+
+async def test_explicit_ai_budget_has_distinct_safe_code(monkeypatch) -> None:
+    intent = ClipIntent(intent_id="i_sport", op="label", attribute="sport being played")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_sport",
+                    needs_vision=[ResolverVisionQuestion(media="m001", question="What sport?")],
+                )
+            ]
+        ),
+    )
+
+    async def _budget(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AiBudgetExceededError(
+            scope="clip_question", reset_at="tomorrow", cached_behavior_available=False
+        )
+
+    monkeypatch.setattr("app.services.clip_intent_resolution._run_vision_candidate", _budget)
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label each sport",
+        clips=[_video_clip("m1", subject="people playing a ball game")],
+        run_context=RunContext(),
+    )
+
+    assert result.status == "budget_exhausted"
+    assert result.error_code == "ai_budget_exhausted"
+    assert not result.needs_creator
+
+
+async def test_quota_wins_over_sibling_unknown_output(monkeypatch) -> None:
+    intents = [
+        ClipIntent(intent_id="i_unknown", op="label", attribute="sport"),
+        ClipIntent(intent_id="i_quota", op="label", attribute="activity"),
+    ]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_unknown",
+                    needs_vision=[ResolverVisionQuestion(media="m001", question="What sport?")],
+                ),
+                ResolverIntentOut(
+                    intent_id="i_quota",
+                    needs_vision=[ResolverVisionQuestion(media="m002", question="What activity?")],
+                ),
+            ]
+        ),
+    )
+
+    async def _mixed(candidate, clip, *, question_agent, run_context):  # noqa: ANN001
+        if candidate.media_id == "m2":
+            raise ProviderQuotaExceededError(provider="gemini")
+        return ClipQuestionOutput(answer="", confidence=0.0)
+
+    monkeypatch.setattr("app.services.clip_intent_resolution._run_vision_candidate", _mixed)
+    result = await resolve_clip_intents_for_turn(
+        intents=intents,
+        creator_request="label the clips",
+        clips=[
+            _video_clip("m1", subject="people sitting on grass"),
+            _video_clip("m2", subject="people sitting on grass"),
+        ],
+        run_context=RunContext(),
+    )
+
+    assert result.status == "budget_exhausted"
+    assert result.error_code == "provider_quota_exceeded"
+    assert result.question is None
+    assert not result.needs_creator
+
+
+async def test_background_quota_stops_later_batches_and_keeps_first_batch_successes(
+    monkeypatch,
+) -> None:
+    intent = ClipIntent(intent_id="i_sport", op="label", attribute="sport")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_sport",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question="What sport?")
+                        for i in range(1, 20)
+                    ],
+                )
+            ]
+        ),
+    )
+    calls: list[str] = []
+
+    async def _quota_first_batch(candidate, clip, *, question_agent, run_context):  # noqa: ANN001
+        calls.append(candidate.media_id)
+        if candidate.media_id == "m1":
+            raise ProviderQuotaExceededError(provider="gemini")
+        return ClipQuestionOutput(answer="Soccer", confidence=0.9, evidence="seen")
+
+    monkeypatch.setattr(
+        "app.services.clip_intent_resolution._run_vision_candidate", _quota_first_batch
+    )
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label each sport",
+        clips=[_video_clip(f"m{i}", subject="people playing a ball game") for i in range(1, 20)],
+        run_context=RunContext(),
+        background=True,
+    )
+
+    assert len(calls) == 4
+    assert set(calls) == {"m1", "m2", "m3", "m4"}
+    assert result.status == "budget_exhausted"
+    assert result.error_code == "provider_quota_exceeded"
+    assert set(result.vision_answers) == {"m2", "m3", "m4"}
+
+
+async def test_clarification_unions_duplicate_attribute_refs_with_bounded_tail(monkeypatch) -> None:
+    intents = [
+        ClipIntent(intent_id="i_one", op="label", attribute="sport"),
+        ClipIntent(intent_id="i_two", op="label", attribute="sport"),
+    ]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_one",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question="What sport?")
+                        for i in range(1, 4)
+                    ],
+                ),
+                ResolverIntentOut(
+                    intent_id="i_two",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question="What sport?")
+                        for i in range(4, 7)
+                    ],
+                ),
+            ]
+        ),
+    )
+    _patch_vision_success(monkeypatch, "unknown", 0.0)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=intents,
+        creator_request="label each sport",
+        clips=[_video_clip(f"m{i}", subject="people sitting on grass") for i in range(1, 7)],
+        run_context=RunContext(),
+        background=True,
+    )
+
+    assert result.status == "needs_creator"
+    assert result.question is not None and len(result.question) <= 300
+    assert result.question.count("I couldn't tell the sport") == 1
+    assert "clips 1, 2, 3, 4, 5 and 1 more" in result.question
+
+
+async def test_legacy_question_shape_still_needs_creator_but_technical_statuses_do_not() -> None:
+    assert IntentResolution(question="Which clips?").needs_creator
+    assert not IntentResolution(question="retry later", status="pending").needs_creator
+    assert not IntentResolution(
+        question="provider failed", status="provider_unavailable"
+    ).needs_creator
+
+
+async def test_provider_quota_is_budget_exhausted_and_not_creator_question(monkeypatch) -> None:
+    intent = ClipIntent(intent_id="i_sport", op="label", attribute="sport being played")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_sport",
+                    needs_vision=[ResolverVisionQuestion(media="m001", question="What sport?")],
+                )
+            ]
+        ),
+    )
+
+    async def _quota(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise ProviderQuotaExceededError(provider="gemini", reason="monthly_cap")
+
+    monkeypatch.setattr("app.services.clip_intent_resolution._run_vision_candidate", _quota)
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label each sport",
+        clips=[_video_clip("m1", subject="people playing a ball game")],
+        run_context=RunContext(),
+    )
+
+    assert result.status == "budget_exhausted"
+    assert result.error_code == "provider_quota_exceeded"
+    assert result.question is None
+    assert not result.needs_creator
+
+
+async def test_generation_cache_mismatch_is_not_reused_and_new_answer_is_pinned(
+    monkeypatch,
+) -> None:
+    intent = ClipIntent(intent_id="i_sport", op="label", attribute="sport being played")
+    question = "What sport?"
+    clip = IntentClip(
+        media_id="m1",
+        kind="video",
+        gcs_path="users/u/m1.mp4",
+        generation="new-generation",
+        analysis={
+            **_record_analysis(subject="people playing a ball game"),
+            ANSWERS_KEY: {
+                normalize_question(question): {
+                    "answer": "Old Sport",
+                    "confidence": 0.95,
+                    "evidence": "stale",
+                    "generation": "old-generation",
+                }
+            },
+        },
+    )
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_sport",
+                    needs_vision=[ResolverVisionQuestion(media="m001", question=question)],
+                )
+            ]
+        ),
+    )
+    calls = _patch_vision_success(monkeypatch, "Soccer", 0.9, evidence="new frame")
+
+    def _fake_generation_download(object_path, local_path, *, generation):  # noqa: ANN001
+        with open(local_path, "wb") as fh:
+            fh.write(b"new-generation-bytes")
+
+    monkeypatch.setattr("app.storage.download_generation_to_file", _fake_generation_download)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label each sport",
+        clips=[clip],
+        run_context=RunContext(),
+    )
+
+    assert calls[0] == 1
+    assert (
+        result.vision_answers["m1"][normalize_question(question)]["generation"] == "new-generation"
+    )
