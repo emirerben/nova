@@ -8,6 +8,8 @@ legacy allowlist lane is byte-identical when the new lane isn't engaged.
 
 from types import SimpleNamespace
 
+import pytest
+
 from app.pipeline.agents.gemini_analyzer import ClipMeta
 from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
 from app.tasks.generative_build import (
@@ -62,6 +64,80 @@ def test_media_id_maps_directly_in_the_guided_lane_and_via_gcs_path_in_the_class
     # clip's GCS path.
     assert _resolve_clip_id_for_media_id("gs://a.mp4", {"clip_0": "gs://a.mp4"}) == "clip_0"
     assert _resolve_clip_id_for_media_id("unknown", {"clip_0": "gs://a.mp4"}) is None
+
+
+@pytest.mark.parametrize("clip_ids", [("clip_0", "clip_1"), ("clip_1", "clip_0")])
+def test_classic_media_id_rejects_duplicate_paths_regardless_of_clip_order(clip_ids):
+    clip_id_to_gcs = dict.fromkeys(clip_ids, "gs://shared.mp4")
+    assert _resolve_clip_id_for_media_id("gs://shared.mp4", clip_id_to_gcs) is None
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+@pytest.mark.parametrize("creator_request", ["", "label the basketball clips Basketball"])
+def test_classic_ambiguous_labels_never_render_but_unique_paths_still_do(
+    reverse_order, creator_request
+):
+    # Both occurrences can independently ground the label. That must not let
+    # the path-only assignment pick whichever clip happens to come first.
+    entries = [
+        ("clip_0", "gs://shared.mp4"),
+        ("clip_1", "gs://unique.mp4"),
+        ("clip_2", "gs://shared.mp4"),
+    ]
+    clip_id_to_gcs = dict(reversed(entries) if reverse_order else entries)
+    metas = [
+        _meta(clip_id, clip_summary="a basketball game at the park")
+        for clip_id in ("clip_0", "clip_2")
+    ] + [_meta("clip_1", clip_summary="cooking paella in a pan")]
+    intent = _intent(
+        creator_text="Basketball",
+        assignments=[
+            ClipAssignment(media_id="gs://shared.mp4", value="Basketball", confidence=0.95),
+            ClipAssignment(media_id="gs://unique.mp4", value="Paella", confidence=0.95),
+        ],
+    )
+    rows = _grounded_context_labels(
+        [intent], clip_id_to_gcs, metas, creator_request=creator_request
+    )
+    assert [(row["clip_id"], row["sport"]) for row in rows] == [("clip_1", "Paella")]
+
+    elements = _context_sport_text_elements(
+        None,
+        steps=[
+            SimpleNamespace(clip_id=clip_id, slot={"transition_in": "cut"})
+            for clip_id in clip_id_to_gcs
+        ],
+        resolved_plans=[{"duration_s": 2.0}] * 3,
+        clip_id_to_gcs=clip_id_to_gcs,
+        clip_metas=metas,
+        video_duration_s=6.0,
+        grounded_rows=rows,
+    )
+    assert [(e["text"], e["start_s"], e["end_s"]) for e in elements] == [("Paella", 2.0, 4.0)]
+
+
+def test_guided_media_ids_keep_labels_on_their_own_occurrences_of_a_shared_path():
+    clip_id_to_gcs = {"clip-a": "gs://shared.mp4", "clip-b": "gs://shared.mp4"}
+    for clip_id in clip_id_to_gcs:
+        assert _resolve_clip_id_for_media_id(clip_id, clip_id_to_gcs) == clip_id
+    intent = _intent(
+        assignments=[
+            ClipAssignment(media_id="clip-a", value="Basketball", confidence=0.95),
+            ClipAssignment(media_id="clip-b", value="Paella", confidence=0.95),
+        ]
+    )
+    rows = _grounded_context_labels(
+        [intent],
+        clip_id_to_gcs,
+        [
+            _meta("clip-a", clip_summary="a basketball game at the park"),
+            _meta("clip-b", clip_summary="cooking paella in a pan"),
+        ],
+    )
+    assert [(row["clip_id"], row["sport"]) for row in rows] == [
+        ("clip-a", "Basketball"),
+        ("clip-b", "Paella"),
+    ]
 
 
 # ---------------------------------------------------------------------------
