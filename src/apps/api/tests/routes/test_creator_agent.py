@@ -2794,7 +2794,9 @@ async def test_route_fallback_preserves_pinned_voiceover_and_all_media_draft(
     failure = append_event.await_args.kwargs
     assert failure["event_type"] == "assistant_error"
     assert failure["payload"] == {
-        "message": "Clip analysis is unavailable right now. Your request is saved; try again later.",
+        "message": (
+            "Clip analysis is unavailable right now. Your request is saved; try again later."
+        ),
         "code": "provider_unavailable",
     }
 
@@ -2871,7 +2873,9 @@ async def test_route_provider_quota_saves_request_restores_call_count_and_retry_
     assert session.last_error == {"code": "provider_quota_exceeded"}
     assert append_event.await_args.kwargs["event_type"] == "assistant_error"
     assert append_event.await_args.kwargs["payload"] == {
-        "message": "Clip analysis is unavailable right now. Your request is saved; try again later.",
+        "message": (
+            "Clip analysis is unavailable right now. Your request is saved; try again later."
+        ),
         "code": "provider_quota_exceeded",
     }
 
@@ -6570,7 +6574,9 @@ async def test_route_schema_failure_preserves_madrid_text_and_source_capacity(
         failure = append_event.await_args.kwargs
         assert failure["event_type"] == "assistant_error"
         assert failure["payload"] == {
-            "message": "Clip analysis is unavailable right now. Your request is saved; try again later.",
+            "message": (
+                "Clip analysis is unavailable right now. Your request is saved; try again later."
+            ),
             "code": "provider_unavailable",
         }
         return

@@ -376,7 +376,9 @@ async def test_resolver_exception_is_a_technical_failure_never_a_genuine_no_matc
     call = append_event.await_args
     assert call.kwargs["event_type"] == "assistant_error"
     assert call.kwargs["payload"] == {
-        "message": "Clip analysis is unavailable right now. Your request is saved; try again later.",
+        "message": (
+            "Clip analysis is unavailable right now. Your request is saved; try again later."
+        ),
         "code": "provider_unavailable",
     }
 
