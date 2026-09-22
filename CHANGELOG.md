@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.132.0] - 2026-09-22
+
+### Fixed
+- fix(ios): keep Text tab stable and enable panel expansion (#1146) <!-- release-pr: 1146 -->
+
 ## [0.76.131.0] - 2026-09-22
 
 ### Fixed

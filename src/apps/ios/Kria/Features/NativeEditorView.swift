@@ -21,8 +21,6 @@ struct NativeEditorView: View {
     @State private var selectedTextForActions: String?
     @State private var keyboardVisible = false
     @State private var timelineExpansion: CGFloat = 0
-    @State private var timelineDragOrigin: CGFloat?
-    @State private var timelineResizeFeedback = 0
     @State private var topChromeHeight: CGFloat = 0
 
     private var shouldReduceMotion: Bool {
@@ -100,7 +98,10 @@ struct NativeEditorView: View {
             }
             .onChange(of: session.selectionRequest) { _, _ in routeSelection() }
             .onChange(of: session.pendingText == nil) { _, finished in
-                if finished { resignKeyboard() }
+                if finished {
+                    resignKeyboard()
+                    if case .textCreation = panel { changePanel(to: nil) }
+                }
             }
             .sheet(isPresented: $showsDeviceRender) {
                 if let key = session.deviceRenderKey {
@@ -153,7 +154,7 @@ struct NativeEditorView: View {
     }
 
     @ViewBuilder private func editor(viewport: GeometryProxy) -> some View {
-        let referenceHeight = session.pendingText == nil && !keyboardVisible
+        let referenceHeight = !keyboardVisible
             ? viewport.size.height + viewport.safeAreaInsets.top + viewport.safeAreaInsets.bottom
             : viewport.size.height
         let portraitHeight = dynamicTypeSize.isAccessibilitySize ? 150 : min(284, max(150, referenceHeight * 0.34))
@@ -168,7 +169,7 @@ struct NativeEditorView: View {
             ? min(preferredPreviewHeight, max(80, viewport.size.height - 320 - topChromeHeight))
             : preferredPreviewHeight
         let resizeRange = max(0, defaultPreviewHeight - 80)
-        let showsTimeline = session.pendingText == nil && panel == nil
+        let showsTimeline = panel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
         // KRI-131: the context capsule now floats over the timeline instead
         // of pushing it up, so selecting a clip/text no longer shrinks the
@@ -224,19 +225,19 @@ struct NativeEditorView: View {
                 }
 
             timelineResizeHandle(range: resizeRange)
-            connectedEditorArea(viewport: viewport, showsContext: showsContext)
+            connectedEditorArea(viewport: viewport, showsContext: showsContext, resizeRange: resizeRange)
         }
         .environment(\.nativeEditorConnectedPanel, true)
         .environment(\.nativeEditorPanelLifecycle, panelLifecycle)
     }
 
-    private var panelIsOpen: Bool { panel != nil || session.pendingText != nil }
+    private var panelIsOpen: Bool { panel != nil }
 
     private var panelTransition: AnyTransition {
         shouldReduceMotion ? .opacity.animation(.easeOut(duration: 0.15)) : .opacity
     }
 
-    private func connectedEditorArea(viewport: GeometryProxy, showsContext: Bool) -> some View {
+    private func connectedEditorArea(viewport: GeometryProxy, showsContext: Bool, resizeRange: CGFloat) -> some View {
         let bottomInset = viewport.safeAreaInsets.bottom
         let clearance = NativeEditorIslandMetrics.bottomClearance(showsContext: showsContext, safeAreaBottom: bottomInset)
         return GeometryReader { area in
@@ -285,12 +286,17 @@ struct NativeEditorView: View {
                                     .environment(\.nativeEditorPanelContentWidth, max(0, area.size.width - 72))
                                     .padding(.top, 18)
                                     .overlay(alignment: .top) {
-                                        Capsule().fill(KriaColor.line).frame(width: 38, height: 4)
-                                            .padding(.top, 8).accessibilityHidden(true)
+                                        NativeEditorPanelResizeGrabber(
+                                            expansion: $timelineExpansion,
+                                            range: resizeRange,
+                                            reduceMotion: shouldReduceMotion,
+                                            accessibilityIdentifier: "native-editor-panel-resize",
+                                            topAligned: true
+                                        )
                                     }
                                     .transition(panelTransition)
                             }
-                            if !keyboardVisible && session.pendingText == nil {
+                            if !keyboardVisible {
                                 NativeEditorToolRail(selected: panel?.tool, availableWidth: area.size.width - 24, connected: true, onSelect: selectTool)
                             }
                         }
@@ -318,28 +324,27 @@ struct NativeEditorView: View {
 
     private func panelHeight(available: CGFloat) -> CGFloat {
         let budget = max(0, available - NativeEditorIslandMetrics.bottomPadding - (keyboardVisible ? 0 : 54))
-        if keyboardVisible || session.pendingText != nil || dynamicTypeSize.isAccessibilitySize { return budget }
+        if keyboardVisible || dynamicTypeSize.isAccessibilitySize { return budget }
         return min(budget, 284 + timelineExpansion * 240)
     }
 
     @ViewBuilder private var panelContent: some View {
-        if session.pendingText != nil {
+        switch panel {
+        case .textCreation:
             NativeTextCreationPanel(session: session) { selection in
                 selectedTextForActions = selection.id
                 changePanel(to: .text(selection.id))
             }
-        } else {
-            switch panel {
-            case .text(let id):
-                NativeEditorTextPanel(id: id, session: session) { changePanel(to: nil) }.id(id)
-            case .captions:
-                NativeCaptionPanel(session: session) { changePanel(to: nil) }
-            case .visuals:
-                NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id, panelDrafts: panelDrafts) { changePanel(to: nil) }
-            case .sounds:
-                NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
-            case nil: EmptyView()
-            }
+        case .text(let id):
+            NativeEditorTextPanel(id: id, session: session) { changePanel(to: nil) }.id(id)
+        case .captions:
+            NativeCaptionPanel(session: session) { changePanel(to: nil) }
+        case .visuals:
+            NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id, panelDrafts: panelDrafts) { changePanel(to: nil) }
+        case .sounds:
+            NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
+        case nil:
+            EmptyView()
         }
     }
 
@@ -363,11 +368,26 @@ struct NativeEditorView: View {
     }
 
     private func selectTool(_ tool: NativeEditorTool) {
-        if panel?.tool == tool { changePanel(to: nil); return }
+        if panel?.tool == tool {
+            changePanel(to: nil)
+            return
+        }
         switch tool {
         case .text:
-            changePanel(to: nil)
-            session.beginTextCreation()
+            if session.pendingText != nil {
+                if panel?.tool != .text { changePanel(to: .textCreation) }
+            } else {
+                // Finish the outgoing destination before creating the draft,
+                // then install the creation destination directly. This keeps
+                // the panel mounted throughout the transition.
+                finishPanelEditing()
+                session.beginTextCreation()
+                guard session.pendingText != nil else { return }
+                inspector = nil
+                withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
+                    panel = .textCreation
+                }
+            }
         case .captions: changePanel(to: .captions)
         case .visuals:
             changePanel(to: .visuals)
@@ -411,46 +431,12 @@ struct NativeEditorView: View {
     }
 
     private func timelineResizeHandle(range: CGFloat) -> some View {
-        Capsule()
-            .fill(KriaColor.ink.opacity(0.28))
-            .frame(width: 36, height: 4)
-            .frame(maxWidth: .infinity)
-            .frame(height: 44)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 3, coordinateSpace: .global)
-                    .onChanged { value in
-                        guard range > 0 else { return }
-                        if timelineDragOrigin == nil {
-                            timelineDragOrigin = timelineExpansion
-                            timelineResizeFeedback += 1
-                        }
-                        let next = min(1, max(0, (timelineDragOrigin ?? 0) - value.translation.height / range))
-                        if next != timelineExpansion && (next == 0 || next == 1) {
-                            timelineResizeFeedback += 1
-                        }
-                        timelineExpansion = next
-                    }
-                    .onEnded { _ in
-                        timelineDragOrigin = nil
-                        timelineResizeFeedback += 1
-                    }
-            )
-            .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: timelineResizeFeedback)
-            .accessibilityElement()
-            .accessibilityLabel("Editor panel size")
-            .accessibilityValue("\(Int(timelineExpansion * 100)) percent expanded")
-            .accessibilityHint("Swipe up or down to resize the editor panel and preview")
-            .accessibilityAdjustableAction { direction in
-                let step: CGFloat = direction == .increment ? 0.25 : -0.25
-                let next = min(1, max(0, timelineExpansion + step))
-                guard next != timelineExpansion else { return }
-                withAnimation(shouldReduceMotion ? nil : .easeOut(duration: 0.18)) {
-                    timelineExpansion = next
-                }
-                timelineResizeFeedback += 1
-            }
-            .accessibilityIdentifier("native-editor-timeline-resize")
+        NativeEditorPanelResizeGrabber(
+            expansion: $timelineExpansion,
+            range: range,
+            reduceMotion: shouldReduceMotion,
+            accessibilityIdentifier: "native-editor-timeline-resize"
+        )
     }
 
     private var deviceLocalFile: URL? {
