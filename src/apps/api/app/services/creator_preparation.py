@@ -64,6 +64,11 @@ def progress(
         message = (
             "Planning your edit is unavailable right now. Your request is saved; try again later."
         )
+    elif error_code == "preparation_unavailable":
+        message = (
+            "I couldn't save clip preparation right now. "
+            "Your request is saved; try again in a moment."
+        )
     elif error_code == "preparation_stale":
         message = (
             "Your footage changed while I was analyzing it. Send your next instruction to continue."

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 import app.tasks.creator_preparation as preparation
 from app.agents._runtime import RunContext
@@ -237,3 +238,148 @@ def test_failed_helper_stops_scheduling_and_has_no_late_checkpoints(monkeypatch)
     assert len(calls) == call_count
     assert len(checkpoints) == checkpoint_count
     assert set(calls).issubset({"clip-0", "clip-1", "clip-2"})
+
+
+class _DatabaseError(Exception):
+    def __init__(self, sqlstate: str) -> None:
+        super().__init__(f"database error {sqlstate}")
+        self.sqlstate = sqlstate
+
+
+def _operational_error(sqlstate: str) -> OperationalError:
+    return OperationalError("SELECT ... FOR UPDATE", {}, _DatabaseError(sqlstate))
+
+
+def test_deadlock_before_analysis_retries_ownership_check_in_fresh_session(monkeypatch) -> None:
+    source = _raw("recorded")
+    graph = (
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        [source],
+        [],
+    )
+    opened_sessions: list[object] = []
+    checked_sessions: list[object] = []
+    analyzed: list[str] = []
+    checkpoints: list[str] = []
+
+    @contextmanager
+    def session():
+        db = object()
+        opened_sessions.append(db)
+        yield db
+
+    def locked(db, *_args, **_kwargs):
+        checked_sessions.append(db)
+        if len(checked_sessions) == 1:
+            raise _operational_error("40P01")
+        return graph
+
+    def analyze(raw, pool, **_kwargs):
+        analyzed.append(raw["media_id"])
+        return dict(raw), _ref(raw)
+
+    monkeypatch.setattr(preparation, "sync_session", session)
+    monkeypatch.setattr(preparation, "_locked", locked)
+    monkeypatch.setattr(preparation, "owns_attempt", lambda *_args: True)
+    monkeypatch.setattr(preparation, "analyze_clip_assignment", analyze)
+    monkeypatch.setattr(
+        preparation,
+        "_checkpoint",
+        lambda _identifier, _token, raw: checkpoints.append(raw["media_id"]),
+    )
+
+    preparation._analyze_sources(ATTEMPT_ID, TOKEN, [source], _context())
+
+    assert checked_sessions == opened_sessions
+    assert len(checked_sessions) == 2
+    assert checked_sessions[0] is not checked_sessions[1]
+    assert analyzed == ["recorded"]
+    assert checkpoints == ["recorded"]
+
+
+def test_deadlock_during_checkpoint_retries_write_without_reanalyzing(monkeypatch) -> None:
+    asset_id = uuid4()
+    source = _raw("pool-image", asset_id=str(asset_id))
+    asset = SimpleNamespace(
+        id=asset_id,
+        status="ready",
+        gcs_generation="42",
+        analysis=None,
+        duration_s=None,
+        aspect=None,
+        error_code=None,
+        error_detail=None,
+        error_retryable=False,
+    )
+    attempt = SimpleNamespace(id=ATTEMPT_ID)
+    agent_session = SimpleNamespace(preparation=None)
+    graph = (attempt, agent_session, SimpleNamespace(), SimpleNamespace(), [source], [asset])
+    opened_sessions: list[object] = []
+    checked_sessions: list[object] = []
+    analyzed: list[str] = []
+    commits: list[object] = []
+
+    @contextmanager
+    def session():
+        db = SimpleNamespace()
+        db.commit = lambda: commits.append(db)
+        opened_sessions.append(db)
+        yield db
+
+    def locked(db, *_args, **_kwargs):
+        checked_sessions.append(db)
+        if len(checked_sessions) == 2:
+            raise _operational_error("40P01")
+        return graph
+
+    def analyze(raw, pool, **_kwargs):
+        analyzed.append(raw["media_id"])
+        return dict(raw), _ref(raw)
+
+    monkeypatch.setattr(preparation, "sync_session", session)
+    monkeypatch.setattr(preparation, "_locked", locked)
+    monkeypatch.setattr(preparation, "owns_attempt", lambda *_args: True)
+    monkeypatch.setattr(preparation, "analyze_clip_assignment", analyze)
+    monkeypatch.setattr(preparation, "source_snapshot", lambda _item, _assets: [source])
+
+    preparation._analyze_sources(ATTEMPT_ID, TOKEN, [source], _context())
+
+    assert analyzed == ["pool-image"]
+    assert len(checked_sessions) == 3
+    assert checked_sessions == opened_sessions
+    assert checked_sessions[1] is not checked_sessions[2]
+    assert commits == [opened_sessions[2]]
+    assert asset.analysis == source["analysis"]
+    assert agent_session.preparation["completed"] == 1
+
+
+def test_non_deadlock_operational_error_is_not_retried(monkeypatch) -> None:
+    source = _raw("recorded")
+    checked_sessions: list[object] = []
+    analyzed: list[str] = []
+
+    @contextmanager
+    def session():
+        yield object()
+
+    def locked(db, *_args, **_kwargs):
+        checked_sessions.append(db)
+        raise _operational_error("42P01")
+
+    def analyze(raw, pool, **_kwargs):
+        analyzed.append(raw["media_id"])
+        return dict(raw), _ref(raw)
+
+    monkeypatch.setattr(preparation, "sync_session", session)
+    monkeypatch.setattr(preparation, "_locked", locked)
+    monkeypatch.setattr(preparation, "analyze_clip_assignment", analyze)
+
+    with pytest.raises(OperationalError) as error:
+        preparation._analyze_sources(ATTEMPT_ID, TOKEN, [source], _context())
+
+    assert error.value.orig.sqlstate == "42P01"
+    assert len(checked_sessions) == 1
+    assert analyzed == []
