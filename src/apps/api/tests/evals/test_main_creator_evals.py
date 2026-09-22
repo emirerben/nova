@@ -85,8 +85,19 @@ def test_main_creator_eval(
         strategy = action["strategy"]
         assert strategy.get("resolved_clip_intents") is None
         intents = strategy.get("clip_intents") or []
-        assert [intent["op"] for intent in intents] == clip_intents_meta["ops"]
-        assert [intent["attribute"] for intent in intents] == clip_intents_meta["attributes"]
+        assert sorted(intent["op"] for intent in intents) == sorted(clip_intents_meta["ops"])
+        if eval_mode == "live":
+            # Open vocabulary: the live model's wording varies. Live mode needs
+            # `CLIP_INTENTS_ENABLED=true` in the env (the prompt teaches the
+            # field only when the flag is on; off, the model asks instead).
+            keywords = clip_intents_meta.get("live_keywords") or []
+            for intent, keyword in zip(intents, keywords, strict=True):
+                assert keyword.casefold() in intent["attribute"].casefold(), (
+                    keyword,
+                    intent["attribute"],
+                )
+        else:
+            assert [intent["attribute"] for intent in intents] == clip_intents_meta["attributes"]
         for intent in intents:
             assert "assignments" not in intent
             assert "media_id" not in intent

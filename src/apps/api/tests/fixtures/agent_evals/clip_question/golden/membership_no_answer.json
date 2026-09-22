@@ -2,7 +2,7 @@
   "agent": "nova.video.clip_question",
   "prompt_version": "2026-09-21.3",
   "input": {
-    "file_uri": "files/kri127-eval-fixture-clip",
+    "file_uri": "clips/devtest-1778504452/clip_01.mp4",
     "file_mime": "video/mp4",
     "question": "Does this clip match this description: \"park clips with people not playing sports\"? Answer only \"yes\" or \"no\"."
   },
@@ -15,6 +15,7 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "Confident, specific answer grounded in what's visible in the clip.",
-    "note": "KRI-127: membership checks are closed yes/no questions; negation must be read correctly."
+    "note": "KRI-127: membership checks are closed yes/no questions; negation must be read correctly.",
+    "live_note": "Bucket-relative dev clip; live mode uploads it via the fixture uploader. Replay uses raw_text; live is structural only (the dev clip's real content differs from the recorded answer)."
   }
 }

@@ -86,6 +86,10 @@
       "attributes": [
         "the dish shown in the clip",
         "the dessert clips"
+      ],
+      "live_keywords": [
+        "dish",
+        "dessert"
       ]
     },
     "contract": "an open-vocabulary label+order request the coded sport/participant/score fields cannot express becomes generic clip_intents, never model-authored per-clip answers"
