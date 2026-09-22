@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.139.0] - 2026-09-22
+
+### Changed
+- fix(phone): shorten crossfade instead of refusing the render (KRI-163) (#1156) <!-- release-pr: 1156 -->
+
 ## [0.76.138.0] - 2026-09-22
 
 ### Fixed
