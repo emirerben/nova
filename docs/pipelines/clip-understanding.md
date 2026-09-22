@@ -44,6 +44,10 @@ transcripts are third-party text that ends up in agent prompts.
 - **Versioning.** `ANALYSIS_VERSION = 8` is video-only; photos stay fresh at 6
   (`_MIN_FRESH_ANALYSIS_VERSION_BY_KIND`). Re-analysis is lazy. `clip_cache`
   invalidates through `CACHE_SCHEMA_VERSION` + the analyzer `prompt_version`.
+- **Generative candidate cache.** `generative_build._clip_meta_from_cache`
+  derives accepted fields from `ClipMeta`, preserving understanding on fast
+  reburns. Legacy rows use dataclass defaults; unknown keys are ignored. Guard:
+  `tests/tasks/test_generative_clip_cache.py`.
 - **parse() threading.** New `ClipMetadataOutput` fields must be threaded
   through `ClipMetadataAgent.parse()` (`TestParseThreading`).
 
@@ -151,6 +155,3 @@ the live evals: `tests/evals/test_clip_request_resolver_evals.py`,
 - Vision answers are cached for pool assets only, not raw `clip_assignments`.
 - `participant_labels` / `score_labels` stay on the transcript-grounded narration
   lane; retiring them is a follow-up.
-- `generative_build._clip_meta_from_cache` drops the `clip_*` fields on the
-  fast-reburn cache round trip, so the non-guided lane can only ground from a
-  fresh analysis.

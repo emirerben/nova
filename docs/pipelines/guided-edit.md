@@ -302,10 +302,15 @@ uses the automatic design path instead of requiring a proposal review:
    - `failed`, pool assets present → **no fallback**. Registered pool media is never silently
      dropped behind a clip-only render (the 2026-08-15 pool-media incident invariant) — the failure
      stays exactly as persisted, retryable.
-   - dispatch itself fails (`publish_failed`, `guided_edit_bypass_unsafe`, etc.) → the proposal stays
-     in whatever state already committed (`approved`, or `failed`+`design_fallback`). The next manual
-     Generate click either dispatches directly (approved reads identically regardless of
-     `approval_mode`) or re-triggers auto-design (failed) — never wedged.
+   - Main Creator dispatch is rejected, raises, or loses its confirmed dispatch context → an
+     approved attempt with no bound Job becomes retryable `failed` with `creator_dispatch_failed`.
+     Settlement rechecks the owner, ownership epoch, exact attempt, and executing session under
+     locks, so it cannot replace a newer attempt or an existing Job. It retains the approved
+     snapshot, draft, speech choice, and retry budget. The next full thread/session poll reconciles
+     the matching execution receipt and displays failure instead of remaining in preparation.
+   - Legacy dispatch itself fails (`publish_failed`, `guided_edit_bypass_unsafe`, etc.) → the
+     proposal keeps its committed state (`approved`, or `failed`+`design_fallback`). The next manual
+     Generate click either dispatches directly or re-triggers auto-design.
 
 **Duration feasibility is renderer-aware end to end** (P2-1). `feasible_guided_duration_s` credits a
 video its own probed duration only when that duration clears the renderer's own per-moment minimum
@@ -602,8 +607,9 @@ detail and proposal mutation responses carry the full review payload, keeping li
   `tests/routes/test_plan_item_generation.py`
 - Draft-attempt crash regressions, duration-adaptation clamp, large mixed-media
   snapshot preservation, renderer-validated deterministic recovery, and the
-  `auto_finalize` state machine (approve+dispatch, dispatch failure, clip-only
-  montage fallback, pool-assets-present no-fallback):
+  `auto_finalize` state machine (approve+dispatch, Creator dispatch failure and native retry
+  eligibility for both speech choices, stale-attempt protection, clip-only montage fallback,
+  pool-assets-present no-fallback):
   `tests/tasks/test_edit_proposal_build.py`
 - Source-diversity, target-capacity-aware mixed-media floors, 32-source alias
   shortlisting/resolution, distinct-chapter, non-overlapping fast-cut repair,
