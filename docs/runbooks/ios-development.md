@@ -158,6 +158,15 @@ Media direct manipulation freezes the surrounding composed layers while the gest
 
 Download follows the video currently shown in the editor. A ready source preview is exported locally from the current edit recipe; a matching device-local file is used directly, and a server-rendered result is downloaded only when the source preview is unavailable and the render receipt still matches the current project generation. While a source preview is preparing, the last finished render may remain visible, but canvas editing and download stay disabled until the displayed video is known to be current.
 
+The first source-composed editor preview includes the Kria watermark and outro,
+matching local export before the user saves or downloads. In
+`NativeEditorSession`, `duration` remains the editable content length;
+`playbackDuration` includes the outro while the source composition is displayed.
+Transport, scrubbing, and replay use the playback duration, while clip and text
+authoring stay within the editable duration. Branding remains outside the edit
+recipe, so rebuilding the preview or exporting does not append it twice.
+Internal thumbnail and blur-fill sampling remains unbranded by default.
+
 For repeatable visual review, a Debug build accepts `-ui-testing-brand` with
 `KRIA_BRAND_STATE` set to `format`, `footage`, `direction`, `rendering`, `ready`,
 `editor`, `projects`, `gallery`, `gallery-posters`, `signin`, `account`, or `recovery`.
