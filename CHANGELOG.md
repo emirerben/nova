@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.115.0] - 2026-09-22
+
+### Changed
+- fix(planner): on-screen text the creator specified is the complete caption list (KRI-129 follow-up) (#1125) <!-- release-pr: 1125 -->
+
 ## [0.76.114.0] - 2026-09-22
 
 ### Fixed
