@@ -481,29 +481,15 @@ def test_prompt_defines_all_media_as_representative_coverage() -> None:
     assert "do not ask the creator to choose\n  a length or pacing" in prompt
 
 
-def test_main_creator_prompt_flag_off_is_byte_identical_to_pre_kri127(monkeypatch) -> None:
-    """KRI-127 (`settings.clip_intents_enabled`) must not change one byte of the
-    rendered prompt while the flag is off (the repo default).
-
-    The pinned hash + length were captured from this exact `_input()` fixture
-    BEFORE any KRI-127 Lane D edit touched `app/agents/main_creator.py` or
-    `prompts/main_creator.txt` (`git show
-    e775533d2:src/apps/api/prompts/main_creator.txt` is the pre-Lane-D text).
-    A change to this hash means the flag-off render drifted -- fix the
-    template/section wiring, don't re-pin the hash.
-    """
-    import hashlib
-
+def test_main_creator_prompt_flag_off_teaches_only_transcript_label_source(monkeypatch) -> None:
     from app.config import settings
 
     monkeypatch.setattr(settings, "clip_intents_enabled", False)
-    prompt = MainCreatorAgent(None).render_prompt(_input())  # type: ignore[arg-type]
-
-    assert len(prompt) == 23709
-    assert (
-        hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-        == "cfb4e55f0874b0a45292267ef1bb12dc04cfad8c0f57c8de12be98ee9797e57d"
-    )
+    prompt = MainCreatorAgent(None).render_prompt(_input())
+    assert '"label_source":"transcript"' in prompt
+    assert "OPEN-VOCABULARY CLIP INTENTS" not in prompt
+    for field in ("participant_labels", "score_labels", "sport_labels", "context_label"):
+        assert field not in prompt
 
 
 def test_main_creator_prompt_flag_on_adds_open_vocabulary_clip_intents_section(

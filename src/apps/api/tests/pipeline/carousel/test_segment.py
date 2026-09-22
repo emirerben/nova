@@ -181,6 +181,7 @@ def test_render_carousel_moment_focus_mode_returns_valid_mp4(tmp_path, two_clips
     assert 0.5 < probe.duration_s < 15.5
 
 
+@pytest.mark.timeout(180)
 def test_render_carousel_moment_focus_mode_clamps_out_of_range_card_index(tmp_path, two_clips):
     """A focus_moments entry naming a card beyond the (2-clip) pool must be
     clamped into range rather than crashing — 2 clips means valid indices

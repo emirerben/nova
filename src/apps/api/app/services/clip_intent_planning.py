@@ -68,8 +68,14 @@ async def plan_and_resolve_clip_intents(
         ClipIntent.model_validate(intent.model_dump(exclude={"source_quote"}))
         for intent in output.intents
     ]
+    visual_intents = [intent for intent in intents if intent.label_source == "clip"]
+    # Transcript labels are fulfilled later from the pinned narration and
+    # final timeline. They remain in the complete requested inventory, but
+    # must never enter the vision resolver.
+    if not visual_intents:
+        return PlannedIntentResolution(intents, IntentResolution())
     resolution = await resolve_clip_intents_for_turn(
-        intents=intents,
+        intents=visual_intents,
         creator_request=creator_request,
         clips=clips,
         run_context=run_context,

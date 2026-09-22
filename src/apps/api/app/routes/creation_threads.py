@@ -77,6 +77,12 @@ from app.routes.plan_items import (
     _pool_asset_counts_toward_capacity,
 )
 from app.schemas.edit_proposal import EditProposal, parse_edit_proposal
+from app.services.creation_thread_titles import (
+    matches_conversation_revision,
+    prepare_message_title,
+    prepare_title,
+    start_title_generation,
+)
 from app.services.creator_direction_receipts import project_direction_receipt
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.creator_sessions import reconcile_render_state
@@ -1538,6 +1544,8 @@ async def _append(
     payload: dict[str, Any] | None = None,
     client_event_id: str | None = None,
 ) -> CreationThreadEvent:
+    if role == "user" and event_type == "user_message" and content and isinstance(db, AsyncSession):
+        await prepare_message_title(db, thread, content)
     sequence = (
         int(
             (
@@ -1592,6 +1600,7 @@ def _job_projection(job: Job | None) -> dict[str, Any] | None:
     if job is None:
         return None
     from app.routes.generative_jobs import _variants_for_response
+    from app.tasks.content_plan_build import humanize_job_failure_reason
 
     # Re-signing is authoritative. A storage/signing outage must be visible to
     # the client instead of returning an expired or stale playback URL.
@@ -1601,6 +1610,10 @@ def _job_projection(job: Job | None) -> dict[str, Any] | None:
         "status": job.status,
         "current_phase": job.current_phase,
         "failure_reason": job.failure_reason,
+        # A sentence, never the raw taxonomy code -- the failure card used to
+        # print `failure_reason` itself verbatim (KRI-163). `failure_reason`
+        # stays above for admin/debug consumers that still want the code.
+        "failure_message": humanize_job_failure_reason(job.failure_reason),
         "variants": variants,
     }
 
@@ -2285,17 +2298,19 @@ async def _load_authorized_projection_rows(
     return item, session, job, integrity
 
 
-async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
+async def _sync_agent(db: AsyncSession, thread: CreationThread) -> bool:
+    """Project background agent progress/replies, reporting whether anything changed."""
     if not thread.active_creator_agent_session_id:
-        return
+        return False
     session = await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
     # Ownership only: this copies session transcript content into the
     # thread's own state/events, so a cross-tenant session (a stale pointer
     # on a degraded thread, or any other drift) must never be projected here
     # -- the same tenant fence _load_authorized_projection_rows enforces.
     if session is None or session.creator_id != thread.creator_id:
-        return
+        return False
     projection = dict(thread.state or {})
+    previous_agent = projection.get("creator_agent") or {}
     active_plan = session.active_plan if isinstance(session.active_plan, dict) else {}
     from app.services.creator_preparation import public_preparation
 
@@ -2307,9 +2322,46 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
         "plan_hash": active_plan.get("plan_hash"),
         "version": active_plan.get("version"),
     }
+    # Clip preparation is durable and can take several minutes before it emits
+    # a planner reply. Persist a small, old-client-visible assistant event at
+    # the start of each valid active attempt so polling never looks silent.
+    # The thread is already locked by the polling path; the stable receipt
+    # also makes repeated polls and retries idempotent.
+    preparation = getattr(session, "preparation", None)
+    preparation_attempt_id = (
+        preparation.get("attempt_id") if isinstance(preparation, dict) else None
+    )
+    preparation_status = preparation.get("status") if isinstance(preparation, dict) else None
+    acknowledgement_appended = False
+    if (
+        session.status in {"planning", "revising"}
+        and preparation_status in {"queued", "analyzing", "resolving"}
+        and isinstance(preparation_attempt_id, str)
+    ):
+        try:
+            attempt_id = str(uuid.UUID(preparation_attempt_id))
+        except (TypeError, ValueError, AttributeError):
+            attempt_id = None
+        if attempt_id is not None:
+            receipt_id = f"creator-preparation:{attempt_id}"
+            if await _duplicate(db, thread.id, receipt_id) is None:
+                await _append(
+                    db,
+                    thread,
+                    event_type="status_update",
+                    role="assistant",
+                    content=(
+                        "I’ve saved your request. I’m analyzing your clips and will continue "
+                        "automatically."
+                    ),
+                    client_event_id=receipt_id,
+                )
+                acknowledgement_appended = True
     # Agent events are copied as an inert transcript projection.  Never copy
     # executable operations or external paths from model output.
-    seen = set(projection.get("creator_agent_event_ids", []))
+    seen_ids = list(projection.get("creator_agent_event_ids", []))
+    seen = set(seen_ids)
+    appended = acknowledgement_appended
     events = (
         (
             await db.execute(
@@ -2321,9 +2373,22 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
         .scalars()
         .all()
     )
+    # Older builds kept only 100 receipt IDs, but saved the full session
+    # revision. A retained ID ties that revision to this exact session, whose
+    # append-only events each advance the revision. Restore lost receipts
+    # without replaying the replies they already projected.
+    projected_revision = (
+        int(previous_agent.get("revision", 0) or 0)
+        if any(str(event.id) in seen for event in events)
+        else 0
+    )
     for event in events:
         key = str(event.id)
         if key in seen:
+            continue
+        if 0 < int(getattr(event, "revision", 0) or 0) <= projected_revision:
+            seen.add(key)
+            seen_ids.append(key)
             continue
         payload = event.payload if isinstance(event.payload, dict) else {}
         safe_payload = {
@@ -2365,8 +2430,15 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
             payload=safe_payload,
         )
         seen.add(key)
-    projection["creator_agent_event_ids"] = list(seen)[-100:]
+        seen_ids.append(key)
+        appended = True
+    # These are deduplication receipts, not a display window. Dropping old
+    # receipts would replay older replies on every poll of a long conversation.
+    projection["creator_agent_event_ids"] = seen_ids
+    if not appended and projection == thread.state:
+        return False
     thread.state = projection
+    return True
 
 
 def _resolve_default_title_fill(
@@ -2420,7 +2492,7 @@ async def _fill_default_title_if_needed(
     if (getattr(thread, "title", None) or _DEFAULT_TITLE) != _DEFAULT_TITLE:
         return
     state = dict(thread.state or {})
-    if state.get("title_source") == "user":
+    if state.get("title_source") == "user" or state.get("title_generation"):
         return
     active_plan = (
         session.active_plan
@@ -2441,6 +2513,8 @@ async def _fill_default_title_if_needed(
 
 
 async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadOut:
+    if isinstance(db, AsyncSession) and (thread.state or {}).get("title_generation") == "pending":
+        start_title_generation(thread.id)
     # Degraded: an incoherent render-graph edge is dropped, never 404ed, so
     # the thread's own row and its full chat transcript stay reachable. See
     # KRI-26 / agents/DECISIONS.md.
@@ -2842,18 +2916,18 @@ async def create_thread(
     state: dict[str, Any] = {
         "media": [],
         "media_count": 0,
-        **({"title_source": "first_prompt"} if body.message else {}),
     }
     thread = CreationThread(
         creator_id=user.id,
         runtime_version=body.runtime_version,
         content_plan_id=plan.id,
         active_plan_item_id=item.id,
-        title=(body.message[:_MAX_TITLE_LENGTH] if body.message else _DEFAULT_TITLE),
+        title=_DEFAULT_TITLE,
         # A project made in the iPhone app on a pilot account renders there
         # even when it never gets device footage (Visuals only, KRI-121).
         state=with_device_intent(state, native_client=native_client, user_id=user.id) or state,
     )
+    prepare_title(thread, body.message)
     db.add(thread)
     await db.flush()
     if body.runtime_version == 2:
@@ -3222,15 +3296,24 @@ async def get_thread(
             session = await db.get(
                 CreatorAgentSession, thread.active_creator_agent_session_id, with_for_update=True
             )
-        if session is not None and await reconcile_render_state(db, session):
+        if session is not None:
+            reconciled = await reconcile_render_state(db, session)
             # Guided planning creates and binds the exact Job asynchronously.
             # Reconciliation can discover that Job after the initial repair
             # pass, so project it in the same GET instead of requiring a
             # second page reload before polling or recovery can begin.
-            await _repair_missing_thread_job_projection(db, thread, user)
-            await _sync_agent(db, thread)
-            await db.commit()
-            await db.refresh(thread)
+            if reconciled:
+                await _repair_missing_thread_job_projection(db, thread, user)
+            # Async clip preparation/planning can finish without a render to
+            # reconcile. Its progress, reply or error must reach the next poll.
+            # V2 writes semantic thread events directly; keep its existing
+            # reconciliation path without importing legacy planner events.
+            synced = False
+            if reconciled or int(getattr(thread, "runtime_version", 1)) == 1:
+                synced = await _sync_agent(db, thread)
+            if reconciled or synced:
+                await db.commit()
+                await db.refresh(thread)
     # Polls are also the repair loop for the projection.  The read model is
     # updated after reconciliation, so a queued/rendering Job or a session in
     # executing/reviewing with no Job is visible in one response.
@@ -3268,7 +3351,7 @@ async def message_thread(
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         await db.rollback()
         return await _response(db, await _load(thread_id, user, db))
-    if thread.revision != body.expected_revision:
+    if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     # Editor actions own their user-message admission so the model call can
     # release locks without committing an incomplete idempotency receipt.
@@ -3364,12 +3447,6 @@ async def message_thread(
     if not state.get("intent"):
         state["intent"] = body.message[:2000]
         thread.state = state
-        if (getattr(thread, "title", None) or _DEFAULT_TITLE) == _DEFAULT_TITLE and state.get(
-            "title_source"
-        ) != "user":
-            thread.title = body.message[:_MAX_TITLE_LENGTH]
-            state["title_source"] = "first_prompt"
-            thread.state = state
     # Never mutate an in-flight render. Preserve the creator's message as a
     # pending revision intent even if this is an older thread whose format
     # projection has not been hydrated yet.
@@ -3556,7 +3633,7 @@ async def action_thread(
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         await db.rollback()
         return await _response(db, await _load(thread_id, user, db))
-    if thread.revision != body.expected_revision:
+    if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     _stamp_device_intent(thread, user, native_client)
     state = dict(thread.state or {})
@@ -4497,7 +4574,7 @@ async def attach_media(
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         await db.rollback()
         return await _response(db, await _load(thread_id, user, db))
-    if thread.revision != body.expected_revision:
+    if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     if any(media.kind == "image" for media in body.media):
         raise HTTPException(
@@ -4763,7 +4840,7 @@ async def rename_thread(
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         await db.rollback()
         return await _response(db, await _load(thread_id, user, db))
-    if thread.revision != body.expected_revision:
+    if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     thread.title = body.title
     thread.state = {**dict(getattr(thread, "state", None) or {}), "title_source": "user"}
@@ -5045,7 +5122,7 @@ async def delete_thread(
         raise HTTPException(status_code=409, detail="Project has an active publication")
 
     locked_thread = thread
-    if locked_thread.revision != expected_revision:
+    if not matches_conversation_revision(locked_thread, expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     if (
         locked_thread.active_plan_item_id
@@ -5243,7 +5320,7 @@ async def archive_thread(
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         await db.rollback()
         return await _response(db, await _load(thread_id, user, db))
-    if thread.revision != body.expected_revision:
+    if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     thread.status = "archived"
     await _append(

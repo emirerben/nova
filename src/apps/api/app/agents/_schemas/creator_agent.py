@@ -249,25 +249,8 @@ CreativePace = Literal["relaxed", "balanced", "fast"]
 AudioStrategy = Literal["licensed_music", "original_audio", "voiceover"]
 ExecutionContract = Literal["guided_voiceover_v1"]
 MediaScope = Literal["all", "selected"]
-ParticipantLabels = Literal["none", "single_subject"]
 CaptionStyle = Literal["none", "clean", "kinetic", "karaoke", "editorial", "auto"]
 OptionalTreatment = Literal["overlays", "sfx", "transitions", "looks"]
-ContextLabelKind = Literal["sport"]
-ContextLabelSource = Literal["clip_metadata", "user_provided"]
-
-
-class ContextLabelIntent(_CreatorModel):
-    """Bounded intent for a trusted pipeline-resolved contextual label.
-
-    This carries no label text. Clip metadata is descriptive evidence and must
-    be resolved and confirmed by the trusted render pipeline before rendering.
-    """
-
-    kind: ContextLabelKind = "sport"
-    source: ContextLabelSource = "clip_metadata"
-    placement: Literal["bottom_right"] = "bottom_right"
-    size: Literal["small"] = "small"
-    per_clip: bool = True
 
 
 class CreativeStrategy(_CreatorModel):
@@ -286,9 +269,6 @@ class CreativeStrategy(_CreatorModel):
     audio_strategy: AudioStrategy = "licensed_music"
     execution_contract: ExecutionContract | None = None
     media_scope: MediaScope | None = None
-    participant_labels: ParticipantLabels = "none"
-    score_labels: bool = False
-    sport_labels: bool = False
     story_structure: list[str] = Field(default_factory=list, max_length=8)
     caption_style: CaptionStyle = "auto"
     intro_hook: str | None = Field(
@@ -339,20 +319,13 @@ class CreativeStrategy(_CreatorModel):
         max_length=16,
         description="Confirmed intro color (#RRGGBB or a supported color alias).",
     )
-    context_label: ContextLabelIntent | None = Field(
-        default=None,
-        description=(
-            "Confirmed request for a server-resolved contextual label; this carries "
-            "no model-authored label text."
-        ),
-    )
     # KRI-127 (flag CLIP_INTENTS_ENABLED). Both default to None so stored
     # strategies and every exclude_none hash stay byte-identical when unused.
     # SkipJsonSchema keeps both OUT of every derived JSON schema: the Kria
     # `apply_strategy` tool builds its argument schema from this model, and a
-    # model that saw an inert `clip_intents` there could route a sport-label
-    # request into it and lose the label while the flag is off. The creator
-    # prompt teaches the shape in prose, only when the flag is on.
+    # visual intent cannot be promised by a tool with no resolver. The creator
+    # prompt describes transcript intents always and visual intents only when
+    # the visual resolver flag is on.
     clip_intents: SkipJsonSchema[list[ClipIntent] | None] = Field(
         default=None,
         max_length=MAX_CLIP_INTENTS,
@@ -368,6 +341,19 @@ class CreativeStrategy(_CreatorModel):
     resolved_clip_intents: SkipJsonSchema[list[ResolvedClipIntent] | None] = Field(
         default=None, max_length=MAX_CLIP_INTENTS
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_legacy_labels(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        data = dict(value)
+        mapped = legacy_clip_intents(data)
+        for key in ("participant_labels", "score_labels", "sport_labels", "context_label"):
+            data.pop(key, None)
+        if mapped:
+            data["clip_intents"] = [*(data.get("clip_intents") or []), *mapped]
+        return data
 
     @model_serializer(mode="wrap")
     def _omit_unused_clip_intents(self, handler):  # noqa: ANN001, ANN202
@@ -499,33 +485,78 @@ class CreativeStrategy(_CreatorModel):
         return self.pacing
 
 
-def legacy_clip_intents(strategy: CreativeStrategy) -> list[ClipIntent]:
-    """Read-time only: map an old sport-labels-shaped strategy onto KRI-127.
+def legacy_clip_intents(strategy: Mapping[str, Any] | CreativeStrategy) -> list[ClipIntent]:
+    """Translate retired fields at read time without rewriting stored JSON.
 
-    A strategy that already carries ``clip_intents`` owns the generic path
-    already, so this returns an empty list for it (never mutates or merges).
-    Otherwise, a strategy whose coded fields still ask for the sport being
-    played (``sport_labels`` or ``context_label.kind == "sport"``) -- for
-    example one restored by the refresh-pin path from a session that
-    predates the flag -- maps onto one generic label intent so it keeps
-    reaching the resolver once ``clip_intents_enabled`` is on. This never
-    writes back to the stored strategy; callers decide whether to use the
-    result for one turn.
+    Modern intents take precedence. Old participant/score requests are still
+    migrated when a stored strategy also contains visual clip intents.
     """
-
-    if strategy.clip_intents:
-        return []
-    if strategy.sport_labels or (
-        strategy.context_label is not None and strategy.context_label.kind == "sport"
+    if not isinstance(strategy, Mapping):
+        return []  # Typed strategies have already crossed the read-time adapter.
+    existing = strategy.get("clip_intents") or []
+    transcript_kinds = {
+        item.get("transcript_kind") if isinstance(item, Mapping) else item.transcript_kind
+        for item in existing
+        if isinstance(item, (Mapping, ClipIntent))
+    }
+    mapped: list[ClipIntent] = []
+    for key, kind, requested in (
+        (
+            "participant_labels",
+            "participant",
+            strategy.get("participant_labels") == "single_subject",
+        ),
+        ("score_labels", "score", strategy.get("score_labels") is True),
     ):
-        return [
-            ClipIntent(
-                intent_id="legacy-sport",
-                op="label",
-                attribute="the sport being played in the clip",
+        if requested and kind not in transcript_kinds:
+            mapped.append(
+                ClipIntent(
+                    intent_id=f"legacy-{kind}",
+                    op="label",
+                    attribute=(
+                        "single-subject participant placeholders"
+                        if kind == "participant"
+                        else "scores spoken in the narration"
+                    ),
+                    label_source="transcript",
+                    transcript_kind=kind,
+                )
             )
-        ]
-    return []
+    context = strategy.get("context_label")
+    sport_requested = strategy.get("sport_labels") is True or (
+        isinstance(context, Mapping) and context.get("kind") == "sport"
+    )
+    if sport_requested:
+        narrated = strategy.get("execution_contract") == "guided_voiceover_v1"
+        if narrated and "topic" not in transcript_kinds:
+            mapped.append(
+                ClipIntent(
+                    intent_id="legacy-sport",
+                    op="label",
+                    attribute="the sport spoken in the narration",
+                    label_source="transcript",
+                    transcript_kind="topic",
+                )
+            )
+        elif not narrated and not existing:
+            mapped.append(
+                ClipIntent(
+                    intent_id="legacy-sport",
+                    op="label",
+                    attribute="the sport being played in the clip",
+                )
+            )
+    return mapped
+
+
+def creator_strategies_equal(left: object, right: object) -> bool:
+    """Compare persisted/new strategy contracts through the same read adapter."""
+    try:
+        return CreativeStrategy.model_validate(left).model_dump(mode="json", exclude_none=True) == (
+            CreativeStrategy.model_validate(right).model_dump(mode="json", exclude_none=True)
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 class AskUser(_CreatorModel):
@@ -1227,7 +1258,6 @@ __all__ = [
     "CreatorMediaRef",
     "CreatorNarrationIdentity",
     "CreatorSfxIntent",
-    "ContextLabelIntent",
     "CreatorRevisionProposal",
     "CreatorReviewEvidence",
     "CreatorReviewReceipt",
@@ -1242,13 +1272,13 @@ __all__ = [
     "CREATOR_REQUEST_MAX_CHARS",
     "ExecutionContract",
     "MediaScope",
-    "ParticipantLabels",
     "LicensedSfxIntent",
     "SfxIntent",
     "MixedMediaTimingProfile",
     "DispatchRenderCommand",
     "DraftGuidedProposalCommand",
     "legacy_clip_intents",
+    "creator_strategies_equal",
     "ProposeStrategy",
     "ResolvedCreatorManifest",
     "ReviewDecision",

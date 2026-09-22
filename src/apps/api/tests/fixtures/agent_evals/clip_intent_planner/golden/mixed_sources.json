@@ -1,0 +1,55 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-09-22.3",
+  "input": {
+    "creator_request": "Label the sport on each clip and show the score I say.",
+    "latest_user_message": null,
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\":[{\"intent_id\":\"sport\",\"op\":\"label\",\"attribute\":\"the sport on each clip\",\"label_source\":\"clip\",\"transcript_kind\":null,\"source_quote\":\"Label the sport on each clip\"},{\"intent_id\":\"score\",\"op\":\"label\",\"attribute\":\"the score I say\",\"label_source\":\"transcript\",\"transcript_kind\":\"score\",\"source_quote\":\"show the score I say\"}],\"question\":null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "sport",
+        "op": "label",
+        "attribute": "the sport on each clip",
+        "label_source": "clip",
+        "transcript_kind": null,
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Label the sport on each clip"
+      },
+      {
+        "intent_id": "score",
+        "op": "label",
+        "attribute": "the score I say",
+        "label_source": "transcript",
+        "transcript_kind": "score",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "show the score I say"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_intents": [
+      {
+        "op": "label",
+        "label_source": "clip",
+        "transcript_kind": null,
+        "source_quote_keywords": ["sport", "clip"]
+      },
+      {
+        "op": "label",
+        "label_source": "transcript",
+        "transcript_kind": "score",
+        "source_quote_keywords": ["score", "say"]
+      }
+    ],
+    "expect_any": true
+  }
+}

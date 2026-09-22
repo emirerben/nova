@@ -5,7 +5,7 @@ import XCTest
 import CoreImage
 #endif
 
-/// The Kria watermark and outro on an exported edit.
+/// The Kria watermark and outro on previews and exported edits.
 ///
 /// The numbers here are the ones `brand/social/build.py` measures and gates at
 /// the repo root; `testBundledAssetsMatchTheBrandKit` is what stops the two
@@ -273,7 +273,60 @@ final class BrandingTests: XCTestCase {
                                     canvas: canvas, context: CIContext()), 0)
     }
 
-    /// Branding must not reach the composition the editor previews and scrubs.
+    @MainActor func testBrandedLivePreviewShowsMarkAndOutroBeforeAndAfterTextEdits() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var (recipe, urls) = try blackPhotoRecipe(in: directory)
+        let root = try XCTUnwrap(#filePath.range(of: "/src/apps/ios/"))
+        let font = URL(fileURLWithPath: String(#filePath[..<root.lowerBound]))
+            .appendingPathComponent("src/apps/api/assets/fonts/Inter-Regular.ttf")
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: font)
+        recipe.assets.append(MediaAsset(id: "font", relativePath: "font", fingerprint: fingerprint))
+        recipe.assetManifest = RenderAssetManifest(assets: (recipe.assetManifest?.assets ?? []) + [
+            RenderAssetReference(id: "font", fingerprint: try RenderFingerprint(fingerprint),
+                source: .library(catalog: .font, catalogID: "Inter-Regular.ttf", generation: fingerprint.hex))
+        ])
+        urls["font"] = font
+        func caption(_ text: String) throws -> PortableTextLayer {
+            try AuthoredTextLayout.compile(id: "caption", text: text, start: 0, end: 2,
+                style: .init(fontAssetID: "font", size: 72, color: TextInk(red: 1, green: 1, blue: 1, alpha: 1)),
+                fontURL: font, canvas: recipe.canvas)
+        }
+        recipe.textLayers = [try caption("First version")]
+        let live = try await LivePreviewComposition(recipe: recipe, assetURLs: urls, branding: .standard)
+        let item = live.preview.playerItem
+        let outro = try await AVURLAsset(url: XCTUnwrap(KriaBranding.outroURL())).load(.duration).seconds
+        XCTAssertEqual(live.preview.description.duration, 2 + outro, accuracy: 0.01)
+
+        let canvas = CGRect(x: 0, y: 0, width: 1080, height: 1920)
+        let markBox = CGRect(x: 60, y: 1475 - 59, width: 133, height: 59)
+        let context = CIContext()
+        for edited in [false, true] {
+            if edited {
+                recipe.textLayers = [try caption("Edited version")]
+                try live.updateText(recipe: recipe)
+                XCTAssertTrue(item === live.preview.playerItem, "Text edits retain the live composition")
+            }
+            let generator = AVAssetImageGenerator(asset: item.asset)
+            generator.videoComposition = item.videoComposition
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            for time in [0.0, 1.0, 1.9] {
+                let frame = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image
+                XCTAssertGreaterThan(brightPixels(in: frame, rect: markBox, canvas: canvas, context: context), 500,
+                                     "Missing preview watermark at \(time)s, edited=\(edited)")
+            }
+            let tail = try await generator.image(at: CMTime(seconds: 2 + outro - 0.2, preferredTimescale: 600)).image
+            XCTAssertGreaterThan(brightPixels(in: tail, rect: canvas, canvas: canvas, context: context),
+                                 Int(canvas.width * canvas.height) / 2, "Missing preview outro, edited=\(edited)")
+            let snapshot = live.exportSnapshot()
+            XCTAssertEqual(snapshot.recipe, recipe, "Export inputs must not contain baked branding")
+            XCTAssertEqual(TimelineMath.totalDuration(of: snapshot.recipe), 2, accuracy: 0.001)
+        }
+    }
+
+    /// Internal sampling for blur fills and thumbnails stays unbranded.
     @MainActor func testPreviewCompositionIsUnbrandedByDefault() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

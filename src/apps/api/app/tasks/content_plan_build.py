@@ -749,6 +749,86 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
 }
 
 
+# `Job.failure_reason` -> a human sentence for the client's failure card
+# (KRI-163). `PHONE_GATE_MESSAGES` above covers a rejection BEFORE a Job
+# exists; this covers the render taxonomy a Job can carry once minted, across
+# `tasks/generative_build.py`, `tasks/template_orchestrate.py`, and
+# `tasks/reaper.py`. The client used to print `failure_reason` itself under
+# "Your project is safe" -- a raw machine token, and for the majority of
+# real failures (a NULL failure_reason) nothing at all. Every code that
+# reaches a client MUST resolve to a sentence here: look it up with
+# `humanize_job_failure_reason` rather than reading this dict directly, so an
+# unrecognized or dynamic-suffix code (`single_hero_*`, `day_vlog_*`,
+# `guided_story_*` from `_classify_error`) still gets a real sentence instead
+# of silently falling through to nothing.
+JOB_FAILURE_MESSAGES: dict[str, str] = {
+    "phone_plan_unsupported": (
+        "This edit can't render on your iPhone the way it's set up right now. "
+        "Try again, or ask for a change to the direction."
+    ),
+    "phone_plan_failed": (
+        "This edit couldn't render on your iPhone. Try again, or ask for a change to the direction."
+    ),
+    "originals_not_uploaded": (
+        "Your original footage wasn't uploaded, so this can't render on your "
+        "iPhone. Reattach your clips and try again."
+    ),
+    "processing_timeout": (
+        "Processing timed out — your clips are heavy (likely 4K/HDR). Try fewer or shorter clips."
+    ),
+    "speech_cleanup_failed": (
+        "Cleaning up the audio didn't finish. Try again, or turn off speech cleanup."
+    ),
+    "no_labeled_tracks": (
+        "No matching music was found for this edit. Try again, or pick a track yourself."
+    ),
+    "matching_failed": "Matching your footage to music didn't finish. Try again.",
+    "auto_music_disabled": "Automatic music matching is turned off right now. Try again later.",
+    "dispatch_publish_failed": "The render couldn't be handed to the queue. Give it another go.",
+    "drive_import_failed": "Importing from Drive didn't finish. Try again.",
+    "drive_import_dispatch_failed": "Importing from Drive didn't finish. Try again.",
+    "upload_promotion_failed": "Saving your upload didn't finish. Try again.",
+    "skia_disabled": "This edit needs a renderer that's temporarily turned off. Try again later.",
+    "cancelled_by_admin": "This render was cancelled.",
+    "render_oom": "Rendering ran out of memory — your clips are heavy. Try fewer or shorter clips.",
+    "ffmpeg_failed": "Something went wrong while assembling your video. Try again.",
+    "gemini_analysis_failed": "Analyzing your footage didn't finish. Try again.",
+    "analysis_failed": "Analyzing your footage didn't finish. Try again.",
+    "copy_generation_failed": "Writing your video's captions didn't finish. Try again.",
+    "output_upload_failed": "Your finished video couldn't be saved. Try again.",
+    "user_clip_download_failed": (
+        "One of your clips couldn't be downloaded. Reattach it and try again."
+    ),
+    "user_clip_unusable": (
+        "One of your clips couldn't be used (it may be corrupted or unsupported). "
+        "Try a different clip."
+    ),
+    "template_misconfigured": "This template has a configuration problem. Try a different one.",
+    "template_assets_missing": "This template is missing assets it needs. Try a different one.",
+    "artifact_eligibility_revoked": "This export is no longer available.",
+    "eligibility_changed_during_export": "Something changed while exporting. Try again.",
+}
+
+# Never blank: an unrecognized or None-but-status-failed code still needs a
+# real sentence, not a fallthrough to nothing.
+_DEFAULT_JOB_FAILURE_MESSAGE = (
+    "Something went wrong and this render didn't finish. Your direction and "
+    "footage are still saved — try again."
+)
+
+
+def humanize_job_failure_reason(failure_reason: str | None) -> str | None:
+    """A sentence for `Job.failure_reason`, never the raw machine code (KRI-163).
+
+    None in, None out -- callers use this to fill a display field only when
+    the job actually carries a reason (or has failed at all); a job that
+    hasn't failed has no `failure_reason` and needs no message.
+    """
+    if not failure_reason:
+        return None
+    return JOB_FAILURE_MESSAGES.get(failure_reason, _DEFAULT_JOB_FAILURE_MESSAGE)
+
+
 def _speech_cleanup_dispatch_snapshot(
     session,  # noqa: ANN001
     item: PlanItem,
@@ -1788,20 +1868,6 @@ def _dispatch_item_render(
         if guided_voiceover:
             snapshot["guided_edit"]["execution_contract"] = GUIDED_VOICEOVER_CONTRACT
             snapshot["guided_edit"]["creator_execution_identity"] = creator_identity
-        # Preserve only the typed contextual-label intent on the immutable
-        # guided snapshot. Label text is never copied from Creator JSON; the
-        # worker resolves it later from the approved clip metadata.
-        if creator_strategy:
-            from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
-
-            try:
-                typed_creator_strategy = CreativeStrategy.model_validate(creator_strategy)
-            except Exception:  # noqa: BLE001 - the normal strategy boundary already failed closed
-                typed_creator_strategy = None
-            if typed_creator_strategy is not None and typed_creator_strategy.context_label:
-                snapshot["guided_edit"]["context_label_intent"] = (
-                    typed_creator_strategy.context_label.model_dump(mode="json")
-                )
         job.assembly_plan = snapshot
     elif creator_guided_attempt_id is not None:
         if not bypass_guided_edit_gate:

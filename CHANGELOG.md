@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.140.0] - 2026-09-22
+
+### Fixed
+- fix(ios): show Kria branding in the first editor preview (#1155) <!-- release-pr: 1155 -->
+
+## [0.76.139.0] - 2026-09-22
+
+### Changed
+- fix(phone): shorten crossfade instead of refusing the render (KRI-163) (#1156) <!-- release-pr: 1156 -->
+
+## [0.76.138.0] - 2026-09-22
+
+### Fixed
+- fix(creator): acknowledge preparation and recover unclaimed analysis (#1152) <!-- release-pr: 1152 -->
+
+## [0.76.137.0] - 2026-09-22
+
+### Fixed
+- fix: restore exported voiceover and sentence captions (#1149) <!-- release-pr: 1149 -->
+
+## [0.76.136.0] - 2026-09-22
+
+### Changed
+- refactor: replace typed labels with sourced clip intents (KRI-156) (#1142) <!-- release-pr: 1142 -->
+
+## [0.76.135.0] - 2026-09-22
+
+### Changed
+- chore(deploy): gate Vercel builds to main + web-affecting commits (#1150) <!-- release-pr: 1150 -->
+
+## [0.76.134.0] - 2026-09-22
+
+### Changed
+- feat(chat): automatically name new chats from the first prompt (KRI-162) (#1148) <!-- release-pr: 1148 -->
+
+## [0.76.133.0] - 2026-09-22
+
+### Fixed
+- fix: deliver background creator replies during chat polling (#1147) <!-- release-pr: 1147 -->
+
 ## [0.76.132.0] - 2026-09-22
 
 ### Fixed

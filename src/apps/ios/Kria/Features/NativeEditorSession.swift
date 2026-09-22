@@ -89,7 +89,16 @@ struct NativeEditorTemporaryVideo {
         get { playbackClock.currentTime }
         set { playbackClock.currentTime = newValue }
     }
+    /// Editable content only; branding never expands authoring ranges.
     @Published var duration: TimeInterval = 0
+    /// The visible source composition includes the outro after the editable
+    /// content. Transport and scrubbing must reach that tail as well.
+    var playbackDuration: TimeInterval {
+        if let sourcePreview, player?.currentItem === sourcePreview.preview.playerItem {
+            return sourcePreview.preview.description.duration
+        }
+        return duration
+    }
     @Published var isPlaying = false
     @Published var isSaving = false
     @Published var hasUnsavedChanges = false
@@ -252,6 +261,10 @@ struct NativeEditorTemporaryVideo {
     private var sourceCompiler: NativeEditorRenderCompiler?
     private var sourceResolver: NativeEditorSourceResolver?
     private var resolvedAudio: [String: ResolvedEditorSource] = [:]
+    /// A device recipe may intentionally have no narration. Remember that
+    /// successful empty resolution for this generation so ordinary editor
+    /// rebuilds do not repeatedly poll the device-render endpoint.
+    private var deviceNarrationResolutionGeneration: String?
     private var previewVariant: [String: JSONValue] = [:]
     var musicPlaybackMode: NativeMusicPlaybackMode { .init(variant: previewVariant) }
     var songReference: NativeSongReference? {
@@ -1251,6 +1264,7 @@ struct NativeEditorTemporaryVideo {
         resolvedSources = nil
         sourcePool = nil
         resolvedAudio = [:]
+        deviceNarrationResolutionGeneration = nil
         resolvedMedia = [:]
         do {
             #if DEBUG
@@ -1332,6 +1346,7 @@ struct NativeEditorTemporaryVideo {
         resolvedSources = nil
         sourcePool = nil
         resolvedAudio.removeAll()
+        deviceNarrationResolutionGeneration = nil
         resolvedMedia.removeAll()
         sourcePreview = nil
         textInteractionTask?.cancel()
@@ -1371,9 +1386,74 @@ struct NativeEditorTemporaryVideo {
             || (archetype == "guided_story" && variant["render_receipt"]?.objectValue?["narration_applied"] == .bool(true))
     }
 
+    /// Device-rendered variants have no cloud receipt or base-video URL. Their
+    /// current recipe is the authority for narration, and its published
+    /// generation must still be the document we are reconstructing.
+    static func currentDeviceNarrationRequest(
+        _ status: DeviceRenderStatusResponse,
+        jobID: UUID,
+        variantID: String,
+        generation: String
+    ) throws -> DeviceRenderRequest? {
+        guard status.request.identity.jobID == jobID,
+              status.request.identity.variantID == variantID,
+              status.phase == "published",
+              status.publishedGeneration == generation else {
+            throw APIError.conflict
+        }
+        return status.request.recipe.audio.narrationAssetID == nil ? nil : status.request
+    }
+
+    private func resolveDeviceNarration(document: EditorDocument, sequence: Int) async throws -> ResolvedEditorSource? {
+        guard let api, let jobID, let variantKey else { throw APIError.invalidResponse }
+        let status = try await api.deviceRender(jobID: jobID, variantID: variantKey)
+        guard sequence == sourcePreviewSequence, !Task.isCancelled,
+              document.revision.baseGeneration == self.document.revision.baseGeneration else {
+            throw CancellationError()
+        }
+        guard let request = try Self.currentDeviceNarrationRequest(
+            status, jobID: jobID, variantID: variantKey, generation: document.revision.baseGeneration
+        ) else { return nil }
+        guard let narrationID = request.recipe.audio.narrationAssetID,
+              var asset = request.recipe.assets.first(where: { $0.id == narrationID }) else {
+            throw MediaEngineError.missingAsset("narration")
+        }
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID)
+        let authorized = AuthorizedDeviceSourceResolver(
+            api: api,
+            request: request,
+            originals: SourceAssetStore(project: project),
+            library: RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory))
+        )
+        let url = try await authorized.resolveNarration()
+        let duration = try await AVURLAsset(url: url).load(.duration).seconds
+        guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
+        asset.duration = duration
+        guard sequence == sourcePreviewSequence, !Task.isCancelled,
+              document.revision.baseGeneration == self.document.revision.baseGeneration else {
+            throw CancellationError()
+        }
+        return ResolvedEditorSource(clipIndex: -1, mediaID: narrationID, asset: asset, url: url)
+    }
+
     private func preparePreviewAudio(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
         guard let resolver = sourceResolver else { return [:] }
-        if Self.usesRenderedNarration(previewVariant), resolvedAudio["narration"] == nil {
+        if rendersOnDevice {
+            // Reopen from the server-authoritative recipe, rather than the
+            // app-owned DeviceRenderSessions cache, which is empty on a cold
+            // launch. A missing or stale required asset fails the preview
+            // visibly instead of silently exporting an AAC silence track.
+            if resolvedAudio["narration"] == nil,
+               deviceNarrationResolutionGeneration != document.revision.baseGeneration {
+                let narration = try await resolveDeviceNarration(document: document, sequence: sequence)
+                guard sequence == sourcePreviewSequence, !Task.isCancelled,
+                      document.revision.baseGeneration == self.document.revision.baseGeneration else {
+                    throw CancellationError()
+                }
+                if let narration { resolvedAudio["narration"] = narration }
+                deviceNarrationResolutionGeneration = document.revision.baseGeneration
+            }
+        } else if Self.usesRenderedNarration(previewVariant), resolvedAudio["narration"] == nil {
             // Legacy narrated renders persist the exact cleaned voice + bed in
             // their caption-free base. Use its audio with original visual cuts;
             // never replay the finished video's burned captions.
@@ -1388,7 +1468,7 @@ struct NativeEditorTemporaryVideo {
             resolvedAudio["narration"] = resolved
         }
         let referenceOnlyMusic = musicPlaybackMode == .referenceOnly
-        let ids = Set([referenceOnlyMusic || Self.usesRenderedNarration(previewVariant) ? nil : document.music?.trackID,
+        let ids = Set([referenceOnlyMusic || resolvedAudio["narration"] != nil ? nil : document.music?.trackID,
                        !referenceOnlyMusic && document.backgroundMusic?.enabled == true && document.backgroundMusic?.muted != true
                         ? document.backgroundMusic?.trackID : nil].compactMap { $0 })
         for id in ids where resolvedAudio[id] == nil {
@@ -1549,15 +1629,15 @@ struct NativeEditorTemporaryVideo {
             #if DEBUG
             NativePreviewDiagnostics.record("composition-start")
             #endif
-            let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs)
+            let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs, branding: .standard)
             guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             let latestTime = currentTime
             let resumePlayback = isPlaying
             sourcePreview = preview
-            installPlayer(item: preview.preview.playerItem, preferredDuration: preview.preview.description.duration)
+            installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe))
             sourcePreviewState = .ready
             if resumePlayback {
-                player?.seek(to: CMTime(seconds: min(latestTime, max(0, duration - 1.0 / 600)), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
+                player?.seek(to: CMTime(seconds: min(latestTime, max(0, playbackDuration - 1.0 / 600)), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
                 activatePreviewAudio()
                 player?.play()
             } else {
@@ -1597,7 +1677,7 @@ struct NativeEditorTemporaryVideo {
         }
         // Scrubbing renders stills independently of AVPlayer. Only that handoff
         // (or replay) needs a seek; ordinary resume keeps the decoded surface.
-        if duration > 0, currentTime >= duration - playbackEndTolerance {
+        if playbackDuration > 0, currentTime >= playbackDuration - playbackEndTolerance {
             currentTime = 0
             playbackSeekTarget = 0
         }
@@ -1643,7 +1723,7 @@ struct NativeEditorTemporaryVideo {
         // freeze at the player's actual clock, not the last 50ms UI sample.
         if playbackSeekTarget == nil, let player, player.currentItem?.status == .readyToPlay {
             let seconds = player.currentTime().seconds
-            if seconds.isFinite { currentTime = min(max(0, seconds), max(0, duration)) }
+            if seconds.isFinite { currentTime = min(max(0, seconds), max(0, playbackDuration)) }
         }
     }
 
@@ -1677,7 +1757,7 @@ struct NativeEditorTemporaryVideo {
             player?.pause()
             isPlaying = false
         }
-        let clamped = min(max(0, time), max(0, duration))
+        let clamped = min(max(0, time), max(0, playbackDuration))
         currentTime = clamped
         if requestScrubFrame(at: clamped) {
             seekRecoveryTask?.cancel()
@@ -1708,7 +1788,7 @@ struct NativeEditorTemporaryVideo {
             scrubFramePlayerItem = item
             scrubFrameComposition = composition
         }
-        playbackSeekTarget = min(time, max(0, duration - 1.0 / 600))
+        playbackSeekTarget = min(time, max(0, playbackDuration - 1.0 / 600))
         pendingScrubFrameTime = playbackSeekTarget
         // Coalescing finger events (above) means only the latest requested
         // position ever becomes visible, so re-arming on every call and
@@ -1780,7 +1860,7 @@ struct NativeEditorTemporaryVideo {
         let sequence = seekSequence
         // The timeline's end is exclusive in the compositor. Keep the ruler
         // at the requested end while displaying the final valid video frame.
-        let playableTarget = min(target, max(0, duration - 1.0 / 600))
+        let playableTarget = min(target, max(0, playbackDuration - 1.0 / 600))
         seekRecoveryTask?.cancel()
         seekRecoveryTask = Task { @MainActor [weak self, weak player] in
             do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
@@ -3857,7 +3937,7 @@ struct NativeEditorTemporaryVideo {
                 guard let self, self.player === next else { return }
                 let seconds = time.seconds
                 if seconds.isFinite && self.isPlaying && !self.seekInFlight && self.pendingSeekTime == nil && self.playbackSeekTarget == nil {
-                    self.currentTime = min(max(0, seconds), max(0, self.duration))
+                    self.currentTime = min(max(0, seconds), max(0, self.playbackDuration))
                 }
                 self.reconcilePlaybackState(next.timeControlStatus)
             }
@@ -3904,15 +3984,15 @@ struct NativeEditorTemporaryVideo {
 
     /// Public geometry helpers keep the view layer from implementing subtly
     /// different clamping or hit-target rules.
-    func timelineX(for time: TimeInterval, width: CGFloat) -> CGFloat { NativeEditorInteraction.x(forTime: time, duration: duration, width: width) }
-    func timelineTime(for x: CGFloat, width: CGFloat) -> TimeInterval { NativeEditorInteraction.time(forX: x, duration: duration, width: width) }
+    func timelineX(for time: TimeInterval, width: CGFloat) -> CGFloat { NativeEditorInteraction.x(forTime: time, duration: playbackDuration, width: width) }
+    func timelineTime(for x: CGFloat, width: CGFloat) -> TimeInterval { NativeEditorInteraction.time(forX: x, duration: playbackDuration, width: width) }
 
     private func refreshDuration() {
         let timelineDuration = timelineProjection.totalDuration
         duration = durationSourcesInvalidated ? timelineDuration : (authoritativeDuration ?? mediaDuration ?? timelineDuration)
         if !duration.isFinite || duration < 0 { duration = max(0, timelineDuration) }
         timelineItemsCache = nil
-        if currentTime > duration { seek(to: duration) }
+        if currentTime > playbackDuration { seek(to: playbackDuration) }
     }
 
     private func setAuthoritativeDuration(_ value: TimeInterval?) {
@@ -3931,12 +4011,12 @@ struct NativeEditorTemporaryVideo {
     private func finishPlayback(for endedPlayer: AVPlayer) {
         guard player === endedPlayer else { return }
         endedPlayer.pause()
-        currentTime = max(0, duration)
+        currentTime = max(0, playbackDuration)
         isPlaying = false
         // A composition has no active layers at its half-open end time.
         // Retain a generated frame from just inside the endpoint instead of
         // relying on VideoPlayer to keep its last surface after natural EOF.
-        _ = requestScrubFrame(at: duration)
+        _ = requestScrubFrame(at: playbackDuration)
     }
 
     private func configureCapabilities(from variant: [String: JSONValue]?) {
@@ -4159,6 +4239,10 @@ struct NativeEditorTemporaryVideo {
             value.revision.baseGeneration = generation
             return value
         }
+        // The follow-up edit remains in `document`, but all resolved media is
+        // owned by the preceding generation. Rebuild it so device narration
+        // is fetched from the newly published recipe and fenced to this base.
+        refreshRebasedSourcePreview()
     }
 
     private func selectionExists(_ value: EditorSelection) -> Bool {

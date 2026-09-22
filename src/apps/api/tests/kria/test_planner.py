@@ -10,7 +10,6 @@ from app.agents._runtime import TerminalError
 from app.agents._schemas.creator_agent import (
     AskUser,
     CapabilityAvailability,
-    ContextLabelIntent,
     CreativeStrategy,
     ProposeStrategy,
     ResolvedCreatorManifest,
@@ -86,7 +85,7 @@ def test_model_clip_intent_fields_are_stripped_unless_server_owned_values_are_su
             selected_media_ids=[],
             rationale="A grounded edit.",
             sport_labels=True,
-            context_label=ContextLabelIntent(),
+            context_label={"kind": "sport"},
             clip_intents=[untrusted],
             resolved_clip_intents=[
                 ResolvedClipIntent(
@@ -111,8 +110,7 @@ def test_model_clip_intent_fields_are_stripped_unless_server_owned_values_are_su
     default_strategy = adapt_creator_action(action).intents[0].arguments["strategy"]
     assert "clip_intents" not in default_strategy
     assert "resolved_clip_intents" not in default_strategy
-    assert default_strategy["sport_labels"] is True
-    assert default_strategy["context_label"]["kind"] == "sport"
+    assert not {"sport_labels", "context_label"} & set(default_strategy)
 
     server_intent = ClipIntent(intent_id="server", op="label", attribute="the sport")
     server_resolved = ResolvedClipIntent(
@@ -139,7 +137,7 @@ def test_model_clip_intent_fields_are_stripped_unless_server_owned_values_are_su
         .arguments["strategy"]
     )
     assert owned_strategy["clip_intents"][0]["intent_id"] == "server"
-    assert owned_strategy["sport_labels"] is False
+    assert "sport_labels" not in owned_strategy
     assert "context_label" not in owned_strategy
     resolved_media_id = owned_strategy["resolved_clip_intents"][0]["assignments"][0]["media_id"]
     assert resolved_media_id == "asset-verified"
@@ -381,6 +379,10 @@ async def test_live_creator_plan_releases_transaction_and_offloads_sync_agent(
         (True, "pending", "recovery"),
         (True, "provider_failure", "recovery"),
         (True, "cache_failure", "recovery"),
+        (False, "transcript", "action"),
+        (True, "transcript", "action"),
+        (False, "transcript_without_narration", "question"),
+        (True, "transcript_without_narration", "question"),
     ],
 )
 async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_closed(
@@ -389,6 +391,14 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
     outcome: str,
     expected_turn: str,
 ) -> None:
+    transcript = ClipIntent(
+        intent_id="score",
+        op="label",
+        attribute="the spoken score",
+        label_source="transcript",
+        transcript_kind="score",
+    )
+    is_transcript = outcome.startswith("transcript")
     creator_id = uuid.uuid4()
     item_id = uuid.uuid4()
     plan_id = uuid.uuid4()
@@ -407,6 +417,13 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
         edit_format="montage",
         render_program="guided",
         capabilities={"dispatch_render": CapabilityAvailability(available=True)},
+        narration={
+            "gcs_path": "voiceover-uploads/voice.mp3",
+            "generation": "1",
+            "duration_s": 20,
+        }
+        if outcome == "transcript"
+        else None,
         context_hash="a" * 64,
         manifest_hash="b" * 64,
     )
@@ -465,11 +482,12 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
                         render_program="guided",
                         selected_media_ids=[],
                         rationale="A beach story.",
+                        execution_contract="guided_voiceover_v1" if is_transcript else None,
                         # These are model-authored and must not survive when
                         # the shared service says no intent is needed.
-                        clip_intents=[
-                            ClipIntent(intent_id="model", op="label", attribute="the beach")
-                        ],
+                        clip_intents=[transcript]
+                        if is_transcript
+                        else [ClipIntent(intent_id="model", op="label", attribute="the beach")],
                         resolved_clip_intents=[
                             ResolvedClipIntent(
                                 intent_id="model",
@@ -484,7 +502,9 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
 
     monkeypatch.setattr(planner, "MainCreatorAgent", FakeAgent)
     monkeypatch.setattr(planner, "default_client", lambda: object())
-    if outcome == "provider_failure":
+    if is_transcript:
+        resolver = AsyncMock(return_value=PlannedIntentResolution([transcript], IntentResolution()))
+    elif outcome == "provider_failure":
         resolver = AsyncMock(side_effect=RuntimeError("provider unavailable"))
     elif outcome == "needs_creator":
         resolver = AsyncMock(
@@ -537,6 +557,15 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
     )
 
     assert result.plan.turn_value == expected_turn
+    if outcome == "transcript":
+        strategy = result.plan.intents[0].arguments["strategy"]
+        assert strategy["clip_intents"][0]["label_source"] == "transcript"
+        assert strategy["clip_intents"][0]["transcript_kind"] == "score"
+        assert "resolved_clip_intents" not in strategy
+        persist_answers.assert_not_awaited()
+    elif outcome == "transcript_without_narration":
+        assert not result.plan.intents
+        persist_answers.assert_not_awaited()
     if not flag_enabled:
         resolver.assert_not_awaited()
         load_clips.assert_not_awaited()
@@ -545,6 +574,8 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
     assert db.rollback.await_count >= 1
     load_clips.assert_awaited_once_with(db, item, persona)
     resolver.assert_awaited_once()
+    if is_transcript:
+        return
     if outcome == "resolved":
         strategy = result.plan.intents[0].arguments["strategy"]
         assert "clip_intents" not in strategy
@@ -586,3 +617,29 @@ def test_explicit_server_editor_action_retains_exact_render_approval() -> None:
         "render.request",
     ]
     assert plan.intents[1].depends_on == ["apply-editor-ops"]
+
+
+def test_strategy_adapter_keeps_only_deferred_transcript_intents():
+    from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
+
+    transcript = ClipIntent(
+        intent_id="score",
+        op="label",
+        attribute="spoken score",
+        label_source="transcript",
+        transcript_kind="score",
+    )
+    visual = ClipIntent(intent_id="sport", op="label", attribute="the sport shown")
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            clip_intents=[transcript, visual],
+            resolved_clip_intents=[ResolvedClipIntent(**visual.model_dump())],
+        ),
+        summary="Show the requested labels.",
+    )
+    plan = adapt_creator_action(action)
+    strategy = plan.intents[0].arguments["strategy"]
+    assert len(strategy["clip_intents"]) == 1
+    assert strategy["clip_intents"][0]["label_source"] == "transcript"
+    assert "resolved_clip_intents" not in strategy

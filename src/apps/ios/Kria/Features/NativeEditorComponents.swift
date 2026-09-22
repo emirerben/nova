@@ -205,15 +205,15 @@ struct NativeEditorTransport: View {
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                     let fraction = min(max(value.location.x / width, 0), 1)
-                    session.seek(to: max(session.duration, 0) * fraction)
+                    session.seek(to: max(session.playbackDuration, 0) * fraction)
                 })
                 .accessibilityElement()
                 .accessibilityLabel("Preview position")
                 .accessibilityValue("\(Int(progress * 100)) percent")
                 .accessibilityAdjustableAction { direction in
-                    let increment = max(session.duration, 1) / 20
+                    let increment = max(session.playbackDuration, 1) / 20
                     switch direction {
-                    case .increment: session.seek(to: min(clock.currentTime + increment, session.duration))
+                    case .increment: session.seek(to: min(clock.currentTime + increment, session.playbackDuration))
                     case .decrement: session.seek(to: max(clock.currentTime - increment, 0))
                     @unknown default: break
                     }
@@ -221,12 +221,12 @@ struct NativeEditorTransport: View {
             }
             .frame(height: 44)
 
-            Text(nativeTimecode(session.duration))
+            Text(nativeTimecode(session.playbackDuration))
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
                 .foregroundStyle(KriaColor.zinc)
                 .monospacedDigit()
                 .accessibilityLabel("Duration")
-                .accessibilityValue(nativeTimecode(session.duration))
+                .accessibilityValue(nativeTimecode(session.playbackDuration))
                 .accessibilityIdentifier("native-editor-duration")
         }
         .padding(.horizontal, 14)
@@ -235,8 +235,8 @@ struct NativeEditorTransport: View {
     }
 
     private var progress: CGFloat {
-        guard session.duration > 0 else { return 0 }
-        return min(max(clock.currentTime / session.duration, 0), 1)
+        guard session.playbackDuration > 0 else { return 0 }
+        return min(max(clock.currentTime / session.playbackDuration, 0), 1)
     }
 }
 

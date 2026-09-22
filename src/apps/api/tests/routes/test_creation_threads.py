@@ -36,6 +36,7 @@ from app.routes.creation_threads import (
     _fill_default_title_if_needed,
     _format_clip_limit,
     _is_status_only_message,
+    _job_projection,
     _load,
     _media_path,
     _other_project_input_references,
@@ -2599,12 +2600,12 @@ async def test_detail_poll_is_read_only_and_revision_stable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_thread_with_initial_message_uses_it_as_title(
+@pytest.mark.parametrize("message", [None, "  ", "Weekend trip recap"])
+async def test_create_thread_only_reserves_naming_for_a_submitted_prompt(
     monkeypatch: pytest.MonkeyPatch,
+    message: str | None,
 ) -> None:
-    """A thread created with `CreateBody.message` gets that message as its
-    title (never left at `_DEFAULT_TITLE`), whether or not any later chat
-    turn ever runs `_agent_message`'s own first-message title rule."""
+    """Save the fallback immediately; empty chats do not reserve a model call."""
 
     import app.routes.creation_threads as routes
 
@@ -2637,14 +2638,20 @@ async def test_create_thread_with_initial_message_uses_it_as_title(
 
     await routes.create_thread(
         request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
-        body=CreateBody(message="Weekend trip recap"),
+        body=CreateBody(message=message),
         user=user,
         db=db,
     )
 
     thread = db.add.call_args.args[0]
-    assert thread.title == "Weekend trip recap"
-    assert thread.state["title_source"] == "first_prompt"
+    if message and message.strip():
+        assert thread.title == "Weekend trip recap"
+        assert thread.state["title_source"] == "first_prompt"
+        assert thread.state["title_generation"] == "pending"
+    else:
+        assert thread.title == _DEFAULT_TITLE
+        assert "title_source" not in thread.state
+        assert "title_generation" not in thread.state
 
 
 def test_resolve_default_title_fill_prefers_accepted_opening_title() -> None:
@@ -3818,6 +3825,7 @@ async def test_get_thread_repairs_projection_from_current_item_job(
     monkeypatch.setattr(
         "app.routes.creation_threads.reconcile_render_state", AsyncMock(return_value=False)
     )
+    monkeypatch.setattr("app.routes.creation_threads._sync_agent", AsyncMock(return_value=False))
     monkeypatch.setattr("app.routes.creation_threads._response", AsyncMock(return_value=thread))
 
     await get_thread(str(thread.id), SimpleNamespace(id=user_id), db, Response())
@@ -3917,6 +3925,36 @@ async def test_list_summaries_batch_active_job_and_agent_status_for_safe_actions
         "variants": [{"variant_id": "one", "render_status": "rendering"}],
     }
     assert output[0].creator_agent == {"status": "rendering"}
+
+
+def test_job_projection_carries_a_human_failure_message_not_the_raw_code() -> None:
+    """KRI-163: the failure card used to print `failure_reason` itself
+    verbatim (e.g. "phone_plan_unsupported"). `_job_projection` must also
+    carry a sentence the client can show instead."""
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="processing_failed",
+        current_phase=None,
+        failure_reason="phone_plan_unsupported",
+        assembly_plan={"variants": []},
+    )
+    projection = _job_projection(job)
+    assert projection is not None
+    assert projection["failure_reason"] == "phone_plan_unsupported"
+    assert projection["failure_message"]
+    assert projection["failure_message"] != "phone_plan_unsupported"
+
+    # A job with no failure carries no message either.
+    ok_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="variants_ready",
+        current_phase=None,
+        failure_reason=None,
+        assembly_plan={"variants": []},
+    )
+    assert _job_projection(ok_job)["failure_message"] is None
+
+    assert _job_projection(None) is None
 
 
 @pytest.mark.asyncio
@@ -5053,4 +5091,34 @@ async def test_proxy_reservation_pins_original_and_rejects_changed_binding(monke
     with pytest.raises(HTTPException) as failure:
         await upload_urls(_request(), str(thread.id), payload, user, db)
     assert failure.value.status_code == 409
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_manual_rename_accepts_an_intervening_generated_title(monkeypatch):
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=5,
+        title="Barcelona Trip Reel",
+        state={"title_source": "generated", "title_generated_revision": 5},
+    )
+    db = Mock(commit=AsyncMock(), refresh=AsyncMock())
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    await rename_thread(
+        _request(),
+        str(thread.id),
+        RenameBody(
+            title="Summer Memories", expected_revision=4, client_event_id="rename-title-race"
+        ),
+        user,
+        db,
+    )
+    assert thread.title == "Summer Memories"
+    assert thread.state["title_source"] == "user"
     db.commit.assert_awaited_once()

@@ -715,46 +715,6 @@
     {
       "argument_schema": {
         "$defs": {
-          "ContextLabelIntent": {
-            "additionalProperties": false,
-            "description": "Bounded intent for a trusted pipeline-resolved contextual label.\n\nThis carries no label text. Clip metadata is descriptive evidence and must\nbe resolved and confirmed by the trusted render pipeline before rendering.",
-            "properties": {
-              "kind": {
-                "const": "sport",
-                "default": "sport",
-                "title": "Kind",
-                "type": "string"
-              },
-              "per_clip": {
-                "default": true,
-                "title": "Per Clip",
-                "type": "boolean"
-              },
-              "placement": {
-                "const": "bottom_right",
-                "default": "bottom_right",
-                "title": "Placement",
-                "type": "string"
-              },
-              "size": {
-                "const": "small",
-                "default": "small",
-                "title": "Size",
-                "type": "string"
-              },
-              "source": {
-                "default": "clip_metadata",
-                "enum": [
-                  "clip_metadata",
-                  "user_provided"
-                ],
-                "title": "Source",
-                "type": "string"
-              }
-            },
-            "title": "ContextLabelIntent",
-            "type": "object"
-          },
           "CreativeStrategy": {
             "additionalProperties": false,
             "description": "Bounded editorial choices selected by the orchestrator.\n\n``intro_hook`` remains an advisory concept for backwards compatibility.\n``opening_title`` is the separate, confirmed copy contract: when present it\nis burned verbatim (after the renderer's normal surrounding trim), rather\nthan being sent back through an LLM.  The optional typography fields use\nthe same font/color vocabulary as the authoritative TextElement schema.",
@@ -818,18 +778,6 @@
                 "default": null,
                 "description": "Confirmed exact closing/end-card copy; never an LLM-generated suggestion.",
                 "title": "Closing Title"
-              },
-              "context_label": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContextLabelIntent"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Confirmed request for a server-resolved contextual label; this carries no model-authored label text."
               },
               "direction": {
                 "default": "fast_montage",
@@ -1029,15 +977,6 @@
                 "title": "Pacing",
                 "type": "string"
               },
-              "participant_labels": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "single_subject"
-                ],
-                "title": "Participant Labels",
-                "type": "string"
-              },
               "rationale": {
                 "default": "",
                 "maxLength": 2000,
@@ -1052,11 +991,6 @@
                 ],
                 "title": "Render Program",
                 "type": "string"
-              },
-              "score_labels": {
-                "default": false,
-                "title": "Score Labels",
-                "type": "boolean"
               },
               "selected_media_ids": {
                 "items": {
@@ -1082,11 +1016,6 @@
                 "default": null,
                 "description": "Confirmed exact per-shot label copy in on-screen order; each label is burned verbatim on its own shot and never rewritten by a specialist.",
                 "title": "Shot Labels"
-              },
-              "sport_labels": {
-                "default": false,
-                "title": "Sport Labels",
-                "type": "boolean"
               },
               "story_structure": {
                 "items": {

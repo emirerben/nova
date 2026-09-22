@@ -111,7 +111,20 @@ def test_creator_request_contract_promotes_explicit_scope_and_required_intent(mo
         "Highlight the sports and the score based on the audio."
     )
     strategy = _apply_explicit_render_intent(
-        CreativeStrategy(audio_strategy="voiceover", render_program="native"),
+        CreativeStrategy(
+            audio_strategy="voiceover",
+            render_program="native",
+            clip_intents=[
+                {
+                    "intent_id": kind,
+                    "op": "label",
+                    "attribute": kind,
+                    "label_source": "transcript",
+                    "transcript_kind": kind,
+                }
+                for kind in ("participant", "score", "topic")
+            ],
+        ),
         request,
         manifest=manifest,
     )
@@ -120,9 +133,11 @@ def test_creator_request_contract_promotes_explicit_scope_and_required_intent(mo
     assert _explicit_media_scope(request) == "all"
     assert strategy.media_scope == "all"
     assert strategy.execution_contract == "guided_voiceover_v1"
-    assert strategy.participant_labels == "single_subject"
-    assert strategy.score_labels is True
-    assert strategy.sport_labels is True
+    assert {intent.transcript_kind for intent in strategy.clip_intents} == {
+        "participant",
+        "score",
+        "topic",
+    }
     assert strategy.mixed_media_timing is not None
     assert strategy.render_program == "guided"
 
@@ -886,10 +901,11 @@ def test_explicit_typed_intent_survives_varied_wording_and_negative_scope(monkey
     )
 
     assert retained.media_scope == "all"
-    assert retained.participant_labels == "single_subject"
-    assert retained.score_labels is True
-    assert retained.sport_labels is True
-    assert retained.context_label is not None
+    assert {intent.transcript_kind for intent in retained.clip_intents} == {
+        "participant",
+        "score",
+        "topic",
+    }
     assert corrected.media_scope == "selected"
     assert _explicit_media_scope("Don't use all media") == "selected"
 
@@ -908,7 +924,13 @@ def test_confirmed_creator_request_keeps_the_shared_bound() -> None:
     assert request.startswith(first)
 
 
-def test_guided_brief_seeds_pinned_narration_for_worker_transcription(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("caption_style", "expected_style"),
+    [("auto", None), ("editorial", "sentence"), ("clean", "sentence"), ("kinetic", "word")],
+)
+def test_guided_brief_seeds_pinned_narration_for_worker_transcription(
+    monkeypatch, caption_style, expected_style
+) -> None:
     monkeypatch.setattr(settings, "creator_prompt_fidelity_enabled", True, raising=False)
     manifest = resolve_creator_manifest(
         item_id="item-1",
@@ -928,6 +950,7 @@ def test_guided_brief_seeds_pinned_narration_for_worker_transcription(monkeypatc
             audio_strategy="voiceover",
             execution_contract="guided_voiceover_v1",
             media_scope="all",
+            caption_style=caption_style,
         ),
     )
     item = SimpleNamespace(
@@ -947,6 +970,7 @@ def test_guided_brief_seeds_pinned_narration_for_worker_transcription(monkeypatc
         "duration_s": 12.0,
         "words": [],
         "language": "",
+        **({"caption_style": expected_style} if expected_style else {}),
     }
 
 

@@ -16,7 +16,12 @@ creator wording):
 $candidate_intents
 
 Return every distinct requested operation as one of:
-- label: per-clip factual name/value to be resolved later
+- label: a factual label. By default label_source is "clip" and its value is
+  resolved later from footage. For a label explicitly requested from the
+  creator's spoken narration, set label_source to "transcript" and set
+  transcript_kind to exactly "participant", "score", or "topic". These are
+  deferred narration-source labels: do not invent their text or treat them as
+  footage facts.
 - group: chapter/membership grouping
 - order: membership moved first or last
 - include: membership explicitly included
@@ -37,6 +42,9 @@ values. Return no intents and ask the creator to name the concrete groups.
 Every intent must contain:
 - intent_id: stable short identifier you create; every intent_id must be unique
 - op, attribute, and optional position/caption_attribute per the JSON schema
+- label_source ("clip" unless the creator explicitly asks for a spoken
+  narration label); transcript_kind is required only for label_source
+  "transcript" and must be participant, score, or topic
 - source_quote: an EXACT contiguous substring copied from Creator request or
   Latest creator message that supports this operation
 - creator_text only when it is exact creator-written on-screen caption copy;
@@ -48,4 +56,4 @@ question. Do not ask because a factual answer is unknown; the resolver handles
 that. Never return a subset.
 
 Return only JSON:
-{"intents":[{"intent_id":"...","op":"label|group|order|include|caption","attribute":"...","creator_text":null,"caption_attribute":null,"position":null,"source_quote":"exact creator quote"}],"question":null}
+{"intents":[{"intent_id":"...","op":"label|group|order|include|caption","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null,"source_quote":"exact creator quote"}],"question":null}

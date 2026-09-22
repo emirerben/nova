@@ -42,11 +42,10 @@ struct PreviewAudioBinding: Sendable {
 @MainActor public struct AVPlayerPreviewComposer: PreviewComposing {
     /// Brand furniture to add to the composition this composer builds.
     ///
-    /// Defaults to OFF, and the exporter is what turns it on. Branding is not
-    /// part of the creator's edit: it must not change the duration their
-    /// scrubber reports, must not appear in the internal sampling passes that
-    /// build blur fills and thumbnails, and must not be something they can
-    /// select or trim. It belongs to the file that leaves the phone.
+    /// The editor and exporter request `.standard` so playback matches the
+    /// saved file. Default to `.none` for internal sampling passes that build
+    /// blur fills and thumbnails. Branding stays outside the editable recipe
+    /// so it cannot be selected, trimmed, or appended twice on export.
     public let branding: KriaBranding.Options
     public init(branding: KriaBranding.Options = .none) { self.branding = branding }
     public func makePreview(recipe: EditRecipe, assetURLs: [String: URL]) async throws -> PreviewComposition {
@@ -56,8 +55,7 @@ struct PreviewAudioBinding: Sendable {
         }
         // Ahead of any asset loading: a branding file missing from the bundle
         // is a build defect, and the creator should meet it in a moment rather
-        // than after a full compose. A no-op on every path but the export,
-        // which is the only caller that asks for branding at all.
+        // than after a full compose. Internal unbranded sampling skips this.
         try KriaBranding.preflight(branding)
         let composition = AVMutableComposition()
         let canvas = CGSize(width: recipe.canvas.width, height: recipe.canvas.height)

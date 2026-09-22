@@ -332,3 +332,33 @@ async def test_failed_preparation_preserves_recovery_policy(code, retryable):
     assert session.preparation["error_code"] == code
     assert session.preparation["retryable"] is retryable
     assert attempt.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_failed_planning_preparation_has_a_public_planning_message() -> None:
+    attempt_id, session_id = uuid4(), uuid4()
+    attempt = SimpleNamespace(
+        id=attempt_id, session_id=session_id, status="running", lease_until=datetime.now(UTC)
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        status="briefing",
+        last_error={"code": "planning_unavailable"},
+        preparation={
+            "attempt_id": str(attempt_id),
+            "status": "resolving",
+            "completed": 2,
+            "total": 2,
+        },
+    )
+
+    class FakeDB:
+        async def get(self, *_args, **_kwargs):
+            return attempt
+
+    await finish_preparation(FakeDB(), session)
+
+    assert session.preparation["error_code"] == "planning_unavailable"
+    assert session.preparation["message"] == (
+        "Planning your edit is unavailable right now. Your request is saved; try again later."
+    )

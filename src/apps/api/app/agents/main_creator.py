@@ -33,20 +33,12 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
 )
 
-# v28 -> v29: added the flag-gated KRI-127 clip_intents section (see
-# `_CLIP_INTENTS_PROMPT_SECTION` below). v29 -> v30: KRI-129 added the
-# `caption` op (+ `caption_attribute`) to the SAME section.
-# `settings.clip_intents_enabled=False` renders the identical v28 prompt text
-# byte-for-byte (the new template slot renders to an empty string on the same
-# blank line it replaced) -- pinned by
-# `test_main_creator_prompt_flag_off_is_byte_identical_to_pre_kri127`. There is
-# no repo precedent for a second, flag-conditional prompt_version, so this is a
-# single bump covering both prompt states.
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-22-v31"
+# KRI-156 retires per-feature label fields. Narration intents are always
+# described; the visual resolver remains gated by clip_intents_enabled.
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-22-v33"
 
-# KRI-127 (flag `clip_intents_enabled`). Kept out of prompts/main_creator.txt's
-# unconditional JSON envelope so a flag-off render never differs by even one
-# example line; only ever substituted into the one optional template slot.
+# Visual instructions are substituted only when the resolver flag is enabled;
+# the base prompt independently describes deferred transcript label intents.
 # Rendered INSIDE the exact-on-screen-copy rule (the `$described_text_exception`
 # slot in prompts/main_creator.txt) when clip intents are on, "" when off.
 # Position matters: appended after the rule the model kept asking the creator
@@ -73,8 +65,8 @@ _DESCRIBED_TEXT_EXCEPTION = (
 _CLIP_INTENTS_PROMPT_SECTION = """
 OPEN-VOCABULARY CLIP INTENTS
 When the creator asks to label, name, group, order, include, or caption clips by ANY
-attribute they describe in their own words -- not only a coded sport/participant/score
-field -- add `clip_intents` to `strategy`: a list of at most 6 objects, each
+attribute they describe in their own words -- add `clip_intents` to `strategy`:
+a list of at most 6 objects, each
 {"intent_id": "short-slug", "op": "label|group|order|include|caption", "attribute": "the
 creator's described attribute -- WHICH clips this is about, in your own words",
 "creator_text": "the creator's exact on-screen words for this intent, or null",
@@ -87,9 +79,11 @@ where nobody is on screen to the end" (order, position "last"), "only use the cl
 dog in them" (include), "put my product's name under the unboxing shots" (label), 'say
 "post match feast" on the food clips' (caption; creator_text="post match feast",
 attribute="the food clips"), "add a caption about the weather on the beach clips" (caption;
-creator_text=null, attribute="the beach clips", caption_attribute="the weather"). Prefer
-`clip_intents` over `sport_labels`/`context_label` for any such request: when you use
-`clip_intents`, leave `sport_labels` false and `context_label` null. Never put a per-clip
+creator_text=null, attribute="the beach clips", caption_attribute="the weather").
+Use label_source="clip" for footage-derived labels (including the sport being played).
+Requests about spoken scores, participant placeholders, or spoken topics use the
+transcript source described above instead; never send them through the visual source.
+Never put a per-clip
 answer, a media id, or label/caption text you invented into `clip_intents` -- the server
 matches clips to the described attribute and verifies any on-screen value against the
 footage before it can render. `creator_text` may ONLY be the creator's own exact written

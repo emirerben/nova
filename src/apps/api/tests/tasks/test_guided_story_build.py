@@ -318,7 +318,7 @@ def test_redelivery_reuses_pinned_execution_plan_without_rematching(monkeypatch)
     monkeypatch.setattr(
         guided_story,
         "validate_guided_snapshot",
-        lambda _raw: (4, "a" * 64, SimpleNamespace()),
+        lambda _raw: (4, "a" * 64, SimpleNamespace(narration=None)),
     )
     monkeypatch.setattr(
         guided_story,

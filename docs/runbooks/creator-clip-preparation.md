@@ -35,6 +35,13 @@ worker loss does not leave a committed preparation silently stranded. Delivery
 is at least once; the attempt status, lease token, source digest, and generation
 checks make re-entry safe.
 
+When preparation is waiting on pool analysis, queued assets that remain unclaimed
+for two minutes can be republished in batches of up to ten. Recovery preserves
+the original analysis attempt token, commits the dispatch cooldown before
+publishing outside the database locks, and leaves the locked pool-task claim
+responsible for rejecting duplicates before provider analysis. The preparation
+deadline still bounds this recovery; it does not extend the global pool lease.
+
 The task resumes the original planning inputs only after all required analysis
 is available. The resume path revalidates the attempt and its owning plan,
 session, item, and sources before publishing any planning result.
@@ -75,12 +82,20 @@ The creator session projection may include an optional `preparation` object with
 web and iOS clients omit this object safely; clients that understand it should
 continue polling while the status is `queued`, `analyzing`, or `resolving`.
 
+Each active preparation attempt also projects one assistant `status_update`
+into the creation-thread transcript, acknowledging that the request is saved
+and will continue automatically. The stable receipt
+`creator-preparation:{attempt_id}` prevents duplicate acknowledgments on repeated
+polls. Clients that do not understand the preparation object can display this
+ordinary assistant message without an app update.
+
 The public provider and planning outcomes are distinct:
 
 | Outcome | Meaning | Recovery behavior |
 | --- | --- | --- |
 | `provider_quota_exceeded` | Gemini explicitly denied the call because of a quota, billing, or monthly spend limit. | The attempt fails with a safe retryable error. Do not treat a generic rate-limit 429 as this outcome. Retry after the provider limit is addressed. |
 | `ai_budget_exhausted` | Nova's own AI cost-control reservation rejected the call before provider work. | The attempt fails with the cost-control error and remains retryable after the allowed budget or attribution is corrected. |
+| `planning_unavailable` | Source preparation completed, but resuming the edit planner failed. | The request remains saved with a retryable planning error; do not report this as unavailable clip analysis. |
 | genuine no match | Analysis completed, but the semantic request has no matching source clip. | Continue the creator conversation and ask a bounded clarification question. This is a planning result, not a provider outage. |
 
 `provider_outcome_unknown`, `media_unavailable`, and `analysis_unavailable`

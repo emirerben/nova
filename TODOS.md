@@ -8,6 +8,35 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## KRI-163 phone render failure UX — deferred follow-ups (2026-09-22)
+
+The crossfade compile bug that killed every phone render since Sept 1 is
+fixed, and every failure now records a reason and shows a real sentence
+(`failure_message`) instead of a raw code or nothing. Two related fixes were
+scoped out to keep that PR bounded.
+
+### "Retry generation" is misleading for a deterministic compile rejection
+**Priority:** P3
+**What:** `CreationConfirmationStage.swift`'s `retryOrCreateButton` only
+special-cases the four `nonRetryablePhoneGateErrorCodes` (pre-Job gate
+rejections). A post-Job compile failure (`phone_plan_unsupported`,
+`phone_plan_failed`) is just as deterministic — retrying re-sends the
+identical plan through the identical compiler and fails identically — but
+still shows "Retry generation".
+**Acceptance:** Extend the non-retryable treatment (or a parallel one) to
+cover `Job.failure_reason` codes that can't succeed without the plan
+changing, using `failure_message` for the copy.
+
+### Runtime-v1 / v2 failure-card inconsistency
+**Priority:** P3
+**What:** `CreationConfirmationStage` (runtime v1) and `FailedStage`
+(runtime v2, `ChatWorkspaceView.swift`) are two separate failure surfaces.
+v1 now reads `job.failureMessage ?? lastAssistantErrorMessage ??
+preparationMessage`; v2 already read a similar chain. Worth confirming they
+converge on identical copy and eventually sharing one view.
+**Acceptance:** Audit both surfaces' fallback chains side by side; unify if
+they diverge on any failure class.
+
 ## KRI-111 reviewer demo login — deferred follow-ups (2026-09-17)
 
 The Apple Beta App Review demo account shipped as a flag-gated email/password login plus an admin seed of finished videos. These were scoped out of the fix so the resubmission could go out same-day.

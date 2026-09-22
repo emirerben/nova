@@ -529,6 +529,46 @@ def test_approved_static_text_uses_shared_layout_and_bound_font():
     assert font.fingerprint.byte_count > 1000
 
 
+def test_phone_guided_sentence_captions_apply_meta_and_group_only_the_rendered_text():
+    plan, bindings = fixture()
+    title = TextElement(id="title", text="Unchanged title", start_s=0, end_s=3, font_family="Inter")
+    captions = [
+        TextElement(
+            id=f"caption-{index}",
+            text=word,
+            start_s=index * 0.2,
+            end_s=(index + 1) * 0.2,
+            font_family="Inter",
+            source_params={"source": "caption_cue"},
+        )
+        for index, word in enumerate(["It", "costs", "172.5", "dollars.”"])
+    ]
+    plan.text_elements = [title, *captions]
+    plan.editor_caption_meta = {
+        "style": "sentence",
+        "y_frac": 0.7,
+        "color": "#FF0000",
+        "size_px": 88,
+    }
+
+    recipe = compile_phone_guided_plan(plan, bindings)
+
+    assert " ".join(run.text for run in recipe.text_layers[0].runs) == "Unchanged title"
+    rendered = recipe.text_layers[1:]
+    assert len(rendered) == len(captions)
+    assert [" ".join(run.text for run in layer.runs) for layer in rendered] == [
+        "It costs 172.5 dollars.”"
+    ] * len(captions)
+    assert [(layer.start, layer.end) for layer in rendered] == [
+        (0, 0.2),
+        (0.2, 0.4),
+        (0.4, 0.6),
+        (0.6, 0.8),
+    ]
+    assert all(layer.anchor_y == pytest.approx(0.7 * 1920) for layer in rendered)
+    assert all(layer.runs[0].fill.red == 1 for layer in rendered)
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -1402,16 +1442,40 @@ def test_pool_video_keeps_its_full_window_into_a_crossfade(visual_duration_s, wi
     )
 
 
-def test_refit_that_shortens_a_pool_video_before_a_crossfade_is_refused():
+def test_refit_that_shortens_a_pool_video_before_a_crossfade_shortens_the_fade_instead():
     # A 3.97s file under a 4s window refits to 3.92s and would end at 6.92,
-    # before the photo's fade completes at 7.0: Composition.swift throws
-    # invalidTimeline, so the phone would fail the export after approval.
+    # before the photo's fade completes at 7.0 -- an 80ms shortfall from the
+    # refit safety margin, not a broken plan (KRI-163). Rather than refuse the
+    # whole render, the fade shrinks to the nearest frame the refit clip
+    # actually covers (0.3s requested -> 0.2s, the overlap floored to 1/30s).
     plan, bindings, visuals = pool_video_crossfading_into_a_photo(3.97, 0, 4)
-    with pytest.raises(UnsupportedPhonePlan, match="transition needs the full source window"):
-        compile_phone_guided_plan(plan, bindings, visuals)
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    _, pooled, card = recipe.tracks[0].clips
+    assert card.transition is not None
+    assert card.transition.duration == pytest.approx(0.2)
+    # The invariant Composition.swift enforces: the outgoing clip must still
+    # be playing when the fade it's part of ends.
+    assert pooled.timeline_start + pooled.source_duration + 1e-6 >= (
+        card.timeline_start + card.transition.duration
+    )
+
+
+def test_refit_that_leaves_under_a_frame_of_overlap_drops_the_transition_to_a_cut():
+    # A 3.76s file refits to 3.71s, leaving only ~10ms of overlap for the
+    # 0.3s requested fade -- under one frame, too little to render any
+    # crossfade at all. Dropped to a hard cut rather than refused outright.
+    plan, bindings, visuals = pool_video_crossfading_into_a_photo(3.76, 0, 4)
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    _, _, card = recipe.tracks[0].clips
+    assert card.transition is None
 
 
 def test_refit_that_shortens_bound_footage_before_a_transition_is_refused():
+    # Here the device file (2.5s) is drastically shorter than what BOTH
+    # moments requested (a 3s window and a [5,8] window), so both saturate to
+    # the same 2.45s cap -- the first clip doesn't even reach where the
+    # second one starts on the timeline (2.45 < 2.7), a genuine hole rather
+    # than a shortfall the fade clamp can absorb. This must still fail closed.
     plan, bindings = transition_fixture()
     bindings[0].original.duration_s = 2.5  # the first 3s window refits to 2.45s
     with pytest.raises(UnsupportedPhonePlan, match="transition needs the full source window"):

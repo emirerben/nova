@@ -129,3 +129,31 @@ def test_pure_duration_request_has_no_intents() -> None:
     input = ClipIntentPlannerInput(creator_request="Make this a fast 20 second edit.")
     out = _agent().parse('{"intents": [], "question": null}', input)
     assert out.intents == []
+
+
+def test_parse_keeps_same_attribute_distinct_across_clip_and_transcript_sources() -> None:
+    request = "Label the score on clips and show the score I say."
+    raw = json.dumps(
+        {
+            "intents": [
+                {
+                    "intent_id": "visual-score",
+                    "op": "label",
+                    "attribute": "score",
+                    "source_quote": "Label the score on clips",
+                },
+                {
+                    "intent_id": "spoken-score",
+                    "op": "label",
+                    "attribute": "score",
+                    "label_source": "transcript",
+                    "transcript_kind": "score",
+                    "source_quote": "show the score I say",
+                },
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request))
+    assert [intent.label_source for intent in out.intents] == ["clip", "transcript"]
+    assert out.intents[1].transcript_kind == "score"
