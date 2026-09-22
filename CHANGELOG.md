@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.113.0] - 2026-09-22
+
+### Changed
+- fix: enable photo and video imports in existing iPhone edits (#1128) <!-- release-pr: 1128 -->
+
 ## [0.76.112.0] - 2026-09-22
 
 ### Changed
