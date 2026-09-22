@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.142.0] - 2026-09-22
+
+### Added
+- feat(ios): a proper signup screen — frame-stack hero, entrance motion, matched consent (KRI-161) (#1159) <!-- release-pr: 1159 -->
+
 ## [0.76.141.0] - 2026-09-22
 
 ### Changed
