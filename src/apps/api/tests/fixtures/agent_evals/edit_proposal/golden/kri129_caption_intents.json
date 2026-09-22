@@ -1,0 +1,92 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.16.0",
+  "input": {
+    "idea": "A day out with friends",
+    "theme": "Park then pub",
+    "direction": "guided_story",
+    "goal": "Group the footage by where it happened",
+    "creator_request": "Group the pub videos together and say \"post match pub\" on the pub chapter.",
+    "pace": "balanced",
+    "target_duration_s": 25,
+    "clip_intents": [
+      {
+        "intent_id": "i-caption-pub",
+        "op": "caption",
+        "attribute": "pub videos",
+        "creator_text": "post match pub",
+        "caption_text": "post match pub",
+        "caption_grounding": "creator_text",
+        "status": "resolved",
+        "assignments": [
+          {
+            "media_id": "clip_pub",
+            "evidence": "group raising glasses in a neighborhood pub",
+            "confidence": 1.0,
+            "grounding": "creator_text"
+          }
+        ]
+      }
+    ],
+    "media": [
+      {
+        "media_id": "clip_park",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "a quiet park path",
+        "setting": "a city park",
+        "activity": "walking outdoors"
+      },
+      {
+        "media_id": "clip_soccer",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "a soccer match",
+        "setting": "a sports field",
+        "activity": "playing soccer"
+      },
+      {
+        "media_id": "clip_volleyball",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "a volleyball rally",
+        "setting": "a sports field",
+        "activity": "playing volleyball"
+      },
+      {
+        "media_id": "clip_speech",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "a person talking to the camera",
+        "setting": "a park bench",
+        "activity": "talking to the camera",
+        "speaks_to_camera": true,
+        "transcript": "hey everyone, quick update"
+      },
+      {
+        "media_id": "clip_pub",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "a group raising glasses",
+        "setting": "a neighborhood pub",
+        "activity": "celebrating with drinks"
+      }
+    ]
+  },
+  "raw_text": "{\"title\": \"Park then pub\", \"duration_s\": 25, \"story_beats\": [{\"topic\": \"Park\", \"thought\": \"A lively afternoon in the park.\", \"media_ids\": [\"clip_park\"], \"layout\": \"fullscreen\", \"duration_s\": 5}, {\"topic\": \"Soccer\", \"thought\": \"A soccer match plays out on the field.\", \"media_ids\": [\"clip_soccer\"], \"layout\": \"fullscreen\", \"duration_s\": 5}, {\"topic\": \"Volleyball\", \"thought\": \"A volleyball rally continues nearby.\", \"media_ids\": [\"clip_volleyball\"], \"layout\": \"fullscreen\", \"duration_s\": 5}, {\"topic\": \"Talking\", \"thought\": \"A moment talking straight to the camera.\", \"media_ids\": [\"clip_speech\"], \"layout\": \"fullscreen\", \"duration_s\": 5}, {\"topic\": \"Pub\", \"thought\": \"post match pub\", \"media_ids\": [\"clip_pub\"], \"layout\": \"fullscreen\", \"duration_s\": 5}]}",
+  "meta": {
+    "source": "hand-authored-kri129-caption-intent-regression",
+    "expected_topics": [
+      "park",
+      "soccer",
+      "volleyball",
+      "pub"
+    ],
+    "contract": "KRI-129: the chat turn already resolved the creator's quoted 'post match pub' into a caption clip-intent for the pub clip. The recorded model response also captioned the Park beat on its own ('A lively afternoon in the park.') -- the exact failure mode the quoted-phrase heuristic could not always prevent (the model kept captioning an unlabelled chapter). app.agents.edit_proposal._apply_caption_intents must force the pub beat's thought to exactly \"post match pub\" and blank every other beat's thought, including the Park beat's unrequested one."
+  }
+}

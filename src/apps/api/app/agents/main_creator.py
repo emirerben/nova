@@ -34,37 +34,49 @@ from app.schemas.edit_proposal import (
 )
 
 # v28 -> v29: added the flag-gated KRI-127 clip_intents section (see
-# `_CLIP_INTENTS_PROMPT_SECTION` below). `settings.clip_intents_enabled=False`
-# renders the identical v28 prompt text byte-for-byte (the new template slot
-# renders to an empty string on the same blank line it replaced) -- pinned by
+# `_CLIP_INTENTS_PROMPT_SECTION` below). v29 -> v30: KRI-129 added the
+# `caption` op (+ `caption_attribute`) to the SAME section.
+# `settings.clip_intents_enabled=False` renders the identical v28 prompt text
+# byte-for-byte (the new template slot renders to an empty string on the same
+# blank line it replaced) -- pinned by
 # `test_main_creator_prompt_flag_off_is_byte_identical_to_pre_kri127`. There is
 # no repo precedent for a second, flag-conditional prompt_version, so this is a
 # single bump covering both prompt states.
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-21-v29"
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-22-v30"
 
 # KRI-127 (flag `clip_intents_enabled`). Kept out of prompts/main_creator.txt's
 # unconditional JSON envelope so a flag-off render never differs by even one
 # example line; only ever substituted into the one optional template slot.
 _CLIP_INTENTS_PROMPT_SECTION = """
 OPEN-VOCABULARY CLIP INTENTS
-When the creator asks to label, name, group, order, or include clips by ANY attribute they
-describe in their own words -- not only a coded sport/participant/score field -- add
-`clip_intents` to `strategy`: a list of at most 6 objects, each
-{"intent_id": "short-slug", "op": "label|group|order|include", "attribute": "the creator's
-described attribute, in your own words", "creator_text": "the creator's exact on-screen
-words for this intent, or null", "position": "first|last (only for op=\\"order\\"), else
-null"}. Examples this covers (diverse; treat every similarly-shaped request the same way,
-not only these): "put the name of the dish on each food clip" (label), "group these by
-city" (group), "move the clips where nobody is on screen to the end" (order, position
-"last"), "only use the clips with my dog in them" (include), "put my product's name under
-the unboxing shots" (label). Prefer `clip_intents` over `sport_labels`/`context_label` for
-any such request: when you use `clip_intents`, leave `sport_labels` false and
-`context_label` null. Never put a per-clip answer, a media id, or label text you invented
-into `clip_intents` -- the server matches clips to the described attribute and verifies any
-on-screen value against the footage before it can render. `creator_text` may ONLY be the
-creator's own exact written words for that intent, copied verbatim; never your paraphrase
-or an inference from clip metadata. `analysis_only_not_copy` evidence may inform which
-owned clips an attribute is about, but you never author the label text yourself.
+When the creator asks to label, name, group, order, include, or caption clips by ANY
+attribute they describe in their own words -- not only a coded sport/participant/score
+field -- add `clip_intents` to `strategy`: a list of at most 6 objects, each
+{"intent_id": "short-slug", "op": "label|group|order|include|caption", "attribute": "the
+creator's described attribute -- WHICH clips this is about, in your own words",
+"creator_text": "the creator's exact on-screen words for this intent, or null",
+"caption_attribute": "op=\\"caption\\" with no creator_text ONLY -- what the caption should
+be ABOUT (e.g. \\"the weather\\"), never which clips; null for every other case",
+"position": "first|last (only for op=\\"order\\"), else null"}. Examples this covers
+(diverse; treat every similarly-shaped request the same way, not only these): "put the name
+of the dish on each food clip" (label), "group these by city" (group), "move the clips
+where nobody is on screen to the end" (order, position "last"), "only use the clips with my
+dog in them" (include), "put my product's name under the unboxing shots" (label), 'say
+"post match feast" on the food clips' (caption; creator_text="post match feast",
+attribute="the food clips"), "add a caption about the weather on the beach clips" (caption;
+creator_text=null, attribute="the beach clips", caption_attribute="the weather"). Prefer
+`clip_intents` over `sport_labels`/`context_label` for any such request: when you use
+`clip_intents`, leave `sport_labels` false and `context_label` null. Never put a per-clip
+answer, a media id, or label/caption text you invented into `clip_intents` -- the server
+matches clips to the described attribute and verifies any on-screen value against the
+footage before it can render. `creator_text` may ONLY be the creator's own exact written
+words for that intent, copied verbatim; never your paraphrase or an inference from clip
+metadata. `label` prints a short tag on EVERY matching clip; `caption` is different -- it is
+ONE short on-screen phrase for the WHOLE group of matching clips (a chapter), never a
+per-clip value, so its `attribute` still names which clips it's for while
+`caption_attribute` (only when there is no `creator_text`) names what the one phrase should
+say. `analysis_only_not_copy` evidence may inform which owned clips an attribute or
+`caption_attribute` is about, but you never author the label or caption text yourself.
 """.strip("\n")
 
 

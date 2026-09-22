@@ -407,6 +407,25 @@ def _clip_intents_prompt_note(
                 f"for them. Clips labeled the same value are a grouping signal: {pairs} -- "
                 "clips sharing a value belong in the same chapter."
             )
+        elif intent.op == "caption":
+            caption_label = (intent.caption_attribute or intent.attribute).strip()[:80]
+            if intent.caption_text:
+                text_clause = (
+                    " The server applies the on-screen text -- set that beat's `thought` to "
+                    f'exactly "{intent.caption_text}", copied verbatim with no rewording.'
+                )
+            else:
+                text_clause = (
+                    " The server fills in that beat's `thought` after you return it -- leave "
+                    'it "".'
+                )
+            clauses.append(
+                f'CAPTION ("{caption_label}"): {aliases} belong together in ONE beat, exactly '
+                "like GROUP. If there are more than 4 of them, spread them across CONSECUTIVE "
+                f"beats that all share this same topic.{text_clause} No other beat may repeat, "
+                "paraphrase, or reference this caption -- do NOT write it as its own label or "
+                "title, and leave every other beat's `thought` about only its own media."
+            )
     if not clauses:
         return ""
     return (
@@ -603,6 +622,128 @@ def _validate_clip_intents(
                     f"edit_proposal: clip intent violated -- ORDER(last) {alias_label} "
                     "must come after the rest of the plan"
                 )
+
+
+def _resolved_caption_intents(
+    input: EditProposalAgentInput,  # noqa: A002
+) -> list[ResolvedClipIntent]:
+    """Resolved caption intents that carry an actual on-screen phrase.
+
+    Honors the same shot_labels precedence and fast_montage skip every other
+    clip-intent lane observes (`_clip_intents_prompt_note`,
+    `_validate_clip_intents`): a caption binds to a story beat, and the two
+    creator-copy contracts were never designed to compose.
+    """
+
+    if input.shot_labels or not input.clip_intents or input.direction == "fast_montage":
+        return []
+    return [
+        intent
+        for intent in input.clip_intents
+        if intent.status == "resolved"
+        and intent.op == "caption"
+        and (intent.caption_text or "").strip()
+    ]
+
+
+def _reorder_beats_for_caption_contiguity(
+    output: EditProposalAgentOutput,
+    input: EditProposalAgentInput,  # noqa: A002
+    captions: list[ResolvedClipIntent],
+    id_to_alias: dict[str, str],
+) -> None:
+    """Best-effort deterministic repair so a caption intent's clips land in one
+    contiguous run of beats, mirroring GROUP's own reorder-not-reject repair
+    (`_reorder_beats_for_clip_intent_order`). Only beat SEQUENCE changes -- no
+    beat's content, topic, or duration is touched. When a trivial reorder
+    still leaves a caption's clips split across non-adjacent beats,
+    `_apply_caption_intents` falls back to the first matching beat rather
+    than raising -- caption enforcement is a repair step, never a rejection.
+    """
+
+    if input.direction == "fast_montage":
+        return
+    beats = output.story_beats
+    lead, trail = _clip_intents_lead_trail_exempt(input, len(beats))
+    if len(beats) <= lead + trail:
+        return
+    core_indices = list(range(lead, len(beats) - trail))
+    for intent in captions:
+        ids = set(_clip_intent_alias_ids(intent, id_to_alias))
+        if not ids:
+            continue
+        positions = [
+            position
+            for position, index in enumerate(core_indices)
+            if set(beats[index].media_ids) & ids
+        ]
+        if len(positions) <= 1 or positions[-1] - positions[0] + 1 == len(positions):
+            continue
+        anchor = positions[0]
+        match_indices = [core_indices[position] for position in positions]
+        before = [core_indices[position] for position in range(anchor) if position not in positions]
+        after = [
+            core_indices[position]
+            for position in range(anchor, len(core_indices))
+            if position not in positions
+        ]
+        core_indices = before + match_indices + after
+    new_order = list(range(lead)) + core_indices + list(range(len(beats) - trail, len(beats)))
+    output.story_beats = [beats[index] for index in new_order]
+
+
+def _apply_caption_intents(
+    output: EditProposalAgentOutput,
+    input: EditProposalAgentInput,  # noqa: A002
+) -> list[str]:
+    """KRI-129: a resolved caption clip-intent's text is server-authoritative.
+
+    The chat turn already decided the exact on-screen phrase for a chapter
+    (the creator's own quoted words, or a resolver-authored phrase that
+    already passed the on-screen-text grounding fence). Force that phrase,
+    verbatim, onto the beat holding the intent's clips, and blank every
+    other beat's thought so nothing else claims to be, echoes, or drifts
+    from that caption -- whatever the model itself wrote for those beats
+    never reaches the screen.
+
+    Called from the same site as `_validate_clip_intents`, right before the
+    moment-budget trim, so the trim sees the final thought assignment.
+    """
+
+    captions = _resolved_caption_intents(input)
+    if not captions:
+        return []
+    _prompt, _alias_to_id, id_to_alias = _prompt_media(input)
+    _reorder_beats_for_caption_contiguity(output, input, captions, id_to_alias)
+    beats = output.story_beats
+    if not beats:
+        return []
+    # No lead/trail exemption here, unlike ORDER/GROUP: the opening title is a
+    # separate overlay, and the first beat is real story content that may
+    # well be the chapter the creator captioned ("the park clips" open the
+    # edit). Excluding it silently dropped that caption.
+    repairs: list[str] = []
+    caption_beat_indexes: set[int] = set()
+    for intent in captions:
+        ids = set(_clip_intent_alias_ids(intent, id_to_alias))
+        if not ids:
+            continue
+        match = [index for index in range(len(beats)) if set(beats[index].media_ids) & ids]
+        if not match:
+            continue
+        target = match[0]
+        beats[target].thought = (intent.caption_text or "").strip()
+        caption_beat_indexes.add(target)
+        repairs.append(f"caption_applied:{target}")
+    if not caption_beat_indexes:
+        return repairs
+    for index, beat in enumerate(beats):
+        if index in caption_beat_indexes:
+            continue
+        if beat.thought.strip():
+            beat.thought = ""
+            repairs.append(f"blanked_thought_for_caption:{index}")
+    return repairs
 
 
 class EditProposalMedia(BaseModel):
@@ -1901,7 +2042,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.15.0",
+        prompt_version="1.16.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -2443,7 +2584,17 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             # rejections below this point are removed (KRI-129): the
             # creator's requested grouping decides beat count and topics, and
             # an empty thought simply renders no on-screen caption.
-        creator_captions = _creator_quoted_on_screen_text(input) if not creator_labels else {}
+        # A resolved caption clip-intent is strictly more precise than the
+        # quoted-phrase heuristic below (it already grounded/matched the
+        # exact clips), so it takes over entirely -- `_apply_caption_intents`
+        # runs later and is authoritative for every beat's thought. The
+        # heuristic remains the fallback for a turn where intents are off or
+        # the chat never authored one.
+        creator_captions = (
+            _creator_quoted_on_screen_text(input)
+            if not creator_labels and not _resolved_caption_intents(input)
+            else {}
+        )
         for beat_index, beat in enumerate(output.story_beats):
             if beat_index in creator_beat_indexes or (creator_labels and not beat.thought.strip()):
                 # Confirmed creator copy is not an AI draft: it is never
@@ -2513,6 +2664,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 output.duration_s = input.target_duration_s
                 repairs.append("scaled_durations")
         _validate_clip_intents(output, input)
+        repairs.extend(_apply_caption_intents(output, input))
         if input.direction in {"guided_story", "text_explainer"} and not creator_labels:
             # The INCLUDE repair above can add a clip back; keep the story
             # within what its length can show, never at the creator's expense.

@@ -20,6 +20,7 @@ from app.agents.edit_proposal import (
     maximum_distinct_sources,
     minimum_required_sources,
 )
+from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     GUIDED_TITLE_HOLD_S,
@@ -1297,6 +1298,46 @@ def deterministic_guided_beats(
         )
         for beat_index, group in enumerate(groups)
     ]
+
+
+def apply_caption_clip_intents(
+    beats: list[StoryBeat],
+    clip_intents: list[ResolvedClipIntent] | None,
+) -> list[StoryBeat]:
+    """KRI-129: carry a resolved caption clip-intent's exact text onto the
+    metadata-free `deterministic_guided_beats` fallback, so an agent failure
+    never silently drops a creator-authored on-screen caption.
+
+    Finds, per caption intent, the fallback beat holding the MOST of its
+    clips (this fallback's grouping is round-robin, not topic-aware, so a
+    caption's clips can land split across several beats -- there is no
+    reorder to attempt here, only a best-effort placement) and sets that
+    beat's thought and thought_source, mirroring how
+    `deterministic_labeled_beats` already marks creator-authored beats
+    "user". Every other beat's thought is left untouched --
+    `deterministic_guided_beats` already leaves every beat's thought ""
+    (KRI-126: never invent generic captions), so there is nothing else to
+    blank here.
+    """
+
+    if not clip_intents or not beats:
+        return beats
+    for intent in clip_intents:
+        if (
+            intent.status != "resolved"
+            or intent.op != "caption"
+            or not (intent.caption_text or "").strip()
+        ):
+            continue
+        ids = set(intent.media_ids())
+        if not ids:
+            continue
+        target = max(beats, key=lambda beat: len(set(beat.media_ids) & ids))
+        if not (set(target.media_ids) & ids):
+            continue
+        target.thought = intent.caption_text.strip()
+        target.thought_source = "user"
+    return beats
 
 
 def _compatibility_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:

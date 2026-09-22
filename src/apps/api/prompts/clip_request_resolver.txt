@@ -34,6 +34,7 @@ For each intent, decide per clip whether its record supports an answer:
 
 - **op="label"** — you are naming something ON EVERY MATCHING CLIP (e.g. "label each sport", "name the dish on each food clip"). For a clip whose record clearly names the thing (the word is right there in its subject/summary/setting/activity/notable_moments), return an `assignments` entry with a SHORT value: 1-3 words, reusing the exact words from that clip's record wherever possible. NEVER invent a value the record doesn't support — a plausible guess is still a guess. If the record is too vague to answer for a clip that otherwise seems relevant to this intent (e.g. it says "playing a ball game" but doesn't say which sport), put that clip in `needs_vision` with a short, specific, ANSWERABLE question about that one clip (e.g. "What sport is being played?") instead of guessing a value. A clip whose record has nothing to do with this intent's attribute at all is simply left out — don't force every clip into every label intent. If the intent has a `creator_text` (the creator's own title, e.g. "post match pub"), that text is not yours to change — just decide which clips are members of that named group; leave `value` empty or echo the creator's text, it will be applied verbatim by the caller.
 - **op="group" / "op="order" / op="include"** — these move clips around but print nothing on screen. Return an `assignments` entry (with `value` empty) for every clip you are honestly confident belongs, with a confidence that reflects how sure you really are. `order` additionally carries a `position` ("first" or "last") telling you which end of the sequence these clips move to — you still only decide MEMBERSHIP, not the final position. If a clip's record is ambiguous about membership (e.g. the request is "people not playing sports" but the record doesn't say whether anyone is playing), put it in `needs_vision` with a short factual question instead of guessing.
+- **op="caption"** — a caption is ONE on-screen phrase for the WHOLE CHAPTER (every clip that matches this intent), not a per-clip tag. Decide membership exactly like `group`: return an `assignments` entry (with `value` empty) for every clip you are honestly confident belongs. Then: if the intent has a `creator_text` (the creator already wrote the exact words, e.g. `say "post match pub" on the pub clips"`), leave the top-level `caption` field `null` — you only ever decide membership for that case, the caller applies the creator's text verbatim. If the intent instead has a `caption_attribute` (what the caption should be ABOUT, e.g. "the weather", as opposed to `attribute` which is WHICH clips it's for), set the top-level `caption` field to ONE short phrase — 10 words or fewer — that answers `caption_attribute` using ONLY words that already appear in the matched clips' records (subject/summary/setting/activity/notable_moments, combined across every matched clip). NEVER invent a caption the records don't support; if none of the matched clips' records say enough to author it, leave `caption` `null` rather than guessing — the caller will ask the creator or re-check the footage instead.
 - If NOTHING in the batch matches an intent, return it with an empty `assignments` list (and empty `needs_vision`) — this is a valid, honest answer, not a failure.
 - If the intent's own `attribute` is too vague to act on at all (independent of any specific clip), set `question` on that intent block to a short, plain-language clarifying question instead of guessing.
 
@@ -56,17 +57,21 @@ Return ONLY this JSON object. No markdown fences, no prose, no commentary.
       "needs_vision": [
         {"media": "<alias>", "question": "<short, specific, answerable-from-the-clip question>"}
       ],
-      "question": null
+      "question": null,
+      "caption": null
     }
   ]
 }
 ```
+
+`caption` is only ever non-null for an op="caption" intent that has NO `creator_text` — every other intent (any other op, or a caption with `creator_text`) MUST leave it `null`.
 
 ## Hard rules
 
 - Every `intent_id` MUST be copied verbatim from "Valid intent_ids".
 - Every `media` value MUST be one of the "Valid aliases" — never a real media id, filename, or path (you were never given one).
 - A `label` op's `value` MUST be 3 words or fewer and MUST reuse words that already appear in that clip's record — never invent a name the record doesn't support.
+- A `caption` op's `assignments` decide membership only (`value` always empty, like `group`); its authored `caption` field (when set) MUST be 10 words or fewer and MUST reuse only words that already appear in the matched clips' records — never invent it, and leave it `null` when the intent has `creator_text` or when the records don't support an answer.
 - No duplicate `media` within one intent's `assignments`, and no duplicate `media` within one intent's `needs_vision`.
 - Return one block per intent_id you were given, even if its `assignments` and `needs_vision` both end up empty.
 - The full output MUST be a single JSON object with one top-level key `intents`. No other keys.
