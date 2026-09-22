@@ -25,6 +25,24 @@ TestFlight release, or issue closure are part of the code verification below.
 - Actual command results and any environment limitations are recorded in the PR.
   A passing simulator suite does not qualify physical-device performance.
 
+## Verification run
+
+The final verification run completed with the following results:
+
+- Focused backend KRI-145 tests: 808 passed; after the final `alphaOverlay`
+  capability fix, the affected set passed 166 tests and the adjacent set passed
+  230 tests.
+- `make verify-kria`: 420 passed, 7 skipped.
+- The first full `make ios-verify` run completed with 491 unit tests, 11
+  opt-in skips, and 62 UI tests passing. It needed one retry because of a
+  timeline-scrub warning.
+- The final direct Xcode run completed with 500 unit tests, 12 opt-in skips,
+  zero failures, and two affected UI tests passing.
+- A server-compiled native pixel-export target passed in the simulator. The
+  captured log is `/private/tmp/kri145-media-export.log`; this is export parity
+  evidence, not physical-device qualification.
+- The final pre-ship check passed.
+
 Admission race tests exercise competing completion/retry interleavings with
 mocked database boundaries. A live PostgreSQL concurrency exercise remains part
 of the rollout check; the implementation serializes item/job/source updates with
@@ -63,5 +81,7 @@ captures using the [iOS performance gate](../../runbooks/ios-development.md#perf
 | Current iPhone | Pending | Pending |
 
 An iPhone 13 Pro was visible to CoreDevice during implementation; connection alone
-is not qualification. Keep the feature off and KRI-145 open until both targets and
-the existing-edit acceptance flow have evidence.
+is not qualification. Physical iPhone 13-class and current-iPhone qualification,
+including performance and thermal measurements, was not executed. Live PostgreSQL
+concurrency validation was also not executed. Keep the feature off and KRI-145 open
+until both targets and the existing-edit acceptance flow have evidence.
