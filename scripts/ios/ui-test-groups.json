@@ -28,7 +28,12 @@
       "KriaUITests/AccountPrivacyUITests/testAccountDeletionIsReachableBeforeAIConsentAndShowsServiceFailure",
       "KriaUITests/AccountPrivacyUITests/testDeletionRequiresConfirmationAndFailedCodeKeepsAccountOpen",
       "KriaUITests/AccountPrivacyUITests/testAcceptingAIConsentEntersWorkspace",
-      "KriaUITests/AccountPrivacyUITests/testConfirmedAccountDeletionReturnsToSignIn"
+      "KriaUITests/AccountPrivacyUITests/testConfirmedAccountDeletionReturnsToSignIn",
+      "KriaUITests/SignInUITests/testSignInShowsEveryProviderAndLegalLink",
+      "KriaUITests/SignInUITests/testSignInEmailOpensReviewerSheetAndCancelReturns",
+      "KriaUITests/SignInUITests/testSignInAtLargestDynamicTypeKeepsEveryActionReachable",
+      "KriaUITests/SignInUITests/testSignInWithReduceMotionIsInteractiveImmediately",
+      "KriaUITests/SignInUITests/testSignInErrorMessageIsAnnounced"
     ],
     "editor": [
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
@@ -110,6 +115,13 @@
     "src/apps/ios/Kria/Features/NativeEditorTextPanel.swift": "editor",
     "src/apps/ios/Kria/Features/NativeTextCreationPanel.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/AppleTextAccessibilityUITests.swift": "editor",
-    "src/apps/ios/Tests/KriaUITests/AccountPrivacyUITests.swift": "projects"
+    "src/apps/ios/Tests/KriaUITests/AccountPrivacyUITests.swift": "projects",
+    "src/apps/ios/Kria/Features/SignInView.swift": "projects",
+    "src/apps/ios/Kria/Features/SignInMotion.swift": "projects",
+    "src/apps/ios/Kria/Features/Views.swift": "projects",
+    "src/apps/ios/Kria/Features/AccountPrivacyViews.swift": "projects",
+    "src/apps/ios/Kria/Features/AccountDeletionView.swift": "projects",
+    "src/apps/ios/Kria/Features/BrandPreviewHost.swift": "projects",
+    "src/apps/ios/Tests/KriaUITests/SignInUITests.swift": "projects"
   }
 }
