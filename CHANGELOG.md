@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.128.0] - 2026-09-22
+
+### Changed
+- fix: make iOS chat chronological with one Send action (KRI-150) (#1141) <!-- release-pr: 1141 -->
+
 ## [0.76.127.0] - 2026-09-22
 
 ### Fixed
