@@ -96,6 +96,24 @@ class TerminalError(AgentError):
     """Exhausted retries and fallbacks. Caller decides graceful degradation."""
 
 
+class ProviderQuotaExceededError(TerminalError):
+    """Provider explicitly denied a call because of quota or billing limits."""
+
+    SAFE_MESSAGE = "provider quota exceeded"
+
+    def __init__(
+        self,
+        *,
+        provider: str = "unknown",
+        reason: str = "quota_exceeded",
+        status_code: int | None = None,
+    ) -> None:
+        self.provider = provider
+        self.reason = reason
+        self.status_code = status_code
+        super().__init__(self.SAFE_MESSAGE)
+
+
 class ProviderOutcomeUnknownError(TerminalError):
     """Provider work may still be running; retrying could double-charge."""
 
@@ -511,7 +529,11 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 # (Refusal/Schema/Transient) still emits an `agent_run` event
                 # so the observability layer never silently drops a failure.
                 self._log_outcome(
-                    outcome="terminal_unknown",
+                    outcome=(
+                        "terminal_provider_quota"
+                        if isinstance(exc, ProviderQuotaExceededError)
+                        else "terminal_unknown"
+                    ),
                     model=stats.model_used or model,
                     stats=stats,
                     fallback_used=fallback_used,
@@ -520,6 +542,15 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     error=str(exc),
                     input_dict=input_dump,
                 )
+                if isinstance(exc, ProviderQuotaExceededError):
+                    log.warning(
+                        "agent_provider_denied",
+                        agent=self.spec.name,
+                        provider=exc.provider,
+                        reason=exc.reason,
+                        status_code=exc.status_code,
+                        creator_agent_session_id=ctx.creator_agent_session_id,
+                    )
                 # Control-plane exceptions have deliberately fixed,
                 # non-sensitive messages and are part of the HTTP contract.
                 # Rewrapping them would erase 429 budget responses and the
@@ -528,6 +559,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     exc,
                     (
                         AiBudgetExceededError,
+                        ProviderQuotaExceededError,
                         ProviderOutcomeUnknownError,
                         CostControlUnavailableError,
                     ),

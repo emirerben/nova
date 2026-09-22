@@ -46,6 +46,7 @@ from app.schemas.edit_proposal import (
 )
 from app.services.clip_understanding import clip_record
 from app.services.content_plan_persona import load_owned_plan_persona_sync
+from app.services.creator_clip_analysis import analyze_clip_assignment
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.edit_direction_planner import (
     clamp_fast_montage_target_duration_s,
@@ -649,80 +650,21 @@ def _pool_refs(db, item: PlanItem, owner_id: uuid.UUID) -> list[MediaRef]:  # no
     ]
 
 
-def _analyze_clip_assignment(raw: dict, pool_by_path: dict[str, MediaRef]) -> tuple[dict, MediaRef]:
-    from app import storage  # noqa: PLC0415
-    from app.tasks.autoplace import (  # noqa: PLC0415
-        ANALYSIS_VERSION,
-        analysis_is_stale,
-        analyze_pool_image,
-        analyze_pool_video,
-    )
+def _analyze_clip_assignment(
+    raw: dict,
+    pool_by_path: dict[str, MediaRef],
+    *,
+    run_context=None,  # noqa: ANN001 - supplied by the parent preparation worker
+    require_semantic: bool = False,
+) -> tuple[dict, MediaRef]:
+    """Compatibility wrapper; task callers/tests may still patch this name."""
 
-    entry = dict(raw)
-    path = str(entry["gcs_path"])
-    media_id = str(entry["media_id"])
-    if path in pool_by_path:
-        pooled = pool_by_path[path]
-        ref = pooled.model_copy(update={"lane": "clip", "media_id": media_id})
-        entry.update(
-            {
-                "generation": ref.generation,
-                "kind": ref.kind,
-                "duration_s": ref.duration_s,
-                "aspect": ref.aspect,
-                "analysis": ref.analysis,
-            }
-        )
-        return entry, ref
-
-    metadata = storage.object_metadata(path)
-    kind = _kind(metadata.content_type, path)
-    cached = entry.get("analysis") if entry.get("generation") == metadata.generation else None
-    analysis = dict(cached or {})
-    if analysis and kind == "video" and analysis_is_stale(analysis, kind=kind):
-        analysis = {}  # rotation-naive pre-v6 row -- fall through to re-derive display dims
-    duration = entry.get("duration_s")
-    aspect = entry.get("aspect")
-    if not analysis:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            local = os.path.join(tmpdir, Path(path).name or "media")
-            storage.download_generation_to_file(path, local, generation=metadata.generation)
-            if kind == "image":
-                result, aspect, dims, has_alpha = analyze_pool_image(local, media_id)
-                analysis = result or {}
-                if dims:
-                    analysis.update({"width": dims[0], "height": dims[1]})
-                analysis["has_alpha"] = has_alpha
-            else:
-                result, aspect, duration, dims = analyze_pool_video(local)
-                analysis = result or {}
-                if dims:
-                    analysis.update({"width": dims[0], "height": dims[1]})
-                analysis.setdefault("analysis_version", ANALYSIS_VERSION)
-                analysis.setdefault("source", "probe_only")
-    entry.update(
-        {
-            "generation": metadata.generation,
-            "kind": kind,
-            "duration_s": duration,
-            "aspect": aspect,
-            "analysis": analysis,
-        }
+    return analyze_clip_assignment(
+        raw,
+        pool_by_path,
+        run_context=run_context,
+        require_semantic=require_semantic,
     )
-    raw_name = Path(path).name
-    ref = MediaRef(
-        lane="clip",
-        media_id=media_id,
-        gcs_path=path,
-        generation=metadata.generation,
-        kind=kind,
-        source_filename=raw_name.split("-", 1)[-1],
-        duration_s=float(duration) if duration else None,
-        aspect=float(aspect) if aspect else None,
-        user_context=str(entry.get("user_note") or ""),
-        analysis=analysis,
-    )
-    return entry, ref
 
 
 def _analyze_clip_assignments(
