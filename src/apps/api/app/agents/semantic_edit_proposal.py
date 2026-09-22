@@ -31,6 +31,36 @@ from app.schemas.semantic_edit import (
 _QUOTED_TEXT_RE = re.compile(
     r"[\"\u201c\u201d]([^\"\u201c\u201d]{1,120})[\"\u201c\u201d]|(?<!\w)'([^']{1,120})'(?!\w)"
 )
+_SPEECH_ATTRIBUTION_RE = re.compile(
+    r"\b(?:said|says|wrote|writes|replied|replies|remarked|remarks|stated|states|asked|asks"
+    r"|told\s+(?:me|us|them|him|her))\s*[:,]?\s*$",
+    re.IGNORECASE,
+)
+_DISPLAY_COPY_CUE_RE = re.compile(
+    r"\b(?:captions?|subtitles?|overlays?|labels?|titles?|show|display)\b"
+    r"|\bon[\s-]?screen\b",
+    re.IGNORECASE,
+)
+_DISPLAY_QUOTE_TARGET = (
+    r"(?:on[\s-]?screen\b"
+    r"|(?:as|in|for)\s+(?:(?:a|an|the)\s+)?(?:caption|subtitle|overlay|label|title)\b)"
+)
+_QUOTE_MEDIA_TARGET = (
+    r"on\s+(?:(?:a|an|the)\s+)?(?:(?:opening|first|last|closing)\s+)?"
+    r"(?:clip|shot|image|frame|video)\b"
+)
+_QUOTE_PLACEMENT_RE = re.compile(
+    r"\b(?:write|print|render|put|add|use)\s+"
+    r"(?:(?:the|these|those|his|her|their|a|an|this|that)\s+)?(?:words?|quotes?|text|lines?)\b",
+    re.IGNORECASE,
+)
+_DISPLAY_QUOTE_SUFFIX_RE = re.compile(
+    rf"^\s*(?:[,;:\u2014-]\s*)?(?:{_DISPLAY_QUOTE_TARGET}"
+    r"|(?:put|show|display|use)\s+(?:that|this|those|these)\s+"
+    rf"(?:quotes?|text|words?|lines?|captions?)\s+(?:{_DISPLAY_QUOTE_TARGET}|{_QUOTE_MEDIA_TARGET})"
+    rf"|(?:put|show|display|use)\s+(?:that|this|it)\s+{_DISPLAY_QUOTE_TARGET})",
+    re.IGNORECASE,
+)
 _FORBIDDEN_TIMING_KEYS = frozenset(
     {"duration_s", "start_s", "end_s", "source_start_s", "source_end_s", "output_duration_s"}
 )
@@ -127,6 +157,30 @@ def _semantic_required_media_ids(input: EditProposalAgentInput) -> set[str]:  # 
     return required
 
 
+def _is_reported_speech_quote(request: str, match: re.Match[str]) -> bool:
+    """Do not turn attributed story dialogue into a required text overlay.
+
+    Keep the quote fallback for unclassified copy, including non-English
+    captions. Only an adjacent speech attribution establishes this exclusion;
+    an explicit display instruction attached to that quote overrides it.
+    """
+    before_quote = request[: match.start()].rstrip().removesuffix(",")
+    prefix = re.split(r"[.!?\n,;]|\b(?:then|and|but)\b", before_quote, flags=re.I)[-1]
+    if not _SPEECH_ATTRIBUTION_RE.search(prefix):
+        return False
+    # A period can sit inside the quoted speech. Do not borrow an instruction
+    # from the next sentence (e.g. 'He said "... ." Put "real copy" on screen').
+    # Only a postfix that directly assigns this quote to a display lane counts.
+    return not (
+        _DISPLAY_COPY_CUE_RE.search(prefix)
+        or _DISPLAY_QUOTE_SUFFIX_RE.search(request[match.end() :])
+        or (
+            _QUOTE_PLACEMENT_RE.search(prefix)
+            and re.match(rf"\s*{_QUOTE_MEDIA_TARGET}", request[match.end() :], re.I)
+        )
+    )
+
+
 def _creator_captions(input: EditProposalAgentInput) -> dict[str, list[str]]:  # noqa: A002
     """Creator-quoted captions are a complete allowlist (KRI-129)."""
     if input.shot_labels:
@@ -150,6 +204,8 @@ def _creator_captions(input: EditProposalAgentInput) -> dict[str, list[str]]:  #
         return phrases
     phrases: dict[str, list[str]] = {}
     for match in _QUOTED_TEXT_RE.finditer(input.creator_request):
+        if _is_reported_speech_quote(input.creator_request, match):
+            continue
         text = (match.group(1) or match.group(2) or "").strip()
         key = creator_copy_match_key(text)
         if key:

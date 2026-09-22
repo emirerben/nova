@@ -1,0 +1,805 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.12",
+  "input": {
+    "goal": "Tell the history of a landmark through construction footage and archival stills.",
+    "idea": "Historical story",
+    "pace": "relaxed",
+    "media": [
+      {
+        "kind": "video",
+        "lane": "clip",
+        "setting": "construction site",
+        "subject": "landmark scene 1",
+        "summary": "historical video 1",
+        "activity": "building",
+        "media_id": "video-01",
+        "duration_s": 5.0,
+        "transcript": "",
+        "description": "historical video 1",
+        "best_moments": [
+          {
+            "end_s": 1.5,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "construction moment 1-1"
+          },
+          {
+            "end_s": 4.0,
+            "energy": 6.0,
+            "start_s": 2.0,
+            "description": "construction moment 1-2"
+          }
+        ],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-01.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "video",
+        "lane": "clip",
+        "setting": "construction site",
+        "subject": "landmark scene 2",
+        "summary": "historical video 2",
+        "activity": "building",
+        "media_id": "video-02",
+        "duration_s": 5.0,
+        "transcript": "",
+        "description": "historical video 2",
+        "best_moments": [
+          {
+            "end_s": 3.966,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "construction moment 2-1"
+          }
+        ],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-02.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "video",
+        "lane": "clip",
+        "setting": "construction site",
+        "subject": "landmark scene 3",
+        "summary": "historical video 3",
+        "activity": "building",
+        "media_id": "video-03",
+        "duration_s": 5.0,
+        "transcript": "",
+        "description": "historical video 3",
+        "best_moments": [
+          {
+            "end_s": 4.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "construction moment 3-1"
+          }
+        ],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-03.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "video",
+        "lane": "clip",
+        "setting": "construction site",
+        "subject": "landmark scene 4",
+        "summary": "historical video 4",
+        "activity": "building",
+        "media_id": "video-04",
+        "duration_s": 5.0,
+        "transcript": "",
+        "description": "historical video 4",
+        "best_moments": [
+          {
+            "end_s": 1.5,
+            "energy": 3.0,
+            "start_s": 0.0,
+            "description": "construction moment 4-1"
+          },
+          {
+            "end_s": 4.0,
+            "energy": 3.0,
+            "start_s": 2.5,
+            "description": "construction moment 4-2"
+          }
+        ],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-04.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "video",
+        "lane": "clip",
+        "setting": "construction site",
+        "subject": "landmark scene 5",
+        "summary": "historical video 5",
+        "activity": "building",
+        "media_id": "video-05",
+        "duration_s": 5.0,
+        "transcript": "",
+        "description": "historical video 5",
+        "best_moments": [
+          {
+            "end_s": 1.5,
+            "energy": 3.0,
+            "start_s": 0.0,
+            "description": "construction moment 5-1"
+          },
+          {
+            "end_s": 4.0,
+            "energy": 4.0,
+            "start_s": 2.5,
+            "description": "construction moment 5-2"
+          }
+        ],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-05.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "image",
+        "lane": "asset",
+        "setting": "construction site",
+        "subject": "landmark scene 6",
+        "summary": "historical image 6",
+        "activity": "building",
+        "media_id": "image-06",
+        "duration_s": null,
+        "transcript": "",
+        "description": "historical image 6",
+        "best_moments": [],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-06.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "image",
+        "lane": "asset",
+        "setting": "construction site",
+        "subject": "landmark scene 7",
+        "summary": "historical image 7",
+        "activity": "building",
+        "media_id": "image-07",
+        "duration_s": null,
+        "transcript": "",
+        "description": "historical image 7",
+        "best_moments": [],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-07.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "image",
+        "lane": "asset",
+        "setting": "construction site",
+        "subject": "landmark scene 8",
+        "summary": "historical image 8",
+        "activity": "building",
+        "media_id": "image-08",
+        "duration_s": null,
+        "transcript": "",
+        "description": "historical image 8",
+        "best_moments": [],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-08.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "image",
+        "lane": "asset",
+        "setting": "construction site",
+        "subject": "landmark scene 9",
+        "summary": "historical image 9",
+        "activity": "building",
+        "media_id": "image-09",
+        "duration_s": null,
+        "transcript": "",
+        "description": "historical image 9",
+        "best_moments": [],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-09.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "image",
+        "lane": "asset",
+        "setting": "construction site",
+        "subject": "landmark scene 10",
+        "summary": "historical image 10",
+        "activity": "building",
+        "media_id": "image-10",
+        "duration_s": null,
+        "transcript": "",
+        "description": "historical image 10",
+        "best_moments": [],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-10.jpg",
+        "speaks_to_camera": false
+      }
+    ],
+    "theme": "",
+    "direction": "guided_story",
+    "media_scope": "all",
+    "shot_labels": null,
+    "clip_intents": null,
+    "closing_title": null,
+    "montage_audio": null,
+    "opening_title": "A landmark unfolds",
+    "creator_request": "Make a narrated 48-second historical video. Start with the title \"A landmark unfolds\". Show construction progress across five clips and five archival images. A builder reportedly said: \"The work can take its time.\" Keep the story moving toward completion.\nMake a narrated 48-second historical video. Start with the title \"A landmark unfolds\". Show construction progress across five clips and five archival images. A builder reportedly said: \"The work can take its time.\" Keep the story moving toward completion.\n",
+    "montage_cadence": null,
+    "narration_words": [
+      {
+        "text": "word",
+        "end_s": 0.427,
+        "start_s": 0.0,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 0.961,
+        "start_s": 0.534,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 1.495,
+        "start_s": 1.068,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 2.029,
+        "start_s": 1.602,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 2.564,
+        "start_s": 2.136,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 3.098,
+        "start_s": 2.67,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 3.632,
+        "start_s": 3.204,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 4.166,
+        "start_s": 3.738,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 4.7,
+        "start_s": 4.273,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 5.234,
+        "start_s": 4.807,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 5.768,
+        "start_s": 5.341,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 6.302,
+        "start_s": 5.875,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 6.836,
+        "start_s": 6.409,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 7.37,
+        "start_s": 6.943,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 7.904,
+        "start_s": 7.477,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 8.438,
+        "start_s": 8.011,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 8.972,
+        "start_s": 8.545,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 9.506,
+        "start_s": 9.079,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 10.04,
+        "start_s": 9.613,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 10.575,
+        "start_s": 10.147,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 11.109,
+        "start_s": 10.681,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 11.643,
+        "start_s": 11.215,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 12.177,
+        "start_s": 11.749,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 12.711,
+        "start_s": 12.284,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 13.245,
+        "start_s": 12.818,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 13.779,
+        "start_s": 13.352,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 14.313,
+        "start_s": 13.886,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 14.847,
+        "start_s": 14.42,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 15.381,
+        "start_s": 14.954,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 15.915,
+        "start_s": 15.488,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 16.449,
+        "start_s": 16.022,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 16.983,
+        "start_s": 16.556,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 17.517,
+        "start_s": 17.09,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 18.051,
+        "start_s": 17.624,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 18.585,
+        "start_s": 18.158,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 19.12,
+        "start_s": 18.692,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 19.654,
+        "start_s": 19.226,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 20.188,
+        "start_s": 19.76,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 20.722,
+        "start_s": 20.295,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 21.256,
+        "start_s": 20.829,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 21.79,
+        "start_s": 21.363,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 22.324,
+        "start_s": 21.897,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 22.858,
+        "start_s": 22.431,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 23.392,
+        "start_s": 22.965,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 23.926,
+        "start_s": 23.499,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 24.46,
+        "start_s": 24.033,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 24.994,
+        "start_s": 24.567,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 25.528,
+        "start_s": 25.101,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 26.062,
+        "start_s": 25.635,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 26.596,
+        "start_s": 26.169,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 27.131,
+        "start_s": 26.703,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 27.665,
+        "start_s": 27.237,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 28.199,
+        "start_s": 27.771,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 28.733,
+        "start_s": 28.305,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 29.267,
+        "start_s": 28.84,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 29.801,
+        "start_s": 29.374,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 30.335,
+        "start_s": 29.908,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 30.869,
+        "start_s": 30.442,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 31.403,
+        "start_s": 30.976,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 31.937,
+        "start_s": 31.51,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 32.471,
+        "start_s": 32.044,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 33.005,
+        "start_s": 32.578,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 33.539,
+        "start_s": 33.112,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 34.073,
+        "start_s": 33.646,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 34.607,
+        "start_s": 34.18,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 35.142,
+        "start_s": 34.714,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 35.676,
+        "start_s": 35.248,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 36.21,
+        "start_s": 35.782,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 36.744,
+        "start_s": 36.316,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 37.278,
+        "start_s": 36.851,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 37.812,
+        "start_s": 37.385,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 38.346,
+        "start_s": 37.919,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 38.88,
+        "start_s": 38.453,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 39.414,
+        "start_s": 38.987,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 39.948,
+        "start_s": 39.521,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 40.482,
+        "start_s": 40.055,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 41.016,
+        "start_s": 40.589,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 41.55,
+        "start_s": 41.123,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 42.084,
+        "start_s": 41.657,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 42.618,
+        "start_s": 42.191,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 43.153,
+        "start_s": 42.725,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 43.687,
+        "start_s": 43.259,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 44.221,
+        "start_s": 43.793,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 44.755,
+        "start_s": 44.327,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 45.289,
+        "start_s": 44.862,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 45.823,
+        "start_s": 45.396,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 46.357,
+        "start_s": 45.93,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 46.891,
+        "start_s": 46.464,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 47.425,
+        "start_s": 46.998,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 47.959,
+        "start_s": 47.532,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 48.493,
+        "start_s": 48.066,
+        "confidence": 1.0
+      }
+    ],
+    "review_feedback": "",
+    "target_duration_s": 48.6,
+    "mixed_media_timing": null,
+    "selected_media_ids": null,
+    "video_reuse_policy": "once",
+    "narration_duration_s": 48.6,
+    "opening_title_duration_s": null
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"A landmark unfolds\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"historical phase 1\", \"thought\": \"\", \"role\": \"hook\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m005\", \"weight\": 1, \"candidate_index\": 0}]}, {\"chapter_id\": \"chapter-2\", \"topic\": \"historical phase 2\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m004\", \"weight\": 1, \"candidate_index\": 0}]}, {\"chapter_id\": \"chapter-3\", \"topic\": \"historical phase 3\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m007\", \"weight\": 1}]}, {\"chapter_id\": \"chapter-4\", \"topic\": \"historical phase 4\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m009\", \"weight\": 1}]}, {\"chapter_id\": \"chapter-5\", \"topic\": \"historical phase 5\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m006\", \"weight\": 1}]}, {\"chapter_id\": \"chapter-6\", \"topic\": \"historical phase 6\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m008\", \"weight\": 1}]}, {\"chapter_id\": \"chapter-7\", \"topic\": \"historical phase 7\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m010\", \"weight\": 1}]}, {\"chapter_id\": \"chapter-8\", \"topic\": \"historical phase 8\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m003\", \"weight\": 1, \"candidate_index\": 0}]}, {\"chapter_id\": \"chapter-9\", \"topic\": \"historical phase 9\", \"thought\": \"\", \"role\": \"payoff\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m002\", \"weight\": 1, \"candidate_index\": 0}]}, {\"chapter_id\": \"chapter-10\", \"topic\": \"historical phase 10\", \"thought\": \"\", \"role\": \"payoff\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m001\", \"weight\": 1, \"candidate_index\": 1}]}], \"text_bindings\": [{\"text\": \"Historical phase 1\", \"chapter_ids\": [\"chapter-1\", \"chapter-2\"], \"media_ids\": []}, {\"text\": \"Historical phase 2\", \"chapter_ids\": [\"chapter-3\"], \"media_ids\": []}, {\"text\": \"Historical phase 3\", \"chapter_ids\": [\"chapter-4\"], \"media_ids\": []}, {\"text\": \"Historical phase 4\", \"chapter_ids\": [\"chapter-5\"], \"media_ids\": []}, {\"text\": \"Historical phase 5\", \"chapter_ids\": [\"chapter-6\"], \"media_ids\": []}, {\"text\": \"Historical phase 6\", \"chapter_ids\": [\"chapter-7\"], \"media_ids\": []}, {\"text\": \"Historical phase 7\", \"chapter_ids\": [\"chapter-8\"], \"media_ids\": []}, {\"text\": \"Historical phase 8\", \"chapter_ids\": [\"chapter-9\"], \"media_ids\": []}, {\"text\": \"Historical phase 9\", \"chapter_ids\": [\"chapter-10\"], \"media_ids\": []}]}",
+  "meta": {
+    "source": "Synthetic reproduction of narrative quote treated as mandatory on-screen caption; media durations and word timings are generated test data.",
+    "case": "Reported speech in a narrated story is not a requested on-screen caption.",
+    "expected_title": "A landmark unfolds"
+  }
+}
