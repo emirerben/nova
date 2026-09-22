@@ -1166,8 +1166,9 @@ phases/backgrounds error, after a job had already started.
 plain `fade-in` layers. Catalog ID, SHA-256, byte count and the complete coordinate
 dictionary must match; renaming an alias or replacing font bytes cannot qualify
 another face. Axes and positioned glyphs are preserved. Giant-title combinations,
-other variable fonts/coordinates, phases, backgrounds, caption-pop and active-only
-karaoke remain gated. `authoredText` must still be explicitly enabled in
+other variable fonts/coordinates remain gated. Phases, backgrounds, caption-pop
+and active-only karaoke require the separate `authoredText` verification below.
+`authoredText` must still be explicitly enabled in
 `PHONE_RENDER_VERIFIED_FEATURES`; a font exception does not bypass that check.
 
 | Font | Bytes | Coordinates | SHA-256 |
@@ -1259,8 +1260,9 @@ selected by `Settings.phone_font_qualification_strict` (env `PHONE_FONT_QUALIFIC
   `validate_phone_pilot_recipe` regardless of this flag). Giant-title combinations are allowed here
   too (`giant-title-wipe` has native support for every effect but handwriting); the unconditional
   giant-title + handwriting reject, and every other check in `validate_phone_pilot_recipe`
-  (visual blocks, editor media, motion scenes, camera pulses, authored phases/backgrounds/
-  caption-pop/karaoke, the capability-list check), are completely unaffected by this flag.
+  (visual blocks, editor media, motion scenes, camera pulses, and the capability-list
+  check) are completely unaffected by this flag. Authored phases/backgrounds,
+  caption-pop, and active-only karaoke are gated separately by `authoredText`.
 - **Strict (`true`)** — byte-identical to the original 2026-09-14 gate above: only the two exact
   hand-qualified font instances, only on plain `fade-in`, no giant title. This is the kill switch —
   flip it if the broader default-mode set ever needs pulling back without a redeploy:
@@ -1276,3 +1278,26 @@ shape; `test_default_mode_rejects_font_outside_the_bundled_registry`,
 2026-09-14 tests are kept as strict-mode pins (`phone_font_qualification_strict` monkeypatched
 `true`), per `docs/reviews/kri-29/capability-matrix.md`'s "Font/authored-text qualification is
 per-instance" note that these are defense-in-depth, not redundant.
+
+### Authored text saves and device retry identity (KRI-153)
+
+Highlight backgrounds and explicit entrance/exit/loop phases require
+`PHONE_RENDER_VERIFIED_FEATURES` to include `authoredText`, along with the
+existing font and effect qualification rules. The shared authored-field guard
+also covers caption-pop and active-only karaoke; those effects remain subject
+to their existing renderer gates. The save path derives this check from the
+actual text-layer fields, so mutating a recipe without refreshing its declared
+capability list cannot bypass it. A rejected save leaves the persisted recipe
+unchanged and returns safe correction copy; error messages do not echo raw
+server reasons or user-entered text.
+
+The API and iOS client use the device request identity (job, variant, recipe
+revision, and digest) to fence retries and delayed local observers. A
+`needs_attention` response can retain a finished local MP4 while requiring
+`/device-render/retry`; retry mints a fresh identity before another attempt.
+`published_generation` is returned only for a published device record and is
+checked alongside the request identity before the editor accepts publication.
+
+Deploy the API and worker first, then distribute the iOS build that decodes the
+optional status fields and presents typed save-recovery messages. Keep existing
+verified-feature and rollout settings synchronized across API and worker.
