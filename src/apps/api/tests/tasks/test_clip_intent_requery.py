@@ -73,7 +73,7 @@ def harness(monkeypatch):
         asset_id=str(asset_id),
         kind="video",
         gcs_path=asset.gcs_path,
-        gcs_generation="123",
+        generation="123",
         analysis=asset.analysis,
     )
     query = DeferredVisionQuery(clip.media_id, "What sport?")
@@ -110,14 +110,14 @@ def _enqueue(h):
 def test_duplicate_turns_and_deliveries_query_once_and_merge_latest_analysis(harness, monkeypatch):
     h = harness
     payload = _enqueue(h)
-    assert vision_query_pending(h.asset.analysis, h.query.question)
+    assert vision_query_pending(h.asset.analysis, h.query.question, "123")
     assert task.enqueue_clip_intent_requeries(**h.kwargs)
     h.publish.assert_called_once()
     assert h.publish.call_args.kwargs["queue"] == task.settings.pool_asset_analysis_queue
 
     def vision(clip, question, **kwargs):
         assert not h.opened  # all DB locks are released during external work
-        assert clip.gcs_generation == "123"
+        assert clip.generation == "123"
         assert kwargs["run_context"].request_id == "turn-2"
         # Another delivery while the first is running must not buy a second call.
         task.requery_clip_intent.run(payload)
@@ -139,7 +139,7 @@ def test_duplicate_turns_and_deliveries_query_once_and_merge_latest_analysis(har
     assert h.asset.analysis[ANSWERS_KEY][h.key]["answer"] == "soccer"
     assert h.asset.analysis[ANSWERS_KEY]["old question"]["answer"] == "yes"
     assert h.asset.analysis["other_analysis"] == "new"
-    assert not vision_query_pending(h.asset.analysis, h.query.question)
+    assert not vision_query_pending(h.asset.analysis, h.query.question, "123")
     assert all(call.kwargs["with_for_update"] for call in h.db.get.call_args_list)
 
 
@@ -147,7 +147,7 @@ def test_publish_failure_releases_claim_and_can_retry(harness):
     h = harness
     h.publish.side_effect = RuntimeError("broker down")
     assert not task.enqueue_clip_intent_requeries(**h.kwargs)
-    assert not vision_query_pending(h.asset.analysis, h.query.question)
+    assert not vision_query_pending(h.asset.analysis, h.query.question, "123")
     assert ANSWERS_KEY not in h.asset.analysis
     h.publish.side_effect = None
     _enqueue(h)
@@ -217,7 +217,9 @@ def test_enqueue_fails_closed_on_ownership_mismatch(harness, invalid):
     assert ANSWER_QUERIES_KEY not in h.asset.analysis
 
 
-def test_transient_failure_retries_then_caches_unknown_on_exhaustion(harness, monkeypatch):
+def test_transient_failure_retries_then_preserves_technical_error_on_exhaustion(
+    harness, monkeypatch
+):
     h = harness
     payload = _enqueue(h)
     monkeypatch.setattr(
@@ -234,8 +236,9 @@ def test_transient_failure_retries_then_caches_unknown_on_exhaustion(harness, mo
         task.requery_clip_intent.run(payload)
     finally:
         task.requery_clip_intent.pop_request()
-    assert h.asset.analysis[ANSWERS_KEY][h.key]["answer"] == ""
-    assert not vision_query_pending(h.asset.analysis, h.query.question)
+    assert ANSWERS_KEY not in h.asset.analysis
+    assert h.asset.analysis[ANSWER_QUERIES_KEY][h.key]["error_code"] == "vision_provider_error"
+    assert not vision_query_pending(h.asset.analysis, h.query.question, "123")
     task.enqueue_clip_intent_requeries(**h.kwargs)
     h.publish.assert_called_once()
 
@@ -272,3 +275,58 @@ def test_worker_rollout_flag_stops_queued_work(harness, monkeypatch):
     monkeypatch.setattr(task, "query_clip_vision", vision)
     task.requery_clip_intent.run(payload)
     vision.assert_not_called()
+
+
+@pytest.mark.parametrize("error_kind", ["budget", "quota", "unknown"])
+def test_provider_stops_are_not_retried_or_cached_as_visual_unknown(
+    harness, monkeypatch, error_kind
+):
+    from app.agents._runtime import (
+        AiBudgetExceededError,
+        ProviderOutcomeUnknownError,
+        ProviderQuotaExceededError,
+    )
+
+    errors = {
+        "budget": (
+            AiBudgetExceededError(
+                scope="test", reset_at="tomorrow", cached_behavior_available=False
+            ),
+            "ai_budget_exhausted",
+        ),
+        "quota": (ProviderQuotaExceededError(), "provider_quota_exceeded"),
+        "unknown": (ProviderOutcomeUnknownError("outcome unknown"), "provider_outcome_unknown"),
+    }
+    error, code = errors[error_kind]
+    h = harness
+    payload = _enqueue(h)
+    monkeypatch.setattr(task, "query_clip_vision", MagicMock(side_effect=error))
+    retry = MagicMock()
+    monkeypatch.setattr(task.requery_clip_intent, "retry", retry)
+    task.requery_clip_intent.run(payload)
+    retry.assert_not_called()
+    assert ANSWERS_KEY not in h.asset.analysis
+    assert h.asset.analysis[ANSWER_QUERIES_KEY][h.key]["error_code"] == code
+    assert not task.enqueue_clip_intent_requeries(**h.kwargs)
+    h.publish.assert_called_once()
+
+
+def test_worker_answers_use_generation_aware_resolver_cache(harness, monkeypatch):
+    from app.services.clip_intent_resolution import _cached_answer
+
+    h = harness
+    # A previous generation's answer must not suppress the new question.
+    h.asset.analysis[ANSWERS_KEY] = {h.key: {"answer": "tennis", "generation": "old"}}
+    payload = _enqueue(h)
+    monkeypatch.setattr(
+        task,
+        "query_clip_vision",
+        MagicMock(return_value=ClipQuestionOutput(answer="soccer", confidence=0.9)),
+    )
+    task.requery_clip_intent.run(payload)
+    cached = _cached_answer(replace(h.clip, analysis=h.asset.analysis), h.key)
+    assert cached["answer"] == "soccer"
+    assert cached["generation"] == "123"
+    assert (
+        _cached_answer(replace(h.clip, generation="456", analysis=h.asset.analysis), h.key) is None
+    )

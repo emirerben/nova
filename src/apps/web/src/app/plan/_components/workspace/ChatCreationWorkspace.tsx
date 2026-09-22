@@ -47,7 +47,8 @@ import {
   getKriaApproval, getKriaDelta, getKriaDraft, listCreationThreads, refreshCreationThread,
   creationClipLimit, sendCreationMessage, threadMessages, uploadCreationMedia,
   creationSpeechCleanupActionId, creationThreadInProgress, creationThreadNeedsPolling,
-  creationThreadPreparing, creationThreadProgressKey,
+  creationThreadPreparing, creationThreadProgressKey, creationPreparation,
+  creationPreparationFailed, creationPreparationRetryable,
   creationGenerationArtifactKey,
   creationConfirmationConflict, creationPlanKey, CREATION_REFRESH_DIRECTION_MESSAGE,
   type CreationConfirmationConflict,
@@ -384,6 +385,20 @@ export function renderPhaseLabel(phase?: string | null): string {
 }
 
 function RenderStatusCard({ thread }: { thread: CreationThread }) {
+  const preparation = creationPreparation(thread);
+  if (preparation && creationThreadPreparing(thread)) {
+    const count = preparation.total > 0 ? `${preparation.completed} of ${preparation.total} ready` : null;
+    return (
+      <ChatArtifactCard badge={<Badge variant="secondary">Preparing clips</Badge>} title={count ?? "Preparing your clips…"} description={preparation.message || "Analyzing your footage…"}>
+        <BeamLoader tone="light" mode="line" strength="medium" ariaLabel={`${preparation.message || "Preparing your clips"}${count ? ` ${count}.` : ""}`} className="rounded-lg">
+          <div className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
+            <span className="size-1.5 motion-safe:animate-ping rounded-full bg-lime-600" aria-hidden="true" />
+            <span>{preparation.message || "Preparing your clips…"}</span>
+          </div>
+        </BeamLoader>
+      </ChatArtifactCard>
+    );
+  }
   const phase = renderPhaseLabel(thread.job?.current_phase);
   const playable = readyVariants(thread);
   const total = thread.job?.variants.length ?? 0;
@@ -419,6 +434,9 @@ function FailureStatusCard({
   busy,
   readOnly = false,
   planningFailure = false,
+  preparationFailure = false,
+  failureDescription,
+  retryLabel = "Retry render",
   onRetry,
   onAdjust,
 }: {
@@ -426,12 +444,16 @@ function FailureStatusCard({
   busy: boolean;
   readOnly?: boolean;
   planningFailure?: boolean;
+  preparationFailure?: boolean;
+  failureDescription?: string;
+  retryLabel?: string;
   onRetry?: () => void;
   onAdjust: () => void;
 }) {
+  const directionFailure = planningFailure && !preparationFailure;
   return (
-    <ChatArtifactCard badge={<Badge variant="outline">{planningFailure ? "Direction needs attention" : "Render needs attention"}</Badge>} title={planningFailure ? "Let’s refine the direction" : "Your project is safe"} description={planningFailure ? "I couldn’t start this edit yet, but your direction, footage, and voiceover are still here." : "The render did not finish, but your direction and footage are still here."}>
-      <div className="flex flex-wrap gap-2">{onRetry ? <Button type="button" onClick={onRetry} disabled={busy || readOnly}><RefreshCw /> Retry render</Button> : null}<Button type="button" variant="outline" onClick={onAdjust} disabled={readOnly}>Edit direction and try again</Button></div>
+    <ChatArtifactCard badge={<Badge variant="outline">{directionFailure ? "Direction needs attention" : preparationFailure ? "Clip preparation needs attention" : "Render needs attention"}</Badge>} title={directionFailure ? "Let’s refine the direction" : "Your project is safe"} description={failureDescription ?? (directionFailure ? "I couldn’t start this edit yet, but your direction, footage, and voiceover are still here." : "The render did not finish, but your direction and footage are still here.")}>
+      <div className="flex flex-wrap gap-2">{onRetry ? <Button type="button" onClick={onRetry} disabled={busy || readOnly}><RefreshCw /> {retryLabel}</Button> : null}<Button type="button" variant="outline" onClick={onAdjust} disabled={readOnly}>Edit direction and try again</Button></div>
     </ChatArtifactCard>
   );
 }
@@ -1156,6 +1178,7 @@ export default function ChatCreationWorkspace({
     && (eventSequenceById.get(message.id) ?? -1) > latestGenerationSequence,
   );
   const planningFailed = Boolean(thread && creationPlanningFailed(thread));
+  const preparationFailed = Boolean(thread && creationPreparationFailed(thread));
   const canConfirmDirection = thread !== null
     && !planningFailed
     && (!creationThreadInProgress(thread) || creationJobFailed(thread))
@@ -1201,7 +1224,7 @@ export default function ChatCreationWorkspace({
       ? "failure"
       : creationJobFailed(thread) && !hasPendingConfirmation
         ? "failure"
-      : thread.active_job_id && (!creationJobSettled(thread) || variantStillRendering)
+      : ((thread.active_job_id && (!creationJobSettled(thread) || variantStillRendering)) || creationThreadPreparing(thread))
         ? "progress"
         : hasReady ? "result" : null;
     if (lifecycleArtifact) {
@@ -2132,8 +2155,8 @@ export default function ChatCreationWorkspace({
             {message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}
             {(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection && !speechCleanupOutcomeFailed ? (cleanupCard ?? defaultConfirmationCard) : null}
             {message.artifact === "revision" && hasReady ? <AgentApprovalCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut." actions={<Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button>} /> : null}
-            {message.artifact === "progress" && thread?.active_job_id && !creationJobFailed(thread) && !speechCleanupOutcomeFailed ? <RenderStatusCard thread={thread} /> : null}
-            {message.artifact === "failure" && thread && (speechCleanupOutcomeFailed || ((creationJobFailed(thread) || planningFailed) && (!hasPendingConfirmation || planningFailed))) ? (speechCleanupOutcomeFailed ? cleanupCard : <FailureStatusCard thread={thread} busy={busy} readOnly={productionPreview} planningFailure={planningFailed} onRetry={creationJobFailed(thread) && thread.runtime_version !== 2 ? () => void confirm("retry") : undefined} onAdjust={() => setInput(latestCreationDirection(thread) || "Try a different opening and keep the pacing quick.")} />) : null}
+            {message.artifact === "progress" && thread && (thread.active_job_id || creationThreadPreparing(thread)) && !creationJobFailed(thread) && !speechCleanupOutcomeFailed ? <RenderStatusCard thread={thread} /> : null}
+            {message.artifact === "failure" && thread && (speechCleanupOutcomeFailed || ((creationJobFailed(thread) || planningFailed) && (!hasPendingConfirmation || planningFailed))) ? (speechCleanupOutcomeFailed ? cleanupCard : <FailureStatusCard thread={thread} busy={busy} readOnly={productionPreview} planningFailure={planningFailed} preparationFailure={preparationFailed} failureDescription={preparationFailed ? creationPreparation(thread)?.message : undefined} retryLabel={preparationFailed ? "Retry preparing clips" : "Retry render"} onRetry={preparationFailed ? (creationPreparationRetryable(thread) ? () => { void submitMessage(thread, "Retry preparing my clips."); } : undefined) : creationJobFailed(thread) && thread.runtime_version !== 2 ? () => void confirm("retry") : undefined} onAdjust={() => setInput(latestCreationDirection(thread) || "Try a different opening and keep the pacing quick.")} />) : null}
             {message.artifact === "result" && thread && hasReady ? <ReadyStatusCard thread={thread} isPartial={isPartial} selectedReadyVariant={selectedReadyVariant} selectedFailedVariant={selectedFailedVariant} busy={busy} readOnly={productionPreview} onSelectVariant={(id) => void selectVariant(id)} onOpenEditor={() => { setEditorOpen(true); setMobileTab("editor"); }} onRetryVariant={(id) => void confirm("retry", { variant_id: id })} /> : null}
             {(() => {
               const receipt = automaticMemoryReceipt(thread?.events.find((event) => event.id === message.id));

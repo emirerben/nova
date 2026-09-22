@@ -312,6 +312,7 @@ async def test_flag_on_needs_creator_asks_and_never_proposes_strategy(monkeypatc
     resolve.assert_awaited_once()
     assert session.active_plan is None
     assert session.status == "briefing"
+    assert session.last_error is None
     append_event.assert_awaited_once()
     call = append_event.await_args
     assert call.kwargs["event_type"] == "assistant_question"
@@ -320,7 +321,9 @@ async def test_flag_on_needs_creator_asks_and_never_proposes_strategy(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_resolver_exception_degrades_to_a_question_never_a_500(monkeypatch) -> None:
+async def test_resolver_exception_is_a_technical_failure_never_a_genuine_no_match(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", True)
     manifest = _manifest()
     item = SimpleNamespace(id=uuid.uuid4())
@@ -369,9 +372,15 @@ async def test_resolver_exception_degrades_to_a_question_never_a_500(monkeypatch
     assert result is response
     assert session.active_plan is None
     assert session.status == "briefing"
+    assert session.last_error == {"code": "provider_unavailable"}
     call = append_event.await_args
-    assert call.kwargs["event_type"] == "assistant_question"
-    assert call.kwargs["payload"]["reason_code"] == "clip_intent_unresolved"
+    assert call.kwargs["event_type"] == "assistant_error"
+    assert call.kwargs["payload"] == {
+        "message": (
+            "Clip analysis is unavailable right now. Your request is saved; try again later."
+        ),
+        "code": "provider_unavailable",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -703,7 +712,8 @@ async def test_async_overflow_receipt_and_enqueue_failure_fallback(monkeypatch, 
     clips = [IntentClip(media_id="clip-1", asset_id=str(uuid.uuid4()), kind="video", analysis={})]
     monkeypatch.setattr(creator_routes, "load_intent_clips_for_item", AsyncMock(return_value=clips))
     resolution = IntentResolution(
-        question="Which sport?",
+        status="pending",
+        error_code="vision_batch_deadline_or_foreground_cap",
         deferred_queries=[
             DeferredVisionQuery("clip-1", "What sport?"),
         ],
@@ -739,10 +749,16 @@ async def test_async_overflow_receipt_and_enqueue_failure_fallback(monkeypatch, 
     assert session.active_plan is None
     assert session.status == "briefing"
     payload = events.await_args.kwargs["payload"]
-    assert payload["reason_code"] == ("clip_intent_pending" if queued else "clip_intent_unresolved")
+    assert events.await_args.kwargs["event_type"] == (
+        "assistant_question" if queued else "assistant_error"
+    )
+    if queued:
+        assert payload["reason_code"] == "clip_intent_pending"
+    else:
+        assert payload["code"] == "vision_batch_deadline_or_foreground_cap"
     assert payload["message"] == (
         "I'm taking a closer look at the remaining clips. "
         "Send another message in a moment and I'll use what I find."
         if queued
-        else "Which sport?"
+        else "Clip analysis is unavailable right now. Your request is saved; try again later."
     )

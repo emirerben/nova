@@ -561,6 +561,10 @@ async def load_intent_clips_for_item(
                 analysis=analysis if isinstance(analysis, dict) else None,
                 gcs_path=_clean(assignment.get("gcs_path"), 512) or None,
                 asset_id=None,
+                generation=str(
+                    assignment.get("storage_generation") or assignment.get("generation") or ""
+                )
+                or None,
             )
         )
 
@@ -597,7 +601,7 @@ async def load_intent_clips_for_item(
                     analysis=analysis,
                     gcs_path=asset.gcs_path,
                     asset_id=str(asset.id),
-                    gcs_generation=getattr(asset, "gcs_generation", None),
+                    generation=str(asset.gcs_generation or "") or None,
                 )
             )
 
@@ -1066,6 +1070,8 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
 
 
 def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
+    from app.services.creator_preparation import public_preparation
+
     events = sorted(session.events or [], key=lambda event: event.sequence)[-MAX_PUBLIC_EVENTS:]
 
     def role(event_type: str) -> str:
@@ -1211,6 +1217,7 @@ def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
             }
             for event in events
         ],
+        "preparation": public_preparation(session),
         "created_at": session.created_at.isoformat() if session.created_at else "",
         "updated_at": session.updated_at.isoformat() if session.updated_at else "",
     }

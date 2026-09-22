@@ -25,8 +25,10 @@ from app.services.clip_intent_resolution import (
     ANSWERS_KEY,
     DeferredVisionQuery,
     IntentClip,
+    _failure_status_and_code,
     normalize_question,
     query_clip_vision,
+    vision_query_marker,
     vision_query_pending,
 )
 from app.services.content_plan_persona import load_owned_plan_persona_sync
@@ -97,6 +99,7 @@ def _set_marker(asset: PlanItemAsset, job: VisionQueryJob, status: str) -> None:
         "token": job.token,
         "status": status,
         "expires_at": time.time() + QUERY_LEASE_S,
+        "generation": job.gcs_generation,
     }
     analysis[ANSWER_QUERIES_KEY] = queries
     asset.analysis = analysis
@@ -104,19 +107,32 @@ def _set_marker(asset: PlanItemAsset, job: VisionQueryJob, status: str) -> None:
 
 def _has_answer(asset: PlanItemAsset, key: str) -> bool:
     answers = (asset.analysis or {}).get(ANSWERS_KEY)
-    return isinstance(answers, dict) and isinstance(answers.get(key), dict)
+    answer = answers.get(key) if isinstance(answers, dict) else None
+    return isinstance(answer, dict) and str(answer.get("generation") or "") == str(
+        asset.gcs_generation or ""
+    )
 
 
-def _finish(job: VisionQueryJob, output: ClipQuestionOutput | None, *, status: str) -> None:
+def _finish(
+    job: VisionQueryJob,
+    output: ClipQuestionOutput | None,
+    *,
+    status: str,
+    error_code: str | None = None,
+) -> None:
     with sync_session() as db:
         asset = _owned_asset(db, job)
         if asset is None or _marker(asset, job.key).get("token") != job.token:
             return
         _set_marker(asset, job, status)
+        if error_code:
+            asset.analysis[ANSWER_QUERIES_KEY][job.key]["error_code"] = error_code
         if output is not None and not _has_answer(asset, job.key):
             analysis = dict(asset.analysis or {})
             answers = dict(analysis.get(ANSWERS_KEY) or {})
             answers[job.key] = output.model_dump()
+            if job.gcs_generation is not None:
+                answers[job.key]["generation"] = job.gcs_generation
             analysis[ANSWERS_KEY] = answers
             asset.analysis = analysis
         db.commit()
@@ -155,7 +171,7 @@ def enqueue_clip_intent_requeries(
                 user_id=user_id,
                 ownership_epoch=ownership_epoch,
                 gcs_path=clip.gcs_path,
-                gcs_generation=clip.gcs_generation,
+                gcs_generation=clip.generation,
                 question=query.question,
                 token=str(uuid.uuid4()),
                 context=asdict(context),
@@ -165,9 +181,13 @@ def enqueue_clip_intent_requeries(
                 if asset is None:
                     continue
                 if _has_answer(asset, job.key) or vision_query_pending(
-                    asset.analysis, job.question
+                    asset.analysis, job.question, job.gcs_generation
                 ):
                     pending = True
+                    continue
+                if vision_query_marker(asset.analysis, job.question, job.gcs_generation).get(
+                    "error_code"
+                ):
                     continue
                 _set_marker(asset, job, "queued")
                 db.commit()
@@ -209,7 +229,9 @@ def requery_clip_intent(self: Any, payload: dict[str, Any]) -> None:
         marker = _marker(asset, job.key)
         if marker.get("token") != job.token:
             return
-        if marker.get("status") == "running" and vision_query_pending(asset.analysis, job.question):
+        if marker.get("status") == "running" and vision_query_pending(
+            asset.analysis, job.question, job.gcs_generation
+        ):
             return
         if marker.get("status") not in {"queued", "running"}:
             return
@@ -229,7 +251,7 @@ def requery_clip_intent(self: Any, payload: dict[str, Any]) -> None:
                     kind="video",
                     analysis=None,
                     gcs_path=job.gcs_path,
-                    gcs_generation=job.gcs_generation,
+                    generation=job.gcs_generation,
                 ),
                 job.question,
                 question_agent=ClipQuestionAgent(default_client()),
@@ -237,10 +259,11 @@ def requery_clip_intent(self: Any, payload: dict[str, Any]) -> None:
             )
         _finish(job, output, status="complete")
     except Exception as exc:  # noqa: BLE001
-        if self.request.retries < self.max_retries:
+        _status, error_code = _failure_status_and_code(exc)
+        if error_code == "vision_provider_error" and self.request.retries < self.max_retries:
             _finish(job, None, status="queued")
             raise self.retry(exc=exc, countdown=5) from exc
-        # A terminal failure, like a model's "unknown", must eventually ask
-        # the creator, not enqueue an infinite stream on every next message.
-        _finish(job, ClipQuestionOutput(), status="failed")
+        # Preserve KRI-151's distinction: provider/media/budget failures are
+        # technical states, never cached as a model's visual "unknown" answer.
+        _finish(job, None, status="failed", error_code=error_code)
         log.warning("clip_intents.requery_failed", asset_id=str(job.asset_id), error=str(exc)[:300])

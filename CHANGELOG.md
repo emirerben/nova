@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.126.0] - 2026-09-22
+
+### Fixed
+- fix: start phone narration renders and recover failed dispatches (#1140) <!-- release-pr: 1140 -->
+
+## [0.76.125.0] - 2026-09-22
+
+### Fixed
+- fix: preserve clip understanding in generative cache (KRI-157) (#1137) <!-- release-pr: 1137 -->
+
+## [0.76.124.0] - 2026-09-22
+
+### Changed
+- test: exclude placeholder icons from gallery poster count (#1139) <!-- release-pr: 1139 -->
+
+## [0.76.123.0] - 2026-09-22
+
+### Fixed
+- fix: prepare creator clips before planning (KRI-151) (#1135) <!-- release-pr: 1135 -->
+
+## [0.76.122.0] - 2026-09-22
+
+### Changed
+- fix: reject ambiguous classic clip label mappings (KRI-158) (#1136) <!-- release-pr: 1136 -->
+
 ## [0.76.121.0] - 2026-09-22
 
 ### Changed

@@ -44,6 +44,10 @@ transcripts are third-party text that ends up in agent prompts.
 - **Versioning.** `ANALYSIS_VERSION = 8` is video-only; photos stay fresh at 6
   (`_MIN_FRESH_ANALYSIS_VERSION_BY_KIND`). Re-analysis is lazy. `clip_cache`
   invalidates through `CACHE_SCHEMA_VERSION` + the analyzer `prompt_version`.
+- **Generative candidate cache.** `generative_build._clip_meta_from_cache`
+  derives accepted fields from `ClipMeta`, preserving understanding on fast
+  reburns. Legacy rows use dataclass defaults; unknown keys are ignored. Guard:
+  `tests/tasks/test_generative_clip_cache.py`.
 - **parse() threading.** New `ClipMetadataOutput` fields must be threaded
   through `ClipMetadataAgent.parse()` (`TestParseThreading`).
 
@@ -82,7 +86,8 @@ Flow (flag on):
    and caption authoring share that deadline. Membership checks are re-asked as
    closed yes/no questions; a confident "no" excludes the clip. New answers are
    cached on the asset's `analysis["answers"][normalized_question]` (pool assets only).
-3. **Continue in the background (KRI-154).** Cacheable video questions left over
+3. **Continue in the background (KRI-154).** On the foreground chat path,
+   cacheable video questions left over
    after the cap, deadline, or a transient failure go to
    `app.tasks.clip_intent_requery.requery_clip_intent`, one question per task on
    `POOL_ASSET_ANALYSIS_QUEUE`. The chat returns an `assistant_question` event
@@ -96,11 +101,17 @@ Flow (flag on):
    epoch, asset identity, and storage generation before querying and writing, and
    download the pinned generation. No DB lock spans vision I/O. Results merge into
    the latest analysis under a row lock. Two task retries bound transient failures;
-   exhausted failures cache an unknown answer so later turns ask for clarification.
-4. **Ask, never guess.** Anything still unresolved (ungrounded label, "unknown",
-   empty group, non-cacheable overflow, or failed dispatch) becomes ONE
-   `assistant_question` event (`reason_code: clip_intent_unresolved`). Pending
-   queries and partial assignments never authorize a strategy or an on-screen label.
+   exhausted failures retain a typed technical error for the claim's lifetime,
+   rather than becoming a visual "unknown". Budget/quota stops and unknown provider
+   outcomes never trigger automatic retries. When KRI-151's
+   `CREATOR_CLIP_PREPARATION_ENABLED` path owns a planning attempt, its background
+   resolver and checkpoint callback finish the batch without enqueueing separate
+   KRI-154 work. Both paths use the same generation-aware answer cache.
+4. **Ask, never guess.** Settled visual uncertainty (ungrounded label, "unknown",
+   or an empty group) becomes ONE `assistant_question` event
+   (`reason_code: clip_intent_unresolved`). Provider, budget, media, and failed
+   dispatch states retain KRI-151's technical error path. Pending queries and
+   partial assignments never authorize a strategy or an on-screen label.
    The creator's answer arrives as a normal next message.
 5. **Plan.** On confirm the intents travel `ProposalBrief.clip_intents` (chat
    `asset-{uuid}` ids translated to planner ids) into `EditProposalAgent` as
@@ -114,6 +125,20 @@ Flow (flag on):
    replay pinning; iOS consumes the same server text elements). The
    timeline-revision rebuild in `guided_story.py` uses the same path. One label
    per clip; the first resolved label intent claims it.
+
+### Clip identity at render time (KRI-158)
+
+The guided lane carries stable media IDs, so an exact ID match identifies the
+intended clip even when multiple clips share a GCS path. The classic lane still
+mints positional IDs per render and resolves path-only assignments only when
+exactly one clip has that path. If two or more clips share it, the label is
+omitted for every occurrence rather than assigned by insertion order; labels
+for other, uniquely matched paths still render.
+
+The classic mapping carries neither generation nor occurrence identity, so it
+cannot distinguish even different generations of a shared path. Supporting
+labels on these repeated sources requires threading stable media identity
+through that lane. Guard: `tests/tasks/test_grounded_context_labels.py`.
 
 ### The on-screen text fence (replaces `_CONTEXT_SPORT_ALIASES`)
 
@@ -150,18 +175,11 @@ the live evals: `tests/evals/test_clip_request_resolver_evals.py`,
 ## Known gaps
 
 - Vision re-query remains video-only. Images need an inline media input path.
-- Background results are picked up on the next creator message; there is no
-  automatic chat continuation or completion notification.
+- KRI-154 overflow results are picked up on the next creator message. KRI-151's
+  separate durable preparation flow can finish and publish the original turn.
 - Vision answers are cached for pool assets only, not raw `clip_assignments`.
 - `participant_labels` / `score_labels` stay on the transcript-grounded narration
   lane; retiring them is a follow-up.
-- `generative_build._clip_meta_from_cache` drops the `clip_*` fields on the
-  fast-reburn cache round trip, so the non-guided lane can only ground from a
-  fresh analysis.
-- Non-guided lane id mapping falls back to the clip's GCS path
-  (`_resolve_clip_id_for_media_id`); two clips sharing one identical source
-  path can receive each other's label. The fence still re-grounds against the
-  clip it lands on, so this misplaces but never invents text.
 
 KRI-154 regression coverage: `tests/services/test_clip_intent_resolution.py`
 replays the 30-clip / 8-vague-clip overflow and cache pickup;

@@ -53,6 +53,7 @@ celery_app = Celery(
         "app.tasks.conformance_build",
         "app.tasks.creator_clip_metadata",
         "app.tasks.clip_intent_requery",
+        "app.tasks.creator_preparation",
         "app.tasks.transcript_analyze",
         "app.tasks.autoplace",
         "app.tasks.edit_proposal_build",
@@ -117,6 +118,7 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     # the `worker` machine it's managing — obviously.
     "tasks.manage_render_worker_lifecycle",
     "tasks.reconcile_kria_turns",
+    "tasks.reconcile_creator_preparations",
     "tasks.prune_kria_drafts",
     "tasks.execute_kria_approval",
     "tasks.reconcile_speech_cleanup_analyses",
@@ -203,6 +205,7 @@ celery_app.conf.update(
     task_routes={
         **{name: {"queue": "maintenance"} for name in MAINTENANCE_TASK_NAMES},
         "tasks.run_kria_turn": {"queue": "agent-control"},
+        "tasks.prepare_creator_clips": {"queue": settings.pool_asset_analysis_queue},
         # Make the queue a property of the TASK, not of each dispatcher. A
         # future bare `repair_job_poster.delay(...)` would otherwise land on
         # the default `celery` queue — the concurrency=1 render worker — and
@@ -214,6 +217,10 @@ celery_app.conf.update(
     # embedded (`-B`) in the `light` process (see fly.toml). Other worker
     # processes ignore this dict, so it's safe to define unconditionally.
     beat_schedule={
+        "reconcile-creator-preparation": {
+            "task": "tasks.reconcile_creator_preparations",
+            "schedule": 60.0,
+        },
         "sweep-stale-jobs-every-5-min": {
             "task": "tasks.sweep_stale_jobs",
             "schedule": 300.0,  # seconds
