@@ -683,6 +683,7 @@ private struct CreationWorkspaceView: View {
                     approval: approval,
                     format: selectedFormat,
                     isBusy: isActing || pendingUploadCount > 0,
+                    responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     decide: decide
                 )
                 .id("approval-\(approval.id)")
@@ -1281,7 +1282,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
         }
         let isProposal = ["assistant_strategy", "agent_assistant_strategy"].contains(event.eventType)
         let proposalSummary = isProposal ? event.payload?["proposal_summary"]?.stringValue : nil
-        let rawContent = proposalSummary ?? event.content ?? event.payload?["message"]?.stringValue
+        let rawContent = [proposalSummary, event.content, event.payload?["message"]?.stringValue]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
         guard let content = rawContent?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty else { return nil }
         var options: [String] = []
         var recommendedOption: String?

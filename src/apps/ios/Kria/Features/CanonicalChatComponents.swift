@@ -224,7 +224,7 @@ struct ChatMessageRow: View {
     }
 }
 
-private extension View {
+extension View {
     /// Long-press Copy for chat text, which plain SwiftUI `Text` can't select.
     /// (`.textSelection(.enabled)` would also copy only the whole message on
     /// iOS.) VoiceOver gets the same Copy as an action, since the menu alone
@@ -520,6 +520,7 @@ struct DirectionStage: View {
     let approval: ApprovalSnapshot
     let format: CreationFormat?
     let isBusy: Bool
+    var responseStartedAt: Date? = nil
     let decide: (String) -> Void
 
     private var directionTitle: String {
@@ -540,10 +541,10 @@ struct DirectionStage: View {
                     .font(KriaFont.body(10).weight(.bold))
                     .tracking(1.3)
                     .foregroundStyle(KriaColor.ink)
-                Text(directionTitle.isEmpty ? "A considered first cut" : directionTitle)
+                ChatResponseText(content: directionTitle.isEmpty ? "A considered first cut" : directionTitle, startedAt: responseStartedAt)
                     .font(KriaFont.body(22))
                     .foregroundStyle(KriaColor.ink)
-                    .lineLimit(3)
+                    .copyableMessage(directionTitle, previewShape: RoundedRectangle(cornerRadius: 8))
 
                 Rectangle().fill(KriaColor.line).frame(height: 1)
 

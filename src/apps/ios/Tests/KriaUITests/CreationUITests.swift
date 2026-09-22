@@ -178,6 +178,48 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(user.waitForExistence(timeout: 10))
     }
 
+    func testIncomingResponseDoesNotPullReaderFromScrolledHistory() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_LONG_HISTORY"] = "1"
+        app.launchEnvironment["KRIA_CHAT_SLOW_CREATION"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        let send = app.buttons["Send clips"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        send.tap()
+
+        // Send forces the conversation to the bottom first. Move away while the
+        // delayed response is still in flight, then choose a row that is truly
+        // visible after that gesture so LazyVStack has materialized it.
+        let historyRows = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS 'Long conversation message number'")
+        ).allElementsBoundByIndex
+        app.scrollViews.firstMatch.swipeDown()
+        XCTAssertTrue(app.buttons["chat-jump-to-latest"].waitForExistence(timeout: 3))
+        guard let earlierReply = historyRows.first(where: { $0.isHittable }) else {
+            XCTFail("Expected a long-history row to remain visible after scrolling up")
+            return
+        }
+        let yBeforeResponse = earlierReply.frame.minY
+
+        let response = app.staticTexts["Kria: Open on the laugh and keep the pacing quick."]
+        XCTAssertTrue(response.waitForExistence(timeout: 12))
+        XCTAssertEqual(earlierReply.frame.minY, yBeforeResponse, accuracy: 2)
+
+        app.buttons["chat-jump-to-latest"].tap()
+        let latestDismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: app.buttons["chat-jump-to-latest"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [latestDismissed], timeout: 3), .completed)
+        XCTAssertTrue(response.isHittable)
+    }
+
     func testTypedPromptAppearsBetweenMediaReceiptAndAssistantResponse() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]

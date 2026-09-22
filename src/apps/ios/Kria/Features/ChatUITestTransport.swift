@@ -154,8 +154,8 @@ private final class CreationChatFixture: @unchecked Sendable {
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
             append("user_message", role: "user", text: body["message"] as? String, clientEventID: turnID)
-            append("assistant_response", text: "Open on the laugh and keep the pacing quick.")
             if runtime == 2 {
+                append("assistant_response", text: "Your draft is ready for review.")
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
             }
