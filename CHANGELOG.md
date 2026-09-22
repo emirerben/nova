@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.124.0] - 2026-09-22
+
+### Changed
+- test: exclude placeholder icons from gallery poster count (#1139) <!-- release-pr: 1139 -->
+
 ## [0.76.123.0] - 2026-09-22
 
 ### Fixed
