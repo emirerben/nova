@@ -37,6 +37,7 @@ import structlog
 from app.agents._model_client import default_client
 from app.agents._runtime import (
     AiBudgetExceededError,
+    ProviderOutcomeUnknownError,
     ProviderQuotaExceededError,
     RunContext,
     TerminalError,
@@ -212,6 +213,7 @@ class _IntentWork:
     had_any_candidate: bool = False
     pending_media_ids: set[str] = field(default_factory=set)
     provider_unavailable_media_ids: set[str] = field(default_factory=set)
+    provider_unknown_media_ids: set[str] = field(default_factory=set)
     ai_budget_exhausted_media_ids: set[str] = field(default_factory=set)
     provider_quota_exhausted_media_ids: set[str] = field(default_factory=set)
     budget_exhausted_media_ids: set[str] = field(default_factory=set)
@@ -416,6 +418,8 @@ def _build_resolver_input(
 
 
 def _failure_status_and_code(exc: BaseException) -> tuple[ResolutionStatus, str]:
+    if isinstance(exc, ProviderOutcomeUnknownError):
+        return "provider_unavailable", "provider_outcome_unknown"
     if isinstance(exc, AiBudgetExceededError):
         return "budget_exhausted", "ai_budget_exhausted"
     if isinstance(exc, ProviderQuotaExceededError):
@@ -749,7 +753,9 @@ async def resolve_clip_intents_for_turn(
             else min(4, settings.clip_intents_max_vision_requeries)
         )
         terminal_budget = any(
-            work.ai_budget_exhausted_media_ids or work.provider_quota_exhausted_media_ids
+            work.ai_budget_exhausted_media_ids
+            or work.provider_quota_exhausted_media_ids
+            or work.provider_unknown_media_ids
             for work in work_by_id.values()
         )
         allowed = 0 if terminal_budget else min(max(0, cap - calls_spent), len(to_call))
@@ -807,7 +813,9 @@ async def resolve_clip_intents_for_turn(
                 except Exception as exc:  # noqa: BLE001 — classify per candidate
                     for dependent in dependents_for_candidate:
                         work = work_by_id[dependent.intent_id]
-                        if isinstance(exc, AiBudgetExceededError):
+                        if isinstance(exc, ProviderOutcomeUnknownError):
+                            work.provider_unknown_media_ids.add(dependent.media_id)
+                        elif isinstance(exc, AiBudgetExceededError):
                             work.ai_budget_exhausted_media_ids.add(dependent.media_id)
                             work.budget_exhausted_media_ids.add(dependent.media_id)
                         elif isinstance(exc, ProviderQuotaExceededError):
@@ -834,7 +842,9 @@ async def resolve_clip_intents_for_turn(
             if checkpoint is not None and background and done:
                 await checkpoint(vision_answers)
             if background and any(
-                work.ai_budget_exhausted_media_ids or work.provider_quota_exhausted_media_ids
+                work.ai_budget_exhausted_media_ids
+                or work.provider_quota_exhausted_media_ids
+                or work.provider_unknown_media_ids
                 for work in work_by_id.values()
             ):
                 for remaining in to_call[offset + batch_size :]:
@@ -874,6 +884,7 @@ async def resolve_clip_intents_for_turn(
             or not work.kept
             or work.pending_media_ids
             or work.provider_unavailable_media_ids
+            or work.provider_unknown_media_ids
             or work.budget_exhausted_media_ids
             or work.media_unavailable_media_ids
         ):
@@ -975,15 +986,18 @@ async def resolve_clip_intents_for_turn(
         has_non_creator_failure = bool(
             work.pending_media_ids
             or work.provider_unavailable_media_ids
+            or work.provider_unknown_media_ids
             or work.ai_budget_exhausted_media_ids
             or work.provider_quota_exhausted_media_ids
             or work.budget_exhausted_media_ids
             or work.media_unavailable_media_ids
         )
-        is_creator_unresolved = (
-            bool(work.intent_question)
-            or bool(work.failed_media_ids)
-            or (not work.kept and not has_non_creator_failure)
+        # Technical/provider/media failures must not be turned into a creator
+        # question. The caller can retry the preparation/resolution attempt;
+        # only settled ambiguity or a genuinely empty result belongs in
+        # `needs_creator`.
+        is_creator_unresolved = not has_non_creator_failure and (
+            bool(work.intent_question) or bool(work.failed_media_ids) or not work.kept
         )
         is_unresolved = is_creator_unresolved or has_non_creator_failure
         if is_unresolved:
@@ -1035,7 +1049,10 @@ async def resolve_clip_intents_for_turn(
     else:
         status = "resolved"
         error_code = None
-    if any(w.ai_budget_exhausted_media_ids for w in unresolved_work):
+    if any(w.provider_unknown_media_ids for w in unresolved_work):
+        status = "provider_unavailable"
+        error_code = "provider_outcome_unknown"
+    elif any(w.ai_budget_exhausted_media_ids for w in unresolved_work):
         status = "budget_exhausted"
         error_code = "ai_budget_exhausted"
     elif any(w.provider_quota_exhausted_media_ids for w in unresolved_work):
