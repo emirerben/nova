@@ -463,11 +463,13 @@ def prepare_creator_clips(attempt_id: str) -> None:
             if k in inputs
         },
     )
+    failure_stage = "analysis"
     try:
         # Preparation precedes Job creation. Agent runs are attributed through
         # RunContext.creator_agent_session_id and durable progress through the attempt.
         with pipeline_trace_for(None):
             _analyze_sources(identifier, token, sources, ctx)
+            failure_stage = "planning"
             asyncio.run(_resume(identifier, token, inputs, creator_id, session_id))
     except PreparationPending:
         # Pool tasks already own this work. Recheck later without spending
@@ -506,9 +508,17 @@ def prepare_creator_clips(attempt_id: str) -> None:
         _fail(identifier, token, "media_unavailable", retryable=False)
     except Exception as exc:  # noqa: BLE001 — creators get stable safe errors
         log.warning(
-            "creator_preparation.failed", attempt_id=attempt_id, error_type=type(exc).__name__
+            "creator_preparation.failed",
+            attempt_id=attempt_id,
+            stage=failure_stage,
+            error_type=type(exc).__name__,
         )
-        _fail(identifier, token, "analysis_unavailable", retryable=True)
+        _fail(
+            identifier,
+            token,
+            "planning_unavailable" if failure_stage == "planning" else "analysis_unavailable",
+            retryable=True,
+        )
 
 
 @celery_app.task(name="tasks.reconcile_creator_preparations", soft_time_limit=45, time_limit=60)
