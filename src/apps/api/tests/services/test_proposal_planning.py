@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.agents._runtime import TerminalError
 from app.agents.edit_proposal import EditProposalAgentInput, EditProposalMedia
+from app.agents.semantic_edit_proposal import SemanticEditProposalAgent
 from app.schemas.edit_frame_schedule import EditFrameSchedule, FrameScheduledMoment
 from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
     MixedMediaTimingProfile,
+    NarrationTrack,
     StoryBeat,
 )
 from app.schemas.semantic_edit import SemanticEditPlan
@@ -321,3 +326,60 @@ def test_layout_revision_preserves_split_labels_and_repeated_sources(repeated: b
     assert all(beat.thought == "Creator label" for beat in refreshed.story_beats)
     assert all(beat.thought_source == "user" for beat in refreshed.story_beats)
     assert refreshed.frame_schedule.direction == "guided_story"
+
+
+def test_narrated_reported_speech_replay_parses_schedules_and_compiles() -> None:
+    """A story quotation must not become a mandatory on-screen caption."""
+    from app.pipeline.guided_story import validate_proposal_compiles
+    from app.services.semantic_edit_scheduler import schedule_semantic_edit
+
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures/narrative_quote_replay.json"
+    replay = json.loads(fixture_path.read_text())
+    creator_input = EditProposalAgentInput.model_validate(replay["input"])
+    assert len(creator_input.media) == 10
+    assert len(creator_input.narration_words) == 91
+    assert 'said: "The work can take its time."' in creator_input.creator_request
+
+    plan = SemanticEditProposalAgent(None).parse(replay["raw_text"], creator_input)
+    scheduled = schedule_semantic_edit(plan, creator_input)
+    snapshot = EditProposalSnapshot(
+        direction=creator_input.direction,
+        goal=creator_input.goal,
+        pace=creator_input.pace,
+        duration_s=scheduled.duration_s,
+        title=creator_input.opening_title or plan.title,
+        opening_title=creator_input.opening_title,
+        opening_title_duration_s=creator_input.opening_title_duration_s,
+        closing_title=creator_input.closing_title,
+        shot_labels=creator_input.shot_labels,
+        media_scope=creator_input.media_scope,
+        selected_media_ids=creator_input.selected_media_ids,
+        video_reuse_policy=creator_input.video_reuse_policy,
+        narration=NarrationTrack(
+            gcs_path="fixtures/narration.wav",
+            generation="1",
+            duration_s=creator_input.narration_duration_s,
+            words=creator_input.narration_words,
+        ),
+        clip_intents=creator_input.clip_intents,
+        media=[
+            MediaRef(
+                media_id=item.media_id,
+                lane=item.lane,
+                kind=item.kind,
+                duration_s=item.duration_s,
+                gcs_path=f"fixtures/{item.media_id}",
+                generation="1",
+            )
+            for item in creator_input.media
+        ],
+        story_beats=scheduled.story_beats,
+        frame_schedule=scheduled.schedule,
+        montage_text_bindings=scheduled.montage_text_bindings,
+        mixed_media_timing=creator_input.mixed_media_timing,
+    )
+
+    validate_proposal_compiles(snapshot)
+    assert len(plan.chapters) == 10
+    assert len(snapshot.story_beats) == 10
+    assert snapshot.frame_schedule.total_frames == 1459

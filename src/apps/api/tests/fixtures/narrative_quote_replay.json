@@ -1,0 +1,799 @@
+{
+  "description": "Sanitized reproduction of narrative quote treated as mandatory on-screen caption",
+  "input": {
+    "goal": "Tell the history of a landmark through construction footage and archival stills.",
+    "idea": "Historical story",
+    "pace": "relaxed",
+    "media": [
+      {
+        "kind": "video",
+        "lane": "clip",
+        "setting": "construction site",
+        "subject": "landmark scene 1",
+        "summary": "historical video 1",
+        "activity": "building",
+        "media_id": "video-01",
+        "duration_s": 5.033333,
+        "transcript": "",
+        "description": "historical video 1",
+        "best_moments": [
+          {
+            "end_s": 1.5,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "construction moment 1-1"
+          },
+          {
+            "end_s": 4.0,
+            "energy": 6.0,
+            "start_s": 2.0,
+            "description": "construction moment 1-2"
+          }
+        ],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-01.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "video",
+        "lane": "clip",
+        "setting": "construction site",
+        "subject": "landmark scene 2",
+        "summary": "historical video 2",
+        "activity": "building",
+        "media_id": "video-02",
+        "duration_s": 5.041667,
+        "transcript": "",
+        "description": "historical video 2",
+        "best_moments": [
+          {
+            "end_s": 3.966,
+            "energy": 4.0,
+            "start_s": 0.0,
+            "description": "construction moment 2-1"
+          }
+        ],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-02.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "video",
+        "lane": "clip",
+        "setting": "construction site",
+        "subject": "landmark scene 3",
+        "summary": "historical video 3",
+        "activity": "building",
+        "media_id": "video-03",
+        "duration_s": 5.041667,
+        "transcript": "",
+        "description": "historical video 3",
+        "best_moments": [
+          {
+            "end_s": 4.0,
+            "energy": 5.0,
+            "start_s": 0.0,
+            "description": "construction moment 3-1"
+          }
+        ],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-03.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "video",
+        "lane": "clip",
+        "setting": "construction site",
+        "subject": "landmark scene 4",
+        "summary": "historical video 4",
+        "activity": "building",
+        "media_id": "video-04",
+        "duration_s": 5.041667,
+        "transcript": "",
+        "description": "historical video 4",
+        "best_moments": [
+          {
+            "end_s": 1.5,
+            "energy": 3.0,
+            "start_s": 0.0,
+            "description": "construction moment 4-1"
+          },
+          {
+            "end_s": 4.0,
+            "energy": 3.0,
+            "start_s": 2.5,
+            "description": "construction moment 4-2"
+          }
+        ],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-04.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "video",
+        "lane": "clip",
+        "setting": "construction site",
+        "subject": "landmark scene 5",
+        "summary": "historical video 5",
+        "activity": "building",
+        "media_id": "video-05",
+        "duration_s": 5.041667,
+        "transcript": "",
+        "description": "historical video 5",
+        "best_moments": [
+          {
+            "end_s": 1.5,
+            "energy": 3.0,
+            "start_s": 0.0,
+            "description": "construction moment 5-1"
+          },
+          {
+            "end_s": 4.0,
+            "energy": 4.0,
+            "start_s": 2.5,
+            "description": "construction moment 5-2"
+          }
+        ],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-05.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "image",
+        "lane": "asset",
+        "setting": "construction site",
+        "subject": "landmark scene 6",
+        "summary": "historical image 6",
+        "activity": "building",
+        "media_id": "image-06",
+        "duration_s": null,
+        "transcript": "",
+        "description": "historical image 6",
+        "best_moments": [],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-06.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "image",
+        "lane": "asset",
+        "setting": "construction site",
+        "subject": "landmark scene 7",
+        "summary": "historical image 7",
+        "activity": "building",
+        "media_id": "image-07",
+        "duration_s": null,
+        "transcript": "",
+        "description": "historical image 7",
+        "best_moments": [],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-07.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "image",
+        "lane": "asset",
+        "setting": "construction site",
+        "subject": "landmark scene 8",
+        "summary": "historical image 8",
+        "activity": "building",
+        "media_id": "image-08",
+        "duration_s": null,
+        "transcript": "",
+        "description": "historical image 8",
+        "best_moments": [],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-08.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "image",
+        "lane": "asset",
+        "setting": "construction site",
+        "subject": "landmark scene 9",
+        "summary": "historical image 9",
+        "activity": "building",
+        "media_id": "image-09",
+        "duration_s": null,
+        "transcript": "",
+        "description": "historical image 9",
+        "best_moments": [],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-09.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "kind": "image",
+        "lane": "asset",
+        "setting": "construction site",
+        "subject": "landmark scene 10",
+        "summary": "historical image 10",
+        "activity": "building",
+        "media_id": "image-10",
+        "duration_s": null,
+        "transcript": "",
+        "description": "historical image 10",
+        "best_moments": [],
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-10.jpg",
+        "speaks_to_camera": false
+      }
+    ],
+    "theme": "",
+    "direction": "guided_story",
+    "media_scope": "all",
+    "shot_labels": null,
+    "clip_intents": null,
+    "closing_title": null,
+    "montage_audio": null,
+    "opening_title": "A landmark unfolds",
+    "creator_request": "Make a narrated 48-second historical video. Start with the title \"A landmark unfolds\". Show construction progress across five clips and five archival images. A builder reportedly said: \"The work can take its time.\" Keep the story moving toward completion.\nMake a narrated 48-second historical video. Start with the title \"A landmark unfolds\". Show construction progress across five clips and five archival images. A builder reportedly said: \"The work can take its time.\" Keep the story moving toward completion.\n",
+    "montage_cadence": null,
+    "narration_words": [
+      {
+        "text": "word",
+        "end_s": 2.799999952316284,
+        "start_s": 2.140000104904175,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 3.2200000286102295,
+        "start_s": 2.799999952316284,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 3.5399999618530273,
+        "start_s": 3.2200000286102295,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 3.799999952316284,
+        "start_s": 3.5399999618530273,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 4.119999885559082,
+        "start_s": 3.799999952316284,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 4.480000019073486,
+        "start_s": 4.119999885559082,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 4.619999885559082,
+        "start_s": 4.480000019073486,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 4.880000114440918,
+        "start_s": 4.619999885559082,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 5.360000133514404,
+        "start_s": 5.079999923706055,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 5.579999923706055,
+        "start_s": 5.360000133514404,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 5.840000152587891,
+        "start_s": 5.579999923706055,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 6.099999904632568,
+        "start_s": 5.840000152587891,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 6.440000057220459,
+        "start_s": 6.099999904632568,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 6.980000019073486,
+        "start_s": 6.980000019073486,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 7.78000020980835,
+        "start_s": 6.980000019073486,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 8.239999771118164,
+        "start_s": 8.079999923706055,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 9.100000381469727,
+        "start_s": 8.239999771118164,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 9.460000038146973,
+        "start_s": 9.100000381469727,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 9.960000038146973,
+        "start_s": 9.460000038146973,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 10.34000015258789,
+        "start_s": 9.960000038146973,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 11.119999885559082,
+        "start_s": 10.960000038146973,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 11.420000076293945,
+        "start_s": 11.119999885559082,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 11.739999771118164,
+        "start_s": 11.420000076293945,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 12.319999694824219,
+        "start_s": 11.739999771118164,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 12.739999771118164,
+        "start_s": 12.319999694824219,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 13.140000343322754,
+        "start_s": 12.859999656677246,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 13.5,
+        "start_s": 13.140000343322754,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 14.039999961853027,
+        "start_s": 13.5,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 15.0600004196167,
+        "start_s": 14.859999656677246,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 15.539999961853027,
+        "start_s": 15.0600004196167,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 16.040000915527344,
+        "start_s": 15.539999961853027,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 16.260000228881836,
+        "start_s": 16.040000915527344,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 16.65999984741211,
+        "start_s": 16.260000228881836,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 16.700000762939453,
+        "start_s": 16.65999984741211,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 16.81999969482422,
+        "start_s": 16.700000762939453,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 18.520000457763672,
+        "start_s": 17.860000610351562,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 19.18000030517578,
+        "start_s": 18.520000457763672,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 20.15999984741211,
+        "start_s": 19.639999389648438,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 20.540000915527344,
+        "start_s": 20.15999984741211,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 21.020000457763672,
+        "start_s": 20.899999618530273,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 21.200000762939453,
+        "start_s": 21.020000457763672,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 21.299999237060547,
+        "start_s": 21.200000762939453,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 21.600000381469727,
+        "start_s": 21.299999237060547,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 21.940000534057617,
+        "start_s": 21.600000381469727,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 22.299999237060547,
+        "start_s": 21.940000534057617,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 23.360000610351562,
+        "start_s": 23.040000915527344,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 24.200000762939453,
+        "start_s": 23.360000610351562,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 25.040000915527344,
+        "start_s": 24.6200008392334,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 25.239999771118164,
+        "start_s": 25.040000915527344,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 25.5,
+        "start_s": 25.239999771118164,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 25.760000228881836,
+        "start_s": 25.5,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 26.0,
+        "start_s": 25.760000228881836,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 26.260000228881836,
+        "start_s": 26.0,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 27.100000381469727,
+        "start_s": 26.940000534057617,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 27.420000076293945,
+        "start_s": 27.100000381469727,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 28.020000457763672,
+        "start_s": 27.940000534057617,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 28.459999084472656,
+        "start_s": 28.020000457763672,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 29.360000610351562,
+        "start_s": 28.969999313354492,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 29.700000762939453,
+        "start_s": 29.360000610351562,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 29.979999542236328,
+        "start_s": 29.700000762939453,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 30.299999237060547,
+        "start_s": 29.979999542236328,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 30.739999771118164,
+        "start_s": 30.299999237060547,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 31.0,
+        "start_s": 30.739999771118164,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 31.520000457763672,
+        "start_s": 31.520000457763672,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 31.860000610351562,
+        "start_s": 31.520000457763672,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 32.13999938964844,
+        "start_s": 31.860000610351562,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 32.880001068115234,
+        "start_s": 32.13999938964844,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 33.560001373291016,
+        "start_s": 32.880001068115234,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 33.91999816894531,
+        "start_s": 33.560001373291016,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 34.31999969482422,
+        "start_s": 33.91999816894531,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 34.68000030517578,
+        "start_s": 34.31999969482422,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 36.29999923706055,
+        "start_s": 35.90999984741211,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 37.08000183105469,
+        "start_s": 36.29999923706055,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 37.68000030517578,
+        "start_s": 37.31999969482422,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 38.0,
+        "start_s": 37.68000030517578,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 38.31999969482422,
+        "start_s": 38.0,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 38.70000076293945,
+        "start_s": 38.31999969482422,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 38.81999969482422,
+        "start_s": 38.70000076293945,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 39.279998779296875,
+        "start_s": 38.81999969482422,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 40.220001220703125,
+        "start_s": 39.279998779296875,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 41.779998779296875,
+        "start_s": 40.220001220703125,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 42.099998474121094,
+        "start_s": 41.779998779296875,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 42.91999816894531,
+        "start_s": 42.7599983215332,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 44.040000915527344,
+        "start_s": 42.91999816894531,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 44.099998474121094,
+        "start_s": 44.040000915527344,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 44.599998474121094,
+        "start_s": 44.099998474121094,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 45.65999984741211,
+        "start_s": 45.41999816894531,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 45.79999923706055,
+        "start_s": 45.65999984741211,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 46.2400016784668,
+        "start_s": 45.79999923706055,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 46.97999954223633,
+        "start_s": 46.2400016784668,
+        "confidence": 1.0
+      },
+      {
+        "text": "word",
+        "end_s": 47.540000915527344,
+        "start_s": 46.97999954223633,
+        "confidence": 1.0
+      }
+    ],
+    "review_feedback": "",
+    "target_duration_s": 48.618667,
+    "mixed_media_timing": null,
+    "selected_media_ids": null,
+    "video_reuse_policy": "once",
+    "narration_duration_s": 48.618667,
+    "opening_title_duration_s": null
+  },
+  "raw_text": "{\"schema_version\": 1, \"title\": \"A landmark unfolds\", \"chapters\": [{\"chapter_id\": \"chapter-1\", \"topic\": \"historical phase 1\", \"thought\": \"\", \"role\": \"hook\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m005\", \"weight\": 1, \"candidate_index\": 0}]}, {\"chapter_id\": \"chapter-2\", \"topic\": \"historical phase 2\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m004\", \"weight\": 1, \"candidate_index\": 0}]}, {\"chapter_id\": \"chapter-3\", \"topic\": \"historical phase 3\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m007\", \"weight\": 1}]}, {\"chapter_id\": \"chapter-4\", \"topic\": \"historical phase 4\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m009\", \"weight\": 1}]}, {\"chapter_id\": \"chapter-5\", \"topic\": \"historical phase 5\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m006\", \"weight\": 1}]}, {\"chapter_id\": \"chapter-6\", \"topic\": \"historical phase 6\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m008\", \"weight\": 1}]}, {\"chapter_id\": \"chapter-7\", \"topic\": \"historical phase 7\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m010\", \"weight\": 1}]}, {\"chapter_id\": \"chapter-8\", \"topic\": \"historical phase 8\", \"thought\": \"\", \"role\": \"build\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m003\", \"weight\": 1, \"candidate_index\": 0}]}, {\"chapter_id\": \"chapter-9\", \"topic\": \"historical phase 9\", \"thought\": \"\", \"role\": \"payoff\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m002\", \"weight\": 1, \"candidate_index\": 0}]}, {\"chapter_id\": \"chapter-10\", \"topic\": \"historical phase 10\", \"thought\": \"\", \"role\": \"payoff\", \"weight\": 1, \"layout\": \"fullscreen\", \"sources\": [{\"media_id\": \"m001\", \"weight\": 1, \"candidate_index\": 1}]}], \"text_bindings\": [{\"text\": \"Historical phase 1\", \"chapter_ids\": [\"chapter-1\", \"chapter-2\"], \"media_ids\": []}, {\"text\": \"Historical phase 2\", \"chapter_ids\": [\"chapter-3\"], \"media_ids\": []}, {\"text\": \"Historical phase 3\", \"chapter_ids\": [\"chapter-4\"], \"media_ids\": []}, {\"text\": \"Historical phase 4\", \"chapter_ids\": [\"chapter-5\"], \"media_ids\": []}, {\"text\": \"Historical phase 5\", \"chapter_ids\": [\"chapter-6\"], \"media_ids\": []}, {\"text\": \"Historical phase 6\", \"chapter_ids\": [\"chapter-7\"], \"media_ids\": []}, {\"text\": \"Historical phase 7\", \"chapter_ids\": [\"chapter-8\"], \"media_ids\": []}, {\"text\": \"Historical phase 8\", \"chapter_ids\": [\"chapter-9\"], \"media_ids\": []}, {\"text\": \"Historical phase 9\", \"chapter_ids\": [\"chapter-10\"], \"media_ids\": []}]}"
+}

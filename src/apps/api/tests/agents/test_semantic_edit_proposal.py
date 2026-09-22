@@ -481,6 +481,91 @@ def test_resolved_caption_echo_cannot_remain_on_unrelated_media(direction, op) -
     ] == ([("After the match", ["two"], [])] if direction == "fast_montage" else [])
 
 
+@pytest.mark.parametrize(
+    "creator_request",
+    [
+        'Create a narrated story. He reportedly said: "My client is not in a hurry."',
+        'Write a narrated story where he said: "My client is not in a hurry."',
+        'He said: "My client is not in a hurry." Put that video on screen.',
+        'He said, "My client is not in a hurry."',
+        'He said: "My client is not in a hurry." on the video.',
+        'Use the words he said: "My client is not in a hurry." for the voiceover.',
+        'He said: "My client is not in a hurry." \u2014 use that quote for the voiceover.',
+    ],
+)
+def test_narrated_reported_speech_is_not_required_on_screen(creator_request: str) -> None:
+    raw = json.loads(_raw())
+    for chapter in raw["chapters"]:
+        chapter["thought"] = ""
+    input = _input(
+        creator_request=creator_request,
+        narration_duration_s=24,
+    )
+
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+
+    assert [chapter.thought for chapter in plan.chapters] == ["", ""]
+    assert plan.text_bindings == []
+
+
+@pytest.mark.parametrize(
+    "creator_request",
+    [
+        'Create a narrated story. Put "My client is not in a hurry." on screen.',
+        'Create a narrated story. He reportedly said: "My client is not in a hurry." '
+        'Put "My client is not in a hurry." on screen.',
+        'Show the words he said: "My client is not in a hurry."',
+        'Put the words he said: "My client is not in a hurry." on the opening clip.',
+        'He reportedly said: "My client is not in a hurry." on screen.',
+        'He reportedly said: "My client is not in a hurry." as a caption.',
+        'He reportedly said: "My client is not in a hurry." \u2014 put that quote on screen.',
+    ],
+)
+def test_narrated_explicit_display_copy_remains_required(creator_request: str) -> None:
+    raw = json.loads(_raw())
+    for chapter in raw["chapters"]:
+        chapter["thought"] = ""
+    input = _input(creator_request=creator_request, narration_duration_s=24)
+
+    with pytest.raises(SchemaError, match="creator caption was dropped"):
+        SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+
+    raw["chapters"][0]["thought"] = "My client is not in a hurry."
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert plan.chapters[0].thought == "My client is not in a hurry."
+
+
+def test_narrated_reported_speech_does_not_replace_explicit_caption() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = ""
+    raw["chapters"][1]["thought"] = "After the match"
+    input = _input(
+        creator_request="Create a narrated story. "
+        'He reportedly said: "My client is not in a hurry." '
+        'Put "After the match" on screen over the pub clip.',
+        narration_duration_s=24,
+    )
+
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["", "After the match"]
+
+    raw["chapters"][1]["thought"] = ""
+    with pytest.raises(SchemaError, match="creator caption was dropped"):
+        SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+
+
+def test_display_instruction_in_previous_clause_does_not_own_reported_speech() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = "Intro"
+    raw["chapters"][1]["thought"] = ""
+    input = _input(
+        creator_request='Show "Intro" on screen, then he said: "My client is not in a hurry."',
+        narration_duration_s=24,
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["Intro", ""]
+
+
 def test_quoted_caption_without_cue_words_is_enforced_for_non_english_request() -> None:
     input = _input(creator_request="“maç sonrası pub” pub çekimleri için.")
     raw = json.loads(_raw())
