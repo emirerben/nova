@@ -67,6 +67,21 @@ scoped to one template — usable before any job has referenced it. Uses the sha
 `AgentSection` component (`src/apps/web/src/app/admin/_shared/`). Cap: 100 runs, DESC
 (newest first).
 
+## Proposal runs before a render job exists
+
+`AgentRun.plan_item_id` is a nullable owner for proposal model calls (migration
+0107). `RunContext(plan_item_id=...)` persists accepted and rejected raw model
+output without inventing a render Job. Existing job/template/track/session owners
+remain valid.
+
+`GET /admin/plan-items/{id}/proposal-trace` requires admin authentication and returns
+the ten latest runs plus `agent_runs_has_more`, direction, prompt version, and
+private scheduling diagnostics. Use
+`python scripts/admin.py GET plan-items/<id>/proposal-trace` locally or the same
+command with `--prod`. Diagnostics include requested/effective frame counts,
+semantic plan, selected windows, repairs and failure reason. They are absent from
+ordinary plan-item responses. The existing redacted `/debug` endpoint stays small.
+
 ## Eval harness opt-out
 
 The eval RunContext sets `extra={"skip_agent_run_persist": True}` so replay-mode evals

@@ -584,10 +584,17 @@ def _fail(
     retryable: bool = True,
     detail: str | None = None,
 ) -> None:
+    from app.config import settings
+
     failed = proposal.model_copy(
         update={
             "proposal_version": proposal.proposal_version + 1,
             "status": "failed",
+            **(
+                {"design_fallback": MAIN_CREATOR_FAIL_CLOSED}
+                if settings.edit_proposal_semantic_enabled or proposal.planning_diagnostics
+                else {}
+            ),
             "failure": ProposalFailure(
                 code=code, message=message, retryable=retryable, detail=detail
             ),
@@ -877,6 +884,7 @@ def _review_authored_montage(
                     ),
                     ctx=RunContext(
                         creator_id=str(creator_id),
+                        plan_item_id=item_id,
                         request_id=(
                             f"edit-proposal:{item_id}:{attempt_id}:montage-review:{source_id}"
                         ),
@@ -1301,6 +1309,9 @@ def _run_draft_attempt(
         deterministic_labeled_beats,
     )
     from app.services.edit_proposals import approve_proposal  # noqa: PLC0415
+    from app.services.proposal_planning import SemanticPlanningError, plan_edit_proposal
+
+    semantic_enabled = settings.edit_proposal_semantic_enabled
 
     def _resolved_clip_intents(proposal_brief):
         # KRI-127 Lane P: only surface the chat turn's resolved clip intents
@@ -1517,82 +1528,27 @@ def _run_draft_attempt(
                 pace=brief.pace,
                 mixed_media_timing=brief.mixed_media_timing,
             )
-        allow_cadence_reuse = bool(
-            video_reuse_policy == "allow_repeat"
-            or brief.montage_cadence is not None
-            and brief.montage_cadence.reuse_policy == "allow_repeat"
-        )
-        feasibility_threshold_s = guided_feasibility_threshold_s(len(media))
-        try:
-            cadence_target_s = cadence_target_duration_s(brief, media)
-        except ValueError:
-            cadence_target_s = None
-            cadence_infeasible = True
+        if semantic_enabled:
+            target_duration_s = narration.duration_s if narration else brief.duration_s
         else:
-            cadence_infeasible = False
-        if cadence_infeasible or (
-            brief.montage_cadence is None
-            and feasible_duration_s < feasibility_threshold_s
-            and not allow_cadence_reuse
-        ):
-            with sync_session() as db:
-                locked = _locked_item(db, iid, ownership_epoch)
-                item = locked[0] if locked else None
-                current = parse_edit_proposal(item.edit_proposal) if item else None
-                if (
-                    item
-                    and current
-                    and current.generation_attempt_id == attempt_id
-                    and current.status == "analyzing"
-                ):
-                    _fail(
-                        item,
-                        current,
-                        "guided_edit_infeasible",
-                        "This footage is only about "
-                        f"{feasible_duration_s:.1f}s long — too short for a guided "
-                        "edit. Add more media or use a shorter format.",
-                    )
-                    db.commit()
-            return
-        target_duration_s = (
-            max(MIN_GUIDED_DURATION_S, min(MAX_PROPOSAL_DURATION_S, narration.duration_s))
-            if narration is not None
-            else cadence_target_s
-            or adapt_target_duration_s(
-                brief.duration_s,
-                feasible_duration_s,
-                allow_source_reuse=allow_cadence_reuse,
+            allow_cadence_reuse = bool(
+                video_reuse_policy == "allow_repeat"
+                or brief.montage_cadence is not None
+                and brief.montage_cadence.reuse_policy == "allow_repeat"
             )
-        )
-        if brief.direction == "guided_story" and narration is None and cadence_target_s is None:
-            # `feasible_duration_s` only sums raw footage; it doesn't know the
-            # beat-limit-bound compiler will also charge a transition overlap
-            # per moment. Clamp to what a real story-beat structure could
-            # deliver so the specialist agent is never asked for more seconds
-            # than either it or the deterministic fallback could ever produce
-            # (job b2242487 -- `guided_story_duration_impossible` after two
-            # schema failures because the target was structurally infeasible
-            # from the start).
-            target_duration_s = max(
-                MIN_GUIDED_DURATION_S,
-                min(
-                    target_duration_s,
-                    guided_story_capacity_s(
-                        media, pace=brief.pace, mixed_media_timing=brief.mixed_media_timing
-                    ),
-                ),
-            )
-        if brief.direction == "fast_montage":
+            feasibility_threshold_s = guided_feasibility_threshold_s(len(media))
             try:
-                target_duration_s = clamp_fast_montage_target_duration_s(
-                    media, target_duration_s, brief.mixed_media_timing, video_reuse_policy
-                )
-            except ValueError as exc:
-                # A typed mixed-media request can pass the generic guided
-                # feasibility floor while still lacking the minimum source
-                # capacity for its per-kind holds. Keep that actionable
-                # outcome distinct from an unexpected proposal failure.
+                cadence_target_s = cadence_target_duration_s(brief, media)
+            except ValueError:
+                cadence_target_s = None
+                cadence_infeasible = True
+            else:
+                cadence_infeasible = False
+            if cadence_infeasible or (
+                brief.montage_cadence is None
+                and feasible_duration_s < feasibility_threshold_s
+                and not allow_cadence_reuse
+            ):
                 with sync_session() as db:
                     locked = _locked_item(db, iid, ownership_epoch)
                     item = locked[0] if locked else None
@@ -1607,13 +1563,71 @@ def _run_draft_attempt(
                             item,
                             current,
                             "guided_edit_infeasible",
-                            "The requested photo/video pacing needs at least 3s of usable "
-                            "source footage. Add another photo or video, or choose a "
-                            "different edit direction.",
-                            detail=_exc_detail(exc),
+                            "This footage is only about "
+                            f"{feasible_duration_s:.1f}s long — too short for a guided "
+                            "edit. Add more media or use a shorter format.",
                         )
                         db.commit()
                 return
+            target_duration_s = (
+                max(MIN_GUIDED_DURATION_S, min(MAX_PROPOSAL_DURATION_S, narration.duration_s))
+                if narration is not None
+                else cadence_target_s
+                or adapt_target_duration_s(
+                    brief.duration_s,
+                    feasible_duration_s,
+                    allow_source_reuse=allow_cadence_reuse,
+                )
+            )
+            if brief.direction == "guided_story" and narration is None and cadence_target_s is None:
+                # `feasible_duration_s` only sums raw footage; it doesn't know the
+                # beat-limit-bound compiler will also charge a transition overlap
+                # per moment. Clamp to what a real story-beat structure could
+                # deliver so the specialist agent is never asked for more seconds
+                # than either it or the deterministic fallback could ever produce
+                # (job b2242487 -- `guided_story_duration_impossible` after two
+                # schema failures because the target was structurally infeasible
+                # from the start).
+                target_duration_s = max(
+                    MIN_GUIDED_DURATION_S,
+                    min(
+                        target_duration_s,
+                        guided_story_capacity_s(
+                            media, pace=brief.pace, mixed_media_timing=brief.mixed_media_timing
+                        ),
+                    ),
+                )
+            if brief.direction == "fast_montage":
+                try:
+                    target_duration_s = clamp_fast_montage_target_duration_s(
+                        media, target_duration_s, brief.mixed_media_timing, video_reuse_policy
+                    )
+                except ValueError as exc:
+                    # A typed mixed-media request can pass the generic guided
+                    # feasibility floor while still lacking the minimum source
+                    # capacity for its per-kind holds. Keep that actionable
+                    # outcome distinct from an unexpected proposal failure.
+                    with sync_session() as db:
+                        locked = _locked_item(db, iid, ownership_epoch)
+                        item = locked[0] if locked else None
+                        current = parse_edit_proposal(item.edit_proposal) if item else None
+                        if (
+                            item
+                            and current
+                            and current.generation_attempt_id == attempt_id
+                            and current.status == "analyzing"
+                        ):
+                            _fail(
+                                item,
+                                current,
+                                "guided_edit_infeasible",
+                                "The requested photo/video pacing needs at least 3s of usable "
+                                "source footage. Add another photo or video, or choose a "
+                                "different edit direction.",
+                                detail=_exc_detail(exc),
+                            )
+                            db.commit()
+                    return
         digest = canonical_media_digest(media, narration)
 
         with sync_session() as db:
@@ -1748,7 +1762,9 @@ def _run_draft_attempt(
         fallback_used = False
         fallback_reason = ""
         try:
-            output = EditProposalAgent(default_client()).run(
+            output = (
+                plan_edit_proposal if semantic_enabled else EditProposalAgent(default_client()).run
+            )(
                 EditProposalAgentInput(
                     idea=idea,
                     theme=theme,
@@ -1778,6 +1794,7 @@ def _run_draft_attempt(
                 ),
                 ctx=RunContext(
                     creator_id=str(owner_id),
+                    plan_item_id=item_id,
                     request_id=f"edit-proposal:{iid}:{attempt_id}:draft",
                 ),
             )
@@ -1811,7 +1828,11 @@ def _run_draft_attempt(
             review_feedback = _montage_review_feedback(reviews)
             if review_feedback:
                 try:
-                    output = EditProposalAgent(default_client()).run(
+                    output = (
+                        plan_edit_proposal
+                        if semantic_enabled
+                        else EditProposalAgent(default_client()).run
+                    )(
                         EditProposalAgentInput(
                             idea=idea,
                             theme=theme,
@@ -1842,6 +1863,7 @@ def _run_draft_attempt(
                         ),
                         ctx=RunContext(
                             creator_id=str(owner_id),
+                            plan_item_id=item_id,
                             request_id=f"edit-proposal:{iid}:{attempt_id}:review-revision",
                         ),
                     )
@@ -1867,6 +1889,7 @@ def _run_draft_attempt(
         # sized for a specific total.
         if (
             output is not None
+            and getattr(output, "frame_schedule", None) is None
             and brief.montage_cadence is None
             and video_reuse_policy != "allow_repeat"
             and output.duration_s > feasible_duration_s + 1e-6
@@ -1994,7 +2017,11 @@ def _run_draft_attempt(
                 # snapshot requires its cuts to sum to this number.
                 duration_s=(
                     output.duration_s
-                    if output is not None and brief.direction == "fast_montage"
+                    if output is not None
+                    and (
+                        getattr(output, "frame_schedule", None) is not None
+                        or brief.direction == "fast_montage"
+                    )
                     else target_duration_s
                 ),
                 # A confirmed Main Creator title is immutable and beats any
@@ -2010,8 +2037,13 @@ def _run_draft_attempt(
                 image_layout=brief.image_layout,
                 licensed_sfx=brief.licensed_sfx,
                 media=media,
+                frame_schedule=getattr(output, "frame_schedule", None)
+                if output is not None
+                else None,
                 story_beats=(
-                    [
+                    output.scheduled_story_beats
+                    if output is not None and getattr(output, "frame_schedule", None) is not None
+                    else [
                         StoryBeat(
                             beat_id=str(uuid.uuid4()),
                             topic=beat.topic,
@@ -2089,6 +2121,7 @@ def _run_draft_attempt(
         except GuidedStoryError as exc:
             if (
                 output is None
+                or semantic_enabled
                 or brief.direction == "text_explainer"
                 or (
                     narration is not None
@@ -2138,8 +2171,15 @@ def _run_draft_attempt(
             # rather than emitting a log/pipeline event here (record_pipeline_
             # event-while-FOR-UPDATE is a known self-deadlock trap in this
             # codebase; see agents/DECISIONS.md).
+            diagnostics = getattr(output, "planning_diagnostics", None)
+            if diagnostics is not None and drafted.draft.frame_schedule is not None:
+                diagnostics = {
+                    **diagnostics,
+                    "schedule": drafted.draft.frame_schedule.model_dump(mode="json"),
+                }
             drafted = drafted.model_copy(
                 update={
+                    "planning_diagnostics": diagnostics,
                     "planner_fallback": (
                         ProposalPlannerFallback(
                             reason=fallback_reason or "unknown planner failure",
@@ -2148,7 +2188,7 @@ def _run_draft_attempt(
                         )
                         if fallback_used
                         else None
-                    )
+                    ),
                 }
             )
             item.edit_proposal = drafted.model_dump(mode="json")
@@ -2194,11 +2234,28 @@ def _run_draft_attempt(
                 and current.generation_attempt_id == attempt_id
                 and current.status in {"analyzing", "drafting"}
             ):
+                if isinstance(exc, SemanticPlanningError):
+                    current = current.model_copy(update={"planning_diagnostics": exc.diagnostics})
+                elif semantic_enabled:
+                    current = current.model_copy(
+                        update={
+                            "planning_diagnostics": {
+                                "outcome": "failed",
+                                "fallback_reason": _exc_detail(exc),
+                                "compiler_version": 8,
+                                "scheduler_version": 1,
+                            }
+                        }
+                    )
                 _fail(
                     item,
                     current,
-                    "proposal_generation_failed",
-                    "Kria couldn't plan this edit. Try again.",
+                    exc.code
+                    if isinstance(exc, SemanticPlanningError)
+                    else "proposal_generation_failed",
+                    exc.reason
+                    if isinstance(exc, SemanticPlanningError)
+                    else "Kria couldn't plan this edit. Try again.",
                     detail=_exc_detail(exc),
                 )
                 db.commit()

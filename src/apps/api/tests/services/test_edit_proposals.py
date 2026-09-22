@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.schemas.edit_frame_schedule import EditFrameSchedule, FrameScheduledMoment
 from app.schemas.edit_proposal import (
     EDIT_CONVERSATION_TURN_MAX_CHARS,
     EditConversationTurn,
@@ -412,6 +413,160 @@ def test_conversation_persists_typed_brief_without_starting_analysis() -> None:
     assert saved.brief_ready is True
     assert [turn.role for turn in saved.conversation] == ["user", "agent"]
     assert proposal_generate_error(item) == "proposal_draft"
+
+
+def test_conversation_manual_revision_marks_private_planning_diagnostics() -> None:
+    item = _item()
+    current = begin_proposal_attempt(item)
+    item.edit_proposal = current.model_copy(
+        update={
+            "status": "draft",
+            "draft": _snapshot(),
+            "planning_diagnostics": {
+                "outcome": "compiled",
+                "schedule": {"stale": True},
+                "semantic_plan": {"chapters": []},
+                "feasibility": {"status": "feasible"},
+            },
+        }
+    ).model_dump(mode="json")
+
+    saved = save_edit_conversation_turn(
+        item,
+        expected_version=current.proposal_version,
+        brief=ProposalBrief(goal="Keep the coast first"),
+        user_message="Put the coast first.",
+        agent_reply="I updated the sequence.",
+        suggestions=[],
+        ready_to_plan=True,
+        revised_snapshot=_snapshot(),
+    )
+
+    assert saved.planning_diagnostics == {
+        "outcome": "manual_revision",
+        "schedule": None,
+        "manual_revision": True,
+        "direction": "guided_story",
+        "prior_plan": {
+            "semantic_plan": {"chapters": []},
+            "feasibility": {"status": "feasible"},
+        },
+    }
+
+
+def test_conversation_manual_revision_refreshes_private_schedule() -> None:
+    item = _item()
+    original = _snapshot()
+    base = original.model_copy(
+        update={
+            "duration_s": 3,
+            "media": [original.media[0].model_copy(update={"duration_s": 10})],
+            "story_beats": [original.story_beats[0].model_copy(update={"duration_s": 3})],
+        }
+    )
+    old_schedule = EditFrameSchedule(
+        total_frames=90,
+        transition_frames=0,
+        direction="guided_story",
+        moments=[
+            FrameScheduledMoment(
+                moment_id="coast",
+                beat_id="beat-1",
+                media_id="clip-1",
+                source_start_frame=60,
+                source_end_frame=150,
+                output_start_frame=0,
+                output_end_frame=90,
+                role="hook",
+            )
+        ],
+    )
+    revised_schedule = old_schedule.model_copy(
+        update={
+            "moments": [
+                old_schedule.moments[0].model_copy(
+                    update={"source_start_frame": 61, "source_end_frame": 151}
+                )
+            ]
+        }
+    )
+    current = begin_proposal_attempt(item)
+    item.edit_proposal = current.model_copy(
+        update={
+            "status": "draft",
+            "draft": base.model_copy(update={"frame_schedule": old_schedule}),
+            "planning_diagnostics": {"outcome": "compiled", "schedule": old_schedule.model_dump()},
+        }
+    ).model_dump(mode="json")
+
+    saved = save_edit_conversation_turn(
+        item,
+        expected_version=current.proposal_version,
+        brief=ProposalBrief(goal="Start on the next frame"),
+        user_message="Move the opening forward one frame.",
+        agent_reply="I moved it.",
+        suggestions=[],
+        ready_to_plan=True,
+        revised_snapshot=base.model_copy(update={"frame_schedule": revised_schedule}),
+    )
+
+    assert saved.draft.frame_schedule.moments[0].source_start_frame == 61
+    assert saved.planning_diagnostics["schedule"]["moments"][0]["source_start_frame"] == 61
+
+
+def test_conversation_replan_diagnostics_use_final_normalized_schedule() -> None:
+    item = _item()
+    original = _snapshot()
+    base = original.model_copy(
+        update={
+            "duration_s": 3,
+            "media": [original.media[0].model_copy(update={"duration_s": 10})],
+        }
+    )
+    planner_schedule = EditFrameSchedule(
+        total_frames=90,
+        transition_frames=0,
+        direction="guided_story",
+        moments=[
+            FrameScheduledMoment(
+                moment_id="coast",
+                beat_id="beat-1",
+                media_id="clip-1",
+                source_start_frame=0,
+                source_end_frame=90,
+                output_start_frame=0,
+                output_end_frame=90,
+                layout="supporting_card",
+                role="hook",
+            )
+        ],
+    )
+    final_schedule = planner_schedule.model_copy(
+        update={
+            "moments": [planner_schedule.moments[0].model_copy(update={"layout": "fullscreen"})]
+        }
+    )
+    current = begin_proposal_attempt(item)
+    item.edit_proposal = current.model_copy(
+        update={
+            "status": "draft",
+            "draft": base.model_copy(update={"frame_schedule": planner_schedule}),
+        }
+    ).model_dump(mode="json")
+
+    saved = save_edit_conversation_turn(
+        item,
+        expected_version=current.proposal_version,
+        brief=ProposalBrief(goal="Phone-ready coast"),
+        user_message="Make the coast phone-ready.",
+        agent_reply="I updated it.",
+        suggestions=[],
+        ready_to_plan=True,
+        revised_snapshot=base.model_copy(update={"frame_schedule": final_schedule}),
+        planning_diagnostics={"outcome": "compiled", "schedule": planner_schedule.model_dump()},
+    )
+
+    assert saved.planning_diagnostics["schedule"]["moments"][0]["layout"] == "fullscreen"
 
 
 def test_conversation_bounds_turns_longer_than_the_transcript_limit() -> None:

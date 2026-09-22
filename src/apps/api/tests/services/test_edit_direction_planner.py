@@ -15,6 +15,7 @@ from app.pipeline.guided_story import (
     compile_execution_plan,
     validate_proposal_timing,
 )
+from app.schemas.edit_frame_schedule import EditFrameSchedule, FrameScheduledMoment
 from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
@@ -28,6 +29,7 @@ from app.schemas.edit_proposal import (
     media_context_group,
 )
 from app.services import edit_direction_planner
+from app.services.proposal_planning import SemanticPlanningError
 
 
 class FailingAgent:
@@ -1730,3 +1732,169 @@ def test_fast_montage_keeps_a_clip_shorter_than_the_cut_floor() -> None:
     assert len(short_cuts) == 1
     assert short_cuts[0].output_duration_s == pytest.approx(0.3, abs=0.04)
     assert {cut.media_id for cut in cuts} == {ref.media_id for ref in media}
+
+
+def _semantic_replan_source(*, scheduled: bool = False) -> EditProposalSnapshot:
+    source = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Tell it",
+        pace="balanced",
+        duration_s=3,
+        title="Title",
+        media=[
+            MediaRef(
+                lane="clip",
+                media_id="clip",
+                gcs_path="users/test/clip.mp4",
+                generation="1",
+                kind="video",
+                duration_s=10,
+            )
+        ],
+        story_beats=[StoryBeat(beat_id="beat", topic="Story", media_ids=["clip"], duration_s=3)],
+    )
+    if not scheduled:
+        return source
+    schedule = EditFrameSchedule(
+        total_frames=90,
+        transition_frames=0,
+        direction="guided_story",
+        moments=[
+            FrameScheduledMoment(
+                moment_id="beat:m1",
+                beat_id="beat",
+                media_id="clip",
+                source_start_frame=0,
+                source_end_frame=90,
+                output_start_frame=0,
+                output_end_frame=90,
+                role="hook",
+            )
+        ],
+    )
+    return source.model_copy(update={"frame_schedule": schedule})
+
+
+def test_direction_replan_keeps_legacy_agent_path_when_semantic_flag_off(monkeypatch) -> None:
+    monkeypatch.setattr(edit_direction_planner.settings, "edit_proposal_semantic_enabled", False)
+    calls = []
+
+    class FakeAgent:
+        def __init__(self, _client):
+            pass
+
+        def run(self, _input, ctx=None):
+            calls.append(ctx)
+            return EditProposalAgentOutput(
+                title="Legacy",
+                duration_s=3,
+                story_beats=[{"topic": "Story", "media_ids": ["clip"], "duration_s": 3}],
+            )
+
+    monkeypatch.setattr(edit_direction_planner, "EditProposalAgent", FakeAgent)
+    monkeypatch.setattr(
+        edit_direction_planner, "plan_edit_proposal", lambda *_a, **_k: pytest.fail("semantic")
+    )
+    result = edit_direction_planner.plan_direction_snapshot(
+        _semantic_replan_source(),
+        direction="guided_story",
+        goal="Tell it",
+        pace="balanced",
+        duration_s=3,
+    )
+    assert result.frame_schedule is None
+    assert len(calls) == 1
+
+
+def test_direction_replan_uses_semantic_facade_and_never_falls_back(monkeypatch) -> None:
+    monkeypatch.setattr(edit_direction_planner.settings, "edit_proposal_semantic_enabled", True)
+    schedule = EditFrameSchedule(
+        total_frames=90,
+        transition_frames=0,
+        direction="guided_story",
+        moments=[
+            FrameScheduledMoment(
+                moment_id="beat:m1",
+                beat_id="beat",
+                media_id="clip",
+                source_start_frame=0,
+                source_end_frame=90,
+                output_start_frame=0,
+                output_end_frame=90,
+                role="hook",
+            )
+        ],
+    )
+    output = EditProposalAgentOutput(
+        title="Semantic",
+        duration_s=3,
+        story_beats=[],
+        frame_schedule=schedule,
+        planning_diagnostics={"outcome": "compiled"},
+        scheduled_story_beats=[
+            StoryBeat(beat_id="beat", topic="Story", media_ids=["clip"], duration_s=3)
+        ],
+    )
+    seen = {}
+
+    def fake_plan(value, **kwargs):
+        seen.update(ctx=kwargs["ctx"], clip_intents=value.clip_intents)
+        return output
+
+    monkeypatch.setattr(edit_direction_planner, "plan_edit_proposal", fake_plan)
+    metadata = {}
+    result = edit_direction_planner.plan_direction_snapshot(
+        _semantic_replan_source(),
+        direction="guided_story",
+        goal="Tell it",
+        pace="balanced",
+        duration_s=3,
+        job_id="job",
+        plan_item_id="item",
+        planning_diagnostics_out=metadata,
+    )
+    assert result.frame_schedule == schedule
+    assert seen["ctx"].plan_item_id == "item"
+    assert metadata["planning_diagnostics"] == output.planning_diagnostics
+
+    monkeypatch.setattr(
+        edit_direction_planner,
+        "plan_edit_proposal",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            SemanticPlanningError("rejected", "no", {"outcome": "rejected"})
+        ),
+    )
+    rejected_metadata = {}
+    with pytest.raises(SemanticPlanningError):
+        edit_direction_planner.plan_direction_snapshot(
+            _semantic_replan_source(),
+            direction="guided_story",
+            goal="Tell it",
+            pace="balanced",
+            duration_s=3,
+            planning_diagnostics_out=rejected_metadata,
+        )
+    assert rejected_metadata["planning_diagnostics"]["outcome"] == "rejected"
+
+
+def test_scheduled_snapshot_forces_semantic_replan_after_flag_rollback(monkeypatch) -> None:
+    monkeypatch.setattr(edit_direction_planner.settings, "edit_proposal_semantic_enabled", False)
+    seen = {}
+
+    def fake_plan(_input, **kwargs):
+        seen["force"] = kwargs["force_semantic"]
+        return EditProposalAgentOutput(
+            title="Semantic",
+            duration_s=3,
+            story_beats=[{"topic": "Story", "media_ids": ["clip"], "duration_s": 3}],
+        )
+
+    monkeypatch.setattr(edit_direction_planner, "plan_edit_proposal", fake_plan)
+    edit_direction_planner.plan_direction_snapshot(
+        _semantic_replan_source(scheduled=True),
+        direction="guided_story",
+        goal="Tell it",
+        pace="balanced",
+        duration_s=3,
+    )
+    assert seen["force"] is True
