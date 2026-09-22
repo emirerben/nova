@@ -98,6 +98,7 @@ protocol KriaAPIClient: Sendable {
     func removeVisual(itemID: String, assetID: String) async throws
     func retryVisual(itemID: String, assetID: String) async throws -> CreationVisual
     func library() async throws -> [ProjectSummary]
+    func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster]
     func createThread(message: String?) async throws -> CreationThread
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession
@@ -152,6 +153,7 @@ protocol KriaAPIClient: Sendable {
 /// editor saves fail explicitly when the production commit endpoint is not
 /// implemented by a substitute.
 extension KriaAPIClient {
+    func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster] { throw APIError.unsupported }
     func requestAccountDeletion() async throws -> AccountDeletionRequest { throw APIError.unsupported }
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
@@ -767,6 +769,11 @@ struct KriaAPI: KriaAPIClient {
         let runtime = capabilities.preferredRuntimeVersion
         return try await request(path: "creation-threads", method: "POST", bodyData: JSONEncoder().encode(CreateThreadRequest(message: runtime == 1 ? message : nil, clientEventID: UUID().uuidString, runtimeVersion: runtime)), decode: CreationThread.self)
     }
+    func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster] {
+        let body = LibraryPosterRequest(jobIDs: jobIDs, brokenJobIDs: brokenJobIDs)
+        let response = try await request(path: "me/jobs/posters/refresh", method: "POST", bodyData: JSONEncoder().encode(body), decode: LibraryPosterResponse.self, timeoutInterval: 10)
+        return response.jobs
+    }
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession { try await request(path: "auth/mobile/exchange", method: "POST", bodyData: try JSONEncoder().encode(["id_token": credential.token, "provider": provider, "nonce": credential.nonce]), decode: MobileSession.self) }
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession { try await request(path: "auth/mobile/refresh", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: MobileSession.self) }
     func revokeMobileSession(_ refreshToken: String) async throws { _ = try await request(path: "auth/mobile/revoke", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: RevokeResponse.self) }
@@ -891,7 +898,7 @@ struct KriaAPI: KriaAPIClient {
     /// "session expired" and would clear the Keychain / broadcast
     /// `.kriaSessionExpired` for a signed-out user. Every other call site
     /// keeps the default and is unaffected.
-    func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true) async throws -> T {
+    func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil) async throws -> T {
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)
         components?.queryItems = query.isEmpty ? nil : query
         // URLComponents preserves `+` in query-item values, while FastAPI
@@ -902,6 +909,7 @@ struct KriaAPI: KriaAPIClient {
         }
         guard let url = components?.url else { throw APIError.invalidResponse }
         var request = URLRequest(url: url); request.httpMethod = method; request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let timeoutInterval { request.timeoutInterval = timeoutInterval }
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         let storedSession = requiresAuth ? try tokenStore.read() : nil
         if let token = storedSession?.accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
@@ -976,6 +984,8 @@ private struct LibraryResponse: Decodable {
         let title: String?
         let status: String
         let posterURL: String?
+        let posterIdentity: String?
+        let posterStatus: String?
         let outputURL: String?
         let outputVariantID: String?
         let createdAt: Date
@@ -983,6 +993,8 @@ private struct LibraryResponse: Decodable {
         enum CodingKeys: String, CodingKey {
             case id, title, status
             case posterURL = "poster_url"
+            case posterIdentity = "poster_identity"
+            case posterStatus = "poster_status"
             case outputURL = "output_url"
             case outputVariantID = "output_variant_id"
             case createdAt = "created_at"
@@ -997,10 +1009,30 @@ private struct LibraryResponse: Decodable {
                 updatedAt: createdAt,
                 posterURL: posterURL.flatMap(URL.init(string:)),
                 outputURL: outputURL.flatMap(URL.init(string:)),
-                outputVariantID: outputVariantID
+                outputVariantID: outputVariantID,
+                posterIdentity: posterIdentity,
+                posterStatus: posterStatus
             )
         }
     }
+}
+struct LibraryPoster: Decodable, Sendable {
+    let id: UUID
+    let posterURL: URL?
+    let posterIdentity: String?
+    let posterStatus: String
+    enum CodingKeys: String, CodingKey {
+        case id
+        case posterURL = "poster_url"
+        case posterIdentity = "poster_identity"
+        case posterStatus = "poster_status"
+    }
+}
+private struct LibraryPosterResponse: Decodable { let jobs: [LibraryPoster] }
+private struct LibraryPosterRequest: Encodable {
+    let jobIDs: [UUID]
+    let brokenJobIDs: [UUID]
+    enum CodingKeys: String, CodingKey { case jobIDs = "job_ids"; case brokenJobIDs = "broken_job_ids" }
 }
 private struct PlaybackResponse: Decodable { let videoURL: String; enum CodingKeys: String, CodingKey { case videoURL = "video_url" } }
 private struct ApprovalResponse: Decodable {}

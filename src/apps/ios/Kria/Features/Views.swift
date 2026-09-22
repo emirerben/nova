@@ -193,18 +193,30 @@ struct ProjectDetailView: View {
 
 struct ProjectPosterView: View {
     let project: ProjectSummary
+    var isRecovering = false
+    var reloadID = 0
+    var onLoad: ((Bool) -> Void)? = nil
 
     var body: some View {
         Group {
             if let posterURL = project.posterURL {
                 AsyncImage(url: posterURL) { phase in
-                    ProjectPosterContent(phase: phase, title: project.workspaceTitle)
+                    ProjectPosterContent(phase: phase.error != nil && isRecovering ? .empty : phase, title: project.workspaceTitle)
+                        .onAppear { report(phase) }
+                        .onChange(of: phase.image != nil) { _, _ in report(phase) }
+                        .onChange(of: phase.error != nil) { _, _ in report(phase) }
                 }
+                .id(reloadID)
             } else {
-                ProjectPosterContent(phase: nil, title: project.workspaceTitle)
+                ProjectPosterContent(phase: isRecovering ? .empty : nil, title: project.workspaceTitle)
             }
         }
         .clipped()
+    }
+
+    private func report(_ phase: AsyncImagePhase) {
+        if phase.image != nil { onLoad?(true) }
+        else if phase.error != nil { onLoad?(false) }
     }
 }
 
@@ -365,6 +377,9 @@ struct GalleryView: View {
         .background(Color.white)
         .toolbar(.hidden, for: .navigationBar)
         .task { await model.loadLibrary() }
+        .onAppear { model.beginLibraryPosterRecovery() }
+        .onDisappear { model.endLibraryPosterRecovery() }
+        .task(id: model.libraryPosterRecoveryVersion) { await model.recoverLibraryPosters() }
     }
 }
 
@@ -381,15 +396,24 @@ private enum GalleryFilter: CaseIterable, Identifiable {
 }
 
 private struct GalleryProjectCard: View {
+    @EnvironmentObject private var model: AppModel
     let project: ProjectSummary
 
     var body: some View {
+        let revision = model.posterLoadRevisions[project.id, default: 0]
         VStack(alignment: .leading, spacing: 8) {
             Color.clear
                 .aspectRatio(174.0 / 246.0, contentMode: .fit)
                 .overlay {
                     GeometryReader { geometry in
-                        ProjectPosterView(project: project)
+                        ProjectPosterView(
+                            project: project,
+                            isRecovering: model.recoveringPosterIDs.contains(project.id),
+                            reloadID: revision,
+                            onLoad: { succeeded in
+                                model.libraryPosterLoaded(project, revision: revision, succeeded: succeeded)
+                            }
+                        )
                         .frame(width: geometry.size.width, height: geometry.size.height)
                         .clipped()
                     }

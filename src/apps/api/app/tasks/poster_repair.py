@@ -101,7 +101,13 @@ def _variant_rank(variant: dict, fallback: int) -> tuple[int, int]:
     return 1_000_000 + fallback, fallback
 
 
-def _resolve_target(job: Any, plan: dict[str, Any], clips: list[Any]) -> _RepairTarget | None:
+def _resolve_target(
+    job: Any,
+    plan: dict[str, Any],
+    clips: list[Any],
+    *,
+    preferred_variant_id: str | None = None,
+) -> _RepairTarget | None:
     """Ready variants by rank → top-level plan output → lowest-ranked ready clip.
 
     ``plan`` is passed separately so callers can resolve against the deep copy
@@ -116,7 +122,15 @@ def _resolve_target(job: Any, plan: dict[str, Any], clips: list[Any]) -> _Repair
             for index, variant in enumerate(variants)
             if isinstance(variant, dict) and variant.get("render_status") == "ready"
         ]
-        for index, variant in sorted(ready, key=lambda item: _variant_rank(item[1], item[0])):
+        ordered = sorted(ready, key=lambda item: _variant_rank(item[1], item[0]))
+        if preferred_variant_id:
+            selected = [
+                item
+                for item in ordered
+                if str(item[1].get("variant_id") or "") == preferred_variant_id
+            ]
+            ordered = selected + [item for item in ordered if item not in selected]
+        for index, variant in ordered:
             source_key = owned_job_output_path(
                 variant.get("video_path") or variant.get("output_url"), job
             )
@@ -242,6 +256,65 @@ def _owned_poster(job: Any, value: Any) -> str | None:
     return owned_job_output_path(value, job)
 
 
+def _target_generation_locked(job: Any, target: _RepairTarget) -> bool:
+    """Private render ownership is a write barrier, including malformed state."""
+    from app.services.public_assembly_plan import (  # noqa: PLC0415
+        project_public_assembly_plan_with_metadata,
+    )
+    from app.services.variant_generation_guard import (  # noqa: PLC0415
+        VariantInitialRenderInProgress,
+        assert_variant_generation_editable,
+    )
+
+    try:
+        assert_variant_generation_editable(job, target.variant_id or "")
+    except VariantInitialRenderInProgress:
+        return True
+    # A private variant must never fall through to its raw top-level mirror.
+    return (
+        target.kind != "variant"
+        and project_public_assembly_plan_with_metadata(job.assembly_plan).active_speech_projection
+    )
+
+
+def _preferred_variant_id(db: Any, job: Any) -> str | None:
+    """Re-read the newest owned thread selection under every repair phase."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import CreationThread  # noqa: PLC0415
+    from app.services.library_variant_selection import selected_variant_id  # noqa: PLC0415
+
+    state = db.execute(
+        select(CreationThread.state)
+        .where(
+            CreationThread.creator_id == job.user_id,
+            CreationThread.active_job_id == job.id,
+        )
+        .order_by(CreationThread.updated_at.desc(), CreationThread.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return selected_variant_id(state)
+
+
+def _resolve_current_target(
+    db: Any,
+    job: Any,
+    plan: dict[str, Any],
+    job_id: uuid.UUID,
+) -> _RepairTarget | None:
+    """Resolve using the same selected-variant precedence as the library."""
+    preferred = _preferred_variant_id(db, job)
+    target = _resolve_target(job, plan, [], preferred_variant_id=preferred)
+    if target is None:
+        target = _resolve_target(
+            job,
+            plan,
+            _ready_clips(db, job_id),
+            preferred_variant_id=preferred,
+        )
+    return target
+
+
 @celery_app.task(
     name="tasks.repair_job_poster",
     bind=True,
@@ -305,11 +378,12 @@ def _run_repair(job_id: str) -> str:
 
         # Clips are only the third resolution tier, so their (indexed) query is
         # skipped entirely for variant/plan-backed jobs.
-        target = _resolve_target(job, plan, [])
-        if target is None:
-            target = _resolve_target(job, plan, _ready_clips(db, jid))
+        target = _resolve_current_target(db, job, plan, jid)
         if target is None:
             return "no_preview"
+
+        if _target_generation_locked(job, target):
+            return "generation_locked"
 
         if _owned_poster(job, target.poster_value):
             # A concurrent render (or an earlier repair) already won.
@@ -344,13 +418,13 @@ def _run_repair(job_id: str) -> str:
             plan = _plan_of(job)
             if plan is None:
                 return "corrupt_plan"
-            current = _resolve_target(job, plan, [])
-            if current is None:
-                current = _resolve_target(job, plan, _ready_clips(db, jid))
+            current = _resolve_current_target(db, job, plan, jid)
             if current is None or current.identity != snapshot:
                 # Re-rendered under us: the new source has not been probed, so
                 # marking it terminal here would be a verdict on stale evidence.
                 return "stale_race"
+            if _target_generation_locked(job, current):
+                return "generation_locked"
             _write_marker(
                 plan,
                 video_path=source_key,
@@ -377,13 +451,13 @@ def _run_repair(job_id: str) -> str:
             plan = _plan_of(job)
             if plan is None:
                 return "corrupt_plan"
-            current = _resolve_target(job, plan, [])
-            if current is None:
-                current = _resolve_target(job, plan, _ready_clips(db, jid))
-            if current is None or current.source_key != source_key:
+            current = _resolve_current_target(db, job, plan, jid)
+            if current is None or current.identity != snapshot:
                 # Re-rendered under us: charging the new source for the old
                 # source's failure could mint a false terminal.
                 return "stale_race"
+            if _target_generation_locked(job, current):
+                return "generation_locked"
             marker = _marker_of(plan)
             bound = marker.get("video_path") == source_key
             # `attempts` increments ONLY here, on a real extraction failure —
@@ -411,13 +485,12 @@ def _run_repair(job_id: str) -> str:
         plan = None if stale else _plan_of(job)
         target = None
         if plan is not None:
-            target = _resolve_target(job, plan, [])
-            if target is None:
-                target = _resolve_target(job, plan, _ready_clips(db, jid))
+            target = _resolve_current_target(db, job, plan, jid)
 
         if (
             target is None
             or target.identity != snapshot
+            or _target_generation_locked(job, target)
             or _owned_poster(job, target.poster_value)
             or not _variant_id_is_unique(plan, target)
         ):

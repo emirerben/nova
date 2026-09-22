@@ -7831,6 +7831,76 @@ def test_reburn_bed_level_requires_persisted_timings(monkeypatch):
         gb._run_reburn_narrated_bed_level(str(uuid.uuid4()), "narrated", 0.5)
 
 
+@pytest.mark.parametrize("source_audio_preserved", [True, False])
+@pytest.mark.parametrize("poster_outcome", ["generated", "failed", "explicit_null"])
+def test_guided_story_song_receipt_keeps_posters_through_finalization(
+    monkeypatch, source_audio_preserved, poster_outcome
+):
+    """Song metadata must not detach the caller result from poster enrichment."""
+    job_id = str(uuid.uuid4())
+    generation = "guided-attempt"
+    old_video = f"generative-jobs/{job_id}/old.mp4"
+    new_video = f"generative-jobs/{job_id}/new.mp4"
+    old_poster = f"generative-jobs/{job_id}/old.poster.jpg"
+    new_poster = f"generative-jobs/{job_id}/new.poster.jpg"
+    job = _FakeJob(
+        job_id=job_id,
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "guided_story",
+                    "render_generation_id": generation,
+                    "video_path": old_video,
+                    "poster_path": old_poster,
+                }
+            ]
+        },
+    )
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(gb, "_reconcile_retired_variant_posters", lambda *a: None)
+    monkeypatch.setattr(
+        "app.tasks.edit_training_artifacts.capture_edit_training_artifact.delay",
+        lambda *a: None,
+    )
+    generated_sources = []
+
+    def generate(source, **kwargs):
+        generated_sources.append(source)
+        return new_poster if poster_outcome == "generated" else None
+
+    monkeypatch.setattr(gb, "generate_and_upload_from_gcs", generate)
+    result = {
+        "variant_id": "guided_story",
+        "rank": 1,
+        "text_mode": "agent_text",
+        "ok": True,
+        "render_status": "ready",
+        "render_generation_id": generation,
+        "video_path": new_video,
+        "render_receipt": {"source_audio_preserved": source_audio_preserved},
+    }
+    if poster_outcome == "explicit_null":
+        result["poster_path"] = None
+
+    assert gb._update_variant_entry(
+        job_id, "guided_story", result, expected_render_gen_id=generation
+    )
+    published = job.assembly_plan["variants"][0]
+    expected_poster = new_poster if poster_outcome == "generated" else None
+    assert published["poster_path"] == expected_poster
+    assert published["music_playback_mode"] == "reference_only"
+    assert "music_playback_mode" not in result
+    assert "poster_path" in result
+    assert result["poster_path"] == expected_poster
+
+    assert gb._finalize_job(job_id, [result])
+    final = job.assembly_plan["variants"][0]
+    assert final["video_path"] == new_video
+    assert final["poster_path"] == expected_poster
+    assert final["poster_path"] != old_poster
+    assert generated_sources == ([] if poster_outcome == "explicit_null" else [new_video])
+
+
 def test_finalize_job_preserves_caption_cues(monkeypatch):
     """REGRESSION: _finalize_job rebuilds variants from a key whitelist that silently
     strips anything not listed. caption_cues MUST survive or the on-video editor (which

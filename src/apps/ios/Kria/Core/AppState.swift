@@ -175,6 +175,14 @@ enum AccountIdentity {
     @Published var errorMessage: String?
     @Published private(set) var projectsState: ProjectCollectionState = .idle
     @Published private(set) var libraryState: ProjectCollectionState = .idle
+    @Published private(set) var libraryPosterRecoveryVersion = 0
+    @Published private(set) var recoveringPosterIDs: Set<UUID> = []
+    @Published private(set) var posterLoadRevisions: [UUID: Int] = [:]
+    private var librarySnapshot = 0
+    private var galleryIsVisible = false
+    private var posterRecoveryRun = UUID()
+    private var posterAttempts: [LibraryPosterKey: Int] = [:]
+    private var failedPosters: Set<LibraryPosterKey> = []
     let api: KriaAPIClient
     let editorOperations: EditorOperations
     let uploads: BackgroundUploadCoordinator
@@ -246,18 +254,120 @@ enum AccountIdentity {
     }
     func loadLibrary() async {
         let generation = collectionGeneration
+        librarySnapshot += 1
+        let snapshot = librarySnapshot
         if libraryProjects.isEmpty { libraryState = .loading }
         do {
             let fetched = try await api.library()
-            guard generation == collectionGeneration else { return }
+            guard generation == collectionGeneration, snapshot == librarySnapshot, !Task.isCancelled else { return }
             libraryProjects = fetched
             libraryState = libraryProjects.isEmpty ? .empty : .loaded
             errorMessage = nil
+            libraryPosterRecoveryVersion += 1
         }
         catch {
-            guard generation == collectionGeneration else { return }
+            guard generation == collectionGeneration, snapshot == librarySnapshot, !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
             libraryState = libraryProjects.isEmpty ? .failed(error.localizedDescription) : .loaded
+            libraryPosterRecoveryVersion += 1
+        }
+    }
+    func beginLibraryPosterRecovery() {
+        galleryIsVisible = true
+        posterAttempts.removeAll()
+        failedPosters.removeAll()
+        libraryPosterRecoveryVersion += 1
+    }
+    func endLibraryPosterRecovery() {
+        galleryIsVisible = false
+        posterRecoveryRun = UUID()
+        recoveringPosterIDs = []
+    }
+    func libraryPosterLoaded(_ project: ProjectSummary, revision: Int, succeeded: Bool) {
+        guard galleryIsVisible,
+              posterLoadRevisions[project.id, default: 0] == revision,
+              let current = libraryProjects.first(where: { $0.id == project.id }),
+              LibraryPosterKey(current) == LibraryPosterKey(project),
+              current.posterURL == project.posterURL else { return }
+        let key = LibraryPosterKey(current)
+        if succeeded {
+            failedPosters.remove(key)
+            recoveringPosterIDs.remove(current.id)
+        } else if failedPosters.insert(key).inserted {
+            libraryPosterRecoveryVersion += 1
+        }
+    }
+    /// SwiftUI owns cancellation through Gallery's .task(id:). Budgets belong
+    /// to the source identity, so freshly signed URLs cannot reset retries.
+    func recoverLibraryPosters(
+        sleep: @Sendable (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
+    ) async {
+        guard galleryIsVisible else { return }
+        let run = UUID()
+        posterRecoveryRun = run
+        let snapshot = librarySnapshot
+        let generation = collectionGeneration
+        defer {
+            if posterRecoveryRun == run { recoveringPosterIDs = [] }
+        }
+        func current() -> Bool {
+            galleryIsVisible && posterRecoveryRun == run && snapshot == librarySnapshot
+                && generation == collectionGeneration && !Task.isCancelled
+        }
+        func eligible(_ project: ProjectSummary) -> Bool {
+            project.status == .ready && project.posterStatus != "unavailable"
+                && (project.posterURL == nil || failedPosters.contains(LibraryPosterKey(project)))
+                && posterAttempts[LibraryPosterKey(project), default: 0] < 8
+        }
+        while current() {
+            let candidates = libraryProjects.filter(eligible)
+            guard !candidates.isEmpty else { return }
+            recoveringPosterIDs = Set(candidates.map(\.id))
+            // Coalesce image failures, then allow asynchronous server repairs
+            // to finish. Every eligible row gets its turn before another round.
+            let attempt = candidates.map { posterAttempts[LibraryPosterKey($0), default: 0] }.max() ?? 0
+            do { try await sleep([0.25, 2, 5, 10, 20, 30, 45, 60][min(attempt, 7)]) }
+            catch { return }
+            guard current() else { return }
+            for offset in stride(from: 0, to: candidates.count, by: 20) {
+                guard current() else { return }
+                let batch = Array(candidates[offset..<min(offset + 20, candidates.count)])
+                    .filter { requested in
+                        libraryProjects.contains { $0.id == requested.id && LibraryPosterKey($0) == LibraryPosterKey(requested) && eligible($0) }
+                    }
+                if batch.isEmpty { continue }
+                let broken = batch.filter { failedPosters.contains(LibraryPosterKey($0)) }.map(\.id)
+                for project in batch { posterAttempts[LibraryPosterKey(project), default: 0] += 1 }
+                do {
+                    let posters = try await api.refreshLibraryPosters(jobIDs: batch.map(\.id), brokenJobIDs: broken)
+                    guard current() else { return }
+                    for poster in posters {
+                        guard let requested = batch.first(where: { $0.id == poster.id }),
+                              let index = libraryProjects.firstIndex(where: { $0.id == poster.id }),
+                              LibraryPosterKey(libraryProjects[index]) == LibraryPosterKey(requested),
+                              libraryProjects[index].posterURL == requested.posterURL else { continue }
+                        // A selection/render changed on the server while this
+                        // grid was open. Fetch its whole paired media projection.
+                        if poster.posterIdentity != requested.posterIdentity {
+                            await loadLibrary()
+                            return
+                        }
+                        libraryProjects[index].posterURL = poster.posterURL
+                        libraryProjects[index].posterIdentity = poster.posterIdentity
+                        libraryProjects[index].posterStatus = poster.posterStatus
+                        if poster.posterURL != nil || poster.posterStatus == "unavailable" {
+                            failedPosters.remove(LibraryPosterKey(requested))
+                            recoveringPosterIDs.remove(poster.id)
+                            posterLoadRevisions[poster.id, default: 0] += 1
+                        }
+                    }
+                } catch {
+                    guard current() else { return }
+                    if let error = error as? APIError, error == .unsupported || error == .sessionExpired { return }
+                    // Keep the last projection; failed requests consume the
+                    // same bounded budget as unsuccessful repair responses.
+                }
+            }
         }
     }
     func createProject() async {
