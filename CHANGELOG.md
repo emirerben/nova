@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.143.0] - 2026-09-22
+
+### Added
+- feat(ios): create and export native photo and video posts (KRI-160) (#1158) <!-- release-pr: 1158 -->
+
 ## [0.76.142.0] - 2026-09-22
 
 ### Added
