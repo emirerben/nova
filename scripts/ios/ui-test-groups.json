@@ -17,6 +17,7 @@
       "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges"
     ],
     "projects": [
+      "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
       "KriaUITests/ProjectsUITests/testPartialDrawerDragsAlwaysSettleAtTheNearestEndpoint",
       "KriaUITests/ProjectsUITests/testProjectActionsCanBeCancelledWithoutChangingProject",
       "KriaUITests/ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry",

@@ -938,7 +938,43 @@ struct KriaAPI: KriaAPIClient {
     }
 }
 private struct EmptyProjectResponse: Decodable {}
-private struct LibraryResponse: Decodable { let jobs: [LibraryJob]; let nextCursor: String?; enum CodingKeys: String, CodingKey { case jobs; case nextCursor = "next_cursor" }; struct LibraryJob: Decodable { let id: String; let mode: String; let status: String; let posterURL: String?; let createdAt: Date; enum CodingKeys: String, CodingKey { case id, mode, status; case posterURL = "poster_url"; case createdAt = "created_at" }; var summary: ProjectSummary { ProjectSummary(id: UUID(uuidString: id) ?? UUID(), title: mode.capitalized, status: status == "ready" ? .ready : status == "failed" ? .failed : .rendering, updatedAt: createdAt, posterURL: posterURL.flatMap(URL.init(string:))) } } }
+private struct LibraryResponse: Decodable {
+    let jobs: [LibraryJob]
+    let nextCursor: String?
+
+    enum CodingKeys: String, CodingKey { case jobs; case nextCursor = "next_cursor" }
+
+    struct LibraryJob: Decodable {
+        let id: String
+        let title: String?
+        let status: String
+        let posterURL: String?
+        let outputURL: String?
+        let outputVariantID: String?
+        let createdAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id, title, status
+            case posterURL = "poster_url"
+            case outputURL = "output_url"
+            case outputVariantID = "output_variant_id"
+            case createdAt = "created_at"
+        }
+
+        var summary: ProjectSummary {
+            let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return ProjectSummary(
+                id: UUID(uuidString: id) ?? UUID(),
+                title: cleanedTitle.isEmpty ? "Untitled video" : cleanedTitle,
+                status: status == "ready" ? .ready : status == "failed" ? .failed : .rendering,
+                updatedAt: createdAt,
+                posterURL: posterURL.flatMap(URL.init(string:)),
+                outputURL: outputURL.flatMap(URL.init(string:)),
+                outputVariantID: outputVariantID
+            )
+        }
+    }
+}
 private struct PlaybackResponse: Decodable { let videoURL: String; enum CodingKeys: String, CodingKey { case videoURL = "video_url" } }
 private struct ApprovalResponse: Decodable {}
 private struct RevokeResponse: Decodable { let revoked: Bool? }
