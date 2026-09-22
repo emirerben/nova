@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.107.0] - 2026-09-22
+
+### Changed
+- fix(planner): the creator's prompt wins — repair instead of reject, no silent overrides, short clips never left out (KRI-129) (#1119) <!-- release-pr: 1119 -->
+
 ## [0.76.106.0] - 2026-09-21
 
 ### Changed
