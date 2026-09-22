@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.110.0] - 2026-09-22
+
+### Changed
+- fix(kri-132): phone voiceover renders were refused in prod; voiceover-timed guided story now renders on the iPhone with Visuals photos (#1123) <!-- release-pr: 1123 -->
+
 ## [0.76.109.0] - 2026-09-22
 
 ### Changed
