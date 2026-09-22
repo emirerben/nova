@@ -2212,8 +2212,23 @@ def _variants_for_response(job: Job) -> list[dict]:
             guided_text_state = _guided_text_state_for_response(job, v)
             if guided_text_state is not None:
                 text_elements, label_elements, label_receipt = guided_text_state
+                revision = _guided_v2_revision(job, v)
+                caption_meta = revision.get("caption_meta") if revision else None
                 v = {
                     **v,
+                    # Presentation belongs to the authoritative revision too;
+                    # otherwise a reopened native draft falls back to word mode.
+                    "caption_meta": caption_meta,
+                    **(
+                        {"voiceover_caption_style": caption_meta["style"]}
+                        if caption_meta and "style" in caption_meta
+                        else {}
+                    ),
+                    **(
+                        {"caption_y_frac": caption_meta["y_frac"]}
+                        if caption_meta and "y_frac" in caption_meta
+                        else {}
+                    ),
                     # Guided v2's revision is authoritative. It contains the
                     # editor union, while the renderer still consumes the
                     # narration labels as a separate lane.
@@ -7285,12 +7300,32 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
         log.warning("guided_editor_approval_projection_failed", job_id=str(job.id), exc_info=True)
         return None
     try:
+        # Older approvals recorded the confirmed style only in the creator
+        # identity. Recover presentation for the initial editor projection,
+        # leaving the immutable approval, plan hash, and word receipts intact.
+        # A saved revision returned above always wins over this fallback.
+        projected_plan = execution_plan
+        if snapshot.narration is not None and execution_plan.get("editor_caption_meta") is None:
+            identity = guided_snapshot.get("creator_execution_identity") or {}
+            edit_plan = identity.get("edit_plan") if isinstance(identity, dict) else None
+            strategy = edit_plan.get("strategy") if isinstance(edit_plan, dict) else None
+            style = {
+                "clean": "sentence",
+                "editorial": "sentence",
+                "kinetic": "word",
+                "karaoke": "word",
+            }.get(strategy.get("caption_style") if isinstance(strategy, dict) else None)
+            if style:
+                projected_plan = {
+                    **execution_plan,
+                    "editor_caption_meta": {"style": style, "y_frac": 0.7},
+                }
         return with_editor_sources(
             guided_editor_revision_from_approval(
                 proposal_version=int(guided_snapshot.get("proposal_version") or 0),
                 media_digest=str(guided_snapshot.get("media_digest") or ""),
                 snapshot=snapshot.model_dump(mode="json"),
-                execution_plan=execution_plan,
+                execution_plan=projected_plan,
                 base_generation=variant_render_baseline(variant),
             )
         )

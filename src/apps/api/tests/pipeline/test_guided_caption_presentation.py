@@ -15,27 +15,65 @@ def cue(index, text, start, end):
     }
 
 
-def test_legacy_is_unchanged_and_grouping_keeps_all_147_identities():
+def test_legacy_is_unchanged_and_sentence_projection_keeps_all_147_identities():
     rows = [cue(index, "word", index * 0.3, index * 0.3 + 0.28) for index in range(147)]
     before = deepcopy(rows)
     assert project_guided_caption_overlays(rows, None) is rows
     result = project_guided_caption_overlays(rows, {"style": "sentence"})
     assert len(result) == 147
     assert {row["element_id"] for row in result} == {str(index) for index in range(147)}
-    assert result[0]["text"] == "word word word word word word"
+    assert result[0]["text"] == " ".join(["word"] * 147)
     assert result[0]["end_s"] == 0.3
     assert rows == before
 
 
-def test_punctuation_pause_and_length_end_groups():
+def test_sentence_projection_uses_full_sentence_and_terminal_punctuation():
     rows = [
-        cue(1, "Hello.", 0, 0.2),
-        cue(2, "Next", 0.2, 0.4),
-        cue(3, "pause", 1, 1.2),
-        cue(4, "ThisIsAVeryLongWordThatExceedsTheLineBudget", 1.2, 1.4),
+        cue(1, "This", 0, 0.2),
+        cue(2, "is", 0.2, 0.4),
+        cue(3, "a", 0.4, 0.6),
+        cue(4, "long", 0.6, 0.8),
+        cue(5, "sentence.", 0.8, 1),
+        cue(6, "Next", 1.5, 1.7),
+        cue(7, "one!", 1.7, 1.9),
     ]
     result = project_guided_caption_overlays(rows, {"style": "sentence"})
-    assert [row["text"] for row in result] == [row["text"] for row in rows]
+    assert [row["text"] for row in result] == [
+        "This is a long sentence.",
+        "This is a long sentence.",
+        "This is a long sentence.",
+        "This is a long sentence.",
+        "This is a long sentence.",
+        "Next one!",
+        "Next one!",
+    ]
+    assert [(row["start_s"], row["end_s"]) for row in result] == [
+        (0, 0.2),
+        (0.2, 0.4),
+        (0.4, 0.6),
+        (0.6, 0.8),
+        (0.8, 1),
+        (1.5, 1.7),
+        (1.7, 1.9),
+    ]
+
+
+def test_sentence_projection_does_not_split_decimals_and_accepts_closing_quotes():
+    rows = [
+        cue(1, "It", 0, 0.2),
+        cue(2, "costs", 0.2, 0.4),
+        cue(3, "172.5", 0.4, 0.6),
+        cue(4, "dollars.”", 0.6, 0.8),
+        cue(5, "Done", 0.8, 1),
+    ]
+    result = project_guided_caption_overlays(rows, {"style": "sentence"})
+    assert [row["text"] for row in result] == [
+        "It costs 172.5 dollars.”",
+        "It costs 172.5 dollars.”",
+        "It costs 172.5 dollars.”",
+        "It costs 172.5 dollars.”",
+        "Done",
+    ]
 
 
 def test_highlight_only_current_spoken_word_and_preserve_receipt_identity():

@@ -252,6 +252,10 @@ struct NativeEditorTemporaryVideo {
     private var sourceCompiler: NativeEditorRenderCompiler?
     private var sourceResolver: NativeEditorSourceResolver?
     private var resolvedAudio: [String: ResolvedEditorSource] = [:]
+    /// A device recipe may intentionally have no narration. Remember that
+    /// successful empty resolution for this generation so ordinary editor
+    /// rebuilds do not repeatedly poll the device-render endpoint.
+    private var deviceNarrationResolutionGeneration: String?
     private var previewVariant: [String: JSONValue] = [:]
     var musicPlaybackMode: NativeMusicPlaybackMode { .init(variant: previewVariant) }
     var songReference: NativeSongReference? {
@@ -1251,6 +1255,7 @@ struct NativeEditorTemporaryVideo {
         resolvedSources = nil
         sourcePool = nil
         resolvedAudio = [:]
+        deviceNarrationResolutionGeneration = nil
         resolvedMedia = [:]
         do {
             #if DEBUG
@@ -1332,6 +1337,7 @@ struct NativeEditorTemporaryVideo {
         resolvedSources = nil
         sourcePool = nil
         resolvedAudio.removeAll()
+        deviceNarrationResolutionGeneration = nil
         resolvedMedia.removeAll()
         sourcePreview = nil
         textInteractionTask?.cancel()
@@ -1371,9 +1377,74 @@ struct NativeEditorTemporaryVideo {
             || (archetype == "guided_story" && variant["render_receipt"]?.objectValue?["narration_applied"] == .bool(true))
     }
 
+    /// Device-rendered variants have no cloud receipt or base-video URL. Their
+    /// current recipe is the authority for narration, and its published
+    /// generation must still be the document we are reconstructing.
+    static func currentDeviceNarrationRequest(
+        _ status: DeviceRenderStatusResponse,
+        jobID: UUID,
+        variantID: String,
+        generation: String
+    ) throws -> DeviceRenderRequest? {
+        guard status.request.identity.jobID == jobID,
+              status.request.identity.variantID == variantID,
+              status.phase == "published",
+              status.publishedGeneration == generation else {
+            throw APIError.conflict
+        }
+        return status.request.recipe.audio.narrationAssetID == nil ? nil : status.request
+    }
+
+    private func resolveDeviceNarration(document: EditorDocument, sequence: Int) async throws -> ResolvedEditorSource? {
+        guard let api, let jobID, let variantKey else { throw APIError.invalidResponse }
+        let status = try await api.deviceRender(jobID: jobID, variantID: variantKey)
+        guard sequence == sourcePreviewSequence, !Task.isCancelled,
+              document.revision.baseGeneration == self.document.revision.baseGeneration else {
+            throw CancellationError()
+        }
+        guard let request = try Self.currentDeviceNarrationRequest(
+            status, jobID: jobID, variantID: variantKey, generation: document.revision.baseGeneration
+        ) else { return nil }
+        guard let narrationID = request.recipe.audio.narrationAssetID,
+              var asset = request.recipe.assets.first(where: { $0.id == narrationID }) else {
+            throw MediaEngineError.missingAsset("narration")
+        }
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID)
+        let authorized = AuthorizedDeviceSourceResolver(
+            api: api,
+            request: request,
+            originals: SourceAssetStore(project: project),
+            library: RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory))
+        )
+        let url = try await authorized.resolveNarration()
+        let duration = try await AVURLAsset(url: url).load(.duration).seconds
+        guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
+        asset.duration = duration
+        guard sequence == sourcePreviewSequence, !Task.isCancelled,
+              document.revision.baseGeneration == self.document.revision.baseGeneration else {
+            throw CancellationError()
+        }
+        return ResolvedEditorSource(clipIndex: -1, mediaID: narrationID, asset: asset, url: url)
+    }
+
     private func preparePreviewAudio(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
         guard let resolver = sourceResolver else { return [:] }
-        if Self.usesRenderedNarration(previewVariant), resolvedAudio["narration"] == nil {
+        if rendersOnDevice {
+            // Reopen from the server-authoritative recipe, rather than the
+            // app-owned DeviceRenderSessions cache, which is empty on a cold
+            // launch. A missing or stale required asset fails the preview
+            // visibly instead of silently exporting an AAC silence track.
+            if resolvedAudio["narration"] == nil,
+               deviceNarrationResolutionGeneration != document.revision.baseGeneration {
+                let narration = try await resolveDeviceNarration(document: document, sequence: sequence)
+                guard sequence == sourcePreviewSequence, !Task.isCancelled,
+                      document.revision.baseGeneration == self.document.revision.baseGeneration else {
+                    throw CancellationError()
+                }
+                if let narration { resolvedAudio["narration"] = narration }
+                deviceNarrationResolutionGeneration = document.revision.baseGeneration
+            }
+        } else if Self.usesRenderedNarration(previewVariant), resolvedAudio["narration"] == nil {
             // Legacy narrated renders persist the exact cleaned voice + bed in
             // their caption-free base. Use its audio with original visual cuts;
             // never replay the finished video's burned captions.
@@ -1388,7 +1459,7 @@ struct NativeEditorTemporaryVideo {
             resolvedAudio["narration"] = resolved
         }
         let referenceOnlyMusic = musicPlaybackMode == .referenceOnly
-        let ids = Set([referenceOnlyMusic || Self.usesRenderedNarration(previewVariant) ? nil : document.music?.trackID,
+        let ids = Set([referenceOnlyMusic || resolvedAudio["narration"] != nil ? nil : document.music?.trackID,
                        !referenceOnlyMusic && document.backgroundMusic?.enabled == true && document.backgroundMusic?.muted != true
                         ? document.backgroundMusic?.trackID : nil].compactMap { $0 })
         for id in ids where resolvedAudio[id] == nil {
@@ -4159,6 +4230,10 @@ struct NativeEditorTemporaryVideo {
             value.revision.baseGeneration = generation
             return value
         }
+        // The follow-up edit remains in `document`, but all resolved media is
+        // owned by the preceding generation. Rebuild it so device narration
+        // is fetched from the newly published recipe and fenced to this base.
+        refreshRebasedSourcePreview()
     }
 
     private func selectionExists(_ value: EditorSelection) -> Bool {
