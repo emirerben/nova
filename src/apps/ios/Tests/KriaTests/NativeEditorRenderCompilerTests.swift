@@ -192,7 +192,8 @@ import KriaMediaEngine
         XCTAssertEqual(recipe.textLayers.first?.runs.map(\.text).joined(), "A title")
         let rendered = recipe.textLayers.filter { $0.id.hasPrefix("caption-") }
         XCTAssertEqual(rendered.map(\.id), ["caption-0", "caption-2", "caption-3"])
-        XCTAssertEqual(rendered.map { $0.runs.map(\.text).joined() }, Array(repeating: "It 172.5 dollars.”", count: 3))
+        // Each run is a wrapped line; the layout trims its boundary whitespace.
+        XCTAssertEqual(rendered.map { $0.runs.map(\.text).joined(separator: " ") }, Array(repeating: "It 172.5 dollars.”", count: 3))
         XCTAssertEqual(rendered.map(\.start), [0, 0.6, 0.9])
         XCTAssertEqual(rendered.map(\.end), [0.6, 0.9, 1.0], "sentence display must span word gaps")
         XCTAssertTrue(rendered.allSatisfy { $0.anchorY == 0.7 * 1920 })
