@@ -227,7 +227,9 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
               case .voiceover = asset.source else {
             throw MediaEngineError.missingAsset("narration")
         }
-        guard request.recipe.assets.contains(where: { $0.id == narrationID && $0.fingerprint == asset.fingerprint.assetFingerprint }) else {
+        guard let media = request.recipe.assets.first(where: { $0.id == narrationID }),
+              let fingerprint = media.fingerprint,
+              try RenderFingerprint(fingerprint) == asset.fingerprint else {
             throw APIError.invalidResponse
         }
         let verified: URL
