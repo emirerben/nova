@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.108.0] - 2026-09-22
+
+### Changed
+- feat(ios): the editor's tools float over the timeline as a glass island (KRI-131) (#1118) <!-- release-pr: 1118 -->
+
 ## [0.76.107.0] - 2026-09-22
 
 ### Changed
