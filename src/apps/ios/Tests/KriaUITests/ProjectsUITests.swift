@@ -14,8 +14,11 @@ final class ProjectsUITests: XCTestCase {
         XCTAssertTrue(unavailable.matching(NSPredicate(format: "label == %@", "Preview unavailable for Missing poster")).firstMatch.exists)
         XCTAssertTrue(unavailable.matching(NSPredicate(format: "label == %@", "Preview unavailable for Failed poster")).firstMatch.exists)
         XCTAssertTrue(app.descendants(matching: .any)["project-poster-loading"].exists)
-        XCTAssertTrue(app.images["project-poster-image"].exists)
-        XCTAssertEqual(app.images.count, 1, "Only the successfully loaded poster may show an image")
+        // Unavailable states legitimately include a video symbol. Count poster
+        // content, not every decorative image exposed by the current iOS SDK.
+        let posters = app.images.matching(identifier: "project-poster-image")
+        XCTAssertEqual(posters.count, 1, "Only the successfully loaded poster may show footage")
+        XCTAssertEqual(posters.firstMatch.label, "Preview for Loaded poster")
     }
 
     func testProjectActionsCanBeCancelledWithoutChangingProject() {

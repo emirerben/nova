@@ -67,7 +67,11 @@
       "KriaUITests/NativeCaptionVisualUITests/testAddingCameraEffectOpensItsSpecificEditor",
       "KriaUITests/NativeCaptionVisualUITests/testVisualControlsEditAndPlaybackRemainAvailable",
       "KriaUITests/NativeEditorInspectorUITests/testPreviewResizeIsAvailableAcrossEditorPanels",
-      "KriaUITests/AppleTextAccessibilityUITests/testTextInspectorKeepsEditingAndStyleControlsReachableAtAccessibilityTextSize"
+      "KriaUITests/AppleTextAccessibilityUITests/testTextInspectorKeepsEditingAndStyleControlsReachableAtAccessibilityTextSize",
+      "KriaUITests/NativeEditorInspectorUITests/testConnectedPanelsKeepRailAndPreviewStableAndCollapseActiveTool",
+      "KriaUITests/NativeEditorInspectorUITests/testConnectedTextPresetAndAnimationPreviewControls",
+      "KriaUITests/NativeEditorInspectorUITests/testKeyboardKeepsSourcePreviewVisibleAboveConnectedPanel",
+      "KriaUITests/NativeCaptionVisualUITests/testUnfinishedCardSurvivesClosingAndSwitchingTools"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",

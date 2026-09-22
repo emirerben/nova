@@ -2,22 +2,17 @@
 import SwiftUI
 
 struct NativeVisualPanel: View {
+    @Environment(\.nativeEditorPanelLifecycle) private var panelLifecycle
+    @State private var lifecycleOwner = UUID()
     enum Tab: String, CaseIterable { case edit = "Edit", animation = "Animation" }
     enum Category: String, CaseIterable { case media = "Media", cards = "Text cards", motion = "Motion", camera = "Camera FX" }
     @ObservedObject var session: NativeEditorSession
     @ObservedObject var uploads: BackgroundUploadCoordinator
     let projectID: UUID
+    @ObservedObject var panelDrafts: NativeEditorPanelDrafts
     let onDone: () -> Void
-    @State private var tab: Tab = .edit
-    @State private var category: Category = .media
     @State private var showsImporter = false
-    @State private var cardPreset: String?
-    @State private var cardText = ""
-    @State private var motionPreset: String?
-    @State private var motionAssetIDs: [String] = []
     @State private var phase = "entrance"
-    /// nil = use the shape's own default strength; the inspector tunes it after.
-    @State private var cameraIntensity: Double? = nil
     @FocusState private var editingText: Bool
     private let visualKinds: Set<EditorSelectionKind> = [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect]
     private var selected: EditorSelection? { session.selection.flatMap { visualKinds.contains($0.kind) ? $0 : nil } }
@@ -59,13 +54,13 @@ struct NativeVisualPanel: View {
         editingText = false
         session.endTransaction()
         session.select(nil)
-        tab = .edit
-        cardPreset = nil
-        motionPreset = nil
+        panelDrafts.visualTab = .edit
+        panelDrafts.cardPreset = nil
+        panelDrafts.motionPreset = nil
     }
 
     var body: some View {
-        NativeEditorLanePanel(title: "Visuals", tabs: editorTabs, tab: $tab, onDone: {
+        NativeEditorLanePanel(title: "Visuals", tabs: editorTabs, tab: $panelDrafts.visualTab, onDone: {
             editingText = false; session.endTransaction(); onDone()
         }, heading: editorHeading, onAdd: addAction,
             onDelete: removeAction) {
@@ -95,7 +90,7 @@ struct NativeVisualPanel: View {
                 if selected == nil {
                     browse
                 } else {
-                    switch tab {
+                    switch panelDrafts.visualTab {
                     case .edit: placement
                     case .animation: animations
                     }
@@ -122,13 +117,19 @@ struct NativeVisualPanel: View {
         }
         .onChange(of: selected, initial: true) { _, _ in
             editingText = false
-            tab = .edit
+            panelDrafts.visualTab = .edit
         }
         .onChange(of: editingText) { _, focused in
             if focused { session.beginTransaction() } else { session.endTransaction() }
         }
-        .onChange(of: tab) { _, _ in editingText = false; session.endTransaction() }
-        .onDisappear { session.endTransaction() }
+        .onChange(of: panelDrafts.visualTab) { _, _ in editingText = false; session.endTransaction() }
+        .onAppear {
+            panelLifecycle?.register(owner: lifecycleOwner) { editingText = false; session.endTransaction() }
+        }
+        .onDisappear {
+            panelLifecycle?.unregister(owner: lifecycleOwner)
+            session.endTransaction()
+        }
     }
 
     private var visualImporter: some View {
@@ -157,15 +158,15 @@ struct NativeVisualPanel: View {
 
     private var browse: some View {
         VStack(spacing: 12) {
-            HStack(spacing: 0) {
-                ForEach(availableCategories, id: \.self) { value in
-                    Button { category = value; cardPreset = nil; motionPreset = nil } label: {
-                        Text(value.rawValue).font(KriaFont.body(13)).frame(maxWidth: .infinity, minHeight: 44)
-                            .background(category == value ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 9))
-                    }.accessibilityAddTraits(category == value ? .isSelected : [])
+            NativeEditorPanelTabs(tabs: availableCategories, selection: Binding(
+                get: { panelDrafts.visualCategory },
+                set: {
+                    panelDrafts.visualCategory = $0
+                    panelDrafts.cardPreset = nil
+                    panelDrafts.motionPreset = nil
                 }
-            }
-            switch category {
+            ), accessibilityPrefix: "native-editor-visuals-browse")
+            switch panelDrafts.visualCategory {
             case .media: mediaLibrary
             case .cards: cards
             case .motion: motion
@@ -236,7 +237,7 @@ struct NativeVisualPanel: View {
         VStack(spacing: 12) {
             HStack(spacing: 10) {
                 ForEach(["Simple", "Bold"], id: \.self) { preset in
-                    Button { cardPreset = preset; cardText = "" } label: {
+                    Button { panelDrafts.cardPreset = preset; panelDrafts.cardText = "" } label: {
                         VStack(spacing: 8) {
                             Text("Your\nstory.").font(KriaFont.body(preset == "Bold" ? 28 : 22).weight(preset == "Bold" ? .bold : .regular))
                                 .foregroundStyle(preset == "Bold" ? .white : KriaColor.ink)
@@ -248,16 +249,19 @@ struct NativeVisualPanel: View {
                         .accessibilityIdentifier("native-editor-card-preset-" + preset.lowercased())
                 }
             }
-            if let cardPreset {
-                TextField("Card text", text: $cardText, axis: .vertical).lineLimit(2...4)
+            if let cardPreset = panelDrafts.cardPreset {
+                TextField("Card text", text: $panelDrafts.cardText, axis: .vertical).lineLimit(2...4)
                     .padding(12).background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
                     .accessibilityIdentifier("native-editor-new-card-text")
                 HStack {
-                    Button("Cancel") { self.cardPreset = nil }
+                    Button("Cancel") { panelDrafts.cardPreset = nil }
                     Spacer()
                     Button("Add card") {
-                        if session.addTextCard(text: cardText, bold: cardPreset == "Bold") != nil { self.cardPreset = nil; tab = .edit }
-                    }.disabled(cardText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if session.addTextCard(text: panelDrafts.cardText, bold: cardPreset == "Bold") != nil {
+                            panelDrafts.cardPreset = nil
+                            panelDrafts.visualTab = .edit
+                        }
+                    }.disabled(panelDrafts.cardText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }.frame(minHeight: 44)
             } else {
                 Text("Choose a card, then edit its text and style.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
@@ -269,7 +273,7 @@ struct NativeVisualPanel: View {
         VStack(spacing: 12) {
             HStack(spacing: 10) {
                 ForEach(["card_stack", "film_strip"], id: \.self) { preset in
-                    Button { motionPreset = preset; motionAssetIDs = [] } label: {
+                    Button { panelDrafts.motionPreset = preset; panelDrafts.motionAssetIDs = [] } label: {
                         VStack(spacing: 8) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 10).fill(KriaColor.softZinc)
@@ -287,28 +291,28 @@ struct NativeVisualPanel: View {
                     }.disabled(!session.canEdit(.motionScenes))
                 }
             }
-            if let motionPreset {
+            if let motionPreset = panelDrafts.motionPreset {
                 let minimum = motionPreset == "card_stack" ? 2 : 3
                 let maximum = motionPreset == "card_stack" ? 6 : 8
                 Text("Choose \(minimum)–\(maximum) photos in playback order.").font(KriaFont.body(12))
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     ForEach(session.visualLibrary.filter { $0.kind == "image" && $0.status == "ready" }) { asset in
                         Button {
-                            if motionAssetIDs.contains(asset.id) { motionAssetIDs.removeAll { $0 == asset.id } }
-                            else if motionAssetIDs.count < maximum { motionAssetIDs.append(asset.id) }
+                            if panelDrafts.motionAssetIDs.contains(asset.id) { panelDrafts.motionAssetIDs.removeAll { $0 == asset.id } }
+                            else if panelDrafts.motionAssetIDs.count < maximum { panelDrafts.motionAssetIDs.append(asset.id) }
                         } label: {
                             assetTile(asset).overlay(alignment: .topTrailing) {
-                                if let index = motionAssetIDs.firstIndex(of: asset.id) {
+                                if let index = panelDrafts.motionAssetIDs.firstIndex(of: asset.id) {
                                     Text(String(index + 1)).padding(6).background(KriaColor.sky, in: Circle())
                                 }
                             }
-                        }.accessibilityAddTraits(motionAssetIDs.contains(asset.id) ? .isSelected : [])
+                        }.accessibilityAddTraits(panelDrafts.motionAssetIDs.contains(asset.id) ? .isSelected : [])
                     }
                 }
                 Button("Add composition") {
-                    let assets = motionAssetIDs.compactMap { id in session.visualLibrary.first { $0.id == id } }
+                    let assets = panelDrafts.motionAssetIDs.compactMap { id in session.visualLibrary.first { $0.id == id } }
                     Task { await session.addMotionComposition(preset: motionPreset, assets: assets) }
-                }.frame(minHeight: 44).disabled(motionAssetIDs.count < minimum || session.isAddingVisual)
+                }.frame(minHeight: 44).disabled(panelDrafts.motionAssetIDs.count < minimum || session.isAddingVisual)
             } else {
                 Text("Arrange your added photos into a moving composition.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             }
@@ -334,7 +338,7 @@ struct NativeVisualPanel: View {
     }
 
     private func cameraOption(easing: String, icon: String, title: String, detail: String) -> some View {
-        Button { session.addCameraPulse(easing: easing, intensity: cameraIntensity) } label: {
+        Button { session.addCameraPulse(easing: easing, intensity: panelDrafts.cameraIntensity) } label: {
             HStack(spacing: 14) {
                 Image(systemName: icon).font(.system(size: 40)).frame(width: 90, height: 80)
                     .background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 10))
@@ -432,7 +436,7 @@ struct NativeVisualPanel: View {
                 Text("Changes motion speed. Visual timing stays the same.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             }.disabled(!session.canEdit("visual_editor_style"))
         } else if let element = cardElement {
-            NativeEditorTextPanel(id: element.id, session: session, initialTab: .animation, embeddedAnimation: true, onDone: { tab = .edit })
+            NativeEditorTextPanel(id: element.id, session: session, initialTab: .animation, embeddedAnimation: true, onDone: { panelDrafts.visualTab = .edit })
         } else if selected?.kind == .motionScene || selected?.kind == .cameraEffect {
             placement
         } else { Text("Select a visual to animate.").frame(minHeight: 80) }

@@ -2,6 +2,7 @@ import SwiftUI
 
 /// The Paper inspector shell keeps the preview visible while controls scroll.
 struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: View where Tab.RawValue == String {
+    @Environment(\.nativeEditorConnectedPanel) private var connected
     let title: String
     let tabs: [Tab]
     @Binding var tab: Tab
@@ -14,13 +15,14 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
     var body: some View {
         VStack(spacing: 6) {
             HStack {
-                Text(heading ?? title).font(KriaFont.body(15).weight(.semibold))
+                Text(heading ?? title).font(KriaFont.body(connected ? 18 : 15).weight(.semibold))
                 Spacer()
                 if let onAdd {
                     Button(action: onAdd) {
-                        Label("Add visual", systemImage: "plus").font(KriaFont.body(13))
+                        Image(systemName: "plus").frame(width: 44, height: 44)
                     }
                     .frame(minHeight: 44)
+                    .accessibilityLabel("Add visual")
                     .accessibilityIdentifier("native-editor-add-another-visual")
                 }
                 if let onDelete {
@@ -30,22 +32,14 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
                     .accessibilityLabel("Remove visual")
                     .accessibilityIdentifier("native-editor-remove-visual")
                 }
-                Button("Done", action: onDone).frame(minWidth: 64, minHeight: 44)
+                Button(action: onDone) {
+                    Text("Done").frame(minWidth: 64, minHeight: 44)
+                        .background(KriaColor.ink.opacity(0.06), in: Capsule())
+                }
                     .accessibilityIdentifier("native-editor-\(title.lowercased())-done")
             }
             if tabs.count > 1 {
-            HStack(spacing: 4) {
-                ForEach(tabs, id: \.self) { value in
-                    Button { tab = value } label: {
-                        Text(value.rawValue)
-                            .font(KriaFont.body(14).weight(value == tab ? .semibold : .regular))
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .background(value == tab ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
-                    }
-                    .accessibilityAddTraits(value == tab ? .isSelected : [])
-                    .accessibilityIdentifier("native-editor-\(title.lowercased())-tab-\(value.rawValue)")
-                }
-            }
+                NativeEditorPanelTabs(tabs: tabs, selection: $tab, accessibilityPrefix: "native-editor-\(title.lowercased())")
             }
             ScrollView { content().padding(.top, 8).padding(.bottom, 12) }
                 .scrollDismissesKeyboard(.interactively)
@@ -63,10 +57,9 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
                     #endif
                 }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, connected ? 24 : 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(KriaColor.paper)
-        .overlay(alignment: .top) { KriaColor.line.opacity(0.4).frame(height: 1) }
+        .background(connected ? Color.clear : KriaColor.paper)
         .font(KriaFont.body(14))
         .tint(KriaColor.ink)
         .accessibilityElement(children: .contain)
@@ -75,6 +68,11 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
 }
 
 struct NativeCaptionPanel: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.nativeEditorPanelContentWidth) private var contentWidth
+    private var stacksControls: Bool { dynamicTypeSize.isAccessibilitySize || contentWidth < 300 }
+    @Environment(\.nativeEditorPanelLifecycle) private var panelLifecycle
+    @State private var lifecycleOwner = UUID()
     enum Tab: String, CaseIterable { case edit = "Edit captions", style = "Style", settings = "Settings" }
     @ObservedObject var session: NativeEditorSession
     let onDone: () -> Void
@@ -114,7 +112,13 @@ struct NativeCaptionPanel: View {
             if new != nil { session.beginTransaction() }
         }
         .onChange(of: tab) { _, _ in editingCueID = nil; session.endTransaction() }
-        .onDisappear { session.endTransaction() }
+        .onAppear {
+            panelLifecycle?.register(owner: lifecycleOwner) { editingCueID = nil; session.endTransaction() }
+        }
+        .onDisappear {
+            panelLifecycle?.unregister(owner: lifecycleOwner)
+            session.endTransaction()
+        }
     }
 
     private var transcript: some View {
@@ -170,7 +174,8 @@ struct NativeCaptionPanel: View {
                 Button("Word") { session.setCaptionDisplay("word") }
             }.disabled(!session.canEditCaptionAppearance)
                 .accessibilityIdentifier("native-editor-caption-display")
-            HStack(spacing: 10) {
+            let layout = stacksControls ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 10))
+            layout {
                 Menu {
                     Button("Default · TikTok Sans") { session.setCaptionFont(nil) }
                     ForEach(NativeEditorWireContract.captionFonts, id: \.self) { font in
@@ -178,7 +183,7 @@ struct NativeCaptionPanel: View {
                     }
                 } label: {
                     HStack {
-                        Text(meta["font"]?.stringValue ?? "TikTok Sans").lineLimit(1)
+                        Text(meta["font"]?.stringValue ?? "TikTok Sans")
                         Spacer(minLength: 2)
                         Image(systemName: "chevron.down").font(.system(size: 10))
                     }.padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 44)
@@ -194,17 +199,20 @@ struct NativeCaptionPanel: View {
                 }.background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
                     .disabled(!session.canEditCaptionAppearance)
             }
-            HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Color")
-                Spacer(minLength: 0)
-                ForEach(["#FFFFFF", "#30352C", "#FFF19E", "#9BCAFF", "#E5DAF5"], id: \.self) { hex in
-                    Button { session.setCaptionMeta(key: "color", value: .string(hex)) } label: {
-                        Circle().fill(nativeEditorColor(hex)).frame(width: 30, height: 30)
-                            .overlay(Circle().stroke((meta["color"]?.stringValue ?? "#FFFFFF") == hex ? KriaColor.sky : .clear, lineWidth: 2))
-                    }.frame(minWidth: 36, minHeight: 44).accessibilityLabel("Caption color " + hex)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 8)], spacing: 8) {
+                    ForEach(["#FFFFFF", "#30352C", "#FFF19E", "#9BCAFF", "#E5DAF5"], id: \.self) { hex in
+                        Button { session.setCaptionMeta(key: "color", value: .string(hex)) } label: {
+                            Circle().fill(nativeEditorColor(hex)).frame(width: 30, height: 30)
+                                .overlay(Circle().stroke((meta["color"]?.stringValue ?? "#FFFFFF") == hex ? KriaColor.sky : .clear, lineWidth: 2))
+                                .frame(minWidth: 44, minHeight: 44)
+                        }.accessibilityLabel("Caption color " + hex)
+                    }
+                    ColorPicker("Custom caption color", selection: color("color", fallback: "#FFFFFF"), supportsOpacity: false)
+                        .labelsHidden().frame(minWidth: 44, minHeight: 44)
                 }
-                ColorPicker("Custom caption color", selection: color("color", fallback: "#FFFFFF"), supportsOpacity: false).labelsHidden()
-            }.frame(minHeight: 44)
+            }
             effectRow("Outline", key: "stroke_width", colorKey: "stroke_color", fallback: 4, range: 0...12)
             effectRow("Shadow", key: "shadow_opacity", colorKey: "shadow_color", fallback: meta["shadow_enabled"] == .bool(false) ? 0 : 0.5, range: 0...1)
             HStack {

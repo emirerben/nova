@@ -234,6 +234,7 @@ struct NativeEditorTimeline: View {
     @ObservedObject var session: NativeEditorSession
     @ObservedObject var uploads: BackgroundUploadCoordinator
     var bottomClearance: CGFloat = 0
+    var isCovered = false
 
     var body: some View {
         VStack(spacing: 6) {
@@ -251,7 +252,7 @@ struct NativeEditorTimeline: View {
                 }
                 .accessibilityIdentifier("native-editor-pending-timeline-import")
             }
-            NativeMiniStrip(session: session, bottomClearance: bottomClearance)
+            NativeMiniStrip(session: session, bottomClearance: bottomClearance, isCovered: isCovered)
                 .frame(maxHeight: .infinity)
                 .accessibilityIdentifier("native-editor-mini-strip")
         }
@@ -352,7 +353,9 @@ private struct NativeEditorContextButtonStyle: ButtonStyle {
 struct NativeEditorToolRail: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var selectionNamespace
-    @Binding var selected: NativeEditorTool?
+    let selected: NativeEditorTool?
+    var availableWidth: CGFloat = 328
+    var connected = false
     let onSelect: (NativeEditorTool) -> Void
 
     private var shouldReduceMotion: Bool {
@@ -362,12 +365,13 @@ struct NativeEditorToolRail: View {
     var body: some View {
         HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
             ForEach(NativeEditorTool.allCases.filter { $0 != .kria }) { tool in
-                Button { selected = tool; onSelect(tool) } label: {
+                Button { onSelect(tool) } label: {
                     VStack(spacing: 4) {
                         Image(systemName: tool.icon)
                             .font(.system(size: 17, weight: .medium))
                         Text(tool.rawValue)
                             .font(KriaFont.body(11).weight(selected == tool ? .semibold : .medium))
+                            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                             .lineLimit(1)
                             // The island pins each tool to a fixed width, so
                             // larger Dynamic Type shrinks the label instead
@@ -375,19 +379,23 @@ struct NativeEditorToolRail: View {
                             .minimumScaleFactor(0.7)
                     }
                     .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
-                    .frame(width: NativeEditorIslandMetrics.toolWidth, height: NativeEditorIslandMetrics.toolHeight)
+                    .frame(width: min(NativeEditorIslandMetrics.toolWidth, max(44, (availableWidth - 22) / 4)), height: NativeEditorIslandMetrics.toolHeight)
                     .background {
                         if selected == tool {
-                            Capsule()
-                                .fill(KriaColor.ink.opacity(0.07))
-                                .matchedGeometryEffect(id: "native-editor-tool-selection", in: selectionNamespace)
+                            if shouldReduceMotion {
+                                Capsule().fill(KriaColor.ink.opacity(0.07))
+                            } else {
+                                Capsule().fill(KriaColor.ink.opacity(0.07))
+                                    .matchedGeometryEffect(id: "native-editor-tool-selection", in: selectionNamespace)
+                            }
                         }
                     }
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(tool.rawValue)
-                .accessibilityHint(tool.accessibilityHint)
+                .accessibilityHint(selected == tool ? "Close this panel" : tool.accessibilityHint)
+                .accessibilityAddTraits(selected == tool ? .isSelected : [])
                 .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
             }
         }
@@ -414,7 +422,7 @@ struct NativeEditorToolRail: View {
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("native-editor-tool-rail")
         )
-        .nativeEditorIslandSurface()
+        .nativeEditorIslandSurface(isEnabled: !connected)
         .animation(shouldReduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: selected)
     }
 }

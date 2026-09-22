@@ -8,15 +8,16 @@ struct NativeEditorView: View {
     private let conversationAcceptedID: UUID?
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var session: NativeEditorSession
     @StateObject private var exporter = NativeEditorExporter()
-    @State private var selectedTool: NativeEditorTool?
+    @StateObject private var panelDrafts = NativeEditorPanelDrafts()
+    @StateObject private var panelLifecycle = NativeEditorPanelLifecycle()
+    @State private var panel: NativeEditorPanel?
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
     @State private var showsDeviceRender = false
     @State private var showsConversation = false
-    @State private var lanePanel: NativeEditorTool?
-    @State private var textInspectorID: String?
     @State private var selectedTextForActions: String?
     @State private var keyboardVisible = false
     @State private var timelineExpansion: CGFloat = 0
@@ -97,45 +98,9 @@ struct NativeEditorView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
-            .onChange(of: session.selectionRequest) { _, _ in
-                guard let selection = session.selection else {
-                    textInspectorID = nil
-                    selectedTextForActions = nil
-                    return
-                }
-                guard !session.isDirectManipulating, !session.isTimingGestureActive else { return }
-                if [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect].contains(selection.kind) {
-                    lanePanel = .visuals; inspector = nil; textInspectorID = nil
-                    return
-                }
-                // Guided-story captions (KRI-110) are `.text`-kind bars tagged
-                // `source_params.source == "caption_cue"` — route them to the
-                // Captions panel just like a native `.captionCue` selection,
-                // instead of falling through to the Text inspector below.
-                let isTextLaneCaption = selection.kind == .text
-                    && session.document.textElements.first(where: { $0.id == selection.id })?.isCaption == true
-                if selection.kind == .captionCue || isTextLaneCaption {
-                    lanePanel = .captions; inspector = nil; textInspectorID = nil
-                    return
-                }
-                if selection.kind == .text {
-                    if selectedTextForActions == selection.id {
-                        textInspectorID = selection.id
-                    } else {
-                        selectedTextForActions = selection.id
-                        textInspectorID = nil
-                    }
-                    lanePanel = nil
-                    inspector = nil
-                    return
-                }
-                selectedTextForActions = nil
-                textInspectorID = nil
-                // Clip selection keeps the timeline handles and context strip
-                // directly reachable. The explicit Adjust action presents the
-                // clip inspector without covering the trim gesture surface.
-                guard selection.kind != .clip else { return }
-                inspector = .selection(selection)
+            .onChange(of: session.selectionRequest) { _, _ in routeSelection() }
+            .onChange(of: session.pendingText == nil) { _, finished in
+                if finished { resignKeyboard() }
             }
             .sheet(isPresented: $showsDeviceRender) {
                 if let key = session.deviceRenderKey {
@@ -179,6 +144,7 @@ struct NativeEditorView: View {
                 Task { await session.resumePendingEditorPlacements() }
             }
             .onDisappear {
+                finishPanelEditing()
                 session.suspendEditorImports()
                 session.pausePlayback()
                 exporter.removeSharedFile()
@@ -190,7 +156,7 @@ struct NativeEditorView: View {
         let referenceHeight = session.pendingText == nil && !keyboardVisible
             ? viewport.size.height + viewport.safeAreaInsets.top + viewport.safeAreaInsets.bottom
             : viewport.size.height
-        let portraitHeight = min(338, max(150, referenceHeight * 0.40))
+        let portraitHeight = dynamicTypeSize.isAccessibilitySize ? 150 : min(284, max(150, referenceHeight * 0.34))
         // Banners and the posting-song bar share this fixed-height column.
         // Their measured height comes out of the preview so the timeline and
         // tool rail stay on screen.
@@ -202,7 +168,7 @@ struct NativeEditorView: View {
             ? min(preferredPreviewHeight, max(80, viewport.size.height - 320 - topChromeHeight))
             : preferredPreviewHeight
         let resizeRange = max(0, defaultPreviewHeight - 80)
-        let showsTimeline = session.pendingText == nil && textInspectorID == nil && lanePanel == nil
+        let showsTimeline = session.pendingText == nil && panel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
         // KRI-131: the context capsule now floats over the timeline instead
         // of pushing it up, so selecting a clip/text no longer shrinks the
@@ -258,42 +224,34 @@ struct NativeEditorView: View {
                 }
 
             timelineResizeHandle(range: resizeRange)
-            if !showsTimeline && !keyboardVisible {
-                NativeEditorTransport(session: session)
-            }
+            connectedEditorArea(viewport: viewport, showsContext: showsContext)
+        }
+        .environment(\.nativeEditorConnectedPanel, true)
+        .environment(\.nativeEditorPanelLifecycle, panelLifecycle)
+    }
 
-            if session.pendingText != nil {
-                NativeTextCreationPanel(session: session) { selection in
-                    selectedTextForActions = selection.id
-                    textInspectorID = selection.id
-                }
-            } else if lanePanel == .visuals {
-                NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id) { lanePanel = nil }
-            } else if lanePanel == .captions {
-                NativeCaptionPanel(session: session) { lanePanel = nil }
-            } else if let id = textInspectorID {
-                NativeEditorTextPanel(id: id, session: session) { textInspectorID = nil }
-                    .id(id)
-            } else {
-            // KRI-131: the tool rail (and, when a clip/text is selected, the
-            // context capsule above it) floats over the timeline as a glass
-            // island. The timeline's lanes and playhead keep running behind
-            // it down to the physical bottom edge; the island itself stays a
-            // fixed distance above the real home-indicator safe area.
-            let bottomInset = viewport.safeAreaInsets.bottom
-            let islandClearance = NativeEditorIslandMetrics.bottomClearance(showsContext: showsContext, safeAreaBottom: bottomInset)
+    private var panelIsOpen: Bool { panel != nil || session.pendingText != nil }
+
+    private var panelTransition: AnyTransition {
+        shouldReduceMotion ? .opacity.animation(.easeOut(duration: 0.15)) : .opacity
+    }
+
+    private func connectedEditorArea(viewport: GeometryProxy, showsContext: Bool) -> some View {
+        let bottomInset = viewport.safeAreaInsets.bottom
+        let clearance = NativeEditorIslandMetrics.bottomClearance(showsContext: showsContext, safeAreaBottom: bottomInset)
+        return GeometryReader { area in
             ZStack(alignment: .bottom) {
-                NativeEditorTimeline(session: session, uploads: model.uploads, bottomClearance: islandClearance)
+                NativeEditorTimeline(session: session, uploads: model.uploads, bottomClearance: clearance, isCovered: panelIsOpen)
                     .ignoresSafeArea(.container, edges: .bottom)
+                    // Safe-area expansion must not let the retained timeline
+                    // paint over the preview when the keyboard shortens us.
+                    .frame(width: area.size.width, height: area.size.height, alignment: .top)
+                    .clipped()
+                    .allowsHitTesting(!panelIsOpen)
+                    .disabled(panelIsOpen)
+                    .scrollDisabled(panelIsOpen)
+                    .accessibilityHidden(panelIsOpen)
 
-                // `NativeEditorIslandScrim` has a fixed `.frame(height:)`, so
-                // applying `.ignoresSafeArea` directly to it leaves it
-                // pinned to the safe-area boundary instead of extending to
-                // the physical bottom edge (a fixed-size leaf has nothing
-                // for the modifier to grow into). Wrapping it in a flexible,
-                // ignoring container with a leading `Spacer` lets THAT
-                // container's bounds reach the physical edge, then pins the
-                // fixed-height scrim flush to its (now-physical) bottom.
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
                     NativeEditorIslandScrim(showsContext: showsContext, safeAreaBottom: bottomInset)
@@ -301,40 +259,155 @@ struct NativeEditorView: View {
                 .ignoresSafeArea(.container, edges: .bottom)
                 .allowsHitTesting(false)
 
+                if panelIsOpen && !keyboardVisible {
+                    NativeEditorTransport(session: session)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .transition(.opacity)
+                }
+
                 NativeEditorIslandGroup {
                     VStack(spacing: NativeEditorIslandMetrics.stackSpacing) {
-                        if let selection = session.selection, selection.kind == .text {
-                            NativeEditorTextContextStrip(
-                                onEdit: { textInspectorID = selection.id },
-                                onDeselect: { session.select(nil) }
-                            )
-                            .transition(shouldReduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
-                        } else if session.selectedClipID != nil {
-                            NativeEditorContextStrip(session: session, onAdjust: { inspector = .adjust })
-                                .transition(shouldReduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
+                        if showsContext {
+                            if let selection = session.selection, selection.kind == .text {
+                                NativeEditorTextContextStrip(
+                                    onEdit: { changePanel(to: .text(selection.id)) },
+                                    onDeselect: { session.select(nil) }
+                                )
+                                .transition(panelTransition)
+                            } else if session.selectedClipID != nil {
+                                NativeEditorContextStrip(session: session, onAdjust: { inspector = .adjust })
+                                    .transition(panelTransition)
+                            }
                         }
-
-                        NativeEditorToolRail(selected: $selectedTool) { tool in
-                            if tool == .visuals { session.select(nil); lanePanel = tool }
-                            else if tool == .captions { lanePanel = tool }
-                            else if tool == .text { session.beginTextCreation() }
-                            else { inspector = .tool(tool) }
+                        VStack(spacing: 0) {
+                            if panelIsOpen {
+                                panelContent
+                                    .environment(\.nativeEditorPanelContentWidth, max(0, area.size.width - 72))
+                                    .padding(.top, 18)
+                                    .overlay(alignment: .top) {
+                                        Capsule().fill(KriaColor.line).frame(width: 38, height: 4)
+                                            .padding(.top, 8).accessibilityHidden(true)
+                                    }
+                                    .transition(panelTransition)
+                            }
+                            if !keyboardVisible && session.pendingText == nil {
+                                NativeEditorToolRail(selected: panel?.tool, availableWidth: area.size.width - 24, connected: true, onSelect: selectTool)
+                            }
+                        }
+                        .frame(width: panelIsOpen ? max(0, area.size.width - 24) : min(328, max(0, area.size.width - 24)))
+                        .frame(height: panelIsOpen ? panelHeight(available: area.size.height) : NativeEditorIslandMetrics.islandHeight)
+                        .nativeEditorIslandSurface(cornerRadius: panelIsOpen ? 32 : 999)
+                        // The marker must remain a plain leaf: glass ancestors
+                        // corrupt AX frames on iOS 26 (see island surface).
+                        .background {
+                            if panelIsOpen {
+                                Color.clear.accessibilityElement().accessibilityLabel("Editor controls")
+                                    .accessibilityAddTraits(.isHeader)
+                                    .accessibilityIdentifier("native-editor-connected-panel")
+                            }
                         }
                     }
                 }
-                // The island group does NOT ignore the safe area (only the
-                // timeline + scrim above do), so it's already laid out with
-                // its bottom edge at the safe-area boundary (~bottomInset
-                // above the physical edge) before this padding is applied.
-                // Padding by `bottomPadding + bottomInset` here would
-                // double-count that inset and float the island far higher
-                // than the spec's "6pt above the safe-area inset".
                 .padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             }
-            .frame(maxHeight: .infinity)
-            .layoutPriority(1)
+            .frame(width: area.size.width, height: area.size.height, alignment: .bottom)
+        }
+        .frame(maxHeight: .infinity)
+        .layoutPriority(1)
+    }
+
+    private func panelHeight(available: CGFloat) -> CGFloat {
+        let budget = max(0, available - NativeEditorIslandMetrics.bottomPadding - (keyboardVisible ? 0 : 54))
+        if keyboardVisible || session.pendingText != nil || dynamicTypeSize.isAccessibilitySize { return budget }
+        return min(budget, 284 + timelineExpansion * 240)
+    }
+
+    @ViewBuilder private var panelContent: some View {
+        if session.pendingText != nil {
+            NativeTextCreationPanel(session: session) { selection in
+                selectedTextForActions = selection.id
+                changePanel(to: .text(selection.id))
+            }
+        } else {
+            switch panel {
+            case .text(let id):
+                NativeEditorTextPanel(id: id, session: session) { changePanel(to: nil) }.id(id)
+            case .captions:
+                NativeCaptionPanel(session: session) { changePanel(to: nil) }
+            case .visuals:
+                NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id, panelDrafts: panelDrafts) { changePanel(to: nil) }
+            case .sounds:
+                NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
+            case nil: EmptyView()
             }
         }
+    }
+
+    private func resignKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private func finishPanelEditing() {
+        panelLifecycle.prepareToClose()
+        resignKeyboard()
+        session.endTransaction()
+    }
+
+    private func changePanel(to destination: NativeEditorPanel?) {
+        guard panel != destination else { return }
+        finishPanelEditing()
+        inspector = nil
+        withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
+            panel = destination
+        }
+    }
+
+    private func selectTool(_ tool: NativeEditorTool) {
+        if panel?.tool == tool { changePanel(to: nil); return }
+        switch tool {
+        case .text:
+            changePanel(to: nil)
+            session.beginTextCreation()
+        case .captions: changePanel(to: .captions)
+        case .visuals:
+            changePanel(to: .visuals)
+            session.select(nil)
+        case .sounds: changePanel(to: .sounds)
+        default:
+            changePanel(to: nil)
+            inspector = .tool(tool)
+        }
+    }
+
+    private func routeSelection() {
+        guard !session.isDirectManipulating, !session.isTimingGestureActive else { return }
+        guard let selection = session.selection else {
+            if case .text = panel { changePanel(to: nil) }
+            selectedTextForActions = nil
+            return
+        }
+        if [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect].contains(selection.kind) {
+            changePanel(to: .visuals)
+            return
+        }
+        // Guided-story captions are text bars tagged as caption_cue.
+        let isTextLaneCaption = selection.kind == .text
+            && session.document.textElements.first(where: { $0.id == selection.id })?.isCaption == true
+        if selection.kind == .captionCue || isTextLaneCaption {
+            changePanel(to: .captions)
+            return
+        }
+        if selection.kind == .text {
+            if selectedTextForActions == selection.id { changePanel(to: .text(selection.id)) }
+            else {
+                changePanel(to: nil)
+                selectedTextForActions = selection.id
+            }
+            return
+        }
+        selectedTextForActions = nil
+        changePanel(to: nil)
+        if selection.kind != .clip { inspector = .selection(selection) }
     }
 
     private func timelineResizeHandle(range: CGFloat) -> some View {
@@ -413,9 +486,9 @@ struct NativeEditorView: View {
     }
 
     private func requestBack() {
-        if lanePanel != nil { lanePanel = nil; return }
-        if session.pendingText != nil { session.cancelTextCreation(); return }
-        if textInspectorID != nil { textInspectorID = nil; return }
+        if session.pendingText != nil { session.cancelTextCreation(); resignKeyboard(); return }
+        if panel != nil { changePanel(to: nil); return }
+        finishPanelEditing()
         if session.hasUnsavedChanges { showsUnsavedExit = true }
         else { onBack() }
     }
@@ -674,43 +747,74 @@ private struct NativeCaptionsInspector: View {
 
 private struct NativeSoundsInspector: View {
     @ObservedObject var session: NativeEditorSession
-    @State private var volume = 0.75
-    @State private var trackID = ""
-
+    @StateObject private var panelDrafts = NativeEditorPanelDrafts()
     var body: some View {
-        Form {
-            Section("Music") {
-                if session.document.music == nil {
-                    TextField("Music track ID", text: $trackID)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("native-editor-music-track-input")
-                    Button("Add music lane") {
-                        session.setMusic(trackID: trackID.trimmingCharacters(in: .whitespacesAndNewlines))
-                    }
-                    .disabled(!session.canEdit(.music) || trackID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("native-editor-add-music")
-                } else {
-                    HStack {
-                        Image(systemName: "speaker.wave.2")
-                        NativeEditorSlider(session: session, value: $volume, in: 0...1) { Text("Music volume") }
-                        .onChange(of: volume) { _, newValue in session.setMusicVolume(newValue) }
-                        Text("\(Int(volume * 100))%")
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(width: 42, alignment: .trailing)
-                    }
-                    .accessibilityIdentifier("native-editor-music-volume")
-                    .disabled(!session.canEditMix)
-                    Text(session.draft.music?.title ?? "Music")
-                        .font(KriaFont.body(13))
-                        .foregroundStyle(KriaColor.zinc)
+        ScrollView { NativeSoundsControls(session: session, panelDrafts: panelDrafts).padding(24) }
+    }
+}
+
+private struct NativeSoundsPanel: View {
+    enum Tab: String { case music = "Music" }
+    @ObservedObject var session: NativeEditorSession
+    @ObservedObject var panelDrafts: NativeEditorPanelDrafts
+    let onDone: () -> Void
+    @State private var tab: Tab = .music
+    var body: some View {
+        NativeEditorLanePanel(title: "Sounds", tabs: [Tab.music], tab: $tab, onDone: onDone) {
+            NativeSoundsControls(session: session, panelDrafts: panelDrafts)
+        }
+        .onDisappear { session.endTransaction() }
+    }
+}
+
+private struct NativeSoundsControls: View {
+    @ObservedObject var session: NativeEditorSession
+    @ObservedObject var panelDrafts: NativeEditorPanelDrafts
+    private var volume: Binding<Double> {
+        Binding(get: { session.draft.music?.volume ?? 0 }, set: { session.setMusicVolume($0) })
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if session.document.music == nil {
+                Text("Add music").font(KriaFont.body(15).weight(.semibold))
+                TextField("Music track ID", text: $panelDrafts.musicTrackID)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .padding(.horizontal, 12).frame(minHeight: 44)
+                    .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 12))
+                    .disabled(!session.canEdit(.music))
+                    .accessibilityIdentifier("native-editor-music-track-input")
+                Button("Add music lane") {
+                    session.setMusic(trackID: panelDrafts.musicTrackID.trimmingCharacters(in: .whitespacesAndNewlines))
                 }
+                .buttonStyle(KriaSecondaryButtonStyle())
+                .disabled(!session.canEdit(.music) || panelDrafts.musicTrackID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("native-editor-add-music")
+            } else {
+                HStack(spacing: 12) {
+                    Image(systemName: "music.note").frame(width: 44, height: 44)
+                        .background(KriaColor.sage, in: RoundedRectangle(cornerRadius: 12))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(session.draft.music?.title ?? "Music").font(KriaFont.body(15).weight(.semibold))
+                        Text("Music track").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+                    }
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 12) {
+                    Text("Volume")
+                    NativeEditorSlider(session: session, value: volume, in: 0...1) { Text("Music volume") }
+                    Text("\(Int(volume.wrappedValue * 100))%")
+                        .font(.system(.caption, design: .monospaced)).frame(width: 42, alignment: .trailing)
+                }
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("native-editor-music-volume")
+                .disabled(!session.canEditMix)
             }
             if !session.canEditMix {
-                Section { Label("Music level is unavailable for this edit. Existing audio stays unchanged.", systemImage: "lock") }
+                Label("Music level is unavailable for this edit. Existing audio stays unchanged.", systemImage: "lock")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .onAppear { volume = session.draft.music?.volume ?? 0 }
     }
 }
 
