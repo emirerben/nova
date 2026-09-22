@@ -79,8 +79,14 @@ Flow (flag on):
 2. **Resolve, inside the chat turn** (`app/services/clip_intent_resolution.py`,
    DB-free, the session row lock is released around it): `ClipRequestResolverAgent`
    (text-only, media aliases, id set-membership) matches intents to the shared
-   clip records. Clips the record cannot answer go to `ClipQuestionAgent` (the
-   vision model re-watches THAT clip): at most `clip_intents_max_vision_requeries`
+   clip records. The resolver accepts the shared creator-request bound of 12,000
+   characters, and replaces exact owned media IDs in that request with their
+   per-call aliases before the opaque IDs reach the model; unknown or embedded IDs
+   remain untouched. A valid alias explicitly selected for a chapter establishes
+   membership even when its generic clip record does not match, while factual
+   labels and authored captions still require evidence from the selected clip's
+   record. Clips the record cannot answer go to `ClipQuestionAgent` (the vision
+   model re-watches THAT clip): at most `clip_intents_max_vision_requeries`
    (4) per turn, under one `clip_intents_vision_deadline_s` (25 s) deadline, video
    only. Membership checks are re-asked as closed yes/no questions; a confident
    "no" excludes the clip. New answers are cached on the asset's
