@@ -1,15 +1,15 @@
 """Durable creator footage preparation (KRI-151).
 
-Revision ID: 0107
-Revises: 0106
+Revision ID: 0108
+Revises: 0107
 """
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql as pg
 
-revision = "0107"
-down_revision = "0106"
+revision = "0108"
+down_revision = "0107"
 branch_labels = None
 depends_on = None
 
