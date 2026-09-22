@@ -14,6 +14,8 @@ class Settings(BaseSettings):
 
     # Phone rendering remains off until a capability group has device evidence.
     phone_rendering_enabled: bool = False
+    # New editor imports require device qualification; saved receipts remain readable.
+    phone_editor_media_enabled: bool = False
     phone_render_verified_features: list[str] = Field(default_factory=list)
     phone_render_user_ids: list[UUID] = Field(default_factory=list)
     # Kill switch for the 2026-09-18 font/effect qualification relaxation in

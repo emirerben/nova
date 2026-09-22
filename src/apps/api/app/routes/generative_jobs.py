@@ -1769,8 +1769,14 @@ def _guided_text_state_for_response(
                 GuidedStoryError,
                 compile_guided_runtime_plan,
             )
+            from app.services.phone_editor_sources import editor_sources_for_variant
 
-            runtime = compile_guided_runtime_plan(execution_plan, guided_snapshot, revision)
+            runtime = compile_guided_runtime_plan(
+                execution_plan,
+                guided_snapshot,
+                revision,
+                admitted_sources=editor_sources_for_variant(variant),
+            )
         except (GuidedStoryError, KeyError, TypeError, ValueError):
             # compile_guided_runtime_plan's own contract normalizes every
             # internal failure into GuidedStoryError (its final `except
@@ -6104,7 +6110,7 @@ _PHONE_UNSUPPORTED_LANES = ("sfx", "overlays", "visual_blocks", "motion_scenes")
 _PHONE_UNSUPPORTED_TOP_LEVEL = (*_PHONE_UNSUPPORTED_LANES, "camera_effects")
 
 
-def _clamp_phone_editor_capabilities(capabilities: dict) -> dict:
+def _clamp_phone_editor_capabilities(capabilities: dict, *, media_enabled: bool = False) -> dict:
     """Close every control a device-rendered variant cannot save, shape-preserving."""
     clamped = dict(capabilities)
     for group, names in (
@@ -6118,12 +6124,18 @@ def _clamp_phone_editor_capabilities(capabilities: dict) -> dict:
             clamped[group] = {
                 name: (
                     {"editable": False, "reason": _PHONE_EDIT_UNSUPPORTED_REASON}
-                    if names is None or name in names
+                    if (names is None or name in names)
+                    and not (
+                        media_enabled
+                        and (group, name) in {("clips", "add"), ("lanes", "visual_blocks")}
+                    )
                     else value
                 )
                 for name, value in operations.items()
             }
     for lane in _PHONE_UNSUPPORTED_TOP_LEVEL:
+        if media_enabled and lane == "visual_blocks":
+            continue
         # Legacy top-level booleans carry their reason in a `<lane>_reason`
         # sibling — when the archetype's map has one. Device and cloud maps must
         # keep the SAME keys (tested), so a missing reason stays missing.
@@ -6133,6 +6145,13 @@ def _clamp_phone_editor_capabilities(capabilities: dict) -> dict:
                 clamped[f"{lane}_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
     if "visual_editor_style" in clamped:
         clamped["visual_editor_style"] = False
+    if media_enabled:
+        clamped["phone_editor_media"] = {
+            "enabled": True,
+            "visual_kinds": ["image", "video"],
+            "source_registration": True,
+        }
+        clamped["visual_block_kinds"] = ["media"]
     return clamped
 
 
@@ -6140,8 +6159,27 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     """Editor capability map for one variant, clamped to what its renderer can save."""
     capabilities = _base_editor_capabilities(job, variant)
     if variant.get("render_destination") == "device":
-        return _clamp_phone_editor_capabilities(capabilities)
+        return _clamp_phone_editor_capabilities(
+            capabilities, media_enabled=_phone_editor_media_available(job, variant)
+        )
     return capabilities
+
+
+def _phone_editor_media_available(job: Job, variant: dict) -> bool:
+    from app.config import settings
+
+    return bool(
+        settings.phone_editor_media_enabled
+        and settings.phone_rendering_for(job.user_id)
+        and settings.guided_story_editor_v2_enabled
+        and settings.visual_blocks_enabled
+        and variant.get("render_destination") == "device"
+        and variant.get("resolved_archetype") == "guided_story"
+        and {"stillImages", "visualVideos", "visualBlocks"}.issubset(
+            settings.phone_render_verified_features
+        )
+        and _guided_v2_revision(job, variant) is not None
+    )
 
 
 def _base_editor_capabilities(job: Job, variant: dict) -> dict:
@@ -6642,10 +6680,16 @@ def _timeline_url_signer() -> Callable[[str, int], str]:
 
 
 def _native_timeline_source(
-    job: Job, path: str, source_id: str, *, sign_url: Callable[[str, int], str] | None = None
+    job: Job,
+    path: str,
+    source_id: str,
+    *,
+    sign_url: Callable[[str, int], str] | None = None,
+    variant: dict | None = None,
 ) -> dict | None:
     sign_url = sign_url or _timeline_url_signer()
     from app.kria.media_sources import is_analysis_proxy_path
+    from app.services.phone_editor_sources import editor_source_bindings
     from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 
     if not isinstance(path, str) or not path.strip():
@@ -6654,6 +6698,10 @@ def _native_timeline_source(
         bindings = (job.assembly_plan or {}).get(PHONE_SOURCES_FIELD) or []
         if not isinstance(bindings, list):
             return None
+        bindings = [
+            *bindings,
+            *(binding.model_dump(mode="json") for binding in editor_source_bindings(variant or {})),
+        ]
         matches = [
             row for row in bindings if isinstance(row, dict) and row.get("proxy_path") == path
         ]
@@ -7199,6 +7247,14 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
     """Read the active revision or derive a non-persisted initial projection."""
 
     assembly = job.assembly_plan or {}
+    from app.services.phone_editor_sources import merge_editor_sources
+
+    def with_editor_sources(revision: dict) -> dict:
+        sources = merge_editor_sources(revision["sources"], variant)
+        if sources == revision["sources"]:
+            return revision
+        return normalize_guided_editor_revision({**revision, "sources": sources, "state_hash": ""})
+
     guided_snapshot = assembly.get("guided_edit")
     execution_plan = assembly.get("guided_story_execution_plan")
     if not isinstance(guided_snapshot, dict) or not isinstance(execution_plan, dict):
@@ -7206,10 +7262,12 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
     persisted = variant.get("guided_edit_revision")
     if isinstance(persisted, dict):
         try:
-            return normalize_guided_editor_revision(
-                persisted,
-                expected_approval_version=int(guided_snapshot.get("proposal_version") or 0),
-                expected_media_digest=str(guided_snapshot.get("media_digest") or ""),
+            return with_editor_sources(
+                normalize_guided_editor_revision(
+                    persisted,
+                    expected_approval_version=int(guided_snapshot.get("proposal_version") or 0),
+                    expected_media_digest=str(guided_snapshot.get("media_digest") or ""),
+                )
             )
         except ValueError:
             # A corrupt/stale revision must not make the read endpoint 500. The
@@ -7227,12 +7285,14 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
         log.warning("guided_editor_approval_projection_failed", job_id=str(job.id), exc_info=True)
         return None
     try:
-        return guided_editor_revision_from_approval(
-            proposal_version=int(guided_snapshot.get("proposal_version") or 0),
-            media_digest=str(guided_snapshot.get("media_digest") or ""),
-            snapshot=snapshot.model_dump(mode="json"),
-            execution_plan=execution_plan,
-            base_generation=variant_render_baseline(variant),
+        return with_editor_sources(
+            guided_editor_revision_from_approval(
+                proposal_version=int(guided_snapshot.get("proposal_version") or 0),
+                media_digest=str(guided_snapshot.get("media_digest") or ""),
+                snapshot=snapshot.model_dump(mode="json"),
+                execution_plan=execution_plan,
+                base_generation=variant_render_baseline(variant),
+            )
         )
     except (TypeError, ValueError):
         log.warning("guided_editor_revision_projection_failed", job_id=str(job.id), exc_info=True)
@@ -7363,7 +7423,7 @@ def _guided_v2_timeline_projection(
             {
                 "clip_index": index,
                 "native_source": _native_timeline_source(
-                    job, path, str(source.get("media_id")), sign_url=sign_url
+                    job, path, str(source.get("media_id")), sign_url=sign_url, variant=variant
                 ),
                 "signed_url": url,
                 "duration_s": source.get("duration_s"),
@@ -8920,6 +8980,23 @@ def prepare_editor_commit(
     variant = _find_variant(job, variant_id)
     if variant is not None and variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit  # noqa: PLC0415
+        from app.services.phone_editor_sources import editor_sources_for_variant
+
+        if not _phone_editor_media_available(job, variant):
+            current = _guided_v2_revision(job, variant) or {}
+            saved_block_ids = {row.get("id") for row in current.get("visual_blocks") or []}
+            adds_visual = any(row.id not in saved_block_ids for row in payload.visual_blocks or [])
+            imported_ids = {row["media_id"] for row in editor_sources_for_variant(variant)}
+            saved_ids = {row["media_id"] for row in current.get("segments") or []}
+            sources = current.get("sources") or []
+            adds_imported_source = any(
+                not slot.removed
+                and 0 <= slot.clip_index < len(sources)
+                and sources[slot.clip_index]["media_id"] in imported_ids - saved_ids
+                for slot in payload.timeline_slots or []
+            )
+            if adds_visual or adds_imported_source:
+                raise HTTPException(422, detail={"code": "phone_editor_media_unavailable"})
 
         return prepare_phone_editor_commit(
             job,
@@ -9484,7 +9561,10 @@ def _prepare_editor_commit(
 
         if not _settings_visual.visual_blocks_enabled:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-        if variant.get("text_mode") == "lyrics" or not variant.get("base_video_path"):
+        phone_guided = guided_v2 and variant.get("render_destination") == "device"
+        if variant.get("text_mode") == "lyrics" or (
+            not variant.get("base_video_path") and not phone_guided
+        ):
             if not payload.visual_blocks:
                 # Untouched empty-list echo on a variant that can never accept
                 # blocks (lyrics variant, or no clean base yet) — undo/redo
@@ -9505,9 +9585,23 @@ def _prepare_editor_commit(
                 )
         else:
             try:
+                visual_duration = visual_block_variant_duration(variant)
+                if phone_guided and payload.timeline_slots is not None:
+                    prospective = _guided_v2_revision_for_write(
+                        job,
+                        variant,
+                        TimelineEditRequest(
+                            slots=payload.timeline_slots,
+                            revision_number=payload.guided_revision_number,
+                            base_generation=payload.base_generation,
+                        ),
+                    )
+                    visual_duration = max(
+                        float(row["output_end_s"]) for row in prospective["segments"]
+                    )
                 validated_visual_blocks = validate_visual_blocks(
                     payload.visual_blocks,
-                    duration_s=visual_block_variant_duration(variant),
+                    duration_s=visual_duration,
                 )
             except ValueError as exc:
                 raise HTTPException(

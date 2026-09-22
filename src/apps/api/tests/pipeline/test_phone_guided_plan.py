@@ -114,6 +114,156 @@ def test_shared_timing_and_original_metadata_preserved():
     assert compile_phone_guided_plan(plan, bindings).audio.original_volume == 0.4
 
 
+def test_editor_media_blocks_stay_rejected_without_explicit_phone_gate():
+    plan, bindings = fixture()
+    visual = pool_video()
+    plan = plan.model_copy(
+        update={
+            "editor_visual_blocks": [
+                {
+                    "kind": "media",
+                    "id": "media",
+                    "start_s": 0,
+                    "end_s": 2,
+                    "asset_id": visual.media_id,
+                    "src_gcs_path": visual.gcs_path,
+                    "media_kind": "video",
+                    "source_duration_s": visual.duration_s,
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(UnsupportedPhonePlan, match="editor_visual_blocks"):
+        compile_phone_guided_plan(plan, bindings, (visual,))
+
+
+def test_editor_media_video_compiles_to_silent_ordered_overlay_with_exact_trim_geometry():
+    plan, bindings = fixture()
+    visual = pool_video(duration_s=1)
+    plan = plan.model_copy(
+        update={
+            "editor_visual_blocks": [
+                {
+                    "kind": "media",
+                    "id": "later",
+                    "start_s": 0.5,
+                    "end_s": 1.0,
+                    "asset_id": visual.media_id,
+                    "src_gcs_path": visual.gcs_path,
+                    "media_kind": "video",
+                    "source_duration_s": 1,
+                    "trim_start_s": 0.25,
+                    "trim_end_s": 0.75,
+                    "x_frac": 0.2,
+                    "y_frac": 0.8,
+                    "scale": 0.4,
+                    "display_mode": "overlay",
+                    "z": 3,
+                    "transform": {"fit_mode": "cover", "focal_x": 0.3, "focal_y": 0.7, "zoom": 2},
+                }
+            ]
+        }
+    )
+
+    assert plan.editor_visual_blocks
+    recipe = compile_phone_guided_plan(plan, bindings, (visual,), allow_editor_media=True)
+    clip = recipe.tracks[1].clips[0]
+    assert recipe.tracks[1].kind == "overlay"
+    assert (
+        clip.timeline_start,
+        clip.source_start,
+        clip.source_duration,
+        clip.rate,
+        clip.volume,
+    ) == (
+        0.5,
+        0.25,
+        0.5,
+        1,
+        0,
+    )
+    assert clip.hold_duration is None
+    assert clip.visual_placement is not None
+    assert (clip.visual_placement.order, clip.visual_placement.width_fraction) == (1, 0.4)
+    assert (clip.visual_placement.x_fraction, clip.visual_placement.y_fraction) == (0.2, 0.8)
+    assert (
+        clip.visual_placement.contain,
+        clip.visual_placement.focal_x,
+        clip.visual_placement.zoom,
+    ) == (
+        False,
+        0.3,
+        2,
+    )
+    assert {"visualBlocks", "visualVideos"} <= recipe.required_capabilities
+
+
+def test_editor_media_video_rejects_a_window_past_trimmed_source():
+    plan, bindings = fixture()
+    visual = pool_video(duration_s=1)
+    plan = plan.model_copy(
+        update={
+            "editor_visual_blocks": [
+                {
+                    "kind": "media",
+                    "id": "too-long",
+                    "start_s": 0,
+                    "end_s": 2,
+                    "asset_id": visual.media_id,
+                    "src_gcs_path": visual.gcs_path,
+                    "media_kind": "video",
+                    "source_duration_s": 1,
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(UnsupportedPhonePlan, match="editor visual blocks are invalid"):
+        compile_phone_guided_plan(plan, bindings, (visual,), allow_editor_media=True)
+
+
+def test_editor_media_images_keep_overlap_windows_and_z_order():
+    plan, bindings, visuals = photo_fixture()
+    photo = visuals[0]
+    plan = plan.model_copy(
+        update={
+            "editor_visual_blocks": [
+                {
+                    "kind": "media",
+                    "id": "top",
+                    "start_s": 0.5,
+                    "end_s": 1.5,
+                    "asset_id": photo.media_id,
+                    "src_gcs_path": photo.gcs_path,
+                    "media_kind": "image",
+                    "z": 5,
+                },
+                {
+                    "kind": "media",
+                    "id": "base",
+                    "start_s": 0,
+                    "end_s": 2,
+                    "asset_id": photo.media_id,
+                    "src_gcs_path": photo.gcs_path,
+                    "media_kind": "image",
+                    "z": 1,
+                },
+            ]
+        }
+    )
+
+    recipe = compile_phone_guided_plan(plan, bindings, visuals, allow_editor_media=True)
+    media = recipe.tracks[1].clips
+    assert [(clip.id, clip.timeline_start, clip.source_duration) for clip in media] == [
+        ("editor-media-base", 0, 2),
+        ("editor-media-top", 0.5, 1),
+    ]
+    assert [clip.visual_placement.order for clip in media if clip.visual_placement] == [1, 2]
+    assert all(clip.visual_placement and clip.visual_placement.contain for clip in media)
+    assert "stillImages" in recipe.required_capabilities
+
+
 def test_tolerates_millisecond_rounding_noise_between_stored_timing_fields():
     # `story_timeline` moments persist source/output timestamps independently
     # rounded to milliseconds. `source_end_s - source_start_s` and the stored
@@ -1633,3 +1783,28 @@ def test_bed_given_without_plan_narration_fails_closed():
     with pytest.raises(UnsupportedPhonePlan, match="no narration") as excinfo:
         compile_phone_guided_plan(plan, bindings, narration=narration_bed())
     assert excinfo.value.capability == "narrationAudio"
+
+
+def test_editor_media_short_trim_from_long_recording_omits_informational_duration():
+    plan, bindings = fixture()
+    visual = pool_video(duration_s=2700)
+    plan.editor_visual_blocks = [
+        {
+            "kind": "media",
+            "id": "long-recording",
+            "start_s": 0,
+            "end_s": 2,
+            "asset_id": visual.media_id,
+            "src_gcs_path": visual.gcs_path,
+            "media_kind": "video",
+            "source_duration_s": 2700,
+            "trim_start_s": 20,
+            "trim_end_s": 22,
+        }
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings, (visual,), allow_editor_media=True)
+    clip = recipe.tracks[1].clips[0]
+    assert (clip.source_start, clip.source_duration) == (20, 2)
+    assert (
+        next(asset for asset in recipe.assets if asset.id == clip.source_asset_id).duration is None
+    )
