@@ -3168,6 +3168,12 @@
             "default": false,
             "title": "Tiktok Publishable",
             "type": "boolean"
+          },
+          "title": {
+            "default": null,
+            "nullable": true,
+            "title": "Title",
+            "type": "string"
           }
         },
         "required": [

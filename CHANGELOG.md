@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.116.0] - 2026-09-22
+
+### Changed
+- feat(ios): auto-delete abandoned empty chats, keep unsent drafts (KRI-144) (#1127) <!-- release-pr: 1127 -->
+
+## [0.76.115.0] - 2026-09-22
+
+### Changed
+- fix(planner): on-screen text the creator specified is the complete caption list (KRI-129 follow-up) (#1125) <!-- release-pr: 1125 -->
+
+## [0.76.114.0] - 2026-09-22
+
+### Fixed
+- Fix gallery titles and thumbnail placeholders (KRI-149) (#1130) <!-- release-pr: 1130 -->
+
 ## [0.76.113.0] - 2026-09-22
 
 ### Changed

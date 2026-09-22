@@ -243,6 +243,49 @@ import SwiftData
         XCTAssertEqual(model.libraryState, .empty)
     }
 
+    func testLibraryUsesSavedTitleAndKeepsSelectedPreviewMediaTogether() async throws {
+        let jobID = UUID()
+        NativeEditorURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/me/jobs")
+            return (200, Data("""
+            {"jobs":[{"id":"\(jobID)","mode":"generative","status":"ready",
+            "title":"  A quiet Sunday  ","created_at":"2026-09-10T10:00:00Z",
+            "poster_url":"https://media.example/selected-poster.jpg",
+            "output_url":"https://media.example/selected-video.mp4",
+            "output_variant_id":"original_text"}],"next_cursor":null}
+            """.utf8))
+        }
+
+        let library = try await NativeEditorTestSupport.api().library()
+        let video = try XCTUnwrap(library.first)
+
+        XCTAssertEqual(video.id, jobID)
+        XCTAssertEqual(video.title, "A quiet Sunday")
+        XCTAssertEqual(video.status, .ready)
+        XCTAssertEqual(video.posterURL?.absoluteString, "https://media.example/selected-poster.jpg")
+        XCTAssertEqual(video.outputURL?.absoluteString, "https://media.example/selected-video.mp4")
+        XCTAssertEqual(video.outputVariantID, "original_text")
+    }
+
+    func testLibraryMissingNullAndBlankTitlesStayTruthfulForLegacyResponses() async throws {
+        for titleField in ["", #""title":null,"#, #""title":"  \n  ","#] {
+            NativeEditorURLProtocol.handler = { _ in
+                (200, Data("""
+                {"jobs":[{"id":"\(UUID())","mode":"content_plan","status":"failed",
+                \(titleField)"poster_url":null,"created_at":"2026-09-10T10:00:00Z"}]}
+                """.utf8))
+            }
+
+            let library = try await NativeEditorTestSupport.api().library()
+            let video = try XCTUnwrap(library.first)
+            XCTAssertEqual(video.title, "Untitled video")
+            XCTAssertEqual(video.status, .failed)
+            XCTAssertNil(video.posterURL)
+            XCTAssertNil(video.outputURL)
+            XCTAssertNil(video.outputVariantID)
+        }
+    }
+
     func testLibraryLoadsAllCursorPagesAndDeduplicatesJobs() async throws {
         let ids = (0...60).map { _ in UUID() }
         let cursor = "2026-09-10T10:00:00+00:00"
