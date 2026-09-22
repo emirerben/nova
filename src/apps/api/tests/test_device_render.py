@@ -86,6 +86,34 @@ def test_publication_requires_exact_job_recipe_and_editor_generation():
     assert error.value.status_code == 409
 
 
+def test_device_status_exposes_only_the_published_attempt_generation():
+    job, _ = _fixture()
+    record = device_record(job, "original_text")
+    assert device_status(job, "original_text").published_generation is None
+
+    record["status"]["phase"] = "published"
+    record["published_attempt"] = str(uuid.uuid4())
+    save_device_record(job, "original_text", record)
+    status = device_status(job, "original_text")
+    assert status.published_generation == record["published_attempt"]
+
+    record["status"]["phase"] = "awaiting_device"
+    save_device_record(job, "original_text", record)
+    assert device_status(job, "original_text").published_generation is None
+
+
+def test_retry_clears_published_generation_until_a_new_attempt_publishes():
+    job, _ = _fixture()
+    record = device_record(job, "original_text")
+    record["status"]["phase"] = "needs_attention"
+    record["published_attempt"] = str(uuid.uuid4())
+    save_device_record(job, "original_text", record)
+
+    retried = retry_device_render(job, "original_text")
+    assert retried.published_generation is None
+    assert "published_attempt" not in device_record(job, "original_text")
+
+
 def test_wire_digest_rejects_modified_recipe_and_nonfinite_values():
     _, request = _fixture()
     wire = request.model_dump(mode="json")
