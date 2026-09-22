@@ -89,6 +89,7 @@ let nonRetryablePhoneGateErrorCodes: Set<String> = [
 struct CreationConfirmationStage: View {
     let thread: CreationThread
     let isBusy: Bool
+    var responseStartedAt: Date? = nil
     var conflict: CreationConfirmationConflict? = nil
     var refreshDirection: () -> Void = {}
     let action: (String, [String: JSONValue]) -> Void
@@ -109,7 +110,7 @@ struct CreationConfirmationStage: View {
         VStack(alignment: .leading, spacing: 16) {
             Text(isFailure ? "Your project is safe" : "Here’s the direction I’ll use")
                 .font(KriaFont.display(24))
-            Text(thread.creatorAgent?["summary"]?.stringValue ?? "Kria will use your footage and direction to make a new cut. Rendering starts only after you approve.")
+            ChatResponseText(content: thread.creatorAgent?["summary"]?.stringValue ?? "Kria will use your footage and direction to make a new cut. Rendering starts only after you approve.", startedAt: responseStartedAt)
                 .font(KriaFont.body(14))
             if isFailure && thread.activeJobID == nil {
                 Text("Kria couldn’t start the video. Your direction and footage are still saved.")

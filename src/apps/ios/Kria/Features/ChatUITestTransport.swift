@@ -101,9 +101,11 @@ private final class CreationChatFixture: @unchecked Sendable {
         var state = thread["state"] as? [String: Any] ?? [:]
         var events = thread["events"] as? [[String: Any]] ?? []
         var revision = thread["revision"] as? Int ?? 0
-        func append(_ type: String, role: String = "assistant", text: String? = nil, payload: [String: Any] = [:]) {
+        func append(_ type: String, role: String = "assistant", text: String? = nil, payload: [String: Any] = [:], clientEventID: String? = nil) {
             revision += 1
-            events.append(["id": UUID().uuidString, "sequence": events.count, "revision": revision, "role": role, "event_type": type, "content": text ?? "", "payload": payload, "created_at": "2026-09-10T10:00:00Z"])
+            var event: [String: Any] = ["id": UUID().uuidString, "sequence": events.count, "revision": revision, "role": role, "event_type": type, "content": text ?? "", "payload": payload, "created_at": "2026-09-10T10:00:00Z"]
+            if let clientEventID { event["client_event_id"] = clientEventID }
+            events.append(event)
         }
         if parts.last == "actions" {
             let action = body["action"] as? String ?? ""
@@ -120,6 +122,14 @@ private final class CreationChatFixture: @unchecked Sendable {
                     state["media"] = [["media_id": "fixture-clip", "kind": "video", "filename": "sample.mov"]]
                 }
                 append("action_select_format", payload: payload)
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
+                    append("media_added", role: "system", payload: [
+                        "media": [[
+                            "media_id": "fixture-clip", "kind": "video", "filename": "sample.mov"
+                        ]],
+                        "media_count": 1
+                    ])
+                }
             } else if action == "generate", ProcessInfo.processInfo.environment["KRIA_CHAT_SLOW_CREATION"] == "1" {
                 thread["creator_agent"] = ["status": "failed", "summary": "Open on the laugh and keep the pacing quick."]
                 state["generation"] = ["status": "failed"]
@@ -142,13 +152,21 @@ private final class CreationChatFixture: @unchecked Sendable {
                 append("generation_started")
             } else if action == "remove_media" { state["media"] = []; append("action_remove_media") }
         } else if parts.last == "messages" || parts.last == "turns" {
-            append("user_message", role: "user", text: body["message"] as? String)
+            let turnID = body["client_event_id"] as? String ?? id
+            append("user_message", role: "user", text: body["message"] as? String, clientEventID: turnID)
             append("assistant_response", text: "Open on the laugh and keep the pacing quick.")
-            if runtime == 2 { append("approval_requested", payload: ["approval_id": approvalID]) }
+            if runtime == 2 {
+                append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
+                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+            }
             else {
                 let version = planVersions[id, default: 0] + 1
                 planVersions[id] = version
                 thread["creator_agent"] = ["status": "awaiting_confirmation", "summary": "Open on the laugh and keep the pacing quick.", "version": version, "plan_hash": "fixture-plan-\(version)"]
+                append("assistant_strategy", payload: [
+                    "proposal_summary": "Open on the laugh and keep the pacing quick.",
+                    "plan_hash": "fixture-plan-\(version)"
+                ])
             }
         } else if parts.contains("approvals") {
             if parts.last == "approve" {
@@ -157,7 +175,9 @@ private final class CreationChatFixture: @unchecked Sendable {
                 thread["job"] = ["id": id, "status": "processing", "variants": []]
                 renders[id] = 0
             } else {
-                return response(["approval_id": approvalID, "turn_id": id, "draft_id": id, "draft_revision": 1, "status": "pending", "consequence_summary": "Open on the laugh and keep the pacing quick.", "expires_at": ProcessInfo.processInfo.environment["KRIA_CHAT_EXPIRED_APPROVAL"] == "1" ? "2000-09-10T10:00:00Z" : "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
+                let approvalPayload = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
+                let turnID = approvalPayload?["turn_id"] as? String ?? id
+                return response(["approval_id": approvalID, "turn_id": turnID, "draft_id": id, "draft_revision": 1, "status": "pending", "consequence_summary": "Open on the laugh and keep the pacing quick.", "expires_at": ProcessInfo.processInfo.environment["KRIA_CHAT_EXPIRED_APPROVAL"] == "1" ? "2000-09-10T10:00:00Z" : "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
             }
         } else if parts.count == 2, let count = preparations[id] {
             preparations[id] = count + 1

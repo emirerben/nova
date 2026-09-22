@@ -116,6 +116,7 @@ def _turn_for(approval) -> SimpleNamespace:  # noqa: ANN001
 def _delta_event(sequence: int) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
+        client_event_id=f"client-{sequence}",
         sequence=sequence,
         revision=sequence + 1,
         role="assistant",
@@ -314,6 +315,7 @@ async def test_read_delta_paginates_archived_thread_without_hiding_events() -> N
     assert response.status == "archived"
     assert response.thread_revision == 14
     assert [event.sequence for event in response.events] == [5, 6]
+    assert [event.client_event_id for event in response.events] == ["client-5", "client-6"]
     assert response.after_sequence == 4
     assert response.next_after_sequence == 6
     assert response.has_more is True

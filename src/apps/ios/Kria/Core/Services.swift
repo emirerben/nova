@@ -396,7 +396,7 @@ struct CreationJob: Codable, Sendable {
     }
 }
 struct ThreadDelta: Codable, Sendable { let threadID: String; let runtimeVersion: Int; let status: String; let threadRevision: Int; let events: [ThreadEvent]; let afterSequence: Int; let nextAfterSequence: Int; let hasMore: Bool; enum CodingKeys: String, CodingKey { case threadID = "thread_id"; case runtimeVersion = "runtime_version"; case status; case threadRevision = "thread_revision"; case events; case afterSequence = "after_sequence"; case nextAfterSequence = "next_after_sequence"; case hasMore = "has_more" } }
-struct ThreadEvent: Codable, Identifiable, Sendable { let id: String; let sequence: Int; let revision: Int; let role: String; let eventType: String; let content: String?; let payload: [String: JSONValue]?; let createdAt: Date; enum CodingKeys: String, CodingKey { case id, sequence, revision, role, content, payload; case eventType = "event_type"; case createdAt = "created_at" } }
+struct ThreadEvent: Codable, Identifiable, Sendable { let id: String; let sequence: Int; let revision: Int; let role: String; let eventType: String; let content: String?; let payload: [String: JSONValue]?; let createdAt: Date; var clientEventID: String? = nil; enum CodingKeys: String, CodingKey { case id, sequence, revision, role, content, payload; case eventType = "event_type"; case createdAt = "created_at"; case clientEventID = "client_event_id" } }
 struct DraftSnapshot: Codable, Sendable {
     let draftID: String
     let itemID: String

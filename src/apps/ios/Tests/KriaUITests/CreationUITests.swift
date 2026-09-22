@@ -149,7 +149,7 @@ final class CreationUITests: XCTestCase {
             app.launch()
             createFreshChat(in: app)
             app.buttons["format-montage"].tap()
-            let next = app.buttons["Continue with 1 clip"]
+            let next = app.buttons["Send clips"]
             XCTAssertTrue(next.waitForExistence(timeout: 5))
             next.tap()
             let confirm = app.buttons["Create this video"]
@@ -158,6 +158,52 @@ final class CreationUITests: XCTestCase {
             XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
             app.terminate()
         }
+    }
+
+    func testClipsOnlySubmissionUsesSuggestAnEdit() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        let send = app.buttons["Send clips"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        XCTAssertEqual(send.label, "Send clips")
+        send.tap()
+
+        let user = app.staticTexts["You: Suggest an edit."]
+        XCTAssertTrue(user.waitForExistence(timeout: 10))
+    }
+
+    func testTypedPromptAppearsBetweenMediaReceiptAndAssistantResponse() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        let receipt = app.descendants(matching: .any)["chat-media-fixture-clip"]
+        XCTAssertTrue(receipt.waitForExistence(timeout: 5))
+        let composer = app.textFields["Add instructions (optional)"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        composer.typeText("Make it cinematic")
+        let send = app.buttons["Send message"]
+        XCTAssertTrue(send.waitForExistence(timeout: 3))
+        send.tap()
+
+        let user = app.staticTexts["You: Make it cinematic"]
+        let assistant = app.staticTexts["Kria: Open on the laugh and keep the pacing quick."]
+        XCTAssertTrue(user.waitForExistence(timeout: 10))
+        XCTAssertTrue(assistant.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == %@", assistant.label)).count, 1)
+        XCTAssertLessThan(receipt.frame.maxY, user.frame.minY)
+        XCTAssertLessThan(user.frame.maxY, assistant.frame.minY)
     }
 
     func testSlowDirectionAndPreJobFailureNeverReturnToUploading() {
@@ -169,7 +215,7 @@ final class CreationUITests: XCTestCase {
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
-        let next = app.buttons["Continue with 1 clip"]
+        let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
         XCTAssertTrue(app.descendants(matching: .any)["chat-thinking"].waitForExistence(timeout: 3))
@@ -264,7 +310,7 @@ final class CreationUITests: XCTestCase {
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
-        let next = app.buttons["Continue with 1 clip"]
+            let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
         XCTAssertTrue(app.staticTexts["This approval expired. Send a message to request an updated direction."].waitForExistence(timeout: 10))
@@ -391,7 +437,7 @@ final class CreationUITests: XCTestCase {
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
-        let next = app.buttons["Continue with 1 clip"]
+        let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
         return app

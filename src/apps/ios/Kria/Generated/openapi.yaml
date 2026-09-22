@@ -1016,6 +1016,12 @@
       },
       "DeltaEvent": {
         "properties": {
+          "client_event_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Client Event Id",
+            "type": "string"
+          },
           "content": {
             "default": null,
             "nullable": true,
@@ -2520,6 +2526,12 @@
       },
       "EventOut": {
         "properties": {
+          "client_event_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Client Event Id",
+            "type": "string"
+          },
           "content": {
             "default": null,
             "nullable": true,

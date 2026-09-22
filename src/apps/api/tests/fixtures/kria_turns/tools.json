@@ -392,6 +392,18 @@
       "$defs": {
         "DeltaEvent": {
           "properties": {
+            "client_event_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Client Event Id"
+            },
             "content": {
               "anyOf": [
                 {

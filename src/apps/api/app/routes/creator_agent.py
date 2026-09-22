@@ -1474,6 +1474,26 @@ def _latest_message_narrows_media_scope(user_message: str, manifest: Any) -> boo
     )
 
 
+def _capacity_history_kind_for_turn(
+    events: list[CreatorAgentEvent], user_message: str, manifest: Any
+) -> HistoricalCapacityChoiceKind | None:
+    """Apply only a real historical choice to the current capacity question."""
+
+    historical_kind = _historical_all_media_capacity_choice_kind(events, manifest)
+    if _latest_message_narrows_media_scope(user_message, manifest):
+        return None
+    # A newer explicit all-media instruction rejects an older subset choice,
+    # but it does not manufacture a prior keep-everything answer.  With no
+    # valid historical preference, the normal capacity question remains.
+    if (
+        historical_kind == "strongest_subset"
+        and _has_explicit_media_scope(user_message, manifest)
+        and _explicit_media_scope(user_message, manifest) == "all"
+    ):
+        return None
+    return historical_kind
+
+
 def _latest_planned_cadence(
     events: list[CreatorAgentEvent],
 ) -> tuple[MontageCadenceConstraint | None, int | float | None]:
@@ -2613,22 +2633,6 @@ async def _run_planning_turn(
                 requested_duration_is_explicit=requested_duration_is_explicit,
             )
             if capacity_question is not None:
-                if locked.question_count < locked.question_budget:
-                    locked.status = "briefing"
-                    locked.question_count += 1
-                    await append_event(
-                        db,
-                        locked,
-                        event_type="assistant_question",
-                        payload=capacity_question,
-                    )
-                    return await _response(db, locked)
-                # The session cannot ask another question. An explicit "all"
-                # must never be silently swapped for a mapping the creator
-                # did not choose: reuse a real answer already given earlier
-                # in this session when one exists; otherwise prefer keeping
-                # every clip (faster pacing) over dropping clips, and always
-                # tell the creator what was applied instead of asking.
                 mappings = capacity_question["all_media_capacity"]["option_mappings"]
                 # mappings[0] is always the strength-ranked subset mapping;
                 # the keep-everything mapping is only present when the fast
@@ -2652,12 +2656,8 @@ async def _run_planning_turn(
                 # narrowing instruction in the creator's latest message
                 # always overrides a "keep everything"/"strongest subset"
                 # history, never the other way around.
-                historical_kind = (
-                    None
-                    if _latest_message_narrows_media_scope(user_message, planning_manifest)
-                    else _historical_all_media_capacity_choice_kind(
-                        session.events, planning_manifest
-                    )
+                historical_kind = _capacity_history_kind_for_turn(
+                    session.events, user_message, planning_manifest
                 )
                 total_clips = len(planning_manifest.media)
                 target_s = strategy.target_duration_s
@@ -2670,6 +2670,22 @@ async def _run_planning_turn(
                 elif historical_kind == "strongest_subset":
                     chosen_mapping = strongest_subset_mapping
                     left_out_sentence = "I used your earlier choice to keep the strongest clips."
+                if chosen_mapping is None and locked.question_count < locked.question_budget:
+                    locked.status = "briefing"
+                    locked.question_count += 1
+                    await append_event(
+                        db,
+                        locked,
+                        event_type="assistant_question",
+                        payload=capacity_question,
+                    )
+                    return await _response(db, locked)
+                # The session cannot ask another question. An explicit "all"
+                # must never be silently swapped for a mapping the creator
+                # did not choose: reuse a real answer already given earlier
+                # in this session when one exists; otherwise prefer keeping
+                # every clip (faster pacing) over dropping clips, and always
+                # tell the creator what was applied instead of asking.
                 if chosen_mapping is None:
                     # No usable history (none recorded, or the current
                     # question has no mapping of that kind): fall back to the

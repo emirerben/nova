@@ -167,6 +167,7 @@ struct ProjectDrawerRow: View {
 struct ChatMessageRow: View {
     let message: ChatTranscriptMessage
     var onSelectOption: ((String) -> Void)? = nil
+    var responseStartedAt: Date? = nil
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -199,7 +200,10 @@ struct ChatMessageRow: View {
             VStack(alignment: .leading, spacing: 7) {
                 // Only the reply text is long-pressable, so the option chips
                 // below keep their plain taps.
-                Text(message.content)
+                if message.isProposal {
+                    Text("Proposed direction").font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.zinc)
+                }
+                ChatResponseText(content: message.content, startedAt: responseStartedAt)
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.ink)
                     .lineSpacing(4)
@@ -334,7 +338,6 @@ struct FootageStage: View {
     var previewVersion = 0
     let progress: [UUID: Double]
     let addFootage: () -> Void
-    let continueWithFootage: () -> Void
     let changeFormat: () -> Void
     var attachedMedia: [CreationAttachedMedia] = []
     var isBusy = false
@@ -346,7 +349,6 @@ struct FootageStage: View {
     var dismissFailure: (UUID) -> Void = { _ in }
     /// Photos and videos in Visuals. A montage can be made from them alone.
     var visualCount = 0
-    var continueWithVisuals: () -> Void = {}
 
     private var readiness: FootageReadiness {
         FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count + preparingCount)
@@ -430,9 +432,6 @@ struct FootageStage: View {
                     }
                 }
 
-                Button("Continue with \(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips")", action: continueWithFootage)
-                    .buttonStyle(CanonicalPrimaryButtonStyle())
-                .disabled(isBusy || !readiness.canContinue)
             }
 
             // Each clip on its way, with its thumbnail, from the moment it is chosen.
@@ -454,10 +453,6 @@ struct FootageStage: View {
                 Text("\(visualsReadiness.attachedCount) \(visualsReadiness.attachedCount == 1 ? "visual" : "visuals") ready")
                     .font(KriaFont.body(12).weight(.medium))
                     .foregroundStyle(KriaColor.zinc)
-                Button("Continue with \(visualsReadiness.attachedCount) \(visualsReadiness.attachedCount == 1 ? "visual" : "visuals")", action: continueWithVisuals)
-                    .buttonStyle(CanonicalPrimaryButtonStyle())
-                    .disabled(isBusy || !visualsReadiness.canContinue)
-                    .accessibilityIdentifier("continue-with-visuals")
             }
 
             if readiness.pendingCount > 0 {
@@ -917,12 +912,15 @@ struct ChatComposer: View {
     @Binding var text: String
     let isSending: Bool
     let canAttach: Bool
+    var canSendWithoutText = false
+    var blocksSubmission = false
+    var placeholder = "Tell Kria what you want…"
     var isFocused: FocusState<Bool>.Binding
     let attach: () -> Void
     let send: () -> Void
 
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSending
+        (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || canSendWithoutText) && !isSending && !blocksSubmission
     }
 
     var body: some View {
@@ -930,7 +928,7 @@ struct ChatComposer: View {
             Button(action: attach) { KriaIcon(.plus).frame(width: 44, height: 44) }
                 .disabled(!canAttach).accessibilityLabel("Attach footage")
                 .accessibilityHint(canAttach ? "" : "Choose a video format first")
-            TextField("Tell Kria what you want…", text: $text, axis: .vertical)
+            TextField(placeholder, text: $text, axis: .vertical)
                 .font(KriaFont.body(15)).lineLimit(1...4)
                 .frame(minHeight: 44).accessibilityLabel("Message Kria")
                 .focused(isFocused)
@@ -947,7 +945,8 @@ struct ChatComposer: View {
                     .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
                     .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
             }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
-                .accessibilityLabel(isSending ? "Sending message" : "Send message")
+                .accessibilityLabel(isSending ? "Sending message" : (canSendWithoutText && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Send clips" : "Send message"))
+                .accessibilityIdentifier("chat-send-message")
         }
         .padding(7).background(WorkspaceSurface())
         .overlay(RoundedRectangle(cornerRadius: 30).stroke(KriaColor.border, lineWidth: 1))
