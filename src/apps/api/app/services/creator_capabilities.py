@@ -49,7 +49,10 @@ from app.agents._schemas.edit_format import (
 from app.config import settings
 from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 from app.services.phone_destination import phone_drawable_visual_kinds
-from app.services.phone_rollout import phone_render_supported_formats
+from app.services.phone_rollout import (
+    phone_guided_narration_supported,
+    phone_render_supported_formats,
+)
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
 CAPABILITY_GUIDED_STORY = "guided_story"
@@ -382,19 +385,28 @@ def resolve_creator_manifest(
             # and worker both already support it (`phone_render_supported_
             # formats()` folds in the narrated-specific flags this branch
             # used to check only for montage via `guided_edit_applicable`).
+            #
+            # `guided_voiceover_executable` deliberately does NOT veto this.
+            # In prod (`creator_prompt_fidelity_enabled` + guided editing on)
+            # it is True for EVERY project whose voiceover has a resolved
+            # narration identity, so gating on it blocked every phone
+            # voiceover render ("Remove the voiceover and I can design the
+            # edit") while unit tests without a narration identity stayed
+            # green. The guided-story narration lane is hard-blocked on the
+            # phone on its own: `CAPABILITY_GUIDED_VOICEOVER` is set
+            # unavailable unconditionally a few lines below, and
+            # `effective_render_program` refuses an all-media / mixed-timing
+            # voiceover strategy without that capability.
             declared_format = coerce_edit_format(edit_format)
             if declared_format in GUIDED_EDIT_FORMATS:
                 montage_voiceover_ready = (
                     not visuals_only
                     and settings.phone_narration_rendering_enabled
                     and "narrationAudio" in settings.phone_render_verified_features
-                    and not guided_voiceover_executable
                 )
             elif declared_format in NARRATED_EDIT_FORMATS:
                 montage_voiceover_ready = (
-                    not visuals_only
-                    and declared_format in phone_render_supported_formats()
-                    and not guided_voiceover_executable
+                    not visuals_only and declared_format in phone_render_supported_formats()
                 )
             else:
                 montage_voiceover_ready = False
@@ -427,8 +439,26 @@ def resolve_creator_manifest(
                 CAPABILITY_DISPATCH_RENDER,
             ):
                 capabilities[capability_name] = phone
-        capabilities[CAPABILITY_GUIDED_VOICEOVER] = _unavailable(
-            "unsupported_phone_audio", "phone rendering does not support recorded voiceover"
+        # KRI-132 phone-voiceover-gate follow-up: the guided-story narration
+        # lane (execution contract `guided_voiceover_v1`, the only lane that
+        # combines Visuals-pool media with a recorded voiceover) now has a
+        # phone compiler (`app.pipeline.phone_guided_plan.compile_phone_
+        # guided_plan`'s narration branch). Keep the cloud-computed value
+        # (set above from `guided_voiceover_executable`) when the phone
+        # itself can carry audio at all AND the rollout is on for this lane
+        # specifically (`phone_guided_narration_supported()`, the single
+        # source of truth `app.services.phone_rollout` also gives the
+        # dispatch gate and the worker); otherwise force it unavailable
+        # exactly as before -- a phone account whose rollout isn't there yet,
+        # or whose recorded voiceover has no resolved narration identity
+        # (`guided_voiceover_executable` False), must still see this
+        # capability closed.
+        capabilities[CAPABILITY_GUIDED_VOICEOVER] = (
+            capabilities[CAPABILITY_GUIDED_VOICEOVER]
+            if (phone.available and phone_guided_narration_supported())
+            else _unavailable(
+                "unsupported_phone_audio", "phone rendering does not support recorded voiceover"
+            )
         )
         # KRI-132: per-format phone-compile availability, voiceover-state
         # aware -- `app.agents._schemas.creator_policy.effective_render_program`

@@ -8,9 +8,11 @@ from app.kria.device_render import recipe_digest
 from app.kria.media_sources import OriginalMediaDescriptor
 from app.kria.recipes import MediaCapability, MediaTransform
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import VisualRenderAsset
-from app.pipeline.guided_story import GuidedStoryExecutionPlan
+from app.kria.render_assets import RenderFingerprint, VisualRenderAsset
+from app.pipeline.guided_story import GuidedStoryExecutionPlan, _narration_caption_elements
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
+from app.pipeline.phone_recipe_shared import PhoneNarrationBed
+from app.schemas.edit_proposal import EditProposalSnapshot, NarrationTrack, NarrationWord
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
@@ -1332,3 +1334,302 @@ def test_round_two_leaves_already_issued_recipe_digests_unchanged():
         recipe_digest(compile_phone_guided_plan(*photo_fixture()))
         == "06ed2d33f8522743f7aca40eb7abfd3a68fcaaa21600538de5688eb27bacda3d"
     )
+
+
+# --- KRI-132 phone-voiceover-gate follow-up: guided-story narration lane ----
+#
+# The voiceover-timed guided story (execution contract `guided_voiceover_v1`)
+# is the only lane that combines Visuals-pool media with a recorded
+# voiceover. `plan.narration` pins a generation-pinned `NarrationTrack`; the
+# compiler now projects it into a `VoiceoverRenderAsset` + a second
+# `TimelineTrack(id="narration", kind="audio")`, hard-replacing the footage's
+# own audio exactly like `_mix_pinned_narration` does on the cloud.
+
+NARRATION_GCS_PATH = "voiceover-uploads/direct/owner/item/voice.m4a"
+NARRATION_GENERATION = "voice-generation-9"
+NARRATION_PLAN_ITEM_ID = "narration-item-1"
+NARRATION_PHOTO_ID_1 = "9b1e5f2a-6c3d-4e8f-9a1b-2c3d4e5f6a71"
+NARRATION_PHOTO_ID_2 = "9b1e5f2a-6c3d-4e8f-9a1b-2c3d4e5f6a72"
+
+
+def narration_track(duration_s: float = 8.0) -> NarrationTrack:
+    """Six ordered words comfortably inside an 8s track (canonical duration
+    at 30fps is exactly 8.0s -- see `canonical_narration_duration_s`)."""
+    words = [
+        NarrationWord(text="This", start_s=0.1, end_s=0.4),
+        NarrationWord(text="is", start_s=0.4, end_s=0.6),
+        NarrationWord(text="a", start_s=0.6, end_s=0.7),
+        NarrationWord(text="recorded", start_s=0.7, end_s=1.2),
+        NarrationWord(text="voiceover", start_s=1.2, end_s=1.8),
+        NarrationWord(text="story", start_s=1.8, end_s=2.2),
+    ]
+    return NarrationTrack(
+        gcs_path=NARRATION_GCS_PATH,
+        generation=NARRATION_GENERATION,
+        duration_s=duration_s,
+        words=words,
+        language="en",
+    )
+
+
+def narration_bed(**changes) -> PhoneNarrationBed:
+    return PhoneNarrationBed(
+        **(
+            {
+                "plan_item_id": NARRATION_PLAN_ITEM_ID,
+                "generation": NARRATION_GENERATION,
+                "fingerprint": RenderFingerprint(sha256="d" * 64, byte_count=999_000),
+                "duration_s": 8.0,
+            }
+            | changes
+        )
+    )
+
+
+def narration_fixture():
+    """Two video moments + two Visuals photos tiling the exact canonical
+    narration duration (8s), a title, and pinned-narration captions -- the
+    shape an approved voiceover-timed guided story actually compiles.
+    Returns (plan, bindings, visuals, bed).
+    """
+    narration = narration_track()
+    binding_1 = PhoneSourceBinding(
+        media_id="source-1",
+        proxy_path="user/analysis-proxy-source-1.mp4",
+        generation="123",
+        original=OriginalMediaDescriptor(
+            sha256="a" * 64,
+            byte_count=1000,
+            duration_s=5,
+            width=1920,
+            height=1080,
+            has_audio=True,
+        ),
+    )
+    binding_2 = PhoneSourceBinding(
+        media_id="source-2",
+        proxy_path="user/analysis-proxy-source-2.mp4",
+        generation="123",
+        original=OriginalMediaDescriptor(
+            sha256="b" * 64,
+            byte_count=1000,
+            duration_s=5,
+            width=1920,
+            height=1080,
+            has_audio=True,
+        ),
+    )
+    visual_1 = PhoneVisualBinding(
+        media_id=NARRATION_PHOTO_ID_1,
+        gcs_path=f"users/owner/plan/item/pool/{NARRATION_PHOTO_ID_1}.jpg",
+        generation="777",
+        sha256="c" * 64,
+        byte_count=2048,
+    )
+    visual_2 = PhoneVisualBinding(
+        media_id=NARRATION_PHOTO_ID_2,
+        gcs_path=f"users/owner/plan/item/pool/{NARRATION_PHOTO_ID_2}.jpg",
+        generation="778",
+        sha256="e" * 64,
+        byte_count=4096,
+    )
+    # `_narration_caption_elements` only reads `.narration` and `.font_family`
+    # off its snapshot argument -- `model_construct` skips validating (and
+    # therefore requiring) `EditProposalSnapshot`'s many unrelated fields.
+    snapshot = EditProposalSnapshot.model_construct(narration=narration, font_family=None)
+    title = TextElement(
+        id="title",
+        text="A day well spent",
+        start_s=0,
+        end_s=8,
+        font_family="Inter-Bold",
+        effect="static",
+    ).model_dump(mode="json", exclude_none=True)
+    captions = _narration_caption_elements(snapshot)
+    assert len(captions) >= 6  # six distinct words, none merged as point timestamps
+    plan = GuidedStoryExecutionPlan.model_validate(
+        {
+            "compiler_version": 6,
+            "proposal_version": 1,
+            "media_digest": "f" * 64,
+            "direction": "guided_story",
+            "goal": "Show the day",
+            "pace": "balanced",
+            "approved_duration_s": 8,
+            "resolved_duration_s": 8,
+            "selected_media_ids": [
+                "source-1",
+                "source-2",
+                NARRATION_PHOTO_ID_1,
+                NARRATION_PHOTO_ID_2,
+            ],
+            "story_timeline": [
+                {
+                    "moment_id": "moment-1",
+                    "beat_id": "beat",
+                    "topic": "Morning",
+                    "media_id": "source-1",
+                    "lane": "clip",
+                    "kind": "video",
+                    "gcs_path": binding_1.proxy_path,
+                    "generation": "123",
+                    "layout": "fullscreen",
+                    "source_start_s": 0,
+                    "source_end_s": 2,
+                    "output_start_s": 0,
+                    "output_end_s": 2,
+                    "duration_s": 2,
+                },
+                {
+                    "moment_id": "moment-2",
+                    "beat_id": "beat",
+                    "topic": "Afternoon",
+                    "media_id": "source-2",
+                    "lane": "clip",
+                    "kind": "video",
+                    "gcs_path": binding_2.proxy_path,
+                    "generation": "123",
+                    "layout": "fullscreen",
+                    "source_start_s": 0,
+                    "source_end_s": 2,
+                    "output_start_s": 2,
+                    "output_end_s": 4,
+                    "duration_s": 2,
+                },
+                {
+                    "moment_id": "moment-3",
+                    "beat_id": "beat",
+                    "topic": "Evening",
+                    "media_id": NARRATION_PHOTO_ID_1,
+                    "lane": "asset",
+                    "kind": "image",
+                    "gcs_path": visual_1.gcs_path,
+                    "generation": visual_1.generation,
+                    "layout": "fullscreen",
+                    "source_start_s": 0,
+                    "source_end_s": 2,
+                    "output_start_s": 4,
+                    "output_end_s": 6,
+                    "duration_s": 2,
+                },
+                {
+                    "moment_id": "moment-4",
+                    "beat_id": "beat",
+                    "topic": "Night",
+                    "media_id": NARRATION_PHOTO_ID_2,
+                    "lane": "asset",
+                    "kind": "image",
+                    "gcs_path": visual_2.gcs_path,
+                    "generation": visual_2.generation,
+                    "layout": "fullscreen",
+                    "source_start_s": 0,
+                    "source_end_s": 2,
+                    "output_start_s": 6,
+                    "output_end_s": 8,
+                    "duration_s": 2,
+                },
+            ],
+            "beat_windows": [
+                {
+                    "beat_id": "beat",
+                    "approved_duration_s": 8,
+                    "resolved_duration_s": 8,
+                    "start_s": 0,
+                    "end_s": 8,
+                }
+            ],
+            "text_elements": [title, *captions],
+            "transition_policy": {"type": "none", "duration_s": 0},
+            "typography": {"style_id": "guided_story_v2", "font": "Inter"},
+            "narration": narration.model_dump(mode="json"),
+        }
+    )
+    return plan, (binding_1, binding_2), (visual_1, visual_2), narration_bed()
+
+
+def test_narration_plan_compiles_a_hard_replace_audio_track_and_stills():
+    plan, bindings, visuals, bed = narration_fixture()
+    recipe = compile_phone_guided_plan(plan, bindings, visuals, narration=bed)
+
+    assert recipe.duration == pytest.approx(plan.resolved_duration_s)
+    audio_tracks = [track for track in recipe.tracks if track.kind == "audio"]
+    assert len(audio_tracks) == 1
+    narration_track_clips = audio_tracks[0].clips
+    assert len(narration_track_clips) == 1
+    voice_clip = narration_track_clips[0]
+    assert (voice_clip.source_start, voice_clip.source_duration, voice_clip.volume) == (
+        0,
+        pytest.approx(8),
+        1,
+    )
+    voice_asset_id = f"voiceover-{NARRATION_PLAN_ITEM_ID}"
+    assert voice_clip.source_asset_id == voice_asset_id
+    # Hard replace: no ducking, no gain, no matched original-audio bed.
+    assert recipe.audio.original_volume == 0
+    assert recipe.audio.narration_asset_id == voice_asset_id
+    assert {"narrationAudio", "audioMix"} <= recipe.required_capabilities
+    asset = next(a for a in recipe.asset_manifest.assets if a.id == voice_asset_id)
+    assert asset.kind == "voiceover"
+    assert asset.plan_item_id == NARRATION_PLAN_ITEM_ID
+    assert (asset.fingerprint.sha256, asset.fingerprint.byte_count) == ("d" * 64, 999_000)
+    # Stills still compile exactly as the KRI-121 photo lane always has.
+    video_clips = recipe.tracks[0].clips
+    assert len(video_clips) == 4
+    assert [clip.still_layout for clip in video_clips] == [None, None, None, None]
+    assert "stillImages" in recipe.required_capabilities
+    # Title + all six caption groups made it through, in chronological order.
+    assert recipe.text_layers[0].id == "text-0"
+    caption_layers = recipe.text_layers[1:]
+    assert len(caption_layers) == len(plan.text_elements) - 1
+    starts = [layer.start for layer in caption_layers]
+    assert starts == sorted(starts)
+    for layer in recipe.text_layers:
+        assert layer.end <= recipe.duration
+    # Capability-gate verification (phone_render_verified_features) is
+    # exercised separately below.
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def test_narration_recipe_passes_the_pilot_gate_once_capabilities_are_verified(monkeypatch):
+    plan, bindings, visuals, bed = narration_fixture()
+    recipe = compile_phone_guided_plan(plan, bindings, visuals, narration=bed)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)  # must not raise
+
+
+def test_narration_plan_without_a_bed_fails_closed():
+    plan, bindings, visuals, _bed = narration_fixture()
+    with pytest.raises(UnsupportedPhonePlan, match="narration binding") as excinfo:
+        compile_phone_guided_plan(plan, bindings, visuals)
+    assert excinfo.value.capability == "narrationAudio"
+
+
+def test_narration_bed_generation_mismatch_fails_closed():
+    plan, bindings, visuals, _bed = narration_fixture()
+    stale = narration_bed(generation="stale-generation")
+    with pytest.raises(UnsupportedPhonePlan, match="replaced since approval") as excinfo:
+        compile_phone_guided_plan(plan, bindings, visuals, narration=stale)
+    assert excinfo.value.capability == "narrationAudio"
+
+
+def test_narration_bed_duration_mismatch_fails_closed():
+    plan, bindings, visuals, _bed = narration_fixture()
+    drifted = narration_bed(duration_s=8.5)  # > 0.05s tolerance
+    with pytest.raises(UnsupportedPhonePlan, match="replaced since approval") as excinfo:
+        compile_phone_guided_plan(plan, bindings, visuals, narration=drifted)
+    assert excinfo.value.capability == "narrationAudio"
+
+
+def test_narration_bed_within_tolerance_still_compiles():
+    plan, bindings, visuals, _bed = narration_fixture()
+    close_enough = narration_bed(duration_s=8.04)  # inside the 0.05s tolerance
+    compile_phone_guided_plan(plan, bindings, visuals, narration=close_enough)  # must not raise
+
+
+def test_bed_given_without_plan_narration_fails_closed():
+    plan, bindings = fixture()  # the plain fixture -- plan.narration is None
+    with pytest.raises(UnsupportedPhonePlan, match="no narration") as excinfo:
+        compile_phone_guided_plan(plan, bindings, narration=narration_bed())
+    assert excinfo.value.capability == "narrationAudio"

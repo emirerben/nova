@@ -1548,7 +1548,10 @@ def _dispatch_item_render(
             NARRATED_EDIT_FORMATS,
         )
         from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
-        from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            phone_guided_narration_supported,
+            phone_render_supported_formats,
+        )
         from app.services.phone_sources import bind_phone_sources  # noqa: PLC0415
 
         phone_sources = ()
@@ -1557,20 +1560,24 @@ def _dispatch_item_render(
             if not settings.phone_rendering_for(plan.user_id):
                 phone_gate = "not_enrolled"
                 raise ValueError("phone rendering is unavailable for this account")
-            if guided_voiceover:
+            if guided_voiceover and not phone_guided_narration_supported():
                 # KRI-132 follow-up: the guided-story narration lane
-                # (`GUIDED_VOICEOVER_CONTRACT`) has no phone compiler --
-                # `compile_phone_guided_plan`'s `_UNSUPPORTED_PHONE_LANE_
-                # CAPABILITY` rejects its "narration" plan lane
-                # unconditionally. `guided_voiceover` forces
-                # `guided_applicable = True` above, so without this check an
-                # APPROVED guided-voiceover proposal would fall straight
-                # through to `bind_phone_sources` + `_run_phone_guided_job`
-                # and only fail once the worker tries to compile it. Reject
-                # here instead, before a Job is even minted -- independent of
-                # `PHONE_NARRATION_RENDERING_ENABLED`, which only covers the
-                # separate montage-family (non-guided) voiceover archetype
-                # checked further below.
+                # (`GUIDED_VOICEOVER_CONTRACT`) now HAS a phone compiler
+                # (`compile_phone_guided_plan`'s narration branch), gated by
+                # `phone_guided_narration_supported()` -- the same rollout
+                # check `creator_capabilities.py`'s `CAPABILITY_GUIDED_
+                # VOICEOVER` and the worker's `_run_phone_guided_job` also
+                # gate on, so all three can never disagree. `guided_voiceover`
+                # forces `guided_applicable = True` above, so while the
+                # rollout is off an APPROVED guided-voiceover proposal would
+                # otherwise fall straight through to `bind_phone_sources` +
+                # `_run_phone_guided_job` and only fail once the worker tries
+                # to compile it. Reject here instead, before a Job is even
+                # minted -- independent of `PHONE_NARRATION_RENDERING_ENABLED`
+                # alone, which only covers the separate montage-family
+                # (non-guided) voiceover archetype checked further below (it
+                # is one of `phone_guided_narration_supported()`'s three
+                # co-requirements, not a substitute for it).
                 phone_gate = "guided_voiceover_unavailable"
                 raise ValueError("phone rendering does not yet support guided-story narration")
             if guided_applicable:

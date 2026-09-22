@@ -213,6 +213,39 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2) -> None:
         )
 
 
+def phone_guided_narration_supported() -> bool:
+    """Single source of truth for "can the guided-story `.narration` plan lane
+    (the voiceover-timed guided story, execution contract `guided_voiceover_v1`)
+    render on the phone right now" (KRI-132 phone-voiceover-gate follow-up).
+
+    Every site that decides this MUST call this function instead of
+    re-deriving the rule: `app.services.creator_capabilities.resolve_creator_
+    manifest` (whether `CAPABILITY_GUIDED_VOICEOVER` is available for a phone
+    manifest), `app.tasks.content_plan_build`'s dispatch gate (whether an
+    approved guided-voiceover proposal is refused before a Job is minted), and
+    `app.tasks.generative_build._run_phone_guided_job` (whether the worker
+    resolves and pins a narration bed at all). Keeping them in lockstep is the
+    entire point -- a manifest that advertises the capability but a dispatch
+    gate or worker that still refuses it (or vice versa) is exactly the class
+    of bug this module exists to prevent.
+
+    True iff ALL of:
+      - `phone_guided_narration_rendering_enabled` (this lane's own rollout
+        flag; independently reversible from the two below).
+      - `phone_narration_rendering_enabled` (the lane reuses the same
+        narration-audio device capability the montage-family and narrated-
+        family voiceover renders already use).
+      - `"narrationAudio"` is in `phone_render_verified_features` (the
+        device-parity gate; a rollout flag alone never skips it).
+    """
+
+    return bool(
+        settings.phone_guided_narration_rendering_enabled
+        and settings.phone_narration_rendering_enabled
+        and "narrationAudio" in settings.phone_render_verified_features
+    )
+
+
 def phone_render_supported_formats() -> frozenset[str]:
     """The single source of truth for "which edit formats can render on the
     phone for THIS deployment, right now" -- settings-aware, unlike the

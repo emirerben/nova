@@ -147,12 +147,12 @@ dispatch gate (`app.tasks.content_plan_build._dispatch_item_render`) checks
 settings.phone_render_verified_features` for a montage-family voiceover item
 routed through an analysis-proxy (phone) source, so flag/capability-off never
 queues a job the worker is doomed to reject. The guided-story narration lane
-(`GUIDED_VOICEOVER_CONTRACT`/`requests_guided_voiceover`) is a SEPARATE,
-still-unported voiceover route (script-guided narration via an approved
-guided proposal) that stays hard-rejected at the SAME gate regardless of this
-flag — `compile_phone_guided_plan` has no compiler for its `"narration"` plan
-lane at all. Out of scope for KRI-132; a future phase would need to either
-give that compiler a narration lane or fold it into this one.
+(`GUIDED_VOICEOVER_CONTRACT`/`requests_guided_voiceover`) is a SEPARATE
+voiceover route (script-guided narration via an approved guided proposal,
+combining Visuals-pool media with a recorded voiceover) that used to stay
+hard-rejected at the same gate unconditionally — see "Voiceover-timed guided
+story on the phone (KRI-132 phone-voiceover-gate follow-up)" below for its
+own compiler and rollout flag.
 
 When Generate creates no Job, inspect the Creator session's `last_error` and
 the `plan_item_render.invalid_clips` log detail, plus its `phone_gate` field:
@@ -167,10 +167,13 @@ a phone-gate cause any more (2026-09 fix). The detail `analysis proxies
 require an approved phone edit plan` indicates a guided-format
 routing/approval failure; `analysis proxies cannot render '<format>' on
 iPhone yet` indicates the format has no phone compiler yet; `phone rendering
-does not yet support voiceover edits` / `phone rendering does not yet support
-guided-story narration` indicate one of the two voiceover gates above —
-neither means missing footage. A manifest conflict happens earlier and
-consumes no render attempt. After correcting the routing, a new message in
+does not yet support voiceover edits` indicates the montage-family voiceover
+gate above; `phone rendering does not yet support guided-story narration`
+indicates the guided-story narration lane's own rollout flag
+(`phone_guided_narration_rendering_enabled`, see below) or its shared
+co-requirements are off — neither means missing footage. A manifest conflict
+happens earlier and consumes no render attempt. After correcting the routing,
+a new message in
 the same failed project creates a fresh planning session using its existing
 attachments; the
 creator then confirms the new direction. Repeated Generate taps on the failed
@@ -183,8 +186,12 @@ the manifest-level mirror of the dispatch gate above — it marks voiceover
 when the same flag + verified capability hold, so the Main Creator agent can
 actually propose a voiceover edit from chat instead of the capability
 permanently reading `unsupported_phone_audio`. `CAPABILITY_GUIDED_VOICEOVER`
-stays unconditionally `unsupported_phone_audio` regardless of the flag,
-matching the guided-story lane staying cloud-only above.
+carries through the cloud-computed value (available iff
+`guided_voiceover_executable`: `creator_prompt_fidelity_enabled` + a resolved
+narration identity + guided editing enabled + attached media) once
+`app.services.phone_rollout.phone_guided_narration_supported()` holds for a
+phone manifest — see the guided-story subsection below; otherwise it stays
+the same unconditional `unsupported_phone_audio` it always was.
 
 `app.agents._schemas.creator_policy.effective_render_program`'s phone branch
 (`if phone is not None:`) resolves a voiceover-carrying phone manifest to
@@ -228,6 +235,88 @@ unknown `planItemId` field, so a pilot device still on an older build fails the
 render ("This edit couldn't finish on your iPhone") instead of refusing early
 with the typed `phone_voiceover_unavailable` reason. Use the rollback secret
 above to close that window if a pilot hits it before their app updates.
+
+#### Voiceover-timed guided story on the phone (KRI-132 phone-voiceover-gate follow-up)
+
+The guided-story narration lane (execution contract `guided_voiceover_v1`,
+`render_program="guided"`) is the ONLY lane that combines Visuals-pool media
+with a recorded voiceover — a chat request like "use every uploaded file"
+plus a voiceover selects it. It was hard-blocked on the phone in four places
+even after the montage-family voiceover render above shipped; this follow-up
+gives it a phone compiler behind its own rollout flag.
+
+**Flag:** `settings.phone_guided_narration_rendering_enabled` (env
+`PHONE_GUIDED_NARRATION_RENDERING_ENABLED`, default `true`). Also requires
+`phone_narration_rendering_enabled` (this lane reuses the same
+narration-audio device capability the montage-family and narrated-family
+voiceover renders already use) AND verified `narrationAudio` — exactly like
+the two lanes above, it is a device-parity gate a rollout flag alone cannot
+skip. `app.services.phone_rollout.phone_guided_narration_supported()` ANDs
+all three and is the single source of truth every call site consults:
+`app.services.creator_capabilities.resolve_creator_manifest`'s
+`CAPABILITY_GUIDED_VOICEOVER` (carries through the cloud-computed
+`guided_voiceover_executable` value instead of forcing
+`unsupported_phone_audio` unconditionally), the dispatch gate
+(`app.tasks.content_plan_build._dispatch_item_render`, `phone_gate =
+"guided_voiceover_unavailable"` when the flag is off), and the worker
+(`app.tasks.generative_build._run_phone_guided_job`, raises
+`UnsupportedPhonePlan(capability="narrationAudio")` when off). **Rollback:**
+`fly secrets set PHONE_GUIDED_NARRATION_RENDERING_ENABLED=false --app
+nova-video` + `fly machine restart <id>` (api + worker) reverts to
+byte-identical pre-follow-up behavior — the dispatch gate and manifest both
+reject unconditionally again, before ever compiling a narration track.
+
+**What renders.** `app.pipeline.phone_guided_plan.compile_phone_guided_plan`
+takes an additional `narration: PhoneNarrationBed | None` keyword. When the
+approved plan's `.narration` is set, the worker re-resolves a fresh device
+receipt via `_resolve_phone_voiceover_bed` (the same helper the
+montage-family compiler uses — never trusts the plan's pinned
+gcs_path/generation alone, since a concurrent edit could have replaced or
+cleared the voiceover since approval) and passes it in; a missing bed, or one
+whose `generation`/`duration_s` no longer matches the approved plan within
+0.05s, fails closed with `UnsupportedPhonePlan(capability="narrationAudio")`
+("the approved voiceover was replaced since approval") instead of silently
+binding stale bytes. The compiler projects the resolved bed into a
+`VoiceoverRenderAsset` and a second `TimelineTrack(id="narration",
+kind="audio")`, then mirrors `_mix_pinned_narration` (the cloud renderer)
+exactly: the narration HARD-REPLACES the footage's own audio
+(`AudioMixRecipe(original_volume=0.0, narration_asset_id=...)` — no ducking,
+no gain, no matched original-audio bed, regardless of
+`montage_audio.preserve_source_audio`), matching the cloud's `-map 1:a:0`
+mux. Visuals-pool photos in the same story (KRI-121) compile exactly as
+before — the narration lane adds only the audio track and the capability
+check, nothing about the still/video moment compilation changed.
+
+**Known divergences from the cloud path (v1, accepted):**
+- No face-aware text placement for the title/chapter lines on this lane
+  (`guided_text_face_placement_enabled`'s device projection is unrelated to
+  the narration audio track and is unaffected either way, but is not itself
+  exercised by this follow-up).
+- No colour looks besides `golden_hour`, and only over an exact-canvas
+  unrotated source — the same limitation every other guided-story moment
+  already has, unchanged by narration.
+- Captions render as the device's existing `static` text layers, one per
+  spoken word group (`_narration_caption_elements`'s point-timestamp
+  grouping), in plain white — there is no per-word emphasis or karaoke-style
+  reveal on this lane the way the cloud's synced-caption styling can carry;
+  each group simply appears and disappears for its exact spoken window.
+- No post-approval editor crop/retime for a narration-carrying story: like
+  every other guided-story moment, the compiler rejects a `source_crop` or a
+  non-unit `playback_rate` outright (`UnsupportedPhonePlan("unsupported
+  phone moment treatment")`) rather than silently dropping it.
+- The narration audio track's `source_duration` is bounded by the recipe's
+  own compiled video timeline (`compiled_duration`, which can be marginally
+  shorter than the plan's nominal `resolved_duration_s` after an on-device
+  refit) — a real mismatch leaves trailing silence rather than truncating
+  video, the same accepted shape as the montage-family voiceover render.
+
+See `tests/tasks/test_phone_guided_narration_prod_replay.py` for an
+end-to-end replay of this lane under production-shaped settings
+(`tests/_prod_profile.py`), `tests/pipeline/test_phone_guided_plan.py`'s
+`narration_fixture()` for the compiler-level coverage (stills + narration
+audio + fail-closed bed variants), and `tests/tasks
+/test_phone_guided_dispatch.py`'s narration tests for the worker's own
+bed-resolution plumbing.
 
 #### Talking to camera + narrated voiceover on the phone (KRI-132 follow-up)
 

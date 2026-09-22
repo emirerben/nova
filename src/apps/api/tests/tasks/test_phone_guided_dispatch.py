@@ -14,7 +14,7 @@ from app.services.generative_jobs import build_generative_job
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD
 from app.services.pool_asset_refs import job_references_pool_asset
 from app.tasks import generative_build as gb
-from tests.pipeline.test_phone_guided_plan import fixture
+from tests.pipeline.test_phone_guided_plan import fixture, narration_bed, narration_track
 from tests.services import test_phone_visuals as photos
 
 
@@ -490,4 +490,114 @@ def test_stale_pool_video_fails_closed_as_unsupported(monkeypatch, change):
     assert kwargs.get("failure_reason") == "phone_plan_unsupported"
     assert downloads == []
     assert PHONE_VISUALS_FIELD not in job.assembly_plan
+    cloud.assert_not_called()
+
+
+# --- KRI-132 phone-voiceover-gate follow-up: guided-story narration lane ----
+#
+# The compiler's own stills+narration shape (2 video + 2 Visuals-photo
+# moments tiling the canonical narration duration) is covered exhaustively in
+# tests/pipeline/test_phone_guided_plan.py; these tests stay on the plain
+# `fixture()` base (no Visuals pool moments, so `bind_phone_visuals` never
+# even touches the session) and focus on the WORKER's own bed-resolution
+# plumbing: does it call `_resolve_phone_voiceover_bed` with the right
+# arguments, does a stale/missing bed fail closed, and does the rollout flag
+# gate it before a bed is ever resolved.
+
+
+def narration_setup(monkeypatch, *, flag: bool = True):
+    """A guided phone job whose approved plan carries a recorded voiceover."""
+    job, snapshot, session, planner, cloud = setup(monkeypatch)
+    plan, _bindings = fixture()
+    plan.narration = narration_track(duration_s=3.0)
+    planner.return_value = (plan.model_dump(mode="json"), None)
+    monkeypatch.setattr(gb.settings, "phone_guided_narration_rendering_enabled", flag)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        ["basicComposition", "local1080Export", "audioMix", "narrationAudio"],
+    )
+    return job, snapshot, session, planner, cloud, plan
+
+
+def test_narration_plan_resolves_and_pins_the_bed(monkeypatch):
+    job, snapshot, session, planner, cloud, plan = narration_setup(monkeypatch)
+    bed = narration_bed(duration_s=3.0)  # matches plan.narration's 3s duration
+    calls = []
+
+    def fake_bed(job_id, gcs_path):
+        calls.append((job_id, gcs_path))
+        return bed
+
+    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", fake_bed, raising=False)
+
+    gb._run_generative_job(str(job.id))
+
+    assert calls == [(str(job.id), plan.narration.gcs_path)]
+    assert job.status == "awaiting_device"
+    request = device_status(job, "guided_story").request
+    voice_asset_id = f"voiceover-{bed.plan_item_id}"
+    assert request.recipe.audio.narration_asset_id == voice_asset_id
+    assert request.recipe.audio.original_volume == 0
+    [narration_track_recipe] = [t for t in request.recipe.tracks if t.kind == "audio"]
+    assert narration_track_recipe.clips[0].source_asset_id == voice_asset_id
+    cloud.assert_not_called()
+
+
+def test_narration_bed_generation_mismatch_fails_closed(monkeypatch):
+    job, snapshot, session, planner, cloud, plan = narration_setup(monkeypatch)
+    stale_bed = narration_bed(generation="stale-generation")
+    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", lambda *a: stale_bed, raising=False)
+
+    with pytest.raises(UnsupportedPhonePlan, match="replaced since approval"):
+        gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+    session.commit.assert_not_called()
+    cloud.assert_not_called()
+
+
+def test_narration_bed_missing_fails_closed(monkeypatch):
+    job, snapshot, session, planner, cloud, plan = narration_setup(monkeypatch)
+    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", lambda *a: None, raising=False)
+
+    with pytest.raises(UnsupportedPhonePlan, match="replaced since approval"):
+        gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+    session.commit.assert_not_called()
+    cloud.assert_not_called()
+
+
+def test_narration_flag_off_fails_closed_before_resolving_a_bed(monkeypatch):
+    job, snapshot, session, planner, cloud, plan = narration_setup(monkeypatch, flag=False)
+    bed_calls = []
+    monkeypatch.setattr(
+        gb,
+        "_resolve_phone_voiceover_bed",
+        lambda *a: (bed_calls.append(a), narration_bed())[1],
+        raising=False,
+    )
+
+    with pytest.raises(UnsupportedPhonePlan, match="guided-story narration"):
+        gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+    assert bed_calls == []  # never even attempted to resolve one
+    session.commit.assert_not_called()
+    cloud.assert_not_called()
+
+
+def test_plan_without_narration_never_looks_up_a_bed(monkeypatch):
+    """Byte-identical to before this change: a plan with no `.narration` never
+    calls `_resolve_phone_voiceover_bed` at all."""
+    job, snapshot, session, planner, cloud = setup(monkeypatch)  # base fixture, no narration
+    bed_calls = []
+    monkeypatch.setattr(
+        gb,
+        "_resolve_phone_voiceover_bed",
+        lambda *a: (bed_calls.append(a), narration_bed())[1],
+        raising=False,
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert bed_calls == []
+    assert job.status == "awaiting_device"
+    request = device_status(job, "guided_story").request
+    assert request.recipe.audio.narration_asset_id is None
     cloud.assert_not_called()

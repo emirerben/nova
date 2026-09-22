@@ -216,9 +216,20 @@ def test_phone_item_with_recorded_voiceover_compiles_native_when_verified(
     guided-proposal capability -- mirroring `_dispatch_item_render`'s own
     `guided_applicable = guided_edit_applicable(strategy_format,
     has_voiceover=True)` (always False) and `routes/creator_agent.py`'s
-    `bypass_guided_edit_gate = render_program == "native"`. The guided-story
-    CAPABILITY_GUIDED_VOICEOVER stays unconditionally unsupported_phone_audio
-    regardless (asserted below) -- that lane remains out of scope.
+    `bypass_guided_edit_gate = render_program == "native"`.
+
+    KRI-132 phone-voiceover-gate follow-up: CAPABILITY_GUIDED_VOICEOVER is no
+    longer unconditionally `unsupported_phone_audio` on every phone manifest
+    -- `phone_guided_narration_rendering_enabled` (default True) also holds
+    here (this test never turns it off), so the phone gate now carries
+    through the CLOUD-computed reason instead. This project has no narration
+    identity and `creator_prompt_fidelity_enabled` is off (this test's
+    default), so the cloud rule's own `guided_voiceover_executable` is False
+    for a reason that has nothing to do with the phone -- `disabled_by_setting`,
+    same as it would be for a cloud project in this exact shape. That
+    capability's value is still asserted unavailable below: this test's real
+    point (native render doesn't need the guided-story lane) is unaffected
+    either way.
     """
     _enable_guided(monkeypatch)
     monkeypatch.setattr(capabilities.settings, "phone_narration_rendering_enabled", True)
@@ -236,7 +247,7 @@ def test_phone_item_with_recorded_voiceover_compiles_native_when_verified(
     guided_voiceover = manifest.capabilities[capabilities.CAPABILITY_GUIDED_VOICEOVER]
     assert (guided_voiceover.available, guided_voiceover.reason_code) == (
         False,
-        "unsupported_phone_audio",
+        "disabled_by_setting",
     )
 
     plan = capabilities.compile_strategy_to_plan(
@@ -281,9 +292,27 @@ def test_phone_voiceover_all_media_scope_with_pool_media_fails_closed(monkeypatc
     the guided_voiceover_v1 execution contract) before the new native/voiceover
     branch is ever reached -- confirm it still fails closed (never silently
     resolves native, dropping the pool media) when the project has pool media
-    attached."""
+    attached.
+
+    KRI-132 phone-voiceover-gate follow-up: this guard has an exemption in
+    `effective_render_program` for `guided_voiceover.reason_code ==
+    "disabled_by_setting"` (so a fleet-wide disabled guided-voiceover lane
+    doesn't mask the plainer "requires the guided proposal capability"
+    message a few lines below it). `CAPABILITY_GUIDED_VOICEOVER` now carries
+    through the cloud-computed reason on a phone manifest once this lane's
+    own rollout is on (`phone_guided_narration_supported()`, true here via
+    `phone_narration_rendering_enabled` + verified narrationAudio) instead of
+    an unconditional `unsupported_phone_audio` -- without
+    `creator_prompt_fidelity_enabled`, that cloud reason IS
+    "disabled_by_setting" (the whole guided-voiceover lane is off), which
+    would trip the exemption and route this test into the OTHER guard's
+    message instead. Set it on so this test keeps exercising the guard it
+    names: the reason becomes "narration_identity_missing" (no narration
+    identity supplied here), which is not exempted.
+    """
     _enable_guided(monkeypatch)
     monkeypatch.setattr(capabilities.settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "creator_prompt_fidelity_enabled", True)
     monkeypatch.setattr(
         capabilities.settings,
         "phone_render_verified_features",
@@ -469,6 +498,65 @@ def test_phone_subtitled_two_clips_fails_closed(monkeypatch) -> None:
                 selected_media_ids=["phone-a", "phone-b"],
             ),
         )
+
+
+@pytest.mark.parametrize("edit_format", ["narrated_planned", "narrated_ready", "montage"])
+def test_phone_voiceover_renders_with_prod_narration_identity_and_prompt_fidelity(
+    monkeypatch, edit_format
+) -> None:
+    """Prod shape (found on a real iPhone 2026-09-22): `creator_prompt_fidelity
+    _enabled` + guided editing are ON and an uploaded voiceover has a resolved
+    narration identity, so `guided_voiceover_executable` is True for EVERY
+    voiceover project. That used to mark `CAPABILITY_PHONE_SOURCE_AUDIO`
+    unavailable ("A voiceover can't render on your iPhone yet... Remove the
+    voiceover") -- blocking narrated AND #1116's montage voiceover in prod while
+    every unit test (no narration identity) stayed green. The native voiceover
+    render (this test's real point: a PLAIN strategy with no
+    `guided_voiceover_v1` execution contract) must not be vetoed by
+    `guided_voiceover_executable`'s mere truth either way.
+
+    KRI-132 phone-voiceover-gate follow-up: unlike when that fix landed,
+    CAPABILITY_GUIDED_VOICEOVER is no longer unconditionally blocked on the
+    phone -- `_enable_narrated_and_subtitled_flags` (phone_flags_on=True, the
+    default) turns on `phone_narration_rendering_enabled` + verified
+    narrationAudio, and `phone_guided_narration_rendering_enabled` defaults
+    True, so `phone_guided_narration_supported()` holds and the capability
+    now carries through the cloud-computed value. With prompt fidelity +
+    narration identity + guided editing all present, that value IS available
+    (`guided_voiceover_executable` is True) -- asserted below. It still does
+    not veto this native voiceover render: this strategy never sets
+    `execution_contract="guided_voiceover_v1"` or `media_scope="all"`, so
+    `effective_render_program` never even consults the capability.
+    """
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "creator_prompt_fidelity_enabled", True)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format=edit_format,
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+        has_voiceover=True,
+        narration={
+            "gcs_path": "voiceover-uploads/user/item/voice.m4a",
+            "generation": "voice-generation-1",
+            "duration_s": 48.0,
+        },
+    )
+    assert manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO].available is True
+    assert manifest.capabilities[capabilities.CAPABILITY_DISPATCH_RENDER].available is True
+    # The guided-story narration lane is ALSO now available (this project has
+    # everything `guided_voiceover_executable` requires); it simply isn't
+    # requested by this plain strategy, so it cannot veto the native render.
+    assert manifest.capabilities[capabilities.CAPABILITY_GUIDED_VOICEOVER].available is True
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format=edit_format, audio_strategy="voiceover", selected_media_ids=["phone-a"]
+        ),
+    )
+    assert plan.strategy.render_program == "native"
 
 
 def test_phone_narrated_with_recorded_voiceover_compiles_native_when_supported(
