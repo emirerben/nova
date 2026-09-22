@@ -208,6 +208,11 @@ Opening the grid only reads JPEGs; playback remains a separate user action.
 Refresh, broken-object probes, and the worker all follow the newest owned
 creation thread's selected variant, with rank order as fallback. A render or
 selection change invalidates stale probe/extraction results.
+On-demand repair uses a deterministic key shared by concurrent writers. A
+stale repair retains that key while the job exists, even if another cut is now
+selected; deleting it could erase another writer's live or pending poster.
+Job deletion owns namespace cleanup. This can retain a small unused JPEG after
+a concurrent source change, in preference to deleting a usable thumbnail.
 
 The September 2026 guided-story regression generated a poster during variant
 publication but lost its reference during finalization: the source-audio

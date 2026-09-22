@@ -17,8 +17,9 @@ script's flow is snapshot/batch shaped):
 * Extraction/upload happens with NO lock held (a full MP4 download can take
   a minute; holding a row lock across it would block deletes and re-renders).
 * After upload the row is re-locked and re-verified — same source key, poster
-  field still empty, render identity unchanged. A failed verification discards
-  the freshly uploaded object instead of clobbering a concurrent render.
+  field still empty, render identity unchanged. A failed verification skips
+  publication. Shared deterministic poster objects remain while the Job exists,
+  because another writer may use that same key; Job deletion owns cleanup.
 * JSONB is not recursively mutation-tracked: deep-copy ``assembly_plan`` before
   any nested write and call ``flag_modified``. Skipping either produces a
   successful commit that persists NOTHING (backfill_video_posters.py:777-783).
@@ -494,14 +495,11 @@ def _run_repair(job_id: str) -> str:
             or _owned_poster(job, target.poster_value)
             or not _variant_id_is_unique(plan, target)
         ):
-            # Stale race: a re-render (or another repairer) moved the ground
-            # under us. Drop the freshly uploaded object so no orphan survives —
-            # UNLESS the winner adopted this very key. Poster keys are
-            # deterministic per (job, source), so two concurrent repairs of the
-            # same source upload identical bytes to the SAME key: deleting it
-            # here would strand the winner's row pointing at a dead object,
-            # which is exactly the failure this feature exists to remove.
-            if _may_delete_poster_key(job, target, poster_key):
+            # This is a shared deterministic key, not an upload unique to this
+            # attempt. Another variant, rollback snapshot, or in-flight repair
+            # may have adopted it. A changed selection cannot prove otherwise.
+            # Retain it while the job exists; job deletion owns its namespace.
+            if job is None:
                 delete_object_best_effort(poster_key)
             return "stale_race"
 
@@ -520,8 +518,8 @@ def _run_repair(job_id: str) -> str:
                 or clip.thumbnail_path != target.poster_value
                 or _owned_poster(job, clip.video_path) != target.source_key
             ):
-                if clip is None or _owned_poster(job, clip.thumbnail_path) != poster_key:
-                    delete_object_best_effort(poster_key)
+                # A sibling clip/repair may still use the shared key. As above,
+                # only deletion of the whole job proves this object is unused.
                 return "stale_race"
             clip.thumbnail_path = poster_key
         elif target.kind == "job_output":
@@ -544,28 +542,6 @@ def _run_repair(job_id: str) -> str:
         _stage_plan(job, plan)
         db.commit()
         return "generated"
-
-
-def _may_delete_poster_key(job: Any, target: _RepairTarget | None, poster_key: str) -> bool:
-    """Whether the loser of a race may drop the object it just uploaded.
-
-    Poster keys are deterministic per (job, source), so a concurrent repair of
-    the same source writes identical bytes to the same key. Deleting one the
-    winner has adopted leaves its row pointing at nothing — the exact failure
-    this feature removes — so the delete requires positive proof of safety:
-
-    * the Job row is gone entirely (its own delete manifest owns the cleanup); or
-    * a target resolved and demonstrably references some OTHER key.
-
-    Anything unprovable (no target, unreadable plan, status moved out of ready
-    under us) keeps the object. An orphan costs storage; a dangling reference
-    costs the user their thumbnail.
-    """
-    if job is None:
-        return True
-    if target is None:
-        return False
-    return _owned_poster(job, target.poster_value) != poster_key
 
 
 def _variant_id_is_unique(plan: dict[str, Any] | None, target: _RepairTarget) -> bool:

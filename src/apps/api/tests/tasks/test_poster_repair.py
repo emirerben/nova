@@ -212,7 +212,30 @@ def test_selection_change_during_extraction_never_writes_the_old_variant(
 
     assert pr._run_repair(str(job.id)) == "stale_race"
     assert all("poster_path" not in variant for variant in job.assembly_plan["variants"])
-    assert calls["deleted"] == ["job-posters/x/abc.poster.jpg"]
+    assert calls["deleted"] == []
+
+
+def test_selection_change_never_deletes_a_poster_adopted_by_another_variant(monkeypatch):
+    job = _FakeJob()
+    first = _variant_plan(job.id, variant_id="first", rank=1)["variants"][0]
+    second = _variant_plan(job.id, variant_id="second", rank=2)["variants"][0]
+    second["video_path"] = f"generative-jobs/{job.id}/second.mp4"
+    job.assembly_plan = {"variants": [first, second]}
+    session = _FakeSession(job)
+    poster = f"job-posters/{job.id}/shared.poster.jpg"
+
+    def concurrent_winner():
+        first["poster_path"] = poster
+        second["poster_path"] = f"job-posters/{job.id}/second.poster.jpg"
+
+    calls = _wire(monkeypatch, session, poster_key=poster, on_generate=concurrent_winner)
+    selected = iter(["first", "second"])
+    monkeypatch.setattr(pr, "_preferred_variant_id", lambda _db, _job: next(selected))
+
+    assert pr._run_repair(str(job.id)) == "stale_race"
+    assert calls["deleted"] == []
+    assert job.assembly_plan["variants"][0]["poster_path"] == poster
+    assert session.commits == 0
 
 
 def test_every_persisting_path_flags_the_jsonb_column_dirty(
@@ -369,7 +392,7 @@ def test_terminal_marker_bound_to_the_same_source_is_a_no_op(
 # ── Races and rebinds ─────────────────────────────────────────────────────────
 
 
-def test_stale_race_after_upload_discards_and_deletes_the_uploaded_object(
+def test_stale_race_after_upload_retains_the_shared_poster_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job = _FakeJob()
@@ -383,7 +406,7 @@ def test_stale_race_after_upload_discards_and_deletes_the_uploaded_object(
     calls = _wire(monkeypatch, session, on_generate=_concurrent_rerender)
 
     assert pr._run_repair(str(job.id)) == "stale_race"
-    assert calls["deleted"] == ["job-posters/x/abc.poster.jpg"]
+    assert calls["deleted"] == []
     assert "poster_path" not in job.assembly_plan["variants"][0]
     assert session.commits == 0
 
@@ -401,7 +424,7 @@ def test_duplicate_variant_ids_discard_the_upload_instead_of_guessing(
     calls = _wire(monkeypatch, session, on_generate=_duplicate_variant)
 
     assert pr._run_repair(str(job.id)) == "stale_race"
-    assert calls["deleted"] == ["job-posters/x/abc.poster.jpg"]
+    assert calls["deleted"] == []
 
 
 def test_marker_rebinds_and_resets_attempts_when_the_video_path_changes(
@@ -631,7 +654,7 @@ def test_clip_row_changed_under_the_lock_discards_the_upload(
     calls = _wire(monkeypatch, session, poster_key="job-posters/loser/abc.poster.jpg")
 
     assert pr._run_repair(str(job.id)) == "stale_race"
-    assert calls["deleted"] == ["job-posters/loser/abc.poster.jpg"]
+    assert calls["deleted"] == []
     assert stale.thumbnail_path is None
     assert session.commits == 0
 
@@ -679,7 +702,7 @@ def test_private_generation_blocks_every_repair_write(monkeypatch, ownership, ph
     assert session.commits == 0
     assert pr.POSTER_REPAIR_MARKER_FIELD not in job.assembly_plan
     assert "poster_path" not in job.assembly_plan["variants"][0]
-    assert calls["deleted"] == ([poster] if phase == "publish" else [])
+    assert calls["deleted"] == []
     if phase == "dequeue":
         assert calls["generate"] == calls["exists"] == []
 
