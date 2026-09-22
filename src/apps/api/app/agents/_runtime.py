@@ -92,8 +92,16 @@ class SchemaError(AgentError):
     """Output failed Pydantic / value validation after parse."""
 
 
+class _OutputTruncatedError(SchemaError):
+    """Provider ended the response before a complete schema could be produced."""
+
+
 class TerminalError(AgentError):
     """Exhausted retries and fallbacks. Caller decides graceful degradation."""
+
+
+class TerminalSchemaError(TerminalError):
+    """Schema retries exhausted, distinct from provider/control-plane failures."""
 
 
 class ProviderQuotaExceededError(TerminalError):
@@ -508,8 +516,11 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 raise TerminalError(self._terminal_message("refusal", exc)) from exc
             except SchemaError as exc:
                 # Schema retries already exhausted — same model can't fix it; fallback won't either.
+                output_truncated = isinstance(exc, _OutputTruncatedError)
                 self._log_outcome(
-                    outcome="terminal_schema",
+                    outcome=(
+                        "terminal_output_truncated" if output_truncated else "terminal_schema"
+                    ),
                     model=stats.model_used or model,
                     stats=stats,
                     fallback_used=fallback_used,
@@ -518,7 +529,12 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     error=str(exc),
                     input_dict=input_dump,
                 )
-                raise TerminalError(self._terminal_message("schema", exc)) from exc
+                if output_truncated:
+                    # A complete user restatement cannot repair a provider
+                    # output-budget failure. Keep it out of the recoverable
+                    # schema subtype so callers retain their retry path.
+                    raise TerminalError(self._terminal_message("output truncated", exc)) from exc
+                raise TerminalSchemaError(self._terminal_message("schema", exc)) from exc
             except TransientError as exc:
                 last_exc = exc
                 # Try the next model in the fallback chain.
@@ -843,7 +859,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     # knob to turn instead of falling through to the generic
                     # "empty response" / "Invalid JSON" path.
                     if fin_name == "MAX_TOKENS":
-                        raise SchemaError(
+                        raise _OutputTruncatedError(
                             "model truncated output — finish_reason=MAX_TOKENS. "
                             "Increase max_output_tokens."
                         )

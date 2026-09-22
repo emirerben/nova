@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.agents._model_client import default_client
-from app.agents._runtime import RunContext
+from app.agents._runtime import RunContext, TerminalSchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.agents.clip_intent_planner import ClipIntentPlannerAgent, ClipIntentPlannerInput
 from app.schemas.clip_intents import ClipIntent
@@ -47,15 +47,31 @@ async def plan_and_resolve_clip_intents(
         )
     # Candidates improve recall but are never the authority: even an empty
     # creative strategy must pass through the complete request inventory.
-    output = await asyncio.to_thread(
-        ClipIntentPlannerAgent(default_client()).run,
-        ClipIntentPlannerInput(
-            creator_request=creator_request,
-            latest_user_message=latest_user_message,
-            candidate_intents=candidate_intents,
-        ),
-        ctx=run_context,
-    )
+    try:
+        output = await asyncio.to_thread(
+            ClipIntentPlannerAgent(default_client()).run,
+            ClipIntentPlannerInput(
+                creator_request=creator_request,
+                latest_user_message=latest_user_message,
+                candidate_intents=candidate_intents,
+            ),
+            ctx=run_context,
+        )
+    except TerminalSchemaError:
+        # Invalid model output is a content-recovery problem, not a failed
+        # preparation. Ask for a complete restatement and trust none of the
+        # candidate intents. Refusals, transient exhaustion, and control-plane
+        # failures remain terminal and are handled by their existing callers.
+        return PlannedIntentResolution(
+            [],
+            IntentResolution(
+                status="needs_creator",
+                question=(
+                    "I couldn't safely verify the clip-specific instructions. "
+                    "Please restate which clips to use, group, order, label, or caption."
+                ),
+            ),
+        )
     if output.question:
         return PlannedIntentResolution(
             [],

@@ -20,6 +20,7 @@ from app.agents._runtime import (
     ProviderOutcomeUnknownError,
     RunContext,
     TerminalError,
+    TerminalSchemaError,
     TransientError,
     run_with_shadow,
 )
@@ -126,11 +127,11 @@ def test_safety_refusal_via_finish_reason(
     assert out.answer == "ok"
 
 
-def test_max_tokens_finish_reason_terminal_schema(
+def test_max_tokens_finish_reason_is_not_recoverable_schema(
     sample_agent: SampleAgent, mock_client: MockModelClient
 ) -> None:
-    """Gemini's MAX_TOKENS finish_reason surfaces as a distinct terminal
-    SchemaError with a self-documenting message — not the generic 'empty
+    """Gemini's MAX_TOKENS finish_reason stays outside recoverable schema
+    failures and carries a self-documenting message — not the generic 'empty
     response' / 'Invalid JSON' fall-through. Discovered when
     `gemini-2.5-pro`'s thinking step consumed the full 400-token budget on
     CreativeDirectionAgent in prod, leaving zero tokens for the response."""
@@ -143,8 +144,9 @@ def test_max_tokens_finish_reason_terminal_schema(
     mock_client.queue("gemini-2.5-flash", truncated)
     with pytest.raises(TerminalError) as exc_info:
         sample_agent.run(SampleInput(topic="x"))
+    assert not isinstance(exc_info.value, TerminalSchemaError)
     msg = str(exc_info.value)
-    assert "schema" in msg.lower()
+    assert "output truncated" in msg.lower()
     assert "MAX_TOKENS" in msg
     assert "Increase max_output_tokens" in msg
     # Terminal on first call — no schema-clarification retry burns another
@@ -152,12 +154,12 @@ def test_max_tokens_finish_reason_terminal_schema(
     assert len(mock_client.invocations) == 1
 
 
-def test_max_tokens_outcome_logged_as_terminal_schema(
+def test_max_tokens_outcome_logged_as_terminal_output_truncated(
     sample_agent: SampleAgent,
     mock_client: MockModelClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The agent_run log records `outcome=terminal_schema` with the
+    """The agent_run log records a distinct truncation outcome with the
     MAX_TOKENS truncation message, so it's distinguishable from generic
     schema failures in observability dashboards."""
     captured: list[tuple[str, dict]] = []
@@ -183,7 +185,7 @@ def test_max_tokens_outcome_logged_as_terminal_schema(
     runs = [c for c in captured if c[0] == "agent_run"]
     assert len(runs) == 1
     payload = runs[0][1]
-    assert payload["outcome"] == "terminal_schema"
+    assert payload["outcome"] == "terminal_output_truncated"
     assert "MAX_TOKENS" in payload["error"]
 
 

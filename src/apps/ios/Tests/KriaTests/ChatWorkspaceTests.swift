@@ -440,6 +440,28 @@ final class ChatWorkspaceTests: XCTestCase {
         )
     }
 
+    func testPreparationFailureOutranksLegacyCreationConfirmation() {
+        XCTAssertEqual(
+            FailedWorkspacePresentation.resolve(runtimeVersion: 1, preparationFailed: true, hasConfirmablePlan: true),
+            .preparationRetry
+        )
+        XCTAssertEqual(
+            FailedWorkspacePresentation.resolve(runtimeVersion: 1, preparationFailed: false, hasConfirmablePlan: true),
+            .legacyCreationConfirmation
+        )
+        XCTAssertEqual(
+            FailedWorkspacePresentation.resolve(runtimeVersion: 2, preparationFailed: false, hasConfirmablePlan: true),
+            .genericFailure
+        )
+    }
+
+    func testLegacyFailureWithoutAPlanUsesGenericRecovery() {
+        XCTAssertEqual(
+            FailedWorkspacePresentation.resolve(runtimeVersion: 1, preparationFailed: false, hasConfirmablePlan: false),
+            .genericFailure
+        )
+    }
+
     func testFailedWithPendingPlanShowsDirectionNotFailed() {
         XCTAssertEqual(
             WorkspaceStage.resolve(status: .failed, awaitsNewPlanConfirmation: true, isChoosingFormat: false, hasFormat: true),
