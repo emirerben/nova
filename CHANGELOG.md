@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.126.0] - 2026-09-22
+
+### Fixed
+- fix: start phone narration renders and recover failed dispatches (#1140) <!-- release-pr: 1140 -->
+
 ## [0.76.125.0] - 2026-09-22
 
 ### Fixed
