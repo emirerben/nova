@@ -208,6 +208,8 @@ class RunContext:
     """Per-call binding. Threaded into structlog events for cross-agent correlation."""
 
     job_id: str | None = None
+    # Durable owner for pre-render proposal planning, when no Job exists yet.
+    plan_item_id: str | None = None
     creator_agent_session_id: str | None = None
     request_id: str | None = None
     # True only for a client-minted intent token. The reservation key then
@@ -970,6 +972,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
             "cost_usd": round(cost_usd, 6),
             "latency_ms": latency_ms,
             "job_id": ctx.job_id,
+            "plan_item_id": ctx.plan_item_id,
             "creator_agent_session_id": ctx.creator_agent_session_id,
             "segment_idx": ctx.segment_idx,
             "request_id": ctx.request_id,
@@ -988,8 +991,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
         log.info("agent_run", **payload)
 
         # Persist one row to the agent_run table for the admin job-debug
-        # view. Skipped silently when ctx.job_id is missing or not a UUID
-        # (track-level analysis, eval harness). Errors are swallowed inside
+        # view. Skipped silently when no valid owner is supplied (eval
+        # harness). Errors are swallowed inside
         # persist_agent_run — a DB hiccup never breaks an in-flight job.
         # Caller can opt out via ctx.extra["skip_agent_run_persist"]=True
         # (eval harness uses this to keep test runs out of prod tables).
@@ -998,6 +1001,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
 
             persist_agent_run(
                 job_id=ctx.job_id,
+                plan_item_id=ctx.plan_item_id,
                 creator_agent_session_id=ctx.creator_agent_session_id,
                 segment_idx=ctx.segment_idx,
                 agent_name=self.spec.name,

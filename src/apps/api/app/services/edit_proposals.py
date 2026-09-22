@@ -201,6 +201,7 @@ def save_edit_conversation_turn(
     ready_to_plan: bool,
     conversation_phase: ConversationPhase = "briefing",
     revised_snapshot: EditProposalSnapshot | None = None,
+    planning_diagnostics: dict | None = None,
 ) -> EditProposal:
     """Persist one user/agent exchange under the proposal CAS contract.
 
@@ -218,6 +219,28 @@ def save_edit_conversation_turn(
         )
     if current and current.status in {"analyzing", "drafting"}:
         raise ProposalConflictError("Kria is already building this edit plan.")
+
+    if revised_snapshot is not None:
+        revised_snapshot = _validated_scheduled_draft(revised_snapshot, current)
+
+    # Planner evidence is private, but it must describe the persisted draft.
+    # A guide-only revision has no new semantic run, so retain the prior
+    # evidence while marking that a human/guide revision refreshed its schedule.
+    if planning_diagnostics is None and revised_snapshot is not None:
+        planning_diagnostics = _manual_revision_diagnostics(current, revised_snapshot)
+    elif planning_diagnostics is not None and revised_snapshot is not None:
+        # Layout normalization runs after the semantic planner (for example,
+        # phone destinations force video beats fullscreen). Persist the exact
+        # schedule that will be rendered, never the pre-normalization one.
+        planning_diagnostics = dict(planning_diagnostics)
+        planning_diagnostics.update(
+            direction=revised_snapshot.direction,
+            schedule=(
+                revised_snapshot.frame_schedule.model_dump(mode="json")
+                if revised_snapshot.frame_schedule is not None
+                else None
+            ),
+        )
 
     # A failed render attempt or stale media must not erase the creator's
     # direction. Analysis/drafting states have already been rejected above, so
@@ -264,9 +287,40 @@ def save_edit_conversation_turn(
         ),
         last_approved=current.last_approved if current else None,
         failure=None,
+        planning_diagnostics=(
+            planning_diagnostics
+            if planning_diagnostics is not None
+            else current.planning_diagnostics
+            if current
+            else None
+        ),
     )
     item.edit_proposal = proposal.model_dump(mode="json")
     return proposal
+
+
+def _manual_revision_diagnostics(
+    current: EditProposal | None, snapshot: EditProposalSnapshot
+) -> dict:
+    """Mark retained planner evidence after a server-validated manual revision."""
+
+    diagnostics = dict(current.planning_diagnostics or {}) if current else {}
+    prior_plan = {
+        key: diagnostics.pop(key) for key in ("semantic_plan", "feasibility") if key in diagnostics
+    }
+    if prior_plan:
+        diagnostics["prior_plan"] = prior_plan
+    diagnostics.update(
+        outcome="manual_revision",
+        manual_revision=True,
+        direction=snapshot.direction,
+        schedule=(
+            snapshot.frame_schedule.model_dump(mode="json")
+            if snapshot.frame_schedule is not None
+            else None
+        ),
+    )
+    return diagnostics
 
 
 def clip_ref_matches(ref, assignment: dict | None) -> bool:  # noqa: ANN001
@@ -454,19 +508,42 @@ def phone_story_layouts(
     would change the approved story's timing and text instead.
     """
 
-    if not renders_on_phone(snapshot.media, owner_id, visuals_only_device=visuals_only_device):
-        return snapshot
+    on_phone = renders_on_phone(snapshot.media, owner_id, visuals_only_device=visuals_only_device)
     images = {ref.media_id for ref in snapshot.media if ref.kind == "image"}
     beats = [
         beat.model_copy(update={"layout": "fullscreen"})
-        if beat.layout != "fullscreen"
+        if on_phone
+        and beat.layout != "fullscreen"
         and any(media_id not in images for media_id in beat.media_ids)
         else beat
         for beat in snapshot.story_beats
     ]
-    if all(new is old for new, old in zip(beats, snapshot.story_beats, strict=True)):
+    if snapshot.frame_schedule is None and all(
+        new is old for new, old in zip(beats, snapshot.story_beats, strict=True)
+    ):
         return snapshot
-    return snapshot.model_copy(update={"story_beats": beats})
+    updates = {"story_beats": beats}
+    if snapshot.frame_schedule is not None:
+        layouts = {beat.beat_id: beat.layout for beat in beats}
+        updates["frame_schedule"] = snapshot.frame_schedule.model_copy(
+            update={
+                "moments": [
+                    moment.model_copy(
+                        update={
+                            "layout": (
+                                snapshot.image_layout or layouts.get(moment.beat_id, moment.layout)
+                                if moment.media_id in images
+                                else "fullscreen"
+                                if on_phone
+                                else layouts.get(moment.beat_id, moment.layout)
+                            )
+                        }
+                    )
+                    for moment in snapshot.frame_schedule.moments
+                ]
+            }
+        )
+    return snapshot.model_copy(update=updates)
 
 
 def direction_guidance_fingerprint(item: PlanItem, media_digest: str) -> str:
@@ -527,6 +604,25 @@ def require_expected_version(item: PlanItem, expected: int) -> EditProposal:
     return proposal
 
 
+def _validated_scheduled_draft(
+    snapshot: EditProposalSnapshot, current: EditProposal | None
+) -> EditProposalSnapshot:
+    from app.pipeline.guided_story import validate_frame_schedule
+    from app.services.proposal_planning import refresh_snapshot_schedule
+
+    previous = current.draft if current else None
+    if snapshot.frame_schedule is None and (
+        settings.edit_proposal_semantic_enabled or previous and previous.frame_schedule is not None
+    ):
+        snapshot = refresh_snapshot_schedule(
+            snapshot,
+            previous=previous,
+            creator_request=current.brief.creator_request if current else "",
+        )
+    validate_frame_schedule(snapshot)
+    return snapshot
+
+
 def save_proposal_draft(
     item: PlanItem,
     *,
@@ -550,6 +646,7 @@ def save_proposal_draft(
     current = require_expected_version(item, expected_version)
     if snapshot.direction == "fast_montage" and not snapshot.fast_cuts:
         raise ProposalReplanRequiredError("proposal_replan_required")
+    snapshot = _validated_scheduled_draft(snapshot, current)
     update: dict = {
         "proposal_version": current.proposal_version + 1,
         "status": "draft",
@@ -562,6 +659,7 @@ def save_proposal_draft(
     }
     if clear_approval_mode:
         update["approval_mode"] = None
+        update["planning_diagnostics"] = _manual_revision_diagnostics(current, snapshot)
     proposal = current.model_copy(update=update)
     item.edit_proposal = proposal.model_dump(mode="json")
     return proposal
@@ -581,6 +679,9 @@ def approve_proposal(item: PlanItem, *, expected_version: int) -> EditProposal:
         raise ProposalConflictError("Only a current draft can be approved.")
     if current.draft.direction == "fast_montage" and not current.draft.fast_cuts:
         raise ProposalReplanRequiredError("proposal_replan_required")
+    from app.pipeline.guided_story import validate_frame_schedule
+
+    validate_frame_schedule(current.draft)
     approved_version = current.proposal_version + 1
     approved = ApprovedProposalSnapshot(
         proposal_version=approved_version,

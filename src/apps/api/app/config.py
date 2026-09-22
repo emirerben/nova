@@ -1053,6 +1053,14 @@ class Settings(BaseSettings):
             "the API and worker; changing it requires API and worker restarts."
         ),
     )
+    edit_proposal_semantic_enabled: bool = Field(
+        default=False,
+        description=(
+            "KRI-133: plan new edits with semantic intent and the deterministic frame scheduler. "
+            "Enable only after every API/worker supports compiler v8. Disabling affects new "
+            "drafts only; approved v8 schedules remain readable and renderable."
+        ),
+    )
     guided_auto_design_enabled: bool = Field(
         default=True,
         description=(
