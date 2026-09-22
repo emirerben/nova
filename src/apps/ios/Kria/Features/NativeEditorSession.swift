@@ -252,6 +252,10 @@ struct NativeEditorTemporaryVideo {
     private var sourceCompiler: NativeEditorRenderCompiler?
     private var sourceResolver: NativeEditorSourceResolver?
     private var resolvedAudio: [String: ResolvedEditorSource] = [:]
+    /// A device recipe may intentionally have no narration. Remember that
+    /// successful empty resolution for this generation so ordinary editor
+    /// rebuilds do not repeatedly poll the device-render endpoint.
+    private var deviceNarrationResolutionGeneration: String?
     private var previewVariant: [String: JSONValue] = [:]
     var musicPlaybackMode: NativeMusicPlaybackMode { .init(variant: previewVariant) }
     var songReference: NativeSongReference? {
@@ -1251,6 +1255,7 @@ struct NativeEditorTemporaryVideo {
         resolvedSources = nil
         sourcePool = nil
         resolvedAudio = [:]
+        deviceNarrationResolutionGeneration = nil
         resolvedMedia = [:]
         do {
             #if DEBUG
@@ -1332,6 +1337,7 @@ struct NativeEditorTemporaryVideo {
         resolvedSources = nil
         sourcePool = nil
         resolvedAudio.removeAll()
+        deviceNarrationResolutionGeneration = nil
         resolvedMedia.removeAll()
         sourcePreview = nil
         textInteractionTask?.cancel()
@@ -1423,13 +1429,20 @@ struct NativeEditorTemporaryVideo {
 
     private func preparePreviewAudio(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
         guard let resolver = sourceResolver else { return [:] }
-        if rendersOnDevice, resolvedAudio["narration"] == nil {
+        if rendersOnDevice {
             // Reopen from the server-authoritative recipe, rather than the
             // app-owned DeviceRenderSessions cache, which is empty on a cold
             // launch. A missing or stale required asset fails the preview
             // visibly instead of silently exporting an AAC silence track.
-            if let narration = try await resolveDeviceNarration(document: document, sequence: sequence) {
-                resolvedAudio["narration"] = narration
+            if resolvedAudio["narration"] == nil,
+               deviceNarrationResolutionGeneration != document.revision.baseGeneration {
+                let narration = try await resolveDeviceNarration(document: document, sequence: sequence)
+                guard sequence == sourcePreviewSequence, !Task.isCancelled,
+                      document.revision.baseGeneration == self.document.revision.baseGeneration else {
+                    throw CancellationError()
+                }
+                if let narration { resolvedAudio["narration"] = narration }
+                deviceNarrationResolutionGeneration = document.revision.baseGeneration
             }
         } else if Self.usesRenderedNarration(previewVariant), resolvedAudio["narration"] == nil {
             // Legacy narrated renders persist the exact cleaned voice + bed in

@@ -44,6 +44,56 @@ final class NativeEditorSessionTests: XCTestCase {
         ))
     }
 
+    func testNoNarrationDeviceRecipeIsMemoizedUntilItsGenerationRefreshes() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        var authoritative = Self.variant(duration: 2, generation: "generation-1")
+        authoritative["render_destination"] = .string("device")
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: authoritative
+        )
+        // The failed fixture pool is enough to initialize the production
+        // resolver; fixture composition then exercises preview audio directly.
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(
+            phase: "published", request: request, publishedGeneration: "generation-1"
+        )
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertEqual(fake.deviceRenderCallCount, 1, "An authoritative no-narration recipe is memoized for its generation")
+
+        let nextRequest = deviceRenderRequest(jobID: jobID, revision: 2, digest: "b")
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(
+            phase: "published", request: nextRequest, publishedGeneration: "generation-2"
+        )
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [], baseGeneration: "generation-2")
+        let refreshRequest = expectation(description: "Refresh generation-two source pool")
+        fake.sourcePoolExpectation = refreshRequest
+        var nextVariant = Self.variant(duration: 2, generation: "generation-2")
+        nextVariant["render_destination"] = .string("device")
+        XCTAssertTrue(session.rebaseCleanDraft(from: nextVariant))
+        await fulfillment(of: [refreshRequest], timeout: 3)
+        for _ in 0..<100 {
+            if case .failed = session.sourcePreviewState { break }
+            await Task.yield()
+        }
+        guard case .failed = session.sourcePreviewState else {
+            return XCTFail("The generation-two refresh must finish before fixture composition")
+        }
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertEqual(fake.deviceRenderCallCount, 2, "A generation refresh must resolve its current device recipe again")
+    }
+
     func testDeviceTimelineDurationUsesShorterOriginalAndKeepsEOFMargin() throws {
         XCTAssertEqual(try XCTUnwrap(NativeEditorSession.deviceTimelineDuration(proxyDuration: 2.2, localDuration: 2.0, minimum: 0.1)),
                        1.95, accuracy: 0.0001)
@@ -2725,6 +2775,9 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     var editorVariantsCallCount = 0
     var sourcePoolCallCount = 0
     var sourcePoolExpectation: XCTestExpectation?
+    var sourcePoolResult: NativeEditorSourcePool?
+    var deviceRenderResponse: DeviceRenderStatusResponse?
+    var deviceRenderCallCount = 0
     var reserveUploadResult: UploadReservation?
     /// Makes the PUT itself fail (after a successful reservation), e.g. a dropped connection.
     var uploadFileError: (any Error)?
@@ -2790,7 +2843,8 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
             }
             sourcePoolIsSuspended = false
         }
-        throw APIError.unsupported
+        guard let sourcePoolResult else { throw APIError.unsupported }
+        return sourcePoolResult
     }
     func resumeSourcePool() {
         if let sourcePoolContinuation {
@@ -2834,6 +2888,11 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { throw APIError.unsupported }
     func playbackURL(jobID: UUID) async throws -> URL { throw APIError.unsupported }
+    func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse {
+        deviceRenderCallCount += 1
+        guard let deviceRenderResponse else { throw APIError.unsupported }
+        return deviceRenderResponse
+    }
     // Qualified: this file now imports KriaMediaEngine, which has its own
     // `EditRecipe` (the render recipe). The API client returns Kria's DTO.
     func editRecipe(jobID: UUID, variantID: String?) async throws -> Kria.EditRecipe { throw APIError.unsupported }
