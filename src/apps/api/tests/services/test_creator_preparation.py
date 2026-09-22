@@ -296,3 +296,39 @@ async def test_finish_preparation_locks_and_settles_attempt_in_same_transaction(
         "error_code": None,
         "retryable": False,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code,retryable",
+    [
+        ("provider_outcome_unknown", False),
+        ("clip_media_unavailable", False),
+        ("provider_quota_exceeded", True),
+    ],
+)
+async def test_failed_preparation_preserves_recovery_policy(code, retryable):
+    attempt_id, session_id = uuid4(), uuid4()
+    attempt = SimpleNamespace(
+        id=attempt_id, session_id=session_id, status="running", lease_until=datetime.now(UTC)
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        status="briefing",
+        last_error={"code": code},
+        preparation={
+            "attempt_id": str(attempt_id),
+            "status": "resolving",
+            "completed": 2,
+            "total": 2,
+        },
+    )
+
+    class FakeDB:
+        async def get(self, *_args, **_kwargs):
+            return attempt
+
+    await finish_preparation(FakeDB(), session)
+    assert session.preparation["error_code"] == code
+    assert session.preparation["retryable"] is retryable
+    assert attempt.status == "failed"
