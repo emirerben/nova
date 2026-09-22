@@ -96,9 +96,9 @@ async def test_sync_agent_persists_one_acknowledgment_per_active_preparation_att
 @pytest.mark.parametrize(
     ("session_status", "preparation_status", "attempt_id"),
     [
-        ("awaiting_confirmation", "queued", str(uuid.uuid4())),
-        ("planning", "ready", str(uuid.uuid4())),
-        ("planning", "failed", str(uuid.uuid4())),
+        ("awaiting_confirmation", "queued", str(uuid.UUID(int=1))),
+        ("planning", "ready", str(uuid.UUID(int=2))),
+        ("planning", "failed", str(uuid.UUID(int=3))),
         ("planning", "queued", "not-a-uuid"),
         ("revising", "queued", None),
     ],
