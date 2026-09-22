@@ -372,7 +372,7 @@ def test_creator_text_fallback_requires_exact_match_key_when_creator_request_unr
     assert rows2 == []
 
 
-def test_first_resolved_intent_claims_a_clip_even_when_it_fails_to_ground():
+def test_multiple_labels_for_a_clip_fail_closed_when_one_cannot_ground():
     meta = _meta("clip-a", clip_summary="a basketball game at the park")
     fails_to_ground = _intent(
         intent_id="i1",
@@ -382,13 +382,78 @@ def test_first_resolved_intent_claims_a_clip_even_when_it_fails_to_ground():
         intent_id="i2",
         assignments=[ClipAssignment(media_id="clip-a", value="Basketball", confidence=0.9)],
     )
-    rows = _grounded_context_labels([fails_to_ground, would_ground], {"clip-a": "a.mp4"}, [meta])
-    assert rows == []
+    with pytest.raises(ValueError, match="every requested context label"):
+        _grounded_context_labels([fails_to_ground, would_ground], {"clip-a": "a.mp4"}, [meta])
 
 
 # ---------------------------------------------------------------------------
 # _context_sport_text_elements wiring: provenance + legacy byte-identity
 # ---------------------------------------------------------------------------
+
+
+def test_multiple_grounded_labels_combine_and_keep_each_provenance():
+    meta = _meta("clip-a", clip_summary="cycling through Paris on a sunny afternoon")
+    rows = _grounded_context_labels(
+        [
+            _intent(
+                intent_id="city",
+                attribute="city",
+                assignments=[ClipAssignment(media_id="clip-a", value="Paris", confidence=0.9)],
+            ),
+            _intent(
+                intent_id="activity",
+                attribute="activity",
+                assignments=[ClipAssignment(media_id="clip-a", value="Cycling", confidence=0.9)],
+            ),
+        ],
+        {"clip-a": "a.mp4"},
+        [meta],
+    )
+    elements = _context_sport_text_elements(
+        rows,
+        steps=[SimpleNamespace(clip_id="clip-a", slot={"transition_in": "cut"})],
+        resolved_plans=[{"duration_s": 2.0}],
+        video_duration_s=2.0,
+    )
+
+    assert elements[0]["text"] == "Paris · Cycling"
+    assert elements[0]["source_params"]["context_label_provenance"] == [
+        {"text": "Paris", "grounding": "record_span", "confidence": 0.9, "intent_id": "city"},
+        {
+            "text": "Cycling",
+            "grounding": "record_span",
+            "confidence": 0.9,
+            "intent_id": "activity",
+        },
+    ]
+
+
+def test_overlong_combined_labels_raise_instead_of_dropping_a_value():
+    rows = [
+        {
+            "clip_id": "clip-a",
+            "sport": "A" * 61,
+            "source": "grounded_label",
+            "grounding": "record_span",
+            "confidence": 0.9,
+            "intent_id": "i1",
+        },
+        {
+            "clip_id": "clip-a",
+            "sport": "B" * 61,
+            "source": "grounded_label",
+            "grounding": "record_span",
+            "confidence": 0.9,
+            "intent_id": "i2",
+        },
+    ]
+    with pytest.raises(ValueError, match="120-character limit"):
+        _context_sport_text_elements(
+            rows,
+            steps=[SimpleNamespace(clip_id="clip-a", slot={"transition_in": "cut"})],
+            resolved_plans=[{"duration_s": 2.0}],
+            video_duration_s=2.0,
+        )
 
 
 def test_every_grounded_element_carries_provenance_in_source_params():

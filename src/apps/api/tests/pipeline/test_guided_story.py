@@ -2096,7 +2096,7 @@ def test_runtime_revision_recomputes_grounded_clip_labels_per_segment(monkeypatc
     guided = _guided_snapshot(catalog_extra=True)
     snapshot = EditProposalSnapshot.model_validate(guided["approved_proposal"])
     sports_video = snapshot.media[0].model_copy(
-        update={"analysis": {"subject": "basketball player on court"}}
+        update={"analysis": {"subject": "basketball player on a Paris court"}}
     )
     snapshot = snapshot.model_copy(
         update={
@@ -2116,6 +2116,18 @@ def test_runtime_revision_recomputes_grounded_clip_labels_per_segment(monkeypatc
                         ClipAssignment(
                             media_id="coast-video",
                             value="Basketball",
+                            confidence=0.9,
+                        )
+                    ],
+                ),
+                ResolvedClipIntent(
+                    intent_id="city-label",
+                    op="label",
+                    attribute="city",
+                    assignments=[
+                        ClipAssignment(
+                            media_id="coast-video",
+                            value="Paris",
                             confidence=0.9,
                         )
                     ],
@@ -2157,13 +2169,27 @@ def test_runtime_revision_recomputes_grounded_clip_labels_per_segment(monkeypatc
         moment for moment in runtime["story_timeline"] if moment["media_id"] == "coast-video"
     )
 
-    assert [element["text"] for element in context] == ["Basketball"]
+    assert [element["text"] for element in context] == ["Basketball · Paris"]
     assert context[0]["start_s"] == basketball_moment["output_start_s"]
     assert context[0]["end_s"] == basketball_moment["output_end_s"]
     assert context[0]["x_frac"] == 0.86
     assert context[0]["y_frac"] == 0.86
     assert context[0]["alignment"] == "right"
-    assert [element["text"] for element in runtime["text_elements"]] != ["Basketball"]
+    assert context[0]["source_params"]["context_label_provenance"] == [
+        {
+            "text": "Basketball",
+            "grounding": "record_span",
+            "confidence": 0.9,
+            "intent_id": "sport-label",
+        },
+        {
+            "text": "Paris",
+            "grounding": "record_span",
+            "confidence": 0.9,
+            "intent_id": "city-label",
+        },
+    ]
+    assert [element["text"] for element in runtime["text_elements"]] != ["Basketball · Paris"]
 
 
 def test_validate_execution_plan_replays_final_context_elements_from_legacy_plan() -> None:

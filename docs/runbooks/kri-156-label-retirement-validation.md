@@ -1,6 +1,6 @@
 # KRI-156 label retirement validation
 
-Date: 2026-09-22. Implementation is based on `origin/main` at `d6a294cd7`, including KRI-133 semantic scheduling, KRI-158 ambiguous clip-identity rejection, and KRI-151 background clip preparation.
+Date: 2026-09-22. Implementation integrates `origin/main` through `6a73bf1a8`, including KRI-133 semantic scheduling, KRI-158 clip identity checks, KRI-151 background preparation, KRI-154 deferred vision queries, KRI-157 cache preservation, and the independent clip-intent inventory.
 
 ## Implementation
 
@@ -10,6 +10,19 @@ Date: 2026-09-22. Implementation is based on `origin/main` at `d6a294cd7`, inclu
 - Historical execution receipts retain only a null `context_label_intent` key for byte-identical v1–v7 compiler hashes; old non-null inputs are discarded and cannot activate rendering.
 - Stored strategy JSON maps at read time without rewriting approved bytes or hashes. Persisted rendered label snapshots still replay. New receipt identities include the semantic transcript request so changes such as sport to city regenerate labels; historical receipt reuse requires canonical legacy identities.
 - An old unresolved visual strategy needs resolution through chat; the removed allowlist is not a render fallback.
+
+## PR check repair and merge verification
+
+The failed API shards were caused by a stale retired-field assertion in the edit-proposal test, a redelivery test double missing its narration field, and the Kria tool-schema snapshot still containing the removed fields. The same snapshot drift failed the portable iOS contract lane; the other two red checks were aggregate jobs.
+
+The merge preserves background preparation checkpoints and token fences, deferred vision query receipts, cached clip evidence, and multiple grounded labels per clip. The new inventory planner keeps transcript requests in the strategy while sending only visual requests to the visual resolver. Both creator entry points require the guided narration contract before accepting transcript labels. Guided timeline revisions preserve every grounded label and its provenance.
+
+- Affected backend integration: **807 passed**, including the repaired tests, Kria snapshot replay, cache round trips, source routing, background query handling, and narration/visual materialization. Focused merge checks: **105 passed**; guided revision module: **118 passed**. Counts overlap.
+- Portable iOS helper suite: **74 passed**. `python -m app.cli.kria_contracts --check` passed for the tools snapshot, mobile contract, and mobile OpenAPI.
+- Scoped Ruff lint/format: **36 files passed**. Frontend `tsc --noEmit`, instruction-size guard, and whitespace checks passed.
+- Full local API testing was attempted but interrupted by local disk exhaustion; the incomplete run is not counted as passing. GitHub CI is the complete-suite gate.
+
+The newly merged `clip_intent_planner` prompt was bumped from `2026-09-22.2` to `2026-09-22.3` for transcript routing. Replay evals pass **8/8**. Live structural samples pass **6/8** for both versions: the candidate fixes `mixed_sources`, while `selection_preserves` fails both and `cooking` fails the candidate sample. Source and transcript-kind requirements are now checked explicitly. Judge scoring is unavailable because this newly introduced agent has no rubric in the repository; `--with-judge` fails closed instead of assigning scores. These results do not clear the existing draft release gates.
 
 ## Deterministic verification
 

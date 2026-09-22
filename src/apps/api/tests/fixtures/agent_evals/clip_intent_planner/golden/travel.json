@@ -1,0 +1,74 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-09-22.2",
+  "input": {
+    "creator_request": "Group the Paris clips, label each city, label the activity in each clip, and say \"Weekend trip\" on the Paris chapter.",
+    "latest_user_message": null,
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\":[{\"intent_id\":\"i1\",\"op\":\"group\",\"attribute\":\"Paris clips\",\"creator_text\":null,\"caption_attribute\":null,\"position\":null,\"source_quote\":\"Group the Paris clips\"},{\"intent_id\":\"i2\",\"op\":\"label\",\"attribute\":\"each city\",\"creator_text\":null,\"caption_attribute\":null,\"position\":null,\"source_quote\":\"label each city\"},{\"intent_id\":\"i3\",\"op\":\"label\",\"attribute\":\"activity in each clip\",\"creator_text\":null,\"caption_attribute\":null,\"position\":null,\"source_quote\":\"label the activity in each clip\"},{\"intent_id\":\"i4\",\"op\":\"caption\",\"attribute\":\"Paris chapter\",\"creator_text\":\"Weekend trip\",\"caption_attribute\":null,\"position\":null,\"source_quote\":\"say \\\"Weekend trip\\\" on the Paris chapter\"}],\"question\":null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i1",
+        "op": "group",
+        "attribute": "Paris clips",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Group the Paris clips"
+      },
+      {
+        "intent_id": "i2",
+        "op": "label",
+        "attribute": "each city",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "label each city"
+      },
+      {
+        "intent_id": "i3",
+        "op": "label",
+        "attribute": "activity in each clip",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "label the activity in each clip"
+      },
+      {
+        "intent_id": "i4",
+        "op": "caption",
+        "attribute": "Paris chapter",
+        "creator_text": "Weekend trip",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "say \"Weekend trip\" on the Paris chapter"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_intents": [
+      {
+        "op": "group",
+        "source_quote_keywords": ["group", "paris"]
+      },
+      {
+        "op": "label",
+        "source_quote_keywords": ["label", "city"]
+      },
+      {
+        "op": "label",
+        "source_quote_keywords": ["label", "activity"]
+      },
+      {
+        "op": "caption",
+        "source_quote_keywords": ["weekend trip", "paris chapter"],
+        "creator_text": "Weekend trip"
+      }
+    ],
+    "expect_any": true
+  }
+}

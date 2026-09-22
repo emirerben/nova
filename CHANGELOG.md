@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.131.0] - 2026-09-22
+
+### Fixed
+- fix: preserve general clip instructions and grounded labels (#1145) <!-- release-pr: 1145 -->
+
+## [0.76.130.0] - 2026-09-22
+
+### Fixed
+- fix(ios): connect editor tool panels and animate text previews (KRI-148) (#1144) <!-- release-pr: 1144 -->
+
+## [0.76.129.0] - 2026-09-22
+
+### Changed
+- fix: continue clip-intent vision queries asynchronously (KRI-154) (#1138) <!-- release-pr: 1138 -->
+
+## [0.76.128.0] - 2026-09-22
+
+### Changed
+- fix: make iOS chat chronological with one Send action (KRI-150) (#1141) <!-- release-pr: 1141 -->
+
+## [0.76.127.0] - 2026-09-22
+
+### Fixed
+- fix: preserve explicit clip selections in long creator requests (#1143) <!-- release-pr: 1143 -->
+
+## [0.76.126.0] - 2026-09-22
+
+### Fixed
+- fix: start phone narration renders and recover failed dispatches (#1140) <!-- release-pr: 1140 -->
+
+## [0.76.125.0] - 2026-09-22
+
+### Fixed
+- fix: preserve clip understanding in generative cache (KRI-157) (#1137) <!-- release-pr: 1137 -->
+
+## [0.76.124.0] - 2026-09-22
+
+### Changed
+- test: exclude placeholder icons from gallery poster count (#1139) <!-- release-pr: 1139 -->
+
 ## [0.76.123.0] - 2026-09-22
 
 ### Fixed

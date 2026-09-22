@@ -419,6 +419,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.clip_request_resolver import ClipRequestResolverAgent
 
         return ClipRequestResolverAgent
+    if agent_name == "nova.plan.clip_intent_planner":
+        from app.agents.clip_intent_planner import ClipIntentPlannerAgent
+
+        return ClipIntentPlannerAgent
     if agent_name == "nova.video.clip_question":
         from app.agents.clip_question import ClipQuestionAgent
 

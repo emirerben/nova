@@ -101,11 +101,11 @@ from app.schemas.edit_proposal import (
     rejects_round_robin_cadence,
 )
 from app.services.ai_usage_headers import paid_call_headers
-from app.services.clip_intent_resolution import (
-    ANSWERS_KEY,
-    IntentResolution,
-    resolve_clip_intents_for_turn,
+from app.services.clip_intent_answers import (
+    persist_clip_intent_vision_answers as _persist_clip_intent_vision_answers,
 )
+from app.services.clip_intent_planning import plan_and_resolve_clip_intents
+from app.services.clip_intent_resolution import IntentResolution
 from app.services.content_plan_persona import load_owned_plan_persona
 from app.services.creator_autonomy import (
     build_auto_bundle,
@@ -423,7 +423,9 @@ def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
     ]
 
 
-def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message: str) -> str:
+def _confirmed_creator_request(
+    events: list[CreatorAgentEvent], current_message: str, *, truncate: bool = True
+) -> str:
     """Preserve bounded creator-authored intent across clarification turns."""
 
     messages = [
@@ -433,7 +435,8 @@ def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message:
     ]
     if current_message.strip() and (not messages or messages[-1] != current_message.strip()):
         messages.append(current_message.strip())
-    return "\n".join(messages)[:CREATOR_REQUEST_MAX_CHARS]
+    request = "\n".join(messages)
+    return request[:CREATOR_REQUEST_MAX_CHARS] if truncate else request
 
 
 # Sent verbatim by the iOS confirmation card's "refresh direction" affordance
@@ -525,7 +528,8 @@ def _original_creator_request_for_refresh(
         if event.role == "user" and str((event.payload or {}).get("message") or "").strip()
     ]
     messages = [message for message in messages if message != REFRESH_DIRECTION_MESSAGE]
-    return "\n".join(messages)[:CREATOR_REQUEST_MAX_CHARS]
+    request = "\n".join(messages)
+    return request[:CREATOR_REQUEST_MAX_CHARS]
 
 
 def _pin_strategy_fields_on_refresh(
@@ -1412,6 +1416,26 @@ def _latest_message_narrows_media_scope(user_message: str, manifest: Any) -> boo
     )
 
 
+def _capacity_history_kind_for_turn(
+    events: list[CreatorAgentEvent], user_message: str, manifest: Any
+) -> HistoricalCapacityChoiceKind | None:
+    """Apply only a real historical choice to the current capacity question."""
+
+    historical_kind = _historical_all_media_capacity_choice_kind(events, manifest)
+    if _latest_message_narrows_media_scope(user_message, manifest):
+        return None
+    # A newer explicit all-media instruction rejects an older subset choice,
+    # but it does not manufacture a prior keep-everything answer.  With no
+    # valid historical preference, the normal capacity question remains.
+    if (
+        historical_kind == "strongest_subset"
+        and _has_explicit_media_scope(user_message, manifest)
+        and _explicit_media_scope(user_message, manifest) == "all"
+    ):
+        return None
+    return historical_kind
+
+
 def _latest_planned_cadence(
     events: list[CreatorAgentEvent],
 ) -> tuple[MontageCadenceConstraint | None, int | float | None]:
@@ -1931,57 +1955,6 @@ def _job_matches_guided_attempt(job: Job | None, attempt_id: str | None) -> bool
         if isinstance(snapshot, dict) and snapshot.get("generation_attempt_id") == attempt_id:
             return True
     return False
-
-
-async def _persist_clip_intent_vision_answers(
-    db: AsyncSession,
-    item: PlanItem,
-    vision_answers: dict[str, dict[str, dict[str, Any]]],
-) -> None:
-    """Best-effort cache write for KRI-127 vision re-query answers.
-
-    Only a pool asset's own ``analysis`` JSONB is a safe, lightweight write
-    from this route: a new dict is assigned (never mutated in place) so
-    SQLAlchemy detects the change, matching the pattern in
-    ``routes/plan_items.py`` (``analysis = dict(asset.analysis); analysis[...]
-    = ...; asset.analysis = analysis``). It piggybacks on the same commit as
-    the rest of this turn (``_response``) rather than committing here.
-
-    Raw ``clip_assignments`` entries have no equally light-weight writer
-    available to this route -- the sole writer, ``set_item_clips`` /
-    ``mutate_plan_item_media`` in ``app/services/plan_clips.py`` and
-    ``app/services/plan_item_media.py``, also invalidates narration/consent
-    state and reconciles speech cleanup, which is out of scope for caching a
-    vision answer. Persistence for those clips is skipped; a repeat question
-    for them simply re-runs the vision re-query on the next turn. Either way,
-    a failure here must never fail the chat turn.
-    """
-
-    if not vision_answers:
-        return
-    try:
-        # SAVEPOINT: a flush error here must roll back ONLY this cache write.
-        # Swallowing it without one would leave the turn's transaction in
-        # "pending rollback" and turn the final commit into a 500.
-        async with db.begin_nested():
-            for media_id, answers in vision_answers.items():
-                if not answers or not media_id.startswith("asset-"):
-                    continue
-                try:
-                    asset_uuid = uuid.UUID(media_id.removeprefix("asset-"))
-                except ValueError:
-                    continue
-                asset = await db.get(PlanItemAsset, asset_uuid)
-                if asset is None or asset.plan_item_id != item.id:
-                    continue
-                analysis = dict(asset.analysis) if isinstance(asset.analysis, dict) else {}
-                existing = dict(analysis.get(ANSWERS_KEY) or {})
-                existing.update(answers)
-                analysis[ANSWERS_KEY] = existing
-                asset.analysis = analysis
-            await db.flush()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("clip_intents.vision_answer_persist_failed", error=str(exc)[:300])
 
 
 async def _run_planning_turn(
@@ -2636,22 +2609,6 @@ async def _run_planning_turn(
                 requested_duration_is_explicit=requested_duration_is_explicit,
             )
             if capacity_question is not None:
-                if locked.question_count < locked.question_budget:
-                    locked.status = "briefing"
-                    locked.question_count += 1
-                    await append_event(
-                        db,
-                        locked,
-                        event_type="assistant_question",
-                        payload=capacity_question,
-                    )
-                    return await _response(db, locked)
-                # The session cannot ask another question. An explicit "all"
-                # must never be silently swapped for a mapping the creator
-                # did not choose: reuse a real answer already given earlier
-                # in this session when one exists; otherwise prefer keeping
-                # every clip (faster pacing) over dropping clips, and always
-                # tell the creator what was applied instead of asking.
                 mappings = capacity_question["all_media_capacity"]["option_mappings"]
                 # mappings[0] is always the strength-ranked subset mapping;
                 # the keep-everything mapping is only present when the fast
@@ -2675,12 +2632,8 @@ async def _run_planning_turn(
                 # narrowing instruction in the creator's latest message
                 # always overrides a "keep everything"/"strongest subset"
                 # history, never the other way around.
-                historical_kind = (
-                    None
-                    if _latest_message_narrows_media_scope(user_message, planning_manifest)
-                    else _historical_all_media_capacity_choice_kind(
-                        session.events, planning_manifest
-                    )
+                historical_kind = _capacity_history_kind_for_turn(
+                    session.events, user_message, planning_manifest
                 )
                 total_clips = len(planning_manifest.media)
                 target_s = strategy.target_duration_s
@@ -2693,6 +2646,22 @@ async def _run_planning_turn(
                 elif historical_kind == "strongest_subset":
                     chosen_mapping = strongest_subset_mapping
                     left_out_sentence = "I used your earlier choice to keep the strongest clips."
+                if chosen_mapping is None and locked.question_count < locked.question_budget:
+                    locked.status = "briefing"
+                    locked.question_count += 1
+                    await append_event(
+                        db,
+                        locked,
+                        event_type="assistant_question",
+                        payload=capacity_question,
+                    )
+                    return await _response(db, locked)
+                # The session cannot ask another question. An explicit "all"
+                # must never be silently swapped for a mapping the creator
+                # did not choose: reuse a real answer already given earlier
+                # in this session when one exists; otherwise prefer keeping
+                # every clip (faster pacing) over dropping clips, and always
+                # tell the creator what was applied instead of asking.
                 if chosen_mapping is None:
                     # No usable history (none recorded, or the current
                     # question has no mapping of that kind): fall back to the
@@ -2759,23 +2728,30 @@ async def _run_planning_turn(
                 for intent in (strategy.clip_intents or [])
                 if intent.label_source == "transcript"
             ]
-            effective_clip_intents = [
-                intent
-                for intent in (strategy.clip_intents or [])
-                if intent.label_source == "clip" and settings.clip_intents_enabled
-            ]
-            if transcript_intents or effective_clip_intents:
+            if settings.clip_intents_enabled or transcript_intents:
                 intent_clips = (
                     await load_intent_clips_for_item(db, item, persona)
-                    if effective_clip_intents
+                    if settings.clip_intents_enabled
                     else []
                 )
+                requested_intents = transcript_intents
                 # Never hold the session's FOR UPDATE row lock across the
                 # resolver's own model/vision calls. Release it exactly the
                 # way the MainCreatorAgent call above does (commit, call,
                 # re-lock, re-check the revision fence) before writing
                 # anything the resolution decided back onto the session.
                 await db.commit()
+                background_pending = False
+                intent_context = RunContext(
+                    creator_agent_session_id=str(session.id),
+                    creator_id=str(user.id),
+                    request_id=str(expected_revision),
+                    usage_purpose=usage_purpose,
+                    test_run_id=test_run_id,
+                    estimated_max_cost_usd=estimated_max_cost_usd,
+                    reservation_approved=reservation_approved,
+                    release_canary_id=release_canary_id,
+                )
 
                 async def save_answers(answers):
                     from app.services.creator_preparation import checkpoint_answers
@@ -2785,7 +2761,32 @@ async def _run_planning_turn(
                     )
 
                 try:
-                    if transcript_intents and (
+                    if settings.clip_intents_enabled:
+                        planned_intents = await plan_and_resolve_clip_intents(
+                            **(
+                                {"background": True, "checkpoint": save_answers}
+                                if preparation_attempt_id
+                                else {}
+                            ),
+                            candidate_intents=strategy.clip_intents,
+                            latest_user_message=user_message,
+                            creator_request=(
+                                creator_request
+                                if is_refresh_retry
+                                else _confirmed_creator_request(
+                                    session.events, user_message, truncate=False
+                                )
+                            ),
+                            clips=intent_clips,
+                            run_context=intent_context,
+                        )
+                        resolution = planned_intents.resolution
+                        requested_intents = planned_intents.requested_intents
+                    else:
+                        resolution = IntentResolution()
+                    if any(
+                        intent.label_source == "transcript" for intent in requested_intents
+                    ) and (
                         planning_manifest.narration is None
                         or strategy.execution_contract != GUIDED_VOICEOVER_EXECUTION_CONTRACT
                     ):
@@ -2796,35 +2797,26 @@ async def _run_planning_turn(
                                 "Please add a recording or choose labels based on the footage."
                             ),
                         )
-                    elif effective_clip_intents:
-                        resolution = await resolve_clip_intents_for_turn(
-                            **(
-                                {"background": True, "checkpoint": save_answers}
-                                if preparation_attempt_id
-                                else {}
-                            ),
-                            intents=effective_clip_intents,
-                            creator_request=creator_request,
-                            clips=intent_clips,
-                            run_context=RunContext(
-                                creator_agent_session_id=str(session.id),
-                                creator_id=str(user.id),
-                                request_id=str(expected_revision),
-                                usage_purpose=usage_purpose,
-                                test_run_id=test_run_id,
-                                estimated_max_cost_usd=estimated_max_cost_usd,
-                                reservation_approved=reservation_approved,
-                                release_canary_id=release_canary_id,
-                            ),
+                    if resolution.deferred_queries and not preparation_attempt_id:
+                        from app.tasks.clip_intent_requery import (  # noqa: PLC0415
+                            enqueue_clip_intent_requeries,
                         )
-                    else:
-                        # Actual transcript copy and timing are resolved only
-                        # after the narration and final visual timeline are pinned.
-                        resolution = IntentResolution()
+
+                        background_pending = await asyncio.to_thread(
+                            enqueue_clip_intent_requeries,
+                            plan_id=str(plan.id),
+                            item_id=str(item.id),
+                            user_id=str(user.id),
+                            ownership_epoch=int(plan.ownership_epoch or 0),
+                            clips=intent_clips,
+                            queries=resolution.deferred_queries,
+                            context=intent_context,
+                        )
                 except Exception as exc:  # noqa: BLE001
                     if preparation_attempt_id:
                         raise
-                    # Keep provider failures distinct from creator ambiguity.
+                    # Never a 500 for a resolver failure. Asking is the safe
+                    # degrade -- it can never print an unverified label.
                     log.warning(
                         "clip_intents.resolution_failed",
                         session_id=str(session.id),
@@ -2852,6 +2844,28 @@ async def _run_planning_turn(
                     )
                 if not preparation_attempt_id:
                     await _persist_clip_intent_vision_answers(db, item, resolution.vision_answers)
+                if background_pending or resolution.needs_creator:
+                    locked.status = "briefing"
+                    await append_event(
+                        db,
+                        locked,
+                        event_type="assistant_question",
+                        role="assistant",
+                        payload={
+                            "message": (
+                                "I'm taking a closer look at the remaining clips. "
+                                "Send another message in a moment and I'll use what I find."
+                                if background_pending
+                                else resolution.question
+                            ),
+                            "reason_code": (
+                                "clip_intent_pending"
+                                if background_pending
+                                else "clip_intent_unresolved"
+                            ),
+                        },
+                    )
+                    return await _response(db, locked)
                 if resolution.status not in {"resolved", "needs_creator"}:
                     locked.status = "briefing"
                     locked.last_error = {"code": resolution.error_code or resolution.status}
@@ -2869,21 +2883,11 @@ async def _run_planning_turn(
                         },
                     )
                     return await _response(db, locked)
-                if resolution.needs_creator:
-                    locked.status = "briefing"
-                    await append_event(
-                        db,
-                        locked,
-                        event_type="assistant_question",
-                        role="assistant",
-                        payload={
-                            "message": resolution.question,
-                            "reason_code": "clip_intent_unresolved",
-                        },
-                    )
-                    return await _response(db, locked)
                 strategy = strategy.model_copy(
-                    update={"resolved_clip_intents": resolution.intents or None}
+                    update={
+                        "clip_intents": requested_intents or None,
+                        "resolved_clip_intents": resolution.intents or None,
+                    }
                 )
             locked.active_plan = compile_active_plan(
                 locked,

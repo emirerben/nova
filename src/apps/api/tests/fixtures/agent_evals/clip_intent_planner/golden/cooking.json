@@ -1,0 +1,48 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-09-22.2",
+  "input": {
+    "creator_request": "Label the dish in each cooking clip and say \"Kitchen notes\" on clips showing ingredients.",
+    "latest_user_message": null,
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\":[{\"intent_id\":\"i1\",\"op\":\"label\",\"attribute\":\"dish in each cooking clip\",\"creator_text\":null,\"caption_attribute\":null,\"position\":null,\"source_quote\":\"Label the dish in each cooking clip\"},{\"intent_id\":\"i2\",\"op\":\"caption\",\"attribute\":\"clips showing ingredients\",\"creator_text\":\"Kitchen notes\",\"caption_attribute\":null,\"position\":null,\"source_quote\":\"say \\\"Kitchen notes\\\" on clips showing ingredients\"}],\"question\":null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i1",
+        "op": "label",
+        "attribute": "dish in each cooking clip",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Label the dish in each cooking clip"
+      },
+      {
+        "intent_id": "i2",
+        "op": "caption",
+        "attribute": "clips showing ingredients",
+        "creator_text": "Kitchen notes",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "say \"Kitchen notes\" on clips showing ingredients"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_intents": [
+      {
+        "op": "label",
+        "source_quote_keywords": ["label", "dish", "cooking"]
+      },
+      {
+        "op": "caption",
+        "source_quote_keywords": ["kitchen notes", "ingredients"],
+        "creator_text": "Kitchen notes"
+      }
+    ],
+    "expect_any": true
+  }
+}

@@ -242,6 +242,49 @@ def test_all_media_capacity_never_replaces_agent_duration_with_arithmetic_floor(
     } == {31}
 
 
+def test_historical_capacity_kind_uses_newer_explicit_all_instruction() -> None:
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": f"clip-{index}", "kind": "video", "duration_s": 4.0} for index in range(33)
+        ],
+        guided_capability_enabled=True,
+    )
+    question = creator_routes._all_media_capacity_question(
+        manifest,
+        CreativeStrategy(
+            direction="guided_story",
+            media_scope="all",
+            target_duration_s=24,
+            audio_strategy="licensed_music",
+        ),
+    )
+    assert question is not None
+    events = [
+        SimpleNamespace(
+            sequence=1,
+            role="assistant",
+            event_type="assistant_question",
+            payload=question,
+        ),
+        SimpleNamespace(
+            sequence=2,
+            role="user",
+            event_type="user_message",
+            payload={"message": question["options"][0]},
+        ),
+    ]
+
+    assert (
+        creator_routes._historical_all_media_capacity_choice_kind(events, manifest)
+        == "strongest_subset"
+    )
+    assert creator_routes._explicit_media_scope("use all clips", manifest) == "all"
+    assert creator_routes._capacity_history_kind_for_turn(events, "use all clips", manifest) is None
+    assert creator_routes._capacity_history_kind_for_turn([], "use all clips", manifest) is None
+
+
 @pytest.mark.asyncio
 async def test_route_uses_content_aware_duration_and_rationale_when_user_omits_it(
     monkeypatch,
@@ -720,6 +763,107 @@ async def test_exact_all_media_capacity_choice_bypasses_model_and_call_budget(mo
     assert session.status == "awaiting_confirmation"
     strategy = session.active_plan["edit_plan"]["strategy"]
     assert strategy["direction"] == "fast_montage"
+    assert strategy["media_scope"] == "all"
+    assert strategy["target_duration_s"] == 40
+
+
+@pytest.mark.asyncio
+async def test_historical_capacity_choice_resolves_before_available_question_budget(
+    monkeypatch,
+) -> None:
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": f"clip-{index}", "kind": "video", "duration_s": 4.0} for index in range(33)
+        ],
+        guided_capability_enabled=True,
+    )
+    question = creator_routes._all_media_capacity_question(
+        manifest,
+        CreativeStrategy(
+            direction="guided_story",
+            media_scope="all",
+            target_duration_s=40,
+            audio_strategy="licensed_music",
+        ),
+    )
+    assert question is not None
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[
+            SimpleNamespace(
+                sequence=1,
+                role="assistant",
+                event_type="assistant_question",
+                payload=question,
+            ),
+            SimpleNamespace(
+                sequence=2,
+                role="user",
+                event_type="user_message",
+                payload={"message": question["options"][1]},
+            ),
+        ],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=manifest.manifest_hash,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            direction="guided_story",
+            media_scope="all",
+            target_duration_s=40,
+            audio_strategy="licensed_music",
+        ),
+        summary="A fast all-media cut.",
+    )
+    to_thread = AsyncMock(return_value=SimpleNamespace(action=action))
+    append_event = AsyncMock()
+    response = SimpleNamespace(status="awaiting_confirmation")
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(creator_routes.asyncio, "to_thread", to_thread)
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Make the opening more energetic",
+    )
+
+    assert result is response
+    to_thread.assert_awaited_once()
+    assert session.question_count == 0
+    assert all(
+        call.kwargs.get("event_type") != "assistant_question"
+        for call in append_event.await_args_list
+    )
+    strategy = session.active_plan["edit_plan"]["strategy"]
     assert strategy["media_scope"] == "all"
     assert strategy["target_duration_s"] == 40
 

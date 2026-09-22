@@ -1,0 +1,47 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-09-22.2",
+  "input": {
+    "creator_request": "Label each sport and group the pub clips.",
+    "latest_user_message": "Use the selected clips for the pub chapter.",
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\":[{\"intent_id\":\"i1\",\"op\":\"label\",\"attribute\":\"each sport\",\"creator_text\":null,\"caption_attribute\":null,\"position\":null,\"source_quote\":\"Label each sport\"},{\"intent_id\":\"i2\",\"op\":\"group\",\"attribute\":\"pub clips\",\"creator_text\":null,\"caption_attribute\":null,\"position\":null,\"source_quote\":\"group the pub clips\"}],\"question\":null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i1",
+        "op": "label",
+        "attribute": "each sport",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Label each sport"
+      },
+      {
+        "intent_id": "i2",
+        "op": "group",
+        "attribute": "pub clips",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "group the pub clips"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_intents": [
+      {
+        "op": "label",
+        "source_quote_keywords": ["label", "sport"]
+      },
+      {
+        "op": "group",
+        "source_quote_keywords": ["group", "pub"]
+      }
+    ],
+    "expect_any": true
+  }
+}

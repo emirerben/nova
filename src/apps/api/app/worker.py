@@ -52,6 +52,7 @@ celery_app = Celery(
         "app.tasks.maintenance",
         "app.tasks.conformance_build",
         "app.tasks.creator_clip_metadata",
+        "app.tasks.clip_intent_requery",
         "app.tasks.creator_preparation",
         "app.tasks.transcript_analyze",
         "app.tasks.autoplace",

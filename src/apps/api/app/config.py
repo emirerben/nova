@@ -411,7 +411,8 @@ class Settings(BaseSettings):
     # KRI-151: durable semantic preparation before the first footage-based plan.
     creator_clip_preparation_enabled: bool = False
     # Chat-turn budget for the on-demand vision re-query (download + File API
-    # upload per clip). Exhausted work remains pending, never visual uncertainty.
+    # upload per clip). Cacheable overflow continues in Celery (KRI-154);
+    # technical failures stay distinct from visual uncertainty (KRI-151).
     clip_intents_max_vision_requeries: int = Field(default=4, ge=0, le=12)
     clip_intents_vision_deadline_s: float = Field(default=25.0, gt=0, le=60)
 

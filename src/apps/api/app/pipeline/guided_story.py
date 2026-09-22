@@ -2859,6 +2859,7 @@ def compile_guided_runtime_plan(
             grounded_intents = []
         if grounded_intents:
             from app.tasks.generative_build import (  # noqa: PLC0415
+                _CONTEXT_LABEL_COMBINED_MAX_CHARS,
                 _compact_context_sport_text_elements,
                 _grounded_context_labels,
             )
@@ -2870,15 +2871,53 @@ def compile_guided_runtime_plan(
                 matcher_clip_metas(snapshot),
                 media_refs=list(snapshot.media),
             )
-            by_clip_row = {row["clip_id"]: row for row in labels}
+            by_clip_rows: dict[str, list[dict[str, Any]]] = {}
+            for row in labels:
+                clip_id = row.get("clip_id") if isinstance(row, dict) else None
+                if isinstance(clip_id, str) and row.get("source") == "grounded_label":
+                    by_clip_rows.setdefault(clip_id, []).append(row)
             context_elements: list[dict[str, Any]] = []
             for index, moment in enumerate(moments):
-                row = by_clip_row.get(str(moment.get("media_id") or "")) or {}
-                sport = row.get("sport")
+                clip_id = str(moment.get("media_id") or "")
+                rendered_rows: list[dict[str, Any]] = []
+                seen_texts: set[str] = set()
+                for row in by_clip_rows.get(clip_id, []):
+                    text = row.get("sport")
+                    if not isinstance(text, str) or not text or text in seen_texts:
+                        continue
+                    seen_texts.add(text)
+                    rendered_rows.append(row)
+                sport = " · ".join(str(row["sport"]) for row in rendered_rows)
                 start_s = float(moment.get("output_start_s") or 0.0)
                 end_s = float(moment.get("output_end_s") or 0.0)
                 if not sport or end_s <= start_s:
                     continue
+                if len(sport) > _CONTEXT_LABEL_COMBINED_MAX_CHARS:
+                    raise ValueError(
+                        "Combined context labels for clip "
+                        f"{clip_id!r} exceed the "
+                        f"{_CONTEXT_LABEL_COMBINED_MAX_CHARS}-character limit"
+                    )
+                row = rendered_rows[0]
+                source_params: dict[str, Any] = {
+                    "source": "context_sport",
+                    "key": f"{clip_id}:{index}:{start_s:.3f}:{end_s:.3f}",
+                    "identity": f"context_sport:{clip_id}:{index}:{start_s:.3f}:{end_s:.3f}",
+                    "source_clip_id": clip_id,
+                    "grounding": row.get("grounding"),
+                    "confidence": row.get("confidence"),
+                    "intent_id": row.get("intent_id") or "",
+                }
+                if len(rendered_rows) > 1:
+                    source_params["context_label_provenance"] = [
+                        {
+                            "text": candidate["sport"],
+                            "grounding": candidate.get("grounding"),
+                            "confidence": candidate.get("confidence"),
+                            "intent_id": candidate.get("intent_id") or "",
+                        }
+                        for candidate in rendered_rows
+                    ]
                 context_elements.append(
                     TextElement(
                         id=f"context-sport-{index}-{str(moment.get('moment_id') or '')}",
@@ -2891,26 +2930,14 @@ def compile_guided_runtime_plan(
                         # 0.86 leaves enough bottom margin for the same label
                         # on both portrait and landscape canvases.
                         y_frac=0.86,
-                        font_family="Inter-Bold",
+                        font_family="Inter",
                         size_class="small",
                         color="#FFFFFF",
                         highlight_color="#FFFFFF",
                         alignment="right",
                         effect="static",
                         z=8,
-                        source_params={
-                            "source": "context_sport",
-                            "source_clip_id": str(moment.get("media_id") or ""),
-                            **(
-                                {
-                                    "grounding": row.get("grounding"),
-                                    "confidence": row.get("confidence"),
-                                    "intent_id": row.get("intent_id") or "",
-                                }
-                                if row.get("grounding")
-                                else {}
-                            ),
-                        },
+                        source_params=source_params,
                     ).model_dump(mode="json", exclude_none=True)
                 )
             runtime_payload["context_label_text_elements"] = _compact_context_sport_text_elements(

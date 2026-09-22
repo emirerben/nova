@@ -415,6 +415,7 @@ async def read_delta(
         events=[
             DeltaEvent(
                 id=str(row.id),
+                client_event_id=getattr(row, "client_event_id", None),
                 sequence=row.sequence,
                 revision=row.revision,
                 role=row.role,

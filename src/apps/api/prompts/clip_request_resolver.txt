@@ -14,9 +14,24 @@ Each intent is one thing the creator wants done with clips matching a described 
 
 $intent_lines
 
+## Creator's explicit selections
+
+When the Creator request explicitly names one or more aliases from the Valid
+aliases list as selected for a named chapter or intent, that is the creator's
+authority for MEMBERSHIP. Return those selected aliases as assignments even
+when their clip records do not describe the chapter's generic attribute, and
+do not add aliases the creator explicitly excluded. This rule only applies to
+the exact valid aliases named in the request: ignore unknown identifiers and
+never infer that a similar-looking alias is selected.
+
+An explicit selection can support membership evidence (for example, "creator
+explicitly selected m001") and deserves high confidence. It never supports a
+factual label value or an authored caption: those must still be grounded in the
+selected clips' records.
+
 ## Clips ($clip_count)
 
-Each clip is shown by its alias, followed by everything the vision analyzer already wrote about it (subject / summary / setting / activity / people / speech / notable moments). This is the ONLY evidence you have — you cannot re-watch the clip.
+Each clip is shown by its alias, followed by everything the vision analyzer already wrote about it (subject / summary / setting / activity / people / speech / notable moments). This is the ONLY evidence you have for factual labels and authored captions — you cannot re-watch the clip. Explicit valid-alias selections above may establish membership.
 
 $clip_lines
 

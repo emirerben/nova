@@ -17,6 +17,7 @@ from app.agents._model_client import default_client
 from app.agents._runtime import RunContext, TerminalError
 from app.agents._schemas.creator_agent import AskUser, ProposeStrategy, ReviewDecision
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+from app.config import settings
 from app.kria.contracts import KriaTurnPlan
 from app.models import (
     ContentPlan,
@@ -29,7 +30,14 @@ from app.models import (
     PlanItem,
 )
 from app.routes._copilot import CopilotTurnBody, run_copilot_turn
-from app.services.creator_sessions import creator_context, resolve_item_creator_context
+from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
+from app.services.clip_intent_answers import persist_clip_intent_vision_answers
+from app.services.clip_intent_planning import plan_and_resolve_clip_intents
+from app.services.creator_sessions import (
+    creator_context,
+    load_intent_clips_for_item,
+    resolve_item_creator_context,
+)
 from app.services.kria_editor_ops import build_editor_snapshot, project_editor_draft
 
 
@@ -40,7 +48,12 @@ class PlannedKriaTurn:
     context_hash: str | None
 
 
-def adapt_creator_action(action: AskUser | ProposeStrategy | ReviewDecision) -> KriaTurnPlan:
+def adapt_creator_action(
+    action: AskUser | ProposeStrategy | ReviewDecision,
+    *,
+    server_clip_intents: list[ClipIntent] | None = None,
+    server_resolved_clip_intents: list[ResolvedClipIntent] | None = None,
+) -> KriaTurnPlan:
     if isinstance(action, AskUser):
         return KriaTurnPlan(
             mode="respond",
@@ -56,6 +69,22 @@ def adapt_creator_action(action: AskUser | ProposeStrategy | ReviewDecision) -> 
     summary = action.summary.strip() or action.strategy.rationale.strip()
     if not summary:
         summary = "I shaped a focused draft around the strongest available footage."
+    server_owned_intents = (
+        server_clip_intents is not None or server_resolved_clip_intents is not None
+    )
+    requested_intents = (
+        server_clip_intents
+        if server_owned_intents
+        else [
+            intent
+            for intent in (action.strategy.clip_intents or [])
+            if intent.label_source == "transcript"
+        ]
+    )
+    strategy_update = {
+        "clip_intents": requested_intents or None,
+        "resolved_clip_intents": server_resolved_clip_intents or None,
+    }
     return KriaTurnPlan(
         mode="act",
         turn_value="action",
@@ -66,20 +95,11 @@ def adapt_creator_action(action: AskUser | ProposeStrategy | ReviewDecision) -> 
                 "tool_name": "draft.apply_strategy",
                 "tool_version": 1,
                 "arguments": {
-                    # This path has no visual resolver. Transcript intents
-                    # are grounded later against the pinned narration; resolved
-                    # visual assignments remain server-owned.
-                    "strategy": action.strategy.model_copy(
-                        update={
-                            "clip_intents": [
-                                intent
-                                for intent in (action.strategy.clip_intents or [])
-                                if intent.label_source == "transcript"
-                            ]
-                            or None,
-                            "resolved_clip_intents": None,
-                        }
-                    ).model_dump(mode="json", exclude_none=True),
+                    # KRI-127: model-authored intent fields are untrusted.
+                    # This path accepts values only from the server resolver.
+                    "strategy": action.strategy.model_copy(update=strategy_update).model_dump(
+                        mode="json", exclude_none=True
+                    ),
                     "summary": summary,
                 },
             },
@@ -91,6 +111,42 @@ def adapt_creator_action(action: AskUser | ProposeStrategy | ReviewDecision) -> 
                 "depends_on": ["apply-strategy"],
             },
         ],
+    )
+
+
+def _full_creator_request(rows: list[CreationThreadEvent], *, current_message: str) -> str | None:
+    """Return complete chronological user instruction text or fail closed.
+
+    Intent extraction must see every creator instruction. Unlike the bounded
+    model conversation, this input is never truncated: a request that exceeds
+    the planner's safe limit gets a recovery turn instead of silently losing
+    an earlier constraint.
+    """
+    messages = [
+        str(row.content).strip()
+        for row in rows
+        if row.role == "user" and row.content and str(row.content).strip()
+    ]
+    current = current_message.strip()
+    if current and messages and messages[-1] == current:
+        messages.pop()
+    if current:
+        messages.append(current)
+    request = "\n".join(messages)
+    return request if len(request) <= 12_000 else None
+
+
+def _clip_intent_resolution_plan(*, question: str | None, status: str) -> KriaTurnPlan:
+    if status == "needs_creator":
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=question or "Which clips should I use for that part?",
+        )
+    return KriaTurnPlan(
+        mode="respond",
+        turn_value="recovery",
+        response="I couldn't reliably match that request to your clips. Please try again shortly.",
     )
 
 
@@ -261,6 +317,44 @@ async def plan_live_turn(
             manifest_hash=manifest.manifest_hash,
             context_hash=manifest.context_hash,
         )
+    intent_clips = []
+    creator_request: str | None = None
+    if settings.clip_intents_enabled:
+        # This deliberately has no row limit or per-message truncation. The
+        # inventory agent must see every creator instruction; a request over
+        # the bound is rejected below rather than silently dropping context.
+        creator_rows = list(
+            (
+                await db.execute(
+                    select(CreationThreadEvent)
+                    .where(
+                        CreationThreadEvent.thread_id == thread_id,
+                        CreationThreadEvent.role == "user",
+                        CreationThreadEvent.content.is_not(None),
+                    )
+                    .order_by(CreationThreadEvent.sequence)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        creator_request = _full_creator_request(creator_rows, current_message=user_message)
+        if creator_request is None:
+            return PlannedKriaTurn(
+                plan=KriaTurnPlan(
+                    mode="respond",
+                    turn_value="recovery",
+                    response=(
+                        "Your edit instructions are too long for me to match safely. "
+                        "Please start a new request with the key clip directions."
+                    ),
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+            )
+        # Capture DB-backed clip identity before releasing the transaction for
+        # the external planner/resolver calls below.
+        intent_clips = await load_intent_clips_for_item(db, item, persona)
     rows = list(
         (
             await db.execute(
@@ -306,6 +400,110 @@ async def plan_live_turn(
         output = await asyncio.to_thread(_run_agent)
     except TerminalError as exc:
         raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
+    if settings.clip_intents_enabled and isinstance(output.action, ProposeStrategy):
+        try:
+            planned = await plan_and_resolve_clip_intents(
+                creator_request=creator_request or user_message,
+                latest_user_message=user_message,
+                candidate_intents=output.action.strategy.clip_intents,
+                clips=intent_clips,
+                run_context=RunContext(
+                    request_id=str(thread_id),
+                    creator_id=str(creator_id),
+                ),
+            )
+        except Exception:  # noqa: BLE001 - no provider failure may mint a draft
+            return PlannedKriaTurn(
+                plan=_clip_intent_resolution_plan(question=None, status="provider_unavailable"),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+            )
+        if any(intent.label_source == "transcript" for intent in planned.requested_intents) and (
+            manifest.narration is None
+            or output.action.strategy.execution_contract != "guided_voiceover_v1"
+        ):
+            return PlannedKriaTurn(
+                plan=_clip_intent_resolution_plan(
+                    question="Those labels need a recorded voiceover with guided visuals.",
+                    status="needs_creator",
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+            )
+        if planned.resolution.vision_answers:
+            try:
+                # `rollback()` before provider I/O expires ORM instances. Reload
+                # the item before the cache writer reads its id, and fail closed
+                # if the target disappeared while the provider was running.
+                current_item = await db.get(PlanItem, item_id, populate_existing=True)
+                if current_item is None:
+                    return PlannedKriaTurn(
+                        plan=_clip_intent_resolution_plan(
+                            question=None, status="provider_unavailable"
+                        ),
+                        manifest_hash=manifest.manifest_hash,
+                        context_hash=manifest.context_hash,
+                    )
+                await persist_clip_intent_vision_answers(
+                    db,
+                    current_item,
+                    planned.resolution.vision_answers,
+                    creator_id=creator_id,
+                    strict=True,
+                )
+                await db.commit()
+            except Exception:  # noqa: BLE001 - cache failure must not mint a draft
+                await db.rollback()
+                return PlannedKriaTurn(
+                    plan=_clip_intent_resolution_plan(question=None, status="provider_unavailable"),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
+        if (
+            planned.resolution.status != "resolved"
+            or planned.resolution.needs_creator
+            or planned.resolution.deferred_queries
+        ):
+            return PlannedKriaTurn(
+                plan=_clip_intent_resolution_plan(
+                    question=planned.resolution.question,
+                    status=(
+                        "needs_creator"
+                        if planned.resolution.needs_creator
+                        else planned.resolution.status
+                    ),
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+            )
+        return PlannedKriaTurn(
+            plan=adapt_creator_action(
+                output.action,
+                server_clip_intents=planned.requested_intents,
+                server_resolved_clip_intents=planned.resolution.intents,
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
+    if (
+        isinstance(output.action, ProposeStrategy)
+        and any(
+            intent.label_source == "transcript"
+            for intent in output.action.strategy.clip_intents or []
+        )
+        and (
+            manifest.narration is None
+            or output.action.strategy.execution_contract != "guided_voiceover_v1"
+        )
+    ):
+        return PlannedKriaTurn(
+            plan=_clip_intent_resolution_plan(
+                question="Those labels need a recorded voiceover with guided visuals.",
+                status="needs_creator",
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
     return PlannedKriaTurn(
         plan=adapt_creator_action(output.action),
         manifest_hash=manifest.manifest_hash,

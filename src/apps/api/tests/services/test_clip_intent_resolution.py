@@ -32,6 +32,7 @@ from app.services.clip_intent_resolution import (
     ANSWERS_KEY,
     IntentClip,
     IntentResolution,
+    _build_resolver_input,
     grounded_labels,
     normalize_question,
     resolve_clip_intents_for_turn,
@@ -51,6 +52,24 @@ def _video_clip(media_id: str, *, subject: str = "", gcs_path: str | None = None
         analysis=_record_analysis(subject=subject),
         gcs_path=gcs_path or f"users/u/clips/{media_id}.mp4",
     )
+
+
+def test_build_resolver_input_replaces_only_known_media_ids_with_aliases() -> None:
+    clips = [
+        _video_clip("asset-pub-01", subject="friends in a pub"),
+        _video_clip("asset-pub-13", subject="friends at a cafe"),
+    ]
+    request = (
+        "Use asset-pub-01 and asset-pub-13 for the pub chapter; "
+        "do not infer unknown-media-id or asset-pub-130."
+    )
+
+    resolver_input, alias_to_media, _aliases = _build_resolver_input([], request, clips)
+
+    assert alias_to_media == {"m001": "asset-pub-01", "m002": "asset-pub-13"}
+    assert "m001 and m002" in resolver_input.creator_request
+    assert "unknown-media-id" in resolver_input.creator_request
+    assert "asset-pub-130" in resolver_input.creator_request
 
 
 def _patch_resolver(monkeypatch: pytest.MonkeyPatch, output: ClipRequestResolverOutput) -> None:
@@ -1437,3 +1456,363 @@ async def test_transcript_intents_never_call_visual_resolver(monkeypatch):
     )
     assert result.needs_creator
     agent.assert_not_called()
+
+
+async def test_thirty_clip_overflow_resolves_next_turn_without_more_vision(monkeypatch):
+    """The KRI-154 report: 8 vague clips in a 30-clip upload, cap 4."""
+    from dataclasses import replace
+
+    from app.services.clip_intent_resolution import DeferredVisionQuery
+
+    monkeypatch.setattr(settings, "clip_intents_max_vision_requeries", 4)
+    intent = ClipIntent(intent_id="sport", op="label", attribute="sport being played")
+    clips = [replace(_video_clip(f"m{i}"), asset_id=f"asset-{i}") for i in range(1, 31)]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="sport",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question="What sport?")
+                        for i in range(1, 9)
+                    ],
+                )
+            ]
+        ),
+    )
+    calls = _patch_vision_success(monkeypatch, "soccer", 0.95)
+    first = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label the sport",
+        clips=clips,
+        run_context=RunContext(),
+    )
+    assert calls[0] == 4
+    assert first.status == "pending"
+    assert first.question is None
+    assert first.deferred_queries == [
+        DeferredVisionQuery(f"m{i}", "What sport?") for i in range(5, 9)
+    ]
+    assert first.intents[0].status == "needs_creator"  # partial assignments never ship
+
+    # Reload the cache shape written by the chat and Celery, as the next turn does.
+    answers = dict(first.vision_answers)
+    for deferred in first.deferred_queries:
+        answers[deferred.media_id] = {
+            normalize_question(deferred.question): {
+                "answer": "soccer",
+                "confidence": 0.95,
+                "evidence": "ball and goal",
+            }
+        }
+    reloaded = [
+        replace(c, analysis={**c.analysis, ANSWERS_KEY: answers.get(c.media_id, {})}) for c in clips
+    ]
+    second = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label the sport",
+        clips=reloaded,
+        run_context=RunContext(),
+    )
+    assert calls[0] == 4
+    assert second.question is None
+    assert not second.deferred_queries
+    assert len(second.intents[0].assignments) == 8
+    assert all(a.grounding == "vision_verified" for a in second.intents[0].assignments)
+
+
+async def test_pending_query_skips_sync_and_expired_claim_can_resume(monkeypatch):
+    import time
+    from dataclasses import replace
+
+    from app.services.clip_intent_resolution import ANSWER_QUERIES_KEY
+
+    intent = ClipIntent(intent_id="sport", op="label", attribute="sport being played")
+    clip = replace(
+        _video_clip("m1"),
+        asset_id="asset-1",
+        analysis={
+            ANSWER_QUERIES_KEY: {
+                "what sport?": {"status": "running", "expires_at": time.time() + 60}
+            },
+        },
+    )
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="sport",
+                    needs_vision=[ResolverVisionQuestion(media="m001", question="What sport?")],
+                )
+            ]
+        ),
+    )
+    calls = _patch_vision_success(monkeypatch, "soccer", 0.9)
+    pending = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label the sport",
+        clips=[clip],
+        run_context=RunContext(),
+    )
+    assert calls[0] == 0
+    assert pending.status == "pending"
+    assert pending.question is None
+    assert len(pending.deferred_queries) == 1
+    clip.analysis[ANSWER_QUERIES_KEY]["what sport?"]["expires_at"] = 0
+    resumed = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label the sport",
+        clips=[clip],
+        run_context=RunContext(),
+    )
+    assert calls[0] == 1
+    assert resumed.question is None
+
+
+async def test_deadline_retains_fast_answer_and_defers_only_slow_clip(monkeypatch):
+    import asyncio
+    from dataclasses import replace
+
+    from app.services import clip_intent_resolution as service
+
+    monkeypatch.setattr(settings, "clip_intents_vision_deadline_s", 0.03)
+    intent = ClipIntent(intent_id="sport", op="label", attribute="sport being played")
+    clips = [replace(_video_clip(f"m{i}"), asset_id=f"asset-{i}") for i in (1, 2)]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="sport",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question="What sport?")
+                        for i in (1, 2)
+                    ],
+                )
+            ]
+        ),
+    )
+
+    async def vision(candidate, clip, **kwargs):
+        if clip.media_id == "m2":
+            await asyncio.sleep(5)
+        return ClipQuestionOutput(answer="soccer", confidence=0.9)
+
+    monkeypatch.setattr(service, "_run_vision_candidate", vision)
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label the sport",
+        clips=clips,
+        run_context=RunContext(),
+    )
+    assert set(result.vision_answers) == {"m1"}
+    assert [q.media_id for q in result.deferred_queries] == ["m2"]
+    assert result.intents[0].status == "needs_creator"
+
+
+async def test_non_cacheable_overflow_still_asks_creator(monkeypatch):
+    from dataclasses import replace
+
+    monkeypatch.setattr(settings, "clip_intents_max_vision_requeries", 0)
+    intent = ClipIntent(intent_id="sport", op="label", attribute="sport being played")
+    clips = [_video_clip("m1"), replace(_video_clip("m2"), kind="image", asset_id="photo")]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="sport",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question="What sport?")
+                        for i in (1, 2)
+                    ],
+                )
+            ]
+        ),
+    )
+    _patch_vision_forbidden(monkeypatch)
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label the sport",
+        clips=clips,
+        run_context=RunContext(),
+    )
+    assert result.status == "media_unavailable"
+    assert result.question is None
+    assert not result.deferred_queries
+
+
+async def test_caption_overflow_uses_same_worker_cache_even_at_zero_chat_budget(monkeypatch):
+    from dataclasses import replace
+
+    monkeypatch.setattr(settings, "clip_intents_max_vision_requeries", 0)
+    intent = ClipIntent(
+        intent_id="park", op="caption", attribute="park clips", caption_attribute="weather"
+    )
+    clip = replace(_video_clip("m1", subject="people at a park"), asset_id="asset-1")
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="park",
+                    assignments=[ResolverAssignment(media="m001", confidence=0.9)],
+                    caption="cold and rainy",
+                )
+            ]
+        ),
+    )
+    _patch_vision_forbidden(monkeypatch)
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="caption the weather",
+        clips=[clip],
+        run_context=RunContext(),
+    )
+    assert len(result.deferred_queries) == 1
+    key = normalize_question(result.deferred_queries[0].question)
+    clip.analysis[ANSWERS_KEY] = {key: {"answer": "cold and rainy", "confidence": 0.9}}
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="caption the weather",
+        clips=[clip],
+        run_context=RunContext(),
+    )
+    assert result.question is None
+    assert result.intents[0].caption_text == "cold and rainy"
+    assert result.intents[0].caption_grounding == "vision_verified"
+
+
+@pytest.mark.parametrize("background", [False, True])
+async def test_preparation_and_overflow_share_pending_and_failed_claims(monkeypatch, background):
+    import time
+    from dataclasses import replace
+
+    from app.services.clip_intent_resolution import ANSWER_QUERIES_KEY
+
+    intent = ClipIntent(intent_id="sport", op="label", attribute="sport being played")
+    clip = replace(
+        _video_clip("m1"),
+        asset_id="asset-1",
+        generation="123",
+        analysis={
+            ANSWER_QUERIES_KEY: {
+                "what sport?": {
+                    "status": "queued",
+                    "expires_at": time.time() + 60,
+                    "generation": "123",
+                }
+            },
+        },
+    )
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="sport",
+                    needs_vision=[ResolverVisionQuestion(media="m001", question="What sport?")],
+                )
+            ]
+        ),
+    )
+    _patch_vision_forbidden(monkeypatch)
+    pending = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label the sport",
+        clips=[clip],
+        run_context=RunContext(),
+        background=background,
+    )
+    assert pending.status == "pending"
+    assert len(pending.deferred_queries) == (0 if background else 1)
+    marker = clip.analysis[ANSWER_QUERIES_KEY]["what sport?"]
+    marker.update(status="failed", error_code="provider_outcome_unknown")
+    failed = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label the sport",
+        clips=[clip],
+        run_context=RunContext(),
+        background=background,
+    )
+    assert failed.status == "provider_unavailable"
+    assert failed.error_code == "provider_outcome_unknown"
+    assert not failed.needs_creator
+    assert not failed.deferred_queries
+
+
+async def test_background_preparation_finishes_pool_overflow_without_separate_tasks(monkeypatch):
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(settings, "clip_intents_max_vision_requeries", 1)
+    intent = ClipIntent(intent_id="sport", op="label", attribute="sport being played")
+    clips = [replace(_video_clip(f"m{i}"), asset_id=f"asset-{i}") for i in range(1, 9)]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="sport",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question="What sport?")
+                        for i in range(1, 9)
+                    ],
+                )
+            ]
+        ),
+    )
+    calls = _patch_vision_success(monkeypatch, "soccer", 0.9)
+    checkpoint = AsyncMock()
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label the sport",
+        clips=clips,
+        run_context=RunContext(),
+        background=True,
+        checkpoint=checkpoint,
+    )
+    assert calls[0] == 8
+    assert result.status == "resolved"
+    assert len(result.intents[0].assignments) == 8
+    assert not result.deferred_queries
+    assert checkpoint.await_count == 2
+
+
+async def test_foreground_budget_stop_does_not_escape_through_overflow_worker(monkeypatch):
+    from dataclasses import replace
+
+    monkeypatch.setattr(settings, "clip_intents_max_vision_requeries", 1)
+    intent = ClipIntent(intent_id="sport", op="label", attribute="sport being played")
+    clips = [replace(_video_clip(f"m{i}"), asset_id=f"asset-{i}") for i in range(1, 3)]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="sport",
+                    needs_vision=[
+                        ResolverVisionQuestion(media=f"m{i:03d}", question="What sport?")
+                        for i in range(1, 3)
+                    ],
+                )
+            ]
+        ),
+    )
+
+    async def budget(*args, **kwargs):
+        raise AiBudgetExceededError(
+            scope="test", reset_at="tomorrow", cached_behavior_available=False
+        )
+
+    monkeypatch.setattr("app.services.clip_intent_resolution._run_vision_candidate", budget)
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="label the sport",
+        clips=clips,
+        run_context=RunContext(),
+    )
+    assert result.status == "budget_exhausted"
+    assert not result.deferred_queries
