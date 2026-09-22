@@ -561,3 +561,40 @@ open native rendering capability gates or change cloud render behavior.
 Validation: `pytest tests/routes/test_native_timeline_sources.py
  tests/routes/test_generative_timeline.py tests/routes/test_generative_jobs.py
  tests/routes/test_editor_commit.py` from `src/apps/api`.
+
+### Signup screen (KRI-161)
+
+Paper source of truth: https://app.paper.design/file/01M34NT2NRNCP6R49KGW19EY4M
+("Kria iOS — Signup", board V1 · Frame stack). `SignInView.swift` and the
+`AIConsentView` half of `AccountPrivacyViews.swift` are the two screens this
+covers.
+
+- **Never Fraunces on these two screens.** `KriaFont.headline` (Inter Bold,
+  `DesignSystem/DesignTokens.swift`) is the only display type allowed in
+  `SignInView.swift` and `AccountPrivacyViews.swift`; `KriaFont.display`
+  (Fraunces) stays everywhere else, including the account-deletion flow, which
+  was split into its own `AccountDeletionView.swift` file specifically so this
+  rule can be source-scanned per file. Guard:
+  `Tests/KriaTests/SignInTypographyGuardTests.swift`.
+- **Motion:** `Features/SignInMotion.swift` defines the entrance stagger
+  (`SignInMotion.Element` — wordmark → hero → headline → promise → providers →
+  footer, each with its own delay) and the ambient hero loop constants
+  (`ambientPeriod`/`ambientDrift`/`ambientTilt`). `View.signInEntrance(_:appeared:reduceMotion:)`
+  applies the opacity/offset stagger; buttons stay hittable from frame 0
+  regardless of animation state. Reduce Motion (system setting or the
+  `UI_TEST_REDUCE_MOTION=1` override other motion-bearing views already use)
+  renders everything fully visible immediately, with no animation. The hero's
+  three portrait frames drift only once their own entrance has settled, and
+  only while the app is active, Reduce Motion is off, and the reviewer
+  sign-in sheet isn't up.
+- **Fixture states** via `-ui-testing-brand` + `KRIA_BRAND_STATE`: `signin`
+  (default empty state), `signin-error` (seeds a Google-cancellation message
+  through `SignInView(initialMessage:)`), `consent` (`AIConsentView`).
+  `BrandPreviewHost` also honours `UI_TEST_DYNAMIC_TYPE_SIZE=accessibility5`
+  (alongside the older `KRIA_BRAND_LARGE_TEXT=1` → `.accessibility3`).
+- Coverage: `Tests/KriaTests/SignInMotionTests.swift` (pure timing/curve
+  constants), `SignInTypographyGuardTests.swift`, and
+  `Tests/KriaUITests/SignInUITests.swift` (provider/legal-link presence,
+  email sheet, largest Dynamic Type reachability, Reduce Motion
+  immediacy, error-message announcement). `scripts/ios/ui-test-groups.json`
+  maps these sources and tests into the `projects` UI group.
