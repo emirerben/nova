@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.129.0] - 2026-09-22
+
+### Changed
+- fix: continue clip-intent vision queries asynchronously (KRI-154) (#1138) <!-- release-pr: 1138 -->
+
 ## [0.76.128.0] - 2026-09-22
 
 ### Changed
