@@ -248,6 +248,15 @@ async def create_editor_source(
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     if item.current_job_id is None:
         raise HTTPException(status_code=404, detail="No render to edit yet")
+    # Visual identity is already known from the request. Lock it between the
+    # owning item and the job, matching the creation graph's canonical order.
+    asset = None
+    if body.source_kind == "visual":
+        try:
+            asset_id = uuid.UUID(body.source_id)
+        except ValueError as exc:
+            raise HTTPException(422, detail="visual_not_ready") from exc
+        asset = await db.get(PlanItemAsset, asset_id, with_for_update=True, populate_existing=True)
     job = (
         await db.execute(select(Job).where(Job.id == item.current_job_id).with_for_update())
     ).scalar_one_or_none()
@@ -303,11 +312,6 @@ async def create_editor_source(
         )
         record["reservation_id"] = str(reservation.id)
     elif body.source_kind == "visual":
-        try:
-            asset_id = uuid.UUID(body.source_id)
-        except ValueError as exc:
-            raise HTTPException(422, detail="visual_not_ready") from exc
-        asset = await db.get(PlanItemAsset, asset_id, with_for_update=True)
         if (
             asset is None
             or asset.plan_item_id != item.id

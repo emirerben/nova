@@ -173,7 +173,13 @@ def reservation_lock_busy(exc: DBAPIError) -> bool:
 
 
 def _recheck_source(
-    db: Any, job: Job, record: dict, source: dict, receipt: dict
+    db: Any,
+    job: Job,
+    record: dict,
+    source: dict,
+    receipt: dict,
+    *,
+    visual_asset: PlanItemAsset | None = None,
 ) -> CreationThreadUploadReservation | None:
     """Re-read DB identity under the job lock after slow preparation completed."""
     if record["source_kind"] == "footage":
@@ -210,11 +216,12 @@ def _recheck_source(
             raise AdmissionError("source_reservation_changed")
         return reservation
     else:
-        asset = db.get(
-            PlanItemAsset, source["media_id"], with_for_update=True, populate_existing=True
-        )
+        asset = visual_asset
         if (
             asset is None
+            or record["source_kind"] != "visual"
+            or str(asset.id) != source["media_id"]
+            or record["source_id"] != source["media_id"]
             or asset.user_id != job.user_id
             or asset.plan_item_id != job.content_plan_item_id
             or asset.status != "ready"
@@ -306,9 +313,20 @@ def prepare_phone_editor_source(
         if str(metadata.generation or "") != source["generation"]:
             raise AdmissionError("source_generation_stale")
         with sync_session() as db:
-            # Match POST lock order: item, then job, then source row.
+            # Canonical lock order: item, visual asset, then job. The copied
+            # import identifies the asset; recheck its identity under the locks.
             item = db.get(
                 PlanItem, job.content_plan_item_id, with_for_update=True, populate_existing=True
+            )
+            visual_asset = (
+                db.get(
+                    PlanItemAsset,
+                    record["source_id"],
+                    with_for_update=True,
+                    populate_existing=True,
+                )
+                if record["source_kind"] == "visual"
+                else None
             )
             job = db.execute(
                 select(Job).where(Job.id == job_id).with_for_update()
@@ -323,7 +341,11 @@ def prepare_phone_editor_source(
                 raise AdmissionError("source_revision_stale")
             if not _guard_matches(job, variant, current):
                 raise AdmissionError("source_revision_stale")
-            reservation = _recheck_source(db, job, current, source, receipt)
+            if current["source_kind"] != record["source_kind"]:
+                raise AdmissionError("source_revision_stale")
+            reservation = _recheck_source(
+                db, job, current, source, receipt, visual_asset=visual_asset
+            )
             catalog = (_guided_v2_revision(job, variant) or {})["sources"]
             index, source = _admit(
                 registry,

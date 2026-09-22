@@ -59,13 +59,18 @@ def world(monkeypatch):
     item = SimpleNamespace(id=item_id, current_job_id=job_id)
     objects = {Job: job, PlanItem: item, PlanItemAsset: asset}
     commits = Mock()
+    locks = []
 
     class Session:
         def get(self, model, *args, **kwargs):
+            if kwargs.get("with_for_update"):
+                locks.append(model)
             return objects.get(model)
 
         def execute(self, query):
             model = query.column_descriptions[0]["entity"]
+            if query._for_update_arg is not None:
+                locks.append(model)
             return SimpleNamespace(scalar_one_or_none=lambda: objects.get(model))
 
         def commit(self):
@@ -110,6 +115,7 @@ def world(monkeypatch):
         binding=binding,
         prepare=prepare,
         commits=commits,
+        locks=locks,
         session=session,
     )
 
@@ -126,6 +132,7 @@ def test_admit_once_preserves_approval_and_baseline(world):
     approval = copy.deepcopy(world.job.assembly_plan["guided_edit"])
     run(world)
     assert result(world)["status"] == "ready"
+    assert world.locks == [PlanItem, PlanItemAsset, Job]
     assert result(world)["source_index"] == 1
     assert result(world)["source"] == world.source
     run(world)
@@ -138,6 +145,7 @@ def test_admit_once_preserves_approval_and_baseline(world):
 @pytest.mark.parametrize(
     "field,value",
     [
+        ("id", uuid.UUID(int=7)),
         ("gcs_generation", "43"),
         ("status", "removed"),
         ("gcs_path", "users/u/replaced.jpg"),
@@ -155,6 +163,26 @@ def test_source_replaced_during_preparation_fails_atomically(world, field, value
     run(world)
     assert result(world)["reason_code"] == "visual_changed"
     assert not result(world)["retryable"]
+    assert world.variant[EDITOR_SOURCES_FIELD]["sources"] == []
+
+
+@pytest.mark.parametrize("change", ["missing_asset", "source_id", "source_kind"])
+def test_final_source_identity_is_rechecked_under_locks(world, change):
+    def prepare(*args):
+        if change == "missing_asset":
+            world.objects[PlanItemAsset] = None
+        elif change == "source_id":
+            result(world)["source_id"] = str(uuid.uuid4())
+        else:
+            result(world)["source_kind"] = "footage"
+        return world.source, world.binding
+
+    world.prepare.side_effect = prepare
+    run(world)
+    assert result(world)["status"] == "failed"
+    assert result(world)["reason_code"] == (
+        "source_revision_stale" if change == "source_kind" else "visual_changed"
+    )
     assert world.variant[EDITOR_SOURCES_FIELD]["sources"] == []
 
 

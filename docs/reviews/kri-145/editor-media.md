@@ -42,6 +42,10 @@ The final verification run completed with the following results:
   captured log is `/private/tmp/kri145-media-export.log`; this is export parity
   evidence, not physical-device qualification.
 - The final pre-ship check passed.
+- CI exposed a visual-asset lock-order violation and an outdated compiler test
+  stub. Both admission paths now lock item, asset, then job; the lock-order guard
+  remains unchanged. After those fixes, 823 focused backend checks passed,
+  including the canonical-lock and song-reference suites, and pre-ship passed.
 
 Admission race tests exercise competing completion/retry interleavings with
 mocked database boundaries. A live PostgreSQL concurrency exercise remains part

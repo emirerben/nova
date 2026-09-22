@@ -10,7 +10,7 @@ from fastapi import HTTPException, Response
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import DBAPIError
 
-from app.models import CreationThread, CreationThreadUploadReservation, Job, PlanItem
+from app.models import CreationThread, CreationThreadUploadReservation, Job, PlanItem, PlanItemAsset
 from app.routes import editor_sources as routes
 from app.services.phone_editor_sources import EDITOR_SOURCES_FIELD
 from app.tasks import editor_sources as task
@@ -94,6 +94,34 @@ async def test_initial_projection_accepts_import_without_persisting_revision(adm
     # Idempotent duplicate doesn't publish another worker.
     await post(a)
     a.publish.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_visual_admission_locks_asset_before_job(admission, monkeypatch):
+    a = admission
+    locks = []
+
+    async def load_item(*args, **kwargs):
+        assert kwargs["for_update"]
+        locks.append(PlanItem)
+        return a.item
+
+    async def load_asset(model, ident, **kwargs):
+        assert model is PlanItemAsset and ident == a.asset.id
+        assert kwargs == {"with_for_update": True, "populate_existing": True}
+        locks.append(model)
+        return a.asset
+
+    async def load_job(statement):
+        assert "FOR UPDATE" in str(statement.compile(dialect=postgresql.dialect()))
+        locks.append(Job)
+        return SimpleNamespace(scalar_one_or_none=lambda: a.job)
+
+    monkeypatch.setattr(routes, "_load_owned_item", load_item)
+    a.db.get = AsyncMock(side_effect=load_asset)
+    a.db.execute = AsyncMock(side_effect=load_job)
+    await post(a)
+    assert locks == [PlanItem, PlanItemAsset, Job]
 
 
 @pytest.mark.asyncio
