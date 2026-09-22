@@ -81,18 +81,92 @@ def phone_job(monkeypatch, *, photo=False):
     return job
 
 
-def save(job, *, generation="first", effect="fade-in", motion=None):
+def save(
+    job,
+    *,
+    generation="first",
+    effect="fade-in",
+    motion=None,
+    guided_revision_number=None,
+    **element_overrides,
+):
     element = {
         **job.assembly_plan["variants"][0]["text_elements"][0],
         "text": "After",
         "effect": effect,
         "motion": motion,
+        **element_overrides,
     }
     return gj.prepare_editor_commit(
         job,
         "guided_story",
-        gj.EditorCommitRequest(base_generation=generation, text_elements=[element]),
+        gj.EditorCommitRequest(
+            base_generation=generation,
+            text_elements=[element],
+            guided_revision_number=guided_revision_number,
+        ),
     )
+
+
+def _enable_guided_v2(job, monkeypatch):
+    """Turn the fixture into a real revision-token-bearing guided-v2 job."""
+    from app.pipeline.guided_story import compile_execution_plan
+    from app.schemas.edit_proposal import (
+        EditProposalSnapshot,
+        FastMontageCut,
+        MediaRef,
+        StoryBeat,
+        canonical_media_digest,
+    )
+
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    binding = job.assembly_plan[PHONE_SOURCES_FIELD][0]
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id="source",
+            gcs_path=binding["proxy_path"],
+            generation="123",
+            kind="video",
+            duration_s=10,
+        )
+    ]
+    snapshot = EditProposalSnapshot(
+        direction="fast_montage",
+        duration_s=3,
+        title="A short scene",
+        media=media,
+        fast_cuts=[
+            FastMontageCut(
+                cut_id=f"cut-{index}",
+                media_id="source",
+                source_start_s=2 + index,
+                source_end_s=3 + index,
+                output_duration_s=1,
+                role="hook",
+            )
+            for index in range(3)
+        ],
+        story_beats=[StoryBeat(beat_id="story", topic="Scene", media_ids=["source"], duration_s=3)],
+    )
+    guided = {
+        "proposal_version": 1,
+        "media_digest": canonical_media_digest(media),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {
+                key: getattr(media[0], key)
+                for key in ("lane", "media_id", "gcs_path", "generation", "kind")
+            }
+        ],
+    }
+    plan = compile_execution_plan(guided, track=None)
+    job.assembly_plan.update(guided_edit=guided, guided_story_execution_plan=plan)
+    variant = job.assembly_plan["variants"][0]
+    variant["text_elements"] = plan["text_elements"]
+    revision = gj._guided_v2_revision(job, variant)
+    assert revision is not None
+    return revision
 
 
 def test_phone_save_atomically_pins_revision_without_cloud_dispatch(monkeypatch):
@@ -154,6 +228,99 @@ def test_reveal_save_stays_on_device(monkeypatch, effect):
     with patch("app.tasks.generative_build.regenerate_generative_variant.apply_async") as cloud:
         gj.enqueue_editor_commit_render(str(job.id), "guided_story", prep)
     cloud.assert_not_called()
+
+
+@pytest.mark.parametrize("guided_v2", [False, True], ids=["legacy", "guided-v2"])
+def test_phone_save_persists_highlight_preset_and_bumps_generation(monkeypatch, guided_v2):
+    job = phone_job(monkeypatch)
+    monkeypatch.setattr(
+        gj.settings,
+        "phone_render_verified_features",
+        [*gj.settings.phone_render_verified_features, "authoredText"],
+    )
+    revision = _enable_guided_v2(job, monkeypatch) if guided_v2 else None
+
+    prep = save(
+        job,
+        guided_revision_number=revision["revision_number"] if revision else None,
+        editor_preset="Highlight",
+        background_color="#FFF0A6",
+        font_family="Inter",
+        color="#30352C",
+    )
+    request = device_status(job, "guided_story").request
+    layer = request.recipe.text_layers[0]
+    assert prep["generation"] != "first"
+    assert request.identity.recipe_revision == 2
+    assert layer.runs[0].fill.red == pytest.approx(0x30 / 255)
+    assert layer.runs[0].fill.green == pytest.approx(0x35 / 255)
+    assert layer.runs[0].fill.blue == pytest.approx(0x2C / 255)
+    assert layer.background is not None
+    assert layer.background.color.red == pytest.approx(1.0)
+    assert layer.background.color.green == pytest.approx(0xF0 / 255)
+    assert layer.background.color.blue == pytest.approx(0xA6 / 255)
+
+
+@pytest.mark.parametrize(
+    ("phase", "value"),
+    [("entrance", value) for value in ("none", "fade", "pop", "slide", "typewriter")]
+    + [("exit", value) for value in ("none", "fade", "pop", "slide", "typewriter")]
+    + [("loop", value) for value in ("none", "pulse", "bounce", "float")],
+)
+@pytest.mark.parametrize("guided_v2", [False, True], ids=["legacy", "guided-v2"])
+def test_phone_save_persists_every_native_text_phase(monkeypatch, phase, value, guided_v2):
+    job = phone_job(monkeypatch)
+    monkeypatch.setattr(
+        gj.settings,
+        "phone_render_verified_features",
+        [*gj.settings.phone_render_verified_features, "authoredText"],
+    )
+    revision = _enable_guided_v2(job, monkeypatch) if guided_v2 else None
+    phases = {"entrance": "none", "exit": "none", "loop": "none", "speed": 1}
+    phases[phase] = value
+    prep = save(
+        job,
+        guided_revision_number=revision["revision_number"] if revision else None,
+        animation_phases=phases,
+    )
+    request = device_status(job, "guided_story").request
+    assert prep["generation"] != "first"
+    assert request.identity.recipe_revision == 2
+    assert getattr(request.recipe.text_layers[0].animation_phases, phase) == value
+
+
+@pytest.mark.parametrize("speed", [0.25, 3.0])
+@pytest.mark.parametrize("guided_v2", [False, True], ids=["legacy", "guided-v2"])
+def test_phone_save_persists_native_text_animation_speed(monkeypatch, speed, guided_v2):
+    job = phone_job(monkeypatch)
+    monkeypatch.setattr(
+        gj.settings,
+        "phone_render_verified_features",
+        [*gj.settings.phone_render_verified_features, "authoredText"],
+    )
+    revision = _enable_guided_v2(job, monkeypatch) if guided_v2 else None
+    prep = save(
+        job,
+        guided_revision_number=revision["revision_number"] if revision else None,
+        animation_phases={"entrance": "none", "exit": "none", "loop": "none", "speed": speed},
+    )
+    request = device_status(job, "guided_story").request
+    assert prep["generation"] != "first"
+    assert request.identity.recipe_revision == 2
+    assert request.recipe.text_layers[0].animation_phases.speed == speed
+
+
+@pytest.mark.parametrize(
+    "element", [{"background_color": "#FFF0A6"}, {"animation_phases": {"entrance": "fade"}}]
+)
+def test_phone_authored_text_gate_off_leaves_save_unchanged(monkeypatch, element):
+    job = phone_job(monkeypatch)
+    before = copy.deepcopy(vars(job))
+    with pytest.raises(HTTPException) as error:
+        save(job, **element)
+    assert error.value.status_code == 422
+    assert "Authored text" in str(error.value.__cause__)
+    assert vars(job) == before
 
 
 def test_phone_guided_revision_compiles_trimmed_source_window(monkeypatch):

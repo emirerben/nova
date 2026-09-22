@@ -58,6 +58,9 @@ class DeviceRenderStatus(_DeviceModel):
     # human-readable detail string. NULL for every pre-P0-1 record and for any
     # non-failure phase; see DeviceRenderFailureBody.reason_code for the enum.
     reason_code: str | None = None
+    # Storage upload attempt that won publication; populated only for the
+    # terminal published phase.
+    published_generation: str | None = None
 
 
 class DeviceAssetDownloadBody(_DeviceModel):
