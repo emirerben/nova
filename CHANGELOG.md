@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.160.0] - 2026-09-23
+
+### Fixed
+- fix(gallery): restore missing posters and recover native previews (KRI-149) (#1153) <!-- release-pr: 1153 -->
+
 ## [0.76.159.0] - 2026-09-23
 
 ### Changed
