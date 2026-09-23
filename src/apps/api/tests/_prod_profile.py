@@ -68,6 +68,8 @@ PROD_TRUE_FLAGS: tuple[str, ...] = (
     "overlay_autoapply_enabled",
     "overlay_autoplace_enabled",
     "phone_rendering_enabled",
+    # Fly secret digest 2026-09-23 (KRI-174): editor media imports are ON.
+    "phone_editor_media_enabled",
     "pool_asset_queued_status_enabled",
     "render_autostop_enabled",
     "retake_cut_enabled",

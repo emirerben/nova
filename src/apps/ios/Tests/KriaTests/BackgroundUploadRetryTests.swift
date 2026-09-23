@@ -3,7 +3,9 @@ import UIKit
 @testable import Kria
 
 @MainActor final class BackgroundUploadRetryTests: XCTestCase {
-    override func tearDown() { UploadRetryProtocol.handler = nil; super.tearDown() }
+    // Every test gets its own request scope, and closes it on the way out: see `UploadRetryProtocol`.
+    override func setUp() { super.setUp(); UploadRetryProtocol.beginTest() }
+    override func tearDown() { UploadRetryProtocol.endTest(); super.tearDown() }
 
     func testProxyCannotEnterCloudSourceReservationContract() throws {
         XCTAssertThrowsError(try BackgroundUploadCoordinator.validateProjectUploadPurpose(.analysisProxy))
@@ -35,8 +37,7 @@ import UIKit
             try? FileManager.default.removeItem(at: staged)
             try? FileManager.default.removeItem(at: projectDirectory.root)
         }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [UploadRetryProtocol.self]
+        let configuration = UploadRetryProtocol.configuration()
         var reservationRequests = 0
         UploadRetryProtocol.handler = { transport in reservationRequests += 1; transport.finish(500, Data()) }
         let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
@@ -81,8 +82,7 @@ import UIKit
             try? FileManager.default.removeItem(at: staged)
             try? FileManager.default.removeItem(at: projectDirectory.root)
         }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [UploadRetryProtocol.self]
+        let configuration = UploadRetryProtocol.configuration()
         UploadRetryProtocol.handler = { transport in transport.finish(409, Data("{}".utf8)) }
         let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
         let coordinator = BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration)
@@ -213,8 +213,7 @@ import UIKit
             try? FileManager.default.removeItem(at: source)
             try? FileManager.default.removeItem(at: projectDirectory.root)
         }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [UploadRetryProtocol.self]
+        let configuration = UploadRetryProtocol.configuration()
         UploadRetryProtocol.handler = { transport in
             if transport.request.httpMethod == "PUT" { transport.finish(200, Data()); return }
             let body = reservationStatus == 200
@@ -251,8 +250,7 @@ import UIKit
             try? FileManager.default.removeItem(at: source)
             try? FileManager.default.removeItem(at: projectDirectory.root)
         }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [UploadRetryProtocol.self]
+        let configuration = UploadRetryProtocol.configuration()
         UploadRetryProtocol.handler = { transport in
             // Hold the PUT open so the upload stays in flight while the disk is inspected;
             // letting it finish would run the attach step against this stub.
@@ -298,11 +296,14 @@ import UIKit
             try? FileManager.default.removeItem(at: source)
             try? FileManager.default.removeItem(at: projectDirectory.root)
         }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [UploadRetryProtocol.self]
+        let configuration = UploadRetryProtocol.configuration()
         let started = expectation(description: "Reservation in flight")
         var held: UploadRetryProtocol?
+        var requests = 0
         UploadRetryProtocol.handler = { transport in
+            requests += 1
+            // Hold only the first: an unexpected second request fails the count below, not the process.
+            guard held == nil else { return }
             held = transport
             started.fulfill()
         }
@@ -314,6 +315,7 @@ import UIKit
         await fulfillment(of: [started], timeout: 3)
 
         XCTAssertEqual(activity.beginCount, 1)
+        XCTAssertEqual(held?.request.httpMethod, "POST", "the request in flight is the reservation, not an upload")
         activity.triggerExpiration()
 
         // The production expiration handler re-hops onto `@MainActor` via an
@@ -333,6 +335,7 @@ import UIKit
         try XCTUnwrap(held).finish(500, Data())
         _ = await enqueueTask.value
         XCTAssertEqual(activity.endCount, 1)
+        XCTAssertEqual(requests, 1, "expiring the preparation must not start another request")
     }
 
     func testConcurrentRetryReservesOnlyOneReplacement() async throws {
@@ -343,6 +346,7 @@ import UIKit
         var reservations = 0
         UploadRetryProtocol.handler = { transport in
             reservations += 1
+            guard held == nil else { return }   // a second reservation fails the count below
             held = transport
             started.fulfill()
         }
@@ -368,8 +372,11 @@ import UIKit
         let started = expectation(description: "Reservation suspended")
         var held: UploadRetryProtocol?
         var puts = 0
+        var reservations = 0
         UploadRetryProtocol.handler = { transport in
             if transport.request.httpMethod == "PUT" { puts += 1; transport.finish(200, Data()); return }
+            reservations += 1
+            guard held == nil else { return }   // a second reservation fails the count below
             held = transport
             started.fulfill()
         }
@@ -381,6 +388,7 @@ import UIKit
         await retry.value
         XCTAssertTrue(fixture.coordinator.records.isEmpty)
         XCTAssertEqual(puts, 0)
+        XCTAssertEqual(reservations, 1, "the cancelled retry must not reserve again")
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.record.localFilePath))
     }
 
@@ -399,28 +407,92 @@ import UIKit
         try Data([1, 2, 3]).write(to: file)
         let record = UploadRecoveryRecord(id: UUID(), projectID: UUID(), localFilePath: file.path, filename: "clip.mp4", source: .files, purpose: .cloudRenderSource, taskIdentifier: 999, retryCount: 0)
         UserDefaults.standard.set(try JSONEncoder().encode([record]), forKey: key)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [UploadRetryProtocol.self]
+        let configuration = UploadRetryProtocol.configuration()
         let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
         return Fixture(coordinator: BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration), record: record, key: key)
     }
 }
 
+/// Stubs every request of a session built from `configuration()`, one test at a time.
+///
+/// A coordinator outlives its test: its URLSession keeps it alive as the delegate, so work the test
+/// left running (the PUT for a reservation answered just before it returned, an upload task that
+/// starts late, an attach after a PUT succeeded) keeps sending requests after the test ends. With
+/// one shared handler those reached a later test's handler: they inflated its request counts, or
+/// fulfilled its one-shot expectation a second time, which crashes the whole test host. So each
+/// test gets a scope, sent as a header on every request: only the current scope reaches `handler`,
+/// any other request fails at once, and `endTest()` fails whatever the test left open.
 private final class UploadRetryProtocol: URLProtocol, @unchecked Sendable {
+    // Main thread only: setUp/tearDown, the test body, and the main-queue hop in `startLoading`.
     nonisolated(unsafe) static var handler: (@MainActor (UploadRetryProtocol) -> Void)?
+    nonisolated(unsafe) private static var scope: String?
+    nonisolated(unsafe) private static var delivered: [UploadRetryProtocol] = []
+    private static let scopeHeader = "X-Kria-Test-Scope"
+
+    static func beginTest() {
+        precondition(Thread.isMainThread)
+        scope = UUID().uuidString
+        handler = nil
+        delivered = []
+    }
+
+    static func endTest() {
+        precondition(Thread.isMainThread)
+        scope = nil
+        handler = nil
+        let leftOpen = delivered
+        delivered = []
+        for transport in leftOpen { transport.fail() }
+    }
+
+    /// An ephemeral configuration whose requests belong to the running test.
+    static func configuration() -> URLSessionConfiguration {
+        precondition(Thread.isMainThread)
+        guard let scope else { preconditionFailure("call from a test, between beginTest() and endTest()") }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [UploadRetryProtocol.self]
+        configuration.httpAdditionalHeaders = [scopeHeader: scope]
+        return configuration
+    }
+
+    private let lock = NSLock()
+    private var stopped = false   // guarded by `lock`
+    private var answered = false  // guarded by `lock`
+
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        let requestScope = request.value(forHTTPHeaderField: Self.scopeHeader)
         let callback = Callback(transport: self)
-        DispatchQueue.main.async { UploadRetryProtocol.handler?(callback.transport) }
+        DispatchQueue.main.async {
+            guard let requestScope, requestScope == UploadRetryProtocol.scope else { callback.transport.fail(); return }
+            UploadRetryProtocol.delivered.append(callback.transport)
+            UploadRetryProtocol.handler?(callback.transport)
+        }
     }
     private struct Callback: @unchecked Sendable { let transport: UploadRetryProtocol }
-    override func stopLoading() {}
+    override func stopLoading() { lock.withLock { stopped = true } }
+
     @MainActor func finish(_ status: Int, _ data: Data) {
+        guard claimReply() else { return }
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
+    }
+
+    private func fail() {
+        guard claimReply() else { return }
+        client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+    }
+
+    /// True once per request, and never after the client cancelled it.
+    private func claimReply() -> Bool {
+        lock.withLock {
+            guard !stopped, !answered else { return false }
+            answered = true
+            return true
+        }
     }
 }
 
@@ -456,12 +528,12 @@ private let reservationResponse = Data(#"[{"media_id":"clip-1","upload_url":"htt
     init(key: String, projectID: UUID, cloudSlots: Int, answerImmediately: Bool) {
         self.projectID = projectID
         self.answerImmediately = answerImmediately
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [UploadRetryProtocol.self]
+        let configuration = UploadRetryProtocol.configuration()
         let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
         coordinator = BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration, backgroundActivity: RecordingBackgroundActivityAssertion(), maxConcurrentCloudPreparations: cloudSlots)
-        UploadRetryProtocol.handler = { [unowned self] transport in
-            if transport.request.httpMethod == "PUT" { return }
+        // Weak: the harness is a test's local and can be gone before tearDown clears the handler.
+        UploadRetryProtocol.handler = { [weak self] transport in
+            guard let self, transport.request.httpMethod != "PUT" else { return }
             self.received += 1
             if self.answerImmediately { transport.finish(200, reservationResponse) } else { self.pending.append(transport) }
         }

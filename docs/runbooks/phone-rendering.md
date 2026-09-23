@@ -460,6 +460,95 @@ word (seen in the simulator render of the `subtitled_word` E2E case);
 `talking_head` (self-narration onto 2+ clips) remains entirely unsupported on
 the phone.
 
+#### Talking-to-camera media lanes: stickers, photo cards, SFX, ending clip (KRI-174 Phase 1)
+
+`PHONE_SUBTITLED_MEDIA_LANES_ENABLED` (`settings.phone_subtitled_media_lanes
+_enabled`, default `false`). When on, `_run_phone_subtitled_job` honours a
+server-owned lane request persisted on the job's `assembly_plan` under
+`_phone_subtitled_lanes_v1` (`app.pipeline.phone_subtitled_lanes
+.PhoneSubtitledLaneRequest`) and `compile_phone_subtitled_plan` emits up to
+three extra lanes on top of the unchanged speaker clip + captions:
+
+- **overlays** — sticker / photo cards from the item's Visuals pool (image
+  assets only), one silent `overlay` track (`subtitled-overlays`) in the exact
+  clip shape `compile_editor_media_track` already ships for guided edits
+  (`VisualMediaPlacement`, `volume=0`, PNG alpha kept by the device by
+  default). Cards are clamped ABOVE the caption band (`y_frac <= 0.62`;
+  captions sit at y ≈ 0.8) so a sticker never covers the captions. Static or
+  fade only — pop-in stays unqualified until a device proof exists.
+- **sound_effects** — one `sfx` audio track of `LibraryRenderAsset
+  (catalog="sound_effect")` clips, resolved + pinned by
+  `_resolve_phone_sound_effect` (mirrors `_resolve_phone_music_bed`: same
+  publish/ready/path-prefix contract, `sound-effects/{id}/` prefix). Only
+  m4a/wav/mp3/aac play on the device (`PLAYABLE_SFX_EXTENSIONS`); any other
+  format is rejected at resolve time. Clips are clamped to the timeline end.
+- **ending_clip** — a Visuals-pool VIDEO appended as a second clip on the
+  main video track with per-clip `volume=0` (muted), which sidesteps the five
+  "exactly one clip" gates (capabilities `max_clips`, upload/register routes,
+  `phone_format:subtitled`, `subtitled_clip_count_unsupported`, the compiler).
+
+**Lane failures never terminalize the job.** Visuals are bound per lane
+(`bind_phone_visual_assets`, gated by `stillImages` / `visualVideos` in
+`PHONE_RENDER_VERIFIED_FEATURES` exactly like the guided runner); an
+unavailable sound effect drops just that effect; a compile-time
+`SubtitledLaneError` drops its lane and the compile is retried without it.
+What landed and what was dropped is persisted on the variant as
+`phone_lane_receipt = {"applied": [...], "dropped": [{"lane", "reason", ...}]}`
+(the Phase 2 chat receipt reads this) and traced as the
+`subtitled_lane_receipt` pipeline event. The raw Whisper words are also saved
+on the variant as `overlay_transcript` BEFORE caption correction (correction
+drops word timings on corrected lines), so Phase 2's phrase triggers ("no, no,
+no" → ❌ + buzzer) can be grounded against untouched timings.
+
+Nothing writes `_phone_subtitled_lanes_v1` yet (Phase 2 grounds it from the
+prompt + Visuals); with the flag off the field is ignored entirely and the
+compiler/runner output is byte-identical to before
+(`tests/pipeline/test_phone_subtitled_plan.py` byte-identity test +
+`tests/tasks/test_phone_subtitled_narrated_dispatch.py` flag-off pins).
+Required capabilities added per lane: overlays → `visualBlocks`,
+`alphaOverlay`, `audioMix`; sfx → `soundEffects`, `audioMix`; ending clip →
+`visualVideos`, `audioMix` — all already in the prod verified-features list.
+**Rollback:** `fly secrets set PHONE_SUBTITLED_MEDIA_LANES_ENABLED=false --app
+nova-video` + `fly machine restart <id>` (api + worker).
+
+**Authoring a lane request by hand (Phase 1.5, admin-only).** Until Phase 2
+grounds lanes from the prompt, an admin stores a request on the plan item and
+dispatch copies it into the job snapshot on the NEXT Generate/Retry (flag on,
+phone-rendered `subtitled` item only):
+
+```bash
+python scripts/admin.py --prod GET    plan-items/<item_id>/phone-lanes
+python scripts/admin.py --prod PUT    plan-items/<item_id>/phone-lanes --data-file lanes.json
+python scripts/admin.py --prod DELETE plan-items/<item_id>/phone-lanes
+```
+
+`lanes.json` names Visuals by their `PlanItemAsset` id and sound effects by
+catalog id; the route resolves the storage pins and rejects anything that is
+not a ready image/video in that item's pool or a published, phone-playable
+effect. Time the triggers from the variant's `overlay_transcript` (raw Whisper
+words, `GET /admin/jobs/{id}`), not from the corrected captions:
+
+```json
+{
+  "overlays": [
+    {"id": "rank-3", "media_id": "<badge-3 png>", "start_s": 3.2, "end_s": 5.0, "y_frac": 0.18, "scale": 0.22},
+    {"id": "photo-leao", "media_id": "<leao jpg>", "start_s": 5.0, "end_s": 8.4, "x_frac": 0.72, "y_frac": 0.40, "scale": 0.36, "fade": true},
+    {"id": "cross-1", "media_id": "<cross png>", "start_s": 6.1, "end_s": 7.0, "x_frac": 0.30, "y_frac": 0.40, "scale": 0.25, "z": 1},
+    {"id": "goat", "media_id": "<goat png>", "start_s": 21.0, "end_s": 24.0, "y_frac": 0.20, "scale": 0.30}
+  ],
+  "sound_effects": [
+    {"id": "buzz-1", "catalog_id": "<Wrong buzzer id>", "at_s": 6.1},
+    {"id": "ding-1", "catalog_id": "<Correct ding id>", "at_s": 8.4, "volume": 0.9}
+  ],
+  "ending_clip": {"media_id": "<ending mp4>", "max_duration_s": 3.0}
+}
+```
+
+`y_frac` above `0.62` is clamped by the compiler so no card lands in the
+caption band. The request is private job state (`_phone_subtitled_lanes_v1`,
+stripped from public assembly-plan responses) and stays on the item until
+deleted, so clear it once Phase 2 owns the lanes.
+
 ## Implemented foundations
 
 - `KriaMediaEngine/SourceAssetStore.swift` binds opaque server media IDs to

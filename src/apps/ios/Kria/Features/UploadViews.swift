@@ -28,6 +28,9 @@ struct FootagePickerView: View {
     let itemID: String?
     let limit: CreationMediaLimit?
     let destination: ProjectUploadDestination
+    /// KRI-175: called when a pick filled the live picker and it closed itself, so the host can return
+    /// to chat too (one talking-to-camera clip: pick it and you're back).
+    let onPickerFilled: (() -> Void)?
     @ObservedObject private var uploads: BackgroundUploadCoordinator
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showingPhotosPicker = false
@@ -47,8 +50,10 @@ struct FootagePickerView: View {
         role: CreationMediaRole = .clip,
         itemID: String? = nil,
         limit: CreationMediaLimit? = nil,
-        destination: ProjectUploadDestination = .cloud
+        destination: ProjectUploadDestination = .cloud,
+        onPickerFilled: (() -> Void)? = nil
     ) {
+        self.onPickerFilled = onPickerFilled
         self.role = role
         self.itemID = itemID
         self.limit = limit
@@ -150,7 +155,9 @@ struct FootagePickerView: View {
                 selection: $photoItems,
                 limit: selectionCapacity.pickerSelectionLimit,
                 filter: role == .visual ? visualPickerFilter : .videos,
-                libraryBacked: libraryAuthorized
+                libraryBacked: libraryAuthorized,
+                title: role.title,
+                onFilled: onPickerFilled
             ))
             .onChange(of: photoItems) { _, items in reconcile(items) }
             }
@@ -261,6 +268,7 @@ struct FootagePickerView: View {
     private func presentPhotosPicker() async {
         let wasAuthorized = libraryAuthorized
         libraryAuthorized = await Self.photoLibraryAuthorized()
+        if libraryAuthorized, ProcessInfo.processInfo.arguments.contains("-ui-testing-seed-photo-video") { await Self.seedUITestVideo() }
         refreshShowablePreselected()
         // Seed with what is already chosen, so those clips render as selected and can't be re-picked.
         // Only assets the library can still show: seeding one it can't resolve would have the picker
@@ -281,6 +289,16 @@ struct FootagePickerView: View {
         let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         let resolved = status == .notDetermined ? await PHPhotoLibrary.requestAuthorization(for: .readWrite) : status
         return resolved == .authorized
+    }
+
+    /// UI tests only: the simulator's sample library has no videos, and Footage only offers videos.
+    /// `nonisolated` so the change block isn't MainActor-isolated: Photos runs it on its own queue,
+    /// and the isolation check traps (SIGTRAP) there.
+    private nonisolated static func seedUITestVideo() async {
+        guard PHAsset.fetchAssets(with: .video, options: nil).count == 0, let url = KriaBranding.outroURL() else { return }
+        try? await PHPhotoLibrary.shared().performChanges {
+            _ = PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: url)
+        }
     }
 
     /// Called on every change of the live selection. Deliberately does nothing but diff and delegate:
@@ -378,19 +396,69 @@ private struct UnreadablePhoto: Error {}
 
 /// Applies the library-backed picker (real checkmarks, live selection, non-nil `itemIdentifier`)
 /// when Photos access was granted, and today's permission-free picker otherwise.
+///
+/// KRI-175: continuous selection drops the system picker's Add/Cancel, and `.photosPicker` can't be
+/// given toolbar items, so the library-backed picker is hosted inline in our own sheet with a Done
+/// button. Without it the only way back was an undiscoverable swipe-down.
 private struct FootagePhotosPicker: ViewModifier {
     @Binding var isPresented: Bool
     @Binding var selection: [PhotosPickerItem]
     let limit: Int
     let filter: PHPickerFilter
     let libraryBacked: Bool
+    let title: String
+    /// Runs once the sheet has closed itself because a pick filled it, so the host can go further back.
+    let onFilled: (() -> Void)?
+    @State private var closedByFilling = false
 
     func body(content: Content) -> some View {
         if libraryBacked {
-            content.photosPicker(isPresented: $isPresented, selection: $selection, maxSelectionCount: limit,
-                                 selectionBehavior: .continuousAndOrdered, matching: filter, photoLibrary: .shared())
+            content.sheet(isPresented: $isPresented, onDismiss: {
+                // After the dismissal, not with it: the host closing its own sheet while this one is
+                // still on screen would tear both down mid-animation.
+                if closedByFilling { closedByFilling = false; onFilled?() }
+            }) {
+                LibraryPhotosPickerSheet(title: title, selection: $selection, limit: limit, filter: filter) { filled in
+                    closedByFilling = filled
+                    isPresented = false
+                }
+            }
         } else {
             content.photosPicker(isPresented: $isPresented, selection: $selection, maxSelectionCount: limit, matching: filter)
+        }
+    }
+}
+
+private struct LibraryPhotosPickerSheet: View {
+    let title: String
+    @Binding var selection: [PhotosPickerItem]
+    let limit: Int
+    let filter: PHPickerFilter
+    let close: (_ filled: Bool) -> Void
+
+    var body: some View {
+        NavigationStack {
+            PhotosPicker(selection: $selection, maxSelectionCount: limit, selectionBehavior: .continuousAndOrdered,
+                         matching: filter, photoLibrary: .shared()) { EmptyView() }
+                .photosPickerStyle(.inline)
+                .ignoresSafeArea(edges: .bottom)
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { close(false) }.accessibilityIdentifier("photos-picker-done")
+                    }
+                }
+        }
+        .onChange(of: selection) { previous, current in
+            let ids = current.compactMap(\.itemIdentifier)
+            guard PhotoPickerAutoClose.shouldClose(previous: previous.compactMap(\.itemIdentifier), current: ids, limit: limit) else { return }
+            // Long enough to see the checkmark land; the uploads were already started by the host's
+            // own `onChange`, which doesn't depend on this sheet staying open.
+            Task {
+                try? await Task.sleep(for: .milliseconds(350))
+                if selection.compactMap(\.itemIdentifier) == ids { close(true) }
+            }
         }
     }
 }

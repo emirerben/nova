@@ -26,13 +26,14 @@ from pathlib import Path
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
 from app.models import SoundEffect
+from app.services.sfx_catalog import SFX_CATEGORIES
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -43,9 +44,10 @@ _BROWSER_AUDIO_PUT_TTL = datetime.timedelta(minutes=15)
 _BROWSER_AUDIO_MIN_BYTES = 1_024  # 1 KB
 _BROWSER_AUDIO_MAX_BYTES = 100 * 1024 * 1024  # 100 MB
 
-_BROWSER_AUDIO_EXT_ALLOWLIST = frozenset(
-    {".mp3", ".m4a", ".mp4", ".wav", ".aac", ".ogg", ".opus", ".webm"}
-)
+# Only containers the iPhone renderer can play: KriaMediaEngine's
+# PlayableAudioFile rejects Ogg/Opus/WebM and upload-confirm does not
+# transcode, so accepting them would publish effects that fail on-device.
+_BROWSER_AUDIO_EXT_ALLOWLIST = frozenset({".mp3", ".m4a", ".mp4", ".wav", ".aac"})
 
 _BROWSER_AUDIO_EXT_TO_CONTENT_TYPE: dict[str, str] = {
     ".mp3": "audio/mpeg",
@@ -53,9 +55,6 @@ _BROWSER_AUDIO_EXT_TO_CONTENT_TYPE: dict[str, str] = {
     ".mp4": "audio/mp4",
     ".wav": "audio/wav",
     ".aac": "audio/aac",
-    ".ogg": "audio/ogg",
-    ".opus": "audio/ogg; codecs=opus",
-    ".webm": "audio/webm",
 }
 
 
@@ -117,6 +116,9 @@ class SoundEffectResponse(BaseModel):
     sha256: str | None
     analysis_version: str | None
     role_tags: list[str]
+    category: str | None
+    search_terms: list[str]
+    catalog_rank: int | None
     integrated_lufs: float | None
     true_peak_dbtp: float | None
     attack_ms: float | None
@@ -151,6 +153,9 @@ def _to_response(effect: SoundEffect) -> SoundEffectResponse:
         sha256=effect.sha256,
         analysis_version=effect.analysis_version,
         role_tags=[str(value) for value in (effect.role_tags or [])],
+        category=effect.category,
+        search_terms=[str(value) for value in (effect.search_terms or [])],
+        catalog_rank=effect.catalog_rank,
         integrated_lufs=effect.integrated_lufs,
         true_peak_dbtp=effect.true_peak_dbtp,
         attack_ms=effect.attack_ms,
@@ -231,6 +236,9 @@ class UpdateSoundEffectRequest(BaseModel):
     publish: bool | None = None
     archive: bool | None = None
     role_tags: list[str] | None = None
+    category: str | None = None
+    search_terms: list[str] | None = None
+    catalog_rank: int | None = Field(default=None, ge=0, le=100_000)
     contains_voice: bool | None = None
     vocal_probability: float | None = None
     provenance: str | None = None
@@ -250,6 +258,21 @@ class UpdateSoundEffectRequest(BaseModel):
         if any(token not in allowed for token in normalized):
             raise ValueError("role_tags contains an unknown Smart sound role")
         return normalized[:16]
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, value: str | None) -> str | None:
+        if value is not None and value not in SFX_CATEGORIES:
+            raise ValueError(f"category must be one of: {', '.join(SFX_CATEGORIES)}")
+        return value
+
+    @field_validator("search_terms")
+    @classmethod
+    def validate_search_terms(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        cleaned = (" ".join(str(term).casefold().split())[:40] for term in value)
+        return list(dict.fromkeys(term for term in cleaned if term))[:32]
 
     @field_validator("vocal_probability")
     @classmethod
@@ -464,6 +487,9 @@ async def update_sound_effect(
 
     for field in (
         "role_tags",
+        "category",
+        "search_terms",
+        "catalog_rank",
         "contains_voice",
         "vocal_probability",
         "provenance",

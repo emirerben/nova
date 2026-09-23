@@ -89,9 +89,10 @@ export interface UseEditCopilotOptions {
   itemId: string;
   variantId: string;
   /** Accepts an optional context the hook threads through on every turn:
-   * renderStepSummary (below) and the hook's own message-derived
-   * recentEditHistory. The caller's buildSnapshot forwards these into
-   * buildCopilotSnapshot's options — see snapshot.ts. */
+   * renderStepSummary (below), the hook's own message-derived
+   * recentEditHistory, and the requestTexts that rank the SFX catalog. The
+   * caller's buildSnapshot forwards these into buildCopilotSnapshot's
+   * options — see snapshot.ts. */
   buildSnapshot: (context?: CopilotSnapshotContext) => CopilotSnapshot;
   applyOps: (
     ops: CopilotOp[],
@@ -329,6 +330,21 @@ export function deriveRecentEditHistory(messages: CopilotMessage[]): string[] {
   return summaries.slice(-COPILOT_RECENT_EDIT_HISTORY_MAX);
 }
 
+/** Earlier user messages that still steer SFX catalog ranking, so a
+ * clarification reply ("at the end") keeps the buzzer it is about. */
+const COPILOT_SFX_PRIOR_REQUESTS_MAX = 2;
+
+/** The texts that rank the snapshot's SFX catalog: this turn's message, then
+ * the latest earlier user messages, newest first. */
+export function copilotRequestTexts(message: string, priorTurns: EditCopilotTurn[]): string[] {
+  const prior = priorTurns
+    .filter((turn) => turn.role === "user" && turn.content.trim())
+    .slice(-COPILOT_SFX_PRIOR_REQUESTS_MAX)
+    .reverse()
+    .map((turn) => turn.content);
+  return [message, ...prior];
+}
+
 export function outcomeAuthoritativeReply({
   modelReply,
   intent,
@@ -536,6 +552,7 @@ export function useEditCopilot(
       const snapshot = optsRef.current.buildSnapshot({
         renderStepSummary: optsRef.current.renderStepSummary,
         recentEditHistory: deriveRecentEditHistory(messagesRef.current),
+        requestTexts: copilotRequestTexts(trimmed, priorTurns),
       });
       failedRevisionHash = snapshotRevisionHash(snapshot);
       const response = await editCopilotTurn(

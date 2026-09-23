@@ -5,6 +5,7 @@
       "KriaUITests/CreationUITests/testLongPressCopiesPromptsAndRepliesWithoutBlockingOptionTaps",
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
       "KriaUITests/CreationUITests/testEveryCreationFormatOpensTheAttachmentFlow",
+      "KriaUITests/CreationUITests/testLibraryPickerReturnsToChatByDoneAndBySinglePick",
       "KriaUITests/CreationUITests/testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",
       "KriaUITests/CreationUITests/testClipsOnlySubmissionUsesSuggestAnEdit",
       "KriaUITests/CreationUITests/testIncomingResponseDoesNotPullReaderFromScrolledHistory",

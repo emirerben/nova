@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.184.0] - 2026-09-23
+
+### Changed
+- fix(ios): Photos picker gets a Done button and closes on the last pick (KRI-175) (#1203) <!-- release-pr: 1203 -->
+
+## [0.76.183.0] - 2026-09-23
+
+### Changed
+- fix(chat): phone Talking items no longer wait forever for a speech check (#1202) <!-- release-pr: 1202 -->
+
+## [0.76.182.0] - 2026-09-23
+
+### Changed
+- test(ios): isolate BackgroundUploadRetryTests request stubs per test (#1201) <!-- release-pr: 1201 -->
+
+## [0.76.181.0] - 2026-09-23
+
+### Changed
+- feat(admin): hand-author phone subtitled media lanes on a plan item (KRI-174 Phase 1.5) (#1199) <!-- release-pr: 1199 -->
+
+## [0.76.180.0] - 2026-09-23
+
+### Changed
+- feat(sfx): creator sound-effect library, iPhone-safe and reachable by the AI placers (KRI-173) (#1198) <!-- release-pr: 1198 -->
+
+## [0.76.179.0] - 2026-09-23
+
+### Changed
+- feat(copilot): rank the SFX catalog by the creator's request (KRI-173) (#1197) <!-- release-pr: 1197 -->
+
+## [0.76.178.0] - 2026-09-23
+
+### Changed
+- feat(phone): subtitled recipe carries stickers, SFX and a muted ending clip (KRI-174 Phase 1) (#1196) <!-- release-pr: 1196 -->
+
 ## [0.76.177.0] - 2026-09-23
 
 ### Changed

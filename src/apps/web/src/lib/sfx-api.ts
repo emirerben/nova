@@ -60,16 +60,33 @@ export interface InitUploadResponse {
   effect_id: string;
   upload_url: string;
   gcs_path: string;
+  // The content type the PUT URL was signed for; the PUT must send exactly it.
+  content_type: string;
+  expires_in_s: number;
+}
+
+/** Containers the iPhone renderer can play (mirrors the API allowlist). */
+export const SFX_UPLOAD_EXTENSIONS = [".m4a", ".mp4", ".wav", ".mp3", ".aac"] as const;
+
+export function sfxUploadExtension(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  const ext = dot >= 0 ? filename.slice(dot).toLowerCase() : "";
+  if (!(SFX_UPLOAD_EXTENSIONS as readonly string[]).includes(ext)) {
+    throw new Error(`Use ${SFX_UPLOAD_EXTENSIONS.join(", ")} — the iPhone can't play "${ext || "no extension"}".`);
+  }
+  return ext;
 }
 
 /** Phase 1: mint an effect row + get a signed PUT URL. */
-export async function initSfxUpload(
-  filename: string,
-  name?: string,
-): Promise<InitUploadResponse> {
+export async function initSfxUpload(file: File, name?: string): Promise<InitUploadResponse> {
   return adminRequest<InitUploadResponse>(`/upload-init-file`, {
     method: "POST",
-    body: JSON.stringify({ filename, name: name ?? filename }),
+    body: JSON.stringify({
+      filename: file.name,
+      name: name ?? file.name,
+      ext: sfxUploadExtension(file.name),
+      byte_count: file.size,
+    }),
   });
 }
 
@@ -77,12 +94,15 @@ export async function initSfxUpload(
 export async function putFileToGcs(
   uploadUrl: string,
   file: File,
+  contentType: string,
   onProgress?: (pct: number) => void,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl);
-    xhr.setRequestHeader("Content-Type", file.type);
+    // Must match the signed content type, not the browser's guess
+    // (Safari reports .m4a as audio/x-m4a, which breaks the signature).
+    xhr.setRequestHeader("Content-Type", contentType);
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
@@ -95,16 +115,17 @@ export async function putFileToGcs(
 }
 
 export interface ConfirmUploadResponse {
-  effect: SoundEffectSummary;
+  effect_id: string;
+  status: string;
+  duration_s: number | null;
 }
 
 /** Phase 3: tell the backend to HEAD the blob, ffprobe, set status=ready. */
-export async function confirmSfxUpload(effectId: string): Promise<SoundEffectSummary> {
-  const res = await adminRequest<ConfirmUploadResponse>(`/${effectId}/upload-confirm`, {
+export async function confirmSfxUpload(effectId: string): Promise<ConfirmUploadResponse> {
+  return adminRequest<ConfirmUploadResponse>(`/${effectId}/upload-confirm`, {
     method: "POST",
     body: JSON.stringify({}),
   });
-  return res.effect;
 }
 
 /** List all sound effects (admin view, includes unpublished). */
@@ -115,10 +136,16 @@ export async function listAdminSoundEffects(
   return adminRequest<SoundEffectListResponse>(`?limit=${limit}&offset=${offset}`);
 }
 
+// Field names mirror the API's UpdateSoundEffectRequest exactly — unknown
+// keys are silently ignored server-side, so a typo is a no-op, not an error.
 export interface PatchSoundEffectPayload {
   name?: string;
-  published?: boolean;   // true → set published_at=now; false → clear
-  archived?: boolean;
+  publish?: boolean; // true → set published_at=now; false → clear
+  archive?: boolean;
+  manual_audit_status?: "pending" | "approved" | "rejected";
+  contains_voice?: boolean;
+  category?: string;
+  search_terms?: string[];
 }
 
 /** Rename / publish / unpublish a sound effect. */
@@ -139,19 +166,19 @@ export async function archiveSoundEffect(effectId: string): Promise<void> {
 
 /** Get a 1-hour signed GET URL for the effect audio (for preview). */
 export async function getSfxAudioUrl(effectId: string): Promise<string> {
-  const res = await adminRequest<{ url: string }>(`/${effectId}/audio-url`);
-  return res.url;
+  const res = await adminRequest<{ audio_url: string }>(`/${effectId}/audio-url`);
+  return res.audio_url;
 }
 
-/** Full 3-phase upload: init → GCS PUT → confirm. Returns the ready effect. */
+/** Full 3-phase upload: init → GCS PUT → confirm. Resolves once the effect is ready. */
 export async function adminUploadSfx(
   file: File,
   name?: string,
   onProgress?: (stage: "uploading" | "confirming", pct?: number) => void,
-): Promise<SoundEffectSummary> {
-  const { effect_id, upload_url } = await initSfxUpload(file.name, name);
+): Promise<ConfirmUploadResponse> {
+  const { effect_id, upload_url, content_type } = await initSfxUpload(file, name);
   onProgress?.("uploading", 0);
-  await putFileToGcs(upload_url, file, (pct) => onProgress?.("uploading", pct));
+  await putFileToGcs(upload_url, file, content_type, (pct) => onProgress?.("uploading", pct));
   onProgress?.("confirming");
   return confirmSfxUpload(effect_id);
 }

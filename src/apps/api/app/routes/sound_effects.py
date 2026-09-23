@@ -43,6 +43,11 @@ class SoundEffectSummary(BaseModel):
     # the editor copilot pick sounds by fit ("keyword_typewriter_tick",
     # "badge_enter", ...). Empty list on unclassified legacy effects.
     role_tags: list[str] = []
+    # Creator-library browse metadata (KRI-173): one of
+    # services.sfx_catalog.SFX_CATEGORIES (None on legacy effects) and the
+    # lowercase words/phrases a picker can search.
+    category: str | None = None
+    search_terms: list[str] = []
 
 
 class SoundEffectListResponse(BaseModel):
@@ -71,6 +76,8 @@ async def list_sound_effects(
                 duration_s=e.duration_s,
                 preview_audio_url=_preview_audio_url(e.audio_gcs_path),
                 role_tags=list(e.role_tags or []),
+                category=e.category,
+                search_terms=list(e.search_terms or []),
             )
             for e in effects
         ]
