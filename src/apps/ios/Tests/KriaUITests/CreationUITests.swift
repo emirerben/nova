@@ -140,6 +140,54 @@ final class CreationUITests: XCTestCase {
         }
     }
 
+    /// KRI-175: with Full Access the picker selects live and has no Add/Cancel of its own. Done must
+    /// always lead back, and the one talking-to-camera clip returns straight to chat once picked.
+    func testLibraryPickerReturnsToChatByDoneAndBySinglePick() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let card = app.buttons["format-talking_to_camera"]
+        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        let chooseVideos = app.buttons["choose-videos"]
+        XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
+        chooseVideos.tap()
+        // Limit Access… / Allow Full Access / Don't Allow, picked by position: the alert is in the
+        // simulator's language, not the app's. The monitor matters: XCTest's default handler would
+        // otherwise answer an alert that interrupts the tap with Don't Allow.
+        func allowFullAccess(_ alert: XCUIElement) -> Bool {
+            guard alert.buttons.count == 3 else { return false }
+            alert.buttons.element(boundBy: 1).tap()
+            return true
+        }
+        let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
+        defer { removeUIInterruptionMonitor(monitor) }
+        let photos = app.buttons["Choose from Photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        photos.tap()
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
+
+        let done = app.buttons["photos-picker-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        done.tap()
+        XCTAssertTrue(photos.waitForExistence(timeout: 5), "Done returns to Add media")
+
+        photos.tap()
+        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        let video = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Video'")).firstMatch
+        XCTAssertTrue(video.waitForExistence(timeout: 10), app.debugDescription)
+        // The picker grid lives in a remote view, whose cells report themselves as not hittable.
+        video.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let backInChat = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: photos)
+        XCTAssertEqual(XCTWaiter.wait(for: [backInChat], timeout: 10), .completed, "picking the one clip returns to chat")
+        XCTAssertFalse(done.exists)
+    }
+
     func testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes() {
         for runtime in ["v1", "v2"] {
             let app = XCUIApplication()
