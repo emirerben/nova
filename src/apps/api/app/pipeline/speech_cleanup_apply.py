@@ -20,6 +20,7 @@ mixed-gap detection, or retake detection.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 import re
@@ -411,6 +412,33 @@ def hydrate_job_speech_cleanup_snapshot(
     )
 
 
+CUT_FINGERPRINT_VERSION = 1
+
+
+def cut_fingerprint(snapshot: HydratedSpeechCleanupSnapshot) -> str:
+    """Hash the exact source window and keep segments an applied CutPlan renders.
+
+    A cleaned narration derivative records this value so every later boundary
+    (dispatch, device grant, worker) can prove the file was cut from the same
+    source generation with the same accepted plan as the Job's snapshot.
+    Floats are rounded to microseconds so JSON round trips cannot drift it.
+    """
+
+    payload = {
+        "version": CUT_FINGERPRINT_VERSION,
+        "storage_path": snapshot.storage_path,
+        "generation": snapshot.generation,
+        "window_start_s": round(float(snapshot.window_start_s), 6),
+        "window_end_s": round(float(snapshot.window_end_s), 6),
+        "keep_segments": [
+            [round(float(start_s), 6), round(float(end_s), 6)]
+            for start_s, end_s in snapshot.cut_plan.keep_segments
+        ],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def apply_speech_cleanup_to_audio(
     snapshot: HydratedSpeechCleanupSnapshot,
     source_path: str,
@@ -455,6 +483,18 @@ def apply_speech_cleanup_to_audio(
         "pcm_s16le",
         "-ar",
         "48000",
+        # No source tags or encoder/version stamp in the WAV (a guided
+        # derivative's object path is its hash). The samples are still only
+        # stable per host: the AAC decoder and resampler pick CPU-specific
+        # code paths, so a re-driven attempt reuses its pinned derivative
+        # (guided_speech_cleanup.reusable_cleaned_narration) instead of
+        # expecting a re-cut elsewhere to hash to the same name.
+        "-map_metadata",
+        "-1",
+        "-fflags",
+        "+bitexact",
+        "-flags:a",
+        "+bitexact",
         "-y",
         output_path,
     ]

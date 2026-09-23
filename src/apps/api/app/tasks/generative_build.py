@@ -103,6 +103,10 @@ from app.services.job_phases import (
 )
 from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_output_path
 from app.services.speech_cleanup import SpeechCleanupFailure
+from app.services.speech_cleanup_outcome import (
+    # Moved to the service so device-export completion writes the same receipt.
+    build_preflight_public_outcome as _build_preflight_public_outcome,
+)
 from app.services.speech_cleanup_terminal import REQUIRED_SPEECH_CLAIM_TTL_S
 from app.services.template_poster import generate_and_upload_from_gcs
 from app.services.tiktok_style_observations import effective_persona_style
@@ -2204,8 +2208,10 @@ def _run_generative_job_impl(
 
                 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
 
-                if isinstance(exc, SoftTimeLimitExceeded):
-                    # Let the outer soft-timeout handler own messaging/failure_reason.
+                if isinstance(exc, SoftTimeLimitExceeded | SpeechCleanupFailure):
+                    # Let the outer handlers own messaging/failure_reason. A
+                    # required cleanup the pinned narration cannot prove fails as
+                    # `speech_cleanup_failed`, exactly like the cloud renderer.
                     raise
                 # A phone-plan compile/validation failure (no on-device renderer to
                 # fall back to) must persist a failure_reason — without this, the
@@ -2609,7 +2615,12 @@ def _run_generative_job_impl(
     if guided_snapshot is not None:
         if speech_cut_operation_id:
             raise RuntimeError("Speech-cut rerenders are not available on guided stories")
-        _run_guided_story_job(job_id, guided_snapshot, render_trace_id=render_trace_id)
+        _run_guided_story_job(
+            job_id,
+            guided_snapshot,
+            render_trace_id=render_trace_id,
+            speech_cleanup=_guided_speech_cleanup_receipt(immutable_job_plan, guided_snapshot),
+        )
         return
 
     if render_intent_value == "slides":
@@ -3690,6 +3701,9 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
         DEVICE_RENDER_FIELD,
         pin_device_request,
     )
+    from app.services.guided_speech_cleanup import (  # noqa: PLC0415
+        require_guided_cleanup_binding,
+    )
     from app.services.phone_rollout import (  # noqa: PLC0415
         phone_guided_narration_supported,
         validate_phone_pilot_recipe,
@@ -3718,6 +3732,11 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
         )
     raw_plan, _track = _guided_execution_plan(job_id, guided)
     plan = GuidedStoryExecutionPlan.model_validate(raw_plan)
+    if plan.narration is not None:
+        # "Clean up speech": a required_v1 Job plays exactly the cleaned
+        # derivative its immutable preflight snapshot consented to, never the
+        # uncut recording, and no other contract may play a derivative.
+        require_guided_cleanup_binding(snapshot, plan.narration)
     # Visuals-pool photos and videos bind only while their feature is verified;
     # otherwise such a moment keeps failing closed in the compiler as before.
     visual_kinds = frozenset(
@@ -3752,7 +3771,9 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
                 "phone rendering does not yet support guided-story narration",
                 capability="narrationAudio",
             )
-        narration_bed = _resolve_phone_voiceover_bed(job_id, plan.narration.gcs_path)
+        narration_bed = _resolve_phone_voiceover_bed(
+            job_id, plan.narration.gcs_path, narration=plan.narration
+        )
         if narration_bed is None or narration_bed.generation != plan.narration.generation:
             raise UnsupportedPhonePlan(
                 "the approved voiceover was replaced since approval",
@@ -3886,7 +3907,12 @@ def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
     )
 
 
-def _resolve_phone_voiceover_bed(job_id: str, voiceover_gcs_path: str | None) -> Any:
+def _resolve_phone_voiceover_bed(
+    job_id: str,
+    voiceover_gcs_path: str | None,
+    *,
+    narration: Any = None,
+) -> Any:
     """Bridge the sync worker to a fresh, pinned voiceover asset for a
     phone job's recorded narration (KRI-132; KRI-132 follow-up widened this
     from montage-family-only to also back `_run_phone_narrated_job`).
@@ -3910,35 +3936,55 @@ def _resolve_phone_voiceover_bed(job_id: str, voiceover_gcs_path: str | None) ->
     when the item's voiceover is missing, was replaced, or its bytes can no
     longer be read -- a phone job must never bake in a stale or mismatched
     voiceover receipt.
+
+    ``narration`` is the approved guided `NarrationTrack`. When it is a cleaned
+    "Clean up speech" derivative, the bed is that derivative: its raw source
+    must still be the item's current voiceover and its object must sit under
+    this owner's item/analysis derivative prefix (`narration_matches_item`),
+    and the bed plays the cleaned duration. Without provenance (and for the
+    montage/narrated callers, which pass none) nothing changes.
     """
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
     from app.pipeline.phone_recipe_shared import PhoneNarrationBed  # noqa: PLC0415
+    from app.services.creator_execution_contract import (  # noqa: PLC0415
+        narration_matches_item,
+    )
     from app.services.phone_voiceover import inspect_voiceover_asset  # noqa: PLC0415
 
     if not voiceover_gcs_path:
         return None
+    cleaned = narration is not None and narration.speech_cleanup is not None
     with _sync_session() as db:
         from app.models import PlanItem  # noqa: PLC0415
 
         job = db.get(Job, uuid.UUID(job_id))
         item_id = job.content_plan_item_id if job is not None else None
         item = db.get(PlanItem, item_id) if item_id is not None else None
-        usable = bool(
-            item is not None
-            and getattr(item, "audio_mode", None) == "voiceover"
-            and item.voiceover_gcs_path == voiceover_gcs_path
-            and item.voiceover_generation
-            and item.voiceover_duration_s
-            and float(item.voiceover_duration_s) > 0
-        )
+        if cleaned:
+            usable = bool(
+                item is not None
+                and narration.gcs_path == voiceover_gcs_path
+                and narration_matches_item(
+                    narration.model_dump(mode="json"), item, owner_id=job.user_id
+                )
+            )
+        else:
+            usable = bool(
+                item is not None
+                and getattr(item, "audio_mode", None) == "voiceover"
+                and item.voiceover_gcs_path == voiceover_gcs_path
+                and item.voiceover_generation
+                and item.voiceover_duration_s
+                and float(item.voiceover_duration_s) > 0
+            )
         if not usable:
             raise UnsupportedPhonePlan(
                 "recorded voiceover is no longer available for phone rendering",
                 capability="narrationAudio",
             )
-        path = str(item.voiceover_gcs_path)
+        path = voiceover_gcs_path if cleaned else str(item.voiceover_gcs_path)
         plan_item_id = str(item.id)
-        duration_s = float(item.voiceover_duration_s)
+        duration_s = float(narration.duration_s if cleaned else item.voiceover_duration_s)
     try:
         asset = inspect_voiceover_asset(
             path, asset_id=f"voiceover-{plan_item_id}", plan_item_id=plan_item_id
@@ -4840,10 +4886,26 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
         creator_request = str(
             (getattr(job, "all_candidates", None) or {}).get("creator_request") or ""
         )
+        job_owner_id = getattr(job, "user_id", None)
+        job_item_id = getattr(job, "content_plan_item_id", None)
 
     from app.services.creator_execution_contract import validate_execution_binding  # noqa: PLC0415
+    from app.services.guided_speech_cleanup import derivative_path_ok  # noqa: PLC0415
 
     validate_execution_binding(guided_snapshot, raw_strategy, voiceover_path)
+    cleaned = snapshot.narration.speech_cleanup if snapshot.narration is not None else None
+    if cleaned is not None and not derivative_path_ok(
+        snapshot.narration.gcs_path,
+        owner_id=job_owner_id,
+        item_id=job_item_id,
+        analysis_id=cleaned.analysis_id,
+    ):
+        # Both renderers play exactly this object: a cleaned narration must be
+        # this Job's own owner/item/analysis derivative, never another object
+        # (the phone bed and the device grant check the same prefix).
+        raise SpeechCleanupFailure(
+            "snapshot_mismatch", "cleaned narration is outside the Job's derivative prefix"
+        )
 
     def guided_resolved_clip_intents() -> list[Any]:
         """Return persisted resolved intents, failing closed on malformed JSONB."""
@@ -5369,8 +5431,51 @@ def _guided_story_attempt_heartbeat(job_id: str, attempt_id: str):  # noqa: ANN2
         thread.join(timeout=1)
 
 
-def _run_guided_story_job(job_id: str, guided_snapshot: dict, *, render_trace_id: str) -> None:
-    """Render one approved story and never enter the best-effort montage path."""
+def _guided_speech_cleanup_receipt(
+    assembly_plan: Mapping[str, Any],
+    guided_snapshot: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Receipt fields for a guided story whose narration is a cleaned derivative.
+
+    "Clean up speech" cuts the voiceover once at planning time, so the render
+    only proves the pinned derivative still equals this Job's immutable
+    preflight snapshot and reports that cut like the narrated renderer does.
+    Raises ``SpeechCleanupFailure`` before rendering when a ``required_v1``
+    story would otherwise play the uncut recording. None when no cleanup
+    applies (no narration, or a raw narration under any other contract).
+    """
+
+    from app.services.guided_speech_cleanup import (  # noqa: PLC0415
+        require_guided_cleanup_binding,
+    )
+
+    proposal = guided_snapshot.get("approved_proposal")
+    narration = proposal.get("narration") if isinstance(proposal, Mapping) else None
+    if narration is None:
+        return None
+    context = require_guided_cleanup_binding(assembly_plan, narration)
+    if context is None:
+        return None
+    snapshot = hydrate_job_speech_cleanup_snapshot(assembly_plan)
+    return {
+        "_speech_cleanup_outcome_context": context,
+        "silence_cut": snapshot.summary(),
+        "silence_cut_outcome": "applied" if snapshot.cut_plan.removed else "no_change",
+    }
+
+
+def _run_guided_story_job(
+    job_id: str,
+    guided_snapshot: dict,
+    *,
+    render_trace_id: str,
+    speech_cleanup: dict[str, Any] | None = None,
+) -> None:
+    """Render one approved story and never enter the best-effort montage path.
+
+    ``speech_cleanup`` (from `_guided_speech_cleanup_receipt`) rides into
+    finalization only, where it becomes the Job's public cleanup receipt.
+    """
 
     from app.pipeline.guided_story import (  # noqa: PLC0415
         VARIANT_ID,
@@ -5420,6 +5525,8 @@ def _run_guided_story_job(job_id: str, guided_snapshot: dict, *, render_trace_id
             job_id=job_id,
             verify_storage=True,
         )
+        if speech_cleanup:
+            verified_result = {**verified_result, **speech_cleanup}
         _finalize_job(job_id, [verified_result])
         return
 
@@ -5466,6 +5573,8 @@ def _run_guided_story_job(job_id: str, guided_snapshot: dict, *, render_trace_id
         elapsed_ms=_elapsed_ms(render_t0),
         next_phase="finalize",
     )
+    if speech_cleanup:
+        result = {**result, **speech_cleanup}
     finalize_t0 = time.monotonic()
     if _finalize_job(job_id, [result]) is False:
         return
@@ -26277,102 +26386,6 @@ def _raise_marked_snapshot_result_failure(
         and result.get("speech_cleanup_failure_reason") == "snapshot_mismatch"
     ):
         raise SpeechCleanupFailure("snapshot_mismatch")
-
-
-def _nonnegative_receipt_count(value: object) -> int:
-    try:
-        return max(0, int(value or 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _build_preflight_public_outcome(
-    plan: Mapping[str, Any],
-    *,
-    job_id: str,
-    results: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
-    failure_reason: str | None = None,
-) -> dict[str, Any] | None:
-    """Build the bounded chat receipt for one immutable preflight Job.
-
-    The renderer's detailed outcome remains in ``pipeline_trace``. This receipt
-    deliberately carries only generation-bound scalar evidence consumed by the
-    creation-thread projection. Historical markerless ``required_v1`` Jobs keep
-    their existing behavior while they drain.
-    """
-
-    if (
-        plan.get(PREFLIGHT_JOB_CONTRACT_FIELD) != PREFLIGHT_JOB_CONTRACT_VALUE
-        or plan.get("speech_cleanup_contract") != "required_v1"
-    ):
-        return None
-    creator_generation = plan.get("creator_generation_id")
-    if not isinstance(creator_generation, str) or not creator_generation:
-        return None
-
-    bounded_results = [value for value in (results or ()) if isinstance(value, dict)]
-    result_failure_reason = next(
-        (
-            str(value.get("speech_cleanup_failure_reason"))
-            for value in bounded_results
-            if value.get("speech_cleanup_failure_reason")
-        ),
-        None,
-    )
-    effective_failure = failure_reason or result_failure_reason
-    if (
-        effective_failure
-        or not bounded_results
-        or any(value.get("ok") is not True for value in bounded_results)
-    ):
-        code = "snapshot_mismatch" if effective_failure == "snapshot_mismatch" else "internal_error"
-        return {
-            "job_id": str(job_id),
-            "render_generation_id": creator_generation,
-            "status": "failed",
-            "removal_count": 0,
-            "removed_ms": 0,
-            "error": {"code": code, "retryable": code != "snapshot_mismatch"},
-        }
-
-    contexts = [value.get("_speech_cleanup_outcome_context") for value in bounded_results]
-    if all(isinstance(context, dict) for context in contexts):
-        removal_count = max(
-            _nonnegative_receipt_count(context.get("output_removal_count"))
-            for context in contexts
-            if isinstance(context, dict)
-        )
-        removed_ms = max(
-            _nonnegative_receipt_count(context.get("output_removed_ms"))
-            for context in contexts
-            if isinstance(context, dict)
-        )
-    else:
-        # A marked required render without bounded apply evidence is not a
-        # truthful cleanup success. Surface failure rather than fabricate an
-        # applied receipt from a ready-looking output.
-        snapshot_mismatch = any(
-            value.get("silence_cut_outcome") == "insufficient_source_speech"
-            for value in bounded_results
-        )
-        return {
-            "job_id": str(job_id),
-            "render_generation_id": creator_generation,
-            "status": "failed",
-            "removal_count": 0,
-            "removed_ms": 0,
-            "error": {
-                "code": "snapshot_mismatch" if snapshot_mismatch else "internal_error",
-                "retryable": not snapshot_mismatch,
-            },
-        }
-    return {
-        "job_id": str(job_id),
-        "render_generation_id": creator_generation,
-        "status": "applied" if removal_count > 0 else "checked_no_change",
-        "removal_count": removal_count,
-        "removed_ms": removed_ms,
-    }
 
 
 def _build_required_speech_terminal_outcome(
