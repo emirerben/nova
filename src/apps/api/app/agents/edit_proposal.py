@@ -33,6 +33,7 @@ from app.schemas.edit_proposal import (
     MontageTextBinding,
     ProposalDuration,
     StoryBeat,
+    StoryShape,
     VideoReusePolicy,
     canonical_narration_duration_s,
     clean_creator_shot_labels,
@@ -42,6 +43,7 @@ from app.schemas.edit_proposal import (
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
+from app.services import story_shapes
 
 _SENSORY_CLAIM = re.compile(
     r"\b(?:delicious|tasty|flavorful|refreshing|favorite)\b",
@@ -437,6 +439,34 @@ def _clip_intents_prompt_note(
     )
 
 
+def _story_shape_prompt_note(input: EditProposalAgentInput) -> str:  # noqa: A002
+    """KRI-118 lane L3: tell the specialist how to interpret a chat-picked
+    story shape (Main Creator's parallel L2 lane sets these on the brief).
+
+    Returns "" when unset -- the geometry contract itself is enforced
+    deterministically afterward (app.services.story_shapes), so this note is
+    advisory, not the thing the render depends on.
+    """
+
+    if input.story_shape == "day_vlog":
+        return (
+            "STORY SHAPE -- day_vlog: this is a day-in-the-life narrative, not a themed "
+            "grouping. Order the beats chronologically, in the order the clips were "
+            "shot/attached, and keep beat-to-beat transitions understated -- do not build "
+            "toward one climactic chapter."
+        )
+    if input.story_shape == "single_hero":
+        _prompt_media_rows, _alias_to_id, id_to_alias = _prompt_media(input)
+        hero_alias = id_to_alias.get(input.hero_media_id or "")
+        hero_clause = f"the {hero_alias} clip" if hero_alias else "one clip"
+        return (
+            f"STORY SHAPE -- single_hero: {hero_clause} is the hero of this edit. It must "
+            "appear, must open the edit, and must hold more screen time than any other "
+            "single clip -- every other clip is supporting."
+        )
+    return ""
+
+
 def _clip_intents_lead_trail_exempt(
     input: EditProposalAgentInput,  # noqa: A002
     beat_count: int,
@@ -802,6 +832,9 @@ class EditProposalAgentInput(BaseModel):
     )
     shot_labels: list[str] | None = Field(default=None, max_length=MAX_CREATOR_SHOT_LABELS)
     closing_title: str | None = Field(default=None, max_length=CREATOR_TITLE_MAX_CHARS)
+    # KRI-118 lane L3: chat-picked story shape, threaded from ProposalBrief.
+    story_shape: StoryShape | None = None
+    hero_media_id: str | None = Field(default=None, max_length=100)
     media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
     @model_validator(mode="before")
@@ -1459,6 +1492,35 @@ def _creator_quoted_on_screen_text(input: EditProposalAgentInput) -> dict[str, s
     return phrases
 
 
+# How close "only"/"just" must sit to a quoted phrase to read as the creator
+# declaring that quote (or set of quotes) an exhaustive caption list, rather
+# than one caption among others the specialist/planner may still add.
+_EXCLUSIVE_QUOTE_WINDOW_CHARS = 40
+_EXCLUSIVE_QUOTE_RE = re.compile(r"\b(?:only|just)\b", re.IGNORECASE)
+
+
+def _creator_quoted_captions_are_exhaustive(request: str) -> bool:
+    """Whether the creator signaled their quoted on-screen text is the
+    complete caption list (e.g. "only say X", "just use X"), rather than one
+    caption to add alongside whatever else the specialist/planner produces.
+
+    A bare quote ("... and say X ...") is no longer treated as exhaustive by
+    itself -- the legacy heuristic blanked every other beat's caption on any
+    quote at all, which wrongly erased captions the creator clearly wanted
+    elsewhere in the same request (e.g. "name each sport on screen ... and
+    say 'post match pub' for the pub clips").
+    """
+
+    for match in _QUOTED_TEXT_RE.finditer(request):
+        window = request[
+            max(0, match.start() - _EXCLUSIVE_QUOTE_WINDOW_CHARS) : match.end()
+            + _EXCLUSIVE_QUOTE_WINDOW_CHARS
+        ]
+        if _EXCLUSIVE_QUOTE_RE.search(window):
+            return True
+    return False
+
+
 def _trim_media_to_moment_budget(
     beats: list[DraftStoryBeat],
     *,
@@ -2050,7 +2112,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.16.0",
+        prompt_version="1.17.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -2359,6 +2421,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 for part in (_creator_text_note(input), _clip_intents_prompt_note(input))
                 if part
             ),
+            story_shape_note=_story_shape_prompt_note(input),
             footage_note=footage_note,
             media_json=json.dumps(
                 [_media_prompt_dict(row) for row in prompt_media], ensure_ascii=False
@@ -2548,31 +2611,15 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 raise SchemaError(
                     "edit_proposal: fast cut durations do not fit the declared duration"
                 )
-        if input.direction == "fast_montage":
-            available_kinds = {
-                media.kind
-                for media in input.media
-                if media.kind == "image"
-                or (
-                    media.duration_s is not None
-                    and float(media.duration_s) >= _MIN_PLANNABLE_VIDEO_S - _FAST_DURATION_EPSILON_S
-                )
-            }
-        else:
-            available_kinds = {media.kind for media in input.media}
         # Fast montage proposals intentionally leave ``story_beats`` empty;
         # their source-of-truth is the ordered cut list.
         variety_ids = cut_sources if input.direction == "fast_montage" and cuts else used
         required_ids = _required_media_ids(input)
         if required_ids and not required_ids <= variety_ids:
             raise SchemaError("edit_proposal: requested media coverage was dropped")
-        used_kinds = {media.kind for media in input.media if media.media_id in variety_ids}
-        if (
-            input.direction == "fast_montage"
-            and len(available_kinds) > 1
-            and used_kinds != available_kinds
-        ):
-            raise SchemaError("edit_proposal: story must use both photos and videos")
+        # KRI-118 lane L3: a valid, renderable fast_montage may use just one
+        # media kind (photos-only or videos-only) -- the old rejection here
+        # was taste, not a render limit, and is removed (KRI-129).
         creator_beat_indexes: set[int] = set()
         if input.direction in {"guided_story", "text_explainer"}:
             if not output.story_beats:
@@ -2605,29 +2652,41 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         # runs later and is authoritative for every beat's thought. The
         # heuristic remains the fallback for a turn where intents are off or
         # the chat never authored one.
-        creator_captions = (
+        creator_quotes = (
             _creator_quoted_on_screen_text(input)
             if not creator_labels and not _resolved_caption_intents(input)
             else {}
+        )
+        # KRI-118 lane L3: a quote is only treated as the COMPLETE caption
+        # list (blanking every other beat's own caption) when the request
+        # also signals exhaustiveness ("only"/"just" near the quote); a bare
+        # quote is added as one caption alongside whatever else the
+        # specialist/planner produces (see _creator_quoted_captions_are_exhaustive).
+        creator_quotes_are_exhaustive = bool(creator_quotes) and (
+            _creator_quoted_captions_are_exhaustive(input.creator_request)
         )
         for beat_index, beat in enumerate(output.story_beats):
             if beat_index in creator_beat_indexes or (creator_labels and not beat.thought.strip()):
                 # Confirmed creator copy is not an AI draft: it is never
                 # neutralized, length-capped, or screened for invented claims.
                 continue
-            if creator_captions and beat.thought.strip():
-                # The creator said what the screen should say: that list is
-                # complete. A caption that is not one of their quoted phrases
-                # is the model's own and is dropped, whatever the prompt led
-                # it to write (it kept captioning an unlabelled chapter).
-                exact = creator_captions.get(creator_copy_match_key(beat.thought))
+            if creator_quotes and beat.thought.strip():
+                exact = creator_quotes.get(creator_copy_match_key(beat.thought))
                 if exact is not None:
                     # Keep the creator's own spelling, not the model's echo.
                     beat.thought = exact
                     continue
-                beat.thought = ""
-                repairs.append(f"blanked_unrequested_thought:{beat_index}")
-                continue
+                if creator_quotes_are_exhaustive:
+                    # The creator said that quote (or set of quotes) is the
+                    # complete list. A caption that is not one of their
+                    # quoted phrases is the model's own and is dropped,
+                    # whatever the prompt led it to write.
+                    beat.thought = ""
+                    repairs.append(f"blanked_unrequested_thought:{beat_index}")
+                    continue
+                # Not signaled as exhaustive: leave this beat's own thought
+                # alone here and let it fall through to the normal AI-draft
+                # screening below, instead of wiping it.
             has_creator_context = any(
                 media_by_id[media_id].user_context.strip() for media_id in beat.media_ids
             )
@@ -2696,5 +2755,18 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                     },
                 )
             )
+        if (
+            input.direction in {"guided_story", "text_explainer"}
+            and not creator_labels
+            and input.story_shape is not None
+        ):
+            # KRI-118 lane L3: enforce the chat-picked shape's own geometry
+            # contract deterministically, after every other repair has
+            # settled the final beat list (never depend on the model itself
+            # honoring the STORY SHAPE prompt note above).
+            if input.story_shape == "day_vlog":
+                repairs.extend(story_shapes.repair_day_vlog(output, input))
+            elif input.story_shape == "single_hero":
+                repairs.extend(story_shapes.repair_single_hero(output, input))
         output.repairs = repairs
         return output
