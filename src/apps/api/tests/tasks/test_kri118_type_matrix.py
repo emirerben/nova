@@ -757,7 +757,7 @@ def test_worker_guided_story_voiceover_reaches_device(monkeypatch: pytest.Monkey
     job, _snapshot, _session, _planner, cloud, _plan = narration_setup(monkeypatch)
     monkeypatch.setattr(gb.settings, "phone_render_verified_features", list(PROD_VERIFIED_FEATURES))
     bed = narration_bed(duration_s=3.0)
-    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", lambda *_a: bed, raising=False)
+    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", lambda *a, **k: bed, raising=False)
     gb._run_generative_job(str(job.id))
     assert job.status == "awaiting_device"
     cloud.assert_not_called()

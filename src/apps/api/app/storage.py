@@ -379,6 +379,42 @@ def upload_local_file(local_path: str, object_path: str, content_type: str) -> N
     bucket.blob(object_path).upload_from_filename(local_path, content_type=content_type)
 
 
+def upload_local_file_immutable(
+    local_path: str,
+    object_path: str,
+    content_type: str,
+) -> ObjectMetadata:
+    """Create one content-addressed object at most once and return its identity.
+
+    ``if_generation_match=0`` never overwrites. A retried worker whose earlier
+    upload landed but lost its response reuses that object once its size is
+    proven to match the local bytes (like ``copy_object_generation``). Callers
+    must derive the name from the content, e.g. a sha256 prefix.
+    """
+    size = Path(local_path).stat().st_size
+    if _uses_local_storage():
+        destination = local_object_path(object_path)
+        if not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local_path, destination)
+        metadata = _local_metadata(object_path)
+    else:
+        bucket = _get_client().bucket(settings.storage_bucket)
+        try:
+            bucket.blob(object_path).upload_from_filename(
+                local_path,
+                content_type=content_type,
+                if_generation_match=0,
+            )
+        except PreconditionFailed:
+            # Already created by an earlier attempt; verified below.
+            pass
+        metadata = object_metadata(object_path)
+    if metadata.size != size:
+        raise ValueError("immutable object size does not match the local file")
+    return metadata
+
+
 def presigned_put_url_for_sfx(
     user_id: str,
     plan_item_id: str,

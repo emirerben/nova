@@ -159,4 +159,88 @@ import XCTest
         """#)
         XCTAssertFalse(nonRetryablePhoneGateErrorCodes.contains(try XCTUnwrap(transient.lastAssistantErrorCode)))
     }
+
+    /// KRI-118 item 4: `strategy_invalid` (`app.services.creator_errors
+    /// .CreatorStrategyError`), `phone_self_narration_multi_clip`
+    /// (`PHONE_GATE_MESSAGES["self_narration_multi_clip"]`), and
+    /// `speech_cleanup_unavailable_on_phone` all fail their session the same
+    /// deterministic way the original phone-gate codes do (before any Job
+    /// exists), so "Retry generation" must stay suppressed for them too --
+    /// while an ordinary transient failure keeps offering it.
+    func testNonRetryableErrorCodesCoverKRI118StructuralFailuresAlongsidePhoneGate() {
+        for code in [
+            "phone_not_enrolled", "phone_plan_unapproved", "phone_format_unavailable", "phone_voiceover_unavailable",
+            "strategy_invalid", "phone_self_narration_multi_clip", "speech_cleanup_unavailable_on_phone",
+        ] {
+            XCTAssertTrue(nonRetryablePhoneGateErrorCodes.contains(code), code)
+        }
+        for code in ["execution_failed", "self_narration_multi_clip", "format_mismatch", "ffmpeg_failed"] {
+            XCTAssertFalse(nonRetryablePhoneGateErrorCodes.contains(code), code)
+        }
+    }
+
+    // MARK: - storyShapeSubtitle (KRI-118 item 2)
+
+    func testStoryShapeSubtitleMapsKnownShapesAndHidesEverythingElse() {
+        XCTAssertEqual(storyShapeSubtitle(creatorAgent: ["story_shape": .string("day_vlog")]), "Day vlog")
+        XCTAssertEqual(storyShapeSubtitle(creatorAgent: ["story_shape": .string("single_hero")]), "Single hero")
+        XCTAssertNil(storyShapeSubtitle(creatorAgent: ["story_shape": .string("classic_montage")]))
+        XCTAssertNil(storyShapeSubtitle(creatorAgent: [:]))
+        XCTAssertNil(storyShapeSubtitle(creatorAgent: nil))
+    }
+
+    // MARK: - mergedWhatKriaChanged (KRI-118 item 3)
+
+    func testWhatKriaChangedMergesAdjustmentsBeforeNoticesAndDedups() {
+        let merged = mergedWhatKriaChanged(creatorAgent: [
+            "adjustments": .array([.string("Trimmed the intro to match the beat."), .string("Kept the laugh in.")]),
+            "notices": .array([.string("Kept the laugh in."), .string("Skipped the voiceover; no clear speech found.")]),
+        ])
+        XCTAssertEqual(merged, [
+            "Trimmed the intro to match the beat.",
+            "Kept the laugh in.",
+            "Skipped the voiceover; no clear speech found.",
+        ])
+    }
+
+    func testWhatKriaChangedIsEmptyWhenBothListsAreAbsentOrEmpty() {
+        XCTAssertEqual(mergedWhatKriaChanged(creatorAgent: nil), [])
+        XCTAssertEqual(mergedWhatKriaChanged(creatorAgent: [:]), [])
+        XCTAssertEqual(mergedWhatKriaChanged(creatorAgent: ["adjustments": .array([]), "notices": .array([])]), [])
+    }
+
+    // MARK: - nonConfirmationConflictMessage (KRI-118 item 5)
+
+    /// `select_format`'s 409 is not in `confirmationActions`, so it used to
+    /// collapse into the generic `changedMessage` regardless of what the
+    /// server actually said (e.g. a real `format_mismatch` sentence). It must
+    /// now show that real sentence instead.
+    func testSelectFormatConflictSurfacesTheRealServerDetail() {
+        let detail = "Kria's current direction was prepared for a different format than the one you picked. Ask Kria for a new direction."
+        XCTAssertEqual(
+            nonConfirmationConflictMessage(action: "select_format", detail: detail, planIdentity: "1|a"),
+            detail
+        )
+        XCTAssertEqual(
+            nonConfirmationConflictMessage(action: "select_edit_format", detail: detail, planIdentity: "1|a"),
+            detail
+        )
+    }
+
+    func testSelectFormatConflictFallsBackWhenTheServerSentNoDetail() {
+        XCTAssertEqual(
+            nonConfirmationConflictMessage(action: "select_format", detail: nil, planIdentity: ""),
+            CreationConfirmationConflict.missingReasonMessage
+        )
+    }
+
+    /// Every other non-confirmation action keeps the old, deliberately vague
+    /// fallback -- only `select_format`/`select_edit_format` are known to
+    /// carry a server detail worth surfacing verbatim.
+    func testOtherNonConfirmationActionsKeepTheGenericChangedMessage() {
+        XCTAssertEqual(
+            nonConfirmationConflictMessage(action: "remove_media", detail: "some detail", planIdentity: ""),
+            CreationConfirmationConflict.changedMessage
+        )
+    }
 }

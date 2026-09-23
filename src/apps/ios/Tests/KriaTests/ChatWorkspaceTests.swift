@@ -297,9 +297,17 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertEqual(FootageReadiness.overallProgress(uploads: [3], preparingCount: 0), 1, "clamped to a valid ProgressView value")
     }
 
+    /// The fallback is what the composer/picker allow before `/capabilities`
+    /// has loaded (or if it fails to load) -- it must match the server's real
+    /// default (50) for every format except talking-to-camera, which is
+    /// genuinely capped at 1 clip server-side. A stale lower fallback (the
+    /// old value was 10) under-caps what a slow/offline first load allows.
     func testCreationFormatFallbackClipLimitProtectsTalkingToCameraOffline() {
         XCTAssertEqual(CreationFormat.talkingToCamera.fallbackMaximumClipCount, 1)
-        XCTAssertEqual(CreationFormat.montage.fallbackMaximumClipCount, 10)
+        XCTAssertEqual(CreationFormat.montage.fallbackMaximumClipCount, 50)
+        XCTAssertEqual(CreationFormat.narrated.fallbackMaximumClipCount, 50)
+        XCTAssertEqual(CreationFormat.slides.fallbackMaximumClipCount, 50)
+        XCTAssertEqual(CreationFormat.fallbackMaximumClipCountWithoutFormat, 50)
     }
 
     func testAttachedClipCountIgnoresVoiceoverAndVisualMedia() {

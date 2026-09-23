@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
-from app.agents._runtime import TerminalError
-from app.agents.edit_proposal import EditProposalAgentInput, EditProposalMedia
+from app.agents._runtime import ModelInvocation, TerminalError
+from app.agents.edit_proposal import (
+    EditProposalAgentInput,
+    EditProposalAgentOutput,
+    EditProposalMedia,
+)
 from app.agents.semantic_edit_proposal import SemanticEditProposalAgent
 from app.schemas.edit_frame_schedule import EditFrameSchedule, FrameScheduledMoment
 from app.schemas.edit_proposal import (
@@ -18,9 +23,12 @@ from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
     NarrationTrack,
     StoryBeat,
+    canonical_media_digest,
 )
 from app.schemas.semantic_edit import SemanticEditPlan
 from app.services.proposal_planning import (
+    INFEASIBLE_INPUT_MESSAGE,
+    SCHEDULE_REJECTED_MESSAGE,
     SemanticPlanningError,
     plan_edit_proposal,
     refresh_snapshot_schedule,
@@ -103,6 +111,32 @@ def _schedule(*, source_start: int = 0) -> EditFrameSchedule:
     )
 
 
+@pytest.mark.parametrize("audio_kind", ["video", "image"])
+def test_story_snapshot_carrying_montage_audio_checks_its_sources(audio_kind: str) -> None:
+    """Planning copies ``montage_audio`` into every direction's plan: a story
+    without fast cuts validates its audio sources instead of crashing."""
+
+    base = _snapshot().model_dump()
+    base["media"].append(
+        MediaRef(
+            lane="clip",
+            media_id="clip-2",
+            gcs_path="users/clip-2",
+            generation="1",
+            kind=audio_kind,
+            duration_s=3 if audio_kind == "video" else None,
+        ).model_dump()
+    )
+    audio = {"preserve_source_audio": True, "source_media_ids": ["clip-2"]}
+    if audio_kind == "image":
+        with pytest.raises(ValueError, match="montage audio beds require video sources"):
+            EditProposalSnapshot.model_validate({**base, "montage_audio": audio})
+        return
+    snapshot = EditProposalSnapshot.model_validate({**base, "montage_audio": audio})
+    assert snapshot.montage_audio is not None
+    assert snapshot.montage_audio.source_media_ids == ["clip-2"]
+
+
 def test_preflight_infeasible_never_invokes_semantic_model(monkeypatch: pytest.MonkeyPatch) -> None:
     called = False
 
@@ -121,6 +155,41 @@ def test_preflight_infeasible_never_invokes_semantic_model(monkeypatch: pytest.M
     assert error.value.code == "semantic_edit_infeasible"
     assert error.value.diagnostics["outcome"] == "infeasible"
     assert called is False
+    # The same confirmed inputs cannot pass, and the creator reads a written
+    # sentence; the scheduler's own reason stays the private diagnostic.
+    assert error.value.retryable is False
+    assert error.value.message == INFEASIBLE_INPUT_MESSAGE
+    assert "pinned timing" not in error.value.message
+
+
+@pytest.mark.parametrize(
+    ("code", "reason", "message"),
+    [
+        ("semantic_capacity", "scheduled source windows exceed footage capacity", None),
+        ("conflicting_text_bindings", "One source has conflicting requested captions.", "same"),
+    ],
+)
+def test_schedule_rejection_shows_written_copy_and_stays_retryable(
+    monkeypatch: pytest.MonkeyPatch, code: str, reason: str, message: str | None
+) -> None:
+    from app.services.semantic_edit_scheduler import FeasibilityError, assess_semantic_feasibility
+
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
+    monkeypatch.setattr(
+        "app.agents.semantic_edit_proposal.SemanticEditProposalAgent.run",
+        lambda *_args, **_kwargs: _semantic_plan(),
+    )
+
+    def reject(*_args, **_kwargs):
+        raise FeasibilityError(code, reason, assess_semantic_feasibility(_input()))
+
+    monkeypatch.setattr("app.services.semantic_edit_scheduler.schedule_semantic_edit", reject)
+    with pytest.raises(SemanticPlanningError) as error:
+        plan_edit_proposal(_input(), force_semantic=True)
+
+    assert error.value.retryable is True
+    assert error.value.reason == reason
+    assert error.value.message == (reason if message == "same" else SCHEDULE_REJECTED_MESSAGE)
 
 
 def test_semantic_success_returns_server_schedule_and_diagnostics(
@@ -328,29 +397,26 @@ def test_layout_revision_preserves_split_labels_and_repeated_sources(repeated: b
     assert refreshed.frame_schedule.direction == "guided_story"
 
 
-def test_narrated_reported_speech_replay_parses_schedules_and_compiles() -> None:
-    """A story quotation must not become a mandatory on-screen caption."""
-    from app.pipeline.guided_story import validate_proposal_compiles
-    from app.services.semantic_edit_scheduler import schedule_semantic_edit
+_SEMANTIC_GOLDEN = (
+    Path(__file__).resolve().parents[1] / "fixtures/agent_evals/semantic_edit_proposal/golden"
+)
 
-    fixture_path = (
-        Path(__file__).resolve().parents[1]
-        / "fixtures/agent_evals/semantic_edit_proposal/golden/narrated_reported_speech.json"
-    )
-    replay = json.loads(fixture_path.read_text())
-    creator_input = EditProposalAgentInput.model_validate(replay["input"])
-    assert len(creator_input.media) == 10
-    assert len(creator_input.narration_words) == 91
-    assert 'said: "The work can take its time."' in creator_input.creator_request
 
-    plan = SemanticEditProposalAgent(None).parse(replay["raw_text"], creator_input)
-    scheduled = schedule_semantic_edit(plan, creator_input)
-    snapshot = EditProposalSnapshot(
+def _narrated_snapshot(
+    creator_input: EditProposalAgentInput,
+    *,
+    title: str,
+    duration_s: float,
+    story_beats: list[StoryBeat],
+    frame_schedule: EditFrameSchedule,
+    montage_text_bindings: list,
+) -> EditProposalSnapshot:
+    return EditProposalSnapshot(
         direction=creator_input.direction,
         goal=creator_input.goal,
         pace=creator_input.pace,
-        duration_s=scheduled.duration_s,
-        title=creator_input.opening_title or plan.title,
+        duration_s=duration_s,
+        title=title,
         opening_title=creator_input.opening_title,
         opening_title_duration_s=creator_input.opening_title_duration_s,
         closing_title=creator_input.closing_title,
@@ -376,13 +442,166 @@ def test_narrated_reported_speech_replay_parses_schedules_and_compiles() -> None
             )
             for item in creator_input.media
         ],
+        story_beats=story_beats,
+        frame_schedule=frame_schedule,
+        montage_text_bindings=montage_text_bindings,
+        mixed_media_timing=creator_input.mixed_media_timing,
+    )
+
+
+def _compiled_text_elements(snapshot: EditProposalSnapshot) -> list[dict]:
+    """The same compiler v8 call as validate_proposal_compiles, keeping its text lanes."""
+    from app.pipeline.guided_story import compile_execution_plan
+
+    compiled = compile_execution_plan(
+        {
+            "proposal_version": 1,
+            "media_digest": canonical_media_digest(snapshot.media, snapshot.narration),
+            "approved_proposal": snapshot.model_dump(mode="json"),
+            "media_identities": [
+                {
+                    "lane": ref.lane,
+                    "media_id": ref.media_id,
+                    "gcs_path": ref.gcs_path,
+                    "generation": ref.generation,
+                    "kind": ref.kind,
+                }
+                for ref in snapshot.media
+            ],
+        },
+        track=None,
+    )
+    assert compiled["compiler_version"] == 8
+    return compiled["text_elements"]
+
+
+class _CassetteClient:
+    def __init__(self, raw_text: str) -> None:
+        self.raw_text = raw_text
+        self.calls = 0
+
+    def invoke(self, **_kwargs: object) -> ModelInvocation:
+        self.calls += 1
+        return ModelInvocation(raw_text=self.raw_text)
+
+
+def _plan_golden_replay(
+    monkeypatch: pytest.MonkeyPatch, replay: dict
+) -> tuple[EditProposalAgentInput, EditProposalAgentOutput, list[dict]]:
+    """Run the real planning boundary on a recorded response, then compile its text."""
+    creator_input = EditProposalAgentInput.model_validate(replay["input"])
+    client = _CassetteClient(replay["raw_text"])
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: client)
+
+    output = plan_edit_proposal(creator_input, force_semantic=True)
+
+    assert client.calls == 1
+    assert output.planning_diagnostics["outcome"] == "compiled"
+    snapshot = _narrated_snapshot(
+        creator_input,
+        title=output.title,
+        duration_s=output.duration_s,
+        story_beats=output.scheduled_story_beats,
+        frame_schedule=output.frame_schedule,
+        montage_text_bindings=output.montage_text_bindings,
+    )
+    return creator_input, output, _compiled_text_elements(snapshot)
+
+
+def test_narrated_reported_speech_replay_parses_schedules_and_compiles() -> None:
+    """A story quotation must not become a mandatory on-screen caption."""
+    from app.pipeline.guided_story import validate_proposal_compiles
+    from app.services.semantic_edit_scheduler import schedule_semantic_edit
+
+    fixture_path = _SEMANTIC_GOLDEN / "narrated_reported_speech.json"
+    replay = json.loads(fixture_path.read_text())
+    creator_input = EditProposalAgentInput.model_validate(replay["input"])
+    assert len(creator_input.media) == 10
+    assert len(creator_input.narration_words) == 91
+    assert 'said: "The work can take its time."' in creator_input.creator_request
+
+    plan = SemanticEditProposalAgent(None).parse(replay["raw_text"], creator_input)
+    scheduled = schedule_semantic_edit(plan, creator_input)
+    snapshot = _narrated_snapshot(
+        creator_input,
+        title=creator_input.opening_title or plan.title,
+        duration_s=scheduled.duration_s,
         story_beats=scheduled.story_beats,
         frame_schedule=scheduled.schedule,
         montage_text_bindings=scheduled.montage_text_bindings,
-        mixed_media_timing=creator_input.mixed_media_timing,
     )
 
     validate_proposal_compiles(snapshot)
     assert len(plan.chapters) == 10
     assert len(snapshot.story_beats) == 10
     assert snapshot.frame_schedule.total_frames == 1458
+
+
+@pytest.mark.parametrize(
+    "fixture_name, image_count, chapter_count, repair",
+    [
+        # every voiceover sentence as both a thought and a chapter binding
+        ("narrated_voiceover_line_bindings", 4, 8, "blanked_narrated_thought:7"),
+        # shot directions as thoughts, voiceover sentences as bindings
+        ("narrated_shot_direction_thoughts", 4, 10, "blanked_narrated_thought:9"),
+        # a surplus empty payoff chapter on the invented alias m000
+        ("narrated_invented_media_alias", 5, 7, "dropped_unknown_media_chapter:7"),
+    ],
+)
+def test_narrated_voiceover_line_bindings_plan_title_and_captions_only(
+    monkeypatch: pytest.MonkeyPatch,
+    fixture_name: str,
+    image_count: int,
+    chapter_count: int,
+    repair: str,
+) -> None:
+    """Voiceover sentences returned as chapter copy never fail or reach the screen twice.
+
+    Prod shape: a reused photo made two chapter-targeted sentence bindings
+    conflict on one source (`conflicting_text_bindings`), and the thoughts
+    would have drawn AI copy over the timed narration captions.
+    """
+    replay = json.loads((_SEMANTIC_GOLDEN / f"{fixture_name}.json").read_text())
+    raw = json.loads(replay["raw_text"])
+    assert len(raw["text_bindings"]) == 8
+    assert Counter(media["kind"] for media in replay["input"]["media"]) == {
+        "video": 5,
+        "image": image_count,
+    }
+
+    creator_input, output, elements = _plan_golden_replay(monkeypatch, replay)
+
+    assert {"dropped_non_montage_text_bindings:8", repair} <= set(output.repairs)
+    assert output.frame_schedule.total_frames == 1459
+    assert len(output.scheduled_story_beats) == chapter_count
+    assert all(beat.thought == "" for beat in output.scheduled_story_beats)
+    assert output.montage_text_bindings == []
+    captions = [row for row in elements if row["id"].startswith("narration-caption-")]
+    assert [row["id"] for row in elements if row not in captions] == ["guided-title"]
+    assert " ".join(row["text"] for row in captions) == " ".join(
+        word["text"] for word in creator_input.narration_words
+    )
+
+
+def test_narrated_quoted_display_caption_from_a_dropped_binding_still_renders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit creator copy that only came back as a binding moves to its chapter thought."""
+    replay = json.loads((_SEMANTIC_GOLDEN / "narrated_voiceover_line_bindings.json").read_text())
+    replay["input"]["creator_request"] += ' Put "Still standing" on screen over the last shot.'
+    raw = json.loads(replay["raw_text"])
+    raw["text_bindings"][-1] = {"text": "Still standing", "chapter_ids": ["chapter-8"]}
+    replay["raw_text"] = json.dumps(raw)
+
+    _creator_input, output, elements = _plan_golden_replay(monkeypatch, replay)
+
+    assert "moved_creator_caption_binding_to_thought:7:7" in output.repairs
+    assert [beat.thought for beat in output.scheduled_story_beats] == [""] * 7 + ["Still standing"]
+    assert [
+        (row["id"], row["text"])
+        for row in elements
+        if not row["id"].startswith("narration-caption-")
+    ] == [
+        ("guided-title", "One light on the coast"),
+        ("guided-thought-chapter-8", "Still standing"),
+    ]

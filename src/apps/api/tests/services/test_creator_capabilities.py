@@ -1973,3 +1973,104 @@ def test_visuals_only_phone_manifest_still_refuses_voiceover(monkeypatch) -> Non
     )
     phone = manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO]
     assert (phone.available, phone.reason_code) == (False, "unsupported_phone_audio")
+
+
+# ── KRI-118 item 1/2: story shapes (day_vlog/single_hero) under Montage ──────
+
+
+def _shape_manifest(monkeypatch, *, has_voiceover: bool = False):
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "creator_montage_shapes_enabled", True)
+    return capabilities.resolve_creator_manifest(
+        item_id="item-shape",
+        edit_format="montage",
+        has_voiceover=has_voiceover,
+        media=[
+            {"media_id": "clip-1", "kind": "video", "duration_s": 5.0},
+            {"media_id": "clip-2", "kind": "video", "duration_s": 5.0},
+        ],
+    )
+
+
+def test_available_shape_round_trips_through_compile(monkeypatch) -> None:
+    manifest = _shape_manifest(monkeypatch)
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage",
+            archetype="single_hero",
+            hero_media_id="clip-1",
+            render_program="guided",
+            media_scope="all",
+        ),
+    )
+    assert plan.strategy.archetype == "single_hero"
+    assert plan.strategy.hero_media_id == "clip-1"
+    assert plan.notices == []
+
+
+def test_shape_with_voiceover_is_dropped_with_a_notice(monkeypatch) -> None:
+    manifest = _shape_manifest(monkeypatch, has_voiceover=True)
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage",
+            archetype="day_vlog",
+            render_program="native",
+            audio_strategy="voiceover",
+            selected_media_ids=["clip-1"],
+        ),
+    )
+    assert plan.strategy.render_program == "native"
+    assert plan.strategy.archetype is None
+    assert plan.strategy.hero_media_id is None
+    assert plan.notices == ["Day vlog shape needs music; kept a regular montage."]
+
+
+def test_shapes_disabled_by_flag_drop_with_a_notice(monkeypatch) -> None:
+    manifest = _shape_manifest(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "creator_montage_shapes_enabled", False)
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage",
+            archetype="single_hero",
+            hero_media_id="clip-1",
+            render_program="guided",
+            media_scope="all",
+        ),
+    )
+    assert plan.strategy.archetype is None
+    assert any("needs music" in notice for notice in plan.notices)
+
+
+def test_stale_edit_format_day_vlog_is_rewritten_to_montage_with_a_notice(monkeypatch) -> None:
+    manifest = _shape_manifest(monkeypatch)
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="day_vlog",
+            render_program="guided",
+            media_scope="all",
+        ),
+    )
+    assert plan.strategy.edit_format == "montage"
+    assert plan.strategy.archetype == "day_vlog"
+    assert plan.notices == ["Reading this as a montage in the day-vlog style."]
+
+
+def test_stale_edit_format_single_hero_is_rewritten_to_montage_with_a_notice(
+    monkeypatch,
+) -> None:
+    manifest = _shape_manifest(monkeypatch)
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="single_hero",
+            render_program="native",
+            selected_media_ids=["clip-1"],
+        ),
+    )
+    assert plan.strategy.edit_format == "montage"
+    assert plan.strategy.archetype == "single_hero"
+    assert plan.notices == ["Reading this as a montage in the single-hero style."]

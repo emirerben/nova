@@ -2890,6 +2890,21 @@ async def _respond_to_dispatch_result(
             status_code=status.HTTP_409_CONFLICT,
             detail="speech_cleanup_unavailable:Speech cleanup is unavailable for this item",
         )
+    if result.outcome == "speech_cleanup_unavailable_on_phone":
+        # KRI-118 L1 item 1 / item 7: `choice == "clean"` was submitted for an
+        # item whose active narration source is a phone analysis proxy -- the
+        # real audio bytes never leave the device, so cleanup can never run
+        # there. Refused explicitly instead of falling through to the generic
+        # unexpected-outcome 500 below. Message kept identical to
+        # `app.routes.creator_agent._SPEECH_CLEANUP_UNAVAILABLE_ON_PHONE_MESSAGE`
+        # -- no shared import between the two route modules; keep in sync.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "speech_cleanup_unavailable_on_phone:Speech cleanup can't run on this "
+                "iPhone project's audio yet — generate without cleanup."
+            ),
+        )
     if result.outcome == "speech_cleanup_analysis_conflict":
         # Enforce mode fails a render closed when the source is in the preflight
         # cohort but no cleanup decision was supplied. The chat flow always
@@ -3368,7 +3383,7 @@ async def _proposal_media_is_current(
     if narration is not None:
         from app.services.creator_execution_contract import narration_matches_item  # noqa: PLC0415
 
-        if not narration_matches_item(narration.model_dump(mode="json"), item):
+        if not narration_matches_item(narration.model_dump(mode="json"), item, owner_id=user_id):
             return False
         try:
             audio_metadata = await asyncio.to_thread(storage.object_metadata, narration.gcs_path)
@@ -3706,7 +3721,7 @@ async def edit_proposal_conversation_turn(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
                     "code": exc.code,
-                    "message": exc.reason,
+                    "message": exc.message,
                 },
             ) from exc
         except Exception as exc:  # noqa: BLE001 - every invalid revision must release its fence

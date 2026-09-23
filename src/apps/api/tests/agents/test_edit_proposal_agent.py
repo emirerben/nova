@@ -582,6 +582,61 @@ def test_mixed_timing_prompt_keeps_legacy_rule_without_typed_profile() -> None:
     ) in prompt
 
 
+def test_footage_note_with_known_video_duration() -> None:
+    agent_input = EditProposalAgentInput(
+        direction="guided_story",
+        pace="balanced",
+        target_duration_s=24,
+        media=[
+            EditProposalMedia(media_id="video", lane="clip", kind="video", duration_s=8.0),
+            EditProposalMedia(media_id="photo", lane="asset", kind="image"),
+        ],
+    )
+    prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+
+    assert "Real available video footage totals about 8.0s across 1 shortlisted clip(s)" in prompt
+    assert "No video footage was uploaded" not in prompt
+    assert "exact duration wasn't provided" not in prompt
+
+
+def test_footage_note_with_unknown_video_duration_is_not_reported_as_no_video() -> None:
+    """A video clip with an unprobed duration_s is not the same as no video
+    footage: telling the model "no video footage was uploaded" here was
+    observed live to make it silently drop real, known clips from its plan
+    (KRI-118 follow-up, 2026-09-23)."""
+    agent_input = EditProposalAgentInput(
+        direction="guided_story",
+        pace="balanced",
+        target_duration_s=24,
+        media=[
+            EditProposalMedia(media_id="video-a", lane="clip", kind="video"),
+            EditProposalMedia(media_id="video-b", lane="asset", kind="video"),
+            EditProposalMedia(media_id="photo", lane="asset", kind="image"),
+        ],
+    )
+    prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+
+    assert "No video footage was uploaded" not in prompt
+    assert "2 video clip(s) are available but their exact duration" in prompt
+    assert "do not" in prompt and "treat them as unusable" in prompt
+
+
+def test_footage_note_with_no_video_clips_at_all() -> None:
+    agent_input = EditProposalAgentInput(
+        direction="guided_story",
+        pace="balanced",
+        target_duration_s=24,
+        media=[
+            EditProposalMedia(media_id="photo", lane="asset", kind="image"),
+        ],
+    )
+    prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+
+    assert (
+        "No video footage was uploaded — every beat must use only the photos provided."
+    ) in prompt
+
+
 def _mixed_timing_payload(*, photo_duration_s: float = 0.6) -> dict:
     long_video_duration_s = round(2.4 - photo_duration_s, 3)
     return {

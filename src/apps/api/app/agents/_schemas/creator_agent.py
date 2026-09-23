@@ -43,6 +43,7 @@ from app.schemas.edit_proposal import (
     MontageAudioPlan,
     MontageCadenceConstraint,
     ProposalDuration,
+    StoryShape,
     VideoReusePolicy,
     clean_creator_copy,
     clean_creator_shot_labels,
@@ -265,7 +266,21 @@ class CreativeStrategy(_CreatorModel):
 
     direction: CreativeDirection = "fast_montage"
     edit_format: EditFormat = "montage"
-    archetype: EditFormat | None = None
+    # KRI-118 lane L2: a chat-picked story SHAPE, not a separate edit_format.
+    # The Montage card stays the only picker entry -- day_vlog/single_hero are
+    # chosen by the Main Creator model and carried here, layered on top of
+    # edit_format == "montage". Only meaningful in that combination; a shape
+    # on any other edit_format (or with a voiceover, or off the guided render
+    # program) is repaired away by `compile_strategy_to_plan`
+    # (app.services.creator_capabilities), never trusted or rendered as-is --
+    # see KRI-129 "the creator's prompt wins": repaired with a notice, never
+    # silently dropped or hard-rejected. Reuses `StoryShape` from
+    # `app.schemas.edit_proposal`, the same literal the guided specialist
+    # (`ProposalBrief.story_shape`, lane L3) already accepts.
+    archetype: StoryShape | None = None
+    # Names the hero clip for a `single_hero` archetype; ignored for every
+    # other shape. Mirrors `ProposalBrief.hero_media_id` (lane L3).
+    hero_media_id: str | None = Field(default=None, max_length=100)
     audio_strategy: AudioStrategy = "licensed_music"
     execution_contract: ExecutionContract | None = None
     media_scope: MediaScope | None = None
@@ -401,6 +416,20 @@ class CreativeStrategy(_CreatorModel):
         if any(not value.strip() or len(value) > 120 for value in values):
             raise ValueError("story_structure entries must be 1-120 characters")
         return [value.strip() for value in values]
+
+    @field_validator("archetype", mode="before")
+    @classmethod
+    def _coerce_archetype(cls, value: object) -> str | None:
+        """Treat any legacy/unrecognized value as absent instead of rejecting.
+
+        `archetype` used to mirror `edit_format`'s full vocabulary (pre
+        KRI-118 lane L2); older recorded model responses and eval fixtures
+        still emit that, e.g. `"archetype": "montage"`. Per KRI-129 ("repair,
+        never reject"), coerce anything that isn't a real shape to `None`
+        here at the schema boundary rather than hard-failing the whole
+        response over a vestigial field the model doesn't need to get right.
+        """
+        return value if value in ("day_vlog", "single_hero") else None
 
     @field_validator("opening_title", mode="before")
     @classmethod
@@ -1173,6 +1202,15 @@ class CreatorEditPlan(_CreatorModel):
     strategy: CreativeStrategy
     commands: list[CreatorCommand] = Field(default_factory=list, max_length=MAX_CREATOR_COMMANDS)
     review: ReviewDecision | None = None
+    # KRI-118 item 2/3/6: short, user-facing sentences for every deterministic
+    # repair or silent-degradation-turned-visible this compile step applied
+    # (a story shape dropped, a stale edit_format rewritten, a hidden format
+    # substituted, a manifest truncated, a fallback strategy used). Mirrors
+    # `app.services.story_shapes.humanize_repairs`'s existing pattern for the
+    # guided specialist; this is the equivalent for the Main Creator compiler.
+    # Never a reason to fail a turn -- KRI-129 "repair and tell, never
+    # silently override."
+    notices: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("manifest_hash", "context_hash")
     @classmethod

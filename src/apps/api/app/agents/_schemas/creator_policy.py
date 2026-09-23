@@ -614,11 +614,121 @@ def normalize_creator_strategy_media(
     )
 
 
+# Formats that must fail visibly instead of silently falling back to montage
+# when their OWN compile step is genuinely malformed (mirrors
+# app.routes.creator_agent._strict_creator_format -- kept as an independent
+# copy for the same route<->policy import-cycle reason as _MEDIA_COUNT_NOUN
+# above; keep both lists in sync). Used by `repair_creator_strategy_shape`
+# below only to recognize the legacy day_vlog/single_hero edit_format values
+# (rule 2); see the NOTE inside that function for why a broader "any strict
+# format unavailable here" rewrite is deliberately NOT implemented.
+STRICT_CREATOR_FORMATS: frozenset[str] = frozenset(
+    {"day_vlog", "single_hero", "subtitled", "narrated", "narrated_planned", "narrated_ready"}
+)
+
+_SHAPE_LABELS: dict[str, str] = {"day_vlog": "Day vlog", "single_hero": "Single-hero"}
+
+
+def repair_creator_strategy_shape(
+    manifest: ResolvedCreatorManifest,
+    strategy: CreativeStrategy,
+    *,
+    shapes_enabled: bool,
+) -> tuple[CreativeStrategy, list[str]]:
+    """KRI-118 item 2: repair a story-shape/stale-format strategy instead of
+    raising, returning a short human notice for every repair applied.
+
+    Called from `app.services.creator_capabilities.compile_strategy_to_plan`
+    BEFORE `normalize_creator_strategy_media` resolves the render program, so
+    every rewrite below sees the strategy's own stated `edit_format`/
+    `archetype` values, not yet the resolved renderer. Per KRI-129 ("the
+    creator's prompt wins"): a policy mismatch here is a genuine render
+    limit, repaired deterministically and told to the creator -- never a
+    silent drop. `shapes_enabled` carries the caller's own
+    `settings.creator_montage_shapes_enabled` read; this module intentionally
+    never imports settings itself (see the CAPABILITY_PHONE_SOURCE_AUDIO
+    comment on `effective_render_program` above). Covers rules 1 and 2 of
+    KRI-118 item 2 (shape-availability drop, legacy edit_format rewrite);
+    rule 3 (a hidden/unavailable strict format rewritten instead of hitting
+    `strategy_invalid`) is deliberately NOT implemented here -- see the NOTE
+    inline below.
+    """
+
+    notices: list[str] = []
+    edit_format = coerce_edit_format(strategy.edit_format)
+    archetype = strategy.archetype
+    hero_media_id = strategy.hero_media_id
+
+    # Rule 2: a stale client/receipt/draft still carries edit_format literally
+    # "day_vlog"/"single_hero" -- the OLD native-picker vocabulary. The chat
+    # contract now only ever exposes Montage as a picker entry; read the old
+    # value as the new shape instead of a format this manifest may no longer
+    # resolve, so an old draft never dead-ends on a format-mismatch failure.
+    if edit_format in {"day_vlog", "single_hero"} and archetype is None:
+        archetype = edit_format
+        edit_format = "montage"
+        style = "day-vlog" if archetype == "day_vlog" else "single-hero"
+        notices.append(f"Reading this as a montage in the {style} style.")
+
+    # Rule 1: a shape is only ever meaningful on a guided montage with no
+    # voiceover, and only while the rollout flag admits it at all. Never
+    # trust the model's own choice alone -- this is the server-side half of
+    # the availability gate `prompts/main_creator.txt` is also told to
+    # respect.
+    if archetype is not None:
+        guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
+        guided_available = bool(guided is not None and guided.available)
+        has_voiceover = manifest.has_voiceover or strategy.audio_strategy == "voiceover"
+        shape_available = (
+            shapes_enabled and edit_format == "montage" and not has_voiceover and guided_available
+        )
+        if not shape_available:
+            label = _SHAPE_LABELS.get(archetype, archetype)
+            notices.append(f"{label} shape needs music; kept a regular montage.")
+            archetype = None
+            hero_media_id = None
+
+    # NOTE (rule 3, deliberately NOT implemented here): the audit that seeded
+    # this task described a THIRD repair -- a strict format hidden/unavailable
+    # on a phone-rendering manifest rewritten instead of hitting
+    # `app.routes.creator_agent._strict_creator_format`'s zero-tolerance
+    # `strategy_invalid` failure. Verified against the actual current code
+    # (not just the audit) before writing it: every format-unavailability
+    # path this module's `effective_render_program` can raise is ALREADY
+    # converted to a typed, graceful outcome before it could ever reach that
+    # branch --  the generic "edit format X unavailable" ValueError becomes
+    # `CreatorCapabilityError` in `compile_strategy_to_plan`'s own try/except
+    # (pinned by `test_compile_rejects_format_whose_renderer_flag_is_off` in
+    # tests/services/test_creator_capabilities.py, which explicitly asserts
+    # the format-disabled case raises CreatorCapabilityError, not a silent
+    # rewrite), and the phone-specific case raises `PhoneFormatUnavailableError`
+    # (a `MixedMediaTimingUnavailableError` subclass), handled distinctly by
+    # `_record_media_unavailable`. A speculative implementation of rule 3
+    # against either of those paths regressed that already-tested, deliberate
+    # behavior. Left out rather than shipped broken; flagged in the PR for a
+    # human to confirm whether a real "hits strategy_invalid" repro exists
+    # that this investigation missed.
+
+    if not notices:
+        return strategy, []
+    return (
+        strategy.model_copy(
+            update={
+                "edit_format": edit_format,
+                "archetype": archetype,
+                "hero_media_id": hero_media_id,
+            }
+        ),
+        notices,
+    )
+
+
 __all__ = [
     "MAX_MAIN_CREATOR_SELECTED_MEDIA",
     "CAPABILITY_DRAFT_GUIDED_PROPOSAL",
     "CAPABILITY_GUIDED_VOICEOVER",
     "GUIDED_VOICEOVER_EXECUTION_CONTRACT",
+    "STRICT_CREATOR_FORMATS",
     "MixedMediaTimingUnavailableError",
     "MontageCadenceUnavailableError",
     "PhoneFormatUnavailableError",
@@ -626,5 +736,6 @@ __all__ = [
     "effective_render_program",
     "explicit_scope_from_stated_media_count",
     "normalize_creator_strategy_media",
+    "repair_creator_strategy_shape",
     "states_explicit_media_narrowing_cue",
 ]

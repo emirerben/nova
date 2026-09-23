@@ -618,6 +618,24 @@ class Settings(BaseSettings):
         "the API process, the plan in the worker).",
     )
 
+    guided_voiceover_speech_cleanup_enabled: bool = Field(
+        default=False,
+        description="Clean up speech for guided narrated stories. When a creator chooses "
+        "'Clean up speech' on a guided voiceover, the draft task applies the confirmed "
+        "preflight CutPlan to the pinned voiceover once, stores the cleaned WAV under "
+        "users/{owner}/plan/{item}/speech-cleanup/, and plans, captions and renders "
+        "against that derivative (NarrationTrack.speech_cleanup records its provenance). "
+        "Gates the writer only: readers always accept the provenance field so mixed "
+        "deploys stay safe. Also requires SILENCE_CUT_ENABLED. Deploy with it off and "
+        "enable only once every api and worker machine runs a build that reads the "
+        "provenance field. Off: a clean choice fails closed with the non-retryable "
+        "speech_cleanup_disabled failure and never renders the uncut voiceover. "
+        "`fly secrets set GUIDED_VOICEOVER_SPEECH_CLEANUP_ENABLED=true --app nova-video` "
+        "+ machine restart. Once on, never roll the image back past this change: "
+        "older builds reject the provenance field on proposals already written, and "
+        "turning the flag off does not repair those rows.",
+    )
+
     speech_cleanup_mixed_gap_mode: Literal["off", "shadow", "apply"] = Field(
         default="off",
         description="Required-v1 mixed-gap filler detector rollout. off preserves the "
@@ -1160,6 +1178,10 @@ class Settings(BaseSettings):
     # here so that lane can read it without a second config PR. Ships
     # default ON per that lane's rollout plan.
     creator_montage_shapes_enabled: bool = True
+    # KRI-118 item 5: Main Creator session budgets, moved off hardcoded
+    # literals in routes/creator_agent.py (`CreatorAgentSession` creation).
+    creator_question_budget: int = 2
+    creator_max_render_attempts: int = 2
 
     @model_validator(mode="after")
     def reject_guided_edit_before_strict_renderer(self) -> "Settings":

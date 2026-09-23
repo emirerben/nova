@@ -349,3 +349,105 @@ def append_speech_cleanup_render_outcome_locked(
         return "persisted"
     except Exception:  # noqa: BLE001 - observability must never block publication
         return "error"
+
+
+def _nonnegative_receipt_count(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def build_preflight_public_outcome(
+    plan: Mapping[str, Any],
+    *,
+    job_id: str,
+    results: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
+    failure_reason: str | None = None,
+) -> dict[str, Any] | None:
+    """Build the bounded chat receipt for one immutable preflight Job.
+
+    The renderer's detailed outcome remains in ``pipeline_trace``. This receipt
+    deliberately carries only generation-bound scalar evidence consumed by the
+    creation-thread projection. Historical markerless ``required_v1`` Jobs keep
+    their existing behavior while they drain. Shared by the cloud finalizer and
+    the device-export completion route, so both destinations publish one shape.
+    """
+
+    from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
+        PREFLIGHT_JOB_CONTRACT_FIELD,
+        PREFLIGHT_JOB_CONTRACT_VALUE,
+    )
+
+    if (
+        plan.get(PREFLIGHT_JOB_CONTRACT_FIELD) != PREFLIGHT_JOB_CONTRACT_VALUE
+        or plan.get("speech_cleanup_contract") != "required_v1"
+    ):
+        return None
+    creator_generation = plan.get("creator_generation_id")
+    if not isinstance(creator_generation, str) or not creator_generation:
+        return None
+
+    bounded_results = [value for value in (results or ()) if isinstance(value, dict)]
+    result_failure_reason = next(
+        (
+            str(value.get("speech_cleanup_failure_reason"))
+            for value in bounded_results
+            if value.get("speech_cleanup_failure_reason")
+        ),
+        None,
+    )
+    effective_failure = failure_reason or result_failure_reason
+    if (
+        effective_failure
+        or not bounded_results
+        or any(value.get("ok") is not True for value in bounded_results)
+    ):
+        code = "snapshot_mismatch" if effective_failure == "snapshot_mismatch" else "internal_error"
+        return {
+            "job_id": str(job_id),
+            "render_generation_id": creator_generation,
+            "status": "failed",
+            "removal_count": 0,
+            "removed_ms": 0,
+            "error": {"code": code, "retryable": code != "snapshot_mismatch"},
+        }
+
+    contexts = [value.get("_speech_cleanup_outcome_context") for value in bounded_results]
+    if all(isinstance(context, dict) for context in contexts):
+        removal_count = max(
+            _nonnegative_receipt_count(context.get("output_removal_count"))
+            for context in contexts
+            if isinstance(context, dict)
+        )
+        removed_ms = max(
+            _nonnegative_receipt_count(context.get("output_removed_ms"))
+            for context in contexts
+            if isinstance(context, dict)
+        )
+    else:
+        # A marked required render without bounded apply evidence is not a
+        # truthful cleanup success. Surface failure rather than fabricate an
+        # applied receipt from a ready-looking output.
+        snapshot_mismatch = any(
+            value.get("silence_cut_outcome") == "insufficient_source_speech"
+            for value in bounded_results
+        )
+        return {
+            "job_id": str(job_id),
+            "render_generation_id": creator_generation,
+            "status": "failed",
+            "removal_count": 0,
+            "removed_ms": 0,
+            "error": {
+                "code": "snapshot_mismatch" if snapshot_mismatch else "internal_error",
+                "retryable": not snapshot_mismatch,
+            },
+        }
+    return {
+        "job_id": str(job_id),
+        "render_generation_id": creator_generation,
+        "status": "applied" if removal_count > 0 else "checked_no_change",
+        "removal_count": removal_count,
+        "removed_ms": removed_ms,
+    }
