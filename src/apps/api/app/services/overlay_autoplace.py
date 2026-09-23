@@ -26,6 +26,8 @@ from dataclasses import dataclass
 
 import structlog
 
+from app.services.sfx_catalog import words as sfx_words
+
 log = structlog.get_logger()
 
 # Canvas is 9:16 (1080×1920). h_frac = scale * (1080/1920) / aspect, aspect = w/h.
@@ -58,6 +60,13 @@ SFX_INTENT_PREFERENCES: dict[str, tuple[str, ...]] = {
     "pop_in": ("pop", "bubble", "click", "whoosh"),
     "whoosh": ("whoosh", "swoosh", "swipe", "pop"),
     "click": ("click", "tap", "pop"),
+}
+# Smart sound-design roles purpose-built for each intent win over name words
+# (KRI-173): with a ~120-effect library, "pop" alone matches a dozen effects.
+SFX_INTENT_ROLES: dict[str, tuple[str, ...]] = {
+    "pop_in": ("visual_enter_soft", "visual_enter_accent"),
+    "whoosh": ("transition_whip",),
+    "click": ("badge_enter", "cta_click"),
 }
 
 
@@ -144,37 +153,41 @@ def map_sfx_intent(
     """Rule-based intent → glossary effect (decision 9A). Returns partial
     SoundEffectPlacement fields, or None ("none" intent / empty glossary).
 
-    `glossary` rows: {"id","name","audio_gcs_path","duration_s"} — ready+published only.
+    `glossary` rows: {"id","name","audio_gcs_path","duration_s","role_tags",
+    "contains_voice"} — ready+published only, in a deterministic order.
+    An effect whose role is built for the intent wins, then a whole-word name
+    match ("tap" never matches "Tape rewind"). Voice clips are never picked:
+    this path can auto-apply into a downloaded video.
     """
     if intent == "none" or not glossary:
         return None
-    prefs = SFX_INTENT_PREFERENCES.get(intent, SFX_INTENT_PREFERENCES["pop_in"])
-    for pref in prefs:
-        for fx in glossary:
-            name = str(fx.get("name", "")).lower()
-            if pref in name and fx.get("audio_gcs_path"):
-                return {
-                    "sound_effect_id": str(fx.get("id")),
-                    "src_gcs_path": str(fx.get("audio_gcs_path")),
-                    "duration_s": fx.get("duration_s"),
-                    "label": str(fx.get("name", ""))[:40],
-                }
+    usable = [fx for fx in glossary if fx.get("audio_gcs_path") and not fx.get("contains_voice")]
+    key = intent if intent in SFX_INTENT_PREFERENCES else "pop_in"
+    for role in SFX_INTENT_ROLES[key]:
+        for fx in usable:
+            if role in (fx.get("role_tags") or []):
+                return _sfx_fields(fx)
+    for pref in SFX_INTENT_PREFERENCES[key]:
+        for fx in usable:
+            if pref in sfx_words(fx.get("name")):
+                return _sfx_fields(fx)
     if not allow_fallback:
         # Smart Captions never substitutes an unrelated/meme/female-voice clip
         # merely because the glossary contains one. Silence is safer than the
         # wrong sound at a numbered heading.
         return None
     # Legacy suggestion path: no name match falls back to the first usable
-    # effect. Keep this default byte/behaviour-compatible for existing jobs.
-    for fx in glossary:
-        if fx.get("audio_gcs_path"):
-            return {
-                "sound_effect_id": str(fx.get("id")),
-                "src_gcs_path": str(fx.get("audio_gcs_path")),
-                "duration_s": fx.get("duration_s"),
-                "label": str(fx.get("name", ""))[:40],
-            }
-    return None
+    # effect.
+    return _sfx_fields(usable[0]) if usable else None
+
+
+def _sfx_fields(fx: dict) -> dict:
+    return {
+        "sound_effect_id": str(fx.get("id")),
+        "src_gcs_path": str(fx.get("audio_gcs_path")),
+        "duration_s": fx.get("duration_s"),
+        "label": str(fx.get("name", ""))[:40],
+    }
 
 
 def pacing_cap_s(main_duration_s: float) -> float:

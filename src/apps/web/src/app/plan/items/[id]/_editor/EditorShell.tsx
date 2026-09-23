@@ -5424,6 +5424,7 @@ export default function EditorShell({
       videoDurationS: timelineDuration,
       sfxPlacements: localSfx,
       sfxCatalog: sfxGlossaryEffects,
+      sfxRequestTexts: context?.requestTexts,
       // Speech marks describe the PERSISTED render's timeline — hide them while
       // local clip edits have shifted it (same staleness discipline the prompt
       // applies to beat marks). Saving refreshes the map.

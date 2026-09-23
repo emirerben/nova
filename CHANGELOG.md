@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.179.0] - 2026-09-23
+
+### Changed
+- feat(copilot): rank the SFX catalog by the creator's request (KRI-173) (#1197) <!-- release-pr: 1197 -->
+
 ## [0.76.178.0] - 2026-09-23
 
 ### Changed

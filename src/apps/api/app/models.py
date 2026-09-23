@@ -553,6 +553,14 @@ class SoundEffect(Base):
     sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     analysis_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     role_tags: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # Creator-library browse/selection metadata (KRI-173, migration 0109):
+    # one of services.sfx_catalog.SFX_CATEGORIES, plus lowercase words and
+    # phrases ("buzzer", "wrong answer") the planners match requests against.
+    category: Mapped[str | None] = mapped_column(Text, nullable=True)
+    search_terms: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # Seed-catalog order (headline effect first per category). Selection
+    # tie-breaks on it; created_at resets whenever an effect is re-uploaded.
+    catalog_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
     integrated_lufs: Mapped[float | None] = mapped_column(Float, nullable=True)
     true_peak_dbtp: Mapped[float | None] = mapped_column(Float, nullable=True)
     attack_ms: Mapped[float | None] = mapped_column(Float, nullable=True)

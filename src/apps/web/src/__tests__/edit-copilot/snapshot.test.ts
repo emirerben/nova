@@ -1625,3 +1625,103 @@ it("uses exact source indices for both durations and generation-tagged context",
   expect(snapshot.slots[1].source_duration_s).toBeNull();
   expect(snapshot.source_assets?.[0].generation).toBe("generation-2");
 });
+
+describe("SFX catalog relevance (KRI-173 library)", () => {
+  // ~120 effects in upload order: 13 per category, headline first, then a
+  // "Wrong buzzer" uploaded mid-library, then the role-tagged smart-* seeds.
+  // GET /sound-effects serves them newest first.
+  const categories = ["rejection", "approval", "suspense", "transition", "impact", "comedy", "ui", "sports", "money"];
+  const takes = categories.flatMap((category) =>
+    Array.from({ length: 13 }, (_, i) =>
+      effect({ id: `${category}-${i}`, name: `${category} take ${i}`, category, search_terms: [category] }),
+    ),
+  );
+  const uploads = [
+    ...takes.slice(0, 60),
+    effect({ id: "fx-buzzer", name: "Wrong buzzer", category: "rejection", search_terms: ["buzzer", "wrong answer"] }),
+    ...takes.slice(60),
+    ...Array.from({ length: 7 }, (_, i) =>
+      effect({ id: `smart-${i}`, name: `Smart accent ${i}`, role_tags: [`role_${i}`] }),
+    ),
+  ];
+  const library = [...uploads].reverse();
+  const legacyCaps = { text_elements: true, timeline: true, sfx: true };
+  const placed = [sfx({ id: "pin-1", sound_effect_id: "impact-5" })];
+
+  function catalogIds(
+    capabilities: EditorCapabilities,
+    options: Parameters<typeof buildCopilotSnapshot>[5] = {},
+  ): string[] {
+    const snapshot = buildCopilotSnapshot([bar()], [slot()], [{ source_duration_s: 8 }], capabilities, [], {
+      sfxEnabled: true,
+      sfxPlacements: placed,
+      sfxCatalog: library,
+      ...options,
+    });
+    return snapshot.sfx?.catalog.map((row) => row.id) ?? [];
+  }
+
+  it("makes a named sound addressable within the legacy 20-row budget", () => {
+    // The fixture's point: the newest 20 uploads do not include the buzzer.
+    expect(library.slice(0, 20).map((row) => row.id)).not.toContain("fx-buzzer");
+
+    const ids = catalogIds(legacyCaps, { sfxRequestTexts: ["add a buzzer here"] });
+    expect(ids).toHaveLength(20);
+    expect(ids.slice(0, 2)).toEqual(["impact-5", "fx-buzzer"]);
+  });
+
+  it("keeps placed and suggested effects, then spreads the rest across categories", () => {
+    const ids = catalogIds(legacyCaps, {
+      sfxSuggestions: [{ effect_id: "money-12", at_s: 2, gain: 1, reason: "price reveal" }],
+    });
+    expect(ids).toHaveLength(20);
+    expect(ids.slice(0, 2)).toEqual(["impact-5", "money-12"]);
+    const firstRound = ids.slice(2, 2 + categories.length + 1).map((id) => id.split("-")[0]);
+    expect(new Set(firstRound)).toEqual(new Set([...categories, "smart"]));
+    expect(ids).not.toContain("fx-buzzer");
+  });
+
+  it("ranks the whole library when the budget is negotiated", () => {
+    const ids = catalogIds(
+      { ...legacyCaps, copilot_snapshot_max_bytes: 524288 },
+      { sfxRequestTexts: ["add a buzzer here"] },
+    );
+    expect(ids).toHaveLength(library.length);
+    expect(ids.slice(0, 2)).toEqual(["impact-5", "fx-buzzer"]);
+  });
+
+  it("keeps the placed and requested effects when byte pressure trims the catalog to 12", () => {
+    const capped = "x".repeat(80);
+    const longMoment = "x".repeat(2000);
+    const snapshot = buildCopilotSnapshot(
+      Array.from({ length: 6 }, (_, i) => bar({ id: `bar-${i}`, text: capped, start_s: i, end_s: i + 0.5 })),
+      Array.from({ length: 12 }, (_, i) =>
+        slot({ key: `slot-${i}`, slotId: `slot-${i}`, clipIndex: 0, momentDescription: longMoment }),
+      ),
+      [{ source_duration_s: 8 }],
+      { sfx: true, overlays: true },
+      [],
+      {
+        sfxEnabled: true,
+        sfxPlacements: placed,
+        sfxCatalog: library,
+        sfxRequestTexts: ["add a buzzer here"],
+        overlaysEnabled: true,
+        overlayCards: Array.from({ length: 12 }, (_, i) => overlay({ id: `overlay-${i}` })),
+        poolAssets: Array.from({ length: 12 }, (_, i) => asset({ id: `asset-${i}`, subject: capped })),
+        pendingSuggestions: Array.from({ length: 6 }, (_, i) => suggestion({ id: `suggestion-${i}`, reason: capped })),
+        musicState: {
+          swappable: true,
+          currentTrackId: "track-1",
+          currentTrackTitle: capped,
+          candidates: Array.from({ length: 20 }, (_, i) => ({ id: `track-${i}`, title: capped })),
+        },
+        title: capped,
+        openTools: ["text", "sounds", "overlays", "styles"],
+      },
+    );
+    expect(byteLength(snapshot)).toBeLessThanOrEqual(COPILOT_SNAPSHOT_MAX_BYTES);
+    expect(snapshot.sfx?.catalog).toHaveLength(12);
+    expect(snapshot.sfx?.catalog.slice(0, 2).map((row) => row.id)).toEqual(["impact-5", "fx-buzzer"]);
+  });
+});
