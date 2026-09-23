@@ -53,6 +53,85 @@ import KriaMediaEngine
         }
     }
 
+    /// KRI-164: `NativeEditorInteraction.transitionOverlap`'s `duration*0.3`
+    /// floor (0.333333*0.3 = 0.0999999) lands just under its 0.1s cutoff, so
+    /// the projection abuts these clips with zero overlap even though both
+    /// declare a crossfade -- exactly the shape of job `d33dca56…`'s clips
+    /// 7/8/10. The compiler used to keep the declared 0.103s transition
+    /// anyway, producing a clip whose `timelineStart` exactly equalled the
+    /// previous clip's `end`; Composition then rejected the whole recipe
+    /// with `invalidTimeline`. Drive the real `timelineProjection` function
+    /// to reproduce that exact floating-point geometry, not hand-picked
+    /// numbers, then build `EditorClip`s the same way
+    /// `NativeEditorSession.timelineClips` does (a plain pass-through of the
+    /// window's `start`/`end`) so this exercises the actual overlap the
+    /// compiler receives in production.
+    func testTransitionClampsToProjectedOverlapAtSubFrameSlotBoundary() async throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: url)
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
+            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: fingerprint), url: url)
+        let durations = [0.866667, 0.333333, 0.866667]
+        let slots = durations.enumerated().map { index, duration in
+            EditorTimelineSlot(id: "slot-\(index)", clipIndex: 0, inS: 0, durationS: duration,
+                transitionAfter: index < durations.count - 1 ? "crossfade" : "cut",
+                transitionDurationS: index < durations.count - 1 ? 0.103 : nil)
+        }
+        let projection = NativeEditorInteraction.timelineProjection(slots: slots, carousel: nil)
+        XCTAssertEqual(projection.clipWindows.count, 3)
+        // Confirm the projection still reproduces the zero-overlap boundary
+        // this test exists to guard. If this ever stops being true, the
+        // assertions below are no longer exercising KRI-164's geometry.
+        XCTAssertEqual(projection.clipWindows[1].overlapBefore, 0)
+        XCTAssertEqual(projection.clipWindows[1].start, projection.clipWindows[0].end, accuracy: 0.0001)
+
+        let clips = zip(slots, projection.clipWindows).map { slot, window in
+            EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: slot.clipIndex,
+                start: window.start, end: window.end, trimIn: 0, trimOut: window.end - window.start,
+                sourceDuration: 10, slotID: slot.id)
+        }
+        let document = EditorDocument(clips: slots)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: document, clips: clips, items: [], sources: [0: source]).recipe
+        let rendered = try XCTUnwrap(recipe.tracks.first(where: { $0.kind == .video })?.clips)
+        XCTAssertEqual(rendered.count, 3)
+        XCTAssertNil(rendered[1].transition,
+            "Clip 2 has zero projected overlap with clip 1; a transition here claims overlap the projection never left room for")
+        for (index, clip) in rendered.enumerated() where index > 0 {
+            guard let transition = clip.transition else { continue }
+            let previousEnd = rendered[index - 1].timelineStart + rendered[index - 1].duration
+            XCTAssertLessThanOrEqual(transition.duration, previousEnd - clip.timelineStart + 1e-9)
+        }
+        XCTAssertNoThrow(try recipe.validate())
+        _ = try await LivePreviewComposition(recipe: recipe, assetURLs: ["source-0": url])
+    }
+
+    func testTransitionShortensToOverlapWhenRequestedDurationExceedsIt() throws {
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
+            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: fingerprint, duration: 6),
+            url: URL(fileURLWithPath: "/fixture/original.mp4"))
+        // 0.5s slots with a requested 0.3s crossfade: transitionOverlap caps
+        // this at leftDuration*0.3 = 0.15, well under the requested 0.3.
+        let slots = [
+            EditorTimelineSlot(id: "slot-0", clipIndex: 0, inS: 0, durationS: 0.5,
+                transitionAfter: "crossfade", transitionDurationS: 0.3),
+            EditorTimelineSlot(id: "slot-1", clipIndex: 0, inS: 0, durationS: 0.5),
+        ]
+        let projection = NativeEditorInteraction.timelineProjection(slots: slots, carousel: nil)
+        XCTAssertEqual(projection.clipWindows[1].overlapBefore, 0.15, accuracy: 0.0001)
+        let clips = zip(slots, projection.clipWindows).map { slot, window in
+            EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: slot.clipIndex,
+                start: window.start, end: window.end, trimIn: 0, trimOut: window.end - window.start,
+                sourceDuration: 6, slotID: slot.id)
+        }
+        let document = EditorDocument(clips: slots)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: document, clips: clips, items: [], sources: [0: source]).recipe
+        let rendered = try XCTUnwrap(recipe.tracks.first(where: { $0.kind == .video })?.clips)
+        XCTAssertEqual(try XCTUnwrap(rendered[1].transition).duration, 0.15, accuracy: 0.0001)
+    }
+
     func testStillVisualKeepsItsWindowWhenFootageRateIsStored() throws {
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",

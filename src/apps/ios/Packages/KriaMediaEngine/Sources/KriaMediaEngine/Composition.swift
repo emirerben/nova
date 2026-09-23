@@ -123,8 +123,17 @@ struct PreviewAudioBinding: Sendable {
                     // this one starts at all -- still fails closed.
                     guard let previousEnd else { throw RecipeError.invalidTimeline }
                     let available = previousEnd - clip.timelineStart
-                    guard available > 0.000_001 else { throw RecipeError.invalidTimeline }
-                    if available + 0.000_001 < fadeIn {
+                    // Two clips landing exactly back to back (available == 0,
+                    // within floating-point noise) are not a genuine hole --
+                    // they're an abut with a transition duration a caller
+                    // left in place from before its own overlap math zeroed
+                    // the overlap out (KRI-164). Drop to a hard cut instead
+                    // of routing into the frame-floor branch below, whose
+                    // `rounded(.down)` on zero can't tell "just barely fits"
+                    // from "doesn't fit at all".
+                    guard available > -0.000_001 else { throw RecipeError.invalidTimeline }
+                    if available <= 0.000_001 { fadeIn = 0 }
+                    else if available + 0.000_001 < fadeIn {
                         let frame = 1 / recipe.frameRate
                         let fitted = (available / frame).rounded(.down) * frame
                         fadeIn = fitted >= frame ? fitted : 0

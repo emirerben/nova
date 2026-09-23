@@ -94,7 +94,17 @@ enum NativeEditorRenderError: Error, Equatable {
                 case "flash": kind = .fadeWhite
                 default: throw NativeEditorRenderError.unsupportedLane("transition")
                 }
-                transition = Transition(kind: kind, duration: previous.transitionDurationS ?? 0.35)
+                // NativeEditorInteraction.transitionOverlap already decided how
+                // much (if any) of these two clips overlaps -- it floors any
+                // overlap under 0.1s to zero, which `timelineClips` bakes into
+                // `clips[index-1].end`/`clip.start` as an exact abut. A
+                // transition built from the slot's *requested* duration
+                // instead of that projected geometry can claim overlap that
+                // doesn't exist, which Composition then rejects outright
+                // (KRI-164). The projection owns the overlap; only emit a
+                // transition when it actually left room for one.
+                let overlap = clips[index - 1].end - clip.start
+                if overlap > 0.000_001 { transition = Transition(kind: kind, duration: overlap) }
             }
             let explicitRate = authoredSlot?.raw["playback_rate"]?.numberValue
             if let explicitRate {

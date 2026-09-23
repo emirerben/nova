@@ -153,5 +153,54 @@ final class ClipTransitionCompositionTests: XCTestCase {
             XCTAssertEqual(error as? RecipeError, .invalidTimeline)
         }
     }
+
+    @MainActor private func coloredAsset(name: String, color: CIColor) throws -> (directory: URL, url: URL) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let context = CIContext()
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        let url = directory.appendingPathComponent("\(name).png")
+        try context.writePNGRepresentation(of: CIImage(color: color).cropped(to: CGRect(x: 0, y: 0, width: 16, height: 16)),
+            to: url, format: .RGBA8, colorSpace: space)
+        return (directory, url)
+    }
+
+    // KRI-164: an editor projection can floor a requested transition's
+    // overlap to exactly zero (NativeEditorInteraction.transitionOverlap's
+    // duration*0.3 floor) while leaving the transition itself attached to
+    // the clip. Unlike the sub-frame case above, `available` here is exactly
+    // 0, not a small positive remainder -- confirm it's treated as a cut
+    // (`available <= 1e-6`), not routed into the frame-floor branch above it
+    // or refused as a gap. This uses the same still-image compositing path
+    // as the three tests above; the fade/gap clamp they and this test cover
+    // runs identically before the still-image/video-track branch.
+    @MainActor func testCrossfadeDropsToACutWhenClipsAbutExactly() async throws {
+        let (grayDirectory, grayURL) = try coloredAsset(name: "gray", color: CIColor(red: 0.5, green: 0.5, blue: 0.5))
+        defer { try? FileManager.default.removeItem(at: grayDirectory) }
+        let (whiteDirectory, whiteURL) = try coloredAsset(name: "white", color: .white)
+        defer { try? FileManager.default.removeItem(at: whiteDirectory) }
+        let recipe = EditRecipe(canvas: Canvas(width: 16, height: 16), assets: [
+            MediaAsset(id: "gray", relativePath: "gray.png"), MediaAsset(id: "white", relativePath: "white.png"),
+        ], tracks: [TimelineTrack(id: "v", kind: .video, clips: [
+            // "a" ends exactly where "b" starts. Must compile with the fade
+            // dropped to a cut, not throw.
+            TimelineClip(id: "a", sourceAssetID: "gray", sourceDuration: 1.7),
+            TimelineClip(id: "b", sourceAssetID: "white", sourceDuration: 2, timelineStart: 1.7, transition: Transition(duration: 0.3)),
+        ])])
+        let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: ["gray": grayURL, "white": whiteURL])
+        // A dropped fade must be a real hard cut, not merely "didn't throw":
+        // sample just after the boundary and confirm it's fully "b"'s color
+        // rather than a residual gray/white blend.
+        let generator = AVAssetImageGenerator(asset: preview.playerItem.asset)
+        generator.videoComposition = preview.playerItem.videoComposition
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let frame = try await generator.image(at: CMTime(seconds: 1.72, preferredTimescale: 600)).image
+        let context = CIContext()
+        var pixels = [UInt8](repeating: 0, count: 16 * 4)
+        context.render(CIImage(cgImage: frame, options: [.colorSpace: NSNull()]), toBitmap: &pixels, rowBytes: 64,
+                       bounds: CGRect(x: 0, y: 8, width: 16, height: 1), format: .RGBA8, colorSpace: nil)
+        XCTAssertGreaterThan(pixels[0], 240, "expected a hard cut to white immediately after the abut point, not a residual gray blend")
+    }
 }
 #endif
