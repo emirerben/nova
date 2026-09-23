@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.184.0] - 2026-09-23
+
+### Changed
+- fix(ios): Photos picker gets a Done button and closes on the last pick (KRI-175) (#1203) <!-- release-pr: 1203 -->
+
 ## [0.76.183.0] - 2026-09-23
 
 ### Changed
