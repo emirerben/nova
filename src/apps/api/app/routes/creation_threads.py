@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,7 +30,12 @@ from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_F
 from app.auth import CurrentUser, NativeClient
 from app.config import settings
 from app.database import get_db
-from app.db_locks import CONTENT_PLAN_LOCK, acquire_locked_rows
+from app.db_locks import (
+    CONTENT_PLAN_LOCK,
+    acquire_key_share_rows,
+    acquire_locked_rows,
+    transient_sqlstate,
+)
 from app.kria.api_schemas import KriaProblemOut, ThreadDeltaOut
 from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
@@ -61,6 +67,7 @@ from app.models import (
     SpeechCleanupAnalysis,
     TikTokPublication,
     TrainingArtifactRetentionEvent,
+    User,
 )
 from app.routes import creator_agent
 from app.routes.music_jobs import _SLOT_UPLOAD_AUDIO_CT
@@ -132,6 +139,9 @@ _ACTIVE_AGENT_STATUSES = frozenset(
         "revising",
     }
 )
+_TERMINAL_AGENT_STATUSES = frozenset({"completed", "failed", "cancelled"})
+#: The idempotent session link after the Creator commit: one try, two retries.
+_SESSION_LINK_ATTEMPTS = 3
 _ACTIVE_PUBLICATION_STATUSES = frozenset(
     {"queued", "snapshotting", "submitting", "processing", "submission_unknown"}
 )
@@ -1199,7 +1209,8 @@ async def _record_partial_variant_retry_enqueue_failure(
     # canonical order (app/db_locks.CANONICAL_LOCK_ORDER): Job -> Session ->
     # CreationThread.  The thread projection is derived state and is locked
     # last.  A newer retry or projection update must remain authoritative if
-    # one raced the broker failure.
+    # one raced the broker failure.  rollback() expires ``thread``; keep its ids.
+    thread_id, creator_id = thread.id, thread.creator_id
     await db.rollback()
     locked = await acquire_locked_rows(db, {Job: job_id, CreatorAgentSession: session_id})
     job = locked[Job]
@@ -1208,8 +1219,8 @@ async def _record_partial_variant_retry_enqueue_failure(
         await db.execute(
             select(CreationThread)
             .where(
-                CreationThread.id == thread.id,
-                CreationThread.creator_id == thread.creator_id,
+                CreationThread.id == thread_id,
+                CreationThread.creator_id == creator_id,
             )
             .with_for_update()
             .execution_options(populate_existing=True)
@@ -1398,6 +1409,169 @@ async def _load(
         )
         raise RuntimeFailure(404, code, "Creation thread not found")
     return thread
+
+
+async def _key_share_thread_parents(
+    db: AsyncSession,
+    thread: CreationThread,
+    *,
+    session_id: uuid.UUID | None = None,
+) -> None:
+    """Key-share the locked thread's FK parents before its first write.
+
+    A second UPDATE of the thread row in one transaction (every ``_append``
+    bumps ``revision``) re-runs every foreign-key check on it, so PostgreSQL
+    takes FOR KEY SHARE on each parent late, after everything else the
+    transaction holds.  Workers lock ContentPlan -> PlanItem ->
+    CreatorAgentSession, so the post-Creator link, which had already
+    key-shared the new session, deadlocked a worker holding the parents
+    (2026-09-23, thread B8D898EC).  Taking the key-shares here, right after
+    the thread lock, turns the late checks into re-locks.  ContentPlan is left
+    out: it is locked FOR NO KEY UPDATE (``app.db_locks.CONTENT_PLAN_LOCK``),
+    which never blocks a key-share; PlanItem and Job are still locked FOR
+    UPDATE.  ``session_id`` is a session about to replace the pointer.
+    """
+
+    await acquire_key_share_rows(
+        db,
+        {
+            PlanItem: thread.active_plan_item_id,
+            Job: thread.active_job_id,
+            CreatorAgentSession: session_id or thread.active_creator_agent_session_id,
+        },
+    )
+
+
+async def _lock_thread_for_session_link(
+    db: AsyncSession, thread_id: uuid.UUID, owner_id: uuid.UUID, session_id: uuid.UUID
+) -> CreationThread:
+    """Lock a thread to link ``session_id``: User -> CreationThread -> FK parents.
+
+    The User key-share comes first because ``message_thread`` holds the user
+    FOR UPDATE while it waits for this thread; taken after the thread it would
+    close that cycle.  ``populate_existing`` matters: the caller's instance
+    still carries the revision/state of the controller's committed transaction,
+    and writing those back would regress a concurrent poll's projection.
+    """
+
+    if isinstance(db, AsyncSession):  # unit-test doubles script db.execute
+        await acquire_key_share_rows(db, {User: owner_id})
+    thread = (
+        await db.execute(
+            select(CreationThread)
+            .where(CreationThread.id == thread_id, CreationThread.creator_id == owner_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    if isinstance(db, AsyncSession):
+        await _key_share_thread_parents(db, thread, session_id=session_id)
+    return thread
+
+
+async def _link_creator_session(
+    db: AsyncSession,
+    thread_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    session_id: uuid.UUID,
+    *,
+    replayed_client_event_id: str | None = None,
+) -> CreationThread:
+    """Link the committed Creator session to its thread and project it.
+
+    Runs after the Creator controller committed the user message and the
+    session (and may already have published clip preparation), so losing this
+    transaction orphans a durable conversation from its chat.  It is
+    idempotent -- the pointer assignment is absolute and ``_sync_agent``
+    dedups by receipt -- so a lock-race abort is retried in a fresh
+    transaction without re-running the controller.
+
+    ``replayed_client_event_id`` makes this the heal of a replayed message:
+    the link happens only while, under these locks, the thread is still
+    unlinked from the session that message started.
+    """
+
+    for attempt in range(1, _SESSION_LINK_ATTEMPTS + 1):
+        try:
+            thread = await _lock_thread_for_session_link(db, thread_id, owner_id, session_id)
+            if replayed_client_event_id is not None:
+                if (
+                    await _replayed_unlinked_session(db, thread, replayed_client_event_id)
+                    != session_id
+                ):
+                    return thread
+                log.warning(
+                    "creation_thread.session_link_healed",
+                    thread_id=str(thread_id),
+                    session_id=str(session_id),
+                )
+            thread.active_creator_agent_session_id = session_id
+            await _sync_agent(db, thread)
+            return thread
+        except DBAPIError as exc:
+            sqlstate = transient_sqlstate(exc)
+            if sqlstate is None or attempt == _SESSION_LINK_ATTEMPTS:
+                raise
+            await db.rollback()
+            log.warning(
+                "creation_thread.session_link_retry",
+                thread_id=str(thread_id),
+                session_id=str(session_id),
+                sqlstate=sqlstate,
+                attempt=attempt,
+            )
+            await asyncio.sleep(0.05 * 2 ** (attempt - 1))
+    raise AssertionError("unreachable")
+
+
+async def _replayed_unlinked_session(
+    db: AsyncSession, thread: CreationThread, client_event_id: str
+) -> uuid.UUID | None:
+    """Return the session a replayed message started if its link was lost.
+
+    The Creator controller commits the message and its session before the
+    thread link, so a link that lost a lock race leaves the session holding
+    the reply while the thread points at nothing, or at the terminal session
+    the message replaced.  Only the creator's newest session on the thread's
+    item qualifies, and only when its own user message carries this
+    ``client_event_id``: a session started from another surface, or an older
+    one, is never linked.
+    """
+
+    item_id = thread.active_plan_item_id
+    current_id = thread.active_creator_agent_session_id
+    if item_id is None:
+        return None
+    if current_id is not None:
+        current = await db.get(CreatorAgentSession, current_id)
+        if current is not None and current.status not in _TERMINAL_AGENT_STATUSES:
+            return None
+    newest_id = (
+        await db.execute(
+            select(CreatorAgentSession.id)
+            .where(
+                CreatorAgentSession.creator_id == thread.creator_id,
+                CreatorAgentSession.plan_item_id == item_id,
+            )
+            .order_by(CreatorAgentSession.created_at.desc(), CreatorAgentSession.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if newest_id is None or newest_id == current_id:
+        return None
+    started_here = (
+        await db.execute(
+            select(CreatorAgentEvent.id)
+            .where(
+                CreatorAgentEvent.session_id == newest_id,
+                CreatorAgentEvent.event_type == "user_message",
+                CreatorAgentEvent.role == "user",
+                CreatorAgentEvent.client_event_id == client_event_id,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return newest_id if started_here is not None else None
 
 
 async def _repair_missing_thread_job_projection(
@@ -2846,6 +3020,9 @@ async def _agent_message(
     if not thread.active_plan_item_id:
         raise HTTPException(status_code=409, detail="Creation project is missing its draft")
     item_id = str(thread.active_plan_item_id)
+    # The controller commits, and a retried link rolls back (which expires
+    # every instance in this session), so the link works from plain values.
+    thread_id, owner_id = thread.id, user.id
     existing = (
         await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
         if thread.active_creator_agent_session_id
@@ -2866,7 +3043,7 @@ async def _agent_message(
         # creator message grants a fresh two-confirmation budget while keeping
         # the accumulated typed plan and conversation in the same audit trail.
         existing.max_render_attempts = int(existing.render_attempts or 0) + 2
-    if existing is None or existing.status in {"completed", "failed", "cancelled"}:
+    if existing is None or existing.status in _TERMINAL_AGENT_STATUSES:
         result = await creator_agent.start_creator_session_controller(
             request,
             item_id,
@@ -2898,19 +3075,11 @@ async def _agent_message(
             db,
             allow_chat=True,
         )
-    thread.active_creator_agent_session_id = uuid.UUID(result.id)
-    # The Creator Agent handler commits its own transaction. Reacquire the
-    # thread row before appending the projected events so concurrent requests
-    # cannot race on MAX(sequence).
-    thread = (
-        await db.execute(
-            select(CreationThread)
-            .where(CreationThread.id == thread.id, CreationThread.creator_id == user.id)
-            .with_for_update()
-        )
-    ).scalar_one()
-    await _sync_agent(db, thread)
-    return thread
+    # The Creator Agent handler commits its own transaction and may already
+    # have published clip preparation. Reacquire the thread (in the
+    # thread-mutation lock order, so concurrent requests cannot race on
+    # MAX(sequence) nor deadlock that worker) before projecting its events.
+    return await _link_creator_session(db, thread_id, owner_id, uuid.UUID(result.id))
 
 
 @router.get("/capabilities", response_model=CreationCapabilitiesOut)
@@ -3398,12 +3567,13 @@ async def get_thread(
                 "kria_runtime_unavailable",
                 "Creation chat unavailable",
             )
-        identifier = thread.id
+        # rollback() expires every instance in the request session, ``user`` too.
+        identifier, owner_id = thread.id, user.id
         await db.rollback()
         return await read_delta(
             db,
             thread_id=identifier,
-            creator_id=user.id,
+            creator_id=owner_id,
             after_sequence=-1,
             limit=limit,
         )
@@ -3491,8 +3661,31 @@ async def message_thread(
     if duplicate:
         if duplicate.event_type != "user_message" or duplicate.content != body.message:
             raise HTTPException(status_code=409, detail="Idempotency key reused")
+        # The replay is the client's recovery after a failed response. If the
+        # Creator commit landed but the thread link did not, link it now. The
+        # link re-checks under its own locks: it waits on the thread's parents,
+        # which a Creator turn may hold while its foreign-key checks need the
+        # user row this request holds FOR UPDATE, so release that first.
+        session_id = (
+            await _replayed_unlinked_session(db, thread, body.client_event_id)
+            if isinstance(db, AsyncSession)
+            else None
+        )
+        # rollback() expires every instance in the request session, ``user`` too.
+        owner_id, locked_thread_id = user.id, thread.id
         await db.rollback()
-        return await _response(db, await _load(thread_id, user, db))
+        if session_id is not None:
+            thread = await _link_creator_session(
+                db,
+                locked_thread_id,
+                owner_id,
+                session_id,
+                replayed_client_event_id=body.client_event_id,
+            )
+            await db.commit()
+            await db.refresh(thread)
+            return await _response(db, thread)
+        return await _response(db, await _load(thread_id, user, db, creator_id=owner_id))
     if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     # Editor actions own their user-message admission so the model call can
@@ -3774,7 +3967,7 @@ async def action_thread(
         if (duplicate.payload or {}) != {"action": body.action, **body.payload}:
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         await db.rollback()
-        return await _response(db, await _load(thread_id, user, db))
+        return await _response(db, await _load(thread_id, user, db, creator_id=owner_id))
     if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     _stamp_device_intent(thread, user, native_client)
@@ -4497,6 +4690,8 @@ async def action_thread(
                 await reconcile_render_state(db, session)
                 thread.state = {**state, "pending_revision_intent": revision_intent}
                 await db.commit()
+                # A retried session link rolls back, which expires ``current_job``.
+                prepared_job_id = str(current_job.id)
                 thread = await _agent_message(
                     request,
                     thread,
@@ -4510,7 +4705,7 @@ async def action_thread(
                 )
                 state = dict(thread.state or {})
                 state.pop("pending_revision_intent", None)
-                state["prepared_revision_job_id"] = str(current_job.id)
+                state["prepared_revision_job_id"] = prepared_job_id
             else:
                 state["pending_revision_intent"] = revision_intent
             await _append(
@@ -4792,8 +4987,10 @@ async def attach_media(
         requested_ids = {media.media_id for media in body.media}
         if previous_ids != requested_ids:
             raise HTTPException(status_code=409, detail="Idempotency key reused")
+        # rollback() expires every instance in the request session, ``user`` too.
+        owner_id = user.id
         await db.rollback()
-        return await _response(db, await _load(thread_id, user, db))
+        return await _response(db, await _load(thread_id, user, db, creator_id=owner_id))
     if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     if any(media.kind == "image" for media in body.media):
@@ -5058,8 +5255,10 @@ async def rename_thread(
     if duplicate:
         if duplicate.event_type != "thread_renamed" or duplicate.payload != {"title": body.title}:
             raise HTTPException(status_code=409, detail="Idempotency key reused")
+        # rollback() expires every instance in the request session, ``user`` too.
+        owner_id = user.id
         await db.rollback()
-        return await _response(db, await _load(thread_id, user, db))
+        return await _response(db, await _load(thread_id, user, db, creator_id=owner_id))
     if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     thread.title = body.title
@@ -5538,8 +5737,10 @@ async def archive_thread(
     if duplicate:
         if duplicate.event_type != "thread_archived":
             raise HTTPException(status_code=409, detail="Idempotency key reused")
+        # rollback() expires every instance in the request session, ``user`` too.
+        owner_id = user.id
         await db.rollback()
-        return await _response(db, await _load(thread_id, user, db))
+        return await _response(db, await _load(thread_id, user, db, creator_id=owner_id))
     if not matches_conversation_revision(thread, body.expected_revision):
         raise HTTPException(status_code=409, detail="Creation thread changed")
     thread.status = "archived"
