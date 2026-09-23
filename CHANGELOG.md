@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.171.0] - 2026-09-23
+
+### Changed
+- feat(ios): bigger editor preview, tap-to-fullscreen, independent panel (KRI-170) (#1187) <!-- release-pr: 1187 -->
+
 ## [0.76.170.0] - 2026-09-23
 
 ### Fixed
