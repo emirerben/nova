@@ -312,6 +312,7 @@ def build_generative_job(
     creator_request: str = "",
     phone_sources: tuple[PhoneSourceBinding, ...] = (),
     render_on_device: bool = False,
+    phone_subtitled_lanes: dict | None = None,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -361,6 +362,19 @@ def build_generative_job(
             or len(set(clip_paths)) != len(clip_paths)
         ):
             raise ValueError("phone sources must exactly bind the selected clips")
+        # KRI-174 Phase 1.5: an admin-authored subtitled media-lane request
+        # (overlay/sfx/ending-clip), validated against the same schema the
+        # worker will parse it with (`_run_phone_subtitled_job`). Only ever
+        # carried on a phone job — the cloud path never sees this key.
+        if phone_subtitled_lanes:
+            from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+                PhoneSubtitledLaneRequest,
+            )
+
+            try:
+                PhoneSubtitledLaneRequest.model_validate(phone_subtitled_lanes)
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError("phone lane request is invalid") from exc
     elif render_on_device:
         # A project with no footage at all (phone_destination): its Visuals are
         # pinned by the worker, so the device job carries no source bindings.
@@ -515,6 +529,26 @@ def build_generative_job(
     resolved_montage_preset = coerce_montage_preset(montage_preset)
     if resolved_montage_preset != DEFAULT_MONTAGE_PRESET:
         all_candidates["montage_preset"] = resolved_montage_preset
+    phone_assembly_plan: dict | None = None
+    if phone_sources:
+        phone_assembly_plan = {
+            PHONE_SOURCES_FIELD: [s.model_dump(mode="json") for s in phone_sources]
+        }
+        # KRI-174 Phase 1.5: only ride along with real phone sources -- an
+        # admin-authored lane request with no phone job to attach to (e.g. a
+        # cloud render) is dropped rather than persisted, so the cloud path
+        # never carries this key. Validated above; re-imported here to avoid
+        # a module-level dependency for a phone-only, feature-gated field.
+        if phone_subtitled_lanes:
+            from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+                PHONE_SUBTITLED_LANES_FIELD,
+            )
+
+            phone_assembly_plan[PHONE_SUBTITLED_LANES_FIELD] = phone_subtitled_lanes
+    elif render_on_device:
+        # Key presence, not content, routes the worker to the phone planner
+        # and keeps the job out of every cloud re-renderer.
+        phone_assembly_plan = {PHONE_SOURCES_FIELD: []}
     return Job(
         user_id=user_id,
         job_type="generative",
@@ -525,15 +559,5 @@ def build_generative_job(
         content_plan_item_id=content_plan_item_id,
         content_plan_ownership_epoch=content_plan_ownership_epoch,
         status="queued",
-        **(
-            {
-                "assembly_plan": {
-                    PHONE_SOURCES_FIELD: [s.model_dump(mode="json") for s in phone_sources]
-                }
-            }
-            if phone_sources
-            # Key presence, not content, routes the worker to the phone planner
-            # and keeps the job out of every cloud re-renderer.
-            else ({"assembly_plan": {PHONE_SOURCES_FIELD: []}} if render_on_device else {})
-        ),
+        **({"assembly_plan": phone_assembly_plan} if phone_assembly_plan is not None else {}),
     )

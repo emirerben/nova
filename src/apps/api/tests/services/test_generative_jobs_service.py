@@ -547,6 +547,101 @@ def test_phone_voiceover_constructor_rejects_unavailable_lane(
         )
 
 
+# ── KRI-174 Phase 1.5: admin-authored subtitled media-lane request ─────────
+
+
+def _phone_source_args(user_id: uuid.UUID, *, edit_format: str = "subtitled") -> dict:
+    thread_id = uuid.uuid4()
+    binding = _phone_binding(user_id, thread_id)
+    return {
+        "user_id": user_id,
+        "clip_paths": [binding.proxy_path],
+        "mode": "content_plan",
+        "content_plan_item_id": uuid.uuid4(),
+        "content_plan_ownership_epoch": 0,
+        "edit_format": edit_format,
+        "phone_sources": (binding,),
+    }
+
+
+_VALID_LANE_REQUEST = {
+    "overlays": [
+        {
+            "id": "o1",
+            "media_id": "5b3f6a1e-8f1c-4c55-9a8e-2f7d1c9b0a11",
+            "gcs_path": "users/u/plan/i/pool/photo.jpg",
+            "generation": "77",
+            "start_s": 0.0,
+            "end_s": 1.0,
+        }
+    ],
+    "sound_effects": [],
+    "ending_clip": None,
+}
+
+
+def _enable_phone_rendering(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+
+
+def test_phone_subtitled_lanes_persisted_alongside_phone_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_phone_rendering(monkeypatch)
+    user_id = uuid.uuid4()
+
+    job = build_generative_job(
+        **_phone_source_args(user_id),
+        phone_subtitled_lanes=_VALID_LANE_REQUEST,
+    )
+
+    assert job.assembly_plan["_phone_subtitled_lanes_v1"] == _VALID_LANE_REQUEST
+    assert job.assembly_plan[PHONE_SOURCES_FIELD][0]["media_id"] == "phone-source"
+
+
+def test_invalid_phone_subtitled_lanes_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_phone_rendering(monkeypatch)
+    user_id = uuid.uuid4()
+
+    with pytest.raises(ValueError, match="phone lane request is invalid"):
+        build_generative_job(
+            **_phone_source_args(user_id),
+            # Missing every required field on the overlay entry.
+            phone_subtitled_lanes={"overlays": [{"id": "o1"}]},
+        )
+
+
+def test_phone_subtitled_lanes_dropped_without_phone_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lane request with no phone job to attach to is dropped, not persisted --
+    the cloud path must never carry this key."""
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["slot-uploads/a.mp4"],
+        phone_subtitled_lanes=_VALID_LANE_REQUEST,
+    )
+    assert job.assembly_plan is None or "_phone_subtitled_lanes_v1" not in job.assembly_plan
+
+
+def test_phone_subtitled_lanes_none_keeps_byte_identical_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting the kwarg (None) must produce the exact same assembly_plan as
+    today's call -- no drift for every existing phone-sources caller."""
+    _enable_phone_rendering(monkeypatch)
+    user_id = uuid.uuid4()
+    args = _phone_source_args(user_id)
+
+    baseline = build_generative_job(**args)
+    with_none = build_generative_job(**args, phone_subtitled_lanes=None)
+
+    assert with_none.assembly_plan == baseline.assembly_plan
+
+
 # ── T1: topic/intent passthrough ─────────────────────────────────────────────
 
 

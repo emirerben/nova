@@ -50,6 +50,7 @@ from app.services.edit_proposal_limits import (
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.phone_destination import item_visuals_only_on_device
 from app.services.phone_sources import bind_phone_sources
+from app.services.sfx_catalog import planner_catalog
 from app.services.tiktok_style_observations import effective_persona_style
 
 ACTIVE_CREATOR_PHASES = frozenset(
@@ -454,26 +455,26 @@ async def resolve_item_creator_context(
     # The planner may propose a licensed SFX command only from this bounded,
     # server-owned catalog.  Expose the effect's opaque primary key (the
     # craft route resolves and revalidates it); never expose its storage path.
+    # The library is larger than the budget (KRI-173), so take a deterministic,
+    # category-diverse slice of ALL of it; effects outside the slice stay
+    # reachable by name/description via the creator route's planning view.
     sound_effects = (
         await db.execute(
-            select(SoundEffect)
-            .where(
+            select(SoundEffect).where(
                 SoundEffect.status == "ready",
                 SoundEffect.published_at.is_not(None),
                 SoundEffect.archived_at.is_(None),
                 SoundEffect.audio_gcs_path.is_not(None),
             )
-            .order_by(SoundEffect.published_at.desc(), SoundEffect.created_at.desc())
-            .limit(max(0, 50 - len(catalog)))
         )
     ).scalars()
     catalog.extend(
         CreatorCatalogRef(
-            catalog_id=str(effect.id),
+            catalog_id=effect.id,
             kind="sound_effect",
             label=_clean(effect.name, 160),
         )
-        for effect in sound_effects
+        for effect in planner_catalog(sound_effects, max(0, 50 - len(catalog)))
     )
     has_ready_variant = False
     current_edit: CreatorEditSnapshot | None = None

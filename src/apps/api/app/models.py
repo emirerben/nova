@@ -553,6 +553,14 @@ class SoundEffect(Base):
     sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     analysis_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     role_tags: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # Creator-library browse/selection metadata (KRI-173, migration 0109):
+    # one of services.sfx_catalog.SFX_CATEGORIES, plus lowercase words and
+    # phrases ("buzzer", "wrong answer") the planners match requests against.
+    category: Mapped[str | None] = mapped_column(Text, nullable=True)
+    search_terms: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # Seed-catalog order (headline effect first per category). Selection
+    # tie-breaks on it; created_at resets whenever an effect is re-uploaded.
+    catalog_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
     integrated_lufs: Mapped[float | None] = mapped_column(Float, nullable=True)
     true_peak_dbtp: Mapped[float | None] = mapped_column(Float, nullable=True)
     attack_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -2786,6 +2794,11 @@ class PlanItem(Base):
     # (never mutate in-place) so SQLAlchemy detects the change.
     scenes: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     user_edited: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # KRI-174 Phase 1.5: admin-authored `PhoneSubtitledLaneRequest` JSON
+    # (app.pipeline.phone_subtitled_lanes) copied into the job snapshot at
+    # dispatch (`Job.assembly_plan["_phone_subtitled_lanes_v1"]`). Written only
+    # via PUT/DELETE /admin/plan-items/{id}/phone-lanes. None = no lanes.
+    phone_lane_request: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
