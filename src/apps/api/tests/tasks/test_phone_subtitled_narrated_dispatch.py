@@ -3,6 +3,10 @@
 fences (immutable generation, bound sources, single pinned device revision,
 redelivery idempotency), but exercising the LEAN subtitled/narrated paths
 instead of the montage-family archetype/spec prework.
+
+KRI-174 Phase 1 extends this file with `_run_phone_subtitled_job`'s optional
+media-lanes handling (overlay sticker/photo cards, catalog sound effects, a
+muted ending clip) and the new `_resolve_phone_sound_effect` helper.
 """
 
 from __future__ import annotations
@@ -10,15 +14,24 @@ from __future__ import annotations
 import copy
 import uuid
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+import app.services.phone_visuals as phone_visuals_mod
+from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.pipeline.phone_subtitled_lanes import (
+    PHONE_SUBTITLED_LANES_FIELD,
+    ResolvedSoundEffect,
+    SubtitledLaneError,
+    SubtitledSoundEffect,
+)
 from app.pipeline.transcribe import Transcript, Word
 from app.services.device_render import device_status
-from app.services.phone_sources import PHONE_SOURCES_FIELD
+from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, PhoneVisualBinding
 from app.tasks import generative_build as gb
 from tests.pipeline.test_phone_montage_plan import _binding
 from tests.tasks.test_generative_build import _Meta
@@ -63,6 +76,8 @@ def _job_and_session(monkeypatch, *, assembly_plan: dict, all_candidates: dict):
     monkeypatch.setattr(gb.settings, "narrated_self_narration_enabled", True)
     # No network calls: skip the LLM-based caption spelling pass entirely.
     monkeypatch.setattr(gb.settings, "subtitled_caption_correction_enabled", False)
+    # KRI-174: off by default, same as production. Individual tests flip it.
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", False)
     return job, session
 
 
@@ -221,13 +236,388 @@ def test_subtitled_worker_rejects_direct_format_it_does_not_own(monkeypatch):
         gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
 
 
+# --- KRI-174: subtitled media lanes (overlays / sound effects / ending clip) -
+
+
+def _lane_request(*, overlays=None, sound_effects=None, ending_clip=None) -> dict:
+    return {
+        "overlays": overlays or [],
+        "sound_effects": sound_effects or [],
+        "ending_clip": ending_clip,
+    }
+
+
+def _overlay_card(card_id: str, media_id: str, *, start_s: float = 0.0, end_s: float = 2.0) -> dict:
+    return {
+        "id": card_id,
+        "media_id": media_id,
+        "gcs_path": f"users/u1/plan/item1/pool/{media_id}.jpg",
+        "generation": "1",
+        "start_s": start_s,
+        "end_s": end_s,
+    }
+
+
+def _ending_clip_dict(media_id: str) -> dict:
+    return {
+        "media_id": media_id,
+        "gcs_path": f"users/u1/plan/item1/pool/{media_id}.mp4",
+        "generation": "2",
+    }
+
+
+def _sfx_request_dict(sfx_id: str, catalog_id: str, *, at_s: float = 1.0) -> dict:
+    return {"id": sfx_id, "catalog_id": catalog_id, "at_s": at_s}
+
+
+def _fake_resolve_sfx(sfx: SubtitledSoundEffect) -> ResolvedSoundEffect:
+    return ResolvedSoundEffect(
+        request=sfx,
+        asset=LibraryRenderAsset(
+            id=f"sfx-{sfx.catalog_id}",
+            catalog="sound_effect",
+            catalog_id=sfx.catalog_id,
+            generation="3",
+            fingerprint=RenderFingerprint(sha256="e" * 64, byte_count=50),
+        ),
+        duration_s=1.5,
+    )
+
+
+def _make_fake_bind(calls: list):
+    def _fake_bind(_open_session, *, job_id, pins):  # noqa: ARG001
+        calls.append(dict(pins))
+        bound = []
+        for media_id, (kind, path, generation) in pins.items():
+            kwargs: dict = {
+                "media_id": media_id,
+                "gcs_path": path,
+                "generation": generation,
+                "sha256": "a" * 64,
+                "byte_count": 100,
+                "kind": kind,
+            }
+            if kind == "video":
+                kwargs.update(duration_s=5.0, width=1080, height=1920, orientation_degrees=0)
+            bound.append(PhoneVisualBinding(**kwargs))
+        return tuple(bound)
+
+    return _fake_bind
+
+
+def _lanes_features(*extra: str) -> list[str]:
+    return [
+        "basicComposition",
+        "local1080Export",
+        "positionedText",
+        "animatedText",
+        "narrationAudio",
+        "audioMix",
+        *extra,
+    ]
+
+
+def test_subtitled_media_lanes_flag_off_is_byte_identical(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    # Flag stays off (the `_job_and_session` default). A lanes field on the
+    # snapshot must be completely ignored.
+    job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD] = _lane_request(
+        overlays=[_overlay_card("card1", "photo1")]
+    )
+    bind_mock = Mock(side_effect=AssertionError("bind must not run with the flag off"))
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", bind_mock)
+
+    import app.pipeline.phone_subtitled_plan as subtitled_plan_mod
+
+    compile_spy = Mock(wraps=subtitled_plan_mod.compile_phone_subtitled_plan)
+    monkeypatch.setattr(subtitled_plan_mod, "compile_phone_subtitled_plan", compile_spy)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    assert "overlay_transcript" not in variant
+    assert "phone_lane_receipt" not in variant
+    assert PHONE_VISUALS_FIELD not in job.assembly_plan
+    bind_mock.assert_not_called()
+    call_kwargs = compile_spy.call_args.kwargs
+    assert "visuals" not in call_kwargs
+    assert "lanes" not in call_kwargs
+
+
+def test_subtitled_media_lanes_happy_path(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        _lanes_features(
+            "stillImages", "visualVideos", "visualBlocks", "alphaOverlay", "soundEffects"
+        ),
+    )
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", _fake_resolve_sfx)
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+
+    job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD] = _lane_request(
+        overlays=[_overlay_card("card1", "photo1", start_s=0.0, end_s=2.0)],
+        sound_effects=[
+            _sfx_request_dict("sfx1", "cat1", at_s=1.0),
+            _sfx_request_dict("sfx2", "cat2", at_s=3.0),
+        ],
+        ending_clip=_ending_clip_dict("video1"),
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    assert variant["overlay_transcript"] == [
+        {"text": "Hello", "start_s": 0.0, "end_s": 0.5, "confidence": 1.0},
+        {"text": "there.", "start_s": 0.5, "end_s": 1.0, "confidence": 1.0},
+    ]
+    receipt = variant["phone_lane_receipt"]
+    assert receipt["applied"] == ["overlays", "sound_effects", "ending_clip"]
+    assert receipt["dropped"] == []
+    # One bind call for the overlay (image) pin, one for the ending (video) pin.
+    assert len(bind_calls) == 2
+    assert job.assembly_plan[PHONE_VISUALS_FIELD]
+
+
+def test_subtitled_media_lanes_sfx_partial_failure(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(
+        gb.settings, "phone_render_verified_features", _lanes_features("soundEffects")
+    )
+
+    def _resolver(sfx: SubtitledSoundEffect) -> ResolvedSoundEffect:
+        if sfx.catalog_id == "bad":
+            raise UnsupportedPhonePlan(
+                "sound effect is no longer available for phone rendering",
+                capability="soundEffects",
+            )
+        return _fake_resolve_sfx(sfx)
+
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", _resolver)
+
+    job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD] = _lane_request(
+        sound_effects=[
+            _sfx_request_dict("s-good", "good", at_s=1.0),
+            _sfx_request_dict("s-bad", "bad", at_s=2.0),
+        ],
+    )
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    receipt = variant["phone_lane_receipt"]
+    assert receipt["applied"] == ["sound_effects"]
+    assert receipt["dropped"] == [
+        {
+            "lane": "sound_effects",
+            "id": "s-bad",
+            "reason": "sound effect is no longer available for phone rendering",
+        }
+    ]
+
+
+def test_subtitled_media_lanes_compiler_lane_error_is_retried(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        _lanes_features("stillImages", "visualBlocks", "alphaOverlay"),
+    )
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind([]))
+
+    import app.pipeline.phone_subtitled_plan as subtitled_plan_mod
+
+    real_compile = subtitled_plan_mod.compile_phone_subtitled_plan
+    call_count = {"n": 0}
+
+    def _flaky_compile(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise SubtitledLaneError(
+                "overlays", "overlay geometry rejected", capability="visualBlocks"
+            )
+        return real_compile(*args, **kwargs)
+
+    monkeypatch.setattr(subtitled_plan_mod, "compile_phone_subtitled_plan", _flaky_compile)
+
+    job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD] = _lane_request(
+        overlays=[_overlay_card("card1", "photo1", start_s=0.0, end_s=2.0)],
+    )
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    receipt = variant["phone_lane_receipt"]
+    assert receipt["applied"] == []
+    assert receipt["dropped"] == [{"lane": "overlays", "reason": "overlay geometry rejected"}]
+    assert call_count["n"] == 2
+    # The overlay visual was bound before the compiler dropped its lane; the
+    # receipt must not leave it behind as a "referenced" pool asset.
+    assert PHONE_VISUALS_FIELD not in job.assembly_plan
+
+
+def test_subtitled_media_lanes_storage_failure_drops_lane_not_job(monkeypatch):
+    """A non-ValueError failure while resolving a lane (a storage hiccup in
+    `inspect_library_asset`, an unexpected binder error) drops that lane; it
+    never terminalizes the job."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        _lanes_features("stillImages", "visualBlocks", "alphaOverlay", "soundEffects"),
+    )
+
+    def _broken_bind(_open_session, *, job_id, pins):  # noqa: ARG001
+        raise OSError("bucket unreachable")
+
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _broken_bind)
+
+    def _broken_resolver(sfx: SubtitledSoundEffect) -> ResolvedSoundEffect:  # noqa: ARG001
+        raise RuntimeError("library asset size changed")
+
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", _broken_resolver)
+
+    job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD] = _lane_request(
+        overlays=[_overlay_card("card1", "photo1")],
+        sound_effects=[_sfx_request_dict("s1", "ding")],
+    )
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    receipt = job.assembly_plan["variants"][0]["phone_lane_receipt"]
+    assert receipt["applied"] == []
+    assert {d["lane"] for d in receipt["dropped"]} == {"overlays", "sound_effects"}
+    assert PHONE_VISUALS_FIELD not in job.assembly_plan
+
+
+def test_subtitled_media_lanes_drops_overlays_when_still_images_not_verified(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    # Default verified features (see `_job_and_session`) carry neither
+    # "stillImages" nor "visualBlocks" -- overlays must be dropped before any
+    # bind attempt.
+    bind_mock = Mock(side_effect=AssertionError("must not bind an unverified lane"))
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", bind_mock)
+
+    job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD] = _lane_request(
+        overlays=[_overlay_card("card1", "photo1", start_s=0.0, end_s=2.0)],
+    )
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    receipt = variant["phone_lane_receipt"]
+    assert receipt["applied"] == []
+    assert receipt["dropped"] == [
+        {"lane": "overlays", "reason": "stillImages not verified on the phone"}
+    ]
+    bind_mock.assert_not_called()
+
+
+def test_subtitled_media_lanes_malformed_request_drops_and_continues(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+
+    job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD] = {"overlays": "not-a-list"}
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    receipt = variant["phone_lane_receipt"]
+    assert receipt["applied"] == []
+    assert len(receipt["dropped"]) == 1
+    assert receipt["dropped"][0]["lane"] == "request"
+
+
+# --- KRI-174: _resolve_phone_sound_effect -----------------------------------
+
+
+def _sfx_row(
+    *,
+    status: str = "ready",
+    published: bool = True,
+    archived: bool = False,
+    path: str = "sound-effects/cat1/click.m4a",
+    duration_s: float | None = 2.0,
+):
+    return SimpleNamespace(
+        status=status,
+        published_at=datetime.now(UTC) if published else None,
+        archived_at=datetime.now(UTC) if archived else None,
+        audio_gcs_path=path,
+        duration_s=duration_s,
+    )
+
+
+def _sfx_session(monkeypatch, row):
+    session = Mock()
+    session.get = Mock(return_value=row)
+
+    @contextmanager
+    def sessions():
+        yield session
+
+    monkeypatch.setattr(gb, "_sync_session", sessions)
+    return session
+
+
+def test_resolve_phone_sound_effect_ready_returns_resolved(monkeypatch):
+    _sfx_session(monkeypatch, _sfx_row(path="sound-effects/cat1/click.m4a"))
+    import app.services.render_library as render_library_mod
+
+    monkeypatch.setattr(
+        render_library_mod,
+        "inspect_library_asset",
+        lambda path, *, asset_id, catalog, catalog_id: LibraryRenderAsset(  # noqa: ARG005
+            id=asset_id,
+            catalog=catalog,
+            catalog_id=catalog_id,
+            generation="7",
+            fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=123),
+        ),
+    )
+    sfx = SubtitledSoundEffect(id="s1", catalog_id="cat1", at_s=1.0)
+    resolved = gb._resolve_phone_sound_effect(sfx)
+    assert resolved.asset.generation == "7"
+    assert resolved.duration_s == 2.0
+    assert resolved.request is sfx
+
+
+def test_resolve_phone_sound_effect_rejects_unplayable_format(monkeypatch):
+    _sfx_session(monkeypatch, _sfx_row(path="sound-effects/cat1/click.ogg"))
+    sfx = SubtitledSoundEffect(id="s1", catalog_id="cat1", at_s=1.0)
+    with pytest.raises(UnsupportedPhonePlan, match="format"):
+        gb._resolve_phone_sound_effect(sfx)
+
+
+def test_resolve_phone_sound_effect_rejects_archived(monkeypatch):
+    _sfx_session(monkeypatch, _sfx_row(path="sound-effects/cat1/click.m4a", archived=True))
+    sfx = SubtitledSoundEffect(id="s1", catalog_id="cat1", at_s=1.0)
+    with pytest.raises(UnsupportedPhonePlan, match="no longer available"):
+        gb._resolve_phone_sound_effect(sfx)
+
+
+def test_resolve_phone_sound_effect_rejects_wrong_prefix(monkeypatch):
+    _sfx_session(monkeypatch, _sfx_row(path="sound-effects/other-catalog/click.m4a"))
+    sfx = SubtitledSoundEffect(id="s1", catalog_id="cat1", at_s=1.0)
+    with pytest.raises(ValueError, match="invalid render catalog path"):
+        gb._resolve_phone_sound_effect(sfx)
+
+
 # --- narrated (WITH a recorded voiceover) -----------------------------------
 
 
 def _fake_narration_bed(_job_id, voiceover_gcs_path):
     if not voiceover_gcs_path:
         return None
-    from app.kria.render_assets import RenderFingerprint
     from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 
     return PhoneNarrationBed(
