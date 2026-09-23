@@ -70,6 +70,11 @@ const TRIM = 2;
  * architecture — the envelope above is arm64, CI is x86_64, where the two
  * workloads may sit at slightly different relative costs. The observed ratio is
  * logged on every run so the ceiling can be tightened from real CI samples.
+ *
+ * The browser twin has since done that and uses 0.7: on x86 CI a doubled draw
+ * reads 0.78-1.01, too close to 0.8 (agents/DECISIONS.md, 2026-09-24). This
+ * Node check keeps 0.8. It reads 0.46-0.54 on CI and up to 0.73 on a loaded
+ * Mac, and it has no doubled-workload check that needs the tighter gap.
  */
 const MAX_DRAW_COST_RATIO = 0.8;
 

@@ -17,15 +17,23 @@ const LONG_TASK_MS = 50;
 // runner speed without normalizing away a regression in drawMotionFrame.
 // Minimize each side independently; taking the smallest ratio would favor
 // a preempted calibration sample and could conceal a real slowdown.
-// One deliberate difference: here calibration and draw samples are
-// interleaved, alternating which runs first. The e2e 1x and 2x pages run at
-// the same time on one small CI runner, and sampling each side in its own phase
-// let that load land on one side of the ratio (agents/DECISIONS.md, 2026-09-24).
+// Two deliberate differences, both from CI measurements (agents/DECISIONS.md,
+// 2026-09-24). Calibration and draw samples are interleaved, alternating which
+// runs first, because the e2e 1x and 2x pages share one small CI runner and
+// sampling each side in its own phase let that load land on one side of the
+// ratio. And the ceiling is recalibrated for the x86 runners this page is
+// judged on.
 const CALIBRATION_ITERATIONS = 80;
 const SAMPLE_COUNT = 24;
 const MEASUREMENT_BLOCKS = 3;
 const TRIM = 2;
-const MAX_DRAW_COST_RATIO = 0.8;
+// Interleaved samples across four CI VMs (2026-09-24): clean 0.393-0.584
+// (n=77), doubled draw workload 0.777-1.006 (n=47). 0.7 sits in that gap,
+// 1.20x above the worst clean sample and 1.11x below the lowest doubled one,
+// and catches a ~1.5x slowdown on CI. The 0.8 used by the Jest twin was set
+// from arm64, where clean runs read higher. On CI it only caught ~1.7x, so a
+// doubled workload landed within noise of it.
+const MAX_DRAW_COST_RATIO = 0.7;
 
 function maximumPreviewScenes(): MotionPresetInstance[] {
   return Array.from({ length: 2 }, (_, index) => {
