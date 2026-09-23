@@ -2311,3 +2311,31 @@ registration too). If either becomes post-registration, the same drift returns t
 different field. Also revisit the client dead-end: iOS and web should surface the 409 detail
 and offer "refresh the direction" instead of re-showing a proposal the server will never
 accept (tracked as a follow-up, not part of this change).
+
+## [2026-09-23] Narrated phone render: spoken lines are not labels; label lanes draw like cloud; cleanup receipts only for cleanup failures (prod job 76db6913, PR #1185)
+
+An iPhone narrated story (`guided_voiceover_v1`, cleaned voiceover) failed with
+`phone_plan_unsupported` / "sequence effect needs composite-stream parity". The Main Creator had
+read the creator's shot/spoken-line script ("show each shot while I say its line: <shot> ·
+<line>") as transcript topic-label requests; the annotator grounded the first 13-word sentence,
+and `narration_labels._append_element` emitted it as a `generative_sequence` pop-in over the
+title, duplicating the voiceover caption. Decisions:
+
+- Topic labels must be label-shaped (the visual label limit, or a proper name up to 5 words /
+  32 chars). A grounded spoken sentence is rejected with a receipt reason. Captions already carry
+  every spoken word; a sentence-length "label" is duplication, never a label.
+- The phone compiler shares the cloud's label-lane role assignment (`_assign_label_lane_roles`),
+  so context/narration labels are independent overlays on both renderers and a pop-in label can
+  no longer fail a device render. Text-lane sequence effects still fail closed. (PR #1183 fixed
+  the crash by checking the compiled layer's fade kind instead; it was closed in favour of
+  #1185, which also carries its iOS `verify.sh` simulator boot-race fix.)
+- A speech-cleanup receipt says `failed` only for a cleanup-attributed failure (the
+  `or "internal_error"` fallback from #968 mislabelled every failed required_v1 Job, cloud
+  included); a read-side fence hides already-mislabelled receipts.
+- Consent follows the card, not the attempt: generate/retry with no explicit choice re-send the
+  analysis row's recorded `clean`/`keep_original`; `create_without_cleanup` on a finished check
+  is refused before an attempt is reserved; a dispatch refused after a successful draft fails
+  the attempt instead of leaving the session `executing` ("preparing your footage" forever).
+
+**Revisit if:** topic labels need multi-word non-name phrases (widen the shape rule with a
+creator opt-in), or the phone gets a sequence compositor.
