@@ -327,6 +327,10 @@ async def test_summarizer_sends_only_the_first_prompt_as_data(monkeypatch):
     prompt = "Create a 30-second reel from my Barcelona trip clips"
 
     assert await titles._summarize(prompt) == "Barcelona Trip Reel"
+    # The provider enforces a 10s minimum even when our application timeout
+    # cancels the optional naming task earlier.
+    assert factory.call_args.kwargs["http_options"].timeout == 10_000
+    assert titles.TITLE_TIMEOUT_S == 8
     request = models.generate_content.await_args.kwargs
     assert json.loads(request["contents"]) == {"first_user_prompt": prompt}
     assert "same language" in request["config"].system_instruction
