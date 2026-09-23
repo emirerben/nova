@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.148.0] - 2026-09-23
+
+### Changed
+- fix(chat): honor Gemini minimum provider deadline (KRI-162) (#1151) <!-- release-pr: 1151 -->
+
 ## [0.76.147.0] - 2026-09-23
 
 ### Changed
