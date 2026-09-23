@@ -319,18 +319,11 @@ struct NativeEditorView: View {
                 .allowsHitTesting(false)
 
                 if panelIsOpen && !keyboardVisible {
-                    // Pinned to the top of the area until a tall panel rises
-                    // to meet it, then rides just above the panel so play/pause
-                    // is never covered.
+                    // Stays pinned to the top of the area; a tall panel rises
+                    // over it rather than dragging it along. Fixed to the
+                    // area's height so the taller ZStack can't stretch it.
                     NativeEditorTransport(session: session)
-                        // Fixed to the area's height: a tall panel makes this ZStack
-                        // taller than the area, and `maxHeight: .infinity` would
-                        // stretch with it and double-count the offset.
                         .frame(height: area.size.height, alignment: .top)
-                        .offset(y: metrics.transportOffset(
-                            areaHeight: area.size.height,
-                            panelHeight: metrics.panelHeight(areaHeight: area.size.height, previewHeight: previewHeight, expansion: panelExpansion)
-                        ))
                         .transition(.opacity)
                 }
 

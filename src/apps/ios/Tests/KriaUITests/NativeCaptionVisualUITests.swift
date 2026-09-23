@@ -131,7 +131,12 @@ final class NativeCaptionVisualUITests: XCTestCase {
         let previousSpeed = speed.value as? String
         speed.adjust(toNormalizedSliderPosition: 0.8)
         XCTAssertNotEqual(speed.value as? String, previousSpeed)
+        // The tall panel now covers the transport (KRI-170); collapse it back
+        // before checking playback is still available.
+        let raised = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 10))
+        raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: 400)))
         let play = app.buttons["native-editor-play-pause"]
+        XCTAssertTrue(play.waitForExistence(timeout: 5))
         XCTAssertTrue(play.isHittable)
         let time = app.descendants(matching: .any)["native-editor-current-time"].firstMatch
         let beforeTime = time.value as? String

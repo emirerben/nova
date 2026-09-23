@@ -94,14 +94,13 @@ final class NativeEditorInspectorUITests: XCTestCase {
             XCTAssertGreaterThan(panel.frame.height, initialPanel.height + 80, tool)
             XCTAssertLessThan(panel.frame.minY, initialPanel.minY - 80, tool)
             // KRI-170: the panel handle no longer shrinks the preview; the panel
-            // rises over it, and its handle and the transport stay reachable.
+            // rises over it, and its handle stays reachable.
             XCTAssertEqual(preview.frame.height, initialPreview.height, accuracy: 2, tool)
             XCTAssertLessThan(panel.frame.minY, preview.frame.maxY, tool)
             XCTAssertTrue(handle.isHittable, tool)
-            XCTAssertTrue(app.buttons["native-editor-play-pause"].isHittable, tool)
-            // The transport rides above the panel but never into the header.
-            XCTAssertGreaterThanOrEqual(app.buttons["native-editor-play-pause"].frame.minY, initialPreview.minY - 12, tool)
-            XCTAssertLessThanOrEqual(app.buttons["native-editor-play-pause"].frame.maxY, panel.frame.minY + 1, tool)
+            // The transport stays put (it's covered, not dragged along) and the
+            // panel never reaches the header.
+            XCTAssertGreaterThanOrEqual(panel.frame.minY, app.buttons["native-editor-back"].frame.maxY, tool)
             XCTAssertEqual(rail.frame.maxY, railBottom, accuracy: 2, tool)
             XCTAssertEqual(app.buttons["native-editor-back"].frame.minY, headerY, accuracy: 2, tool)
             let capture = XCTAttachment(screenshot: app.screenshot())

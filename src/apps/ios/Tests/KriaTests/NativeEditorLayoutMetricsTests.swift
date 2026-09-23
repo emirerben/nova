@@ -93,13 +93,13 @@ final class NativeEditorLayoutMetricsTests: XCTestCase {
         let preview = m.previewHeight(resize: 0)
         let area: CGFloat = 327
         let full = m.panelHeight(areaHeight: area, previewHeight: preview, expansion: 1)
-        XCTAssertEqual(full, 605, accuracy: 0.01)
+        XCTAssertEqual(full, 659, accuracy: 0.01)
         // Panel top (from area top) is above the preview's bottom edge…
         let panelTop = area - NativeEditorIslandMetrics.bottomPadding - full
         XCTAssertLessThan(panelTop, -(NativeEditorLayoutMetrics.resizeHandleHeight))
-        // …but never above the top chrome: transport (54) fits between them.
+        // …up to (and no further than) the top chrome, covering the transport too.
         let previewRegionTop = -(preview + 10 + 44)
-        XCTAssertGreaterThanOrEqual(panelTop - NativeEditorLayoutMetrics.transportHeight, previewRegionTop - 0.01)
+        XCTAssertEqual(panelTop, previewRegionTop, accuracy: 0.01)
         // The preview height is a function of previewResize only.
         XCTAssertEqual(m.previewHeight(resize: 0), preview, accuracy: 0.01)
     }
@@ -131,16 +131,6 @@ final class NativeEditorLayoutMetricsTests: XCTestCase {
         let ax = pro(accessibility: true)
         XCTAssertEqual(ax.panelHeight(areaHeight: 500, previewHeight: 150, expansion: 1), 440, accuracy: 0.01)
         XCTAssertEqual(kb.panelRange(areaHeight: 300, previewHeight: 258), 0, accuracy: 0.01)
-    }
-
-    // MARK: transport
-
-    func testTransportStaysPinnedUntilPanelReachesIt() {
-        let m = pro()
-        XCTAssertEqual(m.transportOffset(areaHeight: 327, panelHeight: 267), 0, accuracy: 0.01)
-        // Panel 100pt taller than the area allows → transport rides 100 up… minus its own 54.
-        let panel = 327 - 6 - 54 + 100
-        XCTAssertEqual(m.transportOffset(areaHeight: 327, panelHeight: CGFloat(panel)), -100, accuracy: 0.01)
     }
 
     // MARK: fullscreen

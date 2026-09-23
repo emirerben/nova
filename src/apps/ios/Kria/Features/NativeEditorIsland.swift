@@ -43,7 +43,7 @@ enum NativeEditorIslandMetrics {
 /// `NativeEditorView` so it can be unit tested. The two are independent: the
 /// timeline handle resizes only the preview (`previewResize`, in points,
 /// positive = shrink, negative = grow) and the panel handle resizes only the
-/// panel (`panelExpansion`, 0…1), which may rise over the preview.
+/// panel (`panelExpansion`, 0…1), which may rise over the transport and preview.
 struct NativeEditorLayoutMetrics: Equatable {
     /// Project header: 44pt title row + 44pt tab row + 6pt bottom padding.
     static let headerHeight: CGFloat = 94
@@ -119,11 +119,13 @@ struct NativeEditorLayoutMetrics: Equatable {
         return keyboardVisible || isAccessibilitySize ? budget : min(budget, Self.defaultPanelCap)
     }
 
-    /// The panel may rise over the preview, up to the header/top chrome.
+    /// The panel may rise over the transport and the preview, up to the
+    /// header/top chrome. The transport stays where it is and is simply covered.
     func panelMaxHeight(areaHeight: CGFloat, previewHeight: CGFloat) -> CGFloat {
         let budget = panelBudget(areaHeight: areaHeight)
         guard !keyboardVisible, !isAccessibilitySize else { return budget }
-        return budget + previewHeight + Self.previewVerticalPadding + Self.resizeHandleHeight
+        return budget + Self.transportHeight + previewHeight
+            + Self.previewVerticalPadding + Self.resizeHandleHeight
     }
 
     func panelHeight(areaHeight: CGFloat, previewHeight: CGFloat, expansion: CGFloat) -> CGFloat {
@@ -136,13 +138,6 @@ struct NativeEditorLayoutMetrics: Equatable {
     func panelRange(areaHeight: CGFloat, previewHeight: CGFloat) -> CGFloat {
         max(0, panelMaxHeight(areaHeight: areaHeight, previewHeight: previewHeight)
             - panelDefaultHeight(areaHeight: areaHeight))
-    }
-
-    /// The transport is pinned to the top of the connected area until the panel
-    /// rises to meet it, then rides just above the panel's top edge.
-    func transportOffset(areaHeight: CGFloat, panelHeight: CGFloat) -> CGFloat {
-        let panelTop = areaHeight - NativeEditorIslandMetrics.bottomPadding - panelHeight
-        return min(0, panelTop - Self.transportHeight)
     }
 
     /// Aspect-fit box for the fullscreen preview inside 90% of the screen.
