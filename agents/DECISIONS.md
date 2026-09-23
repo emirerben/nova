@@ -2351,14 +2351,26 @@ the 503 as `AnalysisTemporarilyUnavailableError`, the task persisted a terminal 
 `failed`, so every Visual in the iOS Add-media sheet stayed "Failed" until a manual Retry tap.
 Decisions:
 
-- Same pattern as `draft_edit_proposal`: `bind=True`, and on `AnalysisTemporarilyUnavailableError`
-  (or a non-quota 5xx/429 classified by `_is_genai_transient` in the catch-all) call
-  `self.retry(countdown=15, max_retries=4)`. `MaxRetriesExceededError` falls through to the
-  unchanged terminal persist, so the exhausted contract (`analysis_temporarily_unavailable`,
-  `error_retryable=True`, same `error_detail`) is byte-identical.
+- Same pattern as `draft_edit_proposal`: `bind=True` and `self.retry(countdown=15,
+  max_retries=4)`, but the retry fires only when the failure's underlying cause is classified
+  transient, whichever wrapper it arrives in. `_is_transient_analysis_failure` walks the cause
+  chain and reuses the existing classifiers: `_is_genai_transient` (5xx / 429), the agent
+  runtime's `TransientError`, and transport errors (dropped connection, read timeout). A
+  quota-shaped 429 anywhere in the chain is never transient. `_analyze_image`/`_analyze_video`
+  wrap every provider-region failure as `AnalysisTemporarilyUnavailableError`, including
+  deterministic bugs (post-processing `AttributeError`, malformed model JSON); those stay
+  terminal on the first invocation instead of burning 4 more Gemini calls.
+- Retries stop at whichever comes first: `max_retries`, or a 6-minute wall-clock budget from the
+  attempt's first invocation (`_POOL_ANALYSIS_RETRY_BUDGET_S`, carried in a Celery header like
+  the attempt token). A video invocation already retries internally and can near the 240s soft
+  limit, so the count alone could keep a Visual `analyzing` for ~20 minutes, past the reaper's
+  10-minute `analyzing` window. Either stop falls through to the unchanged terminal persist, so
+  the exhausted contract (`analysis_temporarily_unavailable`, `error_retryable=True`, same
+  `error_detail`) is byte-identical.
 - The row stays `analyzing` across retries. A retry re-enters its own attempt under the same
-  attempt token, re-arms `analysis_started_at` for the reaper's 10-minute window, and exits
-  without work if the row is no longer `analyzing` (e.g. the reaper terminalized it).
+  attempt token, re-arms `analysis_started_at` once the retried run actually starts (the
+  countdown and queue wait still count against the previous run), and exits without work if
+  the row is no longer `analyzing` (e.g. the reaper terminalized it).
 - Each retry uses a distinct paid-call ledger key (`request_id` suffix `:retryN`). Reusing the
   first invocation's key is refused once that call is `settled` or `unknown`, which would turn a
   retry into a non-retryable `provider_outcome_unknown`. The first invocation keeps its old key,
@@ -2368,10 +2380,13 @@ Decisions:
 - `_AUTOPLACE_TASK_LIMITS` (240/300) is unchanged. Each retry is a fresh invocation, so the
   time-limit < `visibility_timeout` invariant holds per attempt.
 
-Guards: `test_analyze_pool_asset_transient_gemini_error_retries_instead_of_terminal`,
-`test_analyze_pool_asset_persists_safe_retryable_failure[transient_retries_exhausted]` in
-`tests/tasks/test_autoplace_tasks.py`.
+Guards in `tests/tasks/test_autoplace_tasks.py`:
+`test_analyze_pool_asset_transient_gemini_error_retries_instead_of_terminal`,
+`test_analyze_pool_asset_deterministic_failure_is_not_retried`,
+`test_analyze_pool_asset_retry_budget_exhaustion_persists_terminal_failure`,
+`test_video_analysis_failure_is_classified_by_its_cause_chain`, and
+`test_analyze_pool_asset_persists_safe_retryable_failure[transient_retries_exhausted]`.
 
 **Revisit if:** Gemini outages routinely outlast ~1 minute (lengthen the countdown or add
-backoff), or download/GCS transients start stranding uploads (they are still terminal on the
-first failure).
+backoff), or GCS download errors start stranding uploads (google-cloud-storage errors are not
+classified transient, so a failed download is still terminal on the first failure).

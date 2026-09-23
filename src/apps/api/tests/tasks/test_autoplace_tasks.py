@@ -15,12 +15,14 @@ and image/video persistence transitions without downloading real footage.
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from celery.exceptions import Retry
 from google.genai import errors as genai_errors
@@ -547,11 +549,43 @@ def test_analyze_pool_asset_discards_late_output_after_attempt_changes(monkeypat
     assert asset.status == "analyzing"
 
 
-def _gemini_503() -> genai_errors.ServerError:
+def _gemini_503(message: str = "The model is overloaded.") -> genai_errors.ServerError:
     return genai_errors.ServerError(
         503,
-        {"error": {"code": 503, "message": "The model is overloaded.", "status": "UNAVAILABLE"}},
+        {"error": {"code": 503, "message": message, "status": "UNAVAILABLE"}},
     )
+
+
+def _unavailable_from_503(message: str = "The model is overloaded."):
+    """What _analyze_image raises for a Gemini 503: the wrapper, cause kept."""
+    wrapped = ap.AnalysisTemporarilyUnavailableError("image analysis provider failed")
+    wrapped.__cause__ = _gemini_503(message)
+    return wrapped
+
+
+def _patch_image_gemini(monkeypatch, generate_content) -> MagicMock:
+    """Route the REAL _analyze_image (its wrapped region included) to a fake client."""
+    calls = MagicMock(side_effect=generate_content)
+
+    class _Models:
+        def generate_content(self, **kwargs):
+            return calls(**kwargs)
+
+    class _Client:
+        models = _Models()
+
+    monkeypatch.setattr("app.pipeline.agents.gemini_analyzer._get_client", lambda: _Client())
+    monkeypatch.setattr("app.pipeline.prompt_loader.load_prompt", lambda _name: "prompt")
+    return calls
+
+
+def _assert_terminal_temporarily_unavailable(asset) -> None:
+    """The single-attempt terminal contract, byte-identical to pre-retry."""
+    assert asset.status == "failed"
+    assert asset.error_code == "analysis_temporarily_unavailable"
+    assert asset.error_retryable is True
+    assert asset.error_detail == "Kria temporarily couldn't analyze this file. Try again."
+    assert asset.analysis_started_at is None
 
 
 @pytest.mark.parametrize("failure", ["non_transient", "transient_retries_exhausted"])
@@ -571,11 +605,19 @@ def test_analyze_pool_asset_persists_safe_retryable_failure(monkeypatch, failure
 
         ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
     else:
-        seen: list[tuple[str, str | None, str]] = []
+        seen: list[tuple[str, str | None, str, str | None]] = []
 
         def _always_unavailable(_local, _scope, *, creator_id=None, run_context=None):
-            seen.append((asset.status, asset.error_code, run_context.request_id))
-            raise ap.AnalysisTemporarilyUnavailableError("private provider detail")
+            headers = ap.analyze_pool_asset.request.headers or {}
+            seen.append(
+                (
+                    asset.status,
+                    asset.error_code,
+                    run_context.request_id,
+                    headers.get(ap._POOL_ANALYSIS_RETRY_STARTED_HEADER),
+                )
+            )
+            raise _unavailable_from_503("private provider detail")
 
         monkeypatch.setattr(ap, "_analyze_image", _always_unavailable)
 
@@ -590,37 +632,60 @@ def test_analyze_pool_asset_persists_safe_retryable_failure(monkeypatch, failure
 
         assert len(seen) == ap._POOL_ANALYSIS_MAX_RETRIES + 1
         # Never terminal, never error-stamped while a retry was still available.
-        assert {(status, code) for status, code, _rid in seen} == {("analyzing", None)}
+        assert {(status, code) for status, code, *_rest in seen} == {("analyzing", None)}
         # Each retry is a new paid call with its own ledger key; the first
         # invocation keeps the key it always had (redelivery idempotency).
         base = f"pool-image:{asset.plan_item_id}:{asset.id}"
-        assert [rid for *_rest, rid in seen] == [base] + [
+        assert [entry[2] for entry in seen] == [base] + [
             f"{base}:retry{n}" for n in range(1, ap._POOL_ANALYSIS_MAX_RETRIES + 1)
         ]
+        # The chain start travels in a header and never moves across retries.
+        started = [entry[3] for entry in seen]
+        assert started[0] is None
+        assert started[1] is not None
+        assert set(started[1:]) == {started[1]}
 
-    assert asset.status == "failed"
-    assert asset.error_code == "analysis_temporarily_unavailable"
-    assert asset.error_retryable is True
-    assert asset.error_detail == "Kria temporarily couldn't analyze this file. Try again."
+    _assert_terminal_temporarily_unavailable(asset)
     assert "private provider detail" not in asset.error_detail
-    assert asset.analysis_started_at is None
     assert asset.analysis_attempt_token == "attempt-1"
 
 
+def _real_image_helper_raising(error_factory):
+    def _setup(monkeypatch) -> None:
+        def _generate(**_kwargs):
+            raise error_factory()
+
+        _patch_image_gemini(monkeypatch, _generate)
+
+    return _setup
+
+
+def _stub_image_helper_raising(error_factory):
+    def _setup(monkeypatch) -> None:
+        def _boom(*_a, **_kw):
+            raise error_factory()
+
+        monkeypatch.setattr(ap, "_analyze_image", _boom)
+
+    return _setup
+
+
 @pytest.mark.parametrize(
-    "provider_error",
+    "setup",
     [
-        # What _analyze_image/_analyze_video wrap a Gemini 503 into.
+        # The prod shape: _analyze_image's wrapped region turns the 503 into
+        # AnalysisTemporarilyUnavailableError with the ServerError as cause.
+        pytest.param(_real_image_helper_raising(_gemini_503), id="image_helper_wraps_503"),
         pytest.param(
-            lambda: ap.AnalysisTemporarilyUnavailableError("image analysis provider failed"),
-            id="wrapped_503",
+            _real_image_helper_raising(lambda: httpx.ConnectError("connection reset")),
+            id="image_helper_wraps_dropped_connection",
         ),
         # A raw genai 5xx that reaches the task's catch-all instead.
-        pytest.param(_gemini_503, id="raw_genai_503"),
+        pytest.param(_stub_image_helper_raising(_gemini_503), id="raw_genai_503_in_catch_all"),
     ],
 )
 def test_analyze_pool_asset_transient_gemini_error_retries_instead_of_terminal(
-    monkeypatch, provider_error
+    monkeypatch, setup
 ) -> None:
     """Regression for prod 2026-09-23 15:27-15:29 UTC: 16 of 17 Gemini
     generateContent calls on the autoplace machine returned 503 and every pool
@@ -633,11 +698,7 @@ def test_analyze_pool_asset_transient_gemini_error_retries_instead_of_terminal(
     asset.status = "queued"
     asset.analysis_attempt_token = "attempt-1"
     _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
-
-    def _boom(*_a, **_kw):
-        raise provider_error()
-
-    monkeypatch.setattr(ap, "_analyze_image", _boom)
+    setup(monkeypatch)
 
     with pytest.raises(Retry):
         ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
@@ -653,6 +714,34 @@ def test_analyze_pool_asset_transient_gemini_error_retries_instead_of_terminal(
     assert asset.media_status == "ready"
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        # resp.text raises AttributeError inside the wrapped region.
+        pytest.param(SimpleNamespace(), id="post_processing_attribute_error"),
+        pytest.param(SimpleNamespace(text="not json"), id="malformed_model_json"),
+        pytest.param(
+            SimpleNamespace(text=json.dumps({"subject": ["not", "a", "string"]})),
+            id="schema_validation_error",
+        ),
+    ],
+)
+def test_analyze_pool_asset_deterministic_failure_is_not_retried(monkeypatch, response) -> None:
+    """_analyze_image wraps ANY failure in its provider region as
+    AnalysisTemporarilyUnavailableError. A deterministic bug must not burn 4
+    more Gemini calls before failing identically: terminal on attempt 1."""
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    generate = _patch_image_gemini(monkeypatch, lambda **_kw: response)
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")  # no Retry raised
+
+    generate.assert_called_once()
+    _assert_terminal_temporarily_unavailable(asset)
+
+
 def test_analyze_pool_asset_recovers_when_a_retry_succeeds(monkeypatch) -> None:
     asset = _PoolAsset(kind="image")
     asset.status = "queued"
@@ -663,7 +752,7 @@ def test_analyze_pool_asset_recovers_when_a_retry_succeeds(monkeypatch) -> None:
     def _503_then_ok(_local, _scope, *, creator_id=None, run_context=None):
         calls.append(asset.status)
         if len(calls) == 1:
-            raise ap.AnalysisTemporarilyUnavailableError("image analysis provider failed")
+            raise _unavailable_from_503()
         return ({"subject": "matcha"}, 1.0, (100, 100), False)
 
     monkeypatch.setattr(ap, "_analyze_image", _503_then_ok)
@@ -676,6 +765,39 @@ def test_analyze_pool_asset_recovers_when_a_retry_succeeds(monkeypatch) -> None:
     assert asset.error_code is None
     assert asset.error_retryable is False
     assert asset.analysis_started_at is None
+
+
+def test_analyze_pool_asset_retry_budget_exhaustion_persists_terminal_failure(
+    monkeypatch,
+) -> None:
+    """A slow chain (video analysis retries internally, one invocation can near
+    the 240s soft limit) must stop retrying once its wall time plus the next
+    countdown would pass the budget, instead of outliving the reaper's window."""
+    asset = _PoolAsset(kind="image")
+    asset.status = "analyzing"  # a retry re-enters its in-flight attempt
+    asset.media_status = "ready"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    calls: list[int] = []
+
+    def _still_503(*_a, **_kw):
+        calls.append(ap.analyze_pool_asset.request.retries)
+        raise _unavailable_from_503()
+
+    monkeypatch.setattr(ap, "_analyze_image", _still_503)
+    chain_started = time.time() - ap._POOL_ANALYSIS_RETRY_BUDGET_S
+
+    ap.analyze_pool_asset.apply(
+        args=[str(asset.id), False, "attempt-1"],
+        retries=1,
+        headers={
+            "pool_asset_attempt_token": "attempt-1",
+            ap._POOL_ANALYSIS_RETRY_STARTED_HEADER: f"{chain_started:.3f}",
+        },
+    )
+
+    assert calls == [1]  # retries remain by count, but no retry was scheduled
+    _assert_terminal_temporarily_unavailable(asset)
 
 
 def test_analyze_pool_asset_retry_exits_when_row_is_no_longer_analyzing(monkeypatch) -> None:
@@ -732,6 +854,90 @@ def test_analyze_pool_asset_quota_429_is_not_retried(monkeypatch) -> None:
 
     assert asset.status == "failed"
     assert asset.error_retryable is True
+
+
+def _runtime_exhausted_on_503():
+    """analyze_clip's chain when the agent runtime exhausts a Gemini 503:
+    GeminiAnalysisError <- TerminalError <- TransientError <- ServerError."""
+    from app.agents._runtime import TerminalError, TransientError
+    from app.pipeline.agents.gemini_analyzer import GeminiAnalysisError
+
+    transient = TransientError("gemini transient")
+    transient.__cause__ = _gemini_503()
+    terminal = TerminalError("nova.clip_metadata: all models exhausted")
+    terminal.__cause__ = transient
+    error = GeminiAnalysisError(str(terminal))
+    error.__cause__ = terminal
+    return error
+
+
+def _runtime_schema_refusal():
+    """analyze_clip's chain for a deterministic schema failure."""
+    from app.agents._runtime import SchemaError, TerminalError
+    from app.pipeline.agents.gemini_analyzer import GeminiRefusalError
+
+    terminal = TerminalError("nova.clip_metadata: schema")
+    terminal.__cause__ = SchemaError("output did not match schema")
+    error = GeminiRefusalError(str(terminal))
+    error.__cause__ = terminal
+    return error
+
+
+@pytest.mark.parametrize(
+    ("patch_target", "behaviour", "transient"),
+    [
+        pytest.param(
+            "app.pipeline.agents.gemini_analyzer.analyze_clip",
+            _runtime_exhausted_on_503,
+            True,
+            id="runtime_exhausted_503",
+        ),
+        pytest.param(
+            "app.pipeline.agents.gemini_analyzer.gemini_upload_and_wait",
+            _gemini_503,
+            True,
+            id="upload_exhausted_503",
+        ),
+        pytest.param(
+            "app.pipeline.agents.gemini_analyzer.analyze_clip",
+            _runtime_schema_refusal,
+            False,
+            id="runtime_schema_refusal",
+        ),
+        pytest.param(
+            "app.pipeline.agents.gemini_analyzer.analyze_clip",
+            None,  # returns a malformed meta: best_moments is not iterable
+            False,
+            id="post_processing_type_error",
+        ),
+    ],
+)
+def test_video_analysis_failure_is_classified_by_its_cause_chain(
+    monkeypatch, patch_target: str, behaviour, transient: bool
+) -> None:
+    """The real _analyze_video wraps every provider-region failure the same way;
+    only the preserved cause chain separates an outage from a bug."""
+    _patch_video_gemini(monkeypatch)
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: _video_probe(width=720, height=1280),
+    )
+    if behaviour is None:
+        monkeypatch.setattr(
+            patch_target,
+            lambda *_a, **_kw: SimpleNamespace(failed=False, best_moments=5),
+        )
+    else:
+
+        def _raise(*_a, **_kw):
+            raise behaviour()
+
+        monkeypatch.setattr(patch_target, _raise)
+
+    with pytest.raises(ap.AnalysisTemporarilyUnavailableError) as caught:
+        ap._analyze_video("/tmp/clip.mp4")
+
+    assert ap._is_transient_analysis_failure(caught.value) is transient
 
 
 def test_analyze_pool_asset_downloads_verified_generation(monkeypatch) -> None:
