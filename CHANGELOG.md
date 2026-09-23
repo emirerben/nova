@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.149.0] - 2026-09-23
+
+### Changed
+- fix(ios): stop reloading the branded outro's static properties on every editor composition (#1167) <!-- release-pr: 1167 -->
+
 ## [0.76.148.0] - 2026-09-23
 
 ### Changed
