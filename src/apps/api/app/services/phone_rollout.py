@@ -176,8 +176,14 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         for clip in track.clips
         if clip.visual_placement is not None
     ]
-    if recipe.visual_fills or recipe.audio.mute_windows:
+    if recipe.visual_fills:
         raise ValueError("Visual blocks await native parity and device qualification")
+    if recipe.audio.mute_windows:
+        # KRI-118 L1 item 6: mute windows are a distinct feature from visual
+        # blocks (silent overlay tracks) -- this used to reuse the "Visual
+        # blocks..." message meant for that other rejection, which read as
+        # nonsensical/misleading for a recipe with no visual fills at all.
+        raise ValueError("Muted sections aren't supported on iPhone yet")
     if placements and not (
         (getattr(settings, "phone_editor_media_enabled", False) or allow_editor_media)
         and "visualBlocks" in settings.phone_render_verified_features

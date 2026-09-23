@@ -138,6 +138,54 @@ def test_default_font_qualification_cannot_expand_by_alias_or_coordinates(change
         validate_phone_pilot_recipe(recipe)
 
 
+def test_mute_windows_get_their_own_message_distinct_from_visual_blocks():
+    """KRI-118 L1 item 6: mute windows are a distinct feature from visual
+    fills (silent overlay tracks) -- they used to share the same "Visual
+    blocks..." message, which read as nonsensical for a recipe with no
+    visual fills at all."""
+    import json
+    from pathlib import Path
+
+    from app.kria.recipes_v2 import EditRecipeV2
+
+    fixture_path = Path(__file__).parents[1] / "fixtures/kria_edit_recipe_v2.json"
+    document = json.loads(fixture_path.read_text())
+    recipe = EditRecipeV2.model_validate(document)
+    window = {"start": 0, "end": recipe.duration, "clip_ids": [recipe.tracks[0].clips[0].id]}
+    document["audio"]["mute_windows"] = [window]
+    recipe = EditRecipeV2.model_validate(document)
+    assert not recipe.visual_fills
+
+    with pytest.raises(ValueError, match="Muted sections aren't supported"):
+        validate_phone_pilot_recipe(recipe)
+
+
+def test_visual_fills_still_raise_the_visual_blocks_message():
+    """Regression: splitting the mute-window branch out must not change the
+    unrelated visual-fills rejection's message."""
+    import json
+    from pathlib import Path
+
+    from app.kria.recipes_v2 import EditRecipeV2
+
+    fixture_path = Path(__file__).parents[1] / "fixtures/kria_edit_recipe_v2.json"
+    document = json.loads(fixture_path.read_text())
+    fill = {
+        "id": "fill",
+        "start": 0,
+        "end": 1,
+        "order": 0,
+        "kind": "solid",
+        "color": {"red": 0.1, "green": 0.2, "blue": 0.3, "alpha": 1},
+    }
+    document["visual_fills"] = [fill]
+    recipe = EditRecipeV2.model_validate(document)
+    assert not recipe.audio.mute_windows
+
+    with pytest.raises(ValueError, match="Visual blocks await native parity"):
+        validate_phone_pilot_recipe(recipe)
+
+
 def test_authored_phases_require_verified_authored_text(monkeypatch):
     from app.agents._schemas.text_animation_phases import TextAnimationPhases
 

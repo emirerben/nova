@@ -380,3 +380,86 @@ def test_dispatcher_routes_montage_and_guided_snapshots_to_their_own_runner(monk
     gb._run_generative_job(str(job.id))
     guided_runner.assert_called_once()
     montage_runner.assert_not_called()
+
+
+# --- KRI-118 L1 item 2: musicBed capability gap for voiceover + matched track
+
+
+def _voiceover_with_track_setup(monkeypatch, *, verified_features):
+    """Exercise the REAL `_specs_for_archetype` (setup() stubs it by default)
+    so the `best_track`-dropping fix under test actually runs."""
+    from app.services.generative_jobs import CONTENT_PLAN_PRIMARY_VARIANT_POLICY
+
+    real_specs_for_archetype = gb._specs_for_archetype
+    track = _track("track1")
+    voiceover_path = "voiceover-uploads/direct/u/i/voice.m4a"
+    job, snapshot, session, _bindings, cloud = setup(
+        monkeypatch, archetype="voiceover", track=track
+    )
+    monkeypatch.setattr(gb, "_specs_for_archetype", real_specs_for_archetype, raising=False)
+    candidates = {
+        **job.all_candidates,
+        "voiceover_gcs_path": voiceover_path,
+        "variant_policy": CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+    }
+    monkeypatch.setattr(gb.settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(gb.settings, "phone_render_verified_features", verified_features)
+    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", _fake_narration_bed, raising=False)
+    # Mirrors test_voiceover_job_dispatches_when_flag_and_capability_verified:
+    # the REAL decide phase downloads the voiceover to size the montage.
+    monkeypatch.setattr("app.storage.download_to_file", lambda *a, **k: None)
+    monkeypatch.setattr("app.tasks.template_orchestrate._probe_duration", lambda *a, **k: 20.0)
+    return job, snapshot, candidates, cloud
+
+
+def test_voiceover_with_matched_track_falls_back_to_voiceover_only_without_music_bed(
+    monkeypatch,
+):
+    """Under the content-plan primary variant policy, a matched track would
+    normally pick `voiceover_music` as the ONLY (top-ranked) phone variant --
+    that needs the `musicBed` capability. Until the device verifies it, the
+    worker must drop the matched track and fall back to `voiceover_only`
+    instead of compiling (and only then, in `validate_phone_pilot_recipe`,
+    discarding) a plan the device cannot play."""
+    job, snapshot, candidates, cloud = _voiceover_with_track_setup(
+        monkeypatch,
+        verified_features=[
+            "basicComposition",
+            "local1080Export",
+            "crossfade",
+            "audioMix",
+            "narrationAudio",
+        ],
+    )
+
+    gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["variant_id"] == "voiceover_only"
+    assert variant["music_track_id"] is None
+    cloud.assert_not_called()
+
+
+def test_voiceover_with_matched_track_keeps_voiceover_music_when_music_bed_verified(
+    monkeypatch,
+):
+    """Control: with `musicBed` verified, the matched track is kept and the
+    normal `voiceover_music` variant compiles exactly as before."""
+    job, snapshot, candidates, cloud = _voiceover_with_track_setup(
+        monkeypatch,
+        verified_features=[
+            "basicComposition",
+            "local1080Export",
+            "crossfade",
+            "audioMix",
+            "narrationAudio",
+            "musicBed",
+        ],
+    )
+
+    gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["variant_id"] == "voiceover_music"
+    assert variant["music_track_id"] == "track1"
+    cloud.assert_not_called()
