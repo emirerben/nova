@@ -158,7 +158,18 @@ class GateTests(unittest.TestCase):
             )
 
     def test_ios_gate_requires_consistent_group_contract(self):
-        for groups in (None, "", "none", "typo", "editor", "smoke,editor,creation"):
+        for groups in (
+            None,
+            "",
+            "none",
+            "typo",
+            "editor",
+            "smoke",
+            "smoke,editor,creation",
+            "smoke,B/testB,A/testA",
+            "smoke,A/testA,A/testA",
+            "smoke,A/notATest",
+        ):
             needs = {
                 "changes": {
                     "result": "success",
@@ -172,7 +183,12 @@ class GateTests(unittest.TestCase):
             }
             with self.subTest(groups=groups), self.assertRaises(ValueError):
                 ci.gate(needs, "ios", "ios-tests")
-        for groups in ("full", *ci.ui_tests.FOCUSED):
+        for groups in (
+            "full",
+            *ci.ui_tests.FOCUSED,
+            "smoke,A/testA,B/testB",
+            "smoke,editor,A/testA",
+        ):
             needs = {
                 "changes": {
                     "result": "success",
@@ -265,6 +281,56 @@ class GitDiffTests(unittest.TestCase):
         )
         self.assertEqual(ci.selection_details("push", self.base, head)[2], "full")
         self.assertEqual(ci.selection_details("pull_request", head, head)[2], "full")
+
+    def test_ui_test_method_edits_select_only_those_methods(self):
+        # #1162 fixed one editor test and paid for the whole ~25-minute group.
+        path = "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift"
+        original = (SCRIPT.parents[2] / path).read_text()
+        self.write(path, original)
+        self.base = self.commit()
+        method = "func testTextReturnAndDeleteKeepCanvasLinesAligned() {"
+        body = original.split(method, 1)[1]
+        statement = "XCTAssertTrue(input.waitForExistence(timeout: 3))"
+        self.assertIn(statement, body.split("    func ", 1)[0])
+        edited = original.replace(
+            method + body.split(statement, 1)[0] + statement,
+            method + body.split(statement, 1)[0] + statement.replace("3", "4"),
+        )
+        self.write(path, edited)
+        head = self.commit()
+        self.assertEqual(
+            ci.selection_details("pull_request", self.base, head)[2],
+            "smoke,NativeEditorInspectorUITests/"
+            "testTextReturnAndDeleteKeepCanvasLinesAligned",
+        )
+        # Deleting a line inside the method is attributed to it as well.
+        self.base = head
+        self.write(path, edited.replace(statement.replace("3", "4") + "\n", "", 1))
+        self.assertEqual(
+            ci.selection_details("pull_request", self.base, self.commit())[2],
+            "smoke,NativeEditorInspectorUITests/"
+            "testTextReturnAndDeleteKeepCanvasLinesAligned",
+        )
+
+    def test_ui_test_helper_or_header_edits_select_the_whole_group(self):
+        path = "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift"
+        original = (SCRIPT.parents[2] / path).read_text()
+        self.write(path, original)
+        self.base = self.commit()
+        helper = 'XCTAssertTrue(element.waitForExistence(timeout: 3), "Missing timeline'
+        self.assertEqual(original.count(helper), 1)
+        for edited in (
+            original.replace(helper, helper.replace("3", "4"), 1),
+            original.replace("import UIKit", "import UIKit\nimport Foundation", 1),
+        ):
+            with self.subTest(edited=edited[:40]):
+                self.write(path, edited)
+                head = self.commit()
+                self.assertEqual(
+                    ci.selection_details("pull_request", self.base, head)[2],
+                    "smoke,editor",
+                )
+                self.base = head
 
     def test_unit_and_contract_only_keep_ui_omitted(self):
         for path in (

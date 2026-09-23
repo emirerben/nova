@@ -107,6 +107,7 @@ class VerifyShellTests(unittest.TestCase):
             "cache-inputs.py",
             "ui_tests.py",
             "ui-test-groups.json",
+            "ui-test-durations.json",
         ):
             shutil.copy2(original / name, scripts / name)
         shutil.copytree(
@@ -129,6 +130,7 @@ class VerifyShellTests(unittest.TestCase):
         restore_times=False,
         simulator_id="",
         groups="full",
+        extra_env=None,
     ):
         env = {
             **os.environ,
@@ -140,6 +142,7 @@ class VerifyShellTests(unittest.TestCase):
             "KRIA_SIMULATOR_ID": simulator_id,
             "KRIA_RESTORE_INPUT_TIMES": "1" if restore_times else "0",
             "KRIA_SKIP_SIMULATOR_TESTS": "1" if build_only else "0",
+            **(extra_env or {}),
         }
         if groups is None:
             env.pop("KRIA_IOS_UI_GROUPS")
@@ -231,6 +234,77 @@ class VerifyShellTests(unittest.TestCase):
         ]
         self.assertEqual(filters, sorted(expected))
         self.assertEqual(call[call.index("-parallel-testing-enabled") + 1], "NO")
+
+    def test_changed_method_selection_runs_smoke_plus_exactly_those_tests(self):
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        changed = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+        result = self.run_verify(suite="ui", groups=f"smoke,{changed}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads((self.root / "scripts/ios/ui-test-groups.json").read_text())
+        call = next(c for c in self.calls if c[-1] == "test-without-building")
+        filters = [
+            a.removeprefix("-only-testing:")
+            for a in call
+            if a.startswith("-only-testing:")
+        ]
+        self.assertEqual(
+            filters, sorted(set(data["groups"]["smoke"]) | {f"KriaUITests/{changed}"})
+        )
+        self.assertIn("Verified 5 selected UI tests passed.", result.stdout)
+
+    def test_full_suite_shard_runs_and_verifies_exactly_its_part(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "harness_ui_tests", self.root / "scripts/ios/ui_tests.py"
+        )
+        harness_ui = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(harness_ui)
+        inventory = harness_ui.discovered(self.root)
+        seen = set()
+        for shard in ("1/3", "2/3", "3/3"):
+            self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+            result = self.run_verify(
+                suite="ui", groups="full", extra_env={"KRIA_IOS_UI_SHARD": shard}
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            call = next(c for c in self.calls if c[-1] == "test-without-building")
+            filters = {
+                a.removeprefix("-only-testing:")
+                for a in call
+                if a.startswith("-only-testing:")
+            }
+            self.assertNotIn("KriaUITests", filters)
+            self.assertEqual(filters, harness_ui.shard_tests(inventory, shard))
+            self.assertFalse(filters & seen)
+            seen |= filters
+            self.assertIn(f"UI execution (full, shard {shard})", result.stdout)
+            self.assertIn(
+                f"Verified {len(filters)} selected UI tests passed.", result.stdout
+            )
+        self.assertEqual(seen, inventory)
+        # Only the full suite can be sharded; focused PR selections cannot.
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        focused = self.run_verify(
+            suite="ui", groups="smoke,creation", extra_env={"KRIA_IOS_UI_SHARD": "1/3"}
+        )
+        self.assertNotEqual(focused.returncode, 0)
+        self.assertEqual(self.actions, [])
+
+    def test_extra_shards_build_everything_but_skip_the_unit_phase(self):
+        result = self.run_verify(
+            suite="prepare-ui", extra_env={"KRIA_IOS_UNIT_TESTS": "0"}
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.actions, ["build-for-testing"])
+        build = next(call for call in self.calls if call[-1] == "build-for-testing")
+        self.assertFalse(any(arg.startswith("-skip-testing:") for arg in build))
+        self.assertIn("Unit execution skipped", result.stdout)
+        # The UI phase is still authorized for the exact build it compiled.
+        self.assertEqual(self.run_verify(suite="ui").returncode, 0)
+        # The unit-only mode never skips its tests.
+        result = self.run_verify(suite="unit", extra_env={"KRIA_IOS_UNIT_TESTS": "0"})
+        self.assertEqual(self.actions, ["build-for-testing", "test-without-building"])
 
     def test_invalid_or_empty_selection_never_runs_xcode(self):
         for groups in (
@@ -333,6 +407,22 @@ class VerifyShellTests(unittest.TestCase):
                     "platform=iOS Simulator,id=old",
                 )
         self.assertNotEqual(self.run_verify(simulator_id="missing").returncode, 0)
+        self.assertEqual(self.actions, [])
+
+    def test_boot_mode_only_boots_the_device_the_build_will_select(self):
+        result = self.run_verify(suite="boot")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(["xcrun", "simctl", "boot", "selected"], self.calls)
+        self.assertFalse(
+            any(call[0] in ("xcodebuild", "xcodegen") for call in self.calls)
+        )
+        self.assertFalse((self.root / "test-results").exists())
+        # The build phase must still own readiness: it waits on the same device.
+        self.assertEqual(self.run_verify(suite="unit").returncode, 0)
+        self.assertIn(["xcrun", "simctl", "bootstatus", "selected", "-b"], self.calls)
+
+    def test_boot_mode_failure_is_left_to_the_build_phase(self):
+        self.assertNotEqual(self.run_verify("no_simulator", suite="boot").returncode, 0)
         self.assertEqual(self.actions, [])
 
     def test_invalid_mode_stops_before_build(self):

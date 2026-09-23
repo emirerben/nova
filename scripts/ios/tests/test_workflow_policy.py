@@ -19,16 +19,49 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         )
         self.assertIn("- name: Build and unit tests", self.workflow)
 
+    def matrices(self):
+        """(pull_request, main/manual) legs from the matrix fromJSON expression."""
+        import json
+        import re
+
+        line = next(
+            line for line in self.workflow.splitlines() if "matrix: ${{ fromJSON(" in line
+        )
+        self.assertIn("github.event_name == 'pull_request' &&", line)
+        literals = re.findall(r"'(\{.*?\})'", line)
+        self.assertEqual(len(literals), 2)
+        return [json.loads(literal)["include"] for literal in literals]
+
     def test_required_job_aggregates_native_and_portable_contract_legs(self):
         self.assertIn("ios-tests:", self.workflow)
         self.assertIn("fail-fast: false", self.workflow)
-        self.assertIn("lane: native", self.workflow)
-        self.assertIn("runner: macos-15", self.workflow)
-        self.assertIn("lane: contracts", self.workflow)
-        self.assertIn("runner: ubuntu-latest", self.workflow)
+        for legs in self.matrices():
+            self.assertIn({"lane": "contracts", "runner": "ubuntu-latest"}, legs)
+            natives = [leg for leg in legs if leg["lane"] == "native"]
+            self.assertTrue(natives)
+            self.assertTrue(all(leg["runner"] == "macos-15" for leg in natives))
         self.assertIn("runs-on: ${{ matrix.runner }}", self.workflow)
         self.assertIn("needs: [changes, ios-tests]", self.workflow)
         self.assertIn("gate ios ios-tests", self.workflow)
+
+    def test_prs_keep_one_native_leg_and_main_shards_the_full_suite(self):
+        pull_request, main = self.matrices()
+        # PR check names stay "ios-tests (native, macos-15)".
+        self.assertEqual(
+            [leg for leg in pull_request if leg["lane"] == "native"],
+            [{"lane": "native", "runner": "macos-15"}],
+        )
+        shards = [leg["shard"] for leg in main if leg["lane"] == "native"]
+        count = len(shards)
+        self.assertGreater(count, 1)
+        self.assertEqual(shards, [f"{i}/{count}" for i in range(1, count + 1)])
+        ui_step = self.workflow.split("- name: Native UI tests (reuse compiled build)", 1)[1]
+        self.assertIn("KRIA_IOS_UI_SHARD: ${{ matrix.shard }}", ui_step.split("run:", 1)[0])
+        # Exactly one leg per run executes unit tests and saves the shared cache.
+        first = "(!matrix.shard || startsWith(matrix.shard, '1/'))"
+        self.assertIn(f"KRIA_IOS_UNIT_TESTS: ${{{{ {first} && '1' || '0' }}}}", self.workflow)
+        save = self.workflow.split("- name: Save Xcode build data", 1)[1].split("uses:", 1)[0]
+        self.assertIn(first, save)
 
     def test_contract_checks_are_portable_and_native_work_stays_on_macos(self):
         contracts = self.workflow.split(
@@ -39,7 +72,8 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
 
         native_xcode = self.workflow.split("- name: Set up Xcode", 1)[1]
         self.assertIn("if: matrix.lane == 'native'", native_xcode)
-        self.assertIn("name: ios-native-test-diagnostics", native_xcode)
+        # PR runs keep the plain artifact name; shard legs add a suffix.
+        self.assertIn("|| 'ios-native-test-diagnostics' }}", native_xcode)
 
     def test_prs_run_a_bounded_ui_subset_and_main_runs_the_full_regression(self):
         ui_step = self.workflow.split("- name: Native UI tests (reuse compiled build)", 1)[1]

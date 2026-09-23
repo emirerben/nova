@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.165.0] - 2026-09-23
+
+### Changed
+- perf(ios-ci): cut iOS CI time and fix editor UI idle stalls (KRI-168) (#1181) <!-- release-pr: 1181 -->
+
+## [0.76.164.0] - 2026-09-23
+
+### Changed
+- fix(chat): link a new Creator session to its chat without deadlocking; replayed requests stop crashing (#1180) <!-- release-pr: 1180 -->
+
+## [0.76.163.0] - 2026-09-23
+
+### Fixed
+- fix(ci): cover branded outro in iOS scrub regression (#1162) <!-- release-pr: 1162 -->
+
 ## [0.76.162.0] - 2026-09-23
 
 ### Changed

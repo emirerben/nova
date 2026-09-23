@@ -478,7 +478,9 @@ async def create_publication(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PublicationResponse:
-    if not _publishing_available(user.id):
+    # The IntegrityError rollback below expires ``user``; keep its id.
+    owner_id = user.id
+    if not _publishing_available(owner_id):
         raise HTTPException(status_code=404, detail="TikTok publishing is not available")
     if not body.music_usage_confirmed:
         raise HTTPException(status_code=400, detail="Music usage confirmation is required")
@@ -493,14 +495,14 @@ async def create_publication(
         )
     # Validate the Job before the idempotency fast path: cancellation also
     # suppresses retries of an older queued/failed publication receipt.
-    job = await _owned_job(db, user.id, body.job_id)
+    job = await _owned_job(db, owner_id, body.job_id)
     request_hash = hashlib.sha256(
         json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     existing = (
         await db.execute(
             select(TikTokPublication).where(
-                TikTokPublication.user_id == user.id,
+                TikTokPublication.user_id == owner_id,
                 TikTokPublication.idempotency_key == body.idempotency_key,
             )
         )
@@ -518,7 +520,7 @@ async def create_publication(
 
     try:
         output = await run_in_threadpool(resolve_publishable_output, job, body.variant_id)
-        token_row, access_token = await active_access_token(db, user.id)
+        token_row, access_token = await active_access_token(db, owner_id)
         required_scope = "video.upload" if body.delivery_mode == "draft_upload" else "video.publish"
         if required_scope not in set(token_row.scopes or []):
             raise HTTPException(
@@ -561,7 +563,7 @@ async def create_publication(
     # The creator-info and metadata calls above intentionally run without a DB
     # lock; this second fence prevents a concurrent rerender/cancellation from
     # slipping between the initial validation and the publication commit.
-    job = await _owned_job(db, user.id, body.job_id, for_update=True)
+    job = await _owned_job(db, owner_id, body.job_id, for_update=True)
     try:
         locked_output = await run_in_threadpool(resolve_publishable_output, job, body.variant_id)
         locked_meta = await run_in_threadpool(storage.object_metadata, locked_output.object_path)
@@ -584,7 +586,7 @@ async def create_publication(
         )
 
     row = TikTokPublication(
-        user_id=user.id,
+        user_id=owner_id,
         job_id=job.id,
         variant_id=locked_output.variant_id,
         idempotency_key=body.idempotency_key,
@@ -618,7 +620,7 @@ async def create_publication(
         existing = (
             await db.execute(
                 select(TikTokPublication).where(
-                    TikTokPublication.user_id == user.id,
+                    TikTokPublication.user_id == owner_id,
                     TikTokPublication.idempotency_key == body.idempotency_key,
                 )
             )

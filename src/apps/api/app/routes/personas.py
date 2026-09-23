@@ -1011,13 +1011,15 @@ async def chat_start(
         InterviewerInput,
     )
 
+    # The IntegrityError rollback below expires ``user``; keep its id.
+    owner_id = user.id
     existing = (
-        await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+        await db.execute(select(PersonaRow).where(PersonaRow.user_id == owner_id))
     ).scalar_one_or_none()
 
     if existing is None:
         row = PersonaRow(
-            user_id=user.id,
+            user_id=owner_id,
             questionnaire={"interview_turns": []},
             persona_status="chat_pending",
         )
@@ -1029,7 +1031,7 @@ async def chat_start(
             # tiktok_scrape beat us to the INSERT — re-fetch the row it created.
             await db.rollback()
             row = (
-                await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+                await db.execute(select(PersonaRow).where(PersonaRow.user_id == owner_id))
             ).scalar_one()
     else:
         await db.refresh(existing)
@@ -1078,7 +1080,7 @@ async def chat_start(
         ),
         ctx=_creator_run_context(
             request,
-            creator_id=user.id,
+            creator_id=owner_id,
             request_id=f"persona-interview:{row.id}:turn:{agent_count + 1}",
         ),
     )
@@ -1588,6 +1590,9 @@ async def onboarding_fork(
     """
     from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
 
+    # The IntegrityError rollback below expires ``user``; keep its id.
+    owner_id = user.id
+
     if body.content_mode not in _VALID_CONTENT_MODES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1598,12 +1603,12 @@ async def onboarding_fork(
         )
 
     existing = (
-        await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+        await db.execute(select(PersonaRow).where(PersonaRow.user_id == owner_id))
     ).scalar_one_or_none()
 
     if existing is None:
         row = PersonaRow(
-            user_id=user.id,
+            user_id=owner_id,
             questionnaire={"interview_turns": []},
             persona_status="chat_pending",
         )
@@ -1615,7 +1620,7 @@ async def onboarding_fork(
             # tiktok_scrape or chat_start beat us to the INSERT — re-fetch.
             await db.rollback()
             row = (
-                await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+                await db.execute(select(PersonaRow).where(PersonaRow.user_id == owner_id))
             ).scalar_one()
     else:
         await db.refresh(existing)

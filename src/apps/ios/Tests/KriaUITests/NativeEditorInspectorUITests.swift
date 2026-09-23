@@ -206,6 +206,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         var sampledFirstClip = false
         var sampledSecondClip = false
         var sampledBrandOutro = false
+        var sampledContentAfterOutro = false
         func assertDisplayedPreview() {
             let screenshot = app.screenshot()
             let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch.frame
@@ -226,10 +227,12 @@ final class NativeEditorInspectorUITests: XCTestCase {
             if abs(time - 2) > 0.1 && abs(time - 4) > 0.1 {
                 if time < 2 {
                     sampledFirstClip = true
+                    if sampledBrandOutro { sampledContentAfterOutro = true }
                     XCTAssertGreaterThan(rgba[0], 220, "Wrong first clip at \(label): \(rgba), preview: \(previewDiagnostic)")
                     XCTAssertLessThan(rgba[2], 40, "Stale second clip at \(label): \(rgba), preview: \(previewDiagnostic)")
                 } else if time < 4 {
                     sampledSecondClip = true
+                    if sampledBrandOutro { sampledContentAfterOutro = true }
                     XCTAssertGreaterThan(rgba[2], 220, "Wrong second clip at \(label): \(rgba), preview: \(previewDiagnostic)")
                     XCTAssertLessThan(rgba[0], 40, "Stale first clip at \(label): \(rgba), preview: \(previewDiagnostic)")
                 } else {
@@ -275,6 +278,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(sampledFirstClip, "Scrubbing must display a frame from the first editable clip")
         XCTAssertTrue(sampledSecondClip, "Scrubbing must display a frame from the second editable clip")
         XCTAssertTrue(sampledBrandOutro, "Scrubbing must reach the branded transport outro")
+        XCTAssertTrue(sampledContentAfterOutro, "Reverse scrubbing must return from the outro to content")
         app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.tap()
         XCTAssertEqual(app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.value as? String, "2.000")
         XCTAssertEqual(app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.value as? String, "2.000")

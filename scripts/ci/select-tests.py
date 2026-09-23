@@ -4,6 +4,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -32,6 +33,43 @@ def release_only(path, base, head):
         return versions[0] == versions[1]
     except (subprocess.CalledProcessError, ValueError, AttributeError):
         return False
+
+
+def changed_ui_tests(base, head, paths):
+    """Map each changed UI test source to the test methods its diff touched.
+
+    Line numbers come from head's version of the file, which is also where the
+    methods are located. A file maps to None (its whole feature group) when any
+    change falls outside a test method or its head content is unavailable.
+    """
+    sources = [path for path in paths if path.startswith(ui_tests.UI_TEST_ROOT)]
+    if not sources:
+        return {}
+    diff = git("diff", "--no-renames", "--no-color", "-U0", base, head, "--", *sources)
+    lines, current = {}, None
+    for line in diff.decode("utf-8").splitlines():
+        if line.startswith("+++ "):
+            current = line.removeprefix("+++ b/") if line.startswith("+++ b/") else None
+            if current is not None:
+                lines.setdefault(current, set())
+        elif line.startswith("@@") and current is not None:
+            hunk = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
+            if not hunk:
+                lines[current].add(0)  # Unparseable: line 0 forces the group.
+                continue
+            start, count = int(hunk.group(1)), int(hunk.group(2) or "1")
+            # A pure deletion sits between `start` and `start + 1`; blame both.
+            changed = range(start, start + count) if count else (start, start + 1)
+            lines[current].update(changed)
+    focused = {}
+    for path in sources:
+        try:
+            source = git("show", f"{head}:{path}").decode("utf-8")
+        except (subprocess.CalledProcessError, UnicodeError):
+            focused[path] = None
+            continue
+        focused[path] = ui_tests.changed_tests(source, lines.get(path, set()))
+    return focused
 
 
 def affected(path):
@@ -119,7 +157,9 @@ def selection_details(event, base, head):
                 if "ios_ui" in affected(path):
                     ui_paths.append(path)
         groups, reason = (
-            ui_tests.select_groups(ui_paths)
+            ui_tests.select_groups(
+                ui_paths, focused=changed_ui_tests(ancestor, head, ui_paths)
+            )
             if ui_paths
             else ("none", "UI not applicable.")
         )

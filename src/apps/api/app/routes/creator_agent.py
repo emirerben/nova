@@ -3287,14 +3287,20 @@ async def start_creator_session_controller(
             iteration_budget=2,
             events=[],
         )
-        db.add(session)
         try:
-            await db.flush()
+            if isinstance(db, AsyncSession):
+                # Roll back only a savepoint: a chat caller's user message
+                # shares this transaction, and a full rollback would both drop
+                # it and expire every loaded instance (``user``, ``item``).
+                async with db.begin_nested():
+                    db.add(session)
+                    await db.flush()
+            else:  # unit-test doubles have no savepoints
+                db.add(session)
+                await db.flush()
         except IntegrityError:
             # The partial unique index is the final authority. A simultaneous
             # start may win after our read; reload that durable active session.
-            await db.rollback()
-            item, _plan, _persona = await _owned_context(db, item_id, user.id)
             session = await _latest_session(db, user.id, item.id, active_only=True)
             if session is None:
                 raise

@@ -1726,7 +1726,11 @@ async def generate_guide(
         run_shot_list_writer,
     )
 
-    item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    # rollback() below expires every request-scoped instance, ``user`` and
+    # ``item`` included; keep the primitive ids for after it.
+    owner_id = user.id
+    item, plan, _ = await _load_owned_item_context(item_id, owner_id, db)
+    stable_item_id = item.id
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
 
     if item.filming_guide:
@@ -1748,10 +1752,10 @@ async def generate_guide(
         result = await asyncio.to_thread(
             run_shot_list_writer,
             inp,
-            creator_id=str(user.id),
+            creator_id=str(owner_id),
             request_id=_paid_agent_request_id(
                 "shot-list",
-                f"{item.id}:{ownership_epoch}",
+                f"{stable_item_id}:{ownership_epoch}",
                 inp,
             ),
         )
@@ -1776,7 +1780,7 @@ async def generate_guide(
     # that landed while the model was running.
     item, live_plan, _ = await _load_owned_item_context(
         item_id,
-        user.id,
+        owner_id,
         db,
         for_update=True,
     )
@@ -1794,7 +1798,7 @@ async def generate_guide(
     item.filming_guide = [{**s.model_dump(), "shot_id": _uuid.uuid4().hex} for s in result.shots]
     item.user_edited = True
     await db.commit()
-    reloaded = await _load_owned_item(item_id, user.id, db)
+    reloaded = await _load_owned_item(item_id, owner_id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
     return plan_item_response(reloaded, instruction_level=instruction_level)
 
@@ -1953,9 +1957,11 @@ async def transcribe_direction_audio(
     ``voiceover_gcs_path`` is deliberately neither accepted nor assigned here.
     The two audio roles therefore cannot be confused even by a malformed client.
     """
-    item = await _load_owned_item(item_id, user.id, db)
+    # rollback() below expires every request-scoped instance, ``user`` too.
+    owner_id = user.id
+    item = await _load_owned_item(item_id, owner_id, db)
     owned_item_id = str(item.id)
-    expected_prefix = f"users/{user.id}/plan/{owned_item_id}/direction-audio/"
+    expected_prefix = f"users/{owner_id}/plan/{owned_item_id}/direction-audio/"
     if not body.gcs_path.startswith(expected_prefix):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2042,7 +2048,7 @@ async def transcribe_direction_audio(
         )
     # Acquire locks only for the short persistence step; transcription can take
     # seconds and must not hold the plan/persona/item lock chain open.
-    locked_item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    locked_item = await _load_owned_item(item_id, owner_id, db, for_update=True)
     current_notes = _sanitize_text((locked_item.notes or "").strip())
     if current_notes:
         keep_existing = max(0, _MAX_DIRECTION_NOTE_CHARS - len(notes) - 1)
@@ -7703,7 +7709,9 @@ async def transcript_script(
 ) -> TranscriptScriptResponse:
     """Generate (or rewrite) the voiceover script, persist it (bump version), return it."""
     _require_transcript_helper()
-    item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    # rollback() below expires every request-scoped instance, ``user`` too.
+    owner_id = user.id
+    item, plan, _ = await _load_owned_item_context(item_id, owner_id, db)
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     # The model/heuristic needs no live ORM state. Release the read transaction
     # and accept its output only after the fenced owner pair is reacquired.
@@ -7734,7 +7742,7 @@ async def transcript_script(
                 inp,
                 ctx=_creator_run_context(
                     request,
-                    creator_id=user.id,
+                    creator_id=owner_id,
                     request_id=_paid_agent_request_id(
                         "voiceover-script",
                         f"{item_id}:{ownership_epoch}",
@@ -7764,7 +7772,7 @@ async def transcript_script(
     # stale output.
     item, live_plan, _ = await _load_owned_item_context(
         item_id,
-        user.id,
+        owner_id,
         db,
         for_update=True,
     )
@@ -9012,7 +9020,9 @@ async def upload_pool_asset(
     import tempfile  # noqa: PLC0415
 
     _require_asset_pool()
-    _, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    # rollback() below expires every request-scoped instance, ``user`` too.
+    owner_id = user.id
+    _, plan, _ = await _load_owned_item_context(item_id, owner_id, db)
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     # Do not retain a transaction or ownership row lock while the client body
     # streams and storage upload run.  The epoch snapshot is revalidated at the
@@ -9054,7 +9064,7 @@ async def upload_pool_asset(
         source_filename = (file.filename or "asset").split("/")[-1]
         locked_item, locked_plan, _ = await _load_owned_item_context(
             item_id,
-            user.id,
+            owner_id,
             db,
             for_update=True,
         )
@@ -9078,8 +9088,10 @@ async def upload_pool_asset(
         if existing is not None:
             if existing.status == "uploaded":
                 await _queue_pool_asset_analysis(existing, db)
+            # Serialize before rollback() expires ``existing``.
+            deduped = _asset_out(existing, deduped=True)
             await db.rollback()
-            return _asset_out(existing, deduped=True)
+            return deduped
 
         count = int(
             (
@@ -9108,13 +9120,13 @@ async def upload_pool_asset(
         reservation_id = uuid.uuid4()
         safe_name = f"{uuid.uuid4().hex}-{source_filename}"
         gcs_path = (
-            f"dev-user/{user.id}/plan-pool-reservations/{locked_item.id}/"
+            f"dev-user/{owner_id}/plan-pool-reservations/{locked_item.id}/"
             f"{reservation_id}/{safe_name}"
         )
         reservation = PlanItemAsset(
             id=reservation_id,
             plan_item_id=locked_item.id,
-            user_id=user.id,
+            user_id=owner_id,
             gcs_path=gcs_path,
             kind=kind,
             content_hash=content_hash,
@@ -9128,6 +9140,9 @@ async def upload_pool_asset(
         db.add(reservation)
         await db.commit()
         await db.refresh(reservation)
+        if isinstance(db, AsyncSession):
+            # register_pool_asset reads ``user``, which the rollback expired.
+            await db.refresh(user)
 
         # Staging is lifecycle-covered even if the provider raises after writing.
         await asyncio.to_thread(storage.upload_local_file, tmp_path, gcs_path, content_type)

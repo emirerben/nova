@@ -8,9 +8,40 @@ DERIVED_DATA="$IOS_ROOT/.derived-data"
 MODE="${KRIA_IOS_TEST_MODE:-full}"
 UI_RECEIPT="$DERIVED_DATA/.ci-ui-build"
 case "$MODE" in
-  full|unit|prepare-ui|ui) ;;
+  full|unit|prepare-ui|ui|boot) ;;
   *) echo "Unknown KRIA_IOS_TEST_MODE: $MODE" >&2; exit 2 ;;
 esac
+
+select_simulator() {
+  xcrun simctl list devices available -j | /usr/bin/python3 -c '
+import json
+import os
+import sys
+
+requested = os.environ.get("KRIA_SIMULATOR_ID", "")
+payload = json.load(sys.stdin)
+for runtime, devices in reversed(list(payload.get("devices", {}).items())):
+    if "iOS" not in runtime:
+        continue
+    for device in devices:
+        if device.get("isAvailable") and device.get("name", "").startswith("iPhone"):
+            if requested and device["udid"] != requested:
+                continue
+            print(device["udid"])
+            raise SystemExit(0)
+raise SystemExit("Requested iPhone simulator is unavailable" if requested else "No available iPhone simulator found")
+'
+}
+
+# CI starts this in the background at job start. A fresh runner's first simctl
+# call took ~60s and the boot ~65s; run later, both competed with xcodebuild
+# startup and compilation. The build phase selects the same device and its
+# `bootstatus -b` waits for (or performs) the boot, so this is only a head start.
+if [[ "$MODE" == "boot" ]]; then
+  SIMULATOR_ID="$(select_simulator)"
+  xcrun simctl boot "$SIMULATOR_ID" || echo "Early boot of $SIMULATOR_ID did not start; verify.sh boots it later" >&2
+  exit 0
+fi
 
 # Each invocation keeps independent bundles/logs, including failed runs.
 RESULT_ROOT="$REPO_ROOT/test-results/ios"
@@ -30,17 +61,20 @@ timed() {
 }
 
 run_ui() {
-  local groups="$1" arguments
+  local groups="$1" arguments label="$1"
+  # KRIA_IOS_UI_SHARD=i/n runs one part of the full suite; ui_tests.py applies
+  # it to both the -only-testing filters and the verified coverage.
+  [[ -n "${KRIA_IOS_UI_SHARD:-}" ]] && label="$groups, shard $KRIA_IOS_UI_SHARD"
   arguments="$(python3 "$REPO_ROOT/scripts/ios/ui_tests.py" args "$groups")" || return $?
   local filters=()
   while IFS= read -r argument; do filters+=("$argument"); done <<< "$arguments"
   [[ ${#filters[@]} -gt 0 ]] || return 2
-  printf 'UI groups: %s\n%s\n' "$groups" "$arguments" | tee "$RESULT_DIR/selection.log"
+  printf 'UI groups: %s\n%s\n' "$label" "$arguments" | tee "$RESULT_DIR/selection.log"
   # The serial UI suite flakes under simulator/runner contention. Retry inside
   # xcodebuild itself (fail-closed after 3 attempts total); ui_tests.py verify
   # reports any test that only passed on retry as flaky instead of hiding it.
   local xcodebuild_status=0
-  timed "UI execution ($groups)" xcodebuild "${COMMON_ARGS[@]}" \
+  timed "UI execution ($label)" xcodebuild "${COMMON_ARGS[@]}" \
     -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
     -parallel-testing-enabled NO "${filters[@]}" \
     -retry-tests-on-failure -test-iterations 3 \
@@ -139,26 +173,7 @@ if [[ "${KRIA_SKIP_SIMULATOR_TESTS:-0}" == "1" ]]; then
   exit 0
 fi
 
-SIMULATOR_ID="$(
-  xcrun simctl list devices available -j | /usr/bin/python3 -c '
-import json
-import os
-import sys
-
-requested = os.environ.get("KRIA_SIMULATOR_ID", "")
-payload = json.load(sys.stdin)
-for runtime, devices in reversed(list(payload.get("devices", {}).items())):
-    if "iOS" not in runtime:
-        continue
-    for device in devices:
-        if device.get("isAvailable") and device.get("name", "").startswith("iPhone"):
-            if requested and device["udid"] != requested:
-                continue
-            print(device["udid"])
-            raise SystemExit(0)
-raise SystemExit("Requested iPhone simulator is unavailable" if requested else "No available iPhone simulator found")
-'
-)"
+SIMULATOR_ID="$(select_simulator)"
 
 DESTINATION="platform=iOS Simulator,id=$SIMULATOR_ID"
 
@@ -190,8 +205,14 @@ timed "Simulator wait after compilation" wait "$BOOT_PID"
 trap - EXIT
 
 # Keep UI execution serial: cloned parallel runners can miss drawer controls.
-timed "Unit execution (includes runner startup)" xcodebuild "${RUN_TEST_ARGS[@]}" \
-  -resultBundlePath "$RESULT_DIR/unit.xcresult" test-without-building 2>&1 | tee "$RESULT_DIR/unit.log"
+# Main's extra UI shards still compile every bundle but leave the unit phase to
+# shard 1 on the same commit; the workflow gate requires every shard to pass.
+if [[ "$MODE" == "prepare-ui" && "${KRIA_IOS_UNIT_TESTS:-1}" == "0" ]]; then
+  echo "Unit execution skipped: another shard runs it for this commit" | tee "$RESULT_DIR/unit.log"
+else
+  timed "Unit execution (includes runner startup)" xcodebuild "${RUN_TEST_ARGS[@]}" \
+    -resultBundlePath "$RESULT_DIR/unit.xcresult" test-without-building 2>&1 | tee "$RESULT_DIR/unit.log"
+fi
 
 if [[ "$MODE" == "full" ]]; then
   run_ui full

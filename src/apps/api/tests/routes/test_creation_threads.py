@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from fastapi import HTTPException, Response
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -1221,6 +1222,73 @@ async def test_message_after_render_budget_exhaustion_replenishes_current_sessio
     turn.assert_awaited_once()
     assert turn.await_args.kwargs["allow_chat"] is True
     sync_agent.assert_awaited_once_with(db, thread)
+
+
+def _lock_abort(sqlstate: str) -> DBAPIError:
+    return DBAPIError("UPDATE creation_threads", {}, SimpleNamespace(sqlstate=sqlstate))
+
+
+@pytest.mark.asyncio
+async def test_session_link_retries_a_lock_race_after_the_creator_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Creator commit is durable, so a deadlock abort must not orphan it."""
+
+    import app.routes.creation_threads as routes
+
+    thread_id, owner_id, session_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    thread = SimpleNamespace(id=thread_id, active_creator_agent_session_id=None)
+    lock = AsyncMock(side_effect=[_lock_abort("40P01"), thread])
+    sync_agent = AsyncMock()
+    monkeypatch.setattr(routes, "_lock_thread_for_session_link", lock)
+    monkeypatch.setattr(routes, "_sync_agent", sync_agent)
+    db = Mock()
+    db.rollback = AsyncMock()
+
+    result = await routes._link_creator_session(db, thread_id, owner_id, session_id)
+
+    assert result is thread
+    assert thread.active_creator_agent_session_id == session_id
+    assert lock.await_count == 2
+    assert lock.await_args.args == (db, thread_id, owner_id, session_id)
+    db.rollback.assert_awaited_once()
+    sync_agent.assert_awaited_once_with(db, thread)
+
+
+@pytest.mark.asyncio
+async def test_session_link_does_not_retry_other_database_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+
+    lock = AsyncMock(side_effect=_lock_abort("23505"))
+    monkeypatch.setattr(routes, "_lock_thread_for_session_link", lock)
+    db = Mock()
+    db.rollback = AsyncMock()
+
+    with pytest.raises(DBAPIError):
+        await routes._link_creator_session(db, uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
+
+    lock.assert_awaited_once()
+    db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_session_link_gives_up_after_bounded_lock_races(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+
+    lock = AsyncMock(side_effect=_lock_abort("40P01"))
+    monkeypatch.setattr(routes, "_lock_thread_for_session_link", lock)
+    db = Mock()
+    db.rollback = AsyncMock()
+
+    with pytest.raises(DBAPIError):
+        await routes._link_creator_session(db, uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
+
+    assert lock.await_count == routes._SESSION_LINK_ATTEMPTS
+    assert db.rollback.await_count == routes._SESSION_LINK_ATTEMPTS - 1
 
 
 @pytest.mark.asyncio
