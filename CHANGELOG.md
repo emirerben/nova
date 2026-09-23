@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.168.0] - 2026-09-23
+
+### Changed
+- fix(ios): timeline edge auto-scroll for block/trim drags (KRI-165) (#1182) <!-- release-pr: 1182 -->
+
 ## [0.76.167.0] - 2026-09-23
 
 ### Changed
