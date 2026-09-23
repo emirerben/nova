@@ -16,10 +16,11 @@ from app.agents.semantic_edit_proposal import (
     _GROUP_RETRY_HINT,
     SemanticEditProposalAgent,
     _creator_captions,
-    _transcript_speaks,
     semantic_plan_from_legacy,
 )
+from app.agents.spoken_script import transcript_speaks
 from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
+from app.schemas.edit_proposal import creator_copy_match_key
 from app.services.semantic_edit_scheduler import schedule_semantic_edit
 
 
@@ -1908,6 +1909,65 @@ def test_legacy_goldens_project_to_timing_free_semantic_intent(fixture_path: Pat
     )
 
 
+# Real prod narrated request (KRI narrated-story bug): every spoken line is
+# tagged "VO:", and the recorded voiceover's ASR mis-hears three of them
+# (workshop->Vertical, Plans burned->Plants burn, pieced->placed,
+# metres->meters). Shared with the legacy planner tests.
+SAGRADA_VO_REQUEST = (
+    "Narrated story. My voiceover is uploaded; match the video length to it. "
+    "ON-SCREEN TEXT – only two things, nothing else: "
+    '1. The title "Building since 1882" at the start. '
+    "2. Subtitles of my voiceover, shown one sentence at a time, timed to when I say it. "
+    "Keep them clear of the bottom fifth of the frame. "
+    "No other text, labels, dates or captions anywhere. "
+    "SHOTS – use every uploaded file, in this order. "
+    "The quoted lines below are what I SAY in the voiceover (not extra on-screen text); "
+    "show each shot while I say its line: "
+    "1. Sagrada Família towers from below with cranes, then a crane close-up "
+    'VO: "They started building this before the Eiffel Tower… '
+    "and it's still not finished.\" "
+    "2. Gaudí portrait (young bearded man, black and white) "
+    'VO: "In 1883, a 31-year-old Gaudí takes over." '
+    "3. The two old black-and-white construction photos "
+    "(the second shows Gaudí on site) "
+    'VO: "He gives it 43 years. He reportedly said: '
+    "'My client is not in a hurry.'\" "
+    "4. Old black-and-white photo of the half-built church "
+    'VO: "In 1926, Gaudí dies. Less than a quarter is built." '
+    "5. Old black-and-white photo of the workshop with plaster models "
+    'VO: "In 1936, his workshop is set on fire. Plans burned, models smashed." '
+    "6. Inside the basilica: tree-like columns and coloured light "
+    'VO: "The models are pieced back together. '
+    "It's all paid for by donations and tickets.\" "
+    "7. Top of the central tower with the cross "
+    'VO: "In 2026, its central tower is topped out at 172.5 metres. '
+    "The world's tallest church.\" "
+    "8. The whole basilica as the sky turns golden "
+    'VO: "Would you wait 144 years?" '
+    "STYLE: - Calm pace, soft crossfades between shots. "
+    "- Slow zoom on the five old photos (shots 2–5). "
+    "- Keep the black-and-white photos black and white; "
+    "colour returns with the 2026 shots."
+)
+SAGRADA_ASR_TRANSCRIPT = (
+    "They started building this before the Eiffel Tower, and it's still not finished. "
+    "In 1883, a 31-year-old Gaudi takes over. He gives it 43 years. "
+    "He reportedly said, My client is not in a hurry. "
+    "In 1926, Gaudi dies. Less than a quarter is built. "
+    "In 1936, his Vertical is set on fire. Plants burn, models smashed. "
+    "The models are placed back together. It's all paid for by donations and tickets. "
+    "In 2026, its central tower is topped out at 172.5 meters. The world's tallest church. "
+    "Would you wait 144 years?"
+)
+
+
+def sagrada_narration_words() -> list[dict]:
+    return [
+        {"text": word, "start_s": index * 0.4, "end_s": index * 0.4 + 0.3}
+        for index, word in enumerate(SAGRADA_ASR_TRANSCRIPT.split())
+    ]
+
+
 @pytest.mark.parametrize(
     "words, spoken, expected",
     [
@@ -1952,7 +2012,7 @@ def test_legacy_goldens_project_to_timing_free_semantic_intent(fixture_path: Pat
 def test_transcript_speaks_tolerates_bounded_asr_errors(
     words: list[str], spoken: list[str], expected: bool
 ) -> None:
-    assert _transcript_speaks(words, spoken) is expected
+    assert transcript_speaks(words, spoken) is expected
 
 
 @pytest.mark.parametrize(
@@ -2028,62 +2088,11 @@ def test_vo_prefixed_script_lines_never_become_chapter_thoughts_despite_asr_erro
     of transcript accuracy, so `_creator_captions` is empty and no repair ever
     fires `moved_creator_caption_binding_to_thought`.
     """
-    creator_request = (
-        "Narrated story. My voiceover is uploaded; match the video length to it. "
-        "ON-SCREEN TEXT – only two things, nothing else: "
-        '1. The title "Building since 1882" at the start. '
-        "2. Subtitles of my voiceover, shown one sentence at a time, timed to when I say it. "
-        "Keep them clear of the bottom fifth of the frame. "
-        "No other text, labels, dates or captions anywhere. "
-        "SHOTS – use every uploaded file, in this order. "
-        "The quoted lines below are what I SAY in the voiceover (not extra on-screen text); "
-        "show each shot while I say its line: "
-        "1. Sagrada Família towers from below with cranes, then a crane close-up "
-        'VO: "They started building this before the Eiffel Tower… '
-        "and it's still not finished.\" "
-        "2. Gaudí portrait (young bearded man, black and white) "
-        'VO: "In 1883, a 31-year-old Gaudí takes over." '
-        "3. The two old black-and-white construction photos "
-        "(the second shows Gaudí on site) "
-        'VO: "He gives it 43 years. He reportedly said: '
-        "'My client is not in a hurry.'\" "
-        "4. Old black-and-white photo of the half-built church "
-        'VO: "In 1926, Gaudí dies. Less than a quarter is built." '
-        "5. Old black-and-white photo of the workshop with plaster models "
-        'VO: "In 1936, his workshop is set on fire. Plans burned, models smashed." '
-        "6. Inside the basilica: tree-like columns and coloured light "
-        'VO: "The models are pieced back together. '
-        "It's all paid for by donations and tickets.\" "
-        "7. Top of the central tower with the cross "
-        'VO: "In 2026, its central tower is topped out at 172.5 metres. '
-        "The world's tallest church.\" "
-        "8. The whole basilica as the sky turns golden "
-        'VO: "Would you wait 144 years?" '
-        "STYLE: - Calm pace, soft crossfades between shots. "
-        "- Slow zoom on the five old photos (shots 2–5). "
-        "- Keep the black-and-white photos black and white; "
-        "colour returns with the 2026 shots."
-    )
-    transcript_text = (
-        "They started building this before the Eiffel Tower, and it's still not finished. "
-        "In 1883, a 31-year-old Gaudi takes over. He gives it 43 years. "
-        "He reportedly said, My client is not in a hurry. "
-        "In 1926, Gaudi dies. Less than a quarter is built. "
-        "In 1936, his Vertical is set on fire. Plants burn, models smashed. "
-        "The models are placed back together. It's all paid for by donations and tickets. "
-        "In 2026, its central tower is topped out at 172.5 meters. The world's tallest church. "
-        "Would you wait 144 years?"
-    )
-    words = transcript_text.split()
-    narration_words = [
-        {"text": word, "start_s": index * 0.4, "end_s": index * 0.4 + 0.3}
-        for index, word in enumerate(words)
-    ]
     input = _input(
-        creator_request=creator_request,
+        creator_request=SAGRADA_VO_REQUEST,
         opening_title="Building since 1882",
         narration_duration_s=40,
-        narration_words=narration_words,
+        narration_words=sagrada_narration_words(),
     )
     assert _creator_captions(input) == {}
 
@@ -2107,3 +2116,70 @@ def test_vo_prefixed_script_lines_never_become_chapter_thoughts_despite_asr_erro
     assert not any(
         repair.startswith("moved_creator_caption_binding_to_thought") for repair in plan.repairs
     )
+
+
+_WORKSHOP_VO_LINE = "In 1936, his workshop is set on fire. Plans burned, models smashed."
+
+
+@pytest.mark.parametrize(
+    "op, text",
+    [
+        ("caption", "Would you wait 144 years?"),
+        ("group", "Would you wait 144 years?"),
+        # ClipIntent.creator_text truncates to 60 chars, mid-word here.
+        ("group", _WORKSHOP_VO_LINE),
+    ],
+    ids=["caption_short_vo_line", "group_short_vo_line", "group_truncated_mis_heard_vo_line"],
+)
+def test_vo_caption_and_group_intents_never_become_chapter_thoughts(op: str, text: str) -> None:
+    """A chat turn that resolved a creator's 'VO:' line into caption/group copy.
+
+    The intent still decides which shots belong together, but its copy is the
+    voiceover's script: narration captions already draw it, so no chapter may
+    also show it -- even when the model writes it back as the chapter thought.
+    """
+    intent = ResolvedClipIntent(
+        intent_id="vo",
+        op=op,
+        attribute="the whole basilica",
+        caption_text=text if op == "caption" else None,
+        creator_text=text if op == "group" else None,
+        assignments=[ClipAssignment(media_id="pub")],
+    )
+    input = _input(
+        creator_request=SAGRADA_VO_REQUEST,
+        opening_title="Building since 1882",
+        narration_duration_s=40,
+        narration_words=sagrada_narration_words(),
+        clip_intents=[intent],
+    )
+    assert _creator_captions(input) == {}
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = ""
+    raw["chapters"][1]["thought"] = intent.caption_text or intent.creator_text
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["", ""]
+
+
+def test_caption_intent_the_creator_also_asks_to_show_stays_on_screen() -> None:
+    """A same-words quote with a display instruction keeps the copy a caption."""
+    text = "The sea keeps its own hours"
+    intent = ResolvedClipIntent(
+        intent_id="pub",
+        op="caption",
+        attribute="pub",
+        caption_text=text,
+        assignments=[ClipAssignment(media_id="pub")],
+    )
+    words = f"And then {text} I said.".split()
+    input = _input(
+        creator_request=f'Narrated. VO: "{text}" on screen over the pub clip.',
+        narration_duration_s=24,
+        narration_words=[{"text": word} for word in words],
+        clip_intents=[intent],
+    )
+    assert _creator_captions(input) == {creator_copy_match_key(text): [text]}
+    raw = json.loads(_raw())
+    raw["chapters"][1]["thought"] = ""
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["", text]
