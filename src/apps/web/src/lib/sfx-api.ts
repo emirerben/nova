@@ -23,6 +23,10 @@ export interface SoundEffectSummary {
   // Closed-vocabulary role tags (smart sound design) — surfaced to the copilot
   // catalog so sounds can be picked by fit. Empty/absent on legacy effects.
   role_tags?: string[] | null;
+  // Creator-library browse metadata (KRI-173): one of the API's
+  // SFX_CATEGORIES ("rejection", "approval", …) and lowercase search words.
+  category?: string | null;
+  search_terms?: string[] | null;
 }
 
 export interface SoundEffectListResponse {
