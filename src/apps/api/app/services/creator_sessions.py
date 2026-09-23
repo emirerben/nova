@@ -537,6 +537,45 @@ async def resolve_item_creator_context(
     return manifest, media_context
 
 
+async def creator_media_truncation_notice(
+    db: AsyncSession, item: PlanItem, persona: Persona
+) -> str | None:
+    """KRI-118 item 6: tell the creator when the manifest actually dropped owned
+    media to the ``MAX_CREATOR_MEDIA_REFS`` cap, instead of ``resolve_item_creator_context``
+    silently showing only the first 50 with no explanation.
+
+    A best-effort count, not a byte-exact replay of that function's dedup
+    logic (in-memory `clip_assignments`/legacy `clip_gcs_paths` length plus a
+    cheap count of the same asset-eligibility query) -- good enough to answer
+    "did truncation actually drop something" without re-running the full
+    resolution twice per turn. Never raises: a missing/unreadable count is
+    only a missed notice, never a reason to fail the turn.
+    """
+
+    try:
+        clip_count = len(getattr(item, "clip_assignments", None) or [])
+        if clip_count == 0:
+            clip_count = len(getattr(item, "clip_gcs_paths", None) or [])
+        asset_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.user_id == persona.user_id,
+                    PlanItemAsset.status.in_(CREATOR_VISIBLE_ASSET_STATES),
+                    PlanItemAsset.deduplicated_to_asset_id.is_(None),
+                )
+            )
+        ).scalar_one()
+        total = clip_count + int(asset_count or 0)
+    except Exception:  # noqa: BLE001
+        return None
+    if total <= MAX_CREATOR_MEDIA_REFS:
+        return None
+    return f"I used {MAX_CREATOR_MEDIA_REFS} of {total} items."
+
+
 async def load_intent_clips_for_item(
     db: AsyncSession, item: PlanItem, persona: Persona
 ) -> list[IntentClip]:
@@ -679,8 +718,16 @@ def compile_active_plan(
     strategy: CreativeStrategy,
     summary: str,
     creator_request: str = "",
+    extra_notices: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Compile an inert, hash-pinned plan with a deterministic public receipt."""
+    """Compile an inert, hash-pinned plan with a deterministic public receipt.
+
+    ``extra_notices`` carries short, user-facing sentences the caller already
+    knows about before compiling (KRI-118 item 3: a silent degradation --
+    an over-budget question, a fallback strategy's own reasoning -- made
+    visible). They are merged ahead of whatever deterministic repairs
+    `compile_strategy_to_plan` itself records on `edit_plan.notices`.
+    """
 
     # Imported lazily so schema-only tests can import this service while the
     # compiler evolves independently.
@@ -688,11 +735,15 @@ def compile_active_plan(
 
     edit_plan: CreatorEditPlan = compile_strategy_to_plan(manifest, strategy)
     prior_version = int((session.active_plan or {}).get("version", 0))
+    notices = [*(extra_notices or []), *edit_plan.notices]
     receipt = {
         "version": prior_version + 1,
         "summary": _clean(summary, 1000) or _clean(strategy.rationale, 1000),
         "creative_rationale": _clean(strategy.rationale, 2000),
         "edit_format": getattr(strategy, "edit_format", None) or manifest.edit_format,
+        # KRI-118 item 1: the FINAL, server-repaired shape (never the raw
+        # model-proposed value) -- see `edit_plan.strategy.archetype`.
+        "story_shape": getattr(edit_plan.strategy, "archetype", None),
         "audio_strategy": getattr(strategy, "audio_strategy", None),
         "story_structure": list(getattr(strategy, "story_structure", []) or []),
         "caption_style": getattr(strategy, "caption_style", None),
@@ -738,6 +789,8 @@ def compile_active_plan(
         receipt["montage_cadence"] = strategy.montage_cadence.model_dump(mode="json")
     if strategy.video_reuse_policy is not None:
         receipt["video_reuse_policy"] = strategy.video_reuse_policy
+    if notices:
+        receipt["notices"] = notices
     receipt["plan_hash"] = canonical_context_hash(receipt)
     return receipt
 
@@ -1280,6 +1333,7 @@ __all__ = [
     "append_event",
     "compile_active_plan",
     "creator_context",
+    "creator_media_truncation_notice",
     "creator_narration_identity",
     "reconcile_render_state",
     "resolve_item_creator_context",

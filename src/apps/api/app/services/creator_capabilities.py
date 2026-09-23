@@ -37,6 +37,7 @@ from app.agents._schemas.creator_policy import (
     MontageCadenceUnavailableError,
     effective_render_program,
     normalize_creator_strategy_media,
+    repair_creator_strategy_shape,
 )
 from app.agents._schemas.edit_format import (
     EDIT_FORMATS,
@@ -650,6 +651,15 @@ def compile_strategy_to_plan(
     if an agent asks for one.
     """
 
+    # KRI-118 item 2: repair a chat-picked story shape (day_vlog/single_hero)
+    # and any stale/hidden-format strategy BEFORE the render program is
+    # resolved below, so this function never raises over those specific
+    # cases -- see app.agents._schemas.creator_policy.repair_creator_strategy_shape.
+    strategy, shape_notices = repair_creator_strategy_shape(
+        manifest,
+        strategy,
+        shapes_enabled=settings.creator_montage_shapes_enabled,
+    )
     try:
         strategy = normalize_creator_strategy_media(manifest, strategy)
     except (MixedMediaTimingUnavailableError, MontageCadenceUnavailableError):
@@ -748,9 +758,11 @@ def compile_strategy_to_plan(
     effective_strategy = strategy.model_copy(
         update={
             "edit_format": strategy_format,
-            # The renderer resolves its archetype from edit_format. Keeping a
-            # divergent advisory archetype would promise a format it cannot use.
-            "archetype": strategy_format,
+            # KRI-118 item 2: `archetype` now carries the chat-picked story
+            # SHAPE (day_vlog/single_hero), not a mirror of edit_format --
+            # `repair_creator_strategy_shape` above already dropped it when
+            # it is not actually renderable for this manifest/program, so
+            # whatever survives here is safe to forward as-is.
             "render_program": effective_program,
             # The guided specialist owns exact beat/media selection from the
             # approved item pool. Do not preserve a model-selected subset that
@@ -804,6 +816,7 @@ def compile_strategy_to_plan(
         context_hash=manifest.context_hash,
         strategy=effective_strategy,
         commands=commands,
+        notices=shape_notices,
     )
 
 

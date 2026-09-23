@@ -128,6 +128,7 @@ from app.services.creator_sessions import (
     append_event,
     compile_active_plan,
     creator_context,
+    creator_media_truncation_notice,
     creator_narration_identity,
     load_intent_clips_for_item,
     reconcile_render_state,
@@ -2064,6 +2065,9 @@ async def _run_planning_turn(
         persona=persona,
         guided_capability_enabled=(True if allow_chat else None),
     )
+    # KRI-118 item 6: a "I used 50 of N items" notice when the manifest cap
+    # actually dropped owned media, so this turn's plan can surface it.
+    media_truncation_notice = await creator_media_truncation_notice(db, item, persona)
     if not manifest.capabilities["dispatch_render"].available:
         locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
         if locked.revision != expected_revision:
@@ -2336,9 +2340,13 @@ async def _run_planning_turn(
                             locked,
                             event_type="assistant_error",
                             payload={
+                                # KRI-118 item 3: this trigger is the planner
+                                # call itself being rate-limited, not clip
+                                # analysis -- give it its own accurate copy
+                                # instead of the clip-intents message below.
                                 "message": (
-                                    "Clip analysis is unavailable right now. "
-                                    "Your request is saved; try again later."
+                                    "I'm getting rate-limited by the planner right now. "
+                                    "Your request is saved; try again in a moment."
                                 ),
                                 "code": "provider_quota_exceeded",
                             },
@@ -2367,8 +2375,11 @@ async def _run_planning_turn(
                 locked,
                 event_type="assistant_error",
                 payload={
+                    # KRI-118 item 3: this trigger is the planner call itself
+                    # being unreachable, not clip analysis -- give it its own
+                    # accurate copy instead of the clip-intents message below.
                     "message": (
-                        "Clip analysis is unavailable right now. "
+                        "I couldn't reach the planner right now. "
                         "Your request is saved; try again later."
                     ),
                     "code": "provider_unavailable",
@@ -2416,6 +2427,18 @@ async def _run_planning_turn(
             },
         )
     else:
+        turn_notices: list[str] = list(filter(None, [media_truncation_notice]))
+        if isinstance(action, AskUser):
+            # KRI-118 item 3: the model DID ask a question here, but the
+            # session's question budget was already exhausted (the only way
+            # `AskUser` reaches this branch instead of the one above) -- make
+            # that substitution visible instead of silently swapping in the
+            # fallback strategy with no explanation.
+            asked_question = " ".join(str(action.question or "").split())[:200]
+            turn_notices.append(
+                "I had more questions but went ahead with: "
+                f"{asked_question or 'a focused edit from your strongest footage'}."
+            )
         strategy = (
             action.strategy
             if isinstance(action, ProposeStrategy)
@@ -2946,6 +2969,7 @@ async def _run_planning_turn(
                 strategy=strategy,
                 summary=summary,
                 creator_request=creator_request,
+                extra_notices=turn_notices,
             )
         except ValueError as exc:
             log.warning(
@@ -3082,6 +3106,16 @@ async def _run_planning_turn(
                 strategy=strategy,
                 summary=MAIN_CREATOR_FALLBACK_SUMMARY,
                 creator_request=creator_request,
+                # KRI-118 item 3: `_fallback_strategy` fires because the
+                # planner's own response couldn't be applied; the real reason
+                # (`exc`) was already logged above for admins
+                # ("main_creator.unsafe_strategy_dropped") but never told to
+                # the creator. Surface a simplified version of the same
+                # reason instead of leaving it log-only.
+                extra_notices=[
+                    f"Simplified this edit because: {str(exc)[:200]}.",
+                    *([media_truncation_notice] if media_truncation_notice else []),
+                ],
             )
         locked.manifest_hash = manifest.manifest_hash
         locked.status = "awaiting_confirmation"
@@ -3100,6 +3134,10 @@ async def _run_planning_turn(
                 "plan_hash": locked.active_plan["plan_hash"],
                 "target_duration_s": locked.active_plan.get("target_duration_s"),
                 "montage_cadence": locked.active_plan.get("montage_cadence"),
+                # KRI-118 items 2/3/6: every deterministic repair or
+                # previously-silent degradation this turn applied, in plain
+                # language -- never a reason to fail the turn.
+                "notices": locked.active_plan.get("notices") or [],
             },
         )
     return await _response(db, locked)
@@ -3243,8 +3281,9 @@ async def start_creator_session_controller(
             ownership_epoch=int(plan.ownership_epoch or 0),
             # Source selection can legitimately be followed by one capacity
             # choice. Keep both deterministic questions inside the session.
-            question_budget=2,
-            max_render_attempts=2,
+            # KRI-118 item 5: settings, not hardcoded literals.
+            question_budget=settings.creator_question_budget,
+            max_render_attempts=settings.creator_max_render_attempts,
             iteration_budget=2,
             events=[],
         )
@@ -3573,6 +3612,17 @@ def _seed_guided_specialist_brief(
     )
     optional_values = {
         "execution_contract": plan.strategy.execution_contract,
+        # KRI-118 item 1: forward the chat-picked story shape (day_vlog/
+        # single_hero) to the guided specialist. `plan.strategy.archetype`
+        # has already been repaired by `compile_strategy_to_plan`
+        # (`repair_creator_strategy_shape`) to only ever be a real,
+        # currently-available shape -- never trusted further here.
+        "story_shape": plan.strategy.archetype,
+        "hero_media_id": (
+            plan.strategy.hero_media_id.removeprefix("asset-")
+            if plan.strategy.hero_media_id
+            else None
+        ),
         "media_scope": (
             plan.strategy.media_scope
             if plan.strategy.media_scope == "all" or guided_selected_scope
@@ -3699,6 +3749,23 @@ class _CommittedRenderPublishFailure(RuntimeError):
     def __init__(self, job_id: uuid.UUID) -> None:
         super().__init__("render dispatch publication failed")
         self.job_id = job_id
+
+
+class _SpeechCleanupUnavailableOnPhone(RuntimeError):
+    """`dispatch_item_render_for` rejected `choice == "clean"` before a Job was
+    minted because this item's active narration source is a phone analysis
+    proxy (KRI-118 L1 item 1, `app.tasks.content_plan_build`). No Job is ever
+    minted for this outcome -- mirrors `_PhoneGateRejected`'s no-job shape.
+    Without this, `outcome.outcome == "speech_cleanup_unavailable_on_phone"`
+    fell through to the generic `raise RuntimeError(f"render dispatch
+    failed: {outcome.outcome}")` a few lines below (KRI-118 item 7)."""
+
+
+# Kept identical to `app.routes.plan_items._SPEECH_CLEANUP_UNAVAILABLE_ON_PHONE_MESSAGE`
+# -- no shared import between the two route modules; keep both in sync.
+_SPEECH_CLEANUP_UNAVAILABLE_ON_PHONE_MESSAGE = (
+    "Speech cleanup can't run on this iPhone project's audio yet — generate without cleanup."
+)
 
 
 class _PhoneGateRejected(RuntimeError):
@@ -4317,6 +4384,9 @@ async def confirm_creator_plan_controller(
                 raise _CommittedRenderPublishFailure(uuid.UUID(outcome.job_id))
             if outcome.outcome == "invalid_clips" and getattr(outcome, "reason", None):
                 raise _PhoneGateRejected(outcome.reason)
+            if outcome.outcome == "speech_cleanup_unavailable_on_phone":
+                # KRI-118 item 7: real typed refusal, not a dispatch failure.
+                raise _SpeechCleanupUnavailableOnPhone
             if outcome.outcome != "dispatched":
                 raise RuntimeError(f"render dispatch failed: {outcome.outcome}")
             job_id = uuid.UUID(outcome.job_id) if outcome.job_id else None
@@ -4409,6 +4479,24 @@ async def confirm_creator_plan_controller(
                 "I couldn't start that render. Your creative plan is still saved.",
             ),
         )
+        failed.status = "failed"
+        failed.last_error = {"code": code, "message": message}
+        failed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)
+        if failed_receipt:
+            failed_receipt.status = "failed"
+            failed_receipt.error = failed.last_error
+            failed_receipt.completed_at = datetime.now(UTC)
+        await append_event(
+            db, failed, event_type="assistant_error", payload={"message": message, "code": code}
+        )
+        return await _response(db, failed)
+    except _SpeechCleanupUnavailableOnPhone:
+        # KRI-118 item 7: no Job was ever minted for this outcome, mirrors
+        # `_PhoneGateRejected` immediately above.
+        await db.rollback()
+        failed = await _load_session(db, creator_session_id, user_id, plan_item_id, for_update=True)
+        code = "speech_cleanup_unavailable_on_phone"
+        message = _SPEECH_CLEANUP_UNAVAILABLE_ON_PHONE_MESSAGE
         failed.status = "failed"
         failed.last_error = {"code": code, "message": message}
         failed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)

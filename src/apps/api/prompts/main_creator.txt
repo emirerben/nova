@@ -166,6 +166,7 @@ Rules:
   DAY 2 · ART, DAY 3 · NIGHTS). End on 'SEE YOU MONDAY'." => opening_title "ROME IN 3 DAYS",
   opening_title_duration_s 2, shot_labels ["DAY 1 · FOOD", "DAY 2 · ART", "DAY 3 · NIGHTS"],
   closing_title "SEE YOU MONDAY", with each evidence excerpt copied from that request.
+$story_shape_section
 $clip_intents_section
 
 Return ONLY JSON in this envelope:
@@ -184,8 +185,9 @@ OR:
     "kind": "propose_strategy",
     "strategy": {
       "direction": "guided_story|fast_montage|text_explainer|native",
-      "edit_format": "montage|day_vlog|single_hero|talking_head|subtitled|narrated|narrated_planned|narrated_ready",
-      "archetype": "same vocabulary as edit_format or null",
+      "edit_format": "montage|talking_head|subtitled|narrated|narrated_planned|narrated_ready",
+      "archetype": "day_vlog|single_hero or null -- see STORY SHAPE; only meaningful with edit_format montage",
+      "hero_media_id": "owned media id or null -- only for archetype single_hero",
       "audio_strategy": "licensed_music|original_audio|voiceover",
       "execution_contract": "guided_voiceover_v1 or null",
       "media_scope": "all|selected or null",

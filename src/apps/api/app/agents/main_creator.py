@@ -21,6 +21,7 @@ from app.agents._schemas.creator_agent import (
     ProposeStrategy,
     ResolvedCreatorManifest,
 )
+from app.agents._schemas.creator_policy import CAPABILITY_DRAFT_GUIDED_PROPOSAL
 from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
@@ -33,9 +34,8 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
 )
 
-# KRI-156 retires per-feature label fields. Narration intents are always
-# described; the visual resolver remains gated by clip_intents_enabled.
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-22-v33"
+# KRI-118 item 1: story shapes (day_vlog/single_hero) under Montage.
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-23-v34"
 
 # Visual instructions are substituted only when the resolver flag is enabled;
 # the base prompt independently describes deferred transcript label intents.
@@ -61,6 +61,25 @@ _DESCRIBED_TEXT_EXCEPTION = (
     ' each food clip" => {"op": "label", "attribute": "the dish shown in the clip",'
     ' "creator_text": null}.'
 )
+
+# KRI-118 item 1: guidance for the chat-picked "shape" layered on top of
+# `edit_format: "montage"` -- rendered INSIDE the strategy-authoring rules
+# (the `$story_shape_section` slot) only when `_story_shapes_available`
+# below says the shape could actually render this turn; "" otherwise, so the
+# rest of the prompt is untouched byte-for-byte.
+_STORY_SHAPE_PROMPT_SECTION = """
+STORY SHAPE
+The Montage card is the only picker entry for this direction, but two shapes are available
+UNDER it: set `archetype` (alongside `edit_format: "montage"`) to "day_vlog" when the
+request or footage reads as "my day", "morning to night", or "a day at X" -- the edit is
+cut in chronological (shooting) order. Set `archetype` to "single_hero" and `hero_media_id`
+to the owned media id that should dominate when one clip clearly should carry the edit and
+the rest are cutaways ("show off this shot", "make this clip the star"). Never set
+`archetype` for any other request; leave it null. Whenever you pick a shape, `summary` MUST
+name the choice in plain language (for example "I'm cutting this as a day vlog, in the order
+you shot it." or "I'm building this around your clip, with the rest as cutaways.") -- never
+pick a shape silently.
+""".strip("\n")
 
 _CLIP_INTENTS_PROMPT_SECTION = """
 OPEN-VOCABULARY CLIP INTENTS
@@ -126,12 +145,21 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         prompt_version=MAIN_CREATOR_PROMPT_VERSION,
         model="gemini-3.1-pro-preview",
         fallback_models=("gemini-3.6-flash",),
-        max_attempts=2,
+        # KRI-118 item 4: bumped from 2 -> 3 alongside `schema_retry_limit`
+        # below -- `_run_on_model`'s loop bounds EVERY retry path (transient/
+        # refusal/schema) by `max_attempts`, so a `schema_retry_limit` above
+        # `max_attempts - 1` is otherwise unreachable dead configuration.
+        max_attempts=3,
         backoff_s=(2.0,),
         timeout_s=35.0,
         # Reserve output capacity for the full source manifest.
         thinking_level="low",
         sensitive_io=True,
+        # This agent's output schema (bounded editorial choices across many
+        # optional fields, typed evidence, clip intents) is wide enough that
+        # one clarification retry sometimes isn't enough headroom to recover
+        # from a single missed constraint.
+        schema_retry_limit=2,
     )
     Input = MainCreatorInput
     Output = MainCreatorOutput
@@ -165,6 +193,17 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             ),
             described_text_exception=(
                 _DESCRIBED_TEXT_EXCEPTION if settings.clip_intents_enabled else ""
+            ),
+            # KRI-118 item 1: only mention story shapes when they could
+            # actually render this turn (rollout flag + guided proposal
+            # capability + no recorded voiceover) -- defense in depth, since
+            # `compile_strategy_to_plan` (`repair_creator_strategy_shape`)
+            # repairs an unavailable shape away regardless of whether the
+            # model saw this guidance.
+            story_shape_section=(
+                _STORY_SHAPE_PROMPT_SECTION
+                if _story_shapes_available(input.capability_manifest)
+                else ""
             ),
         )
 
@@ -288,6 +327,22 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             + (f"\nCorrect these schema errors: {feedback}." if feedback else "")
             + " Use only documented fields, exact enum values, and #RRGGBB colors."
         )
+
+
+def _story_shapes_available(manifest: ResolvedCreatorManifest) -> bool:
+    """KRI-118 item 1: whether the STORY SHAPE prompt guidance is worth
+    showing this turn -- rollout flag, guided proposal capability, and no
+    recorded voiceover (a shape only ever renders on a guided montage).
+    Mirrors, but does not replace, the server-side repair in
+    `app.agents._schemas.creator_policy.repair_creator_strategy_shape` --
+    this only controls whether the MODEL is invited to propose one; the
+    compiler never trusts the model's own choice alone.
+    """
+
+    if not settings.creator_montage_shapes_enabled or manifest.has_voiceover:
+        return False
+    guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
+    return bool(guided is not None and guided.available)
 
 
 def _repair_action_envelope(action: object) -> object:

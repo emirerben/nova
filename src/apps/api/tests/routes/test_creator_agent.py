@@ -370,6 +370,82 @@ async def test_route_uses_content_aware_duration_and_rationale_when_user_omits_i
     assert append_event.await_args.kwargs["event_type"] == "assistant_strategy"
 
 
+@pytest.mark.asyncio
+async def test_over_budget_question_falls_back_with_a_visible_notice(monkeypatch) -> None:
+    # KRI-118 item 3: the model asked a genuine question, but the session's
+    # question budget was already spent -- the resulting fallback strategy's
+    # `assistant_strategy` event must say so, not silently swap in a plan.
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "clip-1", "kind": "video", "duration_s": 8.0}],
+        guided_capability_enabled=True,
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=2,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=None,
+    )
+    response = SimpleNamespace(status="awaiting_confirmation")
+    append_event = AsyncMock()
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                action=AskUser(
+                    kind="ask_user",
+                    question="Should the video include your dog clips?",
+                    reason_code="scope",
+                )
+            )
+        ),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Make a montage from my holiday clips",
+    )
+
+    assert result is response
+    assert session.status == "awaiting_confirmation"
+    strategy_event = append_event.await_args.kwargs
+    assert strategy_event["event_type"] == "assistant_strategy"
+    notices = strategy_event["payload"]["notices"]
+    assert len(notices) == 1
+    assert notices[0].startswith("I had more questions but went ahead with: ")
+    assert "Should the video include your dog clips?" in notices[0]
+
+
 def _refresh_retry_fixture() -> tuple[dict[str, Any], str, list]:
     """A previously accepted guided_story plan plus its original request text.
 
@@ -3020,6 +3096,49 @@ def test_specialist_brief_normalizes_pool_asset_audio_and_cadence_ids(monkeypatc
     ]
 
 
+def test_story_shape_round_trips_into_specialist_brief(monkeypatch) -> None:
+    # KRI-118 item 1: a chat-picked story shape survives compile_strategy_to_plan
+    # and lands on the guided specialist's ProposalBrief under the same field
+    # names (story_shape/hero_media_id).
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(creator_capabilities.settings, "creator_montage_shapes_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "asset-hero", "kind": "video", "duration_s": 10},
+            {"media_id": "clip-1", "kind": "video", "duration_s": 5},
+        ],
+    )
+    edit_plan = compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            direction="guided_story",
+            edit_format="montage",
+            archetype="single_hero",
+            hero_media_id="asset-hero",
+            render_program="guided",
+            media_scope="all",
+        ),
+    )
+    assert edit_plan.strategy.archetype == "single_hero"
+    item = SimpleNamespace(edit_proposal=None)
+
+    _seed_guided_specialist_brief(
+        item,
+        edit_plan,
+        summary="I'm building this around your clip, with the rest as cutaways.",
+        creator_request="Make my dive clip the star.",
+    )
+
+    assert item.edit_proposal["brief"]["story_shape"] == "single_hero"
+    # The chat manifest's asset-* prefix is translated to the bare id the
+    # guided specialist/planner uses, matching montage_audio/montage_cadence.
+    assert item.edit_proposal["brief"]["hero_media_id"] == "hero"
+
+
 def test_native_mixed_timing_replaces_stale_approved_proposal_with_fresh_brief(
     monkeypatch,
 ) -> None:
@@ -3218,7 +3337,7 @@ async def test_route_fallback_preserves_pinned_voiceover_and_all_media_draft(
     assert failure["event_type"] == "assistant_error"
     assert failure["payload"] == {
         "message": (
-            "Clip analysis is unavailable right now. Your request is saved; try again later."
+            "I couldn't reach the planner right now. Your request is saved; try again later."
         ),
         "code": "provider_unavailable",
     }
@@ -3297,7 +3416,8 @@ async def test_route_provider_quota_saves_request_restores_call_count_and_retry_
     assert append_event.await_args.kwargs["event_type"] == "assistant_error"
     assert append_event.await_args.kwargs["payload"] == {
         "message": (
-            "Clip analysis is unavailable right now. Your request is saved; try again later."
+            "I'm getting rate-limited by the planner right now. "
+            "Your request is saved; try again in a moment."
         ),
         "code": "provider_quota_exceeded",
     }
@@ -6291,6 +6411,124 @@ async def test_chat_dispatch_phone_gate_rejection_surfaces_typed_code(
 
 
 @pytest.mark.asyncio
+async def test_chat_dispatch_speech_cleanup_unavailable_on_phone_surfaces_typed_code(
+    monkeypatch,
+) -> None:
+    """KRI-118 item 7: `speech_cleanup_unavailable_on_phone` (L1's new bare
+    outcome, not wrapped in invalid_clips/reason) must surface its own typed
+    code/message here too, not fall into the generic 'execution_failed'
+    RuntimeError catch-all. Same harness as
+    `test_chat_dispatch_phone_gate_rejection_surfaces_typed_code`.
+    """
+    from app.tasks import content_plan_build
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id = uuid.uuid4()
+    manifest = _manifest(monkeypatch)
+    strategy = CreativeStrategy(
+        direction="fast_montage",
+        edit_format="montage",
+        audio_strategy="licensed_music",
+        render_program="native",
+        selected_media_ids=["clip-1"],
+    )
+    edit_plan = compile_strategy_to_plan(manifest, strategy)
+    active = {
+        "version": 1,
+        "plan_hash": "a" * 64,
+        "creator_request": "Make a clean montage",
+        "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
+    }
+    item = SimpleNamespace(id=item_id, current_job_id=None)
+    plan = SimpleNamespace(ownership_epoch=4)
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item_id,
+        status="awaiting_confirmation",
+        revision=3,
+        ownership_epoch=4,
+        manifest_hash=manifest.manifest_hash,
+        active_plan=active,
+        render_attempts=1,
+        max_render_attempts=3,
+        iteration_count=1,
+        target_variant_id=None,
+        target_job_id=None,
+        last_error=None,
+    )
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    receipt_holder: dict[str, CreatorAgentExecution] = {}
+    db = AsyncMock()
+    db.execute.return_value = receipt_result
+
+    def add(row) -> None:
+        if isinstance(row, CreatorAgentExecution):
+            row.id = uuid.uuid4()
+            receipt_holder["receipt"] = row
+
+    async def get(model, _identifier, **_kwargs):
+        if model is CreatorAgentExecution:
+            return receipt_holder.get("receipt")
+        return None
+
+    db.add = MagicMock(side_effect=add)
+    db.get.side_effect = get
+    dispatch = MagicMock(
+        return_value=SimpleNamespace(
+            outcome="speech_cleanup_unavailable_on_phone", job_id=None, reason=None
+        )
+    )
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "_apply_plan_intent", MagicMock())
+    monkeypatch.setattr(
+        creator_routes,
+        "_previous_creator_clip_order",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    response = SimpleNamespace(status="failed")
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+    monkeypatch.setattr(content_plan_build, "dispatch_item_render_for", dispatch)
+
+    returned = await creator_routes.confirm_creator_plan_controller(
+        str(item_id),
+        ConfirmBody(
+            session_id=session.id,
+            expected_revision=3,
+            plan_version=1,
+            plan_hash="a" * 64,
+            client_event_id="speech-cleanup-phone-1",
+        ),
+        user,
+        db,
+        allow_chat=True,
+    )
+
+    assert returned is response
+    dispatch.assert_called_once()
+    assert session.status == "failed"
+    assert session.last_error["code"] == "speech_cleanup_unavailable_on_phone"
+    assert "iPhone" in session.last_error["message"]
+    receipt = receipt_holder["receipt"]
+    assert receipt.status == "failed"
+    assert receipt.error == session.last_error
+    _args, kwargs = creator_routes.append_event.await_args
+    assert kwargs["payload"]["code"] == "speech_cleanup_unavailable_on_phone"
+
+
+@pytest.mark.asyncio
 async def test_chat_cleanup_publish_failure_crash_replay_refunds_once(
     monkeypatch,
 ) -> None:
@@ -7287,7 +7525,7 @@ async def test_route_schema_failure_preserves_madrid_text_and_source_capacity(
         assert failure["event_type"] == "assistant_error"
         assert failure["payload"] == {
             "message": (
-                "Clip analysis is unavailable right now. Your request is saved; try again later."
+                "I couldn't reach the planner right now. Your request is saved; try again later."
             ),
             "code": "provider_unavailable",
         }
