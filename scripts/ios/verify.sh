@@ -178,14 +178,50 @@ SIMULATOR_ID="$(select_simulator)"
 DESTINATION="platform=iOS Simulator,id=$SIMULATOR_ID"
 
 # Boot during compilation instead of paying for startup after the build.
-boot_simulator() {
+# Runs simctl in the background so the timed shell can forward cancellation.
+simctl_wait() {
   local child status=0
-  xcrun simctl bootstatus "$SIMULATOR_ID" -b &
+  xcrun simctl "$@" &
   child=$!
-  # The timed background shell must forward cancellation to simctl.
   trap 'kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; exit 143' TERM
   wait "$child" || status=$?
   trap - TERM
+  return "$status"
+}
+
+# True while the selected device is booted or mid-boot (simctl reports both as
+# "Booted" once the boot request is accepted).
+simulator_boot_in_progress() {
+  xcrun simctl list devices -j | /usr/bin/python3 -c '
+import json
+import sys
+
+udid = sys.argv[1]
+payload = json.load(sys.stdin)
+for devices in payload.get("devices", {}).values():
+    for device in devices:
+        if device.get("udid") == udid:
+            raise SystemExit(0 if device.get("state") in {"Booted", "Booting"} else 1)
+raise SystemExit(1)
+' "$SIMULATOR_ID"
+}
+
+boot_simulator() {
+  local status=0
+  simctl_wait bootstatus "$SIMULATOR_ID" -b || status=$?
+  if [[ "$status" -ne 0 ]] && simulator_boot_in_progress; then
+    # CI's head start (KRIA_IOS_TEST_MODE=boot) may still be booting this
+    # device. `bootstatus -b` then races it: it sees a device that is not yet
+    # finished, issues its own boot, and simctl refuses with SimError 405
+    # "Unable to boot device in current state: Booted" (exit 149; first seen
+    # on PR #1183 right after #1181 added the head start). A plain
+    # `bootstatus` only monitors the boot already under way, so wait on that
+    # instead of failing a green build. A device that is not booting at all
+    # keeps the original failure.
+    echo "bootstatus -b lost the race with the early boot (exit $status); waiting for it" >&2
+    status=0
+    simctl_wait bootstatus "$SIMULATOR_ID" || status=$?
+  fi
   return "$status"
 }
 timed "Simulator readiness (overlaps compilation)" boot_simulator > "$RESULT_DIR/simulator.log" 2>&1 &
