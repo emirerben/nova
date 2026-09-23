@@ -22,6 +22,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from celery.exceptions import Retry
+from google.genai import errors as genai_errors
 
 import app.tasks.autoplace as ap
 from app.db_locks import CONTENT_PLAN_LOCK
@@ -545,22 +547,191 @@ def test_analyze_pool_asset_discards_late_output_after_attempt_changes(monkeypat
     assert asset.status == "analyzing"
 
 
-def test_analyze_pool_asset_persists_safe_retryable_failure(monkeypatch) -> None:
+def _gemini_503() -> genai_errors.ServerError:
+    return genai_errors.ServerError(
+        503,
+        {"error": {"code": 503, "message": "The model is overloaded.", "status": "UNAVAILABLE"}},
+    )
+
+
+@pytest.mark.parametrize("failure", ["non_transient", "transient_retries_exhausted"])
+def test_analyze_pool_asset_persists_safe_retryable_failure(monkeypatch, failure: str) -> None:
+    """Both a never-retried failure and an exhausted transient-retry chain must
+    persist the exact single-attempt terminal contract the clients render."""
     asset = _PoolAsset(kind="image")
     asset.status = "queued"
     asset.analysis_attempt_token = "attempt-1"
     _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
-    monkeypatch.setattr(
-        "app.storage.download_to_file",
-        lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("private provider detail")),
-    )
+    if failure == "non_transient":
+        # Not a provider transient: terminal on the first invocation, no retry.
+        monkeypatch.setattr(
+            "app.storage.download_to_file",
+            lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("private provider detail")),
+        )
 
-    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+        ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+    else:
+        seen: list[tuple[str, str | None, str]] = []
+
+        def _always_unavailable(_local, _scope, *, creator_id=None, run_context=None):
+            seen.append((asset.status, asset.error_code, run_context.request_id))
+            raise ap.AnalysisTemporarilyUnavailableError("private provider detail")
+
+        monkeypatch.setattr(ap, "_analyze_image", _always_unavailable)
+
+        # Eager apply walks the REAL Task.retry bookkeeping: every Retry is
+        # re-applied at once (countdown ignored) with retries+1 until
+        # MaxRetriesExceededError falls through to the terminal persist. The
+        # token rides the header exactly as the route/reaper dispatch it.
+        ap.analyze_pool_asset.apply(
+            args=[str(asset.id), False],
+            headers={"pool_asset_attempt_token": "attempt-1"},
+        )
+
+        assert len(seen) == ap._POOL_ANALYSIS_MAX_RETRIES + 1
+        # Never terminal, never error-stamped while a retry was still available.
+        assert {(status, code) for status, code, _rid in seen} == {("analyzing", None)}
+        # Each retry is a new paid call with its own ledger key; the first
+        # invocation keeps the key it always had (redelivery idempotency).
+        base = f"pool-image:{asset.plan_item_id}:{asset.id}"
+        assert [rid for *_rest, rid in seen] == [base] + [
+            f"{base}:retry{n}" for n in range(1, ap._POOL_ANALYSIS_MAX_RETRIES + 1)
+        ]
 
     assert asset.status == "failed"
     assert asset.error_code == "analysis_temporarily_unavailable"
     assert asset.error_retryable is True
+    assert asset.error_detail == "Kria temporarily couldn't analyze this file. Try again."
     assert "private provider detail" not in asset.error_detail
+    assert asset.analysis_started_at is None
+    assert asset.analysis_attempt_token == "attempt-1"
+
+
+@pytest.mark.parametrize(
+    "provider_error",
+    [
+        # What _analyze_image/_analyze_video wrap a Gemini 503 into.
+        pytest.param(
+            lambda: ap.AnalysisTemporarilyUnavailableError("image analysis provider failed"),
+            id="wrapped_503",
+        ),
+        # A raw genai 5xx that reaches the task's catch-all instead.
+        pytest.param(_gemini_503, id="raw_genai_503"),
+    ],
+)
+def test_analyze_pool_asset_transient_gemini_error_retries_instead_of_terminal(
+    monkeypatch, provider_error
+) -> None:
+    """Regression for prod 2026-09-23 15:27-15:29 UTC: 16 of 17 Gemini
+    generateContent calls on the autoplace machine returned 503 and every pool
+    asset went terminal `failed` with analysis_attempt_count=1 (iOS Add-media
+    rows showed "Failed"). analyze_pool_asset was single-attempt and the reaper
+    never re-dispatches `failed`, so nothing ever retried. A transient provider
+    failure must now schedule a real Celery retry and leave the row in flight.
+    """
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+
+    def _boom(*_a, **_kw):
+        raise provider_error()
+
+    monkeypatch.setattr(ap, "_analyze_image", _boom)
+
+    with pytest.raises(Retry):
+        ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    assert asset.status == "analyzing"  # in progress, not terminal
+    assert asset.error_code is None
+    assert asset.error_detail is None
+    assert asset.error_retryable is False
+    assert asset.analysis_started_at is not None
+    assert asset.analysis_attempt_token == "attempt-1"
+    # Media readiness is published before the AI call and survives the retry,
+    # so manual overlays stay usable while analysis is re-driven.
+    assert asset.media_status == "ready"
+
+
+def test_analyze_pool_asset_recovers_when_a_retry_succeeds(monkeypatch) -> None:
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    calls: list[str] = []
+
+    def _503_then_ok(_local, _scope, *, creator_id=None, run_context=None):
+        calls.append(asset.status)
+        if len(calls) == 1:
+            raise ap.AnalysisTemporarilyUnavailableError("image analysis provider failed")
+        return ({"subject": "matcha"}, 1.0, (100, 100), False)
+
+    monkeypatch.setattr(ap, "_analyze_image", _503_then_ok)
+
+    ap.analyze_pool_asset.apply(args=[str(asset.id), False, "attempt-1"])
+
+    assert calls == ["analyzing", "analyzing"]
+    assert asset.status == "ready"
+    assert asset.analysis["subject"] == "matcha"
+    assert asset.error_code is None
+    assert asset.error_retryable is False
+    assert asset.analysis_started_at is None
+
+
+def test_analyze_pool_asset_retry_exits_when_row_is_no_longer_analyzing(monkeypatch) -> None:
+    """The reaper may terminalize a stuck attempt without minting a new token.
+    A late retry of that attempt must not re-run analysis or overwrite it."""
+    asset = _PoolAsset(kind="image")
+    asset.status = "failed"
+    asset.error_code = "analysis_timed_out"
+    asset.error_retryable = True
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    analysis = MagicMock(return_value=({"subject": "late"}, 1.0, (100, 100), False))
+    downloads: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.download_to_file",
+        lambda path, _local: downloads.append(path),
+    )
+    monkeypatch.setattr(ap, "_analyze_image", analysis)
+
+    ap.analyze_pool_asset.apply(args=[str(asset.id), False, "attempt-1"], retries=1)
+
+    analysis.assert_not_called()
+    assert downloads == []
+    assert asset.status == "failed"
+    assert asset.error_code == "analysis_timed_out"
+    assert asset.analysis is None
+
+
+def test_analyze_pool_asset_quota_429_is_not_retried(monkeypatch) -> None:
+    """A billing/quota 429 is a provider denial, not capacity: never retried."""
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+
+    def _quota(*_a, **_kw):
+        raise genai_errors.ClientError(
+            429,
+            {
+                "error": {
+                    "code": 429,
+                    "message": (
+                        "You exceeded your current quota, please check your plan and "
+                        "billing details."
+                    ),
+                    "status": "RESOURCE_EXHAUSTED",
+                }
+            },
+        )
+
+    monkeypatch.setattr(ap, "_analyze_image", _quota)
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")
+
+    assert asset.status == "failed"
+    assert asset.error_retryable is True
 
 
 def test_analyze_pool_asset_downloads_verified_generation(monkeypatch) -> None:

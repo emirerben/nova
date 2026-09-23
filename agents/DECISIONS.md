@@ -2339,3 +2339,39 @@ title, duplicating the voiceover caption. Decisions:
 
 **Revisit if:** topic labels need multi-word non-name phrases (widen the shape rule with a
 creator opt-in), or the phone gets a sequence compositor.
+
+---
+
+## [2026-09-23] Pool-asset analysis retries transient Gemini failures instead of going terminal
+
+On 2026-09-23 15:27-15:29 UTC, 16 of 17 Gemini `generateContent` calls on the autoplace machine
+returned 503. `analyze_pool_asset` was single-attempt: `_analyze_image`/`_analyze_video` wrapped
+the 503 as `AnalysisTemporarilyUnavailableError`, the task persisted a terminal `failed` row with
+`analysis_attempt_count=1` and returned success to Celery. The reaper never re-dispatches
+`failed`, so every Visual in the iOS Add-media sheet stayed "Failed" until a manual Retry tap.
+Decisions:
+
+- Same pattern as `draft_edit_proposal`: `bind=True`, and on `AnalysisTemporarilyUnavailableError`
+  (or a non-quota 5xx/429 classified by `_is_genai_transient` in the catch-all) call
+  `self.retry(countdown=15, max_retries=4)`. `MaxRetriesExceededError` falls through to the
+  unchanged terminal persist, so the exhausted contract (`analysis_temporarily_unavailable`,
+  `error_retryable=True`, same `error_detail`) is byte-identical.
+- The row stays `analyzing` across retries. A retry re-enters its own attempt under the same
+  attempt token, re-arms `analysis_started_at` for the reaper's 10-minute window, and exits
+  without work if the row is no longer `analyzing` (e.g. the reaper terminalized it).
+- Each retry uses a distinct paid-call ledger key (`request_id` suffix `:retryN`). Reusing the
+  first invocation's key is refused once that call is `settled` or `unknown`, which would turn a
+  retry into a non-retryable `provider_outcome_unknown`. The first invocation keeps its old key,
+  so broker redelivery stays idempotent.
+- No client-wide `HttpRetryOptions` on the shared `genai.Client`: it would stack with the
+  existing manual upload/poll retry loops and the agent runtime's own attempts.
+- `_AUTOPLACE_TASK_LIMITS` (240/300) is unchanged. Each retry is a fresh invocation, so the
+  time-limit < `visibility_timeout` invariant holds per attempt.
+
+Guards: `test_analyze_pool_asset_transient_gemini_error_retries_instead_of_terminal`,
+`test_analyze_pool_asset_persists_safe_retryable_failure[transient_retries_exhausted]` in
+`tests/tasks/test_autoplace_tasks.py`.
+
+**Revisit if:** Gemini outages routinely outlast ~1 minute (lengthen the countdown or add
+backoff), or download/GCS transients start stranding uploads (they are still terminal on the
+first failure).
