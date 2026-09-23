@@ -256,6 +256,10 @@ final class EditorUITests: XCTestCase {
         // `.isModal` wraps the video in an alert container; the video box is its child.
         let box = fullscreen.descendants(matching: .any).firstMatch
         XCTAssertTrue(box.exists)
+        // The box grows out of the preview; wait for the animation to settle.
+        let settled = NSPredicate { _, _ in abs(box.frame.width - app.frame.width * 0.9) < 4 }
+        expectation(for: settled, evaluatedWith: nil)
+        waitForExpectations(timeout: 5)
         XCTAssertEqual(box.frame.width, app.frame.width * 0.9, accuracy: 4)
         XCTAssertGreaterThan(box.frame.height, originalFrame.height * 1.5)
         XCTAssertEqual(box.frame.midY, app.frame.midY, accuracy: 4, "centered on the full screen")

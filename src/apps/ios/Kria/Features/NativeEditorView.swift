@@ -26,7 +26,11 @@ struct NativeEditorView: View {
     @State private var previewResize: CGFloat = 0
     @State private var panelExpansion: CGFloat = 0
     @State private var topChromeHeight: CGFloat = 0
+    /// `previewFullscreen` mounts the overlay; `fullscreenExpanded` drives its
+    /// grow/shrink so the overlay can animate out before it is removed.
     @State private var previewFullscreen = false
+    @State private var fullscreenExpanded = false
+    @State private var previewGlobalFrame: CGRect = .zero
     @State private var wasPlayingBeforeFullscreen = false
 
     private var shouldReduceMotion: Bool {
@@ -215,6 +219,7 @@ struct NativeEditorView: View {
             NativeVideoPreview(session: session, onEmptyTap: enterFullscreen)
                 .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
                 .clipped()
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { previewGlobalFrame = $0 }
                 .accessibilityIdentifier("native-editor-preview")
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
@@ -246,24 +251,37 @@ struct NativeEditorView: View {
 
     private var panelIsOpen: Bool { panel != nil }
 
+    private var fullscreenSpring: Animation {
+        shouldReduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.36, dampingFraction: 0.88)
+    }
+
     /// Empty preview taps and the VoiceOver "Expand preview" action land here.
-    /// Playback starts if it was paused (this is for watching) and is restored
-    /// on exit. At the end of the timeline `togglePlayback()` restarts from 0.
+    /// The grow animation starts first; playback (which synchronously
+    /// activates the audio session) waits until it settles so it can't stall
+    /// the animation. Playback is restored on exit. At the end of the timeline
+    /// `togglePlayback()` restarts from 0.
     private func enterFullscreen() {
         guard !previewFullscreen, !keyboardVisible, session.pendingText == nil,
               session.canDisplayCurrentPlayer else { return }
         wasPlayingBeforeFullscreen = session.isPlaying
-        if !session.isPlaying { session.togglePlayback() }
-        withAnimation(shouldReduceMotion ? .easeOut(duration: 0.15) : .easeOut(duration: 0.25)) {
-            previewFullscreen = true
+        fullscreenExpanded = false
+        previewFullscreen = true
+        DispatchQueue.main.async {
+            withAnimation(fullscreenSpring) { fullscreenExpanded = true }
+        }
+        if !wasPlayingBeforeFullscreen {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                if previewFullscreen, fullscreenExpanded, !session.isPlaying { session.togglePlayback() }
+            }
         }
     }
 
     private func exitFullscreen() {
         guard previewFullscreen else { return }
         if !wasPlayingBeforeFullscreen { session.pausePlayback() }
-        withAnimation(shouldReduceMotion ? .easeOut(duration: 0.15) : .easeOut(duration: 0.25)) {
-            previewFullscreen = false
+        withAnimation(fullscreenSpring) { fullscreenExpanded = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (shouldReduceMotion ? 0.16 : 0.34)) {
+            if !fullscreenExpanded { previewFullscreen = false }
         }
     }
 
@@ -272,18 +290,26 @@ struct NativeEditorView: View {
             width: viewport.size.width,
             height: viewport.size.height + viewport.safeAreaInsets.top + viewport.safeAreaInsets.bottom
         )
+        let size = NativeEditorLayoutMetrics.fullscreenSize(screen: screen, aspect: session.previewAspectRatio)
+        let collapsedScale = size.width > 0 ? max(0.05, previewGlobalFrame.width / size.width) : 1
+        let collapsedOffset = CGSize(
+            width: previewGlobalFrame.midX - screen.width / 2,
+            height: previewGlobalFrame.midY - screen.height / 2
+        )
         return ZStack {
-            Color.black.opacity(0.8)
+            Color.black.opacity(fullscreenExpanded ? 0.8 : 0)
             NativeEditorFullscreenPreview(
                 session: session,
-                size: NativeEditorLayoutMetrics.fullscreenSize(screen: screen, aspect: session.previewAspectRatio),
-                reduceMotion: shouldReduceMotion
+                size: size,
+                reduceMotion: shouldReduceMotion,
+                expanded: fullscreenExpanded,
+                collapsedScale: collapsedScale,
+                collapsedOffset: collapsedOffset
             )
         }
         .ignoresSafeArea()
         .contentShape(Rectangle())
         .onTapGesture(perform: exitFullscreen)
-        .transition(.opacity)
         .accessibilityAddTraits(.isModal)
         .accessibilityAction(.escape, exitFullscreen)
         .accessibilityAction(named: "Close fullscreen", exitFullscreen)

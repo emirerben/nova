@@ -762,12 +762,18 @@ final class NativeEditorPreviewDragClock {
 
 /// KRI-170: the fullscreen watch surface. A second `AVPlayerLayer` on the
 /// session's player, mounted over the (still mounted) in-layout preview so
-/// neither entering nor leaving ever tears a layer down. It fades in once its
-/// layer has a frame (0.4s cap), so a slow layer never shows as a black box.
+/// neither entering nor leaving ever tears a layer down. The box grows out of
+/// (and shrinks back into) the preview's own frame; its layer fades in over the
+/// first frames so a not-yet-ready layer never shows as a black box.
 struct NativeEditorFullscreenPreview: View {
     @ObservedObject var session: NativeEditorSession
     let size: CGSize
     let reduceMotion: Bool
+    let expanded: Bool
+    /// Where the box starts/ends: uniform scale and center offset (from the
+    /// screen's center) that make it coincide with the in-layout preview.
+    let collapsedScale: CGFloat
+    let collapsedOffset: CGSize
     @State private var ready = false
 
     var body: some View {
@@ -788,11 +794,12 @@ struct NativeEditorFullscreenPreview: View {
         }
         .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .opacity(ready ? 1 : 0)
-        .scaleEffect(reduceMotion || ready ? 1 : 0.94)
-        .animation(.easeOut(duration: reduceMotion ? 0.15 : 0.25), value: ready)
+        .scaleEffect(reduceMotion || expanded ? 1 : collapsedScale)
+        .offset(reduceMotion || expanded ? .zero : collapsedOffset)
+        .opacity(ready && (expanded || !reduceMotion) ? 1 : 0)
+        .animation(.easeOut(duration: 0.12), value: ready)
         .task {
-            try? await Task.sleep(for: .milliseconds(400))
+            try? await Task.sleep(for: .milliseconds(250))
             ready = true
         }
         .accessibilityElement(children: .ignore)
