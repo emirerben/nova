@@ -54,6 +54,32 @@ final class AppleTextAccessibilityUITests: XCTestCase {
         XCTAssertLessThanOrEqual(color.frame.maxX, viewport.maxX)
     }
 
+    func testTextFontPickerListsWebFontsAndAppliesTheChoice() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-two-text"]
+        app.launchEnvironment["UI_TEST_EDITOR_WIDTH"] = "390"
+        app.launch()
+
+        let timelineText = app.buttons["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"].firstMatch
+        XCTAssertTrue(timelineText.waitForExistence(timeout: 8))
+        timelineText.tap()
+        timelineText.tap()
+
+        let font = app.buttons["native-editor-text-font"]
+        reveal(font, in: app.scrollViews["native-editor-text-inspector-scroll"])
+        XCTAssertTrue(font.waitForExistence(timeout: 3))
+        font.tap()
+
+        // Fonts beyond the old four-font shortlist are offered.
+        let bebas = app.buttons["native-editor-font-option-bebas-neue"]
+        XCTAssertTrue(bebas.waitForExistence(timeout: 3))
+        attachScreenshot(app, name: "Font picker sheet")
+        bebas.tap()
+
+        XCTAssertTrue(font.waitForExistence(timeout: 3))
+        XCTAssertEqual(font.value as? String, "Bebas Neue")
+    }
+
     private func reveal(_ control: XCUIElement, in inspector: XCUIElement) {
         for _ in 0..<24 where !control.isHittable {
             let moveUp = !control.exists || control.frame.midY > inspector.frame.midY

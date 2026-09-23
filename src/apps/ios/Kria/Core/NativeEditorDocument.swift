@@ -29,7 +29,7 @@ enum NativeEditorWireContract {
     static let transitions = ["cut", "crossfade", "dip_to_black", "flash"]
     static let textAnimations = ["none", "fade-in", "pop-in", "slide-in"]
     static let musicAlignments = ["preserve_cuts", "resync_beats"]
-    static let captionFonts = ["Inter", "Fraunces", "Space Grotesk"]
+    static let captionFonts = NativeFontCatalog.shared.pickerFonts
 }
 
 struct EditorCapability: Codable, Equatable, Sendable {

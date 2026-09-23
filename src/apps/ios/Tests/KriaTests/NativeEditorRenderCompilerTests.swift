@@ -295,8 +295,11 @@ import KriaMediaEngine
         let captionElement = EditorTextElement(id: "caption-1", text: "Spoken words", startS: 0, endS: 2,
             role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")]), "font_family": .string("Inter-Bold")])
         let item = NativeEditorTimelineItem(selection: .init(kind: .text, id: "caption-1"), start: 0, end: 2)
-        XCTAssertEqual(NativeEditorWireContract.captionFonts, ["Inter", "Fraunces", "Space Grotesk"])
-        for (font, file) in [("Inter", "Inter-Bold.ttf"), ("Fraunces", "Fraunces-Bold.ttf"), ("Space Grotesk", "SpaceGrotesk-Bold.ttf")] {
+        XCTAssertEqual(NativeEditorWireContract.captionFonts, NativeFontCatalog.shared.pickerFonts)
+        for (font, file) in [("Inter", "Inter-Bold.ttf"), ("Fraunces", "Fraunces-Bold.ttf"), ("Space Grotesk", "SpaceGrotesk-Bold.ttf"),
+                             ("Bebas Neue", "BebasNeue-Regular.ttf"), ("Great Vibes", "GreatVibes-Regular.ttf"),
+                             // "Outfit" is repeated in the registry; the live (last) entry must win.
+                             ("Outfit", "Outfit-VF.ttf")] {
             let document = EditorDocument(textElements: [captionElement],
                 captionMeta: ["font": .string(font), "font_set": .bool(true)])
             let program = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source])
