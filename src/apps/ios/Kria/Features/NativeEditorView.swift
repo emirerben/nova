@@ -9,6 +9,7 @@ struct NativeEditorView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var session: NativeEditorSession
     @StateObject private var exporter = NativeEditorExporter()
     @StateObject private var panelDrafts = NativeEditorPanelDrafts()
@@ -163,6 +164,16 @@ struct NativeEditorView: View {
             .task { await loadEditor(); await session.resumeEditorImports() }
             .onReceive(model.uploads.$pendingEditorPlacements) { _ in
                 Task { await session.resumePendingEditorPlacements() }
+            }
+            // A source import outlives the screen: the upload runs in a
+            // background URLSession, so the app can be suspended (or woken in
+            // the background) while the editor's in-process waiter is gone,
+            // and returning to the app doesn't re-run `.task`. Re-arm the
+            // waiter whenever the app becomes active again so a finished
+            // server probe is picked up instead of leaving "Preparing media
+            // import…" up until a relaunch.
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await session.resumeEditorImports() } }
             }
             .onDisappear {
                 finishPanelEditing()

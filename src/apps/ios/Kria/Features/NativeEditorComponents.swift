@@ -265,6 +265,18 @@ struct NativeEditorTimeline: View {
                     Button("Remove", role: .destructive) { Task { await session.dismissPendingEditorImport(pending) } }.font(KriaFont.body(12)).frame(minHeight: 44)
                 }
                 .accessibilityIdentifier("native-editor-pending-timeline-import")
+                // Watchdog: a visible "Preparing…" row means this editor is on
+                // screen, so make sure a live waiter exists. The waiter can die
+                // silently (app suspended/relaunched mid-import); without this
+                // the row would stay until the editor is reopened.
+                .task(id: "\(pending.id.uuidString)-\(pending.status)") {
+                    guard pending.status == "preparing" else { return }
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(4))
+                        if Task.isCancelled { break }
+                        await session.resumeEditorImports()
+                    }
+                }
             }
             NativeMiniStrip(
                 session: session, bottomClearance: bottomClearance, isCovered: isCovered,
