@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.169.0] - 2026-09-23
+
+### Fixed
+- fix(ios): explain failed Visuals and auto-retry transient analysis failures (#1186) <!-- release-pr: 1186 -->
+
 ## [0.76.168.0] - 2026-09-23
 
 ### Changed
