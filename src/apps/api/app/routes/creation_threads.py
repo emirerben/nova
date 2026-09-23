@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app import storage
-from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
+from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.auth import CurrentUser, NativeClient
 from app.config import settings
 from app.database import get_db
@@ -1853,13 +1853,59 @@ def _exclude_referenced_project_storage(
     )
 
 
+_ADJUSTMENTS_NOTICES_CAP = 8
+
 # Session failures whose retry cannot succeed in the same session.
 _NON_RETRYABLE_SESSION_FAILURES = frozenset(
     {"agent_budget_exhausted", "question_budget_exhausted", "render_identity_mismatch"}
 )
 
 
-def _creator_agent_projection(session: CreatorAgentSession | None) -> dict[str, Any] | None:
+def _deduped_capped_strings(values: object, *, cap: int = _ADJUSTMENTS_NOTICES_CAP) -> list[str]:
+    """Order-preserving dedupe of a string list, capped for client display."""
+
+    if not isinstance(values, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+        if len(out) >= cap:
+            break
+    return out
+
+
+def _edit_proposal_adjustments(item: PlanItem | None) -> list[str]:
+    """KRI-118 item 3: the guided specialist's own repair notes (lane L3).
+
+    `ApprovedProposalSnapshot.snapshot.adjustments` /
+    `EditProposalSnapshot.adjustments` (app/schemas/edit_proposal.py) are the
+    deterministic story-shape repair layer's user-facing "what Kria changed"
+    notes (app.services.story_shapes.humanize_repairs). Both the unapproved
+    draft and the last approved snapshot can carry their own adjustments --
+    merge both so a client sees the full picture regardless of approval
+    state; `_deduped_capped_strings` collapses any overlap.
+    """
+
+    if item is None:
+        return []
+    proposal = parse_edit_proposal(getattr(item, "edit_proposal", None))
+    if proposal is None:
+        return []
+    adjustments: list[str] = []
+    if proposal.draft is not None:
+        adjustments.extend(proposal.draft.adjustments)
+    if proposal.last_approved is not None:
+        adjustments.extend(proposal.last_approved.snapshot.adjustments)
+    return adjustments
+
+
+def _creator_agent_projection(
+    session: CreatorAgentSession | None, *, item: PlanItem | None = None
+) -> dict[str, Any] | None:
     """Expose reviewable strategy metadata, never executable plan commands."""
 
     if session is None:
@@ -1913,7 +1959,7 @@ def _creator_agent_projection(session: CreatorAgentSession | None) -> dict[str, 
                 else "Send a message to try a new direction."
             ),
         }
-    return {
+    projection: dict[str, Any] = {
         **({"preparation": preparation} if preparation else {}),
         "status": session.status,
         "revision": session.revision,
@@ -1924,6 +1970,23 @@ def _creator_agent_projection(session: CreatorAgentSession | None) -> dict[str, 
         "max_render_attempts": budget,
         **({"failure": failure} if failure is not None else {}),
     }
+    # KRI-118 item 3: `story_shape`/`notices` are the Main Creator's own
+    # server-repaired direction metadata (app.services.creator_sessions.
+    # compile_active_plan, lane L2); `adjustments` merges the guided
+    # specialist's repair notes on the item's edit proposal (lane L3). Both
+    # are best-effort "what Kria changed" surfaces -- omit the keys entirely
+    # when there is nothing to show so this stays additive for callers/tests
+    # that assert an exact dict shape.
+    story_shape = plan.get("story_shape")
+    if isinstance(story_shape, str) and story_shape:
+        projection["story_shape"] = story_shape
+    notices = _deduped_capped_strings(plan.get("notices"))
+    if notices:
+        projection["notices"] = notices
+    adjustments = _deduped_capped_strings(_edit_proposal_adjustments(item))
+    if adjustments:
+        projection["adjustments"] = adjustments
+    return projection
 
 
 def _is_status_only_message(message: str) -> bool:
@@ -2369,17 +2432,15 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> bool:
         return False
     projection = dict(thread.state or {})
     previous_agent = projection.get("creator_agent") or {}
-    active_plan = session.active_plan if isinstance(session.active_plan, dict) else {}
-    from app.services.creator_preparation import public_preparation
-
-    projection["creator_agent"] = {
-        **({"preparation": public_preparation(session)} if public_preparation(session) else {}),
-        "status": session.status,
-        "revision": session.revision,
-        "summary": active_plan.get("summary"),
-        "plan_hash": active_plan.get("plan_hash"),
-        "version": active_plan.get("version"),
-    }
+    # KRI-118 item 3: reuse the same projection helper the main GET path uses
+    # (_response) so story_shape/adjustments/notices reach the poll/SSE sync
+    # path too, not just the initial fetch. `item` is best-effort -- a lookup
+    # failure/absence here must never block syncing the rest of the agent
+    # transcript, so this never raises on a session double that doesn't carry
+    # a real plan_item_id (e.g. a lightweight test double).
+    session_plan_item_id = getattr(session, "plan_item_id", None)
+    item = await db.get(PlanItem, session_plan_item_id) if session_plan_item_id else None
+    projection["creator_agent"] = _creator_agent_projection(session, item=item)
     # Clip preparation is durable and can take several minutes before it emits
     # a planner reply. Persist a small, old-client-visible assistant event at
     # the start of each valid active attempt so polling never looks silent.
@@ -2741,7 +2802,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         if response_active_session_id
         else None,
         active_job_id=str(response_active_job_id) if response_active_job_id else None,
-        creator_agent=_creator_agent_projection(session),
+        creator_agent=_creator_agent_projection(session, item=item),
         job=_job_projection(job),
         media_capabilities=media_capabilities,
         direction_receipt=direction_receipt,
@@ -2873,7 +2934,20 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
         )
 
         supported_now = phone_render_supported_formats()
-        formats = {key: value for key, value in formats.items() if value in supported_now}
+        # `slides` is exempt from this filter even though it's never in
+        # `phone_render_supported_formats()`. A slide post has no clip
+        # pipeline at all -- its media lives exclusively in the
+        # `PlanItemAsset` pool (see the `upload-urls` fence above) and its
+        # render always dispatches to the cloud slides renderer
+        # (`content_plan_build.py` / `slide_build.py`), never through the
+        # phone dispatch gate this filter exists to protect. Dropping it
+        # here would just hide a working, cloud-only format from a phone
+        # account for no reason.
+        formats = {
+            key: value
+            for key, value in formats.items()
+            if value in supported_now or value == "slides"
+        }
     return {
         # Runtime v2 cannot create a guided phone job at all, so a pilot account
         # offered v2 would never get its render on the iPhone.
@@ -4108,13 +4182,48 @@ async def action_thread(
                     )
                 ).scalar_one_or_none()
         planned_format = (session.active_plan or {}).get("edit_format")
-        if body.action != "revise" and (
+        picked_format = state.get("edit_format")
+        format_mismatch = body.action != "revise" and (
             planned_format not in set(_available_formats().values())
-            or planned_format != state.get("edit_format")
+            or planned_format != picked_format
+        )
+        if (
+            format_mismatch
+            and picked_format == "montage"
+            and planned_format in (GUIDED_EDIT_FORMATS - {"montage"})
         ):
+            # KRI-118 item 2: a plan receipt can still carry the legacy
+            # literal edit_format "day_vlog"/"single_hero" even after L2's
+            # shape repair -- `compile_active_plan`
+            # (app/services/creator_sessions.py) stamps the receipt's
+            # edit_format from the RAW pre-repair strategy, not the
+            # server-repaired `edit_plan.strategy.edit_format` that
+            # `repair_creator_strategy_shape` rewrites to "montage" (+
+            # `story_shape`). The chat picker only ever exposes "montage" as
+            # the Paper format for the whole GUIDED_EDIT_FORMATS family, so a
+            # chat-picked montage confirming a plan whose receipt still says
+            # "day_vlog"/"single_hero" is the SAME format underneath, not a
+            # stale one -- treat it as a match instead of failing the turn.
+            format_mismatch = False
+        if format_mismatch:
             raise HTTPException(
                 status_code=409,
-                detail="Kria must prepare a direction in the selected Paper format",
+                # code: format_mismatch. iOS's `decodeDetail` /
+                # `CreationConfirmationConflict` (Services.swift /
+                # CreationConfirmationStage.swift) only ever reads this field
+                # as a plain string -- never nest a `{"code": ..., ...}` dict
+                # here, or the client's `body["detail"] as? String` parse
+                # silently drops the message and falls back to its generic
+                # "out of date" one. Keep the message a specific sentence
+                # (not a bare whitespace-free "machine code" token, and not
+                # one of the client's exact-matched literals) so it still
+                # resolves through the client's default "offer a direction
+                # refresh" branch.
+                detail=(
+                    "Kria's current direction was prepared for a different "
+                    "format than the one you picked. Ask Kria for a new "
+                    "direction in that format before confirming."
+                ),
             )
         if (
             body.action in {"generate", "confirm_generation"}
