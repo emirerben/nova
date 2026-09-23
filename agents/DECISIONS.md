@@ -2386,7 +2386,8 @@ Guards in `tests/tasks/test_autoplace_tasks.py`:
 `test_analyze_pool_asset_transient_gemini_error_retries_instead_of_terminal`,
 `test_analyze_pool_asset_deterministic_failure_is_not_retried`,
 `test_analyze_pool_asset_retry_budget_exhaustion_persists_terminal_failure`,
-`test_video_analysis_failure_is_classified_by_its_cause_chain`, and
+`test_video_analysis_failure_is_classified_by_its_cause_chain`,
+`test_analyze_pool_asset_bug_with_implicit_503_context_is_not_retried`, and
 `test_analyze_pool_asset_persists_safe_retryable_failure[transient_retries_exhausted]`.
 
 **Revisit if:** Gemini outages routinely outlast ~1 minute (lengthen the countdown or add
