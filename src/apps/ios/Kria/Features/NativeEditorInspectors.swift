@@ -297,9 +297,10 @@ private struct NativeSelectedClipInspector: View {
                 }
                 .accessibilityIdentifier("native-editor-clip-transition-picker")
                 .onChange(of: transition) { _, value in session.setClipTransition(clipID: selection.id, transition: value, durationS: transitionDuration) }
-                NativeEditorSlider(session: session, value: $transitionDuration, in: 0.1...0.3, step: 0.05) { Text("Transition duration") }
-                    .onChange(of: transitionDuration) { _, value in session.setClipTransition(clipID: selection.id, transition: transition, durationS: value) }
-                    .disabled(transition == "cut")
+                if transition != "cut" {
+                    NativeEditorSlider(session: session, value: $transitionDuration, in: 0.1...0.3, step: 0.05) { Text("Transition duration") }
+                        .onChange(of: transitionDuration) { _, value in session.setClipTransition(clipID: selection.id, transition: transition, durationS: value) }
+                }
                 if let caption = effectiveOverlapCaption {
                     Text(caption).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                         .accessibilityIdentifier("native-editor-clip-transition-caption")

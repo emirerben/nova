@@ -52,7 +52,14 @@ struct NativeVisualPanel: View {
         let base: [Category] = session.rendersOnDevice ? [.media] : [.media, .cards, .motion, .camera]
         return transitionsCategoryAvailable ? base + [.transitions] : base
     }
-    private var editorHeading: String { selected.map { "Edit " + label($0).lowercased() } ?? "Add visual" }
+    // nil falls back to NativeEditorLanePanel's own "Visuals" title. "Add
+    // visual" is specific to the Media category's add flow -- it shouldn't
+    // show while browsing Cards/Motion/Camera FX/Transitions, which aren't
+    // about adding a visual at all.
+    private var editorHeading: String? {
+        if let selected { return "Edit " + label(selected).lowercased() }
+        return panelDrafts.visualCategory == .media ? "Add visual" : nil
+    }
     private var addAction: (() -> Void)? { selected == nil ? nil : { openLibrary() } }
 
     private var removeAction: (() -> Void)? {
@@ -365,27 +372,31 @@ struct NativeVisualPanel: View {
 
     private var transitionsCategory: some View {
         VStack(spacing: 12) {
-            Text("Sets the transition used between every clip. To change just one, select that clip on the timeline instead.")
-                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             Picker("Transition", selection: $panelDrafts.wholeVideoTransition) {
                 ForEach(NativeEditorWireContract.transitions, id: \.self) { value in
                     Text(nativeEditorWireLabel(value)).tag(value)
                 }
             }
             .accessibilityIdentifier("native-editor-visuals-transition-picker")
-            slider("Duration", value: $panelDrafts.wholeVideoTransitionDuration, range: 0.1...0.3)
-                .disabled(panelDrafts.wholeVideoTransition == "cut")
-            Button("Apply to whole video") {
+            if panelDrafts.wholeVideoTransition != "cut" {
+                slider("Duration", value: $panelDrafts.wholeVideoTransitionDuration, range: 0.1...0.3)
+            }
+            Button {
                 session.setTransitionAcrossVideo(
                     transition: panelDrafts.wholeVideoTransition,
                     durationS: panelDrafts.wholeVideoTransitionDuration
                 )
+            } label: {
+                // kriaPage()'s app-wide .foregroundStyle(KriaColor.ink) wins
+                // over .borderedProminent's automatic white label unless the
+                // label sets its own color explicitly -- ink text on an
+                // ink-tinted fill was unreadable on device.
+                Text("Apply to whole video").foregroundStyle(KriaColor.paper)
             }
             .frame(maxWidth: .infinity, minHeight: 44)
             .buttonStyle(.borderedProminent)
+            .tint(KriaColor.ink)
             .accessibilityIdentifier("native-editor-visuals-apply-transition")
-            Text("Short clips may shorten or drop a transition to fit.")
-                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
         }
     }
 
