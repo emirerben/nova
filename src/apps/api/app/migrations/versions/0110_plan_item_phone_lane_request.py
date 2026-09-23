@@ -1,15 +1,15 @@
 """Admin-authored phone subtitled lane request on plan items (KRI-174 Phase 1.5).
 
-Revision ID: 0109
-Revises: 0108
+Revision ID: 0110
+Revises: 0109
 """
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql as pg
 
-revision = "0109"
-down_revision = "0108"
+revision = "0110"
+down_revision = "0109"
 branch_labels = None
 depends_on = None
 
