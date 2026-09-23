@@ -899,6 +899,19 @@ struct FailedStage: View {
     var bodyText = "Your direction and footage are safe. Refresh the project or tell me what you want to change."
     var retryLabel = "Refresh project"
     var retry: (() -> Void)?
+    /// KRI-118 item 4: the most recent `assistant_error` event's `code`, when
+    /// this is the GENERIC failure card (`ChatWorkspaceView`'s
+    /// `.genericFailure` case). `retry` here resends the same request that
+    /// just failed -- honest for a transient/stale-state failure (network,
+    /// revision mismatch), but for a deterministic/structural one
+    /// (`nonRetryablePhoneGateErrorCodes`, `CreationConfirmationStage.swift`)
+    /// it would fail identically. "Refresh project" is misleading there, so
+    /// this offers a fresh project instead.
+    var nonRetryableReasonCode: String? = nil
+
+    private var isNonRetryable: Bool {
+        nonRetryableReasonCode.map(nonRetryablePhoneGateErrorCodes.contains) == true
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -906,7 +919,10 @@ struct FailedStage: View {
                 title: title,
                 bodyText: bodyText
             )
-            if let retry {
+            if isNonRetryable {
+                NewChatButton()
+                    .accessibilityIdentifier("failed-stage-start-new-edit")
+            } else if let retry {
                 Button(retryLabel, action: retry)
                     .buttonStyle(CanonicalPrimaryButtonStyle())
             }
