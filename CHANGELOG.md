@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.166.0] - 2026-09-23
+
+### Changed
+- fix(ios): let creators change a montage clip's transition (KRI-167) (#1179) <!-- release-pr: 1179 -->
+
 ## [0.76.165.0] - 2026-09-23
 
 ### Changed
