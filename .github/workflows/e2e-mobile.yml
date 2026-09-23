@@ -32,31 +32,6 @@ jobs:
       - name: Install Playwright Chromium
         working-directory: src/apps/web
         run: pnpm exec playwright install --with-deps chromium
-      # TEMPORARY (PR #1200): same-VM A/B of the motion-preview benchmark.
-      # Reverted before review; never merge this step.
-      - name: "[TEMP A/B] motion-preview phased (main) vs interleaved vs interleaved+flush-per-repeat"
-        working-directory: src/apps/web
-        continue-on-error: true
-        run: |
-          echo "nproc=$(nproc)"; lscpu | grep -E "Model name|Thread|Core|Socket" || true
-          FIXTURE=src/app/dev-qa/motion-preview/MotionPreviewPerformanceFixture.tsx
-          cp "$FIXTURE" /tmp/fixture.interleaved.tsx
-          git fetch --depth=1 origin main
-          git show "FETCH_HEAD:src/apps/web/$FIXTURE" > /tmp/fixture.phased.tsx
-          perl -pe 's/(drawMotionFrame\(CanvasKit, canvas, scenes, \(index \* 5\) % 360, 360, 640, motionResources\);)/$1 if (repeat < drawMultiplier - 1) benchmarkSurface.flush();/' \
-            "$FIXTURE" > /tmp/fixture.flush2x.tsx
-          grep -q "repeat < drawMultiplier - 1" /tmp/fixture.flush2x.tsx
-          for round in 1 2; do
-            for variant in phased interleaved flush2x; do
-              cp "/tmp/fixture.$variant.tsx" "$FIXTURE"
-              echo "::group::A/B round $round $variant"
-              pnpm exec playwright test e2e/motion-preview.spec.ts --project desktop-editor \
-                --repeat-each 5 --retries 0 --reporter list 2>&1 | sed -u "s/^/[AB $variant] /" || true
-              echo "::endgroup::"
-            done
-          done
-          cp /tmp/fixture.interleaved.tsx "$FIXTURE"
-          git diff --exit-code -- "$FIXTURE"
       - name: Run mobile Playwright tests
         working-directory: src/apps/web
         run: pnpm exec playwright test
