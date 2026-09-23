@@ -33,6 +33,13 @@ for name, value in {
     "INTERNAL_API_KEY": "test",
 }.items():
     os.environ.setdefault(name, value)
+# The speech-cleanup case pins its cleaned voiceover through the real storage
+# helpers; keep every object in a throwaway local root, never a bucket.
+os.environ.update(
+    STORAGE_PROVIDER="local",
+    E2E_FIXTURES="true",
+    LOCAL_STORAGE_ROOT=tempfile.mkdtemp(prefix="kria-photo-e2e-storage-"),
+)
 
 from app.agents._schemas.text_element import CAPTION_CUE_SOURCE, TextElement
 from app.config import settings
@@ -172,6 +179,122 @@ def _status(
     )
     status = DeviceRenderStatus(phase="awaiting_device", request=request).model_dump(mode="json")
     return status, recipe
+
+
+CLEANED_GROUP_WORDS = 4
+CLEANED_WORD_S = 0.6
+CLEANED_GROUP_STARTS = [1.0, 9.0, 17.0, 25.0, 33.0, 41.0]
+CLEANED_RAW_DURATION_S = 48.0
+
+
+def _cleaned_narration(out: Path) -> tuple[NarrationTrack, Path, list[list[dict]], float]:
+    """Record-with-pauses -> real speech-cleanup analysis -> real derivative.
+
+    Six spoken groups (a tone while each group's words play) separated by
+    5.6 s pauses. The REAL `analyze_speech_cleanup` decides the cut from the
+    injected word timings and silence spans (no ASR for a tone), then the REAL
+    draft-time builder `build_cleaned_narration` cuts the recording into the
+    content-addressed WAV a phone render plays. Returns the cleaned track, its
+    WAV, the cleaned word groups and the raw recording's longest pause.
+    """
+
+    from app import storage
+    from app.pipeline.speech_cleanup_analysis import (
+        SpeechCleanupAnalysisInput,
+        analyze_speech_cleanup,
+    )
+    from app.pipeline.transcribe import Word
+    from app.services.clip_speech import SilenceDetectionResult
+    from app.services.guided_speech_cleanup import build_cleaned_narration
+
+    owner_id, item_id = uuid.uuid4(), uuid.uuid4()
+    raw_path = f"users/{owner_id}/plan/{item_id}/voiceover/voiceover-with-pauses.m4a"
+    raw_local = storage.local_object_path(raw_path)
+    raw_local.parent.mkdir(parents=True, exist_ok=True)
+    spoken = "+".join(
+        f"between(t,{start},{round(start + CLEANED_GROUP_WORDS * CLEANED_WORD_S, 3)})"
+        for start in CLEANED_GROUP_STARTS
+    )
+    _ffmpeg(
+        *("-f", "lavfi", "-i", f"sine=frequency=220:duration={CLEANED_RAW_DURATION_S}"),
+        *("-af", f"volume='if({spoken},1,0)':eval=frame", "-c:a", "aac", str(raw_local)),
+    )
+    raw_meta = storage.object_metadata(raw_path)
+
+    words = [
+        Word(
+            text=f"word{group}{index}",
+            start_s=round(start + index * CLEANED_WORD_S, 3),
+            end_s=round(start + (index + 1) * CLEANED_WORD_S, 3),
+            confidence=1.0,
+        )
+        for group, start in enumerate(CLEANED_GROUP_STARTS)
+        for index in range(CLEANED_GROUP_WORDS)
+    ]
+    group_ends = [
+        round(start + CLEANED_GROUP_WORDS * CLEANED_WORD_S, 3) for start in CLEANED_GROUP_STARTS
+    ]
+    spans = [(0.0, round(CLEANED_GROUP_STARTS[0] - 0.05, 3))]
+    spans += [
+        (round(end + 0.02, 3), round(next_start - 0.02, 3))
+        for end, next_start in zip(group_ends, CLEANED_GROUP_STARTS[1:])
+    ]
+    spans.append((round(group_ends[-1] + 0.05, 3), CLEANED_RAW_DURATION_S))
+    raw_max_pause_s = max(
+        next_start - end for end, next_start in zip(group_ends, CLEANED_GROUP_STARTS[1:])
+    )
+    fingerprint = hashlib.sha256(raw_local.read_bytes()).hexdigest()
+    analysis = analyze_speech_cleanup(
+        SpeechCleanupAnalysisInput(
+            source_fingerprint=fingerprint,
+            local_media_path=str(raw_local),
+            duration_s=CLEANED_RAW_DURATION_S,
+            source_window_start_s=0.0,
+            source_window_end_s=CLEANED_RAW_DURATION_S,
+        ),
+        transcribe_fn=lambda *_a, **_k: type(
+            "Transcript", (), {"words": words, "language": "en", "low_confidence": False}
+        )(),
+        silence_detect_fn=lambda *_a, **_k: SilenceDetectionResult(
+            spans=tuple(spans), status="ok"
+        ),
+    )
+    snapshot = {
+        "schema_version": 1,
+        "analysis_id": str(uuid.uuid4()),
+        "engine_version": "preflight-v1-2026-09-05",
+        "detector_version": analysis.detector_version,
+        "source": {
+            "kind": "voiceover",
+            "media_identity": "voiceover-e2e",
+            "storage_path": raw_path,
+            "generation": str(raw_meta.generation),
+            "window_start_s": 0.0,
+            "window_end_s": CLEANED_RAW_DURATION_S,
+            "source_policy_fingerprint": fingerprint,
+        },
+        "analysis": analysis.to_payload(),
+    }
+    raw_track = NarrationTrack(
+        gcs_path=raw_path,
+        generation=str(raw_meta.generation),
+        duration_s=CLEANED_RAW_DURATION_S,
+        words=[
+            {"text": w.text, "start_s": w.start_s, "end_s": w.end_s, "confidence": 1.0}
+            for w in words
+        ],
+    )
+    cleaned = build_cleaned_narration(raw_track, snapshot, owner_id=owner_id, item_id=item_id)
+    assert cleaned.speech_cleanup is not None
+    wav = out / "voiceover-cleaned.wav"
+    wav.write_bytes(storage.local_object_path(cleaned.gcs_path).read_bytes())
+    cleaned_words = [word.model_dump(mode="json") for word in cleaned.words]
+    assert len(cleaned_words) == len(words)
+    groups = [
+        cleaned_words[index : index + CLEANED_GROUP_WORDS]
+        for index in range(0, len(cleaned_words), CLEANED_GROUP_WORDS)
+    ]
+    return cleaned, wav, groups, raw_max_pause_s
 
 
 def main() -> None:
@@ -638,6 +761,130 @@ def main() -> None:
         "caption_samples": narrated_caption_samples,
     }
 
+    # --- "Clean up speech and create" on the same narrated story ------------
+    # The recipe must play the cleaned WAV derivative (one narration clip at
+    # the cleaned duration), with captions at the cleaned word times.
+    cleaned, cleaned_wav, cleaned_groups, raw_max_pause_s = _cleaned_narration(out)
+    cleaned_moment_s = round(cleaned.duration_s / 10, 3)
+    cleaned_moments = []
+    cleaned_media_ids = []
+    for index in range(5):
+        clip_start = round(2 * index * cleaned_moment_s, 3)
+        clip_end = round(clip_start + cleaned_moment_s, 3)
+        cleaned_moments.append(
+            footage_moment(narrated_clip_bindings[index], f"clip{index}", clip_start, clip_end)
+        )
+        cleaned_media_ids.append(narrated_clip_bindings[index].media_id)
+        photo_end = (
+            cleaned.duration_s if index == 4 else round(clip_end + cleaned_moment_s, 3)
+        )
+        cleaned_moments.append(
+            pooled(narrated_photo_bindings[index], f"photo{index}", clip_end, photo_end)
+        )
+        cleaned_media_ids.append(narrated_photo_bindings[index].media_id)
+    cleaned_caption_elements = [
+        {
+            **narrated_caption_elements[0],
+            "id": f"narration-caption-{index + 1}",
+            "text": " ".join(word["text"] for word in group),
+            "start_s": group[0]["start_s"],
+            "end_s": group[-1]["end_s"],
+            "word_timings": group,
+            "source_params": {
+                "source": CAPTION_CUE_SOURCE,
+                "key": str(index),
+                "identity": f"pinned-narration-caption-{index}",
+            },
+        }
+        for index, group in enumerate(cleaned_groups)
+    ]
+    wav_sha, wav_bytes = _fingerprint(cleaned_wav)
+    cleaned_item_id = "e2e-narrated-story-cleaned-item"
+    cleaned_status, cleaned_recipe = _status(
+        _plan(
+            cleaned_moments,
+            cleaned_media_ids,
+            source_audio=False,
+            narration=cleaned,
+            text_elements=[title_element, *cleaned_caption_elements],
+            compiler_version=7,
+        ),
+        tuple(narrated_clip_bindings),
+        tuple(narrated_photo_bindings),
+        narration=PhoneNarrationBed(
+            plan_item_id=cleaned_item_id,
+            generation=cleaned.generation,
+            fingerprint=RenderFingerprint(sha256=wav_sha, byte_count=wav_bytes),
+            duration_s=cleaned.duration_s,
+        ),
+    )
+    (out / "status-narrated-story-cleaned.json").write_text(json.dumps(cleaned_status, indent=2))
+    narration_clips = [
+        clip for track in cleaned_recipe.tracks if track.id == "narration" for clip in track.clips
+    ]
+    assert len(narration_clips) == 1
+    assert abs(narration_clips[0].source_duration - cleaned.duration_s) < 0.05
+    cleaned_regions = [
+        _caption_region(layer, canvas_width=1080, canvas_height=1920)
+        for layer in cleaned_recipe.text_layers[1:]
+    ]
+    assert len(cleaned_regions) == len(cleaned_groups)
+    cleaned_caption_samples = []
+    for index, group in enumerate(cleaned_groups):
+        cleaned_caption_samples.append(
+            {
+                "name": f"cue{index}_on",
+                "t": round((group[0]["start_s"] + group[-1]["end_s"]) / 2, 3),
+                "region": cleaned_regions[index],
+                "expect_text": True,
+            }
+        )
+        if index + 1 < len(cleaned_groups):
+            gap_start, gap_end = group[-1]["end_s"], cleaned_groups[index + 1][0]["start_s"]
+            if gap_end - gap_start >= 0.2:
+                cleaned_caption_samples.append(
+                    {
+                        "name": f"cue{index}_gap",
+                        "t": round((gap_start + gap_end) / 2, 3),
+                        "region": cleaned_regions[index],
+                        "expect_text": False,
+                    }
+                )
+    spoken_bounds = [(group[0]["start_s"], group[-1]["end_s"]) for group in cleaned_groups]
+    cleaned_silences = [
+        spoken_bounds[0][0],
+        *(nxt[0] - cur[1] for cur, nxt in zip(spoken_bounds, spoken_bounds[1:])),
+        cleaned_recipe.duration - spoken_bounds[-1][1],
+    ]
+    cleaned_colors = {"clip0": (0, [255, 0, 0]), "photo0": (1, [255, 165, 0]),
+                      "clip2": (4, [0, 255, 0]), "photo3": (7, [0, 128, 128])}
+    cleaned_entry = {
+        "status_file": "status-narrated-story-cleaned.json",
+        "duration_s": cleaned_recipe.duration,
+        "raw_voiceover_duration_s": CLEANED_RAW_DURATION_S,
+        "raw_max_silence_s": raw_max_pause_s,
+        # The encoder's priming/padding plus 10 ms window granularity.
+        "max_silence_s": round(max(cleaned_silences) + 0.25, 3),
+        "clips": narrated_story_entry["clips"],
+        "voiceover_asset_id": f"voiceover-{cleaned_item_id}",
+        "voiceover_file": cleaned_wav.name,
+        "samples": [
+            {
+                "name": name,
+                "t": round(
+                    (cleaned_moments[index]["output_start_s"]
+                     + cleaned_moments[index]["output_end_s"]) / 2,
+                    3,
+                ),
+                "x": 540,
+                "y": 960,
+                "rgb": rgb,
+            }
+            for name, (index, rgb) in cleaned_colors.items()
+        ],
+        "caption_samples": cleaned_caption_samples,
+    }
+
     (out / "e2e.json").write_text(
         json.dumps(
             {
@@ -670,6 +917,7 @@ def main() -> None:
                     ],
                 },
                 "narrated_story": narrated_story_entry,
+                "narrated_story_cleaned": cleaned_entry,
             },
             indent=2,
         )
