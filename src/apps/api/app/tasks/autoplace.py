@@ -2032,7 +2032,8 @@ def _load_glossary(db) -> list[dict]:
 
     rows = (
         db.execute(
-            select(SoundEffect).where(
+            select(SoundEffect)
+            .where(
                 SoundEffect.status == "ready",
                 SoundEffect.audio_gcs_path.is_not(None),
                 SoundEffect.archived_at.is_(None),
@@ -2041,6 +2042,9 @@ def _load_glossary(db) -> list[dict]:
                 # unpublished/draft/admin-test effect into a user's downloaded video.
                 SoundEffect.published_at.is_not(None),
             )
+            # Deterministic, oldest first: the intent mapper takes the first
+            # match, so heap order must never decide which effect is baked in.
+            .order_by(SoundEffect.created_at, SoundEffect.id)
         )
         .scalars()
         .all()
@@ -2055,6 +2059,12 @@ def _load_glossary(db) -> list[dict]:
             # suggestion path; the overlay intent mapper ignores them.
             "role_tags": list(r.role_tags or []),
             "contains_voice": bool(r.contains_voice),
+            "category": r.category,
+            "search_terms": list(r.search_terms or []),
+            "quality_tier": r.quality_tier,
+            # placement_catalog tie-breaks on curation, then upload order.
+            "catalog_rank": r.catalog_rank,
+            "created_at": r.created_at,
         }
         for r in rows
     ]
@@ -2615,6 +2625,7 @@ def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
                 SfxPlacementAgent,
                 SfxPlacementInput,
             )
+            from app.services.sfx_catalog import placement_catalog  # noqa: PLC0415
 
             if not settings.gemini_api_key:
                 _record("sfx_autoplace_skipped", reason="no_gemini_key", variant_id=variant_id)
@@ -2627,14 +2638,16 @@ def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
                     # Slice BEFORE constructing the input: the schema caps
                     # effects at _MAX_EFFECTS and an oversized glossary would
                     # fail Pydantic validation and silently kill the task.
+                    # placement_catalog keeps it deterministic and diverse:
+                    # voice-free one-shots, role-tagged first (KRI-173).
                     effects=[
                         SfxCatalogEffect(
-                            effect_id=str(g["id"]),
-                            name=str(g.get("name") or ""),
-                            role_tags=list(g.get("role_tags") or []),
-                            duration_s=g.get("duration_s"),
+                            effect_id=entry.id,
+                            name=entry.name,
+                            role_tags=list(entry.role_tags),
+                            duration_s=entry.duration_s,
                         )
-                        for g in [x for x in glossary if not x.get("contains_voice")][:_MAX_EFFECTS]
+                        for entry in placement_catalog(glossary, _MAX_EFFECTS)
                     ],
                     duration_s=duration_s,
                 ),

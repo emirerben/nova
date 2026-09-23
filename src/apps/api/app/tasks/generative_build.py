@@ -22096,12 +22096,16 @@ def _render_subtitled_variant(
                                 "quality_tier": row.quality_tier,
                             }
                             for row in db.execute(
-                                _select(SoundEffect).where(
+                                _select(SoundEffect)
+                                .where(
                                     SoundEffect.status == "ready",
                                     SoundEffect.audio_gcs_path.is_not(None),
                                     SoundEffect.published_at.is_not(None),
                                     SoundEffect.archived_at.is_(None),
                                 )
+                                # Role picks take the first matching row; keep
+                                # that deterministic as the library grows.
+                                .order_by(SoundEffect.created_at, SoundEffect.id)
                             )
                             .scalars()
                             .all()

@@ -77,8 +77,12 @@ export default function AdminSoundEffectsPage() {
 
   async function handlePublishToggle(effect: SoundEffectSummary) {
     try {
+      const publishing = effect.published_at == null;
+      // Publishing from this page IS the human audit: approved effects are
+      // what the AI placers may choose (smart-edit role picks require it).
       const updated = await patchSoundEffect(effect.id, {
-        published: effect.published_at == null,
+        publish: publishing,
+        ...(publishing ? { manual_audit_status: "approved" as const } : {}),
       });
       setEffects((prev) => prev.map((e) => (e.id === effect.id ? updated : e)));
     } catch (e: unknown) {
@@ -140,7 +144,7 @@ export default function AdminSoundEffectsPage() {
             <span className="text-xs text-zinc-400 uppercase tracking-wide">Audio file</span>
             <input
               type="file"
-              accept="audio/mpeg,audio/mp4,audio/wav,audio/aac,audio/ogg"
+              accept=".m4a,.mp4,.wav,.mp3,.aac,audio/mpeg,audio/mp4,audio/wav,audio/aac"
               onChange={(e) => {
                 const f = e.target.files?.[0] ?? null;
                 setFile(f);
@@ -229,6 +233,7 @@ export default function AdminSoundEffectsPage() {
               )}
               <p className="text-xs text-zinc-500 mt-0.5">
                 {effect.duration_s != null ? `${effect.duration_s.toFixed(2)}s` : "—"}
+                {effect.category ? ` · ${effect.category}` : ""}
                 {effect.source_filename ? ` · ${effect.source_filename}` : ""}
               </p>
             </div>

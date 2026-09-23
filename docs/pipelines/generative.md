@@ -631,6 +631,12 @@ the copilot lists survivors as PENDING SFX SUGGESTIONS the model realizes as
 ordinary `add_sfx` ops. Deliberately no autoapply twin — suggestions never
 render without a human ask.
 
+**Library size (KRI-173).** The glossary is the ~116-effect creator library
+plus the `smart-*` seeds, which is more than the agent's 30-effect cap, so
+`services/sfx_catalog.placement_catalog` picks the 30. It sends voice-free
+one-shots, role-tagged seeds first, then one headline effect per category.
+Build, levels and rollout: `docs/runbooks/sfx-library.md`.
+
 ## Visual blocks
 
 `visual_blocks` are first-class, per-variant base-layer treatments. Structured

@@ -36,6 +36,7 @@ from app.agents._schemas.creator_agent import (
     ApplySpeechCutCommand,
     AskUser,
     CreativeStrategy,
+    CreatorCatalogRef,
     CreatorCraftBundle,
     CreatorEditPlan,
     CreatorEditSnapshot,
@@ -148,6 +149,7 @@ from app.services.job_status import (
     PLAN_ITEM_JOB_TERMINAL,
 )
 from app.services.public_assembly_plan import project_public_assembly_plan
+from app.services.sfx_catalog import SfxEntry, resolve_described_effect
 from app.services.speech_cleanup_terminal import classify_route_speech_cut_rollback
 from app.services.variant_generation_guard import (
     VariantInitialRenderInProgress,
@@ -744,12 +746,31 @@ def _chat_turn_text(creator_request: str) -> str:
     return "\n".join(" ".join(line.split()) for line in lines if line.strip())
 
 
-def _sfx_verb_phrases(request: str) -> list[str]:
+# A refusal governs the verb directly: "don't use the whoosh sound effect",
+# "never add a buzzer sound effect" (iOS types ’). Negation elsewhere is
+# ordinary wording ("why don't you add ...", "without music add ...", "don't
+# forget to add ..."), and "don't use it too much" moderates rather than
+# refuses.
+_SFX_REFUSAL_BEFORE_VERB = re.compile(r"\b(?:don[’']?t|do\s+not|never)\s+(?:ever\s+)?$", re.I)
+_SFX_MODERATION_AFTER = re.compile(
+    r"\s*(?:sound\s+effects?|sfx)\b[^.!?;\n]{0,40}?\b(?:too|so)\s+(?:much|often|many|loud)\b",
+    re.I,
+)
+
+
+def _sfx_verb_refused(request: str, verb_start: int, phrase_end: int) -> bool:
+    if not _SFX_REFUSAL_BEFORE_VERB.search(request[max(0, verb_start - 24) : verb_start]):
+        return False
+    return not _SFX_MODERATION_AFTER.match(request, phrase_end)
+
+
+def _sfx_verb_matches(request: str) -> list[tuple[str, bool]]:
     """Every "add <phrase> sound effect" phrase, one per verb, in order.
 
     Overlapping candidates let "Add a sound effect. Use the Fah sound effect"
     reach the named one; a phrase that runs into the next request ("add music
-    but add the whoosh ...") yields to that request's own verb.
+    but add the whoosh ...") yields to that request's own verb. Each phrase is
+    paired with whether the creator refused it (KRI-173).
     """
 
     phrases = []
@@ -760,8 +781,12 @@ def _sfx_verb_phrases(request: str) -> list[str]:
     ):
         phrase = match.group(1)
         if not re.search(rf"\b(?:and|but|then|so)\s+{_SFX_VERB}\b", phrase, re.IGNORECASE):
-            phrases.append(phrase)
+            phrases.append((phrase, _sfx_verb_refused(request, match.start(), match.end(1))))
     return phrases
+
+
+def _sfx_verb_phrases(request: str) -> list[str]:
+    return [phrase for phrase, negated in _sfx_verb_matches(request) if not negated]
 
 
 def _sfx_name_from_phrase(phrase: str, manifest: Any | None) -> str | None:
@@ -817,7 +842,10 @@ def _explicit_sfx_name(creator_request: str, *, manifest: Any | None = None) -> 
             return match.group(1).strip()
     unnamed_phrase: str | None = None
     declined = False
-    for phrase in _sfx_verb_phrases(request):
+    for phrase, negated in _sfx_verb_matches(request):
+        if negated:
+            declined = True
+            continue
         name = _sfx_name_from_phrase(phrase, manifest)
         if name:
             return name
@@ -907,6 +935,51 @@ async def _resolve_explicit_sfx_outside_manifest(
     return manifest.model_copy(update={"catalog": [*manifest.catalog, trusted_ref]})
 
 
+async def _resolve_described_sfx(
+    db: AsyncSession,
+    requested: str | None,
+    *,
+    manifest: Any,
+) -> tuple[Any, CreatorCatalogRef | None]:
+    """Resolve a described effect ("a buzzer") against the whole live library.
+
+    Runs after the exact lookups, on the same name ``_apply_explicit_render_intent``
+    extracts, and only when that name matches nothing exactly. Every content
+    word must be covered by one effect's name or search terms, with at least
+    one word specific to that effect (KRI-173); otherwise the name stays inert
+    and compilation fails visibly instead of guessing. Like the exact lookup,
+    the effect joins the planning view without changing the manifest hash and
+    is revalidated by id before materialization.
+    """
+
+    if not requested or resolve_creator_sfx_catalog_ref(manifest, requested) is not None:
+        return manifest, None
+    library = (
+        (
+            await db.execute(
+                select(SoundEffect).where(
+                    SoundEffect.status == "ready",
+                    SoundEffect.published_at.is_not(None),
+                    SoundEffect.archived_at.is_(None),
+                    SoundEffect.audio_gcs_path.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    described = resolve_described_effect((SfxEntry.from_row(row) for row in library), requested)
+    if described is None:
+        return manifest, None
+    for ref in manifest.catalog:
+        if ref.kind == "sound_effect" and ref.catalog_id == described.id:
+            return manifest, ref
+    ref = CreatorCatalogRef(
+        catalog_id=described.id, kind="sound_effect", label=described.name[:160]
+    )
+    return manifest.model_copy(update={"catalog": [*manifest.catalog, ref]}), ref
+
+
 _SECONDS_UNIT = r"(?:s|sec|secs|seconds?|saniye|segundos?|secondes?|sekunden?|secondi|secondo)\b"
 _SECONDS_WORDS = {
     "half a": 0.5,
@@ -942,6 +1015,7 @@ def _apply_explicit_render_intent(
     manifest: Any | None = None,
     latest_user_message: str = "",
     render_intent_evidence: CreatorRenderIntentEvidence | None = None,
+    resolved_sfx: CreatorCatalogRef | None = None,
 ) -> CreativeStrategy:
     """Preserve grounded semantic intent, with legacy literal extraction as fallback.
 
@@ -1001,14 +1075,16 @@ def _apply_explicit_render_intent(
     latest = " ".join(str(latest_user_message or "").casefold().split())
 
     # A named SFX is a required request, never an optional treatment. Resolve
-    # names only by exact case-insensitive match against the server manifest;
-    # an unresolved name is retained as an inert id so compilation fails
+    # names by exact case-insensitive match against the server manifest, else
+    # take the description match the planning turn already made for this
+    # name; an unresolved name is retained as an inert id so compilation fails
     # visibly rather than silently dropping to optional_treatments.
     sfx_name = _explicit_sfx_name(creator_request, manifest=manifest)
     if sfx_name:
+        # ``resolved_sfx`` is ``_resolve_described_sfx`` for this same name.
         resolved = (
             resolve_creator_sfx_catalog_ref(manifest, sfx_name) if manifest is not None else None
-        )
+        ) or resolved_sfx
         updates["licensed_sfx"] = {
             "effect_id": resolved.catalog_id if resolved is not None else sfx_name,
             "semantics": "funny_moments",
@@ -2763,6 +2839,11 @@ async def _run_planning_turn(
                 planning_manifest = await _resolve_explicit_sfx_outside_manifest(
                     db, requested_sfx, manifest=planning_manifest
                 )
+            planning_manifest, described_sfx = await _resolve_described_sfx(
+                db,
+                _explicit_sfx_name(creator_request, manifest=planning_manifest),
+                manifest=planning_manifest,
+            )
             strategy = _apply_explicit_render_intent(
                 strategy,
                 creator_request,
@@ -2771,6 +2852,7 @@ async def _run_planning_turn(
                 render_intent_evidence=(
                     action.render_intent_evidence if isinstance(action, ProposeStrategy) else None
                 ),
+                resolved_sfx=described_sfx,
             )
             pre_normalize_target_duration_s = strategy.target_duration_s
             try:
