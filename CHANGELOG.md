@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.174.0] - 2026-09-23
+
+### Changed
+- fix(autoplace): classify retry causes by explicit __cause__ only (#1194) <!-- release-pr: 1194 -->
+
 ## [0.76.173.0] - 2026-09-23
 
 ### Changed
