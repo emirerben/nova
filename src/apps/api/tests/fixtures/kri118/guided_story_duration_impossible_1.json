@@ -1,0 +1,37 @@
+{
+  "failure_reason": "guided_story_duration_impossible",
+  "source": "python scripts/admin.py --prod GET /admin/jobs/<redacted>/debug, pulled 2026-09-23",
+  "provenance": "real",
+  "notes": [
+    "Real prod shape: a 4-beat guided story, each beat backed by exactly one",
+    "video source, with each beat's declared duration close to (but nominally",
+    "under) its own source's probed duration -- e.g. a 6.0s beat against a",
+    "7.19s source. error_detail was 'Beat Performances is longer than its",
+    "approved videos can support.' -- GuidedStoryError(code=",
+    "'guided_story_duration_impossible', ...) raised from",
+    "_allocate_beat_durations's water-fill (app/pipeline/guided_story.py).",
+    "Unlike the render_failed/receipt_mismatch fixtures, this check is PURE",
+    "(duration/overlap arithmetic, no ffmpeg) -- test_prod_failure_replay.py",
+    "actually re-runs validate_proposal_compiles(...) against this exact shape",
+    "and asserts on the real outcome today, which is a genuine replay, not a",
+    "typed-contract stand-in. If L1's feasible_guided_duration_s fix (crediting",
+    "a short clip its own duration instead of zero) or any allocator change",
+    "since this job ran altered the outcome, the test will observe that for",
+    "real."
+  ],
+  "edit_format": "montage",
+  "direction": "guided_story",
+  "media": [
+    { "media_id": "clip-performances", "kind": "video", "duration_s": 7.188345 },
+    { "media_id": "clip-gatherings", "kind": "video", "duration_s": 8.575011 },
+    { "media_id": "clip-wildlife", "kind": "video", "duration_s": 6.235011 },
+    { "media_id": "clip-cityscapes", "kind": "video", "duration_s": 8.036667 }
+  ],
+  "story_beats": [
+    { "beat_id": "beat-0", "topic": "Performances", "thought": "", "media_ids": ["clip-performances"], "duration_s": 6.0 },
+    { "beat_id": "beat-1", "topic": "Gatherings", "thought": "", "media_ids": ["clip-gatherings"], "duration_s": 5.0 },
+    { "beat_id": "beat-2", "topic": "Wildlife", "thought": "", "media_ids": ["clip-wildlife"], "duration_s": 4.5 },
+    { "beat_id": "beat-3", "topic": "Cityscapes", "thought": "", "media_ids": ["clip-cityscapes"], "duration_s": 4.5 }
+  ],
+  "duration_s": 20
+}
