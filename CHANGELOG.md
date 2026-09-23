@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.175.0] - 2026-09-23
+
+### Fixed
+- fix(worker): route omni unclaimed-asset cleanup to the maintenance queue (#1191) <!-- release-pr: 1191 -->
+
 ## [0.76.174.0] - 2026-09-23
 
 ### Changed
