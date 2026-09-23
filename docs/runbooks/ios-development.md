@@ -381,6 +381,15 @@ files. Changed, added or deleted inputs retain normal Xcode invalidation. Missin
 or corrupt manifests act as cache misses; paths come from the current checkout,
 not the cached manifest. Standalone developer runs do not restore times by default.
 
+Directory mtimes are restored too (KRI-168). Xcode fingerprints folder inputs
+such as `Assets.xcassets` by their directory tree, so restoring only file times
+still reran `actool` on every warm CI build (~28s plus two ~9s passes). That
+regenerated `GeneratedAssetSymbols.swift`, re-emitted the Kria module and
+relinked the app and test bundles. A directory's time is restored only when its
+current entry names match the recorded listing. Adding, removing or renaming an
+entry still invalidates it. Locally, a simulated fresh checkout then rebuilt with
+zero compile or asset tasks, the same as a no-op build.
+
 Run cache/phase regression tests with `python3 -m unittest discover -s
 scripts/ios/tests -v`. To disable timestamp restoration, remove
 `KRIA_RESTORE_INPUT_TIMES` from the CI build step. To return PRs to build and
@@ -421,9 +430,24 @@ bounded by the largest single group). This exists because a PR that was green on
 build and unit tests broke creation-to-ready for every later merge (#1088); the
 smoke group contains that scenario. `smoke` is an execution-only value: the
 selector never emits it and the gate rejects it as a selector output.
-The selector retains `ios` and `ios_ui`, adding `ios_ui_groups` (`none`, `full`, or exactly
-`smoke,creation`, `smoke,projects`, or `smoke,editor`). The required `build-and-test`
-gate still rejects missing or inconsistent group outputs on every run.
+The selector retains `ios` and `ios_ui`, adding `ios_ui_groups` (`none`, `full`,
+`smoke,<group>`, or a method-level value, described below). The required
+`build-and-test` gate still rejects missing or inconsistent group outputs on every run.
+
+Method-level focus (KRI-168). When every diff hunk in a changed UI test file
+falls inside test method bodies, that file selects just those methods, not its
+feature group. The value is `smoke[,<group>],<Class>/<testMethod>…`, with methods
+sorted and unique. For example, #1162 edited one editor test: it ran `smoke,editor`
+(51 tests, 22–43 minutes of UI time) but now selects smoke plus that one test.
+`select-tests.py` maps line numbers against the PR head's copy of the file, and
+`ui_tests.changed_tests` owns the rules.
+
+Any change outside a test body falls back to the file's group: imports,
+properties, `setUp`, private helpers, column-0 code, or an unfamiliar layout.
+Mapped app sources still select their group, and method ids that group already
+covers are dropped. Unmapped UI test files (for example `NativeCaptionVisualUITests`)
+can focus too, so an edited test there now runs before merge. Before, it selected
+`full`, and PRs ran only smoke.
 Unknown or stale test inventory forces full selection in the selector; the
 manifest guard also requires new tests to be explicitly classified before the
 PR can pass.
@@ -453,6 +477,13 @@ bundles under `test-results/ios/`. GitHub uploads these artifacts on success or
 failure with seven-day retention. The selection job explains its decision; the
 iOS job reports cache restoration and phase durations. Simulator boot overlaps
 compilation, so those durations must not be added together.
+
+CI starts the boot right after Xcode setup (`KRIA_IOS_TEST_MODE=boot`, in the
+background; its log is `test-results/ios/early-boot.log`). On a fresh runner the
+first `simctl` call took ~60s and the boot ~65s. Started later, both competed
+with xcodebuild's startup and package resolution on the 3-vCPU runner. The build
+phase still selects the same device and `bootstatus -b` waits for it, so a failed
+head start only costs the old overlap.
 
 ### Flaky UI tests
 
@@ -542,6 +573,97 @@ incremental build, and 6 seconds for unit execution. This was a local serial
 sample, not a controlled GitHub-runner benchmark. The local `smoke,editor` run
 also verified all 15 selected tests passed in 229 seconds (146 seconds / 39%
 less UI-phase time than the full run).
+
+#### Runtime breakdown (KRI-168, 2026-09-23)
+
+Source: logs from 119 native jobs, 2026-09-19 to 09-23. Median totals were:
+
+| Run type | Runs | Median total |
+| -- | -- | -- |
+| PR, unit only | 20 | 9.8 min |
+| PR, smoke | 54 | 13.7 min |
+| PR, smoke + group | 4 | 16–44 min |
+| main, full suite | 27 | 41.7 min (range 31–54) |
+
+**Build.** Warm "Compilation" had a median of 325s and cold 511s, so the cache
+helps. On a warm cache only ~47 Swift files recompile; most of the phase is
+overhead:
+
+- a ~60s cold `simctl list`
+- 30–50s of xcodebuild startup
+- 50–210s of "Resolve Package Graph" while the simulator boots
+- the checkout-fresh asset-catalog rebuild (fixed above)
+- ~20s of SDK stat-cache regeneration
+
+A PR restoring its own cache recompiles ~3 Swift files instead of ~66 from main's
+cache. That is worth about as much as the ~28s PR cache save costs, so PR saves
+stay.
+
+**Unit phase.** Median 115s, of which tests take 36–58s. Most of that is AVFoundation
+work, such as `testDisplayedSourcePreviewExportsAPlayableVideo` at 7–16s. Installing
+and launching the test host on the freshly booted simulator takes 37–47s.
+
+**UI phase.** In a full run, attributed test time splits into:
+
+| Activity | Share |
+| -- | -- |
+| App launch | 30% (~6s per launch: terminate, automation session, idle) |
+| Element lookup | 27% (~0.17s per query, ~2,000 queries per run) |
+| `waitForExistence` | 19% |
+| Idle waits | 13% |
+| Gestures | 7% |
+
+No single test dominates on a normal run; the median test takes ~22s.
+
+**The 567s test was an XCUITest idle stall, not a slow test.**
+`testTextReturnAndDeleteKeepCanvasLinesAligned` normally takes 25–31s. In main
+run 35846909178, XCUITest logged "App animations complete notification not
+received" 9 times, 60s each. Every stall (4 runs, 4 tests) began on the first
+action after a tap brought up the keyboard in the native editor, and it lasted
+until the app relaunched. It hit all 3 `smoke,editor` PR runs in the sample (two
+were #1162's, and the latest lost 15 minutes) and 1 of 27 main runs.
+
+The cause is in the simulator's unified log, exported from `ui.xcresult` with
+`xcresulttool export diagnostics`. The editor preview was a SwiftUI `VideoPlayer`,
+which is a full `AVPlayerViewController`. Each launch built AVKit's hidden iOS 26
+glass playback controls (`AVMobileGlassPlaybackControlButton … micaPackage`).
+Right after that, XCTest's in-app monitor logged "Unexpectedly received
+animationDidStop without a matching animationDidStart. Monitoring for idle
+animations may no longer function" (77 times in #1162's run). Once that count is
+corrupted, a later keyboard animation never reports idle.
+
+The same player also ran VisionKit Live Text analysis on paused frames and
+published Now Playing info. The editor never used any of it: the canvas above it
+owns every gesture. `NativeEditorPlayerSurface` (an `AVPlayerLayer` view) now
+replaces it. On the same four editor tests locally, the warning went from 8 to 0,
+with no AVKit control setup and no VisionKit analysis.
+
+The other `VideoPlayer` screens (result, slide post, device render, diagnostics)
+are outside the editor tests. If an idle stall shows up there, check the same log
+line.
+
+#### Sharded main UI suite (KRI-168)
+
+Main pushes and manual dispatches run three native legs (`shard: 1/3` … `3/3`).
+Each builds from the warm cache (`prepare-ui`) and runs one part of the full
+suite. PRs keep a single native leg with the unchanged job name.
+
+- `ui_tests.shard_tests` places tests longest-first into the least-loaded shard,
+  using median CI durations from `scripts/ios/ui-test-durations.json`. Unknown
+  tests weigh the median.
+- Every leg computes the same partition, so the shards are disjoint and cover
+  the whole inventory. Each leg's `verify` requires exactly its part, and the
+  `ios-tests` aggregate fails unless every leg passes.
+- Only shard 1 runs unit tests (`KRIA_IOS_UNIT_TESTS=0` elsewhere) and saves the
+  build cache. Diagnostics upload as `ios-native-test-diagnostics-shard-<job
+  index>`.
+- Refresh the durations file from recent green main runs when the suite changes
+  a lot. Stale values only unbalance the shards; they never drop coverage.
+- The repo is public, so macOS minutes cost nothing. Each main run holds 3 of
+  the account's 5 concurrent macOS runners, so PR jobs may queue briefly during
+  a main run.
+- Parallel testing on one runner stays off: cloned simulators missed drawer
+  controls in #1004.
 
 ## Native editor source assets
 

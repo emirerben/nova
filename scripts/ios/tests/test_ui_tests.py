@@ -154,9 +154,141 @@ class UISelectionTests(unittest.TestCase):
             "none",
             "editor,smoke",
             "smoke,editor,creation",
+            # Changed-test ids must be canonical (sorted, unique) and real.
+            "smoke,SignInUITests/testSignInShowsEveryProviderAndLegalLink,"
+            "ProjectsUITests/testProjectActionsCanBeCancelledWithoutChangingProject",
+            "smoke,ProjectsUITests/testNope",
+            "smoke,ProjectsUITests/helper",
+            "smoke,editor,editor",
         ):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 ui.expected_tests(invalid)
+
+    def test_changed_test_methods_add_only_those_tests_to_smoke(self):
+        data = ui.manifest()
+        rename = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+        self.assertEqual(
+            ui.expected_tests(f"smoke,{rename}"),
+            set(data["groups"]["smoke"]) | {f"KriaUITests/{rename}"},
+        )
+        self.assertEqual(
+            ui.expected_tests(f"smoke,editor,{rename}"),
+            set(data["groups"]["smoke"] + data["groups"]["editor"])
+            | {f"KriaUITests/{rename}"},
+        )
+
+    def test_shards_partition_the_full_suite_and_balance_recorded_time(self):
+        inventory = ui.discovered()
+        durations = json.loads(ui.DURATIONS.read_text())
+        self.assertTrue(all(float(value) > 0 for value in durations.values()))
+        for count in range(1, 5):
+            parts = [
+                ui.shard_tests(inventory, f"{i}/{count}") for i in range(1, count + 1)
+            ]
+            with self.subTest(count=count):
+                self.assertEqual(set().union(*parts), inventory)
+                self.assertEqual(sum(len(part) for part in parts), len(inventory))
+                loads = [sum(durations.get(test, 0) for test in part) for part in parts]
+                self.assertLessEqual(max(loads) - min(loads), max(durations.values()))
+        # Unknown (new) tests still land in exactly one shard.
+        extra = inventory | {"KriaUITests/NewUITests/testBrandNew"}
+        parts = [ui.shard_tests(extra, f"{i}/3") for i in (1, 2, 3)]
+        self.assertEqual(
+            sum("KriaUITests/NewUITests/testBrandNew" in p for p in parts), 1
+        )
+        for invalid in ("", "0/3", "4/3", "1/0", "a/b", "1/10", "1-3"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                ui.shard_tests(inventory, invalid)
+
+    def test_changed_tests_maps_lines_inside_test_methods_only(self):
+        path = "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift"
+        source = (ui.ROOT / path).read_text()
+        lines = source.splitlines()
+
+        def line_of(fragment, after=0):
+            return next(
+                n for n, text in enumerate(lines, 1) if n > after and fragment in text
+            )
+
+        rename = line_of(
+            "func testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+        )
+        drawer = line_of("func testPartialDrawerDragsAlwaysSettleAtTheNearestEndpoint")
+        helper = line_of("private func createFreshChat")
+        rename_id = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+        drawer_id = (
+            "ProjectsUITests/testPartialDrawerDragsAlwaysSettleAtTheNearestEndpoint"
+        )
+        self.assertEqual(ui.changed_tests(source, {rename + 2}), {rename_id})
+        self.assertEqual(
+            ui.changed_tests(source, {rename, drawer - 1, drawer + 3}),
+            {rename_id, drawer_id},
+        )
+        for outside in (
+            {0},
+            {1},  # import
+            {line_of("final class ProjectsUITests")},
+            {helper + 1},  # private helper body
+            {rename + 2, helper + 1},
+            {len(lines) + 1},
+            set(),
+        ):
+            with self.subTest(outside=outside):
+                self.assertIsNone(ui.changed_tests(source, outside))
+        # Unfamiliar layouts (tests not at member indentation) never focus.
+        self.assertIsNone(
+            ui.changed_tests(
+                source.replace("    func testRename", "func testRename"), {rename + 2}
+            )
+        )
+
+    def test_selector_focuses_changed_methods_and_keeps_groups_conservative(self):
+        projects = "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift"
+        editor_source = "src/apps/ios/Kria/Features/NativeEditorView.swift"
+        creation_source = "src/apps/ios/Kria/Features/CreationAttachments.swift"
+        rename = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+        focused = {projects: {rename}}
+        self.assertEqual(
+            ui.select_groups([projects], focused=focused)[0], f"smoke,{rename}"
+        )
+        # A group already covering the method keeps the plain group value.
+        self.assertEqual(
+            ui.select_groups(
+                [projects, "src/apps/ios/Tests/KriaUITests/SignInUITests.swift"],
+                focused=focused,
+            )[0],
+            "smoke,projects",
+        )
+        self.assertEqual(
+            ui.select_groups([projects, editor_source], focused=focused)[0],
+            f"smoke,editor,{rename}",
+        )
+        self.assertEqual(
+            ui.select_groups([editor_source, creation_source], focused=focused)[0],
+            "full",
+        )
+        for fallback in (
+            None,
+            {projects: None},
+            {projects: {"ProjectsUITests/testGone"}},
+        ):
+            with self.subTest(fallback=fallback):
+                self.assertEqual(
+                    ui.select_groups([projects], focused=fallback)[0], "smoke,projects"
+                )
+        # An unmapped test file used to select full (smoke alone on PRs), so the
+        # edited test never ran before merge; a focused edit now runs it.
+        visual = "src/apps/ios/Tests/KriaUITests/NativeCaptionVisualUITests.swift"
+        caption = "NativeCaptionVisualUITests/testCaptionAndVisualPaperScreens"
+        self.assertNotIn(visual, ui.manifest()["sources"])
+        self.assertEqual(ui.select_groups([visual])[0], "full")
+        self.assertEqual(
+            ui.select_groups([visual], focused={visual: {caption}})[0],
+            f"smoke,{caption}",
+        )
+        for path, group in ui.manifest()["sources"].items():
+            value = ui.select_groups([path], focused=focused)[0]
+            self.assertEqual(value, ui.validate_groups(value))
 
 
 class ResultCoverageTests(unittest.TestCase):

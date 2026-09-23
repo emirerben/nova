@@ -39,20 +39,70 @@ class CacheInputTests(unittest.TestCase):
         path.write_text(content)
         return path
 
-    def test_unchanged_sources_assets_and_generated_project_reuse_timestamps(self):
-        self.assertEqual(cache.save(self.root, self.manifest), 3)
+    def fresh_checkout(self, paths):
         fresh = self.original_time + 100_000_000_000
-        for path in (self.source, self.asset, self.project):
+        for path in paths:
             os.utime(path, ns=(fresh, fresh))
-        self.assertEqual(cache.restore(self.root, self.manifest), 3)
+        return fresh
+
+    def test_unchanged_sources_assets_and_generated_project_reuse_timestamps(self):
+        # 4 directories: src/apps/ios, its Kria and Kria.xcodeproj, and fonts.
+        self.assertEqual(cache.save(self.root, self.manifest), (3, 4))
+        self.fresh_checkout((self.source, self.asset, self.project))
+        self.assertEqual(cache.restore(self.root, self.manifest), (3, 4))
         for path in (self.source, self.asset, self.project):
             self.assertEqual(path.stat().st_mtime_ns, self.original_time)
+
+    def test_unchanged_directories_reuse_timestamps(self):
+        # Asset catalogs are folder inputs: a checkout-fresh directory mtime
+        # alone reran actool and recompiled the app on every warm CI build.
+        catalog = self.write(
+            "src/apps/ios/Kria/Assets.xcassets/Icon.imageset/Contents.json", "{}"
+        ).parent
+        cache.save(self.root, self.manifest)
+        state = json.loads(self.manifest.read_text())
+        recorded = {
+            path: state[relative]["mtime_ns"]
+            for relative, path in cache.directories(self.root)
+        }
+        self.assertIn(catalog, recorded)
+        self.assertIn(catalog.parent, recorded)
+        self.fresh_checkout(recorded)
+        self.assertEqual(cache.restore(self.root, self.manifest)[1], len(recorded))
+        for path, timestamp in recorded.items():
+            self.assertEqual(path.stat().st_mtime_ns, timestamp)
+
+    def test_directories_with_added_or_removed_entries_keep_fresh_timestamps(self):
+        catalog = self.write(
+            "src/apps/ios/Kria/Assets.xcassets/Icon.imageset/Contents.json", "{}"
+        ).parent
+        cache.save(self.root, self.manifest)
+        (catalog / "Icon@2x.png").write_text("png")
+        self.source.unlink()
+        fresh = self.fresh_checkout((catalog, self.source.parent))
+        cache.restore(self.root, self.manifest)
+        self.assertEqual(catalog.stat().st_mtime_ns, fresh)
+        self.assertEqual(self.source.parent.stat().st_mtime_ns, fresh)
+
+    def test_manifest_cannot_supply_directory_paths(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        before = outside.stat().st_mtime_ns
+        cache.save(self.root, self.manifest)
+        state = json.loads(self.manifest.read_text())
+        entry = {"entries": cache.listing(outside), "mtime_ns": self.original_time}
+        state["outside/"] = entry
+        state[f"{outside}/"] = entry
+        state["src/apps/ios/../../../outside/"] = entry
+        self.manifest.write_text(json.dumps(state))
+        cache.restore(self.root, self.manifest)
+        self.assertEqual(outside.stat().st_mtime_ns, before)
 
     def test_same_size_changed_source_keeps_fresh_timestamp(self):
         cache.save(self.root, self.manifest)
         self.source.write_text("let value = 2")
         changed_time = self.source.stat().st_mtime_ns
-        self.assertEqual(cache.restore(self.root, self.manifest), 2)
+        self.assertEqual(cache.restore(self.root, self.manifest)[0], 2)
         self.assertEqual(self.source.stat().st_mtime_ns, changed_time)
         self.assertEqual(self.source.read_text(), "let value = 2")
 
@@ -66,16 +116,17 @@ class CacheInputTests(unittest.TestCase):
         self.assertEqual(new.stat().st_mtime_ns, new_time)
 
     def test_missing_or_corrupt_manifest_is_a_cache_miss(self):
-        self.assertEqual(cache.restore(self.root, self.manifest), 0)
+        self.assertEqual(cache.restore(self.root, self.manifest), (0, 0))
         self.manifest.parent.mkdir(parents=True)
         for value in (
             "bad json",
             "[]",
             "null",
             '{"src/apps/ios/Kria/View.swift":null}',
+            '{"src/apps/ios/Kria/":null}',
         ):
             self.manifest.write_text(value)
-            self.assertEqual(cache.restore(self.root, self.manifest), 0)
+            self.assertEqual(cache.restore(self.root, self.manifest), (0, 0))
 
     def test_manifest_cannot_supply_outside_paths_or_touch_symlinks(self):
         outside = self.write("outside.txt", "private")
@@ -100,7 +151,7 @@ class CacheInputTests(unittest.TestCase):
             for entry in state.values():
                 entry["mtime_ns"] = timestamp
             self.manifest.write_text(json.dumps(state))
-            self.assertEqual(cache.restore(self.root, self.manifest), 0)
+            self.assertEqual(cache.restore(self.root, self.manifest), (0, 0))
 
     def test_fingerprint_ignores_times_but_tracks_content_and_new_sources(self):
         before = cache.fingerprint(self.root)

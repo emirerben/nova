@@ -28,17 +28,18 @@ jobs:
     # Keep this job id: build-and-test consumes its matrix aggregate as the
     # stable, fail-closed required check. Contracts are portable, so running
     # them on Ubuntu leaves the macOS runner for the native build sooner.
+    #
+    # PRs keep one native leg. Main and manual runs split the serial full UI
+    # suite (~35 minutes) across three native legs (KRI-168). Each leg builds
+    # from the warm cache in parallel, which beats building once and then
+    # handing products to the shards. Shard 1 also runs the unit tests and
+    # saves the cache.
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - lane: native
-            runner: macos-15
-          - lane: contracts
-            runner: ubuntu-latest
+      matrix: ${{ fromJSON(github.event_name == 'pull_request' && '{"include":[{"lane":"native","runner":"macos-15"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || '{"include":[{"lane":"native","runner":"macos-15","shard":"1/3"},{"lane":"native","runner":"macos-15","shard":"2/3"},{"lane":"native","runner":"macos-15","shard":"3/3"},{"lane":"contracts","runner":"ubuntu-latest"}]}') }}
     runs-on: ${{ matrix.runner }}
-    # Green native runs on main take 37-41 minutes (build, unit tests and the
-    # full UI suite), so 45 left too little room as the UI suite grows.
+    # Green native runs on main took 31-54 minutes (median 42) in September
+    # 2026 as one serial job. See KRI-168 in docs/runbooks/ios-development.md.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -70,6 +71,16 @@ jobs:
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
+      # Start CoreSimulator and the boot now, in the background, so they overlap
+      # the cache download and build-setting checks rather than xcodebuild's
+      # startup and compilation. verify.sh still selects the same device and
+      # waits for it; if this head start fails, it simply boots it itself.
+      - name: Start simulator boot early
+        if: matrix.lane == 'native'
+        run: |
+          mkdir -p test-results/ios
+          nohup env KRIA_IOS_TEST_MODE=boot bash scripts/ios/verify.sh \
+            > test-results/ios/early-boot.log 2>&1 &
       - name: Install XcodeGen
         if: matrix.lane == 'native'
         run: brew install xcodegen
@@ -112,14 +123,17 @@ jobs:
           # native UI coverage runs after merge and on manual regressions.
           KRIA_IOS_TEST_MODE: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.ios_ui == 'true') && 'prepare-ui' || 'unit' }}
           KRIA_RESTORE_INPUT_TIMES: "1"
+          # UI shards 2 and 3 compile every bundle but leave unit tests to shard 1.
+          KRIA_IOS_UNIT_TESTS: ${{ (!matrix.shard || startsWith(matrix.shard, '1/')) && '1' || '0' }}
         run: bash scripts/ios/verify.sh
       # Save a usable build as soon as compilation/unit tests pass. In particular,
       # main's shared cache need not wait for the slower UI suite to finish.
+      # Only one leg per run saves: the shards would race for the same key.
       - name: Record compiled input timestamps
-        if: matrix.lane == 'native'
+        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/'))
         run: python3 scripts/ios/cache-inputs.py save
       - name: Save Xcode build data
-        if: matrix.lane == 'native' && steps.build-cache.outputs.cache-hit != 'true'
+        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && steps.build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -131,19 +145,22 @@ jobs:
             src/apps/ios/.derived-data/CompilationCache.noindex
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
       - name: Native UI tests (reuse compiled build)
-        # main and workflow_dispatch run the fail-closed full regression. A PR
-        # that touches native UI inputs runs a bounded pre-merge subset: smoke
-        # plus the one affected feature group, or smoke alone when the selector
-        # wants full coverage (shared, unmapped, or multi-group changes). The
-        # smoke group walks creation to a ready cut, which a green build/unit
-        # PR once broke for every later merge (#1088).
+        # main and workflow_dispatch run the fail-closed full regression, one
+        # duration-balanced shard per leg; each leg verifies its exact part and
+        # the job fails unless every leg passes. A PR that touches native UI
+        # inputs runs a bounded pre-merge subset: smoke plus the affected
+        # feature group and/or the changed test methods, or smoke alone when
+        # the selector wants full coverage (shared, unmapped, or multi-group
+        # changes). The smoke group walks creation to a ready cut, which a
+        # green build/unit PR once broke for every later merge (#1088).
         if: matrix.lane == 'native' && (github.event_name != 'pull_request' || needs.changes.outputs.ios_ui == 'true')
         env:
           KRIA_IOS_TEST_MODE: ui
           KRIA_IOS_UI_GROUPS: ${{ github.event_name != 'pull_request' && 'full' || (needs.changes.outputs.ios_ui_groups == 'full' && 'smoke' || needs.changes.outputs.ios_ui_groups) }}
+          KRIA_IOS_UI_SHARD: ${{ matrix.shard }}
         run: bash scripts/ios/verify.sh
       - name: Compare focused UI coverage (manual only)
-        if: matrix.lane == 'native' && github.event_name == 'workflow_dispatch' && inputs.benchmark_ui_group != 'none'
+        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && github.event_name == 'workflow_dispatch' && inputs.benchmark_ui_group != 'none'
         env:
           BENCHMARK_UI_GROUP: ${{ inputs.benchmark_ui_group }}
         run: |
@@ -153,7 +170,8 @@ jobs:
         if: always() && matrix.lane == 'native'
         uses: actions/upload-artifact@v4
         with:
-          name: ios-native-test-diagnostics
+          # Shard legs need distinct names; job-index 0, 1, 2 are shards 1/3, 2/3, 3/3.
+          name: ${{ matrix.shard && format('ios-native-test-diagnostics-shard-{0}', strategy.job-index) || 'ios-native-test-diagnostics' }}
           path: test-results/ios/
           retention-days: 7
           if-no-files-found: ignore

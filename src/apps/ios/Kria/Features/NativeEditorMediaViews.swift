@@ -1,5 +1,4 @@
 import AVFoundation
-import AVKit
 import KriaMediaEngine
 import SwiftUI
 import UIKit
@@ -568,7 +567,7 @@ struct NativeVideoPreview: View {
             Color.black
             if session.canDisplayCurrentPlayer, let player = session.player {
                 ZStack {
-                    VideoPlayer(player: player)
+                    NativeEditorPlayerSurface(player: player)
                         .aspectRatio(session.previewAspectRatio, contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityLabel("Video preview")
@@ -725,6 +724,40 @@ struct NativeVideoPreview: View {
                 liveTextScale = 1; liveTextRotation = 0; liveTextTranslation = .zero
             }
         }
+    }
+}
+
+/// The editor preview is only a video surface: the canvas above it owns every
+/// gesture and the editor draws its own transport. SwiftUI's `VideoPlayer`
+/// wrapped a full `AVPlayerViewController`, which still built hidden iOS 26
+/// glass playback controls, ran VisionKit Live Text analysis on paused frames
+/// and published Now Playing info. Those control animations also broke
+/// XCUITest's animation-idle tracking, stalling editor UI tests for 60s per
+/// action once the keyboard animated in (KRI-168).
+private struct NativeEditorPlayerSurface: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> Surface {
+        let view = Surface()
+        view.playerLayer.player = player
+        return view
+    }
+
+    func updateUIView(_ view: Surface, context: Context) {
+        if view.playerLayer.player !== player { view.playerLayer.player = player }
+    }
+
+    final class Surface: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            playerLayer.videoGravity = .resizeAspect
+            backgroundColor = .clear
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     }
 }
 

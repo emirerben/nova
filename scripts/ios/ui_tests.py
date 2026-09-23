@@ -10,11 +10,47 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path(__file__).with_name("ui-test-groups.json")
-FOCUSED = ("smoke,creation", "smoke,projects", "smoke,editor")
+# Median seconds per UI test on GitHub's macos-15 runners; balances main shards.
+DURATIONS = Path(__file__).with_name("ui-test-durations.json")
+FEATURES = ("creation", "projects", "editor")
+FOCUSED = tuple(f"smoke,{group}" for group in FEATURES)
+UI_TEST_ROOT = "src/apps/ios/Tests/KriaUITests/"
+TEST_ID = re.compile(r"[A-Za-z_]\w*/test\w+")
+# Members of the single XCTestCase class sit at exactly four spaces. Test bodies
+# (including nested helpers) are indented further; file scope is at column 0.
+TEST_METHOD = re.compile(r"    (?:@[\w.]+(?:\([^)]*\))?\s+)*func\s+(test\w+)\s*\(")
+MEMBER = re.compile(
+    r"    (?:@[\w.]+(?:\([^)]*\))?\s+)*"
+    r"(?:(?:private|fileprivate|internal|public|open|override|static|final|class"
+    r"|nonisolated|mutating|lazy|weak|convenience|required)\s+)*"
+    r"(?:func|var|let|init|deinit|subscript|struct|enum|class|actor|typealias)\b"
+)
+
+
+def parse_selection(value):
+    """Split a focused value into (feature group or None, changed test ids).
+
+    Grammar: "smoke" [",<feature>"] {",<Class>/<testMethod>"}, with test ids
+    sorted and unique so every selection has one canonical spelling.
+    """
+    tokens = value.split(",") if isinstance(value, str) else []
+    if not tokens or tokens[0] != "smoke":
+        raise ValueError(f"Invalid iOS UI groups: {value!r}")
+    group = tokens[1] if len(tokens) > 1 and tokens[1] in FEATURES else None
+    tests = tokens[2:] if group else tokens[1:]
+    if any(not TEST_ID.fullmatch(test) for test in tests) or tests != sorted(
+        set(tests)
+    ):
+        raise ValueError(f"Invalid iOS UI groups: {value!r}")
+    return group, tuple(tests)
 
 
 def validate_groups(value):
-    if value not in ("none", "full", *FOCUSED):
+    """Selector output: none, full, smoke plus one group and/or changed tests."""
+    if value in ("none", "full"):
+        return value
+    group, tests = parse_selection(value)
+    if not group and not tests:
         raise ValueError(f"Invalid iOS UI groups: {value!r}")
     return value
 
@@ -70,21 +106,79 @@ def inventory_matches(root=ROOT):
     )
 
 
-def select_groups(paths, root=ROOT):
-    """Caller passes only paths that selected UI coverage, including deleted paths."""
+def changed_tests(source, lines):
+    """Test methods ("Class/testName") containing every changed line, else None.
+
+    `lines` are 1-based line numbers of `source` touched by the diff. Any change
+    outside a test method body (imports, properties, setUp, private helpers, a
+    comment at column 0, file-scope code) or an unfamiliar layout returns None,
+    so the caller falls back to the file's whole feature group.
+    """
+    classes = re.findall(r"\bclass\s+(\w+)\s*:\s*XCTestCase\b", source)
+    text = source.splitlines()
+    methods = re.findall(r"\bfunc\s+(test\w+)\s*\(", source)
+    if (
+        len(classes) != 1
+        or not lines
+        or sum(1 for line in text if TEST_METHOD.match(line)) != len(methods)
+    ):
+        return None
+    owners, owner = [], None
+    for line in text:
+        if re.match(r"\S", line):
+            owner = None
+        elif match := TEST_METHOD.match(line):
+            owner = match.group(1)
+        elif MEMBER.match(line):
+            owner = ""
+        owners.append(owner)
+    tests = set()
+    for number in lines:
+        if not 1 <= number <= len(owners) or not owners[number - 1]:
+            return None
+        tests.add(f"{classes[0]}/{owners[number - 1]}")
+    return tests
+
+
+def select_groups(paths, root=ROOT, focused=None):
+    """Caller passes only paths that selected UI coverage, including deleted paths.
+
+    `focused` optionally maps a changed UI test source to the test methods its
+    diff touched (see changed_tests); such a file selects only those tests.
+    """
     try:
         if not inventory_matches(root):
             return "full", "UI inventory changed or contains unclassified tests."
-        sources = manifest()["sources"]
-        if not paths or any(
-            path not in sources or not (root / path).is_file() for path in paths
-        ):
+        data = manifest()
+        sources = data["sources"]
+        inventory = discovered(root)
+        if not paths:
             return "full", "Shared, deleted, or unmapped UI input changed."
-        groups = {sources[path] for path in paths}
-        if len(groups) != 1:
+        groups, tests = set(), set()
+        for path in paths:
+            changed = (focused or {}).get(path)
+            if not (root / path).is_file():
+                return "full", "Shared, deleted, or unmapped UI input changed."
+            # Method-level focus needs no mapping: it names the tests it changed.
+            if changed and {f"KriaUITests/{test}" for test in changed} <= inventory:
+                tests |= changed
+            elif path in sources:
+                groups.add(sources[path])
+            else:
+                return "full", "Shared, deleted, or unmapped UI input changed."
+        if len(groups) > 1:
             return "full", "Multiple native feature groups changed."
-        group = groups.pop()
-        return f"smoke,{group}", f"Smoke plus affected {group} UI tests."
+        group = groups.pop() if groups else None
+        if group:
+            covered = {
+                test.removeprefix("KriaUITests/") for test in data["groups"][group]
+            }
+            tests -= covered
+        value = ",".join(["smoke", *([group] if group else []), *sorted(tests)])
+        reason = f"Smoke plus affected {group} UI tests" if group else "Smoke"
+        if tests:
+            reason += f" plus {len(tests)} changed UI test method(s)"
+        return value, reason + "."
     except (OSError, ValueError, KeyError, TypeError):
         return "full", "UI manifest unavailable or invalid."
 
@@ -98,7 +192,16 @@ def expected_tests(value, root=ROOT):
     if not inventory_matches(root):
         raise ValueError("UI inventory changed; run full coverage")
     data = manifest()
-    return set().union(*(set(data["groups"][g]) for g in value.split(",")))
+    group, tests = parse_selection(value)
+    selected = {f"KriaUITests/{test}" for test in tests}
+    unknown = selected - discovered(root)
+    if unknown:
+        raise ValueError(f"Unknown UI tests selected: {sorted(unknown)}")
+    return (
+        set(data["groups"]["smoke"])
+        | (set(data["groups"][group]) if group else set())
+        | selected
+    )
 
 
 def _iter_test_cases(report):
@@ -221,11 +324,46 @@ def verify_results(report, expected):
     return f"Verified {len(expected)} selected UI tests passed."
 
 
+def parse_shard(spec):
+    match = re.fullmatch(r"([1-9])/([1-9])", spec or "")
+    if not match or int(match.group(1)) > int(match.group(2)):
+        raise ValueError(f"Invalid UI shard: {spec!r}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def shard_tests(tests, spec, durations=None):
+    """This shard's part of a deterministic, duration-balanced partition.
+
+    Every shard computes the same partition from the same checkout, so the
+    shards are disjoint and their union is exactly `tests`. Longest tests are
+    placed first into the least-loaded shard; tests without a recorded
+    duration weigh the median, so new tests still spread out evenly.
+    """
+    index, count = parse_shard(spec)
+    if durations is None:
+        durations = json.loads(DURATIONS.read_text()) if DURATIONS.exists() else {}
+    known = sorted(float(value) for value in durations.values())
+    default = known[len(known) // 2] if known else 30.0
+    weight = {test: float(durations.get(test, default)) for test in tests}
+    loads, members = [0.0] * count, [[] for _ in range(count)]
+    for test in sorted(tests, key=lambda test: (-weight[test], test)):
+        target = min(range(count), key=lambda shard: (loads[shard], shard))
+        loads[target] += weight[test]
+        members[target].append(test)
+    return set(members[index - 1])
+
+
 def main():
     command, value = sys.argv[1:3]
     expected = expected_tests(value)
+    # Main runs split the full suite across Macs; each shard checks its part.
+    shard = os.environ.get("KRIA_IOS_UI_SHARD", "")
+    if shard:
+        if value != "full":
+            raise ValueError("Only the full UI suite can be sharded")
+        expected = shard_tests(expected, shard)
     if command == "args":
-        if value == "full":
+        if value == "full" and not shard:
             print("-only-testing:KriaUITests")
         else:
             print("\n".join(f"-only-testing:{test}" for test in sorted(expected)))
