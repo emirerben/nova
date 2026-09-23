@@ -132,7 +132,11 @@ struct AttachmentSheet: View {
                     // Until the pool loads, its limit is unknown; don't show a
                     // disabled picker claiming the limit was reached.
                     if role != .visual || pool != nil {
-                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, attachedMediaIDs: attachedMediaIDs, role: role, itemID: itemID, limit: limit, destination: uploadDestination)
+                        // KRI-175: footage that fills the format (the one talking-to-camera clip) goes
+                        // straight back to chat, which shows its upload. Visuals stay here, where their
+                        // analysis status is.
+                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, attachedMediaIDs: attachedMediaIDs, role: role, itemID: itemID, limit: limit, destination: uploadDestination,
+                                          onPickerFilled: role == .clip ? { dismiss() } : nil)
                             .id(role)
                     }
                     // KRI-132: available on `.cloud` (always) and on `.phone` once the

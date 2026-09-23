@@ -4,6 +4,25 @@ import XCTest
 /// KRI-125: the rules behind "start uploading while choosing" and "show what's already chosen",
 /// exercised without SwiftUI or the network.
 @MainActor final class PhotoSelectionTests: XCTestCase {
+    // MARK: auto-close (KRI-175)
+
+    func testPickThatFillsThePickerClosesIt() {
+        XCTAssertTrue(PhotoPickerAutoClose.shouldClose(previous: [], current: ["a"], limit: 1),
+                      "the single talking-to-camera clip returns to chat on the first pick")
+        XCTAssertTrue(PhotoPickerAutoClose.shouldClose(previous: ["a"], current: ["a", "b"], limit: 2))
+        XCTAssertTrue(PhotoPickerAutoClose.shouldClose(previous: ["a"], current: ["b"], limit: 1),
+                      "swapping the one clip is still a new pick")
+    }
+
+    func testPickerStaysOpenUntilANewPickFillsIt() {
+        XCTAssertFalse(PhotoPickerAutoClose.shouldClose(previous: [], current: ["a"], limit: 3), "room for more")
+        XCTAssertFalse(PhotoPickerAutoClose.shouldClose(previous: ["a", "b"], current: ["a"], limit: 1),
+                       "un-choosing must not close it")
+        XCTAssertFalse(PhotoPickerAutoClose.shouldClose(previous: ["a"], current: ["a"], limit: 1),
+                       "the seeded selection of a full picker is not a pick")
+        XCTAssertFalse(PhotoPickerAutoClose.shouldClose(previous: [], current: ["a", "b"], limit: 0))
+    }
+
     // MARK: diff
 
     func testDiffSplitsAddedFromRemovedAndKeepsPickerOrder() {
