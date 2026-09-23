@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.152.0] - 2026-09-23
+
+### Changed
+- fix(narrated): plan voiceover stories reliably, make Clean up speech real, recover from planning failures (#1166) <!-- release-pr: 1166 -->
+
 ## [0.76.151.0] - 2026-09-23
 
 ### Changed
