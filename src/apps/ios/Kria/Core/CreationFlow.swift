@@ -63,6 +63,11 @@ struct CreationVisual: Codable, Sendable, Identifiable {
     var sourceURL: URL? = nil
     var durationS: Double? = nil
     var mediaStatus: String? = nil
+    /// Why analysis failed (`analysis_temporarily_unavailable`, `analysis_unreadable`, …)
+    /// and the server's one-line explanation for the creator. Nil on healthy
+    /// assets and on servers that predate the fields.
+    var errorCode: String? = nil
+    var errorDetail: String? = nil
 
     /// Older APIs return original videos in display_url. For images, accept
     /// that URL only when its key is the original, never a flattened preview.
@@ -78,6 +83,7 @@ struct CreationVisual: Codable, Sendable, Identifiable {
         case id, kind, status, retryable
         case gcsPath = "gcs_path", sourceURL = "source_url", durationS = "duration_s", mediaStatus = "media_status"
         case sourceFilename = "source_filename", displayURL = "display_url", previewURL = "preview_url"
+        case errorCode = "error_code", errorDetail = "error_detail"
     }
 }
 struct CreationVisuals: Codable, Sendable {
