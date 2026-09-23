@@ -2948,6 +2948,12 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 detector_policy=current_detector_policy(),
             )
             row = await current_analysis_async(db, item.id)
+            # `storage_path` MUST ride along: it is what excludes a phone
+            # (analysis-proxy) source, exactly as `schedule_item_preflight_*`
+            # does. Without it this projection said "applicable" for a phone
+            # Talking item while no analysis row could ever be scheduled, so
+            # the iOS confirmation stage spun on "Preparing the speech check"
+            # forever with no Create button (2026-09-24, thread f249fb29).
             in_cohort = bool(
                 cleanup_enforced
                 and resolution.source
@@ -2955,6 +2961,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                     resolution.source.source_policy_fingerprint,
                     mode=settings.speech_cleanup_preflight_mode,
                     rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+                    storage_path=getattr(resolution.source, "storage_path", None),
                 )
             )
             speech_cleanup = public_projection(
@@ -4711,6 +4718,10 @@ async def action_thread(
                     if item is not None
                     else None
                 )
+                # Same `storage_path` gate as the projection above and the
+                # scheduler: a phone (analysis-proxy) source is never enforced,
+                # otherwise `generate` 409s `speech_cleanup_pending` for an
+                # analysis that will never exist.
                 enforced_for_source = bool(
                     resolution
                     and resolution.source
@@ -4718,6 +4729,7 @@ async def action_thread(
                         resolution.source.source_policy_fingerprint,
                         mode=settings.speech_cleanup_preflight_mode,
                         rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+                        storage_path=getattr(resolution.source, "storage_path", None),
                     )
                 )
                 if (
