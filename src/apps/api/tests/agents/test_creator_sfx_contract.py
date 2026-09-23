@@ -15,6 +15,7 @@ from app.routes.creator_agent import (
     _apply_explicit_render_intent,
     _explicit_sfx_lookup_names,
     _explicit_sfx_name,
+    _resolve_described_sfx,
     _resolve_explicit_sfx_outside_manifest,
 )
 from app.services.creator_capabilities import (
@@ -22,6 +23,7 @@ from app.services.creator_capabilities import (
     compile_strategy_to_plan,
     resolve_creator_sfx_catalog_ref,
 )
+from app.services.sfx_catalog import SFX_CATEGORY_TERMS
 
 
 def _manifest(*, effects: list[dict]) -> ResolvedCreatorManifest:
@@ -528,3 +530,106 @@ def test_sfx_parser_rejects_raw_output_over_the_placement_cap() -> None:
                 duration_s=10.0,
             ),
         )
+
+
+def _live_effect(effect_id: str, name: str, category: str, terms: list[str]) -> SimpleNamespace:
+    # Mirrors the seed script: explicit terms first, then the category-wide words.
+    return SimpleNamespace(
+        id=effect_id,
+        name=name,
+        category=category,
+        search_terms=[*terms, *SFX_CATEGORY_TERMS[category], category],
+        role_tags=[],
+        contains_voice=False,
+        quality_tier="library",
+        catalog_rank=None,
+        created_at=None,
+        duration_s=0.4,
+    )
+
+
+_LIVE_LIBRARY = [
+    _live_effect("buzz", "Wrong buzzer", "rejection", ["buzzer", "wrong answer", "quiz"]),
+    _live_effect("buzz-long", "Wrong buzzer long", "rejection", ["buzzer", "wrong answer"]),
+    _live_effect("ding", "Correct ding", "approval", ["ding", "bell", "correct answer"]),
+    _live_effect("whoosh", "Whoosh fast", "transition", ["whoosh", "swish"]),
+    _live_effect("pop", "Soft pop", "ui", ["pop", "appear"]),
+]
+
+
+async def _plan_requested_sfx(request: str):
+    """Run the planning turn's SFX steps exactly as ``_run_planning_turn`` does."""
+
+    def execute(statement):
+        # Exact name/id lookups filter on lower(...); the library scan doesn't.
+        rows = [] if "lower(" in str(statement) else _LIVE_LIBRARY
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
+
+    db = SimpleNamespace(execute=AsyncMock(side_effect=execute))
+    manifest = _manifest(effects=[])
+    planning_manifest = manifest
+    for name in _explicit_sfx_lookup_names(request, manifest=manifest):
+        planning_manifest = await _resolve_explicit_sfx_outside_manifest(
+            db, name, manifest=planning_manifest
+        )
+    planning_manifest, described = await _resolve_described_sfx(
+        db, _explicit_sfx_name(request, manifest=planning_manifest), manifest=planning_manifest
+    )
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(), request, manifest=planning_manifest, resolved_sfx=described
+    )
+    assert planning_manifest.manifest_hash == manifest.manifest_hash
+    return planning_manifest, strategy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("request_text", "effect_id"),
+    [
+        # KRI-173: a described effect reaches the whole library, outside the prompt catalog.
+        ("Add a buzzer sound effect when I say the wrong player.", "buzz"),
+        ("Use the wrong answer buzzer sound effect.", "buzz"),
+        ("Don't use the whoosh sound effect, use a pop sound effect instead.", "pop"),
+        ("Don't forget to add a buzzer sound effect.", "buzz"),
+    ],
+)
+async def test_described_effect_resolves_from_the_whole_library(
+    request_text: str, effect_id: str
+) -> None:
+    planning_manifest, strategy = await _plan_requested_sfx(request_text)
+    plan = compile_strategy_to_plan(planning_manifest, strategy)
+    assert plan.strategy.licensed_sfx.effect_id == effect_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "request_text",
+    [
+        "Use no sound effect, just the music.",
+        "Don't use the whoosh sound effect.",
+        "Don\u2019t add a buzzer sound effect.",
+        "Never add a whoosh sound effect.",
+        "Please do not include the buzzer sound effect.",
+    ],
+)
+async def test_refused_effect_is_never_placed(request_text: str) -> None:
+    _, strategy = await _plan_requested_sfx(request_text)
+    assert strategy.licensed_sfx is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "request_text",
+    [
+        "Add a trumpet sound effect.",
+        # Category-wide words describe a mood, not one effect.
+        "Add the right sound effect for each funny moment.",
+        "Add a text sound effect.",
+    ],
+)
+async def test_unmatched_description_still_fails_visibly(request_text: str) -> None:
+    planning_manifest, strategy = await _plan_requested_sfx(request_text)
+    assert strategy.licensed_sfx is not None
+    assert strategy.licensed_sfx.effect_id not in {e.id for e in _LIVE_LIBRARY}
+    with pytest.raises(CreatorSfxUnavailableError):
+        compile_strategy_to_plan(planning_manifest, strategy)
