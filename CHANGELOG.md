@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.182.0] - 2026-09-23
+
+### Changed
+- test(ios): isolate BackgroundUploadRetryTests request stubs per test (#1201) <!-- release-pr: 1201 -->
+
 ## [0.76.181.0] - 2026-09-23
 
 ### Changed
