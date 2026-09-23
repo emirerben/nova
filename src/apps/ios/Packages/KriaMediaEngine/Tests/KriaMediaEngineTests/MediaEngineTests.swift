@@ -106,7 +106,7 @@ final class MediaEngineTests: XCTestCase {
     }
 
     func testStorageEstimateAndCrossfade() {
-        XCTAssertGreaterThan(StorageEstimate.forAssetBytes(10_000).requiredBytes, 10_000)
+        XCTAssertGreaterThan(StorageEstimate.forEstimatedOutput(durationS: 30).requiredBytes, 10_000)
         let a = TimelineClip(id: "a", sourceAssetID: "a", sourceDuration: 2)
         let b = TimelineClip(id: "b", sourceAssetID: "b", sourceDuration: 3, timelineStart: 2, transition: Transition(duration: 0.5))
         XCTAssertEqual(TimelineMath.crossfadeOverlap(a, b), 0.5)

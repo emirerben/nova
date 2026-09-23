@@ -61,6 +61,36 @@ final class RequestFailureTests: XCTestCase {
         }
     }
 
+    /// KRI-118: a 4xx error body's `detail` string used to be discarded entirely.
+    /// It must now be available on the error without disturbing the existing
+    /// status-only equality every other call site relies on.
+    func testRequestFailedCarriesTheServersDetailMessage() async {
+        NativeEditorURLProtocol.handler = { _ in (400, Data(#"{"detail":"That title is too long."}"#.utf8)) }
+        do {
+            _ = try await NativeEditorTestSupport.api().project(threadID: UUID())
+            XCTFail("Expected HTTP 400 to throw")
+        } catch let error as APIError {
+            XCTAssertEqual(error, .requestFailed(status: 400))
+            XCTAssertEqual(error.requestFailureDetail, "That title is too long.")
+        } catch {
+            XCTFail("Expected APIError, got \(error)")
+        }
+    }
+
+    func testRequestFailedDetailIsNilWhenBodyHasNoDetailField() async {
+        for body in [Data(), Data("not json".utf8), Data(#"{"other":"field"}"#.utf8)] {
+            NativeEditorURLProtocol.handler = { _ in (400, body) }
+            do {
+                _ = try await NativeEditorTestSupport.api().project(threadID: UUID())
+                XCTFail("Expected HTTP 400 to throw")
+            } catch let error as APIError {
+                XCTAssertNil(error.requestFailureDetail)
+            } catch {
+                XCTFail("Expected APIError, got \(error)")
+            }
+        }
+    }
+
     /// The incident path: a failed chat action shows "That change wasn’t saved."
     /// followed by the explanation of the error.
     func testCreateThisVideoServerErrorIsNotShownAsAConnectionProblem() async {

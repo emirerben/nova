@@ -475,7 +475,7 @@ final class KriaTests: XCTestCase {
         do {
             _ = try await api.reviewerSignIn(email: "reviewer@kria.app", password: "wrong")
             XCTFail("Expected invalid-credentials failure")
-        } catch APIError.requestFailed(status: 401) {
+        } catch APIError.requestFailed(status: 401, detail: _) {
         } catch { XCTFail("Expected requestFailed(status: 401), got \(error)") }
         XCTAssertNil(try store.read())
     }
@@ -490,7 +490,7 @@ final class KriaTests: XCTestCase {
         do {
             _ = try await api.reviewerSignIn(email: "reviewer@kria.app", password: "wrong")
             XCTFail("Expected unavailable failure")
-        } catch APIError.requestFailed(status: 404) {
+        } catch APIError.requestFailed(status: 404, detail: _) {
         } catch { XCTFail("Expected requestFailed(status: 404), got \(error)") }
         XCTAssertNil(try store.read())
     }
