@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.176.0] - 2026-09-23
+
+### Changed
+- fix(planner): voiceover script never becomes on-screen chapter text (#1192) <!-- release-pr: 1192 -->
+
 ## [0.76.175.0] - 2026-09-23
 
 ### Fixed
