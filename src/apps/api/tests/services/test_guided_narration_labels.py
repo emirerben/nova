@@ -5,6 +5,7 @@ import pytest
 
 from app.agents.narration_annotations import NarrationAnnotation, NarrationAnnotationOutput
 from app.pipeline.guided_story import GuidedStoryError
+from app.pipeline.narration_labels import TOPIC_SENTENCE_REJECTION
 from app.schemas.edit_proposal import NarrationTrack
 from app.services.guided_narration_labels import materialize_guided_narration_labels
 
@@ -405,3 +406,148 @@ def test_score_copy_is_taken_only_from_its_pinned_transcript_span():
     texts = {row["text"] for row in result["narration_label_text_elements"]}
     assert "99-0" not in texts
     assert "1-0" in texts
+
+
+# Synthetic stand-ins for a creator's per-shot voiceover script. Never copy
+# real creator text into this fixture.
+_SPOKEN_LINES = (
+    "The old bridge opened before the railway came and it still carries traffic",
+    "Market stalls fill the lanes every morning before the heat arrives",
+    "We ended the walk at the harbour watching the boats come home",
+)
+
+
+def _spoken_script_inputs():
+    """Prod shape (2026-09-23): the Main Creator turned "show each shot while I
+    say its line" into one transcript topic intent per line, the attribute
+    being the spoken line itself."""
+
+    snapshot, plan, _strategy = inputs()
+    words = []
+    cursor = 0.3
+    for line in _SPOKEN_LINES:
+        for token in line.split():
+            words.append(
+                {"text": token, "start_s": round(cursor, 3), "end_s": round(cursor + 0.2, 3)}
+            )
+            cursor += 0.25
+        cursor += 0.4
+    snapshot.narration = NarrationTrack(
+        gcs_path="voiceover-uploads/take.mp3",
+        generation="7",
+        duration_s=cursor + 1,
+        words=words,
+    )
+    plan["story_timeline"][0]["output_end_s"] = cursor + 1
+    strategy = {
+        "clip_intents": [
+            {
+                "intent_id": f"line-{index}",
+                "op": "label",
+                "attribute": line,
+                "label_source": "transcript",
+                "transcript_kind": "topic",
+            }
+            for index, line in enumerate(_SPOKEN_LINES)
+        ]
+    }
+    return snapshot, plan, strategy
+
+
+def test_spoken_script_topic_intents_materialize_no_labels():
+    snapshot, plan, strategy = _spoken_script_inputs()
+    first_end = len(_SPOKEN_LINES[0].split()) - 1
+    second_start = first_end + 1
+    second_end = second_start + len(_SPOKEN_LINES[1].split()) - 1
+    agent = MagicMock()
+    agent.run.return_value = NarrationAnnotationOutput(
+        annotations=[
+            # Exactly copied whole sentences: grounded, but script.
+            NarrationAnnotation(
+                kind="topic",
+                start_word_id="w000000",
+                end_word_id=f"w{first_end:06d}",
+                text=_SPOKEN_LINES[0],
+            ),
+            NarrationAnnotation(
+                kind="topic",
+                start_word_id="w000000",
+                end_word_id=f"w{first_end:06d}",
+                text=_SPOKEN_LINES[0],
+            ),
+            NarrationAnnotation(
+                kind="topic",
+                start_word_id=f"w{second_start:06d}",
+                end_word_id=f"w{second_end:06d}",
+                text=_SPOKEN_LINES[1],
+            ),
+            # An anchor wider than any label span is still ungrounded.
+            NarrationAnnotation(
+                kind="topic",
+                start_word_id="w000000",
+                end_word_id=f"w{second_end:06d}",
+                text=f"{_SPOKEN_LINES[0]} {_SPOKEN_LINES[1]}",
+            ),
+        ]
+    )
+    with patch("app.services.guided_narration_labels.NarrationAnnotationAgent", return_value=agent):
+        result = materialize_guided_narration_labels(
+            plan, snapshot=snapshot, strategy=strategy, creator_request="Use all", job_id="job"
+        )
+
+    assert result["narration_label_text_elements"] == []
+    receipt = result["narration_label_receipt"]
+    assert receipt["accepted"] == []
+    assert [row["reason"] for row in receipt["rejected"]] == [
+        TOPIC_SENTENCE_REJECTION,
+        TOPIC_SENTENCE_REJECTION,
+        TOPIC_SENTENCE_REJECTION,
+        "topic text is not copied from its transcript anchor",
+    ]
+
+    # A later load of the pinned plan replays the empty lane; it never asks
+    # the agent again and never resurrects the sentence.
+    with patch("app.services.guided_narration_labels.NarrationAnnotationAgent") as replay:
+        assert (
+            materialize_guided_narration_labels(
+                result,
+                snapshot=snapshot,
+                strategy=strategy,
+                creator_request="Use all",
+                job_id="job",
+            )
+            is result
+        )
+        replay.assert_not_called()
+
+
+def test_short_transcript_topic_alongside_spoken_script_still_renders():
+    snapshot, plan, strategy = _spoken_script_inputs()
+    bridge = _SPOKEN_LINES[0].split().index("bridge")
+    agent = MagicMock()
+    agent.run.return_value = NarrationAnnotationOutput(
+        annotations=[
+            NarrationAnnotation(
+                kind="topic",
+                start_word_id="w000000",
+                end_word_id=f"w{len(_SPOKEN_LINES[0].split()) - 1:06d}",
+                text=_SPOKEN_LINES[0],
+            ),
+            NarrationAnnotation(
+                kind="topic",
+                start_word_id=f"w{bridge - 2:06d}",
+                end_word_id=f"w{bridge:06d}",
+                text="old bridge",
+            ),
+        ]
+    )
+    with patch("app.services.guided_narration_labels.NarrationAnnotationAgent", return_value=agent):
+        result = materialize_guided_narration_labels(
+            plan, snapshot=snapshot, strategy=strategy, creator_request="Use all", job_id="job"
+        )
+
+    labels = result["narration_label_text_elements"]
+    assert [(row["text"], row["effect"]) for row in labels] == [("old bridge", "pop-in")]
+    assert [row["reason"] for row in result["narration_label_receipt"]["rejected"]] == [
+        TOPIC_SENTENCE_REJECTION
+    ]

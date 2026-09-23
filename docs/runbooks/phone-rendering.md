@@ -1151,6 +1151,16 @@ sequence text after other lanes as production does. Other sequence effects
 remain rejected pending composite-stream parity. Unrelated effects continue
 to ignore fade_in_ms/fade_out_ms, matching the dispatcher.
 
+Context and narration labels are stored as `generative_sequence` for the
+editor's lane projection, but neither renderer treats them as sequence text:
+`_assign_label_lane_roles` (shared by the cloud burn and the phone compiler)
+retags them `generative_context_label` / `generative_narration_label` first.
+They therefore compile as ordinary layers (a pop-in topic or score label uses
+native pop-in), draw beneath genuine sequence blocks, and never hit the
+composite-stream fence above. Before 2026-09-23 the phone compiler skipped that
+retag, so any narrated device render carrying a pop-in label failed with
+`phone_plan_unsupported`.
+
 See the [coverage ledger](../reviews/kri-29/coverage.md) for the concrete catalog
 and combination matrix. This is implementation coverage, not rollout or device verification.
 

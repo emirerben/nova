@@ -9,7 +9,14 @@ from app.kria.media_sources import OriginalMediaDescriptor
 from app.kria.recipes import MediaCapability, MediaTransform
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderFingerprint, VisualRenderAsset
-from app.pipeline.guided_story import GuidedStoryExecutionPlan, _narration_caption_elements
+from app.pipeline.generative_overlays import build_overlays_from_text_elements
+from app.pipeline.guided_story import (
+    GuidedStoryExecutionPlan,
+    _assign_label_lane_roles,
+    _narration_caption_elements,
+    _tag_guided_text_overlays,
+)
+from app.pipeline.narration_labels import TOPIC_SENTENCE_REJECTION, materialize_narration_labels
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 from app.schemas.edit_proposal import EditProposalSnapshot, NarrationTrack, NarrationWord
@@ -1877,3 +1884,245 @@ def test_editor_media_short_trim_from_long_recording_omits_informational_duratio
     assert (
         next(asset for asset in recipe.assets if asset.id == clip.source_asset_id).duration is None
     )
+
+
+# --- Label lanes on phone (2026-09-23 prod: a narrated device render failed
+# with "sequence effect needs composite-stream parity" because a pop-in
+# narration label was held to the sequence-composite effect fence). Synthetic
+# text only.
+
+
+def _plan_narration_labels(plan, annotations, requirements, *, words=None):
+    """Materialize narration labels exactly as `guided_narration_labels` feeds
+    the materializer: indexed transcript words + the final story timeline."""
+
+    source_words = words if words is not None else plan.narration.words
+    return materialize_narration_labels(
+        [
+            {"word_id": f"w{index:06d}", **word.model_dump(mode="json")}
+            for index, word in enumerate(source_words)
+        ],
+        [
+            {
+                **moment.model_dump(mode="json"),
+                "timeline_id": moment.moment_id,
+                "asset_id": moment.media_id,
+            }
+            for moment in plan.story_timeline
+        ],
+        [],
+        requirements,
+        annotations,
+    )
+
+
+def _pinned_sentence_label(text: str, *, start_s: float, end_s: float) -> TextElement:
+    """A topic label as `_append_element` stored it before the shape fence:
+    top-left, pop-in, still role ``generative_sequence``."""
+
+    return TextElement(
+        id="pinned-sentence-topic",
+        text=text,
+        start_s=start_s,
+        end_s=end_s,
+        role="generative_sequence",
+        position="custom",
+        x_frac=0.08,
+        y_frac=0.12,
+        size_class="small",
+        alignment="left",
+        effect="pop-in",
+        source_params={
+            "narration_label_kind": "topic",
+            "source_kind": "narration_annotation",
+            "transcript_grounded": True,
+        },
+    )
+
+
+def _context_label(text: str, *, start_s: float, end_s: float) -> TextElement:
+    """A creator-quoted context label as `_context_sport_text_elements` builds it."""
+
+    return TextElement(
+        id=f"context-{text}",
+        text=text,
+        start_s=start_s,
+        end_s=end_s,
+        role="generative_sequence",
+        position="custom",
+        x_frac=0.86,
+        y_frac=0.86,
+        font_family="Inter",
+        size_class="small",
+        color="#FFFFFF",
+        highlight_color="#FFFFFF",
+        alignment="right",
+        effect="static",
+        z=8,
+        source_params={
+            "source": "context_sport",
+            "grounding": "creator_text",
+            "confidence": 1.0,
+            "intent_id": "place",
+        },
+    )
+
+
+def _assert_pilot_ready(recipe, monkeypatch):
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)  # must not raise
+
+
+def test_prod_shape_spoken_sentence_topic_is_dropped_and_narrated_plan_compiles(monkeypatch):
+    plan, bindings, visuals, bed = narration_fixture()
+    words = plan.narration.words
+    sentence = " ".join(word.text for word in words)
+    sentence_topic = {
+        "kind": "topic",
+        "text": sentence,
+        "start_word_id": "w000000",
+        "end_word_id": f"w{len(words) - 1:06d}",
+        "confidence": "high",
+    }
+    result = _plan_narration_labels(
+        plan, [sentence_topic, dict(sentence_topic)], {"context_labels": ["topic"]}
+    )
+    assert result.elements == ()
+    assert [row.reason for row in result.rejected] == [TOPIC_SENTENCE_REJECTION] * 2
+    plan.narration_label_text_elements = [TextElement.model_validate(e) for e in result.elements]
+
+    recipe = compile_phone_guided_plan(plan, bindings, visuals, narration=bed)
+
+    assert [layer.id for layer in recipe.text_layers if layer.id.startswith("narration")] == []
+    assert [layer.id for layer in recipe.text_layers] == [
+        f"text-{index}" for index in range(len(plan.text_elements))
+    ]
+    _assert_pilot_ready(recipe, monkeypatch)
+
+
+def test_pinned_pop_in_narration_label_compiles_instead_of_failing_the_render(monkeypatch):
+    """Plans approved before the shape fence replay their stored labels on
+    retry; the device render must draw one like cloud instead of failing."""
+
+    plan, bindings, visuals, bed = narration_fixture()
+    sentence = " ".join(word.text for word in plan.narration.words)
+    plan.narration_label_text_elements = [_pinned_sentence_label(sentence, start_s=0.1, end_s=2.2)]
+
+    recipe = compile_phone_guided_plan(plan, bindings, visuals, narration=bed)
+
+    label = recipe.text_layers[-1]
+    assert label.id == "narration-0"
+    assert label.effect == "pop-in"
+    assert label.fade is None
+    assert [layer.id for layer in recipe.text_layers[:-1]] == [
+        f"text-{index}" for index in range(len(plan.text_elements))
+    ]
+    _assert_pilot_ready(recipe, monkeypatch)
+
+
+def test_narration_topic_and_score_labels_compile_as_independent_pop_in(monkeypatch):
+    plan, bindings = fixture()
+    words = [
+        NarrationWord(text=text, start_s=0.2 + index * 0.35, end_s=0.5 + index * 0.35)
+        for index, text in enumerate(("we", "played", "football", "and", "won", "2-1"))
+    ]
+    result = _plan_narration_labels(
+        plan,
+        [{"kind": "topic", "text": "football", "start_word_id": "w000002"}],
+        {"context_labels": ["topic"], "score_labels": True},
+        words=words,
+    )
+    assert sorted(row["text"] for row in result.elements) == ["2-1", "football"]
+    plan.text_elements = [
+        TextElement(id="title", text="Match day", start_s=0, end_s=2.5, effect="fade-in")
+    ]
+    plan.narration_label_text_elements = [TextElement.model_validate(e) for e in result.elements]
+
+    recipe = compile_phone_guided_plan(plan, bindings)
+
+    assert [layer.id for layer in recipe.text_layers] == ["text-0", "narration-0", "narration-1"]
+    for layer in recipe.text_layers[1:]:
+        assert layer.effect == "pop-in"
+        assert layer.fade is None
+    _assert_pilot_ready(recipe, monkeypatch)
+
+
+def test_creator_quoted_context_label_still_compiles_beside_narration_captions(monkeypatch):
+    plan, bindings, visuals, bed = narration_fixture()
+    plan.context_label_text_elements = [_context_label("Old Town", start_s=2.0, end_s=4.0)]
+
+    recipe = compile_phone_guided_plan(plan, bindings, visuals, narration=bed)
+
+    context = [layer for layer in recipe.text_layers if layer.id.startswith("context")]
+    assert [layer.id for layer in context] == ["context-0"]
+    assert recipe.text_layers[-1].id == "context-0"
+    assert context[0].effect == "static"
+    assert context[0].fade is None
+    assert (context[0].start, context[0].end) == (2.0, 4.0)
+    _assert_pilot_ready(recipe, monkeypatch)
+
+
+def test_text_lane_sequence_pop_in_still_fails_closed():
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id=f"seq{index}",
+            text=text,
+            role="generative_sequence",
+            effect="pop-in",
+            start_s=index * 0.5,
+            end_s=2.5,
+        )
+        for index, text in enumerate(("First", "Second"))
+    ]
+    with pytest.raises(UnsupportedPhonePlan, match="composite-stream parity"):
+        compile_phone_guided_plan(plan, bindings)
+
+
+def test_labels_draw_below_genuine_sequence_blocks_like_cloud():
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id=f"seq{index}",
+            text=text,
+            role="generative_sequence",
+            effect="fade-in",
+            start_s=index * 0.5,
+            end_s=2.5,
+        )
+        for index, text in enumerate(("First", "Second"))
+    ]
+    plan.context_label_text_elements = [_context_label("Old Town", start_s=0.0, end_s=3.0)]
+    plan.narration_label_text_elements = [
+        _pinned_sentence_label("football", start_s=0.5, end_s=1.5)
+    ]
+
+    recipe = compile_phone_guided_plan(plan, bindings)
+
+    phone_order = [layer.id for layer in recipe.text_layers]
+    assert phone_order == ["context-0", "narration-0", "text-0", "text-1"]
+
+    # Cloud: the guided burn retags both label lanes, then Skia draws every
+    # non-sequence overlay before the sequence composite.
+    def lane(elements, name):
+        overlays = _tag_guided_text_overlays(
+            build_overlays_from_text_elements(
+                elements, video_duration_s=3, independent_box_alignment=True
+            ),
+            elements,
+        )
+        if name != "text":
+            overlays = _assign_label_lane_roles(overlays, name)
+        return [(f"{name}-{index}", overlay) for index, overlay in enumerate(overlays)]
+
+    cloud = [
+        *lane(plan.text_elements, "text"),
+        *lane(plan.context_label_text_elements, "context"),
+        *lane(plan.narration_label_text_elements, "narration"),
+    ]
+    cloud_order = [
+        layer_id for layer_id, overlay in cloud if overlay["role"] != "generative_sequence"
+    ] + [layer_id for layer_id, overlay in cloud if overlay["role"] == "generative_sequence"]
+    assert phone_order == cloud_order
