@@ -742,6 +742,44 @@ def test_analyze_pool_asset_deterministic_failure_is_not_retried(monkeypatch, re
     _assert_terminal_temporarily_unavailable(asset)
 
 
+def _bug_while_handling_503(**_kwargs):
+    try:
+        raise _gemini_503()
+    except genai_errors.ServerError:
+        # No `from`: the 503 rides along only as implicit __context__.
+        raise AttributeError("bug raised while handling the 503")
+
+
+def _ledger_release_bug(*_a, **_kw):
+    raise AttributeError("release_paid_call bug")
+
+
+@pytest.mark.parametrize("case", ["bug_raised_in_except_block", "ledger_release_bug_during_503"])
+def test_analyze_pool_asset_bug_with_implicit_503_context_is_not_retried(
+    monkeypatch, case: str
+) -> None:
+    """A deterministic bug raised WHILE a genuine 503 is being handled carries
+    the 503 only as implicit __context__ (e.g. `release_paid_call` failing in
+    execute_metered_google_call's except block). The classifier follows
+    explicit causes only, so the bug is terminal on attempt 1, not retried."""
+    asset = _PoolAsset(kind="image")
+    asset.status = "queued"
+    asset.analysis_attempt_token = "attempt-1"
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    if case == "bug_raised_in_except_block":
+        generate = _patch_image_gemini(monkeypatch, _bug_while_handling_503)
+    else:
+        generate = _patch_image_gemini(
+            monkeypatch, lambda **_kw: (_ for _ in ()).throw(_gemini_503())
+        )
+        monkeypatch.setattr("app.services.ai_cost_control.release_paid_call", _ledger_release_bug)
+
+    ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")  # no Retry raised
+
+    generate.assert_called_once()
+    _assert_terminal_temporarily_unavailable(asset)
+
+
 def test_analyze_pool_asset_recovers_when_a_retry_succeeds(monkeypatch) -> None:
     asset = _PoolAsset(kind="image")
     asset.status = "queued"
