@@ -1476,16 +1476,16 @@ struct NativeMiniStrip: View {
                 onSelectText()
             }
         }
-        .padding(6)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(KriaColor.paper)
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(KriaColor.softZinc, lineWidth: 1))
-        )
-        .shadow(color: .black.opacity(0.14), radius: 18, y: 6)
-        .fixedSize()
+        // Accessibility grouping sits on the content INSIDE the glass, never
+        // on/above it: `.glassEffect()` collapses the hit-test frame of any
+        // ancestor carrying `.accessibilityElement(children: .contain)` or an
+        // identifier (see NativeEditorIslandSurface).
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Add to timeline")
+        .padding(6)
+        // Same blurred glass surface as the bottom tool rail.
+        .nativeEditorIslandSurface(cornerRadius: 22)
+        .fixedSize()
     }
 
     private func quickAddRow(_ title: String, icon: String, enabled: Bool, action: @escaping () -> Void) -> some View {
