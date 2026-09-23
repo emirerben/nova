@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-09-21",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -127,6 +127,33 @@
       "provenance": "corpus",
       "evidence": "In our fetched city-lifestyle set, the top 5 performers were all 6-13s (median 9s); a 7s morning clip indexed 14x, a 9s city clip 2.75x. Posts over 30s sat below median. Consistent pattern across the full 20-video sample.",
       "source": "tiktok market research 2026-06 (city-lifestyle account)"
+    },
+    {
+      "id": "seasonal-identity-corpus-10",
+      "factor": "Lead with a seasonal identity declaration ('I AM [season]'), not an outfit show — claim an identity, let the content follow from it",
+      "why": "Identity declarations invite the viewer to self-sort ('that's me') and comment/share more than a product or look showcase; the creator becomes a symbol for the season, not just a source of inspo",
+      "applies_to": ["hook", "persona"],
+      "provenance": "corpus",
+      "evidence": "A seasonal identity declaration post indexed ~25x the account median at 16% engagement — nearly 10x better than the same creator's outfit-rotation posts (~1x median) in the same 20-video sample",
+      "source": "tiktok market research 2026-09 (lifestyle-fashion account)"
+    },
+    {
+      "id": "early-effort-hook-corpus-11",
+      "factor": "Name the sacrifice in the hook: 'woke up at [early hour] to [hard thing]' — the cost paid earns the viewer's respect and curiosity before a single frame plays",
+      "why": "Explicit effort naming signals commitment and filters for the audience who share the aspiration; it also sets up a reward reveal that drives completion",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "A 5am hike post indexed ~20x the account median at 25% engagement — the highest performer in a solo-travel/fitness account's 20-video sample",
+      "source": "tiktok market research 2026-09 (solo-travel/fitness account)"
+    },
+    {
+      "id": "format-return-nostalgia-corpus-12",
+      "factor": "Return to a beloved recurring format after a long absence and acknowledge the gap — the comeback itself becomes the story, and loyal followers spike reposts",
+      "why": "Naming the absence validates the community's wait and turns re-watch loyalty into explicit sharing behavior; reposts are the highest-cost action a viewer takes and compound reach multiplicatively",
+      "applies_to": ["plan", "persona"],
+      "provenance": "corpus",
+      "evidence": "A farm-vlog return after ~1 year absence indexed ~13x the account median with 7,487 reposts (highest in 20-video sample) at 8% engagement — reposts alone outpaced that account's typical total engagement count",
+      "source": "tiktok market research 2026-09 (lifestyle/personal-brand account)"
     },
     {
       "id": "event-community-reach-corpus-09",
