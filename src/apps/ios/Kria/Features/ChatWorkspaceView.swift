@@ -508,7 +508,7 @@ private struct CreationWorkspaceView: View {
     }
 
     private var selectedMaximumClipCount: Int {
-        guard let selectedFormat else { return 10 }
+        guard let selectedFormat else { return CreationFormat.fallbackMaximumClipCountWithoutFormat }
         return maximumClipsByFormat[selectedFormat] ?? selectedFormat.fallbackMaximumClipCount
     }
 
@@ -799,7 +799,10 @@ private struct CreationWorkspaceView: View {
                         retry: fullThread?.preparationRetryable == true ? { Task { await send(message: "Retry preparing my clips.") } } : nil
                     ).id("failed-preparation")
                 } else {
-                    FailedStage(retry: { Task { await send(message: "Try generating this edit again") } }).id("failed")
+                    FailedStage(
+                        retry: { Task { await send(message: "Try generating this edit again") } },
+                        nonRetryableReasonCode: fullThread?.lastAssistantErrorCode
+                    ).id("failed")
                 }
             }
         }
@@ -962,7 +965,11 @@ private struct CreationWorkspaceView: View {
                 await refreshCapabilities()
                 await refreshNow()
                 guard CreationConfirmationConflict.confirmationActions.contains(action), payload["variant_id"] == nil else {
-                    failure = ChatFailure(CreationConfirmationConflict.changedMessage)
+                    failure = ChatFailure(nonConfirmationConflictMessage(
+                        action: action,
+                        detail: error.conflictDetail,
+                        planIdentity: fullThread?.creatorPlanIdentity ?? ""
+                    ))
                     return
                 }
                 let conflict = CreationConfirmationConflict(
@@ -1464,9 +1471,17 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Used only before `/capabilities` has loaded (or if it fails to load).
+    /// Talking-to-camera is genuinely capped at 1 clip server-side; every
+    /// other format's real server default is 50 -- keep this in step with it
+    /// so a slow/failed capabilities fetch doesn't under-cap what the picker
+    /// and composer allow.
     var fallbackMaximumClipCount: Int {
-        self == .talkingToCamera ? 1 : 10
+        self == .talkingToCamera ? 1 : CreationFormat.fallbackMaximumClipCountWithoutFormat
     }
+
+    /// Same fallback, for the moment before any format is even selected.
+    static let fallbackMaximumClipCountWithoutFormat = 50
 
     init?(thread: CreationThread) {
         if let format = thread.state?["format"]?.stringValue {
@@ -1577,6 +1592,23 @@ func attachedVideoClipCount(in threadState: [String: JSONValue]) -> Int {
         guard case .object(let value) = entry else { return false }
         return value["kind"]?.stringValue == "video"
     }.count
+}
+
+/// KRI-118 item 5: an action's 409 outside `CreationConfirmationConflict
+/// .confirmationActions` (`generate`/`retry`/`create_without_cleanup`)
+/// normally collapses into the generic "This project changed" copy --
+/// correct for most such actions, whose own conflict doesn't map to a
+/// server-authored sentence. `select_format`/`select_edit_format` is the
+/// exception: its 409 (e.g. a stale `format_mismatch`,
+/// `app.routes.creation_threads`) DOES carry a specific, real reason the
+/// user should see, so it reuses `CreationConfirmationConflict`'s own detail
+/// classification (real sentence vs. machine code vs. missing) instead of
+/// discarding `detail` and hand-rolling a second one.
+func nonConfirmationConflictMessage(action: String, detail: String?, planIdentity: String) -> String {
+    guard action == "select_format" || action == "select_edit_format" else {
+        return CreationConfirmationConflict.changedMessage
+    }
+    return CreationConfirmationConflict(detail: detail, planIdentity: planIdentity).message
 }
 
 func formatClipCapacityError(
