@@ -59,6 +59,14 @@ from app.routes.creation_threads import (
     rename_thread,
     upload_urls,
 )
+from app.schemas.edit_proposal import (
+    ApprovedProposalSnapshot,
+    EditProposal,
+    EditProposalSnapshot,
+    MediaRef,
+    StoryBeat,
+    canonical_media_digest,
+)
 
 
 def test_creation_thread_router_rejects_unauthenticated_http_requests() -> None:
@@ -446,6 +454,116 @@ def test_creator_agent_projection_omits_executable_commands() -> None:
         "plan_hash": "x" * 64,
         "version": 2,
     }
+
+
+def _edit_proposal_dict(*, draft_adjustments: list[str], approved_adjustments: list[str]) -> dict:
+    media = MediaRef(
+        lane="clip",
+        media_id="clip-1",
+        gcs_path="users/u/plan/i/a.mp4",
+        generation="1",
+        kind="video",
+    )
+    beats = [StoryBeat(beat_id="b1", topic="Morning", media_ids=[media.media_id], duration_s=4)]
+    draft = EditProposalSnapshot(
+        direction="guided_story",
+        duration_s=20,
+        title="A day out",
+        media=[media],
+        story_beats=beats,
+        adjustments=draft_adjustments,
+    )
+    approved_snapshot = EditProposalSnapshot(
+        direction="guided_story",
+        duration_s=20,
+        title="A day out",
+        media=[media],
+        story_beats=beats,
+        adjustments=approved_adjustments,
+    )
+    digest = canonical_media_digest(draft.media)
+    proposal = EditProposal(
+        proposal_version=2,
+        generation_attempt_id="attempt-1",
+        media_digest=digest,
+        status="approved",
+        draft=draft,
+        last_approved=ApprovedProposalSnapshot(
+            proposal_version=1,
+            media_digest=digest,
+            approved_at=datetime.now(UTC),
+            snapshot=approved_snapshot,
+        ),
+    )
+    return proposal.model_dump(mode="json")
+
+
+def test_creator_agent_projection_surfaces_story_shape_and_notices() -> None:
+    """KRI-118 item 3: `story_shape`/`notices` come from the Main Creator's
+    own server-repaired plan receipt (lane L2, compile_active_plan)."""
+    session = SimpleNamespace(
+        status="awaiting_confirmation",
+        revision=4,
+        active_plan={
+            "summary": "A day out",
+            "plan_hash": "x" * 64,
+            "version": 2,
+            "story_shape": "day_vlog",
+            "notices": ["Reading this as a montage in the day-vlog style."],
+        },
+    )
+    projection = _creator_agent_projection(session)
+    assert projection["story_shape"] == "day_vlog"
+    assert projection["notices"] == ["Reading this as a montage in the day-vlog style."]
+
+
+def test_creator_agent_projection_merges_adjustments_from_draft_and_approved() -> None:
+    """KRI-118 item 3: `adjustments` merges the guided specialist's (lane L3)
+    draft and last-approved snapshot notes, deduped and order-preserving."""
+    session = SimpleNamespace(status="awaiting_confirmation", revision=1, active_plan={})
+    item = SimpleNamespace(
+        edit_proposal=_edit_proposal_dict(
+            draft_adjustments=["Clamped the day-vlog transition to fit your footage."],
+            approved_adjustments=[
+                "Clamped the day-vlog transition to fit your footage.",
+                "Single-hero shape needs music; kept a regular montage.",
+            ],
+        )
+    )
+    projection = _creator_agent_projection(session, item=item)
+    # The draft's note is deduped against the identical approved-snapshot
+    # note; order follows draft-then-approved.
+    assert projection["adjustments"] == [
+        "Clamped the day-vlog transition to fit your footage.",
+        "Single-hero shape needs music; kept a regular montage.",
+    ]
+
+
+def test_creator_agent_projection_caps_adjustments_at_eight() -> None:
+    session = SimpleNamespace(status="awaiting_confirmation", revision=1, active_plan={})
+    item = SimpleNamespace(
+        edit_proposal=_edit_proposal_dict(
+            draft_adjustments=[f"Adjustment {i}" for i in range(6)],
+            approved_adjustments=[f"Adjustment {i}" for i in range(6, 12)],
+        )
+    )
+    projection = _creator_agent_projection(session, item=item)
+    assert projection["adjustments"] == [f"Adjustment {i}" for i in range(8)]
+
+
+def test_creator_agent_projection_omits_shape_adjustments_notices_when_absent() -> None:
+    """No story_shape/notices on the receipt and no edit proposal at all must
+    not add empty keys -- keeps the dict additive for existing consumers."""
+    session = SimpleNamespace(
+        status="awaiting_confirmation",
+        revision=1,
+        active_plan={"summary": "Plain montage", "plan_hash": "x" * 64, "version": 1},
+    )
+    item = SimpleNamespace(edit_proposal=None)
+    projection = _creator_agent_projection(session, item=item)
+    assert "story_shape" not in projection
+    assert "notices" not in projection
+    assert "adjustments" not in projection
 
 
 def _db_for_scalar(value: object) -> Mock:
@@ -2668,12 +2786,6 @@ def test_resolve_default_title_fill_uses_approved_proposal_title() -> None:
     from datetime import UTC as _UTC
     from datetime import datetime as _datetime
 
-    from app.schemas.edit_proposal import (
-        ApprovedProposalSnapshot,
-        EditProposal,
-        EditProposalSnapshot,
-    )
-
     approved = EditProposal.model_construct(
         schema_version=1,
         proposal_version=1,
@@ -2695,7 +2807,6 @@ def test_resolve_default_title_fill_uses_approved_proposal_title() -> None:
 
 
 def test_resolve_default_title_fill_never_uses_placeholder_proposal_title() -> None:
-    from app.schemas.edit_proposal import EditProposal, EditProposalSnapshot
 
     approved = EditProposal.model_construct(
         schema_version=1,
@@ -2709,7 +2820,6 @@ def test_resolve_default_title_fill_never_uses_placeholder_proposal_title() -> N
 
 
 def test_resolve_default_title_fill_ignores_unapproved_proposal() -> None:
-    from app.schemas.edit_proposal import EditProposal, EditProposalSnapshot
 
     drafting = EditProposal.model_construct(
         schema_version=1,
@@ -4243,6 +4353,137 @@ async def test_confirm_dispatch_links_authoritative_job(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_edit_format", ["day_vlog", "single_hero"])
+async def test_confirm_generation_tolerates_legacy_shape_edit_format_receipt(
+    monkeypatch: pytest.MonkeyPatch, legacy_edit_format: str
+) -> None:
+    """KRI-118 item 2: `compile_active_plan` (app/services/creator_sessions.py)
+    can stamp a plan receipt's `edit_format` from the RAW pre-repair strategy,
+    so a receipt can still literally say "day_vlog"/"single_hero" even though
+    `repair_creator_strategy_shape` already folded that into a `story_shape`
+    on a plain montage. The chat picker only ever offers "montage" as the
+    Paper format for the whole GUIDED_EDIT_FORMATS family, so confirming a
+    chat-picked montage against that receipt must be treated as a match, not
+    a format_mismatch 409."""
+    user = SimpleNamespace(id=uuid.uuid4())
+    session_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_plan_item_id=uuid.uuid4(),
+        active_creator_agent_session_id=session_id,
+        active_job_id=None,
+        state={"edit_format": "montage"},
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        revision=4,
+        active_plan={"version": 1, "plan_hash": "x" * 64, "edit_format": legacy_edit_format},
+    )
+    result = SimpleNamespace(id=str(session_id), current_job_id=str(job_id))
+    db = Mock()
+    db.get = AsyncMock(return_value=session)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_sync_agent", AsyncMock())
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    confirm = AsyncMock(return_value=result)
+    monkeypatch.setattr(routes.creator_agent, "confirm_creator_plan_controller", confirm)
+    resolve_direction = AsyncMock(return_value=SimpleNamespace(name="current"))
+    monkeypatch.setattr(
+        "app.services.creator_direction_snapshot.resolve_snapshot_for_dispatch",
+        resolve_direction,
+    )
+    monkeypatch.setattr(
+        "app.services.creator_direction_snapshot.serialize_private_snapshot",
+        lambda value, *, source: {"direction": value.name, "source": source},
+    )
+    monkeypatch.setattr(
+        "app.services.creator_direction_receipts.stamp_private_receipt",
+        lambda snapshot, _direction: snapshot,
+    )
+    output = await routes.action_thread(
+        _request(),
+        str(thread.id),
+        routes.ActionBody(
+            action="confirm_generation",
+            payload={},
+            client_action_id="confirm-1",
+            expected_revision=0,
+        ),
+        user,
+        db,
+    )
+    assert output is thread
+    assert thread.active_job_id == job_id
+    confirm.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_confirm_generation_still_rejects_a_real_format_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the KRI-118 item 2 tolerance is narrow -- it only forgives
+    the legacy day_vlog/single_hero receipt shape against a picked montage.
+    A genuine mismatch (Kria prepared a direction for a different format than
+    the one the creator has selected) must still 409 with a clear message."""
+    user = SimpleNamespace(id=uuid.uuid4())
+    session_id = uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_plan_item_id=uuid.uuid4(),
+        active_creator_agent_session_id=session_id,
+        active_job_id=None,
+        state={"edit_format": "montage"},
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        revision=4,
+        active_plan={"version": 1, "plan_hash": "x" * 64, "edit_format": "subtitled"},
+    )
+    db = Mock()
+    db.get = AsyncMock(return_value=session)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_sync_agent", AsyncMock())
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    confirm = AsyncMock()
+    monkeypatch.setattr(routes.creator_agent, "confirm_creator_plan_controller", confirm)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await routes.action_thread(
+            _request(),
+            str(thread.id),
+            routes.ActionBody(
+                action="confirm_generation",
+                payload={},
+                client_action_id="confirm-1",
+                expected_revision=0,
+            ),
+            user,
+            db,
+        )
+    assert exc_info.value.status_code == 409
+    assert isinstance(exc_info.value.detail, str)
+    confirm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_confirm_generation_syncs_the_projection_after_controller_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4982,10 +5223,13 @@ async def test_phone_picker_offers_subtitled_and_narrated_once_rolled_out(monkey
 
 @pytest.mark.asyncio
 async def test_phone_picker_only_offers_montage_when_new_flags_are_off(monkeypatch):
-    """Flag-off byte-identical to pre-KRI-132: only Montage is offered even
-    though `subtitled`/`narrated_planned` are generally-available formats
-    (`subtitled_archetype_enabled` on), because the phone-specific rollout
-    flags stay off."""
+    """Flag-off byte-identical to pre-KRI-132 for the ROLLOUT-gated formats:
+    only Montage is offered even though `subtitled`/`narrated_planned` are
+    generally-available formats (`subtitled_archetype_enabled` on), because
+    the phone-specific rollout flags stay off. `slides` still survives --
+    KRI-118 item 1: it's exempt from the phone-supported-formats filter
+    entirely (cloud-only render, no phone dispatch path), so it is not part
+    of what this test is pinning."""
     monkeypatch.setattr(settings, "phone_rendering_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     monkeypatch.setattr(settings, "narrated_archetype_enabled", True, raising=False)
@@ -4995,7 +5239,42 @@ async def test_phone_picker_only_offers_montage_when_new_flags_are_off(monkeypat
     manifest = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=True)
 
     edit_formats = {entry["edit_format"] for entry in manifest["formats"]}
-    assert edit_formats == {"montage"}
+    assert edit_formats == {"montage", "slides"}
+
+
+@pytest.mark.asyncio
+async def test_phone_picker_always_offers_slides_regardless_of_phone_rollout_flags(monkeypatch):
+    """KRI-118 item 1: `slides` is never in `phone_render_supported_formats()`
+    (it has no phone compiler at all), but it also never dispatches through
+    the phone gate that set exists to protect -- a slide post's media lives
+    exclusively in the PlanItemAsset pool (see the `upload-urls` clip-pool
+    fence) and always renders in the cloud. The phone capability filter must
+    keep it regardless of every OTHER rollout flag staying off."""
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "slide_posts_enabled", True)
+    monkeypatch.setattr(settings, "narrated_archetype_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", False)
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", False)
+    monkeypatch.setattr(settings, "phone_narrated_rendering_enabled", False)
+
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=True)
+
+    edit_formats = {entry["edit_format"] for entry in manifest["formats"]}
+    assert edit_formats == {"montage", "slides"}
+
+
+@pytest.mark.asyncio
+async def test_phone_picker_hides_slides_when_slide_posts_disabled(monkeypatch):
+    """The phone-filter exemption only ever preserves a format that
+    `_available_formats()` already offered -- it must not resurrect `slides`
+    when the feature itself is off."""
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "slide_posts_enabled", False)
+
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=True)
+
+    edit_formats = {entry["edit_format"] for entry in manifest["formats"]}
+    assert "slides" not in edit_formats
 
 
 @pytest.mark.asyncio
