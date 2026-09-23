@@ -59,6 +59,11 @@ MediaLane = Literal["clip", "asset"]
 MediaKind = Literal["image", "video"]
 MediaScope = Literal["all", "selected"]
 VideoReusePolicy = Literal["once", "distinct_windows", "allow_repeat"]
+# KRI-118 lane L3: chat-picked "shapes" under Montage (day_vlog / single_hero).
+# A parallel Main Creator lane (L2) sets these on the brief; the deterministic
+# repair layer that enforces each shape's contract lives in
+# app.services.story_shapes.
+StoryShape = Literal["day_vlog", "single_hero"]
 NARRATION_FPS = 30
 
 
@@ -904,6 +909,18 @@ class EditProposalSnapshot(BaseModel):
         max_length=MAX_CLIP_INTENTS,
         exclude_if=lambda value: value is None,
     )
+    # KRI-118 lane L3: user-visible, plain-English notes on what the
+    # deterministic repair layer (app.services.story_shapes.humanize_repairs)
+    # changed about the authored plan -- e.g. a day_vlog transition clamp, or
+    # a single_hero shape that could not apply. Always user-facing, unlike
+    # the admin-only `planner_fallback` on EditProposal; when the planner's
+    # own deterministic fallback was used, that fact is prepended here too.
+    # Bounded to keep the snapshot small; the source list may be longer.
+    adjustments: list[Annotated[str, Field(max_length=160)]] = Field(
+        default_factory=list,
+        max_length=6,
+        exclude_if=lambda value: not value,
+    )
 
     @field_validator("shot_labels", mode="before")
     @classmethod
@@ -1406,6 +1423,16 @@ class ProposalBrief(BaseModel):
     # Main Creator can pin the short-form delivery canvas without changing
     # ordinary guided-edit orientation inference. None preserves legacy briefs.
     output_orientation: OutputOrientation | None = None
+    # KRI-118 lane L3: a chat-picked story shape (day_vlog / single_hero), set
+    # by the parallel Main Creator lane (L2). None preserves every existing
+    # brief byte-identically. hero_media_id names the hero clip for
+    # single_hero; it is ignored for every other shape.
+    story_shape: StoryShape | None = Field(default=None, exclude_if=lambda value: value is None)
+    hero_media_id: str | None = Field(
+        default=None,
+        max_length=100,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class EditConversationTurn(BaseModel):

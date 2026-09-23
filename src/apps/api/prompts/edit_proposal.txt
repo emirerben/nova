@@ -24,6 +24,7 @@ $mixed_timing_note
 $montage_note
 $narration_note
 $creator_text_note
+$story_shape_note
 $review_note
 FOOTAGE CONSTRAINT: $footage_note
 
