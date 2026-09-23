@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.183.0] - 2026-09-23
+
+### Changed
+- fix(chat): phone Talking items no longer wait forever for a speech check (#1202) <!-- release-pr: 1202 -->
+
 ## [0.76.182.0] - 2026-09-23
 
 ### Changed
