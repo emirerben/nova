@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.159.0] - 2026-09-23
+
+### Changed
+- test(kri118): L7 verification matrix + prod failure replay (#1172) <!-- release-pr: 1172 -->
+
 ## [0.76.158.0] - 2026-09-23
 
 ### Changed
