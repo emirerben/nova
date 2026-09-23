@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.155.0] - 2026-09-23
+
+### Changed
+- KRI-118 lane L3: apply creator's-prompt-wins rule to guided-story specialist (#1171) <!-- release-pr: 1171 -->
+
 ## [0.76.154.0] - 2026-09-23
 
 ### Changed
