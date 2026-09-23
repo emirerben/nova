@@ -3908,6 +3908,75 @@ def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
     )
 
 
+def _resolve_phone_sound_effect(sfx: Any) -> Any:
+    """Bridge the sync worker to the (async-shaped) render-library catalog
+    lookup for a phone subtitled job's requested sound effect (KRI-174).
+
+    Mirrors `_resolve_phone_music_bed` above: `app.services.render_library.
+    catalog_path` takes an `AsyncSession`; a Celery worker has no running
+    event loop, so this re-validates the exact same publish/ready/
+    path-prefix contract directly against a sync session instead of calling
+    it. `inspect_library_asset` (already sync) then pins the exact
+    generation + fingerprint that the device-render grant will
+    independently recompute when the phone fetches the asset -- they must
+    agree exactly.
+
+    ``sfx`` is a `app.pipeline.phone_subtitled_lanes.SubtitledSoundEffect`
+    (``id``, ``catalog_id``, ``at_s``, ``volume``); only ``catalog_id`` is
+    used to resolve the catalog row. Raises `UnsupportedPhonePlan`
+    (``capability="soundEffects"``) when the effect can no longer be served
+    or its format cannot play on the iPhone engine -- a phone job must
+    never bake in a stale or unplayable sound-effect receipt.
+    """
+    from app.models import SoundEffect  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        ResolvedSoundEffect,
+        sfx_path_is_playable,
+    )
+    from app.services.render_library import inspect_library_asset  # noqa: PLC0415
+
+    catalog_id = sfx.catalog_id
+    with _sync_session() as db:
+        row = db.get(SoundEffect, catalog_id)
+        usable = bool(
+            row is not None
+            and row.published_at is not None
+            and row.archived_at is None
+            and row.status == "ready"
+            and row.audio_gcs_path
+        )
+        if not usable:
+            raise UnsupportedPhonePlan(
+                "sound effect is no longer available for phone rendering",
+                capability="soundEffects",
+            )
+        path = str(row.audio_gcs_path)
+        duration_s = float(row.duration_s) if getattr(row, "duration_s", None) else None
+    if not sfx_path_is_playable(path):
+        raise UnsupportedPhonePlan(
+            "sound effect format cannot play on the iPhone (needs m4a/wav/mp3/aac)",
+            capability="soundEffects",
+        )
+    # Even a corrupt catalog row cannot grant access to a differently-prefixed
+    # path -- mirrors `render_library.catalog_path`'s exact check.
+    if (
+        not path.startswith(f"sound-effects/{catalog_id}/")
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+        or "\\" in path
+    ):
+        raise ValueError("invalid render catalog path")
+    asset = inspect_library_asset(
+        path, asset_id=f"sfx-{catalog_id}", catalog="sound_effect", catalog_id=catalog_id
+    )
+    if duration_s is None or duration_s <= 0:
+        raise UnsupportedPhonePlan(
+            "sound effect has no usable duration for phone rendering",
+            capability="soundEffects",
+        )
+    return ResolvedSoundEffect(request=sfx, asset=asset, duration_s=duration_s)
+
+
 def _resolve_phone_voiceover_bed(
     job_id: str,
     voiceover_gcs_path: str | None,
@@ -4377,6 +4446,16 @@ def _run_phone_subtitled_job(
     is the LEAN cloud path (`_render_subtitled_variant`): one clip, its own
     audio, transcribed into editable captions. No silence-cut/speech-cleanup
     runs on the phone path at all (see `_phone_speech_cleanup_contract_guard`).
+
+    KRI-174 Phase 1: when `settings.phone_subtitled_media_lanes_enabled`, a
+    server-owned `_phone_subtitled_lanes_v1` request on the snapshot
+    (overlay sticker/photo cards pinned from the Visuals pool, catalog sound
+    effects, a muted ending clip) is resolved lane-by-lane and folded into
+    the compile -- a lane that fails to bind/resolve, or that the compiler
+    itself rejects (`SubtitledLaneError`), is dropped and the plan is
+    recompiled without it rather than failing the whole job. With the flag
+    off, every statement below executes exactly as it did before this
+    feature existed, and the lanes field on the snapshot is ignored entirely.
     """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
@@ -4390,8 +4469,26 @@ def _run_phone_subtitled_job(
         pin_device_request,
     )
     from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
-    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+    from app.services.phone_sources import (  # noqa: PLC0415
+        PHONE_SOURCES_FIELD,
+        PHONE_VISUALS_FIELD,
+        PhoneSourceBinding,
+    )
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    media_lanes_enabled = settings.phone_subtitled_media_lanes_enabled
+    # KRI-174 imports for the lane compiler contract -- gated behind the flag
+    # so a worker with the flag off never depends on this module existing.
+    if media_lanes_enabled:
+        from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+            PHONE_SUBTITLED_LANES_FIELD,
+            PhoneSubtitledLaneRequest,
+            PhoneSubtitledLanes,
+            SubtitledLaneError,
+            drop_lane,
+            lane_names,
+        )
+        from app.services.phone_visuals import bind_phone_visual_assets  # noqa: PLC0415
 
     generation = snapshot.get("creator_generation_id")
     if not isinstance(generation, str) or not generation:
@@ -4442,6 +4539,14 @@ def _run_phone_subtitled_job(
         "word" if all_candidates.get("voiceover_caption_style") == "word" else "sentence"
     )
 
+    # KRI-174 lane state. Kept at these empty defaults when the flag is off
+    # (or there is no lane request), so the fences/persistence below become
+    # no-ops and the variant dict stays byte-identical to before.
+    lanes: Any = None
+    visuals: tuple = ()
+    lane_drops: list[dict] = []
+    raw_words: list[dict] | None = None
+
     with pipeline_trace_for(job_id):
         with tempfile.TemporaryDirectory(
             prefix="nova_phone_subtitled_", ignore_cleanup_errors=True
@@ -4490,6 +4595,19 @@ def _run_phone_subtitled_job(
 
             transcript = transcribe_whisper_cached(clip_path, language=None)
             detected_lang = transcript.language or language
+            if media_lanes_enabled:
+                # Captured before caption correction touches the cues built
+                # from these same words -- the persisted receipt is exactly
+                # what Whisper heard, never the LLM-corrected spelling.
+                raw_words = [
+                    {
+                        "text": word.text,
+                        "start_s": word.start_s,
+                        "end_s": word.end_s,
+                        "confidence": word.confidence,
+                    }
+                    for word in transcript.words
+                ]
             cues = build_plain_cues(transcript.words, attach_words=True)
             cues = correct_caption_cues(
                 cues,
@@ -4500,14 +4618,154 @@ def _run_phone_subtitled_job(
             )
             cues = resplit_cues_into_sentences(cues)
 
-            recipe = compile_phone_subtitled_plan(
-                bindings, caption_cues=cues, caption_style=caption_style
-            )
+            if not media_lanes_enabled:
+                recipe = compile_phone_subtitled_plan(
+                    bindings, caption_cues=cues, caption_style=caption_style
+                )
+            else:
+                raw_lane_request = snapshot.get(PHONE_SUBTITLED_LANES_FIELD)
+                lane_request: Any = None
+                if isinstance(raw_lane_request, dict):
+                    try:
+                        lane_request = PhoneSubtitledLaneRequest.model_validate(raw_lane_request)
+                    except Exception as exc:  # noqa: BLE001
+                        lane_drops.append({"lane": "request", "reason": str(exc)[:300]})
 
-    validate_phone_pilot_recipe(recipe)
+                overlay_cards: list = []
+                ending_clip: Any = None
+                resolved_sfx: list = []
+                if lane_request is not None:
+                    visual_kinds = frozenset(
+                        kind
+                        for kind, feature in (
+                            ("image", "stillImages"),
+                            ("video", "visualVideos"),
+                        )
+                        if feature in settings.phone_render_verified_features
+                    )
+                    overlay_cards = list(lane_request.overlays)
+                    ending_clip = lane_request.ending_clip
+                    overlay_visuals: tuple = ()
+                    ending_visuals: tuple = ()
+                    if overlay_cards and "image" not in visual_kinds:
+                        lane_drops.append(
+                            {"lane": "overlays", "reason": "stillImages not verified on the phone"}
+                        )
+                        overlay_cards = []
+                    if ending_clip is not None and "video" not in visual_kinds:
+                        lane_drops.append(
+                            {
+                                "lane": "ending_clip",
+                                "reason": "visualVideos not verified on the phone",
+                            }
+                        )
+                        ending_clip = None
+                    if overlay_cards:
+                        pins = {
+                            card.media_id: ("image", card.gcs_path, card.generation)
+                            for card in overlay_cards
+                        }
+                        try:
+                            overlay_visuals = bind_phone_visual_assets(
+                                _sync_session, job_id=job_id, pins=pins
+                            )
+                        except OperationalError:
+                            raise  # transient DB -> Celery autoretry, never a lane drop
+                        except Exception as exc:  # noqa: BLE001 - a lane never fails the job
+                            lane_drops.append({"lane": "overlays", "reason": str(exc)[:300]})
+                            overlay_cards = []
+                            overlay_visuals = ()
+                    if ending_clip is not None:
+                        pins = {
+                            ending_clip.media_id: (
+                                "video",
+                                ending_clip.gcs_path,
+                                ending_clip.generation,
+                            )
+                        }
+                        try:
+                            ending_visuals = bind_phone_visual_assets(
+                                _sync_session, job_id=job_id, pins=pins
+                            )
+                        except OperationalError:
+                            raise  # transient DB -> Celery autoretry, never a lane drop
+                        except Exception as exc:  # noqa: BLE001 - a lane never fails the job
+                            lane_drops.append({"lane": "ending_clip", "reason": str(exc)[:300]})
+                            ending_clip = None
+                            ending_visuals = ()
+                    visuals = tuple(overlay_visuals) + tuple(ending_visuals)
+                    for sfx in lane_request.sound_effects:
+                        try:
+                            resolved_sfx.append(_resolve_phone_sound_effect(sfx))
+                        except OperationalError:
+                            raise  # transient DB -> Celery autoretry, never a lane drop
+                        except Exception as exc:  # noqa: BLE001 - a lane never fails the job
+                            # `UnsupportedPhonePlan` (unavailable/unplayable), a
+                            # bad catalog path (`ValueError`) and a storage
+                            # hiccup in `inspect_library_asset` all drop just
+                            # this one effect -- the job itself must survive.
+                            lane_drops.append(
+                                {
+                                    "lane": "sound_effects",
+                                    "id": sfx.id,
+                                    "reason": str(exc)[:300],
+                                }
+                            )
+                    lanes = PhoneSubtitledLanes(
+                        overlays=overlay_cards,
+                        sound_effects=resolved_sfx,
+                        ending_clip=ending_clip,
+                    )
+
+                recipe = None
+                attempts_remaining = 3
+                while True:
+                    try:
+                        recipe = compile_phone_subtitled_plan(
+                            bindings,
+                            caption_cues=cues,
+                            caption_style=caption_style,
+                            visuals=visuals,
+                            lanes=lanes,
+                        )
+                        break
+                    except SubtitledLaneError as exc:
+                        lane_drops.append({"lane": exc.lane, "reason": str(exc)[:300]})
+                        attempts_remaining -= 1
+                        if attempts_remaining <= 0 or lanes is None:
+                            raise
+                        lanes = drop_lane(lanes, exc.lane)
+
+                if lanes is not None:
+                    # A lane the compiler dropped must not leave its bound
+                    # visuals behind as "referenced" receipts.
+                    referenced = {card.media_id for card in lanes.overlays}
+                    if lanes.ending_clip is not None:
+                        referenced.add(lanes.ending_clip.media_id)
+                    visuals = tuple(v for v in visuals if v.media_id in referenced)
+                lane_receipt = {
+                    "applied": list(lane_names(lanes)) if lanes is not None else [],
+                    "dropped": lane_drops,
+                }
+                try:
+                    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+                    record_pipeline_event("phone", "subtitled_lane_receipt", lane_receipt)
+                except Exception:  # noqa: BLE001
+                    pass
+
+    if not media_lanes_enabled:
+        validate_phone_pilot_recipe(recipe)
+    else:
+        validate_phone_pilot_recipe(
+            recipe, allow_editor_media=bool(lanes is not None and lanes.overlays)
+        )
     variant_id = "subtitled"
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id=variant_id, revision=1, recipe=recipe
+    )
+    visual_rows = (
+        [visual.model_dump(mode="json") for visual in visuals] if media_lanes_enabled else []
     )
 
     with _sync_session() as db:
@@ -4521,6 +4779,16 @@ def _run_phone_subtitled_job(
         if current.get("creator_generation_id") != generation or current.get(
             PHONE_SOURCES_FIELD
         ) != snapshot.get(PHONE_SOURCES_FIELD):
+            return
+        if media_lanes_enabled and current.get(PHONE_SUBTITLED_LANES_FIELD) != snapshot.get(
+            PHONE_SUBTITLED_LANES_FIELD
+        ):
+            return
+        # Absent-or-equal: never overwrite photo/video receipts another run
+        # pinned. Flag-gated: with the flag off, visual_rows is always []
+        # and this field is never written, so skipping the check keeps the
+        # flag-off path from ever returning early on it.
+        if media_lanes_enabled and current.get(PHONE_VISUALS_FIELD, visual_rows) != visual_rows:
             return
         prior_device = (current.get(DEVICE_RENDER_FIELD) or {}).get(variant_id)
         if prior_device is not None and prior_device.get("base_generation") == generation:
@@ -4545,12 +4813,19 @@ def _run_phone_subtitled_job(
             "caption_language": detected_lang,
             "ok": False,
         }
+        if media_lanes_enabled:
+            new_entry["overlay_transcript"] = raw_words
+            new_entry["phone_lane_receipt"] = lane_receipt
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:
             variants.append(new_entry)
         current["variants"] = variants
         current["phone_deferred_variants"] = []
+        if media_lanes_enabled and visual_rows:
+            # Private receipts the editor recompiles from; each row keeps
+            # gcs_path so pool deletion still sees the photo/video as referenced.
+            current[PHONE_VISUALS_FIELD] = visual_rows
         job.assembly_plan = current
         pin_device_request(job, request, base_generation=generation)
         job.status = "awaiting_device"

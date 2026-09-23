@@ -96,6 +96,24 @@ class Settings(BaseSettings):
     # `fly secrets set PHONE_SUBTITLED_RENDERING_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_rendering_enabled: bool = True
+    # KRI-174 Phase 1: a server-owned `_phone_subtitled_lanes_v1` request on
+    # the job's assembly_plan (overlay sticker/photo cards pinned from the
+    # Visuals pool, catalog sound effects on an `sfx` track, a muted ending
+    # clip) is honoured by `_run_phone_subtitled_job`
+    # (`app.tasks.generative_build`), which resolves each lane (Visuals via
+    # `bind_phone_visual_assets`, sound effects via the new
+    # `_resolve_phone_sound_effect`), compiles them through
+    # `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan`'s
+    # `lanes=`/`visuals=` kwargs, and persists `overlay_transcript` (the raw
+    # pre-correction Whisper words) + `phone_lane_receipt` (applied/dropped
+    # lanes) on the variant. False (default): the field is ignored entirely
+    # -- `_run_phone_subtitled_job` executes the exact same statements as
+    # before this flag existed and persists the exact same variant dict, with
+    # no `overlay_transcript`/`phone_lane_receipt` keys and no Visuals-binder
+    # call, even when the snapshot carries the lanes field. Rollback:
+    # `fly secrets set PHONE_SUBTITLED_MEDIA_LANES_ENABLED=false --app
+    # nova-video` + `fly machine restart <id>` (api + worker).
+    phone_subtitled_media_lanes_enabled: bool = False
     # KRI-132 (narrated walkthrough): a `narrated`/`narrated_planned`/
     # `narrated_ready` item WITH a recorded voiceover compiles through
     # `app.pipeline.phone_narrated_plan.compile_phone_narrated_plan`
