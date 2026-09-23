@@ -275,8 +275,13 @@ struct NativeEditorView: View {
                                     onDeselect: { session.select(nil) }
                                 )
                                 .transition(panelTransition)
-                            } else if session.selectedClipID != nil {
-                                NativeEditorContextStrip(session: session, onAdjust: { inspector = .adjust })
+                            } else if let selection = session.selection, selection.kind == .clip {
+                                NativeEditorContextStrip(
+                                    session: session,
+                                    onBack: { session.select(nil) },
+                                    onAdjust: { inspector = .adjust },
+                                    onTransition: { inspector = .selection(selection) }
+                                )
                                     .transition(panelTransition)
                             }
                         }

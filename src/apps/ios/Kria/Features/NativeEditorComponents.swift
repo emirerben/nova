@@ -274,36 +274,58 @@ struct NativeEditorTimeline: View {
 
 struct NativeEditorContextStrip: View {
     @ObservedObject var session: NativeEditorSession
+    let onBack: () -> Void
     let onAdjust: () -> Void
+    let onTransition: () -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
-            Button(action: onAdjust) {
-                Label("Adjust", systemImage: "slider.horizontal.3")
-                    .frame(minHeight: 44)
-                    .padding(.horizontal, 16)
-            }
-            .buttonStyle(NativeEditorContextButtonStyle(isAccent: true))
-            .accessibilityIdentifier("native-editor-adjust")
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                Button(action: onBack) {
+                    Label("Back", systemImage: "chevron.left")
+                        .frame(minHeight: 44)
+                        .padding(.horizontal, 16)
+                }
+                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                .accessibilityIdentifier("native-editor-clip-back")
 
-            Button(action: onAdjust) {
-                Label("Audio", systemImage: "speaker.slash")
-                    .frame(minHeight: 44)
-                    .padding(.horizontal, 16)
-            }
-            .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
-            .accessibilityIdentifier("native-editor-clip-audio")
+                Button(action: onAdjust) {
+                    Label("Adjust", systemImage: "slider.horizontal.3")
+                        .frame(minHeight: 44)
+                        .padding(.horizontal, 16)
+                }
+                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                .accessibilityIdentifier("native-editor-adjust")
 
-            Button(action: session.deleteSelectedClip) {
-                Label("Delete", systemImage: "trash")
-                    .frame(minHeight: 44)
-                    .padding(.horizontal, 16)
+                Button(action: onAdjust) {
+                    Label("Audio", systemImage: "speaker.slash")
+                        .frame(minHeight: 44)
+                        .padding(.horizontal, 16)
+                }
+                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                .accessibilityIdentifier("native-editor-clip-audio")
+
+                if session.canEditOperation(["clips.transitions"], section: .timeline) {
+                    Button(action: onTransition) {
+                        Label("Transition", systemImage: "rectangle.on.rectangle.angled")
+                            .frame(minHeight: 44)
+                            .padding(.horizontal, 16)
+                    }
+                    .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                    .accessibilityIdentifier("native-editor-clip-transition")
+                }
+
+                Button(action: session.deleteSelectedClip) {
+                    Label("Delete", systemImage: "trash")
+                        .frame(minHeight: 44)
+                        .padding(.horizontal, 16)
+                }
+                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                .disabled(!session.canEditTimeline || session.draft.clips.count <= 1)
+                .accessibilityIdentifier("native-editor-delete")
             }
-            .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
-            .disabled(!session.canEditTimeline || session.draft.clips.count <= 1)
-            .accessibilityIdentifier("native-editor-delete")
+            .padding(4)
         }
-        .padding(4)
         .frame(height: NativeEditorIslandMetrics.contextHeight)
         .nativeEditorIslandSurface()
     }

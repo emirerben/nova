@@ -1,6 +1,8 @@
 import SwiftUI
 
-private func nativeEditorWireLabel(_ value: String) -> String {
+// Shared with NativeVisualPanel's whole-video transition picker -- one label
+// mapping for the wire contract's transition values, not two.
+func nativeEditorWireLabel(_ value: String) -> String {
     switch value {
     case "none": return "Original"
     case "dip_to_black": return "Dip to Black"
@@ -216,6 +218,26 @@ private struct NativeSelectedClipInspector: View {
         guard let slotID = clip?.slotID else { return nil }
         return session.document.clips.first(where: { $0.id == slotID })
     }
+    // Informational only: mirrors the server/timeline overlap math
+    // (NativeEditorInteraction.transitionOverlap) so a creator setting a
+    // duration that's longer than a short neighboring clip can fit sees why
+    // the render won't match what the slider says, instead of discovering it
+    // only after Save.
+    private var effectiveOverlapCaption: String? {
+        guard transition != "cut", let slot,
+              let leftDuration = slot.durationS,
+              let index = session.document.clips.firstIndex(where: { $0.id == slot.id }),
+              index + 1 < session.document.clips.count,
+              let rightDuration = session.document.clips[index + 1].durationS
+        else { return nil }
+        var probe = slot
+        probe.transitionAfter = transition
+        probe.transitionDurationS = transitionDuration
+        let overlap = NativeEditorInteraction.transitionOverlap(left: probe, leftDuration: leftDuration, rightDuration: rightDuration)
+        if overlap <= 0 { return "This clip is too short for a transition here — it will render as a cut." }
+        if overlap + 0.005 < transitionDuration { return "Shortened to \(String(format: "%.2f", overlap))s to fit this clip." }
+        return nil
+    }
     @State private var sourceStart = 0.0
     @State private var sourceEnd = 1.0
     @State private var look = "none"
@@ -273,10 +295,16 @@ private struct NativeSelectedClipInspector: View {
                         Text(nativeEditorWireLabel(value)).tag(value)
                     }
                 }
+                .accessibilityIdentifier("native-editor-clip-transition-picker")
                 .onChange(of: transition) { _, value in session.setClipTransition(clipID: selection.id, transition: value, durationS: transitionDuration) }
-                NativeEditorSlider(session: session, value: $transitionDuration, in: 0.1...1, step: 0.05) { Text("Transition duration") }
-                    .onChange(of: transitionDuration) { _, value in session.setClipTransition(clipID: selection.id, transition: transition, durationS: value) }
-                    .disabled(transition == "cut")
+                if transition != "cut" {
+                    NativeEditorSlider(session: session, value: $transitionDuration, in: 0.1...0.3, step: 0.05) { Text("Transition duration") }
+                        .onChange(of: transitionDuration) { _, value in session.setClipTransition(clipID: selection.id, transition: transition, durationS: value) }
+                }
+                if let caption = effectiveOverlapCaption {
+                    Text(caption).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                        .accessibilityIdentifier("native-editor-clip-transition-caption")
+                }
             }
             Section("Clip audio") {
                 Label(clip?.muted == true ? "Muted" : "Original audio on", systemImage: clip?.muted == true ? "speaker.slash" : "speaker.wave.2")
@@ -298,7 +326,7 @@ private struct NativeSelectedClipInspector: View {
             sourceStart = clip?.trimIn ?? 0; sourceEnd = clip?.trimOut ?? 1
             look = NativeEditorWireContract.lookPresets.contains(slot?.lookPreset ?? "") ? slot?.lookPreset ?? "none" : "none"
             transition = slot?.transitionAfter ?? "cut"
-            transitionDuration = min(max(0.1, slot?.transitionDurationS ?? 0.1), 1)
+            transitionDuration = min(max(0.1, slot?.transitionDurationS ?? 0.1), 0.3)
         }
     }
 }

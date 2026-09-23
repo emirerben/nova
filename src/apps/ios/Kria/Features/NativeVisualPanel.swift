@@ -5,7 +5,7 @@ struct NativeVisualPanel: View {
     @Environment(\.nativeEditorPanelLifecycle) private var panelLifecycle
     @State private var lifecycleOwner = UUID()
     enum Tab: String, CaseIterable { case edit = "Edit", animation = "Animation" }
-    enum Category: String, CaseIterable { case media = "Media", cards = "Text cards", motion = "Motion", camera = "Camera FX" }
+    enum Category: String, CaseIterable { case media = "Media", cards = "Text cards", motion = "Motion", camera = "Camera FX", transitions = "Transitions" }
     @ObservedObject var session: NativeEditorSession
     @ObservedObject var uploads: BackgroundUploadCoordinator
     let projectID: UUID
@@ -39,10 +39,27 @@ struct NativeVisualPanel: View {
         guard selected != nil else { return [] }
         return mediaSelected || cardElement != nil ? [.edit, .animation] : [.edit]
     }
-    private var availableCategories: [Category] {
-        session.rendersOnDevice ? [.media] : Category.allCases
+    // Transitions is the one Visuals category deliberately available on
+    // device: unlike cards/motion/camera (not phone-compiled at all),
+    // transitions already are (NativeEditorRenderCompiler maps crossfade/
+    // dip_to_black/flash). Hidden entirely -- not shown-disabled -- when the
+    // capability is closed or there are fewer than 2 active clips (no
+    // boundary to set).
+    private var transitionsCategoryAvailable: Bool {
+        session.canEditOperation(["clips.transitions"], section: .timeline) && session.document.clips.count > 1
     }
-    private var editorHeading: String { selected.map { "Edit " + label($0).lowercased() } ?? "Add visual" }
+    private var availableCategories: [Category] {
+        let base: [Category] = session.rendersOnDevice ? [.media] : [.media, .cards, .motion, .camera]
+        return transitionsCategoryAvailable ? base + [.transitions] : base
+    }
+    // nil falls back to NativeEditorLanePanel's own "Visuals" title. "Add
+    // visual" is specific to the Media category's add flow -- it shouldn't
+    // show while browsing Cards/Motion/Camera FX/Transitions, which aren't
+    // about adding a visual at all.
+    private var editorHeading: String? {
+        if let selected { return "Edit " + label(selected).lowercased() }
+        return panelDrafts.visualCategory == .media ? "Add visual" : nil
+    }
     private var addAction: (() -> Void)? { selected == nil ? nil : { openLibrary() } }
 
     private var removeAction: (() -> Void)? {
@@ -171,6 +188,7 @@ struct NativeVisualPanel: View {
             case .cards: cards
             case .motion: motion
             case .camera: camera
+            case .transitions: transitionsCategory
             }
 
         }
@@ -350,6 +368,36 @@ struct NativeVisualPanel: View {
         }
         .disabled(!session.canEdit(.cameraEffects))
         .accessibilityIdentifier("native-visual-add-camera-\(easing)")
+    }
+
+    private var transitionsCategory: some View {
+        VStack(spacing: 12) {
+            Picker("Transition", selection: $panelDrafts.wholeVideoTransition) {
+                ForEach(NativeEditorWireContract.transitions, id: \.self) { value in
+                    Text(nativeEditorWireLabel(value)).tag(value)
+                }
+            }
+            .accessibilityIdentifier("native-editor-visuals-transition-picker")
+            if panelDrafts.wholeVideoTransition != "cut" {
+                slider("Duration", value: $panelDrafts.wholeVideoTransitionDuration, range: 0.1...0.3)
+            }
+            Button {
+                session.setTransitionAcrossVideo(
+                    transition: panelDrafts.wholeVideoTransition,
+                    durationS: panelDrafts.wholeVideoTransitionDuration
+                )
+            } label: {
+                // kriaPage()'s app-wide .foregroundStyle(KriaColor.ink) wins
+                // over .borderedProminent's automatic white label unless the
+                // label sets its own color explicitly -- ink text on an
+                // ink-tinted fill was unreadable on device.
+                Text("Apply to whole video").foregroundStyle(KriaColor.paper)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .buttonStyle(.borderedProminent)
+            .tint(KriaColor.ink)
+            .accessibilityIdentifier("native-editor-visuals-apply-transition")
+        }
     }
 
     @ViewBuilder private var placement: some View {

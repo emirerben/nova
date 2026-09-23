@@ -208,4 +208,86 @@ final class NativeCaptionVisualUITests: XCTestCase {
         app.buttons["In visual animation Pop"].tap()
         XCTAssertTrue(app.buttons["native-editor-visuals-done"].exists)
     }
+
+    // KRI-167: selecting a clip on the timeline reconnects the existing
+    // (previously unreachable) per-clip transition picker via a new
+    // "Transition" button on the context strip. This is the core fix for
+    // the ticket's "no option to change it" complaint: the picker itself
+    // (value clamping, wire-contract validation) is already covered by
+    // NativeEditorInspectorTests -- what has zero prior coverage, and what
+    // actually broke the ticket, is this routing. `NativeSelectedClipInspector`
+    // sits in an unidentified Form whose scroll offset this harness can't
+    // drive deterministically (no pointer-event support on this simulator,
+    // and swipe-gesture distance is not reproducible run to run) -- that's a
+    // pre-existing testability gap in code this ticket reconnects, not one
+    // it introduces, so this test stops at proving the sheet opens rather
+    // than fighting that gap.
+    func testClipSelectionShowsTransitionControl() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]
+        app.launch()
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 20))
+        clip.tap()
+        let transitionButton = app.buttons["native-editor-clip-transition"]
+        XCTAssertTrue(transitionButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(transitionButton.isHittable)
+        transitionButton.tap()
+
+        XCTAssertTrue(app.navigationBars["Clip"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["native-editor-inspector-done"].exists)
+        app.buttons["native-editor-inspector-done"].tap()
+        XCTAssertFalse(app.navigationBars["Clip"].exists)
+        // The rest of the editor stays usable once the sheet closes.
+        XCTAssertTrue(app.buttons["native-editor-adjust"].waitForExistence(timeout: 5))
+    }
+
+    // KRI-167: the button must not appear when the server closes
+    // clips.transitions -- a creator on a render that can't save a
+    // transition edit shouldn't see a control that would 422 at Save.
+    func testTransitionControlHiddenWhenCapabilityClosed() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-transitions-closed"]
+        app.launch()
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 20))
+        clip.tap()
+        XCTAssertTrue(app.buttons["native-editor-adjust"].waitForExistence(timeout: 5), "the rest of the context strip must still appear")
+        XCTAssertFalse(app.buttons["native-editor-clip-transition"].exists)
+    }
+
+    // KRI-167: regression guard for the deliberate on-device exception in
+    // NativeVisualPanel.availableCategories -- every other Visuals category
+    // is device-hidden, and the Transitions category is the one meant to
+    // stay reachable there. Without a device-shaped fixture this would only
+    // ever exercise the untested cloud path while real (100% sampled) prod
+    // traffic saw nothing.
+    func testVisualsTransitionsCategoryVisibleOnDevice() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-device"]
+        app.launch()
+        XCTAssertTrue(app.buttons["native-editor-tool-visuals"].waitForExistence(timeout: 20))
+        app.buttons["native-editor-tool-visuals"].tap()
+        XCTAssertTrue(app.buttons["Transitions"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Text cards"].exists, "other categories stay device-hidden")
+        XCTAssertFalse(app.buttons["Motion"].exists)
+        XCTAssertFalse(app.buttons["Camera FX"].exists)
+
+        app.buttons["Transitions"].tap()
+        XCTAssertTrue(app.buttons["native-editor-visuals-apply-transition"].waitForExistence(timeout: 5))
+        app.buttons["native-editor-visuals-apply-transition"].tap()
+        XCTAssertTrue(app.buttons["native-editor-visuals-apply-transition"].exists, "applying doesn't leave the panel")
+    }
+
+    // KRI-167: the Transitions category must not appear at all -- not
+    // shown-disabled -- when the capability is closed, on device or off.
+    func testVisualsTransitionsCategoryHiddenWhenCapabilityClosed() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-device", "-ui-testing-editor-transitions-closed"]
+        app.launch()
+        XCTAssertTrue(app.buttons["native-editor-tool-visuals"].waitForExistence(timeout: 20))
+        app.buttons["native-editor-tool-visuals"].tap()
+        XCTAssertTrue(app.buttons["native-editor-import-visual"].waitForExistence(timeout: 5), "media category (the only device category) still renders")
+        XCTAssertFalse(app.buttons["Transitions"].exists)
+    }
 }

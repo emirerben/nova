@@ -69,9 +69,52 @@ final class NativeEditorInspectorTests: XCTestCase {
         session.setClipTransition(clipID: clipID, transition: "crossfade", durationS: 2)
         session.setCaptionSize(200)
         session.setCaptionPositionY(1)
-        XCTAssertEqual(session.document.clips[0].transitionDurationS, 1)
+        // KRI-167: the server's ceiling is 0.3s everywhere (guided_edit_revision.py's
+        // le=0.3); anything requested above that is clamped at the mutation,
+        // not silently shrunk later at Save.
+        XCTAssertEqual(session.document.clips[0].transitionDurationS, 0.3)
         XCTAssertEqual(session.document.captionMeta["size_px"], .number(160))
         XCTAssertEqual(session.document.captionMeta["y_frac"], .number(0.90))
+    }
+
+    // KRI-167: "Apply to whole video" sets every boundary but the last in a
+    // single transaction (one undo step), clamps duration, and no-ops on an
+    // unknown transition or a fewer-than-2-clip document.
+    func testSetTransitionAcrossVideoAppliesInOneTransaction() {
+        var draft = NativeEditorUITestFixtures.allLanes
+        draft.serverSnapshot["editor_capabilities"] = .object(["timeline": .bool(true)])
+        let session = NativeEditorSession(draft: draft)
+        XCTAssertEqual(session.document.clips.count, 3, "fixture must have 2 boundaries to exercise this")
+        let before = session.document
+
+        session.setTransitionAcrossVideo(transition: "crossfade", durationS: 5)
+
+        XCTAssertEqual(session.document.clips[0].transitionAfter, "crossfade")
+        XCTAssertEqual(session.document.clips[0].transitionDurationS, 0.3, "clamped to the 0.3s server ceiling")
+        XCTAssertEqual(session.document.clips[1].transitionAfter, "crossfade")
+        XCTAssertEqual(session.document.clips[1].transitionDurationS, 0.3)
+        XCTAssertEqual(session.document.clips[2].transitionAfter, "cut", "the last clip has no outgoing boundary")
+        XCTAssertNil(session.document.clips[2].transitionDurationS)
+
+        session.undo()
+        XCTAssertEqual(session.document, before, "every boundary reverts in a single undo step")
+    }
+
+    func testSetTransitionAcrossVideoIgnoresUnknownTransitionAndSingleClipDocument() {
+        var draft = NativeEditorUITestFixtures.allLanes
+        draft.serverSnapshot["editor_capabilities"] = .object(["timeline": .bool(true)])
+        let allLanesSession = NativeEditorSession(draft: draft)
+        let before = allLanesSession.document
+        allLanesSession.setTransitionAcrossVideo(transition: "wipe_left", durationS: 0.3)
+        XCTAssertEqual(allLanesSession.document, before, "not a value in NativeEditorWireContract.transitions")
+
+        draft = NativeEditorUITestFixtures.captionVisuals
+        draft.serverSnapshot["editor_capabilities"] = .object(["timeline": .bool(true)])
+        let singleClipSession = NativeEditorSession(draft: draft)
+        XCTAssertEqual(singleClipSession.document.clips.count, 1, "fixture must have no boundary to exercise this")
+        let beforeSingle = singleClipSession.document
+        singleClipSession.setTransitionAcrossVideo(transition: "crossfade", durationS: 0.3)
+        XCTAssertEqual(singleClipSession.document, beforeSingle, "no boundary exists with a single clip")
     }
 
     func testOpaqueTextSelectionEditsAndUndoAsOneLocalTransaction() {

@@ -8,6 +8,41 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## KRI-167 clip transitions — deferred follow-ups (2026-09-23)
+
+The Visuals tab now has a whole-video transition default, and selecting a
+clip on the timeline reconnects the (previously dead) per-boundary
+transition picker via a new "Transition" context-strip button. Two things
+were scoped out to keep that PR bounded.
+
+### Wire the dead clip-inspector transition picker into a more discoverable spot, or remove the redundancy
+**Priority:** P3
+**What:** `NativeSelectedClipInspector`'s "Look and transition" section is
+now reachable (via the new "Transition" context-strip button) but sits in an
+unidentified `Form` several sections down, behind scrolling that even
+XCUITest can't drive deterministically on this simulator config (no pointer
+events, non-reproducible swipe distance). A creator has to scroll past
+"Clip", "Order and source window", and the footage panel to reach it.
+**Acceptance:** Either promote the transition picker higher in that Form, or
+reconsider whether per-boundary editing belongs in a lighter-weight surface
+(e.g. inline on the timeline near the boundary itself). Whichever way,
+consider giving the Form's scroll container an accessibility identifier so
+it stops being an untestable surface — see the KRI-167 PR's UI test file for
+where that gap currently blocks deeper coverage.
+
+### `wipe_left` / `wipe_right` transitions aren't offered anywhere
+**Priority:** P3
+**What:** Both wipe kinds exist end-to-end in `KriaMediaEngine.Transition.Kind`
+and the phone compiler's transition allowlist (`phone_guided_plan.py`,
+`phone_montage_plan.py`), but are missing from
+`NativeEditorWireContract.transitions` (iOS), `TimelineSlotEdit` and
+`GuidedEditorSegment` (server schemas), and the copilot `set_transition`
+validator. Nobody can actually author one today.
+**Acceptance:** Add `wipe_left`/`wipe_right` to all three contract surfaces
+in one PR (iOS wire contract + both server Pydantic schemas + copilot
+validator), with picker labels and a duration-clamp story matching the
+existing four transitions.
+
 ## KRI-163 phone render failure UX — deferred follow-ups (2026-09-22)
 
 The crossfade compile bug that killed every phone render since Sept 1 is
