@@ -907,31 +907,35 @@ private struct NativeSoundsControls: View {
 private struct NativeStylesInspector: View {
     @ObservedObject var session: NativeEditorSession
     @State private var selected = "Fraunces"
-    private let presets = ["Fraunces", "Inter", "Space Grotesk"]
+    private var presets: [String] { NativeFontCatalog.shared.pickerFonts }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Type sets the feeling before anyone reads the words.")
                 .font(KriaFont.body(15))
                 .foregroundStyle(KriaColor.zinc)
-            ForEach(presets, id: \.self) { preset in
-                Button {
-                    selected = preset
-                    session.setTextStyle(id: nil, style: preset)
-                } label: {
-                    HStack {
-                        Text(preset).font(preset == "Fraunces" ? KriaFont.display(24) : KriaFont.body(19))
-                        Spacer()
-                        Image(systemName: selected == preset ? "checkmark.circle.fill" : "circle")
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(presets, id: \.self) { preset in
+                        Button {
+                            selected = preset
+                            session.setTextStyle(id: nil, style: preset)
+                        } label: {
+                            HStack {
+                                Text(preset).font(NativeFontCatalog.shared.previewFont(preset, size: 22))
+                                Spacer()
+                                Image(systemName: selected == preset ? "checkmark.circle.fill" : "circle")
+                            }
+                            .foregroundStyle(KriaColor.ink)
+                            .padding(15)
+                            .background(selected == preset ? KriaColor.sage : KriaColor.softZinc)
+                            .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                        }
+                        .accessibilityIdentifier("native-editor-style-\(preset.lowercased())")
+                        .frame(minHeight: 50)
+                        .disabled(!session.canEditText)
                     }
-                    .foregroundStyle(KriaColor.ink)
-                    .padding(15)
-                    .background(selected == preset ? KriaColor.sage : KriaColor.softZinc)
-                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
                 }
-                .accessibilityIdentifier("native-editor-style-\(preset.lowercased())")
-                .frame(minHeight: 50)
-                .disabled(!session.canEditText)
             }
             if session.draft.text.isEmpty {
                 Label("Add text first to apply a type preset.", systemImage: "info.circle")

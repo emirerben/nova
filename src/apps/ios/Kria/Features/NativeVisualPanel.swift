@@ -437,9 +437,10 @@ struct NativeVisualPanel: View {
                 } else if let element = cardElement {
                     TextField("Card text", text: Binding(get: { cardElement?.text ?? "" }, set: { session.updateTextContent(id: element.id, content: $0) }), axis: .vertical)
                         .focused($editingText).padding(12).background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
-                    Picker("Font", selection: Binding(get: { cardElement?.raw["font_family"]?.stringValue ?? "Inter" }, set: { session.setTextStyle(id: element.id, style: $0) })) {
-                        ForEach(["Inter Regular", "Inter", "Fraunces", "Space Grotesk"], id: \.self) { Text($0).tag($0) }
-                    }.frame(minHeight: 44)
+                    NativeFontPicker(
+                        selection: cardElement?.raw["font_family"]?.stringValue ?? "Inter",
+                        accessibilityID: "native-editor-card-font"
+                    ) { if let family = $0 { session.setTextStyle(id: element.id, style: family) } }
                     ColorPicker("Text color", selection: Binding(get: { nativeEditorColor(cardElement?.raw["color"]?.stringValue ?? "#FFFFFF") }, set: { session.setTextColor(id: element.id, color: nativeEditorHex($0)) }), supportsOpacity: false).frame(minHeight: 44)
                     slider("Size", value: Binding(get: { cardElement.map(NativeEditorSession.textSize) ?? 72 }, set: { session.setTextSize(id: element.id, sizePX: $0) }), range: 8...240)
                 } else if selected.kind == .motionScene {

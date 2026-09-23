@@ -176,19 +176,12 @@ struct NativeCaptionPanel: View {
                 .accessibilityIdentifier("native-editor-caption-display")
             let layout = stacksControls ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 10))
             layout {
-                Menu {
-                    Button("Default · TikTok Sans") { session.setCaptionFont(nil) }
-                    ForEach(NativeEditorWireContract.captionFonts, id: \.self) { font in
-                        Button(font) { session.setCaptionFont(font) }
-                    }
-                } label: {
-                    HStack {
-                        Text(meta["font"]?.stringValue ?? "TikTok Sans")
-                        Spacer(minLength: 2)
-                        Image(systemName: "chevron.down").font(.system(size: 10))
-                    }.padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 44)
-                        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
-                }.buttonStyle(.plain).accessibilityLabel("Caption font")
+                NativeFontPicker(
+                    selection: meta["font"]?.stringValue,
+                    includeDefault: true,
+                    accessibilityLabelText: "Caption font",
+                    accessibilityID: "native-editor-caption-font"
+                ) { session.setCaptionFont($0) }
                 HStack(spacing: 0) {
                     ForEach(["left", "center", "right"], id: \.self) { value in
                         Button { session.setCaptionAppearance(key: "alignment", value: .string(value)) } label: {
