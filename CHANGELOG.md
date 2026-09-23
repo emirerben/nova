@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.164.0] - 2026-09-23
+
+### Changed
+- fix(chat): link a new Creator session to its chat without deadlocking; replayed requests stop crashing (#1180) <!-- release-pr: 1180 -->
+
 ## [0.76.163.0] - 2026-09-23
 
 ### Fixed
