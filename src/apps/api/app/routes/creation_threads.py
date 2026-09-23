@@ -780,6 +780,41 @@ async def _commit_refreshed_cleanup_policy(
         await asyncio.to_thread(publish_preflight_after_commit, analysis_id)
 
 
+async def _recorded_cleanup_consent(
+    db: AsyncSession,
+    plan_item_id: uuid.UUID | None,
+    analysis_id: uuid.UUID,
+) -> tuple[uuid.UUID, Literal["clean", "keep_original"] | None] | None:
+    """The consent the current checked analysis already records.
+
+    Once the creator has chosen, the projection stops asking
+    (``requires_choice`` is False), so the native card's "Create this video"
+    and "Retry generation" send only the analysis id. The dispatcher still
+    needs the choice for a ready analysis, so re-send the recorded one;
+    ``no_findings`` needs none. Anything else (another analysis, an unchecked
+    bypass, an undecided row) returns None and keeps the normal fences.
+    """
+
+    if plan_item_id is None:
+        return None
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        current_analysis_async,
+    )
+
+    current = await current_analysis_async(db, plan_item_id)
+    if current is None or current.id != analysis_id:
+        return None
+    if current.status == "no_findings":
+        return current.id, None
+    if (
+        current.status == "ready"
+        and int(current.candidate_count or 0) > 0
+        and current.decision in {"clean", "keep_original"}
+    ):
+        return current.id, current.decision
+    return None
+
+
 async def _probe_registered_media(
     *,
     object_path: str,
@@ -4538,6 +4573,95 @@ async def action_thread(
                     status_code=409,
                     detail="speech_cleanup_analysis_changed",
                 )
+            from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                current_analysis_async,
+            )
+
+            current_cleanup = await current_analysis_async(db, thread.active_plan_item_id)
+            if current_cleanup is None or current_cleanup.id != cleanup_analysis_id:
+                raise HTTPException(status_code=409, detail="speech_cleanup_analysis_changed")
+            if current_cleanup.status not in {"queued", "running", "failed"}:
+                # Same meaning as the sync dispatcher
+                # (_speech_cleanup_dispatch_snapshot): outside a genuine
+                # cleanup-failure recovery (handled above), create_without_
+                # cleanup is only the unchecked bypass for an analysis that
+                # never produced a choice; a checked analysis uses
+                # keep_original. Refuse here, before an attempt is reserved,
+                # instead of failing after planning (prod item 26bf79fe: a
+                # guided attempt planned the raw voiceover, then dispatch
+                # refused it and the chat stayed "preparing" forever).
+                raise HTTPException(status_code=409, detail="speech_cleanup_choice_not_allowed")
+        elif (
+            body.action == "retry"
+            and recovery_action is None
+            and current_job is not None
+            and not reports_cleanup_failure
+        ):
+            # A render that failed for a reason unrelated to cleanup (phone
+            # compile refusal, OOM, timeout) keeps the creator's consent for
+            # the SAME current analysis: re-send it exactly as the original
+            # confirmation did. Without it an enforce-mode dispatch refuses the
+            # retry (speech_cleanup_analysis_conflict) and a non-enforce one
+            # falls back to the legacy flag with no consent snapshot.
+            private = current_plan.get("_speech_cleanup_internal")
+            private = private if isinstance(private, dict) else {}
+            raw_snapshot = private.get("preflight_snapshot")
+            prior_outcome = current_plan.get("speech_cleanup_outcome")
+            snapshot_contract = current_plan.get("speech_cleanup_preflight_contract")
+            unchecked_bypass = bool(
+                snapshot_contract is None
+                and current_plan.get("speech_cleanup_contract") == "off_v1"
+                and isinstance(prior_outcome, dict)
+                and prior_outcome.get("status") == "bypassed_unchecked"
+            )
+            if snapshot_contract == "snapshot_v1" and isinstance(raw_snapshot, dict):
+                consented_id = raw_snapshot.get("analysis_id")
+            elif unchecked_bypass:
+                consented_id = private.get("outcome_analysis_id")
+            else:
+                consented_id = None
+            if consented_id:
+                from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                    current_analysis_async,
+                )
+
+                current_cleanup = await current_analysis_async(db, thread.active_plan_item_id)
+                if current_cleanup is not None and str(current_cleanup.id) == str(consented_id):
+                    if unchecked_bypass:
+                        # The dispatcher accepts the bypass only while the
+                        # analysis is still unchecked, exactly like the card.
+                        if (
+                            current_cleanup.status in {"queued", "running", "failed"}
+                            and current_cleanup.decision == "create_without_cleanup"
+                        ):
+                            cleanup_analysis_id = current_cleanup.id
+                            cleanup_choice = "create_without_cleanup"
+                    elif current_cleanup.status == "no_findings":
+                        cleanup_analysis_id = current_cleanup.id
+                    elif current_cleanup.status == "ready" and current_cleanup.decision in {
+                        "clean",
+                        "keep_original",
+                    }:
+                        cleanup_analysis_id = current_cleanup.id
+                        cleanup_choice = current_cleanup.decision
+        elif body.action == "retry" and recovery_action is None and current_job is None:
+            # Planning failed before any Job existed, so there is no Job
+            # consent to reuse. "Retry generation" sends the card's analysis
+            # id; re-send its recorded consent exactly as generate does, or the
+            # new attempt plans without consent and dispatch refuses it.
+            raw_analysis_id = payload.get("speech_cleanup_analysis_id")
+            try:
+                submitted_analysis_id = (
+                    uuid.UUID(str(raw_analysis_id)) if raw_analysis_id is not None else None
+                )
+            except ValueError:
+                submitted_analysis_id = None
+            if submitted_analysis_id is not None:
+                recorded = await _recorded_cleanup_consent(
+                    db, thread.active_plan_item_id, submitted_analysis_id
+                )
+                if recorded is not None:
+                    cleanup_analysis_id, cleanup_choice = recorded
         elif body.action in {"generate", "confirm_generation"}:
             raw_analysis_id = payload.get("speech_cleanup_analysis_id")
             if raw_analysis_id is not None:
@@ -4553,6 +4677,17 @@ async def action_thread(
                 if raw_choice not in {"clean", "keep_original"}:
                     raise HTTPException(status_code=422, detail="Invalid speech cleanup choice")
                 cleanup_choice = raw_choice
+            elif cleanup_analysis_id is not None:
+                # A decided analysis stops asking, so the native card confirms
+                # a new direction with the analysis id alone (prod item
+                # 26bf79fe: the direction proposed after the failed phone Job).
+                # Re-send the recorded choice; without it the enforce fence
+                # below answers speech_cleanup_choice_required on every tap.
+                recorded = await _recorded_cleanup_consent(
+                    db, thread.active_plan_item_id, cleanup_analysis_id
+                )
+                if recorded is not None:
+                    cleanup_choice = recorded[1]
 
             if settings.speech_cleanup_preflight_mode == "enforce":
                 from app.services.plan_item_media import (  # noqa: PLC0415

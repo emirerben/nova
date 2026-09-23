@@ -194,8 +194,15 @@ requires the existing `guided_voiceover_v1` contract and pinned narration.
 both the transcript and final visual timeline are immutable. Score copy comes
 from exact word spans (never the annotation model's text); participant labels
 still require typed single-subject focus and retain asset-local identity. Topic
-labels require a transcript span. Visual and transcript intents can coexist on
-a narrated edit, but neither source can authorize the other's text.
+labels require a transcript span that is also label-shaped: inside the visual
+label fence (at most `LABEL_MAX_WORDS` words / `LABEL_MAX_CHARS` characters),
+or a proper name within `TOPIC_NAME_MAX_WORDS` / `TOPIC_NAME_MAX_CHARS`
+(capitalized words joined only by short lowercase particles, such as "Parc de
+la Ciutadella" or "Brighton and Hove Albion"). A grounded spoken sentence is
+voiceover script, already captioned, and is rejected with
+`TOPIC_SENTENCE_REJECTION` in the narration receipt. Visual and
+transcript intents can coexist on a narrated edit, but neither source can
+authorize the other's text.
 
 `CreativeStrategy` decodes legacy JSON through `legacy_clip_intents()` before
 strict validation, without writing to stored rows. Participant/score fields map

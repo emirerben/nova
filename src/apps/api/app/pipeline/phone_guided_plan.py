@@ -130,7 +130,11 @@ def compile_phone_guided_plan(
     # imports this compiler for its device path.
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.guided_caption_presentation import project_guided_caption_overlays
-    from app.pipeline.guided_story import _apply_guided_caption_meta, _tag_guided_text_overlays
+    from app.pipeline.guided_story import (
+        _apply_guided_caption_meta,
+        _assign_label_lane_roles,
+        _tag_guided_text_overlays,
+    )
     from app.pipeline.portable_text_layout import compile_text_overlay
 
     for lane, capability in _UNSUPPORTED_PHONE_LANE_CAPABILITY.items():
@@ -476,11 +480,19 @@ def compile_phone_guided_plan(
         overlays = _tag_guided_text_overlays(overlays, elements)
         if lane == "text":
             overlays = project_guided_caption_overlays(overlays, plan.editor_caption_meta)
+        else:
+            # Same role rewrite as the cloud burn: context/narration labels
+            # render as independent overlays, never inside the sequence
+            # composite (so a pop-in topic/score label is not held to its
+            # effect fence below).
+            overlays = _assign_label_lane_roles(overlays, lane)
         ordered_overlays.extend(
             (f"{lane}-{index}", overlay) for index, overlay in enumerate(overlays)
         )
     # Production renders non-sequence inputs first, then the sequence composite.
-    # Keep stable order within each partition, including context/narration lanes.
+    # Keep stable order within each partition. After the label-lane role rewrite
+    # only genuine text-lane sequence blocks sort last, so labels draw beneath
+    # them exactly as in cloud.
     ordered_overlays.sort(key=lambda entry: entry[1].get("role") == "generative_sequence")
     for index, (layer_id, overlay) in enumerate(ordered_overlays):
         if overlay.get("role") == "generative_sequence" and overlay.get("effect", "none") not in {

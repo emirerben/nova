@@ -14,9 +14,11 @@ from app.agents._schemas.text_element import TextElement
 from app.pipeline.canvas import PORTRAIT, Canvas
 from app.pipeline.generative_overlays import build_overlays_from_text_elements
 from app.pipeline.guided_story import (
+    LABEL_LANE_RENDER_ROLES,
     GuidedStoryError,
     _allocate_beat_durations,
     _apply_guided_text_face_placement,
+    _assign_label_lane_roles,
     _compile_execution_plan_version,
     _download_selected,
     _enforce_strict_story_duration,
@@ -424,6 +426,32 @@ def test_narration_captions_and_labels_use_independent_renderer_streams(
         "narration-caption-1",
         "player-label-1",
     ]
+
+
+@pytest.mark.parametrize(
+    "lane,expected",
+    [("context", "generative_context_label"), ("narration", "generative_narration_label")],
+)
+def test_label_lanes_render_outside_the_sequence_composite(lane: str, expected: str) -> None:
+    """Cloud burn and phone compile share this rewrite (2026-09-23: the phone
+    compiler lacked it, so a pop-in label failed the whole device render)."""
+
+    overlays = [
+        {"role": "generative_sequence", "effect": "pop-in", "text": "football"},
+        {"role": "generative_narration_caption", "text": "caption"},
+        {"role": "generative_intro", "text": "intro"},
+    ]
+
+    tagged = _assign_label_lane_roles(overlays, lane)
+
+    assert tagged is overlays
+    assert [overlay["role"] for overlay in tagged] == [
+        expected,
+        "generative_narration_caption",
+        "generative_intro",
+    ]
+    assert LABEL_LANE_RENDER_ROLES[lane] == expected
+    assert tagged[0]["effect"] == "pop-in"
 
 
 def test_edited_narration_caption_rebuilds_stale_karaoke_words_in_its_cue() -> None:

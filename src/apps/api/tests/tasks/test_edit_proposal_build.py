@@ -3206,6 +3206,12 @@ def test_creator_dispatch_failure_settlement_fences(monkeypatch, fence):
         },
     )
     db = _Db(_Result(rows=[session]))
+    if fence == "job":
+        # The item's current Job is still rendering. A TERMINAL Job left by an
+        # earlier attempt no longer fences settlement (prod item 26bf79fe);
+        # see tests/routes/test_creation_threads_cleanup_attribution.py.
+        active = SimpleNamespace(id=item.current_job_id, status="processing", assembly_plan={})
+        db.get = lambda _model, identifier, **_kw: active if identifier == active.id else None
     original = dict(item.edit_proposal)
     monkeypatch.setattr(proposal_build, "sync_session", lambda: nullcontext(db))
     monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a: (item, owner_id))

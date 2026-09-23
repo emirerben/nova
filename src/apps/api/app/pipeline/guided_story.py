@@ -4631,6 +4631,33 @@ def _tag_guided_text_overlays(
     return compiled
 
 
+# Burn roles for the two server-derived label lanes. Both lanes store their
+# elements as ``generative_sequence`` so the editor projects them as separate
+# lanes, but every renderer must draw them as independent overlays: the Skia
+# renderer would otherwise coalesce them into the one full-canvas sequence
+# composite (losing per-element receipt identity), and the phone compiler
+# would hold them to that composite's effect fence (a pop-in topic or score
+# label then fails the whole device render).
+LABEL_LANE_RENDER_ROLES: dict[str, str] = {
+    "context": "generative_context_label",
+    "narration": "generative_narration_label",
+}
+
+
+def _assign_label_lane_roles(compiled: list[dict[str, Any]], lane: str) -> list[dict[str, Any]]:
+    """Render a label lane's sequence-role overlays as independent overlays.
+
+    ``lane`` is a ``LABEL_LANE_RENDER_ROLES`` key. Shared by the cloud burn and
+    the phone compiler so both treat labels alike.
+    """
+
+    role = LABEL_LANE_RENDER_ROLES[lane]
+    for overlay in compiled:
+        if overlay.get("role") == "generative_sequence":
+            overlay["role"] = role
+    return compiled
+
+
 def _apply_guided_caption_meta(
     elements: list[TextElement], meta: dict[str, Any] | None
 ) -> tuple[list[TextElement], set[str]]:
@@ -5038,7 +5065,8 @@ def render_execution_plan(
         # role into one full-canvas sequence, however, which loses per-element
         # receipt identity (and makes every label look absent to the strict
         # verifier). Keep the lane projection but render these server-derived
-        # labels as independent burn sequences in the authoritative pass.
+        # labels as independent burn sequences in the authoritative pass
+        # (``_assign_label_lane_roles``, shared with the phone compiler).
         def compile_and_tag(source_elements: list[TextElement]) -> list[dict]:
             return _tag_guided_text_overlays(
                 build_overlays_from_text_elements(
@@ -5059,16 +5087,10 @@ def render_execution_plan(
             ),
             plan.get("editor_caption_meta"),
         )
-        context_overlays = compile_and_tag(context_elements)
-        narration_label_overlays = compile_and_tag(narration_label_elements)
-        for overlay in context_overlays:
-            if overlay.get("role") == "generative_sequence":
-                overlay["role"] = "generative_context_label"
-        overlays.extend(context_overlays)
-        for overlay in narration_label_overlays:
-            if overlay.get("role") == "generative_sequence":
-                overlay["role"] = "generative_narration_label"
-        overlays.extend(narration_label_overlays)
+        overlays.extend(_assign_label_lane_roles(compile_and_tag(context_elements), "context"))
+        overlays.extend(
+            _assign_label_lane_roles(compile_and_tag(narration_label_elements), "narration")
+        )
         text_receipts = burn_text_overlays_skia_with_evidence(
             clean_base,
             overlays,

@@ -5,6 +5,11 @@ planner or an LLM may suggest semantic annotations, but this boundary owns the
 rules that make them safe to render:
 
 * score text is copied from an exact timed-word span;
+* topic text is copied from an exact timed-word span AND is label-shaped
+  (the same <= ``LABEL_MAX_WORDS`` / ``LABEL_MAX_CHARS`` fence as visual clip
+  labels, or a proper name within ``TOPIC_NAME_MAX_*``): a spoken sentence is
+  voiceover script, already shown by the captions, never an on-screen topic
+  label;
 * numbers that are not a score shape are ignored;
 * participant placeholders require typed single-subject evidence for the final
   shot's source asset;
@@ -23,11 +28,13 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from app.agents._schemas.text_element import TextElement
+from app.schemas.clip_intents import LABEL_MAX_CHARS, LABEL_MAX_WORDS
 
 _NUMBER_WORDS: dict[str, int] = {
     "zero": 0,
@@ -68,6 +75,13 @@ _HYBRID_SCORE_RE = re.compile(
     re.I,
 )
 _PUNCTUATION_RE = re.compile(r"[^\w\s'-]+", re.UNICODE)
+TOPIC_SENTENCE_REJECTION = "topic text is a spoken sentence, not a short label"
+# A spoken proper name can run past the visual label fence ("Parc de la
+# Ciutadella", "Brighton and Hove Albion", "Estadio Santiago Bernabeu"). Such a
+# name-shaped span may use this wider fence; script lines stay rejected
+# because a sentence carries lowercase content words.
+TOPIC_NAME_MAX_WORDS = 5
+TOPIC_NAME_MAX_CHARS = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,6 +407,14 @@ def materialize_narration_labels(
             if candidate is None:
                 reject(annotation, "topic text is not copied from its transcript anchor")
                 continue
+            if not _is_topic_label_text(candidate.text):
+                # 2026-09-23 prod: a request pairing each shot with a spoken
+                # line was read as topic intents, and the first spoken sentence
+                # rendered as a pop-in label over the title, doubling the
+                # voiceover caption. A grounded span of script is still script;
+                # only a label-shaped span is a topic label.
+                reject(annotation, TOPIC_SENTENCE_REJECTION)
+                continue
             start = words_by_id[candidate.start_word_id or ""]
             end = words_by_id[candidate.end_word_id or ""]
             accept(candidate)
@@ -621,6 +643,60 @@ def _ground_topic_annotation(
                 reason=annotation.reason,
             )
     return None
+
+
+def _is_topic_label_text(text: str) -> bool:
+    """Whether grounded topic copy is a label rather than a spoken sentence.
+
+    Any span inside ``clean_label_text``'s size fence for visual clip labels
+    passes. A longer span passes only when it is shaped like a proper name
+    (``_is_name_shaped``) and fits ``TOPIC_NAME_MAX_*``. Sizes are measured on
+    the displayed words (not casefolded, so "ß" or "İ" never grows a label).
+    """
+
+    # A typographic apostrophe (d’Horta) would otherwise be stripped as
+    # punctuation and hide the elided article from ``_is_name_shaped``.
+    display = unicodedata.normalize("NFC", text).replace("\N{RIGHT SINGLE QUOTATION MARK}", "'")
+    tokens = [
+        cleaned
+        for cleaned in (_PUNCTUATION_RE.sub("", token) for token in display.split())
+        if any(char.isalnum() for char in cleaned)
+    ]
+    if not tokens:
+        return False
+    chars = len(" ".join(tokens))
+    if len(tokens) <= LABEL_MAX_WORDS and chars <= LABEL_MAX_CHARS:
+        return True
+    return (
+        len(tokens) <= TOPIC_NAME_MAX_WORDS
+        and chars <= TOPIC_NAME_MAX_CHARS
+        and _is_name_shaped(tokens)
+    )
+
+
+def _is_name_shaped(tokens: list[str]) -> bool:
+    """Capitalized words joined only by short lowercase particles.
+
+    "Parc de la Ciutadella", "Real Madrid vs Barcelona", "the 3rd of March
+    2019" and "Parc del Laberint d'Horta" qualify. A spoken line does not: it
+    carries a lowercase content word ("then everything burned down"), ends on
+    a particle, or has fewer than two substantial capitalized words ("so we
+    got to Rome"). Caseless scripts never qualify and keep the base fence.
+    """
+
+    def proper(token: str) -> bool:
+        head, apostrophe, tail = token.partition("'")
+        if apostrophe and 0 < len(head) <= 2 and head.isalpha() and head.islower():
+            token = tail  # elided article: d'Horta, l'Eixample
+        return token[:1].isupper() or token[:1].isdigit()
+
+    def particle(token: str) -> bool:
+        return len(token) <= 3 and token.isalpha() and token.islower()
+
+    if not proper(tokens[-1]) or not all(proper(token) or particle(token) for token in tokens):
+        return False
+    substantial = sum(1 for token in tokens if proper(token) and len(token) >= 4)
+    return substantial >= min(2, len(tokens))
 
 
 def _annotation_bounds(

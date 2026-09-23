@@ -68,15 +68,22 @@ elif name == 'xcrun':
     elif args[:3] == ['simctl', 'list', 'devices']:
         if mode == 'list_failure':
             sys.exit(27)
+        # The selected device reports "Booted" only while the early head start
+        # (boot_race) is still booting it; every other mode sees it shut down.
+        state = 'Booted' if mode == 'boot_race' else 'Shutdown'
         devices = {} if mode == 'no_simulator' else {
-            'watchOS': [{'name': 'iPhone fake', 'isAvailable': True, 'udid': 'wrong'}],
-            'iOS-18': [{'name': 'iPhone old', 'isAvailable': True, 'udid': 'old'}],
+            'watchOS': [{'name': 'iPhone fake', 'isAvailable': True, 'udid': 'wrong', 'state': 'Shutdown'}],
+            'iOS-18': [{'name': 'iPhone old', 'isAvailable': True, 'udid': 'old', 'state': 'Shutdown'}],
             'iOS-26': [
-                {'name': 'iPad', 'isAvailable': True, 'udid': 'ipad'},
-                {'name': 'iPhone unavailable', 'isAvailable': False, 'udid': 'off'},
-                {'name': 'iPhone selected', 'isAvailable': True, 'udid': 'selected'}]}
+                {'name': 'iPad', 'isAvailable': True, 'udid': 'ipad', 'state': 'Shutdown'},
+                {'name': 'iPhone unavailable', 'isAvailable': False, 'udid': 'off', 'state': 'Shutdown'},
+                {'name': 'iPhone selected', 'isAvailable': True, 'udid': 'selected', 'state': state}]}
         print(json.dumps({'devices': devices}))
     elif args[1] == 'bootstatus':
+        if mode == 'boot_race' and '-b' in args:
+            # simctl: SimError 405 "Unable to boot device in current state: Booted".
+            (root / 'boot_started').touch()
+            sys.exit(149)
         if mode == 'build_failure':
             def stopped(*_):
                 (root / 'boot_stopped').touch()
@@ -434,6 +441,22 @@ class VerifyShellTests(unittest.TestCase):
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertEqual(self.actions, ["build-for-testing"])
         self.assertTrue((self.root / "boot_stopped").exists())
+
+    def test_boot_race_with_early_head_start_waits_instead_of_failing(self):
+        # PR #1183 right after #1181: the head start was still booting the device
+        # when `bootstatus -b` ran, so simctl refused the second boot (exit 149)
+        # and a green build never reached the unit phase.
+        result = self.run_verify("boot_race", suite="unit")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.actions, ["build-for-testing", "test-without-building"])
+        boot_calls = [call for call in self.calls if call[:3] == ["xcrun", "simctl", "bootstatus"]]
+        self.assertEqual(
+            boot_calls,
+            [
+                ["xcrun", "simctl", "bootstatus", "selected", "-b"],
+                ["xcrun", "simctl", "bootstatus", "selected"],
+            ],
+        )
 
     def test_boot_failure_never_tests(self):
         result = self.run_verify("boot_failure")

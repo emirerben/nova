@@ -483,7 +483,11 @@ background; its log is `test-results/ios/early-boot.log`). On a fresh runner the
 first `simctl` call took ~60s and the boot ~65s. Started later, both competed
 with xcodebuild's startup and package resolution on the 3-vCPU runner. The build
 phase still selects the same device and `bootstatus -b` waits for it, so a failed
-head start only costs the old overlap.
+head start only costs the old overlap. If the head start is still booting when
+`bootstatus -b` runs, simctl refuses the second boot (SimError 405, exit 149);
+`boot_simulator` then falls back to a plain `bootstatus` that only waits for the
+boot already under way (ported from PR #1183 into #1185, guard
+`test_boot_race_with_early_head_start_waits_instead_of_failing`).
 
 ### Flaky UI tests
 
