@@ -723,15 +723,8 @@
                 "anyOf": [
                   {
                     "enum": [
-                      "montage",
-                      "talking_head",
                       "day_vlog",
-                      "single_hero",
-                      "subtitled",
-                      "narrated",
-                      "narrated_planned",
-                      "narrated_ready",
-                      "slides"
+                      "single_hero"
                     ],
                     "type": "string"
                   },
@@ -832,6 +825,19 @@
                 "default": null,
                 "description": "Confirmed intro font registry key.",
                 "title": "Font Family"
+              },
+              "hero_media_id": {
+                "anyOf": [
+                  {
+                    "maxLength": 100,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Hero Media Id"
               },
               "image_layout": {
                 "anyOf": [

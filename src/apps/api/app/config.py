@@ -1160,6 +1160,10 @@ class Settings(BaseSettings):
     # here so that lane can read it without a second config PR. Ships
     # default ON per that lane's rollout plan.
     creator_montage_shapes_enabled: bool = True
+    # KRI-118 item 5: Main Creator session budgets, moved off hardcoded
+    # literals in routes/creator_agent.py (`CreatorAgentSession` creation).
+    creator_question_budget: int = 2
+    creator_max_render_attempts: int = 2
 
     @model_validator(mode="after")
     def reject_guided_edit_before_strict_renderer(self) -> "Settings":

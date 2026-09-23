@@ -316,6 +316,36 @@ def test_schema_error_once_then_success(
     assert "valid json matching the schema" in mock_client.invocations[1]["prompt"].lower()
 
 
+def test_schema_retry_limit_grants_extra_attempt_and_prompt_carries_real_error(
+    mock_client: MockModelClient,
+) -> None:
+    """KRI-118 item 4: `schema_retry_limit` (default 1) is an opt-in AgentSpec
+    field an agent can raise so a wide-schema output gets more than one
+    clarification retry, and the retry prompt names the real parse error
+    instead of only the generic reminder."""
+    import dataclasses  # noqa: PLC0415
+
+    class WiderRetryAgent(SampleAgent):
+        spec = dataclasses.replace(SampleAgent.spec, schema_retry_limit=2, max_attempts=3)
+
+    agent = WiderRetryAgent(mock_client)
+    mock_client.queue(
+        "gemini-2.5-flash",
+        {"answer": "ok", "score": 999},  # 1st: out of range
+        {"answer": "ok", "score": -5},  # 2nd: still out of range (2nd retry)
+        {"answer": "ok", "score": 50},  # 3rd: valid -- only reachable with limit=2
+    )
+    out = agent.run(SampleInput(topic="x"))
+    assert out.score == 50
+    assert len(mock_client.invocations) == 3
+    # Every retry prompt carries the real schema error, not only the generic
+    # "return ONLY valid JSON" reminder.
+    for prompt in (mock_client.invocations[1]["prompt"], mock_client.invocations[2]["prompt"]):
+        assert "valid json matching the schema" in prompt.lower()
+        assert "fix this schema error" in prompt.lower()
+        assert "score" in prompt.lower()
+
+
 def test_schema_error_twice_terminal(
     sample_agent: SampleAgent, mock_client: MockModelClient
 ) -> None:
