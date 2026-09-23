@@ -2353,8 +2353,10 @@ Decisions:
 
 - Same pattern as `draft_edit_proposal`: `bind=True` and `self.retry(countdown=15,
   max_retries=4)`, but the retry fires only when the failure's underlying cause is classified
-  transient, whichever wrapper it arrives in. `_is_transient_analysis_failure` walks the cause
-  chain and reuses the existing classifiers: `_is_genai_transient` (5xx / 429), the agent
+  transient, whichever wrapper it arrives in. `_is_transient_analysis_failure` walks the explicit
+  `__cause__` chain (never implicit `__context__`, so a bug raised while a 503 is being handled,
+  such as a failing `release_paid_call`, is not laundered into a retry) and reuses the existing
+  classifiers: `_is_genai_transient` (5xx / 429), the agent
   runtime's `TransientError`, and transport errors (dropped connection, read timeout). A
   quota-shaped 429 anywhere in the chain is never transient. `_analyze_image`/`_analyze_video`
   wrap every provider-region failure as `AnalysisTemporarilyUnavailableError`, including
