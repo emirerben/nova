@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.153.0] - 2026-09-23
+
+### Changed
+- fix(plan): don't tell the specialist there's no video when duration is just unknown (#1176) <!-- release-pr: 1176 -->
+
 ## [0.76.152.0] - 2026-09-23
 
 ### Changed
