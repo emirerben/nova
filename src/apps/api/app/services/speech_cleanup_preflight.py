@@ -112,7 +112,26 @@ def preflight_enabled_for_source(
     *,
     mode: str,
     rollout_percent: int,
+    storage_path: str | None = None,
 ) -> bool:
+    """Whether media writers should schedule/offer a speech-cleanup decision.
+
+    ``storage_path``, when given, gates out phone-rendered projects (KRI-118
+    L1 item 1): a phone project uploads only a small analysis proxy for the
+    server-side agents to look at -- the original bytes never leave the
+    device, so speech cleanup (which needs the real audio) can never run
+    there. Returning False here means no `SpeechCleanupAnalysis` row is ever
+    scheduled for such a source (`schedule_item_preflight_async`/`_sync`
+    return `None`), so the clean/keep_original choice is never offered in the
+    first place -- `content_plan_build._speech_cleanup_dispatch_snapshot`
+    additionally refuses `choice == "clean"` explicitly, in case a stale
+    client still tries to submit one.
+    """
+    if storage_path is not None:
+        from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+
+        if is_analysis_proxy_path(storage_path):
+            return False
     if mode == "off" or rollout_percent <= 0:
         return False
     if mode not in {"shadow", "enforce"}:
@@ -510,6 +529,7 @@ async def refresh_policy_stale_analysis_async(
         source.source_policy_fingerprint,
         mode=settings.speech_cleanup_preflight_mode,
         rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+        storage_path=source.storage_path,
     ):
         # One owner for supersede + consent reset + queueing, so a policy
         # refresh cannot drift from the media-mutation path it mirrors.
@@ -547,6 +567,7 @@ async def schedule_item_preflight_async(
         resolution.source.source_policy_fingerprint,
         mode=settings.speech_cleanup_preflight_mode,
         rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+        storage_path=resolution.source.storage_path,
     ):
         return None
     intent = await ensure_current_analysis_async(db, item, resolution)
@@ -572,6 +593,7 @@ def schedule_item_preflight_sync(
         resolution.source.source_policy_fingerprint,
         mode=settings.speech_cleanup_preflight_mode,
         rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+        storage_path=resolution.source.storage_path,
     ):
         return None
     intent = ensure_current_analysis_sync(db, item, resolution)

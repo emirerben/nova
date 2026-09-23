@@ -4187,6 +4187,34 @@ def _run_phone_montage_job(
                     f"phone montage compiler cannot render archetype={archetype!r}"
                 )
 
+            # KRI-118 L1 item 2: for the "voiceover" archetype under the
+            # content-plan primary variant policy, `_specs_for_archetype`
+            # picks `voiceover_music` (matched track as a low bed under the
+            # voice) as the FIRST (only-rendered) spec whenever a track
+            # matched. That variant needs the `musicBed` phone capability --
+            # compiling it anyway would only be caught, after the full
+            # ingest/agents/matcher prework above already ran, by
+            # `validate_phone_pilot_recipe`'s capability check further down.
+            # Decide it here instead: fail closed by dropping the matched
+            # track before it ever reaches `_specs_for_archetype`, so this
+            # phone job renders the same `voiceover_only` variant the
+            # verified-capability case would fall back to when no track
+            # matches at all, rather than failing outright.
+            if (
+                archetype == "voiceover"
+                and best_track is not None
+                and "musicBed" not in settings.phone_render_verified_features
+            ):
+                log.info(
+                    "phone_montage.music_bed_unverified_fallback",
+                    job_id=job_id,
+                    archetype=archetype,
+                )
+                # TODO(KRI-118 L2): surface via notices -- tell the creator a
+                # matched track was skipped because this iPhone hasn't
+                # verified the musicBed capability yet.
+                best_track = None
+
             specs = _specs_for_archetype(
                 archetype,
                 best_track,

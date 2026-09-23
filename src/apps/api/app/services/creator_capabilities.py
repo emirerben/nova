@@ -90,7 +90,6 @@ _FEATURE_SETTINGS = {
 _PHONE_UNSUPPORTED_CAPABILITIES = (
     "sound_effects",
     "media_overlays",
-    "visual_blocks",
     "motion_scenes",
     "wide_looks",
 )
@@ -432,6 +431,24 @@ def resolve_creator_manifest(
             capabilities[capability_name] = _unavailable(
                 "unsupported_on_phone", f"{capability_name} cannot render on the iPhone yet"
             )
+        # `visual_blocks` (KRI-118 L1 item 5): unlike the capabilities above,
+        # this has real native parity once BOTH the editor-media rollout flag
+        # and the device's verified feature set agree -- mirrors
+        # `phone_rollout.validate_phone_pilot_recipe`'s exact compile-time
+        # rule (`(phone_editor_media_enabled) and "visualBlocks" in
+        # phone_render_verified_features`) so the manifest never advertises a
+        # plan the compiler would then reject. The generic
+        # `visual_blocks_enabled` gate (already applied above by the
+        # `_FEATURE_SETTINGS` loop) still has to hold too.
+        if not (
+            phone.available
+            and capabilities["visual_blocks"].available
+            and getattr(settings, "phone_editor_media_enabled", False)
+            and "visualBlocks" in settings.phone_render_verified_features
+        ):
+            capabilities["visual_blocks"] = _unavailable(
+                "unsupported_on_phone", "visual_blocks cannot render on the iPhone yet"
+            )
         if not phone.available:
             for capability_name in (
                 CAPABILITY_DRAFT_GUIDED_PROPOSAL,
@@ -527,25 +544,47 @@ def resolve_creator_manifest(
                 elif candidate_format in NARRATED_EDIT_FORMATS:
                     if has_voiceover:
                         narrated_ok = candidate_format in supported_now
+                        phone_format_capability = (
+                            _available()
+                            if narrated_ok
+                            else _unavailable(
+                                "phone_format_unavailable",
+                                f"{candidate_format} does not render on this iPhone yet",
+                            )
+                        )
+                    elif clip_count >= 2:
+                        # KRI-118 L1 item 3: self-narration (no recorded
+                        # voiceover) across 2+ clips would need
+                        # `talking_head`, which has no phone compiler at all
+                        # -- only the single-clip shape can ever resolve to
+                        # the phone-supported `subtitled` archetype
+                        # (`_resolve_archetype`, generative_build.py). Refuse
+                        # explicitly at planning time, before a Job is ever
+                        # minted, with a distinct reason/copy rather than the
+                        # generic `phone_format_unavailable` below.
+                        phone_format_capability = _unavailable(
+                            "self_narration_multi_clip",
+                            "Narrating across several clips isn't on iPhone yet. "
+                            "Record a voiceover, or keep one clip for talking-to-camera.",
+                        )
                     else:
                         # Self-narration: only the single-clip shape can
                         # ever resolve to the phone-supported `subtitled`
                         # archetype (`_resolve_archetype`,
-                        # generative_build.py) -- 2+ clips would need
-                        # `talking_head`, which has no phone compiler.
+                        # generative_build.py).
                         narrated_ok = (
                             settings.narrated_self_narration_enabled
                             and "subtitled" in supported_now
                             and clip_count == 1
                         )
-                    phone_format_capability = (
-                        _available()
-                        if narrated_ok
-                        else _unavailable(
-                            "phone_format_unavailable",
-                            f"{candidate_format} does not render on this iPhone yet",
+                        phone_format_capability = (
+                            _available()
+                            if narrated_ok
+                            else _unavailable(
+                                "phone_format_unavailable",
+                                f"{candidate_format} does not render on this iPhone yet",
+                            )
                         )
-                    )
                 else:
                     phone_format_capability = _unavailable(
                         "phone_format_unavailable",

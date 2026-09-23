@@ -544,6 +544,149 @@ def test_dispatch_snapshots_only_explicit_speech_cleanup_contracts(
     assert mock_build.call_args.kwargs["creator_request"] == "x" * 2000
 
 
+# --- KRI-118 L1 item 1: clean speech must never be accepted on phone -------
+
+
+def test_speech_cleanup_dispatch_snapshot_refuses_clean_on_phone_sourced_item() -> None:
+    """`choice == "clean"` against an item whose ACTIVE narration source is an
+    analysis proxy is refused with a typed reason, before any DB row is even
+    read -- the original audio bytes never reach the server on a phone
+    project, so speech cleanup can never actually run there. This gates on
+    the resolved source, not the item's raw clip paths -- a phone item's
+    recorded voiceover (the active source when `audio_mode == "voiceover"`)
+    is a normal, fully uploaded file even though its video clips are
+    proxies (see `test_..._recorded_voiceover_source_is_unaffected` below)."""
+    from app.tasks.content_plan_build import DispatchResult, _speech_cleanup_dispatch_snapshot
+
+    item = SimpleNamespace(id=uuid.uuid4(), clip_gcs_paths=["irrelevant"])
+    with patch(
+        "app.services.plan_item_media.resolve_item_narration",
+        return_value=SimpleNamespace(
+            source=SimpleNamespace(
+                storage_path="users/u/plan/i/analysis-proxy-source.mp4",
+                source_policy_fingerprint="fp",
+            )
+        ),
+    ):
+        result = _speech_cleanup_dispatch_snapshot(
+            MagicMock(), item, analysis_id=str(uuid.uuid4()), choice="clean"
+        )
+
+    assert isinstance(result, DispatchResult)
+    assert result.outcome == "speech_cleanup_unavailable_on_phone"
+
+
+def test_speech_cleanup_dispatch_snapshot_recorded_voiceover_source_is_unaffected() -> None:
+    """A recorded voiceover is the active source for a voiceover item even on
+    a phone project -- it is a normal fully uploaded file, never an analysis
+    proxy, so `choice == "clean"` must NOT be phone-gated for it."""
+    from app.tasks.content_plan_build import DispatchResult, _speech_cleanup_dispatch_snapshot
+
+    item = SimpleNamespace(id=uuid.uuid4(), clip_gcs_paths=["users/u/plan/i/proxy.mp4"])
+    session = MagicMock()
+    session.get.return_value = None
+    with patch(
+        "app.services.plan_item_media.resolve_item_narration",
+        return_value=SimpleNamespace(
+            source=SimpleNamespace(
+                storage_path="users/u/plan/i/voice.m4a",
+                source_policy_fingerprint="fp",
+            )
+        ),
+    ):
+        result = _speech_cleanup_dispatch_snapshot(
+            session, item, analysis_id=str(uuid.uuid4()), choice="clean"
+        )
+
+    # No matching analysis row (`session.get` returns None) -> the generic
+    # conflict, never the phone-specific reason this test guards against.
+    assert isinstance(result, DispatchResult)
+    assert result.outcome == "speech_cleanup_analysis_conflict"
+
+
+def test_speech_cleanup_dispatch_snapshot_keep_original_is_not_phone_gated() -> None:
+    """The phone gate is specific to `choice == "clean"` -- `keep_original`
+    on a phone-sourced item falls through to the normal (unaffected) path."""
+    from app.tasks.content_plan_build import DispatchResult, _speech_cleanup_dispatch_snapshot
+
+    item = SimpleNamespace(id=uuid.uuid4(), clip_gcs_paths=["users/u/plan/i/proxy.mp4"])
+    session = MagicMock()
+    session.get.return_value = None
+    with patch(
+        "app.services.plan_item_media.resolve_item_narration",
+        return_value=SimpleNamespace(
+            source=SimpleNamespace(
+                storage_path="users/u/plan/i/analysis-proxy-source.mp4",
+                source_policy_fingerprint="fp",
+            )
+        ),
+    ):
+        result = _speech_cleanup_dispatch_snapshot(
+            session, item, analysis_id=str(uuid.uuid4()), choice="keep_original"
+        )
+
+    # No matching analysis row (`session.get` returns None) -> the generic
+    # conflict, never the phone-specific reason this test guards against.
+    assert isinstance(result, DispatchResult)
+    assert result.outcome == "speech_cleanup_analysis_conflict"
+
+
+def test_dispatch_item_render_refuses_clean_choice_before_minting_a_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: a Generate request carrying `speech_cleanup_choice="clean"`
+    for a phone-sourced item is refused by `_dispatch_item_render` itself,
+    before `build_generative_job`/`enqueue_orchestrator_sync` ever run.
+
+    Uses `subtitled` (talking-to-camera): its active narration source IS the
+    clip's own embedded audio, so an analysis-proxy clip path genuinely makes
+    the resolved source an analysis proxy too -- unlike a plain montage item
+    (which has no narration source at all) or a voiceover item (whose active
+    source is the separately uploaded, non-proxy voiceover file)."""
+    from app.config import settings
+
+    item = _cleanup_dispatch_item()
+    item.clip_gcs_paths = ["users/u/plan/i/analysis-proxy-source.mp4"]
+    item.clip_assignments = [
+        {
+            "media_id": "registered-spine",
+            "gcs_path": item.clip_gcs_paths[0],
+            "storage_generation": "generation-17",
+            "duration_s": 12.0,
+            "has_audio": True,
+        }
+    ]
+    plan = SimpleNamespace(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0
+    )
+    session = MagicMock()
+
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch("app.services.generative_jobs.build_generative_job") as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync") as mock_enqueue,
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+            speech_cleanup_analysis_id=str(uuid.uuid4()),
+            speech_cleanup_choice="clean",
+        )
+
+    assert result.outcome == "speech_cleanup_unavailable_on_phone"
+    mock_build.assert_not_called()
+    mock_enqueue.assert_not_called()
+
+
 def _cleanup_dispatch_item() -> SimpleNamespace:
     item_id = uuid.uuid4()
     clip_path = "users/u/plan/i/talking.mp4"
@@ -644,7 +787,10 @@ def _run_cleanup_dispatch(
     monkeypatch.setattr(
         "app.services.plan_item_media.resolve_item_narration",
         lambda *_args, **_kwargs: SimpleNamespace(
-            source=SimpleNamespace(source_policy_fingerprint="active-source-fingerprint")
+            source=SimpleNamespace(
+                storage_path=item.clip_gcs_paths[0],
+                source_policy_fingerprint="active-source-fingerprint",
+            )
         ),
     )
     enqueue = MagicMock()
@@ -1255,7 +1401,10 @@ def test_cleanup_decision_and_job_commit_before_broker_publish(
     monkeypatch.setattr(
         "app.services.plan_item_media.resolve_item_narration",
         lambda *_args, **_kwargs: SimpleNamespace(
-            source=SimpleNamespace(source_policy_fingerprint="active-source-fingerprint")
+            source=SimpleNamespace(
+                storage_path=item.clip_gcs_paths[0],
+                source_policy_fingerprint="active-source-fingerprint",
+            )
         ),
     )
     with (
@@ -1306,7 +1455,10 @@ def test_invalid_preflight_snapshot_mints_no_job(
     monkeypatch.setattr(
         "app.services.plan_item_media.resolve_item_narration",
         lambda *_args, **_kwargs: SimpleNamespace(
-            source=SimpleNamespace(source_policy_fingerprint="active-source-fingerprint")
+            source=SimpleNamespace(
+                storage_path=item.clip_gcs_paths[0],
+                source_policy_fingerprint="active-source-fingerprint",
+            )
         ),
     )
     with (
@@ -1355,7 +1507,10 @@ def test_audio_only_preflight_cannot_persist_choice_or_mint_job(
         patch(
             "app.services.plan_item_media.resolve_item_narration",
             return_value=SimpleNamespace(
-                source=SimpleNamespace(source_policy_fingerprint=row.source_policy_fingerprint)
+                source=SimpleNamespace(
+                    storage_path=item.voiceover_gcs_path,
+                    source_policy_fingerprint=row.source_policy_fingerprint,
+                )
             ),
         ),
     ):
@@ -2934,18 +3089,19 @@ def test_audio_mode_controls_active_soundtrack(
 # (`phone_rendering_for`) is checked first regardless of format.
 
 
-def _phone_dispatch_item(edit_format: str = "montage") -> SimpleNamespace:
+def _phone_dispatch_item(edit_format: str = "montage", *, clip_count: int = 1) -> SimpleNamespace:
     item = _cleanup_dispatch_item()
-    proxy_path = "users/u/plan/i/analysis-proxy-source.mp4"
-    item.clip_gcs_paths = [proxy_path]
+    proxy_paths = [f"users/u/plan/i/analysis-proxy-source-{n}.mp4" for n in range(clip_count)]
+    item.clip_gcs_paths = proxy_paths
     item.clip_assignments = [
         {
-            "media_id": "registered-spine",
-            "gcs_path": proxy_path,
+            "media_id": f"registered-spine-{n}",
+            "gcs_path": path,
             "storage_generation": "generation-17",
             "duration_s": 12.0,
             "has_audio": True,
         }
+        for n, path in enumerate(proxy_paths)
     ]
     item.edit_format = edit_format
     item.edit_proposal = {"generation_attempt_id": "gid-1"}
@@ -2962,10 +3118,11 @@ def _run_phone_dispatch(
     voiceover: bool = False,
     phone_narration_rendering_enabled: bool = False,
     phone_render_verified_features: list | None = None,
+    clip_count: int = 1,
 ):
     from app.config import settings
 
-    item = _phone_dispatch_item(edit_format)
+    item = _phone_dispatch_item(edit_format, clip_count=clip_count)
     if voiceover:
         item.audio_mode = "voiceover"
         item.voiceover_gcs_path = "users/u/plan/i/voice.m4a"
@@ -3068,6 +3225,47 @@ def test_phone_gate_unsupported_format_rejected(monkeypatch: pytest.MonkeyPatch)
         == "analysis proxies cannot render 'talking_head' on iPhone yet"
     )
     assert warning_call.kwargs["phone_gate"] == "unsupported_format"
+
+
+def test_phone_gate_self_narration_multi_clip_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """KRI-118 L1 item 3: self-narration (no recorded voiceover) across 2+
+    clips gets its own typed reason/message, distinct from the generic
+    `unsupported_format` -- `talking_head` (what 2+ self-narrated clips would
+    resolve to) has no phone compiler at all."""
+    with patch("app.tasks.content_plan_build.log") as mock_log:
+        result, _job, mock_build, bind_mock = _run_phone_dispatch(
+            monkeypatch,
+            edit_format="narrated",
+            approved=False,
+            clip_count=2,
+        )
+
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
+    assert result.outcome == "invalid_clips"
+    assert result.reason == "self_narration_multi_clip"
+    warning_call = mock_log.warning.call_args
+    assert warning_call.kwargs["phone_gate"] == "self_narration_multi_clip"
+
+
+def test_phone_gate_self_narration_single_clip_still_dispatches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The single-clip self-narration shape (which can resolve to the
+    phone-supported `subtitled` archetype) is unaffected by the new
+    multi-clip refusal above."""
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="narrated",
+        approved=False,
+        clip_count=1,
+        phone_narration_rendering_enabled=True,
+        phone_render_verified_features=["narrationAudio"],
+    )
+
+    bind_mock.assert_called_once()
+    assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
+    assert result.outcome == "dispatched"
 
 
 def test_phone_gate_allowlist_extension_binds_without_approval(
@@ -3428,7 +3626,10 @@ def _dispatch_guided_voiceover_cleanup(
         patch(
             "app.services.plan_item_media.resolve_item_narration",
             return_value=SimpleNamespace(
-                source=SimpleNamespace(source_policy_fingerprint=_GUIDED_SOURCE_FINGERPRINT)
+                source=SimpleNamespace(
+                    storage_path=item.voiceover_gcs_path,
+                    source_policy_fingerprint=_GUIDED_SOURCE_FINGERPRINT,
+                )
             ),
         ),
         patch("app.services.phone_sources.bind_phone_sources", bind_mock),
