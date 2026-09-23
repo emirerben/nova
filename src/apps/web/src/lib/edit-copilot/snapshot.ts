@@ -18,6 +18,7 @@ import {
 } from "@/lib/overlay-layout";
 import { sequentialSlotLayout } from "@/app/plan/items/[id]/_editor/editor-bar-drag";
 import type { CopilotOpFamily } from "./ops";
+import { orderSfxCatalogForRequest } from "./sfx-catalog";
 import {
   EDITOR_MAX_TIMELINE_SLOTS,
   MOTION_FPS,
@@ -493,6 +494,9 @@ export interface CopilotRenderStepSummaryItem {
 export interface CopilotSnapshotContext {
   renderStepSummary?: CopilotRenderStepSummaryItem[];
   recentEditHistory?: string[];
+  /** This turn's message, then earlier user messages (newest first). Ranks
+   * the SFX catalog so a sound the creator names is addressable by add_sfx. */
+  requestTexts?: string[];
 }
 
 /** Whether an undoable/repeatable local-op turn currently exists (PR7:
@@ -736,7 +740,10 @@ export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
    * paginated visual-assets list and must remain complete for "all" edits. */
   sourcePool?: Array<Record<string, unknown>>;
   sfxPlacements?: SoundEffectPlacement[];
+  /** Full GET /sound-effects list, in its created_at-desc order. */
   sfxCatalog?: SoundEffectSummary[];
+  /** CopilotSnapshotContext.requestTexts — orders sfxCatalog (see sfx-catalog.ts). */
+  sfxRequestTexts?: readonly string[];
   /** Server-derived spoken-word/pause map. Pass null (not the map) while the
    * local clip timeline is dirty — the persisted times no longer match. */
   speechMap?: VariantSpeechMap | null;
@@ -1423,8 +1430,27 @@ export function buildCopilotSnapshot(
     (inspectAll || allowed.has("sfx")) &&
     (options.sfxPlacements || options.sfxCatalog || options.sfxSuggestions?.length)
   ) {
+    const sfxPlacements = take((options.sfxPlacements ?? []), 15);
+    const sfxSuggestions = (options.sfxSuggestions ?? [])
+      .slice(0, inspectAll ? undefined : COPILOT_SFX_SUGGESTIONS_MAX)
+      .map((s) => ({
+        effect_id: s.effect_id,
+        at_s: roundCopilotNumber(s.at_s),
+        gain: s.gain == null ? null : roundCopilotNumber(s.gain),
+        reason: inspectAll ? s.reason ?? "" : truncate(s.reason ?? "", 80) ?? "",
+      }));
+    // add_sfx only accepts a listed effect_id, so the 20/12-row budget must
+    // hold what the draft references (placed pins, suggestions to realize)
+    // and what this request names — not simply the newest uploads.
+    const sfxCatalog = orderSfxCatalogForRequest(options.sfxCatalog ?? [], {
+      requestTexts: options.sfxRequestTexts,
+      keepEffectIds: [
+        ...sfxPlacements.map((placement) => placement.sound_effect_id),
+        ...sfxSuggestions.map((suggestion) => suggestion.effect_id),
+      ],
+    });
     snapshot.sfx = {
-      placements: take((options.sfxPlacements ?? []), 15).map((placement, index) => ({
+      placements: sfxPlacements.map((placement, index) => ({
         index,
         id: placement.id,
         label: inspectAll ? placement.label ?? null : truncate(placement.label, 60),
@@ -1436,21 +1462,13 @@ export function buildCopilotSnapshot(
         duration_s: placement.duration_s == null ? null : roundCopilotNumber(placement.duration_s),
         effect_group_id: placement.effect_group_id ?? null,
       })),
-      catalog: take(options.sfxCatalog ?? [], 20).map((effect) => ({
+      catalog: take(sfxCatalog, 20).map((effect) => ({
         id: effect.id,
         name: inspectAll ? effect.name : truncate(effect.name, 32) ?? "",
         duration_s: effect.duration_s == null ? null : roundCopilotNumber(effect.duration_s),
         ...(effect.role_tags?.length ? { role_tags: take(effect.role_tags, 6) } : {}),
       })),
     };
-    const sfxSuggestions = (options.sfxSuggestions ?? [])
-      .slice(0, inspectAll ? undefined : COPILOT_SFX_SUGGESTIONS_MAX)
-      .map((s) => ({
-        effect_id: s.effect_id,
-        at_s: roundCopilotNumber(s.at_s),
-        gain: s.gain == null ? null : roundCopilotNumber(s.gain),
-        reason: inspectAll ? s.reason ?? "" : truncate(s.reason ?? "", 80) ?? "",
-      }));
     if (sfxSuggestions.length > 0) {
       snapshot.sfx.suggestions = sfxSuggestions;
     }

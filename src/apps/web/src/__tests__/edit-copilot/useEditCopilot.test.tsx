@@ -983,7 +983,7 @@ describe("useEditCopilot", () => {
     ).toBeNull();
   });
 
-  it("threads renderStepSummary and derived recentEditHistory into buildSnapshot", async () => {
+  it("threads renderStepSummary, derived recentEditHistory and requestTexts into buildSnapshot", async () => {
     mockEditCopilotTurn
       .mockResolvedValueOnce(
         response({
@@ -1004,6 +1004,7 @@ describe("useEditCopilot", () => {
     expect(buildSnapshot).toHaveBeenNthCalledWith(1, {
       renderStepSummary,
       recentEditHistory: [],
+      requestTexts: ["make it bigger"],
     });
 
     await act(async () => {
@@ -1012,9 +1013,11 @@ describe("useEditCopilot", () => {
     // The first turn applied one op ("Size"), so the second turn's context
     // must carry it forward as edit history — this is how the model learns
     // what it already did without a server round-trip.
+    // requestTexts rank the SFX catalog: this turn first, then earlier asks.
     expect(buildSnapshot).toHaveBeenNthCalledWith(2, {
       renderStepSummary,
       recentEditHistory: ["Size (1 edit)"],
+      requestTexts: ["make it bigger again", "make it bigger"],
     });
   });
 
