@@ -14730,6 +14730,9 @@ def _update_variant_entry(
     """
     if cleanup_followup not in {"required", "none", "media_layers", "sfx_layer"}:
         raise ValueError(f"invalid cleanup_followup: {cleanup_followup}")
+    # Initial guided-story callers finalize this same result after publication.
+    # Keep its poster fields enriched even when song metadata needs a local copy.
+    caller_patch = patch
     receipt = patch.get("render_receipt")
     if isinstance(receipt, dict) and receipt.get("source_audio_preserved") is not None:
         patch = {
@@ -14740,7 +14743,7 @@ def _update_variant_entry(
             "source_audio_preserved": receipt.get("source_audio_preserved"),
         }
     enriched_patch, generated_poster_paths = _attach_variant_posters(patch, job_id=job_id)
-    patch.update(
+    caller_patch.update(
         {
             field: enriched_patch[field]
             for field in ("poster_path", "base_poster_path", "pre_overlay_poster_path")

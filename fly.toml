@@ -19,6 +19,9 @@ kill_timeout = 300
   # (2026-08-17) and scripts/fly-deploy-with-retry.sh, which retries that
   # specific signature once.
   REMAP_SIGTERM = "SIGQUIT"
+  # Poster extraction downloads MP4s; route it to the media-capable worker.
+  # Enable POSTER_ONDEMAND_REPAIR_ENABLED only after all workers are upgraded.
+  POSTER_REPAIR_QUEUE = "autoplace-jobs"
   # Deploy the dedicated worker before switching POOL_ASSET_ANALYSIS_QUEUE via
   # a Fly secret. Initial routing deliberately remains the code default: celery.
 

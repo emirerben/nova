@@ -131,9 +131,16 @@ Gallery follows `/me/jobs` cursors until all pages are loaded, using the API's
 card uses the API's saved video title: an owned plan item's editor title takes
 precedence over its creation-thread name, with `Untitled video` when neither is
 available. Legacy API responses without a title use the same neutral fallback.
-Posters and playback retain the API's selected variant identity. Missing or
-failed posters show `Preview unavailable`; loading posters show a progress
-indicator. Bundled sample photography never stands in for a user's video.
+Posters and playback retain the API's selected variant identity. While Gallery
+is visible, missing or failed posters use `POST /me/jobs/posters/refresh` in
+serial batches of 20. Actual image failures are included in `broken_job_ids`.
+Eight attempts per stable poster identity use increasing delays through 60
+seconds, spanning the repair worker's 150-second soft deadline. Rotating signed
+URLs cannot reset that budget. Dismissal cancels recovery; library reloads and
+deletions invalidate stale replies. Recovery updates poster metadata only.
+Active recovery shows a progress indicator; terminal or exhausted recovery
+shows `Preview unavailable`. Reopening Gallery starts a fresh bounded attempt.
+Bundled sample photography never stands in for a user's video.
 A failed refresh preserves the prior library; an initial failure shows recovery
 instead of substituting preview videos, including in Debug builds. For an
 authenticated, count-only device check, launch Debug with

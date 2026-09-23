@@ -176,7 +176,14 @@ The task downloads the full source MP4 into the RAM-backed `/tmp` and runs
 ffmpeg. That is the workload that OOM'd the 1GB `light`/Beat machine on
 2026-08-02, so it must never land there, and it must never land on the default
 `celery` queue where it would head-of-line-block the concurrency=1 render
-worker. Set the queue **before** flipping the flag:
+worker. Production `fly.toml` sets `POSTER_REPAIR_QUEUE=autoplace-jobs`;
+the code default remains `celery` for local development. Verify the effective
+setting and an active `autoplace-jobs` consumer before flipping the flag.
+Deploy the repair implementation to the whole fleet first. A flag-enabled API
+must not send work to an old flag-disabled consumer: that consumer drains the
+task without repair, while the API's ten-minute dedupe marker stays fresh.
+Activate and verify the consuming worker before the API. The manual settings
+below are overrides; confirm they agree with the checked-in queue:
 
 ```bash
 fly secrets set POSTER_REPAIR_QUEUE=autoplace-jobs --app nova-video
@@ -192,6 +199,34 @@ fly machine restart <worker-machine-id>
 `POSTER_REPAIR_QUEUE` defaults to `celery` in code so local `dev-auto.sh` keeps
 working — it consumes no autoplace queue. `worker.py` pins the route in
 `task_routes`, so the queue is a property of the task, not of each dispatcher.
+
+### Native Gallery and guided-story publication (KRI-149)
+
+Native Gallery uses this same endpoint for missing posters and image-load
+failures, in batches of 20 with eight attempts per stable media identity.
+Opening the grid only reads JPEGs; playback remains a separate user action.
+Refresh, broken-object probes, and the worker all follow the newest owned
+creation thread's selected variant, with rank order as fallback. A render or
+selection change invalidates stale probe/extraction results.
+On-demand repair uses a deterministic key shared by concurrent writers. A
+stale repair retains that key while the job exists, even if another cut is now
+selected; deleting it could erase another writer's live or pending poster.
+Job deletion owns namespace cleanup. This can retain a small unused JPEG after
+a concurrent source change, in preference to deleting a usable thumbnail.
+
+The September 2026 guided-story regression generated a poster during variant
+publication but lost its reference during finalization: the source-audio
+receipt adapter copied the result before poster enrichment. Preserve poster
+enrichment on the caller's result as well as the saved variant. Regressions
+exercise publication followed by finalization for both source-audio choices,
+including extraction failure and explicitly null poster values.
+
+Deploying the publication fix does not repair existing null references.
+After activation, canary an affected ready job with a retained source: confirm
+`repairing` becomes `ready`, the saved poster remains paired with the selected
+video, and a fresh signed URL returns a decodable JPEG. Use the guarded bulk
+workflow only for an intentional whole-history sweep. The unrelated phone
+export completion path's missing poster producer is a separate follow-up.
 
 ### Rollback
 

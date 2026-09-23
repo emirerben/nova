@@ -86,7 +86,12 @@ def _one(row: object) -> MagicMock:
     return r
 
 
-def _db(execute_results: list, *, library_title_rows: list | None = None) -> AsyncMock:
+def _db(
+    execute_results: list,
+    *,
+    library_title_rows: list | None = None,
+    poster_thread_rows: list | None = None,
+) -> AsyncMock:
     db = AsyncMock()
     db.add = MagicMock()
     db.commit = AsyncMock()
@@ -98,6 +103,8 @@ def _db(execute_results: list, *, library_title_rows: list | None = None) -> Asy
         sql = str(statement)
         if sql.startswith("SELECT plan_items.id, plan_items.theme, plan_items.current_job_id"):
             return _rows(library_title_rows or [])
+        if sql.startswith("SELECT creation_threads.active_job_id, creation_threads.state \n"):
+            return _rows(poster_thread_rows or [])
         return execute_results.pop(0)
 
     db.execute = AsyncMock(side_effect=execute)
@@ -563,7 +570,7 @@ def test_refresh_posters_batches_owned_jobs_in_request_order_and_signs_only_post
         360,
     )
     download_signer.assert_not_called()
-    assert db.execute.await_count == 1
+    assert db.execute.await_count == 2  # owned thread selections are batched
     statement = db.execute.await_args_list[0].args[0]
     compiled = statement.compile()
     assert user.id in compiled.params.values()
@@ -608,7 +615,7 @@ def test_refresh_posters_uses_ready_jobclip_and_omits_missing_or_foreign_ids(
         ]
     }
     signer.assert_called_once_with(clip.thumbnail_path, 360)
-    assert db.execute.await_count == 2
+    assert db.execute.await_count == 3
 
 
 def test_refresh_posters_signing_failure_stays_repairable(monkeypatch) -> None:
@@ -713,8 +720,52 @@ def test_refresh_posters_enqueues_repair_and_stamps_marker_for_ready_missing_pos
     db.commit.assert_awaited()
     repair_task.apply_async.assert_called_once_with(args=[str(job.id)], queue="celery")
     # The marker write happens under a per-job FOR UPDATE re-select.
-    locked = db.execute.await_args_list[1].args[0]
+    locked = db.execute.await_args_list[2].args[0]
     assert "FOR UPDATE" in str(locked.compile())
+
+
+def test_refresh_posters_repairs_the_thread_selected_variant_not_rank_one(
+    monkeypatch, repair_task
+) -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "rank-one",
+                    "rank": 1,
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/PLACEHOLDER/one.mp4",
+                    "poster_path": "generative-jobs/PLACEHOLDER/one.jpg",
+                },
+                {
+                    "variant_id": "rank-two",
+                    "rank": 2,
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/PLACEHOLDER/two.mp4",
+                },
+            ]
+        },
+    )
+    for variant in job.assembly_plan["variants"]:
+        variant["video_path"] = variant["video_path"].replace("PLACEHOLDER", str(job.id))
+    job.assembly_plan["variants"][0]["poster_path"] = job.assembly_plan["variants"][0][
+        "poster_path"
+    ].replace("PLACEHOLDER", str(job.id))
+    db = _db(
+        [_scalars([job]), _scalar(job)],
+        poster_thread_rows=[(job.id, {"selected_variant_id": "rank-two"})],
+    )
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+
+    response = client.post("/me/jobs/posters/refresh", json={"job_ids": [str(job.id)]})
+
+    assert response.status_code == 200
+    assert response.json()["jobs"][0]["poster_status"] == "repairing"
+    assert job.assembly_plan["_poster_repair"]["video_path"].endswith("/two.mp4")
+    repair_task.apply_async.assert_called_once_with(args=[str(job.id)], queue="celery")
 
 
 def test_refresh_posters_dispatch_uses_configured_repair_queue(monkeypatch, repair_task) -> None:
@@ -764,7 +815,7 @@ def test_refresh_posters_skips_enqueue_when_marker_fresh_or_attempts_exhausted(
     assert [j["poster_status"] for j in response.json()["jobs"]] == ["repairing", "unavailable"]
     repair_task.apply_async.assert_not_called()
     db.commit.assert_not_awaited()
-    assert db.execute.await_count == 1  # no FOR UPDATE re-select at all
+    assert db.execute.await_count == 2  # batch selection, no FOR UPDATE re-select
 
 
 def test_refresh_posters_flag_off_is_byte_identical_no_writes_no_dispatch(monkeypatch) -> None:
@@ -787,7 +838,7 @@ def test_refresh_posters_flag_off_is_byte_identical_no_writes_no_dispatch(monkey
     assert response.status_code == 200
     assert response.json()["jobs"][0]["poster_status"] == "repairing"
     assert "_poster_repair" not in job.assembly_plan
-    assert db.execute.await_count == 1
+    assert db.execute.await_count == 2
     db.commit.assert_not_awaited()
     task.apply_async.assert_not_called()
 
@@ -3060,3 +3111,83 @@ def test_open_in_editor_400_on_bad_job_id() -> None:
     resp = client.post("/me/jobs/not-a-uuid/open-in-editor", json={})
 
     assert resp.status_code == 400
+
+
+@pytest.mark.parametrize("changed", ["selection", "source", "identity"])
+async def test_broken_poster_probe_cannot_mutate_changed_preview(monkeypatch, changed):
+    import app.routes.me as routes
+
+    user = _user()
+    job = _job(user_id=user.id, assembly_plan={"variants": []})
+    poster = f"generative-jobs/{job.id}/shared.jpg"
+    first = {
+        "variant_id": "first",
+        "rank": 1,
+        "render_status": "ready",
+        "render_generation_id": "generation-1",
+        "video_path": f"generative-jobs/{job.id}/first.mp4",
+        "poster_path": poster,
+    }
+    second = {**first, "variant_id": "second", "rank": 2}
+    job.assembly_plan["variants"] = [first, second]
+    current_selection = ["first"]
+    db = AsyncMock()
+
+    async def select_current(statement):
+        sql = str(statement)
+        assert "creation_threads.creator_id" in sql
+        assert "creation_threads.updated_at DESC, creation_threads.id DESC" in sql
+        return _rows([(job.id, {"selected_variant_id": current_selection[0]})])
+
+    db.execute.side_effect = select_current
+    monkeypatch.setattr(routes, "_lock_owned_job", AsyncMock(return_value=job))
+
+    def probe(path, *, timeout_s):
+        if changed == "selection":
+            current_selection[0] = "second"
+        elif changed == "source":
+            first["video_path"] = f"generative-jobs/{job.id}/new.mp4"
+        else:
+            first["render_generation_id"] = "generation-2"
+        return False
+
+    monkeypatch.setattr(routes, "object_exists_once", probe)
+    dispatch, budget = await routes._verify_broken_posters(
+        db, user.id, [job], {}, {job.id: "first"}, {job.id}, 20
+    )
+    assert dispatch == []
+    assert budget == 20
+    assert all(v["poster_path"] == poster for v in job.assembly_plan["variants"])
+    assert "_poster_repair" not in job.assembly_plan
+    db.commit.assert_awaited_once()
+
+
+async def test_poster_enqueue_rechecks_selection_after_job_lock(monkeypatch):
+    import app.routes.me as routes
+
+    user = _user()
+    job = _job(user_id=user.id, assembly_plan={"variants": []})
+    first = {
+        "variant_id": "first",
+        "rank": 1,
+        "render_status": "ready",
+        "video_path": f"generative-jobs/{job.id}/first.mp4",
+    }
+    job.assembly_plan["variants"] = [
+        first,
+        {
+            **first,
+            "variant_id": "second",
+            "rank": 2,
+            "poster_path": f"generative-jobs/{job.id}/second.jpg",
+        },
+    ]
+    db = AsyncMock()
+    db.execute.return_value = _rows([(job.id, {"selected_variant_id": "second"})])
+    monkeypatch.setattr(routes, "_lock_owned_job", AsyncMock(return_value=job))
+    selected = {job.id: "first"}
+    dispatch, budget = await routes._enqueue_poster_repairs(db, user.id, [job], {}, selected, 20)
+    assert dispatch == []
+    assert budget == 20
+    assert selected[job.id] == "second"
+    assert "_poster_repair" not in job.assembly_plan

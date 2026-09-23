@@ -88,6 +88,7 @@ from app.services.job_storage_paths import (
     normalize_job_storage_path,
     owned_job_output_path,
 )
+from app.services.library_variant_selection import preferred_variants_from_rows, selected_variant_id
 from app.services.mobile_auth import MobileAuthError, ProviderClaims, verify_provider_id_token
 from app.services.public_assembly_plan import (
     project_public_assembly_plan,
@@ -1024,14 +1025,14 @@ async def list_my_jobs(
                 # A job could, in principle, be `active_job_id` for more than
                 # one thread row over its lifetime; the most recently updated
                 # thread is the one the user is actually looking at.
-                .order_by(CreationThread.updated_at.asc())
+                .order_by(CreationThread.updated_at.asc(), CreationThread.id.asc())
             )
         ).all()
         thread_titles_by_job: dict[uuid.UUID, str | None] = {}
+        preferred_variant_by_job = preferred_variants_from_rows(
+            (active_job_id, state) for active_job_id, state, _title in thread_rows
+        )
         for active_job_id, state, thread_title in thread_rows:
-            selected = (state or {}).get("selected_variant_id")
-            if isinstance(selected, str) and selected.strip():
-                preferred_variant_by_job[active_job_id] = selected.strip()  # last (newest) wins
             # Assignment is deliberately unconditional: a newer blank title
             # clears an older title instead of reviving stale conversation copy.
             thread_titles_by_job[active_job_id] = thread_title
@@ -1264,11 +1265,30 @@ async def _relocked_ready_clips(db: AsyncSession, job_id: uuid.UUID) -> list[Job
     )
 
 
+async def _current_poster_selection(
+    db: AsyncSession, user_id: uuid.UUID, job_id: uuid.UUID
+) -> str | None:
+    """Re-read selection after taking the job lock, before poster maintenance."""
+    rows = (
+        await db.execute(
+            select(CreationThread.active_job_id, CreationThread.state)
+            .where(
+                CreationThread.creator_id == user_id,
+                CreationThread.active_job_id == job_id,
+            )
+            .order_by(CreationThread.updated_at.desc(), CreationThread.id.desc())
+            .limit(1)
+        )
+    ).all()
+    return preferred_variants_from_rows(rows).get(job_id)
+
+
 async def _verify_broken_posters(
     db: AsyncSession,
     user_id: uuid.UUID,
     jobs: list[Job],
     clips_by_job: dict[uuid.UUID, list[JobClip]],
+    preferred_variant_by_job: dict[uuid.UUID, str],
     broken_ids: set[uuid.UUID],
     budget: int,
 ) -> tuple[list[uuid.UUID], int]:
@@ -1284,7 +1304,11 @@ async def _verify_broken_posters(
             break
         if job.id not in broken_ids or _derived_status(job) != "ready":
             continue
-        preview = _preview(job, clips_by_job.get(job.id))
+        preview = _preview(
+            job,
+            clips_by_job.get(job.id),
+            preferred_variant_id=preferred_variant_by_job.get(job.id),
+        )
         if preview is None or not preview.poster_path or not preview.video_path:
             continue
         if _preview_is_generation_locked(job, preview):
@@ -1346,8 +1370,18 @@ async def _verify_broken_posters(
             if _preview(locked) is not None or _preview_media_suppressed(locked)
             else await _relocked_ready_clips(db, job_id)
         )
-        fresh = _preview(locked, locked_clips)
-        if fresh is None or fresh.poster_path != preview.poster_path:
+        preferred = await _current_poster_selection(db, user_id, job_id)
+        if preferred is None:
+            preferred_variant_by_job.pop(job_id, None)
+        else:
+            preferred_variant_by_job[job_id] = preferred
+        fresh = _preview(locked, locked_clips, preferred_variant_id=preferred)
+        if fresh is None or (
+            fresh.poster_path != preview.poster_path
+            or fresh.video_path != preview.video_path
+            or fresh.poster_identity != preview.poster_identity
+            or fresh.variant_id != preview.variant_id
+        ):
             continue
         # The initial render can claim this variant after the bulk read and
         # storage probes, so ownership must be re-checked under the row lock.
@@ -1386,6 +1420,7 @@ async def _enqueue_poster_repairs(
     user_id: uuid.UUID,
     jobs: list[Job],
     clips_by_job: dict[uuid.UUID, list[JobClip]],
+    preferred_variant_by_job: dict[uuid.UUID, str],
     budget: int,
 ) -> tuple[list[uuid.UUID], int]:
     """Stamp the dedupe marker for every posterless ready job, then enqueue."""
@@ -1398,7 +1433,11 @@ async def _enqueue_poster_repairs(
             break
         if _derived_status(job) != "ready":
             continue
-        preview = _preview(job, clips_by_job.get(job.id))
+        preview = _preview(
+            job,
+            clips_by_job.get(job.id),
+            preferred_variant_id=preferred_variant_by_job.get(job.id),
+        )
         if preview is None or not preview.video_path or preview.poster_path:
             continue
         if _preview_is_generation_locked(job, preview):
@@ -1411,7 +1450,12 @@ async def _enqueue_poster_repairs(
         locked_any = True
         # Re-derive everything from the locked row: a render may have finished
         # (or another request may have stamped the marker) since the bulk read.
-        preview = _preview(locked, clips_by_job.get(job.id))
+        preferred = await _current_poster_selection(db, user_id, job.id)
+        if preferred is None:
+            preferred_variant_by_job.pop(job.id, None)
+        else:
+            preferred_variant_by_job[job.id] = preferred
+        preview = _preview(locked, clips_by_job.get(job.id), preferred_variant_id=preferred)
         if preview is None or not preview.video_path or preview.poster_path:
             continue
         # Exact race guard for a generation claimed between the unlocked bulk
@@ -1475,12 +1519,26 @@ async def refresh_library_posters(
     )
     jobs_by_id = {job.id: job for job in rows}
     ordered_jobs = [jobs_by_id[job_id] for job_id in job_ids if job_id in jobs_by_id]
+    preferred_variant_by_job: dict[uuid.UUID, str] = {}
+    if ordered_jobs:
+        thread_rows = (
+            await db.execute(
+                select(CreationThread.active_job_id, CreationThread.state)
+                .where(
+                    CreationThread.creator_id == user.id,
+                    CreationThread.active_job_id.in_([job.id for job in ordered_jobs]),
+                )
+                .order_by(CreationThread.updated_at.asc(), CreationThread.id.asc())
+            )
+        ).all()
+        preferred_variant_by_job = preferred_variants_from_rows(thread_rows)
 
     clips_by_job: dict[uuid.UUID, list[JobClip]] = {}
     jobs_needing_clips = [
         job.id
         for job in ordered_jobs
-        if _preview(job) is None and not _preview_media_suppressed(job)
+        if _preview(job, preferred_variant_id=preferred_variant_by_job.get(job.id)) is None
+        and not _preview_media_suppressed(job)
     ]
     if jobs_needing_clips:
         ranked_clips = (
@@ -1527,7 +1585,11 @@ async def refresh_library_posters(
     def sign_ordered_posters() -> list[LibraryPosterRefreshJob]:
         refreshed: list[LibraryPosterRefreshJob] = []
         for job in ordered_jobs:
-            preview = _preview(job, clips_by_job.get(job.id))
+            preview = _preview(
+                job,
+                clips_by_job.get(job.id),
+                preferred_variant_id=preferred_variant_by_job.get(job.id),
+            )
             poster_url: str | None = None
             if preview is not None and preview.poster_path:
                 try:
@@ -1563,7 +1625,13 @@ async def refresh_library_posters(
             # Runs BEFORE signing so a cleared poster is reported as
             # `repairing` in this same response instead of one round-trip later.
             verified, budget = await _verify_broken_posters(
-                db, user.id, ordered_jobs, clips_by_job, broken_ids, budget
+                db,
+                user.id,
+                ordered_jobs,
+                clips_by_job,
+                preferred_variant_by_job,
+                broken_ids,
+                budget,
             )
             dispatch.extend(verified)
 
@@ -1571,7 +1639,14 @@ async def refresh_library_posters(
 
     if repair_enabled:
         # Budget is not read again: this is the last pass that spends it.
-        enqueued, _ = await _enqueue_poster_repairs(db, user.id, ordered_jobs, clips_by_job, budget)
+        enqueued, _ = await _enqueue_poster_repairs(
+            db,
+            user.id,
+            ordered_jobs,
+            clips_by_job,
+            preferred_variant_by_job,
+            budget,
+        )
         dispatch.extend(enqueued)
         if dispatch:
             await run_in_threadpool(_dispatch_poster_repairs, dispatch)
@@ -1623,14 +1698,11 @@ async def refresh_library_playback_url(
             )
             # A job could, in principle, be `active_job_id` for more than one
             # thread row over its lifetime; take the most recently updated.
-            .order_by(CreationThread.updated_at.desc())
+            .order_by(CreationThread.updated_at.desc(), CreationThread.id.desc())
             .limit(1)
         )
     ).scalar_one_or_none()
-    if owning_thread_state:
-        selected = owning_thread_state.get("selected_variant_id")
-        if isinstance(selected, str) and selected.strip():
-            preferred_variant_id = selected.strip()
+    preferred_variant_id = selected_variant_id(owning_thread_state)
 
     preview = _preview(job, preferred_variant_id=preferred_variant_id)
     if preview is None and not _preview_media_suppressed(job):

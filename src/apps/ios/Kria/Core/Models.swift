@@ -15,6 +15,8 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
     var status: ProjectStatus
     var updatedAt: Date
     var posterURL: URL?
+    var posterIdentity: String?
+    var posterStatus: String?
     /// Fresh-signed playback URL for the selected render variant, when the
     /// creation-thread response includes full media projection.
     var outputURL: URL?
@@ -46,6 +48,8 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
         posterURL: URL?,
         outputURL: URL? = nil,
         outputVariantID: String? = nil,
+        posterIdentity: String? = nil,
+        posterStatus: String? = nil,
         runtimeVersion: Int = 2,
         serverRevision: Int = 0,
         activeJobID: UUID? = nil,
@@ -59,6 +63,8 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
         self.status = status
         self.updatedAt = updatedAt
         self.posterURL = posterURL
+        self.posterIdentity = posterIdentity
+        self.posterStatus = posterStatus
         self.outputURL = outputURL
         self.outputVariantID = outputVariantID
         self.runtimeVersion = runtimeVersion

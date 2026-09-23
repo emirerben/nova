@@ -65,6 +65,9 @@ class _Result:
     def all(self) -> list[Any]:
         return list(self._rows)
 
+    def scalar_one_or_none(self) -> Any:
+        return None
+
 
 class _FakeSession:
     """One shared session stand-in across all three locked phases."""
@@ -176,6 +179,63 @@ def test_persists_relative_key_on_the_matching_variant(monkeypatch: pytest.Monke
     assert kwargs == {"job_id": str(job.id), "source_kind": "poster_repair"}
     assert session.commits == 1
     assert not calls["deleted"]
+
+
+def test_repairs_the_thread_selected_variant_instead_of_rank_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _FakeJob()
+    first = _variant_plan(job.id, variant_id="rank-one", rank=1)
+    second = _variant_plan(job.id, variant_id="rank-two", rank=2)
+    job.assembly_plan = {"variants": first["variants"] + second["variants"]}
+    session = _FakeSession(job)
+    calls = _wire(monkeypatch, session)
+    monkeypatch.setattr(pr, "_preferred_variant_id", lambda _db, _job: "rank-two")
+
+    assert pr._run_repair(str(job.id)) == "generated"
+    assert job.assembly_plan["variants"][0].get("poster_path") is None
+    assert job.assembly_plan["variants"][1]["poster_path"] == "job-posters/x/abc.poster.jpg"
+    assert calls["generate"][0][0].endswith("/song-text.mp4")
+
+
+def test_selection_change_during_extraction_never_writes_the_old_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _FakeJob()
+    first = _variant_plan(job.id, variant_id="rank-one", rank=1)
+    second = _variant_plan(job.id, variant_id="rank-two", rank=2)
+    job.assembly_plan = {"variants": first["variants"] + second["variants"]}
+    session = _FakeSession(job)
+    calls = _wire(monkeypatch, session)
+    selected = iter(["rank-two", "rank-one"])
+    monkeypatch.setattr(pr, "_preferred_variant_id", lambda _db, _job: next(selected))
+
+    assert pr._run_repair(str(job.id)) == "stale_race"
+    assert all("poster_path" not in variant for variant in job.assembly_plan["variants"])
+    assert calls["deleted"] == []
+
+
+def test_selection_change_never_deletes_a_poster_adopted_by_another_variant(monkeypatch):
+    job = _FakeJob()
+    first = _variant_plan(job.id, variant_id="first", rank=1)["variants"][0]
+    second = _variant_plan(job.id, variant_id="second", rank=2)["variants"][0]
+    second["video_path"] = f"generative-jobs/{job.id}/second.mp4"
+    job.assembly_plan = {"variants": [first, second]}
+    session = _FakeSession(job)
+    poster = f"job-posters/{job.id}/shared.poster.jpg"
+
+    def concurrent_winner():
+        first["poster_path"] = poster
+        second["poster_path"] = f"job-posters/{job.id}/second.poster.jpg"
+
+    calls = _wire(monkeypatch, session, poster_key=poster, on_generate=concurrent_winner)
+    selected = iter(["first", "second"])
+    monkeypatch.setattr(pr, "_preferred_variant_id", lambda _db, _job: next(selected))
+
+    assert pr._run_repair(str(job.id)) == "stale_race"
+    assert calls["deleted"] == []
+    assert job.assembly_plan["variants"][0]["poster_path"] == poster
+    assert session.commits == 0
 
 
 def test_every_persisting_path_flags_the_jsonb_column_dirty(
@@ -332,7 +392,7 @@ def test_terminal_marker_bound_to_the_same_source_is_a_no_op(
 # ── Races and rebinds ─────────────────────────────────────────────────────────
 
 
-def test_stale_race_after_upload_discards_and_deletes_the_uploaded_object(
+def test_stale_race_after_upload_retains_the_shared_poster_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job = _FakeJob()
@@ -346,7 +406,7 @@ def test_stale_race_after_upload_discards_and_deletes_the_uploaded_object(
     calls = _wire(monkeypatch, session, on_generate=_concurrent_rerender)
 
     assert pr._run_repair(str(job.id)) == "stale_race"
-    assert calls["deleted"] == ["job-posters/x/abc.poster.jpg"]
+    assert calls["deleted"] == []
     assert "poster_path" not in job.assembly_plan["variants"][0]
     assert session.commits == 0
 
@@ -364,7 +424,7 @@ def test_duplicate_variant_ids_discard_the_upload_instead_of_guessing(
     calls = _wire(monkeypatch, session, on_generate=_duplicate_variant)
 
     assert pr._run_repair(str(job.id)) == "stale_race"
-    assert calls["deleted"] == ["job-posters/x/abc.poster.jpg"]
+    assert calls["deleted"] == []
 
 
 def test_marker_rebinds_and_resets_attempts_when_the_video_path_changes(
@@ -594,6 +654,105 @@ def test_clip_row_changed_under_the_lock_discards_the_upload(
     calls = _wire(monkeypatch, session, poster_key="job-posters/loser/abc.poster.jpg")
 
     assert pr._run_repair(str(job.id)) == "stale_race"
-    assert calls["deleted"] == ["job-posters/loser/abc.poster.jpg"]
+    assert calls["deleted"] == []
     assert stale.thumbnail_path is None
+    assert session.commits == 0
+
+
+@pytest.mark.parametrize("ownership", ["control", "lock", "malformed"])
+@pytest.mark.parametrize("phase", ["dequeue", "expired", "failed", "publish"])
+def test_private_generation_blocks_every_repair_write(monkeypatch, ownership, phase):
+    job = _FakeJob()
+    job.assembly_plan = _variant_plan(job.id)
+    session = _FakeSession(job)
+
+    def claim():
+        if ownership == "control":
+            job.assembly_plan["speech_cut_control"] = {
+                "variant_id": "song_text",
+                "operation_id": "operation",
+                "render_generation_id": "private-generation",
+            }
+        else:
+            job.assembly_plan["_speech_cleanup_internal"] = {
+                "required_speech_generation_locks": (
+                    {"song_text": "private-generation"} if ownership == "lock" else "corrupt"
+                )
+            }
+
+    poster = f"job-posters/{job.id}/repair.jpg"
+    calls = _wire(
+        monkeypatch,
+        session,
+        poster_key=None if phase == "failed" else poster,
+        on_generate=claim if phase in {"failed", "publish"} else None,
+    )
+    if phase == "dequeue":
+        claim()
+    elif phase == "expired":
+
+        def probe(_path):
+            claim()
+            return False
+
+        monkeypatch.setattr("app.storage.object_exists", probe)
+
+    outcome = pr._run_repair(str(job.id))
+    assert outcome == ("stale_race" if phase == "publish" else "generation_locked")
+    assert session.commits == 0
+    assert pr.POSTER_REPAIR_MARKER_FIELD not in job.assembly_plan
+    assert "poster_path" not in job.assembly_plan["variants"][0]
+    assert calls["deleted"] == []
+    if phase == "dequeue":
+        assert calls["generate"] == calls["exists"] == []
+
+
+def test_private_generation_does_not_delete_an_adopted_poster(monkeypatch):
+    job = _FakeJob()
+    job.assembly_plan = _variant_plan(job.id)
+    session = _FakeSession(job)
+    poster = f"job-posters/{job.id}/winner.jpg"
+
+    def adopt_and_claim():
+        job.assembly_plan["variants"][0]["poster_path"] = poster
+        job.assembly_plan["_speech_cleanup_internal"] = {
+            "required_speech_generation_locks": {"song_text": "private"}
+        }
+
+    calls = _wire(monkeypatch, session, poster_key=poster, on_generate=adopt_and_claim)
+    assert pr._run_repair(str(job.id)) == "stale_race"
+    assert calls["deleted"] == []
+    assert session.commits == 0
+    assert job.assembly_plan["variants"][0]["poster_path"] == poster
+
+
+def test_worker_selection_query_has_owner_fence_and_deterministic_tie_break():
+    from unittest.mock import MagicMock
+
+    job = _FakeJob()
+    db = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = {"selected_variant_id": "chosen"}
+    assert pr._preferred_variant_id(db, job) == "chosen"
+    statement = db.execute.call_args.args[0]
+    sql = str(statement)
+    assert "creation_threads.updated_at DESC, creation_threads.id DESC" in sql
+    assert statement.compile().params["creator_id_1"] == job.user_id
+    assert statement.compile().params["active_job_id_1"] == job.id
+
+
+def test_private_variant_cannot_repair_its_raw_top_level_mirror(monkeypatch):
+    job = _FakeJob()
+    job.assembly_plan = _variant_plan(job.id, render_status="rendering")
+    job.assembly_plan.update(
+        {
+            "output_path": f"generative-jobs/{job.id}/private-output.mp4",
+            "_speech_cleanup_internal": {
+                "required_speech_generation_locks": {"song_text": "private-generation"}
+            },
+        }
+    )
+    session = _FakeSession(job)
+    calls = _wire(monkeypatch, session)
+    assert pr._run_repair(str(job.id)) == "generation_locked"
+    assert calls["generate"] == calls["exists"] == []
     assert session.commits == 0
