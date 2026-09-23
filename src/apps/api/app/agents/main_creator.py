@@ -34,8 +34,8 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
 )
 
-# KRI-118 item 1: story shapes (day_vlog/single_hero) under Montage.
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-23-v34"
+# Named sound effects are model-read with verbatim licensed_sfx evidence.
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-23-v35"
 
 # Visual instructions are substituted only when the resolver flag is enabled;
 # the base prompt independently describes deferred transcript label intents.

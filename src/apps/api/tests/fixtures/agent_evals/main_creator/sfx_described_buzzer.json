@@ -1,0 +1,93 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-09-23-v35",
+  "input": {
+    "user_message": "Make a quick edit of the best sports moments. Add a buzzer sound effect every time someone misses.",
+    "creator_context": "Personal sports-day footage from Ann Arbor.",
+    "item_context": "A short highlight montage from several games.",
+    "media_context": [
+      {
+        "media_id": "clip-football",
+        "kind": "video",
+        "creator_note": "football action"
+      },
+      {
+        "media_id": "clip-tennis",
+        "kind": "video",
+        "creator_note": "tennis action"
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-sports-day",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-football",
+          "kind": "video",
+          "duration_s": 12.0,
+          "label": "Football"
+        },
+        {
+          "media_id": "clip-tennis",
+          "kind": "video",
+          "duration_s": 10.0,
+          "label": "Tennis"
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "sfx-fah",
+          "kind": "sound_effect",
+          "label": "Fah"
+        },
+        {
+          "catalog_id": "sfx-rejection",
+          "kind": "sound_effect",
+          "label": "Rejection"
+        },
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Licensed sports pulse"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "edit_format:montage": {
+          "available": true
+        },
+        "sound_effects": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"audio_strategy\": \"licensed_music\",\n      \"story_structure\": [\n        \"Fast-paced intro to the sports action\",\n        \"Quick cuts highlighting the best football and tennis moments\",\n        \"Punctuate misses with a buzzer sound effect\"\n      ],\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 15,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [\"transitions\"],\n      \"licensed_sfx\": {\n        \"effect_id\": \"buzzer\",\n        \"semantics\": \"funny_moments\",\n        \"max_placements\": 6\n      },\n      \"rationale\": \"A fast-paced 15-second montage will keep the energy high to showcase the best sports moments. I'll add an energetic sports music track and ensure the requested buzzer sound effect plays during any missed plays.\",\n      \"summary\": \"I'll create a quick, fast-paced sports montage highlighting the best football and tennis action, with an energetic music track and a buzzer sound effect on the misses.\"\n    },\n    \"render_intent_evidence\": {\n      \"licensed_sfx\": \"Add a buzzer sound effect every time someone misses.\"\n    }\n  }\n}",
+  "output": {},
+  "meta": {
+    "source": "live_capture",
+    "case": "sfx_described_buzzer",
+    "sfx_intent": {
+      "effect_words": "buzzer",
+      "grounded": true
+    },
+    "test_run_id": "main-creator-sfx-evidence-2026-09-24"
+  }
+}

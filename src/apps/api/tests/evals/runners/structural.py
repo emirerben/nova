@@ -3121,8 +3121,18 @@ def run_structural(
                 failures.append("explicit title color was not preserved exactly")
         if "fah" in normalized_request and "sound effect" in normalized_request:
             intent = action.strategy.licensed_sfx
+            # "Don't add the Fah sound effect" also matches these keywords; a
+            # decline grounded in the creator's words is not a dropped request.
+            # Fixture meta `sfx_intent` pins which reading is correct.
+            sfx_excerpt = " ".join(
+                str(getattr(action.render_intent_evidence, "licensed_sfx", None) or "").split()
+            )
+            declined = bool(sfx_excerpt) and sfx_excerpt.casefold() in normalized_request
             if intent is None:
-                failures.append("explicit Fah request was dropped from typed licensed_sfx intent")
+                if not declined:
+                    failures.append(
+                        "explicit Fah request was dropped from typed licensed_sfx intent"
+                    )
             else:
                 if intent.effect_id != "sfx-fah":
                     failures.append(

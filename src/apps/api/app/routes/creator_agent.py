@@ -63,6 +63,7 @@ from app.agents._schemas.creator_policy import (
     normalize_creator_strategy_media,
     states_explicit_media_narrowing_cue,
 )
+from app.agents._schemas.sfx_intent import LicensedSfxIntent
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCreatorOutput
 from app.auth import CurrentUser
 from app.config import settings
@@ -980,6 +981,96 @@ async def _resolve_described_sfx(
     return manifest.model_copy(update={"catalog": [*manifest.catalog, ref]}), ref
 
 
+def _creator_sources(creator_request: str, latest_user_message: str) -> tuple[str, str]:
+    """The creator's own words that a verbatim evidence excerpt may quote."""
+
+    return (
+        " ".join(str(creator_request or "").split()),
+        " ".join(str(latest_user_message or "").split()),
+    )
+
+
+def _grounded_excerpt(
+    render_intent_evidence: CreatorRenderIntentEvidence | None,
+    field: str,
+    creator_sources: tuple[str, ...],
+) -> str | None:
+    quote = " ".join(str(getattr(render_intent_evidence, field, None) or "").split())
+    if not quote or not any(quote in source for source in creator_sources):
+        return None
+    return quote
+
+
+def _sfx_named_in(excerpt: str, name: str | None) -> bool:
+    name = " ".join(str(name or "").split())
+    return (
+        bool(name)
+        and re.search(rf"(?<!\w){re.escape(name)}(?!\w)", excerpt, re.IGNORECASE) is not None
+    )
+
+
+def _model_sfx_lookup_name(
+    strategy: CreativeStrategy,
+    render_intent_evidence: CreatorRenderIntentEvidence | None,
+    creator_sources: tuple[str, ...],
+) -> str | None:
+    """A model-read effect name the creator typed, worth the live-library lookups.
+
+    The bounded prompt catalog can omit a published effect, so the name the
+    model read from a grounded excerpt ("Put Fah on the punchline") gets the
+    same exact and described lookups as the literal recognizer's names.
+    """
+
+    excerpt = _grounded_excerpt(render_intent_evidence, "licensed_sfx", creator_sources)
+    if excerpt is None or strategy.licensed_sfx is None:
+        return None
+    name = " ".join(strategy.licensed_sfx.effect_id.split())
+    return name if _sfx_named_in(excerpt, name) else None
+
+
+def _grounded_model_sfx(
+    licensed_sfx: LicensedSfxIntent | None,
+    excerpt: str | None,
+    manifest: Any | None,
+    *,
+    described: CreatorCatalogRef | None = None,
+) -> tuple[bool, LicensedSfxIntent | None]:
+    """The model's named-effect decision, when a creator excerpt grounds it.
+
+    ``(False, None)`` leaves the decision to the literal recognizer. A grounded
+    ``None`` is the model reading no named effect, including an indirect
+    decline ("I don't like the Fah, use a different sound effect") that the
+    refusal grammar can't see. A named effect must appear in the excerpt and
+    resolves by exact match against the server manifest, else by the
+    description match ``described`` the planning turn made for this same
+    name; an unresolved creator-typed name stays inert so compilation fails
+    visibly.
+    """
+
+    if excerpt is None:
+        return False, None
+    if licensed_sfx is None:
+        return True, None
+    resolved = (
+        resolve_creator_sfx_catalog_ref(manifest, licensed_sfx.effect_id)
+        if manifest is not None
+        else None
+    )
+    if resolved is not None:
+        if not (
+            _sfx_named_in(excerpt, resolved.label) or _sfx_named_in(excerpt, licensed_sfx.effect_id)
+        ):
+            return False, None
+        return True, licensed_sfx.model_copy(update={"effect_id": resolved.catalog_id})
+    name = " ".join(licensed_sfx.effect_id.split())
+    if not _sfx_named_in(excerpt, name) or all(
+        word.casefold() in _SFX_GENERIC_WORDS for word in name.split()
+    ):
+        return False, None
+    effect_id = described.catalog_id if described is not None else name
+    return True, licensed_sfx.model_copy(update={"effect_id": effect_id})
+
+
 _SECONDS_UNIT = r"(?:s|sec|secs|seconds?|saniye|segundos?|secondes?|sekunden?|secondi|secondo)\b"
 _SECONDS_WORDS = {
     "half a": 0.5,
@@ -1016,6 +1107,7 @@ def _apply_explicit_render_intent(
     latest_user_message: str = "",
     render_intent_evidence: CreatorRenderIntentEvidence | None = None,
     resolved_sfx: CreatorCatalogRef | None = None,
+    model_resolved_sfx: CreatorCatalogRef | None = None,
 ) -> CreativeStrategy:
     """Preserve grounded semantic intent, with legacy literal extraction as fallback.
 
@@ -1027,7 +1119,7 @@ def _apply_explicit_render_intent(
 
     request = " ".join(str(creator_request or "").split())
     semantic_updates: dict[str, object] = {}
-    creator_sources = (request, " ".join(str(latest_user_message or "").split()))
+    creator_sources = _creator_sources(creator_request, latest_user_message)
     if render_intent_evidence is not None:
         for field in (
             "opening_title",
@@ -1037,8 +1129,8 @@ def _apply_explicit_render_intent(
             "shot_labels",
             "closing_title",
         ):
-            quote = " ".join(str(getattr(render_intent_evidence, field, None) or "").split())
-            if not quote or not any(quote in source for source in creator_sources):
+            quote = _grounded_excerpt(render_intent_evidence, field, creator_sources)
+            if quote is None:
                 continue
             value = getattr(strategy, field)
             # Typography and color are semantic choices from a validated
@@ -1078,9 +1170,19 @@ def _apply_explicit_render_intent(
     # names by exact case-insensitive match against the server manifest, else
     # take the description match the planning turn already made for this
     # name; an unresolved name is retained as an inert id so compilation fails
-    # visibly rather than silently dropping to optional_treatments.
-    sfx_name = _explicit_sfx_name(creator_request, manifest=manifest)
-    if sfx_name:
+    # visibly rather than silently dropping to optional_treatments. The
+    # model's grounded reading wins, a decline included; the literal
+    # recognizer only decides when no excerpt grounds it.
+    sfx_grounded, grounded_sfx = _grounded_model_sfx(
+        strategy.licensed_sfx,
+        _grounded_excerpt(render_intent_evidence, "licensed_sfx", creator_sources),
+        manifest,
+        described=model_resolved_sfx,
+    )
+    sfx_name = None if sfx_grounded else _explicit_sfx_name(creator_request, manifest=manifest)
+    if grounded_sfx is not None:
+        updates["licensed_sfx"] = grounded_sfx.model_dump(mode="json")
+    elif sfx_name:
         # ``resolved_sfx`` is ``_resolve_described_sfx`` for this same name.
         resolved = (
             resolve_creator_sfx_catalog_ref(manifest, sfx_name) if manifest is not None else None
@@ -2834,8 +2936,19 @@ async def _run_planning_turn(
             # Model-authored media references are repaired only at this trust
             # boundary. The subsequent compiler remains strict, so persisted
             # plans can contain only IDs from the authoritative manifest.
+            render_intent_evidence = (
+                action.render_intent_evidence if isinstance(action, ProposeStrategy) else None
+            )
+            model_sfx_name = _model_sfx_lookup_name(
+                strategy,
+                render_intent_evidence,
+                _creator_sources(creator_request, user_message),
+            )
             planning_manifest = manifest
-            for requested_sfx in _explicit_sfx_lookup_names(creator_request, manifest=manifest):
+            for requested_sfx in [
+                *_explicit_sfx_lookup_names(creator_request, manifest=manifest),
+                model_sfx_name,
+            ]:
                 planning_manifest = await _resolve_explicit_sfx_outside_manifest(
                     db, requested_sfx, manifest=planning_manifest
                 )
@@ -2844,15 +2957,19 @@ async def _run_planning_turn(
                 _explicit_sfx_name(creator_request, manifest=planning_manifest),
                 manifest=planning_manifest,
             )
+            # The model reads "add a buzzer" the same way; its grounded name
+            # gets the same description match against the whole library.
+            planning_manifest, model_described_sfx = await _resolve_described_sfx(
+                db, model_sfx_name, manifest=planning_manifest
+            )
             strategy = _apply_explicit_render_intent(
                 strategy,
                 creator_request,
                 manifest=planning_manifest,
                 latest_user_message=user_message,
-                render_intent_evidence=(
-                    action.render_intent_evidence if isinstance(action, ProposeStrategy) else None
-                ),
+                render_intent_evidence=render_intent_evidence,
                 resolved_sfx=described_sfx,
+                model_resolved_sfx=model_described_sfx,
             )
             pre_normalize_target_duration_s = strategy.target_duration_s
             try:
@@ -3310,6 +3427,9 @@ async def _run_planning_turn(
                             "closing_title": strategy.closing_title,
                             "font_family": strategy.font_family,
                             "text_color": strategy.text_color,
+                            # Grounded evidence re-verifies this below; without
+                            # it the evidence would read as a decline.
+                            "licensed_sfx": strategy.licensed_sfx,
                         }
                     ),
                     creator_request,

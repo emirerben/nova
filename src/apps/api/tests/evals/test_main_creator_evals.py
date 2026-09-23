@@ -135,3 +135,44 @@ def test_main_creator_eval(
         # Every exact copy field must survive the verbatim-evidence boundary.
         for field, value in exact_copy.items():
             assert getattr(grounded, field) == value, field
+
+    sfx_intent = fixture.meta.get("sfx_intent")
+    if sfx_intent:
+        from app.agents._schemas.creator_agent import (
+            CreativeStrategy,
+            CreatorRenderIntentEvidence,
+            ResolvedCreatorManifest,
+        )
+        from app.routes.creator_agent import (
+            _apply_explicit_render_intent,
+            _creator_sources,
+            _grounded_excerpt,
+        )
+
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        evidence = CreatorRenderIntentEvidence.model_validate(
+            action.get("render_intent_evidence") or {}
+        )
+        request = fixture.input.get("creator_request") or fixture.input["user_message"]
+        if sfx_intent.get("grounded"):
+            # The regex misreads negation; the model's grounded reading must decide.
+            assert _grounded_excerpt(evidence, "licensed_sfx", _creator_sources(request, request))
+        grounded = _apply_explicit_render_intent(
+            CreativeStrategy.model_validate(action["strategy"]),
+            request,
+            manifest=ResolvedCreatorManifest.model_validate(fixture.input["capability_manifest"]),
+            latest_user_message=fixture.input["user_message"],
+            render_intent_evidence=evidence,
+        )
+        effect_id = grounded.licensed_sfx.effect_id if grounded.licensed_sfx else None
+        if "effect_words" in sfx_intent:
+            from app.services.sfx_catalog import content_words
+
+            # A described effect stays the creator's words here; the planning
+            # turn matches those same content words against the live library.
+            assert effect_id is not None
+            assert content_words(effect_id) == content_words(sfx_intent["effect_words"])
+        else:
+            assert effect_id == sfx_intent["effect_id"]

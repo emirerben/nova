@@ -46,6 +46,7 @@
   "output": {},
   "meta": {
     "source": "hand-authored-golden",
-    "contract": "full production wording preserves exact title and typed licensed SFX intent"
+    "contract": "full production wording preserves exact title and typed licensed SFX intent",
+    "sfx_intent": {"effect_id": "sfx-fah"}
   }
 }

@@ -121,13 +121,28 @@ Rules:
   names or selects particular audio sources. The guided montage specialist authors the complete
   ordered timeline, including any alternation, repetition, cadence, and source-specific text.
   Do not choose a sequence preset or fixed pattern on the creator's behalf.
-- Licensed sound effects are a typed treatment, not a generic optional treatment. Only choose
-  an effect ID that appears in the manifest catalog with `kind: "sound_effect"`; copy that exact
-  opaque `catalog_id` and never invent one. When the creator explicitly names a catalog effect,
-  set `licensed_sfx` to `{"effect_id":"<catalog_id>","semantics":"funny_moments",`
-  `"max_placements":6}`. The server resolves the ID again and fails visibly if it is unavailable.
+- Licensed sound effects are a typed treatment, not a generic optional treatment. Set
+  `licensed_sfx` only when the creator asks for one specific effect, by name ("the Boing sound
+  effect") or by the sound itself ("a buzzer", "a wrong-answer buzzer"). When a manifest catalog
+  entry with `kind: "sound_effect"` has exactly that label, copy its opaque `catalog_id`;
+  otherwise use the creator's own words for the effect exactly as they wrote them (for example
+  "buzzer"), never a guess or a similar-sounding catalog effect; the server matches names and
+  described sounds against the full library. Set `licensed_sfx` to
+  `{"effect_id":"<catalog_id or the creator's words>","semantics":"funny_moments",`
+  `"max_placements":6}`, lowering `max_placements` (1-6) only when the creator limits how often
+  it plays. The server resolves the ID again and fails visibly if it is unavailable.
   When `licensed_sfx` is set, never include `"sfx"` in `optional_treatments`; the typed licensed
   effect is the complete required treatment and must not be duplicated or weakened as optional.
+- Decide specific sound effects by meaning, not keywords. Whenever the creator's words mention
+  a specific effect (asking for it, declining it, or replacing it), include
+  `render_intent_evidence.licensed_sfx` with the verbatim excerpt that decides it; when
+  `licensed_sfx` is set, the effect's words must appear inside that excerpt. A declined effect,
+  or one replaced by an unspecific effect, sets `licensed_sfx` to null with the declining words
+  as evidence. Examples: "Skip the Boing sound effect." and "The Boing is annoying, try another
+  sound." => `licensed_sfx` null, evidence that sentence; "Why not put the Boing sound effect on
+  the jokes?" and "Don't overdo the Boing sound effect." => the Boing effect, evidence that
+  sentence. An unspecific request ("add a sound effect", "a funny sound") never sets
+  `licensed_sfx`.
 - For a proposal, name a specific opening concept in `intro_hook` whenever the footage summaries
   support one. Make the rationale explain the hook, pacing, audio, and caption choice briefly.
 - Preserve explicit user-authored title copy and styling as executable fields, not prose. When the
@@ -219,7 +234,8 @@ OR:
       "text_color": "verbatim creator color instruction, or null",
       "opening_title_duration_s": "verbatim creator excerpt stating the title hold, or null",
       "shot_labels": "verbatim creator excerpt containing every shot label, or null",
-      "closing_title": "verbatim creator excerpt containing the exact closing text, or null"
+      "closing_title": "verbatim creator excerpt containing the exact closing text, or null",
+      "licensed_sfx": "verbatim creator excerpt asking for or declining a specific sound effect, or null"
     }
   }
 }

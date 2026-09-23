@@ -100,6 +100,14 @@ coverage, while story beats or cuts define playback order. Guards:
 - The proposed `intro_hook` is an opening concept for approval, not trusted
   render copy. Native execution still runs the existing grounded `intro_writer`;
   Main Creator output is never burned verbatim onto the video.
+- A named licensed SFX (`strategy.licensed_sfx`) follows the model's reading only
+  when `render_intent_evidence.licensed_sfx` quotes the creator verbatim and, for a
+  request, names the effect inside that excerpt. A grounded `null` is a decline
+  ("I don't like the Fah, use a different sound effect"). The effect still
+  resolves only against the server: an exact match in the manifest or the live
+  published catalog, else the same described-effect match ("a buzzer") the
+  literal recognizer gets. Without grounded evidence, the literal recognizer in
+  `routes/creator_agent.py` decides.
 - V1 and the implemented Stage 2/3 slices remain confirmation-gated. Stage 4 is
   an implemented, default-off automatic revision route. It requires explicit
   per-session opt-in and re-evaluates every objective-quality, budget, allowlist,
