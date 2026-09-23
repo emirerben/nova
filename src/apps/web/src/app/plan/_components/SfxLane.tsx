@@ -10,17 +10,13 @@
  */
 
 import { useEffect, useReducer, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { SoundEffectPlacement } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
+import { sfxDurationLabel } from "@/lib/sfx-browse";
 import { computeBarPosition } from "@/lib/timeline/bar-position";
 import { classifyZone, clampSeconds } from "@/lib/timeline/drag-zone";
 import {
@@ -29,6 +25,7 @@ import {
 } from "@/lib/timeline/sfx-timeline-reducer";
 import { Playhead } from "@/lib/timeline/Playhead";
 import { formatTimecode } from "@/lib/timeline/time-format";
+import SfxPicker from "./SfxPicker";
 import type { UploadFile, SfxDragState } from "./UnifiedTimelineTypes";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -211,13 +208,17 @@ export default function SfxLane({
 
   // ── Glossary + SFX upload ─────────────────────────────────────────────────────
 
-  const [selectedGlossaryId, setSelectedGlossaryId] = useState("");
+  const [selectedGlossaryId, setSelectedGlossaryId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // Single source of truth for the trigger label and "+ Add": a pick that
+  // drops out of the glossary reads as no pick at all.
+  const selectedEffect = sfxGlossaryEffects.find((e) => e.id === selectedGlossaryId);
+  const selectedDuration = selectedEffect ? sfxDurationLabel(selectedEffect) : null;
   const sfxFileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   function addFromGlossary() {
-    if (!selectedGlossaryId) return;
-    const effect = sfxGlossaryEffects.find((e) => e.id === selectedGlossaryId);
+    const effect = selectedEffect;
     if (!effect) return;
     dispatch({
       type: "ADD",
@@ -232,7 +233,7 @@ export default function SfxLane({
         duration_s: effect.duration_s ?? null,
       },
     });
-    setSelectedGlossaryId("");
+    setSelectedGlossaryId(null);
   }
 
   async function handleSfxFileSelect(files: FileList | File[]) {
@@ -419,32 +420,50 @@ export default function SfxLane({
       {/* ── Add SFX controls ── */}
       <div className="pl-14 pr-0 pt-2 space-y-2">
         <div className="flex gap-2">
-          <Select
-            value={selectedGlossaryId || undefined}
-            onValueChange={(v) => setSelectedGlossaryId(v)}
-            disabled={sfxDisabled || sfxGlossaryLoading}
-          >
-            <SelectTrigger className="h-auto flex-1 rounded bg-zinc-50 px-2 py-1 text-xs disabled:opacity-50">
-              <SelectValue
-                placeholder={
-                  sfxGlossaryLoading ? "Loading effects…" : "Pick a sound effect (placed at playhead)…"
-                }
+          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={sfxDisabled || sfxGlossaryLoading}
+                className="h-auto flex-1 justify-between rounded bg-zinc-50 px-2 py-1 text-xs font-normal disabled:opacity-50"
+              >
+                <span className={`truncate ${selectedEffect ? "" : "text-muted-foreground"}`}>
+                  {selectedEffect
+                    ? `${selectedEffect.name}${selectedDuration ? ` · ${selectedDuration}` : ""}`
+                    : sfxGlossaryLoading
+                      ? "Loading effects…"
+                      : "Pick a sound effect (placed at playhead)…"}
+                </span>
+                <ChevronDown aria-hidden className="h-4 w-4 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            {/* Capped to the viewport space Radix measures (the old Select
+                did the same), so the search field and last rows never end
+                up off-screen on short viewports. */}
+            <PopoverContent
+              align="start"
+              aria-label="Sound effects"
+              className="flex max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(22rem,calc(100vw-2rem))] flex-col rounded-lg border-zinc-200 bg-white p-2 shadow-lg"
+            >
+              <SfxPicker
+                effects={sfxGlossaryEffects}
+                selectedId={selectedGlossaryId}
+                density="compact"
+                className="flex min-h-0 flex-1 flex-col"
+                listClassName="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+                onPick={(effect) => {
+                  setSelectedGlossaryId(effect.id);
+                  setPickerOpen(false);
+                }}
               />
-            </SelectTrigger>
-            <SelectContent>
-              {sfxGlossaryEffects.map((e) => (
-                <SelectItem key={e.id} value={e.id}>
-                  {e.name}
-                  {e.duration_s != null ? ` · ${e.duration_s.toFixed(1)}s` : ""}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            </PopoverContent>
+          </Popover>
           <Button
             type="button"
             variant="ghost"
             onClick={addFromGlossary}
-            disabled={sfxDisabled || !selectedGlossaryId}
+            disabled={sfxDisabled || !selectedEffect}
             className="h-auto shrink-0 rounded bg-lime-800/60 px-3 py-1 text-xs text-lime-100 transition-colors hover:bg-lime-700 disabled:opacity-40"
           >
             + Add
