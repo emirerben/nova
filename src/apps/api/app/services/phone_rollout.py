@@ -263,6 +263,55 @@ def phone_guided_narration_supported() -> bool:
     )
 
 
+# Device features the subtitled overlay lane needs at compile + validation
+# time: `compile_phone_subtitled_plan` adds `visualBlocks`/`alphaOverlay`/
+# `audioMix` to `required_capabilities` for the `subtitled-overlays` track,
+# `validate_phone_pilot_recipe(allow_editor_media=True)` still requires
+# `visualBlocks`, and `_run_phone_subtitled_job` only binds image cards when
+# `stillImages` is verified. Kept as one tuple so the manifest gate below and
+# the worker can never disagree on the list.
+PHONE_SUBTITLED_OVERLAY_FEATURES: tuple[str, ...] = (
+    "stillImages",
+    "visualBlocks",
+    "alphaOverlay",
+    "audioMix",
+)
+
+
+def phone_subtitled_overlays_supported() -> bool:
+    """Single source of truth for "can a phone-rendered `subtitled`
+    (talk-to-camera) edit carry picture-in-picture Visuals cards right now"
+    (KRI-176).
+
+    Consulted by `app.services.creator_capabilities.resolve_creator_manifest`
+    (whether `media_overlays` is advertised on a phone `subtitled` manifest
+    instead of the blanket `unsupported_on_phone` refusal) and by
+    `app.tasks.generative_build._run_phone_subtitled_job` (whether the worker
+    grounds overlay cards from the transcript at all). A manifest that
+    advertises the lane while the worker skips it -- or vice versa -- is
+    exactly the drift this helper exists to prevent.
+
+    True iff ALL of:
+      - `phone_subtitled_media_lanes_enabled` (KRI-174 Phase 1 lane flag; the
+        compiler/runner only honour overlay lanes behind it).
+      - `media_overlays_enabled` (the generic overlay feature gate, cloud and
+        phone alike).
+      - every feature in `PHONE_SUBTITLED_OVERLAY_FEATURES` is in
+        `phone_render_verified_features` (device-parity gate; a rollout flag
+        alone never skips it).
+
+    Deliberately says nothing about the edit format or clip count -- callers
+    combine it with their own `subtitled` shape check.
+    """
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_subtitled_media_lanes_enabled
+        and settings.media_overlays_enabled
+        and all(feature in verified for feature in PHONE_SUBTITLED_OVERLAY_FEATURES)
+    )
+
+
 def phone_render_supported_formats() -> frozenset[str]:
     """The single source of truth for "which edit formats can render on the
     phone for THIS deployment, right now" -- settings-aware, unlike the

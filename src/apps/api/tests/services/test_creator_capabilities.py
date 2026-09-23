@@ -15,6 +15,7 @@ from app.schemas.edit_proposal import MixedMediaTimingProfile, MontageCadenceCon
 from app.services import creator_capabilities as capabilities
 from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 from app.services.creator_sessions import compile_active_plan
+from app.services.phone_rollout import PHONE_SUBTITLED_OVERLAY_FEATURES
 
 
 def _enable_guided(monkeypatch) -> None:
@@ -2074,3 +2075,141 @@ def test_stale_edit_format_single_hero_is_rewritten_to_montage_with_a_notice(
     assert plan.strategy.edit_format == "montage"
     assert plan.strategy.archetype == "single_hero"
     assert plan.notices == ["Reading this as a montage in the single-hero style."]
+
+
+# --- KRI-176: subtitled (Talking) phone picture-in-picture Visuals overlays -
+
+_MEDIA_OVERLAYS_VERIFIED_VARIANTS: dict[str, tuple[str, ...]] = {
+    "full": tuple(PHONE_SUBTITLED_OVERLAY_FEATURES),
+    **{
+        f"missing_{feature}": tuple(f for f in PHONE_SUBTITLED_OVERLAY_FEATURES if f != feature)
+        for feature in PHONE_SUBTITLED_OVERLAY_FEATURES
+    },
+}
+
+
+@pytest.mark.parametrize("edit_format", ["subtitled", "montage", "narrated"])
+@pytest.mark.parametrize("lanes_flag_on", [True, False])
+@pytest.mark.parametrize("overlays_enabled", [True, False])
+@pytest.mark.parametrize("verified_variant", list(_MEDIA_OVERLAYS_VERIFIED_VARIANTS))
+def test_media_overlays_phone_capability_matrix(
+    monkeypatch, edit_format, lanes_flag_on, overlays_enabled, verified_variant
+) -> None:
+    """KRI-176: `media_overlays` is available on a phone manifest iff the
+    edit format is `subtitled` (Talking) AND the KRI-174 Phase 1 lane flag is
+    on AND the generic `media_overlays_enabled` gate is on AND every device
+    feature `PHONE_SUBTITLED_OVERLAY_FEATURES` lists is verified. Every other
+    cell of this matrix must stay the blanket `unsupported_on_phone` refusal
+    -- in particular montage and narrated NEVER become available regardless
+    of how the flags/features resolve, since only the Talking phone compiler
+    has a lane for this today."""
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_media_lanes_enabled", lanes_flag_on)
+    monkeypatch.setattr(capabilities.settings, "media_overlays_enabled", overlays_enabled)
+    monkeypatch.setattr(
+        capabilities.settings,
+        "phone_render_verified_features",
+        list(_MEDIA_OVERLAYS_VERIFIED_VARIANTS[verified_variant]),
+    )
+    manifest = _phone_manifest(monkeypatch, edit_format, [{"media_id": "phone-a", "kind": "video"}])
+    entry = manifest.capabilities["media_overlays"]
+    should_be_available = (
+        edit_format == "subtitled"
+        and lanes_flag_on
+        and overlays_enabled
+        and verified_variant == "full"
+    )
+    if should_be_available:
+        assert entry.available is True
+    else:
+        assert entry.available is False
+        assert entry.reason_code == "unsupported_on_phone"
+
+
+def test_media_overlays_subtitled_manifest_hash_unchanged_when_lanes_flag_off(
+    monkeypatch,
+) -> None:
+    """A flag-off deploy must keep the exact pre-KRI-176 manifest: the
+    `subtitled` phone manifest's `media_overlays` entry is byte-identical to
+    a montage phone manifest's, and turning on the unrelated generic
+    `media_overlays_enabled` gate (while the KRI-174 Phase 1 lane flag stays
+    off) contributes nothing to the resolved manifest hash."""
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_media_lanes_enabled", False)
+    media = [{"media_id": "phone-a", "kind": "video"}]
+
+    subtitled_manifest = _phone_manifest(monkeypatch, "subtitled", media)
+    montage_manifest = _phone_manifest(monkeypatch, "montage", media)
+    assert (
+        subtitled_manifest.capabilities["media_overlays"]
+        == montage_manifest.capabilities["media_overlays"]
+    )
+    assert subtitled_manifest.capabilities["media_overlays"].available is False
+    assert subtitled_manifest.capabilities["media_overlays"].reason_code == "unsupported_on_phone"
+
+    monkeypatch.setattr(capabilities.settings, "media_overlays_enabled", True)
+    subtitled_with_generic_gate_on = _phone_manifest(monkeypatch, "subtitled", media)
+    assert subtitled_with_generic_gate_on.manifest_hash == subtitled_manifest.manifest_hash
+
+
+def test_media_overlays_cloud_manifest_unaffected(monkeypatch) -> None:
+    """The KRI-176 override only touches the phone branch (guarded by
+    `phone_source_media_ids is not None`) -- a cloud subtitled manifest keeps
+    advertising `media_overlays` purely off the generic `media_overlays_enabled`
+    gate, same as before this change."""
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(
+        capabilities.settings,
+        "phone_render_verified_features",
+        list(PHONE_SUBTITLED_OVERLAY_FEATURES),
+    )
+    cloud_manifest = capabilities.resolve_creator_manifest(
+        item_id="item-cloud",
+        edit_format="subtitled",
+        media=[{"media_id": "clip-a", "kind": "video"}],
+    )
+    assert cloud_manifest.capabilities["media_overlays"].available is True
+
+    monkeypatch.setattr(capabilities.settings, "media_overlays_enabled", False)
+    cloud_manifest_disabled = capabilities.resolve_creator_manifest(
+        item_id="item-cloud",
+        edit_format="subtitled",
+        media=[{"media_id": "clip-a", "kind": "video"}],
+    )
+    assert cloud_manifest_disabled.capabilities["media_overlays"].available is False
+    assert cloud_manifest_disabled.capabilities["media_overlays"].reason_code == (
+        "disabled_by_setting"
+    )
+
+
+def test_media_overlays_available_phone_subtitled_manifest_compiles_overlays_treatment(
+    monkeypatch,
+) -> None:
+    """`compile_strategy_to_plan` on an available phone `subtitled` manifest
+    keeps `"overlays"` in `optional_treatments` -- mirrors
+    `test_phone_manifest_never_advertises_lanes_the_phone_compiler_rejects`'s
+    pattern, but for the one lane KRI-176 turns on instead of one that stays
+    refused."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(
+        capabilities.settings,
+        "phone_render_verified_features",
+        list(PHONE_SUBTITLED_OVERLAY_FEATURES) + ["narrationAudio"],
+    )
+    manifest = _phone_manifest(monkeypatch, "subtitled", [{"media_id": "phone-a", "kind": "video"}])
+    assert manifest.capabilities["media_overlays"].available is True
+
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="subtitled",
+            audio_strategy="original_audio",
+            selected_media_ids=["phone-a"],
+            optional_treatments=["overlays"],
+        ),
+    )
+    assert plan.strategy.render_program == "native"
+    assert plan.strategy.optional_treatments == ["overlays"]

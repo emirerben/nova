@@ -500,9 +500,12 @@ on the variant as `overlay_transcript` BEFORE caption correction (correction
 drops word timings on corrected lines), so Phase 2's phrase triggers ("no, no,
 no" → ❌ + buzzer) can be grounded against untouched timings.
 
-Nothing writes `_phone_subtitled_lanes_v1` yet (Phase 2 grounds it from the
-prompt + Visuals); with the flag off the field is ignored entirely and the
-compiler/runner output is byte-identical to before
+Phase 2 (below) grounds overlay cards from the transcript, but it does NOT
+write `_phone_subtitled_lanes_v1` -- grounded cards feed straight into
+`compile_phone_subtitled_plan` as `SubtitledOverlayCard`s alongside (or in
+place of) any hand-authored lane request, never round-tripping through the
+stored lane-request field. With the flag off, `_phone_subtitled_lanes_v1` is
+ignored entirely and the compiler/runner output is byte-identical to before
 (`tests/pipeline/test_phone_subtitled_plan.py` byte-identity test +
 `tests/tasks/test_phone_subtitled_narrated_dispatch.py` flag-off pins).
 Required capabilities added per lane: overlays → `visualBlocks`,
@@ -511,10 +514,14 @@ Required capabilities added per lane: overlays → `visualBlocks`,
 **Rollback:** `fly secrets set PHONE_SUBTITLED_MEDIA_LANES_ENABLED=false --app
 nova-video` + `fly machine restart <id>` (api + worker).
 
-**Authoring a lane request by hand (Phase 1.5, admin-only).** Until Phase 2
-grounds lanes from the prompt, an admin stores a request on the plan item and
-dispatch copies it into the job snapshot on the NEXT Generate/Retry (flag on,
-phone-rendered `subtitled` item only):
+**Authoring a lane request by hand (Phase 1.5, admin-only).** Now that Phase 2
+(below) auto-grounds overlay cards from the transcript, this hand-authored
+request is a manual OVERRIDE, not the only path: an admin stores a request on
+the plan item and dispatch copies it into the job snapshot on the NEXT
+Generate/Retry (flag on, phone-rendered `subtitled` item only); if that
+request carries `overlays`, `_run_phone_subtitled_job` uses it as-is and skips
+grounding entirely (receipt `matcher: "manual"`) -- sound effects and the
+ending clip are unaffected either way and always resolve independently:
 
 ```bash
 python scripts/admin.py --prod GET    plan-items/<item_id>/phone-lanes
@@ -548,6 +555,108 @@ words, `GET /admin/jobs/{id}`), not from the corrected captions:
 caption band. The request is private job state (`_phone_subtitled_lanes_v1`,
 stripped from public assembly-plan responses) and stays on the item until
 deleted, so clear it once Phase 2 owns the lanes.
+
+#### Phase 2: PiP cards grounded from the transcript (KRI-176)
+
+**Gate:** `app.services.phone_rollout.phone_subtitled_overlays_supported()` --
+True iff `phone_subtitled_media_lanes_enabled` AND `media_overlays_enabled`
+AND every feature in `PHONE_SUBTITLED_OVERLAY_FEATURES` (`stillImages`,
+`visualBlocks`, `alphaOverlay`, `audioMix`) is in
+`phone_render_verified_features`. Same helper gates both sides: the planner
+(`app.services.creator_capabilities.resolve_creator_manifest` advertises
+`media_overlays` on a phone `subtitled` manifest instead of the blanket
+`unsupported_on_phone` refusal) and the worker
+(`app.tasks.generative_build._run_phone_subtitled_job` only grounds cards when
+it is true) -- a manifest/worker split-brain is exactly the drift this single
+source of truth prevents.
+
+**Flow** (`app.services.phone_overlay_grounding`), run by
+`_run_phone_subtitled_job` right after transcription, before compile:
+
+1. Start from the raw, pre-correction Whisper words (the same
+   `overlay_transcript` timings Phase 1's hand-authored triggers use).
+2. Propose placements with `OverlayPlacementAgent` (Gemini) when a key is
+   configured, else fall back to a token-overlap heuristic between each
+   Visual's label/caption and the transcript words -- no network call, works
+   offline/in CI.
+3. `build_suggestions` clamps the raw proposals: each card must span at least
+   1.5s, a pacing cap limits how many cards can land close together, the first
+   2.5s "hook window" is protected (no card steals the opening beat), no more
+   than one card starts per 5s, and at most 10 cards total per variant.
+4. Each surviving suggestion gets a default upper-right card at 36% of frame
+   width (position is a starting point, not final -- see next step).
+5. `arbitrate_media_overlays` resolves overlap against two live signals: the
+   caption band (a protected box below `y=0.60`, mirroring Phase 1's `y_frac
+   <= 0.62` clamp) and OpenCV face regions sampled from the speaker clip
+   itself. Face sampling is fail-open -- a detector error or zero faces found
+   never blocks placement, it just skips the face-avoidance nudge for that
+   card (recorded as `face_sampling: "skipped"` or `"failed"` on the receipt,
+   never a job failure).
+6. Surviving cards become `SubtitledOverlayCard`s and lane through the exact
+   same bind (`bind_phone_visual_assets`) / compile
+   (`compile_phone_subtitled_plan`) / retry-without-the-lane-on-
+   `SubtitledLaneError` path Phase 1's hand-authored overlay lane already
+   uses -- grounding only decides WHICH cards to propose, not how they render
+   or fail.
+
+**Image Visuals only.** A video Visual matched by the placement step is
+reported `video_not_supported` (in `unplaced`, never silently dropped) --
+video-as-PiP is a follow-up, not this phase.
+
+**Manual override wins.** An admin-authored `phone-lanes` request (Phase 1.5,
+above) that carries `overlays` is used as-is and skips grounding entirely;
+the receipt records `matcher: "manual"` for that variant. Sound effects and
+the ending clip are independent lanes and are unaffected by which matcher
+supplied the overlay cards.
+
+**Receipt.** Persisted on the variant as `phone_overlay_receipt`:
+
+```json
+{
+  "version": 1,
+  "matcher": "agent",
+  "face_sampling": "ok",
+  "placed": [
+    {"media_id": "...", "label": "Coffee shot", "start_s": 3.2, "end_s": 5.0, "reason": "You say \"the coffee\" -- this photo shows it."}
+  ],
+  "unplaced": [
+    {"media_id": "...", "label": "Sunset drive", "reason": "no_spoken_match"}
+  ],
+  "wishlist": ["a wide shot of the harbor"]
+}
+```
+
+`matcher` is one of `agent` | `heuristic` | `none` (no Visuals or no
+transcript to ground against) | `manual` (Phase 1.5 override) | `failed`
+(grounding errored -- fail-open, the render proceeds with zero cards rather
+than failing the job). `face_sampling` is one of `ok` | `skipped` | `failed`.
+`unplaced[].reason` vocabulary: `no_spoken_match` (the matcher never
+proposed it), `video_not_supported`, `missing_generation` (pool row not
+bindable), the step-3 clamp reasons `hook_window` / `density_cap` / `overlap`
+/ `too_short` / `duplicate_asset`, the step-5 arbitration reasons
+`no_safe_spot` (no corner clear of the face and caption band even after
+shrinking) / `duplicate`, and the post-grounding demotions `bind_failed`
+(`bind_phone_visual_assets` rejected the pins) / `compile_dropped` (the
+compiler's `SubtitledLaneError` retry dropped the overlays lane).
+`placed[].reason` is the matcher's one-sentence rationale (agent) or empty
+(heuristic).
+
+**Where to read it:** the admin job-debug view
+(`GET /admin/jobs/{id}`, variant `phone_overlay_receipt`); the
+`("phone", "subtitled_overlay_grounding")` pipeline event
+(`{"placed": n, "unplaced": m, "matcher": ..., "face_sampling": ...}`, counts
+only); the `("media_overlay", "cards_applied")` event
+(`{"variant_id": "subtitled", "card_count": n}`); and the Nova activity feed
+(`app/services/nova_steps.py`), which humanizes the grounding event as "Nova
+popped your Visuals in as cards" (with placed/unplaced counts) or "Nova
+looked for moments to show your Visuals" when nothing was placed.
+
+**Rollback:** same two flags as Phase 1 --
+`fly secrets set PHONE_SUBTITLED_MEDIA_LANES_ENABLED=false --app nova-video`
+or `fly secrets set MEDIA_OVERLAYS_ENABLED=false --app nova-video`, either
+one + `fly machine restart <id>` (api + worker) turns grounding off; the
+worker then behaves exactly as it did before KRI-176 (no `phone_overlay_receipt`,
+no grounding call).
 
 ## Implemented foundations
 
