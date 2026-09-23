@@ -7407,6 +7407,134 @@ def test_two_quoted_titles_in_one_message_set_both_ends(monkeypatch):
     assert strategy.closing_title == "B"
 
 
+# Unquoted wording that DESCRIBES the intro/hook/text is direction, never
+# literal title copy. A stray title fails a subtitled ("Talking to camera")
+# session outright ("opening_title is not supported by the subtitled
+# renderer"), so the literal fallback must only fire on words that introduce
+# copy ("saying", "should say", "title:") or on quoted copy.
+_DESCRIPTIVE_TITLE_WORDING = [
+    "I want the intro to be energetic, with karaoke captions.",
+    "Make the intro energetic. Keep the captions big, the text is the star.",
+    "Show the hook as it is",
+    "The hook is strong, keep it.",
+    "The intro is too slow, speed it up.",
+    "Make the text to be bigger.",
+    "Intro: energetic, fast cuts.",
+    "Hook: show me jumping into the pool.",
+    "Text: big and yellow.",
+    # Apostrophes (straight and iOS curly) are not quote marks.
+    "The intro's fine, don't change the hook's timing.",
+    "The intro’s fine, don’t change the hook’s timing.",
+    "I've got the kids' intro ready.",
+    # "title is/to" and "hook as" describe the copy; they never supply it.
+    "The title is too long, shorten it.",
+    "Change the title to something punchier.",
+    "Keep the hook as short as possible.",
+    # ... and a later caption direction never becomes the title instead.
+    "The title is Rome Trip, and add captions with text that says what I say.",
+    "Intro: Rome trip, text saying the location.",
+    "Hook: first bite of pasta, then text that says where we are.",
+]
+
+
+@pytest.mark.parametrize("creator_text", _DESCRIPTIVE_TITLE_WORDING)
+def test_descriptive_intro_wording_never_becomes_title_copy(monkeypatch, creator_text):
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(), creator_text, manifest=_manifest(monkeypatch)
+    )
+    assert strategy.opening_title is None
+    assert strategy.closing_title is None
+
+
+@pytest.mark.parametrize("creator_text", _DESCRIPTIVE_TITLE_WORDING)
+def test_descriptive_intro_wording_compiles_for_subtitled(monkeypatch, creator_text):
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "subtitled_archetype_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="subtitled",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+    )
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(
+            edit_format="subtitled",
+            render_program="native",
+            selected_media_ids=["clip-1"],
+        ),
+        creator_text,
+        manifest=manifest,
+    )
+    plan = compile_strategy_to_plan(manifest, strategy)
+    assert plan.strategy.edit_format == "subtitled"
+    assert plan.strategy.opening_title is None
+
+
+@pytest.mark.parametrize(
+    "creator_text,opening,closing",
+    [
+        ("Title: Summer in Madrid", "Summer in Madrid", None),
+        ("Intro text: Summer in Madrid, use Rascal font.", "Summer in Madrid", None),
+        ("The intro should say Summer in Madrid", "Summer in Madrid", None),
+        ("Outro text: See you tomorrow", None, "See you tomorrow"),
+        ("End title: Follow for more", None, "Follow for more"),
+        # Every qualifier the "<qualifier> text|copy:" and "title:" grammar accepts.
+        ("Opening copy: Summer in Madrid", "Summer in Madrid", None),
+        ("Hook text: Summer in Madrid", "Summer in Madrid", None),
+        ("Intro title: Summer in Madrid", "Summer in Madrid", None),
+        ("Closing copy: See you tomorrow", None, "See you tomorrow"),
+        ("Ending text: See you tomorrow", None, "See you tomorrow"),
+        # Legacy multi-sentence title copy survives ...
+        ("Title: Emir Olympics. Ann Arbor 2022.", "Emir Olympics. Ann Arbor 2022.", None),
+        # ... but never runs into the next label or a following instruction.
+        ("Outro text: See you. Intro text: Hello", "Hello", None),
+        ("Title saying Hi. Outro text: Bye", "Hi", None),
+        (
+            "Closing text: Follow for more. Also I want the clips in order and no captions",
+            None,
+            "Follow for more",
+        ),
+        ("End copy: bye. my phone number is on the second clip, hide it", None, "bye"),
+        ("Opening text: Hi. Keep the whole video under 20 seconds.", "Hi", None),
+        # Quotes: inner apostrophes, curly quotes, and a leading quoted title.
+        ("title 'Emir's Olympics'", "Emir's Olympics", None),
+        ("title ‘Emir’s Olympics’", "Emir’s Olympics", None),
+        ("‘Emir Olympics’ title", "Emir Olympics", None),
+        # Apostrophes earlier in the message never open the quoted copy.
+        ("The intro's fine; add the hook's 'Big Day' title", "Big Day", None),
+        ("Add the kids' 'Big Day' title", "Big Day", None),
+        # Chat turns are newline-joined: unquoted copy stops at the turn
+        # boundary, while quoted copy and the closing cue may span one.
+        ("Title: Summer Vibes\nCan you make the clips shorter?", "Summer Vibes", None),
+        ("Closing copy: Thanks for watching\nmake the cuts faster", None, "Thanks for watching"),
+        ('Title: "Summer\nin Rome"', "Summer in Rome", None),
+        ('At the end\ntitle "Bye"', None, "Bye"),
+    ],
+)
+def test_explicit_title_copy_is_exact_and_bounded(monkeypatch, creator_text, opening, closing):
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(), creator_text, manifest=_manifest(monkeypatch)
+    )
+    assert strategy.opening_title == opening
+    assert strategy.closing_title == closing
+
+
+@pytest.mark.parametrize(
+    "creator_text",
+    [
+        "Dont add a title saying Summer in Madrid.",  # no apostrophe
+        "Don't add an outro text: See you",  # match-head closing cue
+        "Do not add a closing title: See you",
+    ],
+)
+def test_negated_title_wording_variants_add_no_title(monkeypatch, creator_text):
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(), creator_text, manifest=_manifest(monkeypatch)
+    )
+    assert strategy.opening_title is None
+    assert strategy.closing_title is None
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("compile_fails_once", [False, True])
 @pytest.mark.parametrize("semantic_plan", [False, True])
