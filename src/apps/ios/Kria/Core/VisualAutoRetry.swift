@@ -4,16 +4,17 @@ import Foundation
 /// transiently (`analysis_temporarily_unavailable`: a one-off Gemini 503, a
 /// broker publish that didn't go through).
 ///
-/// The Add-media sheet feeds every poll of `GET /plan-items/{id}/assets` into
-/// `observe`, sends `POST …/reanalyze` for the ids it returns and reports each
-/// outcome through `recordAttempt`. Nothing here re-uploads: a retry only asks
-/// the server to analyze the object it already holds. Per asset and per sheet
-/// session the scheduler makes at most `maximumAttempts` attempts, `delays`
+/// The Add-media sheet and the editor's Visuals library feed every poll of
+/// `GET /plan-items/{id}/assets` into `observe`, send `POST …/reanalyze` for
+/// the ids it returns and report each outcome through `recordAttempt`. Nothing
+/// here re-uploads: a retry only asks the server to analyze the object it
+/// already holds. Per asset and per owner (a sheet session, or an editor
+/// session) the scheduler makes at most `maximumAttempts` attempts, `delays`
 /// apart, and never touches a failure the server marked non-retryable or
 /// attributed to any other code. Those keep the manual Retry button (when
 /// retryable) or ask the creator to choose the file again.
 ///
-/// The manual Retry button goes through `beginManualRetry` too, so the sheet
+/// The manual Retry button goes through `beginManualRetry` too, so an owner
 /// never has two reanalyze requests on the wire for one asset: a tap during an
 /// automatic attempt is refused, and no automatic attempt fires during a tap.
 struct VisualAutoRetryScheduler: Equatable, Sendable {
@@ -53,6 +54,14 @@ struct VisualAutoRetryScheduler: Equatable, Sendable {
     func canRetryManually(_ assetID: String) -> Bool { entries[assetID]?.inFlight == nil }
 
     func attempts(for assetID: String) -> Int { entries[assetID]?.attempts ?? 0 }
+
+    /// Whether an owner that polls only while something is changing must keep
+    /// polling for this asset: an attempt is scheduled or in flight, or a
+    /// qualifying failure hasn't spent its budget (it may not be scheduled
+    /// yet if a refresh outside the poll was the first to see it).
+    func needsObservation(of asset: CreationVisual) -> Bool {
+        isRetryPending(asset.id) || (Self.qualifies(asset) && attempts(for: asset.id) < Self.maximumAttempts)
+    }
 
     /// Reconciles the scheduler with the latest pool snapshot and returns the
     /// assets whose automatic reanalyze is due now, marking them in flight so
@@ -122,21 +131,40 @@ struct VisualAutoRetryScheduler: Equatable, Sendable {
 }
 
 extension CreationVisual {
-    /// The line under the filename in the Add-media sheet. A failed row shows
-    /// the server's explanation instead of a bare "Failed"; a failure the
-    /// server won't retry asks the creator to choose the file again, and a
-    /// pending automatic retry says so in place of the server's "Try again."
-    func statusCaption(retryingAutomatically: Bool = false) -> String {
-        guard status == "failed" else { return status.capitalized }
+    /// A Visual's status explanation and, when the creator has something to
+    /// know or do next, that step. Kept apart so the editor's narrow tile can
+    /// truncate a long server explanation without cutting off the next step.
+    struct StatusCaptionParts: Equatable, Sendable {
+        var explanation: String
+        /// "Choose it again." for a failure the server won't retry,
+        /// "Retrying automatically…" while an automatic retry is pending, and
+        /// nil otherwise (a retryable failure's next step is its Retry button).
+        var nextStep: String?
+    }
+
+    /// A failed Visual gets the server's explanation instead of a bare
+    /// "Failed"; a failure the server won't retry asks the creator to choose
+    /// the file again, and a pending automatic retry says so in place of the
+    /// server's "Try again."
+    func statusCaptionParts(retryingAutomatically: Bool = false) -> StatusCaptionParts {
+        guard status == "failed" else { return .init(explanation: status.capitalized) }
         var detail = errorDetail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if retryable == false {
-            return Self.sentences(detail.isEmpty ? "Failed." : detail, "Choose it again.")
+            return .init(explanation: detail.isEmpty ? "Failed" : detail, nextStep: "Choose it again.")
         }
-        guard retryingAutomatically else { return detail.isEmpty ? "Failed" : detail }
+        guard retryingAutomatically else { return .init(explanation: detail.isEmpty ? "Failed" : detail) }
         if detail.hasSuffix("Try again.") {
             detail = String(detail.dropLast("Try again.".count)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return Self.sentences(detail.isEmpty ? "Failed." : detail, "Retrying automatically…")
+        return .init(explanation: detail.isEmpty ? "Failed" : detail, nextStep: "Retrying automatically…")
+    }
+
+    /// The same caption as one line of text: the line under the filename in
+    /// the Add-media sheet, and the editor tile's accessibility label.
+    func statusCaption(retryingAutomatically: Bool = false) -> String {
+        let parts = statusCaptionParts(retryingAutomatically: retryingAutomatically)
+        guard let nextStep = parts.nextStep else { return parts.explanation }
+        return Self.sentences(parts.explanation, nextStep)
     }
 
     private static func sentences(_ first: String, _ second: String) -> String {
