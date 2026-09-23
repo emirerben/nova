@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.162.0] - 2026-09-23
+
+### Changed
+- fix(db-locks): lock ContentPlan FOR NO KEY UPDATE so FK checks can't deadlock; iOS retries concurrent_update (#1178) <!-- release-pr: 1178 -->
+
 ## [0.76.161.0] - 2026-09-23
 
 ### Fixed
