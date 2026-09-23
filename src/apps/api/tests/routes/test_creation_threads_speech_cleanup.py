@@ -1140,7 +1140,11 @@ async def _run_generate_action(
     payload: dict[str, object],
     action: str = "generate",
     graph: tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace] | None = None,
+    source_storage_path: str | None = None,
 ) -> tuple[object, AsyncMock]:
+    """``source_storage_path`` switches the enforce gate to the REAL
+    `preflight_enabled_for_source` (rollout 100) with that path on the
+    resolved source, instead of stubbing the gate to True."""
     thread, session, item = graph or _action_graph()
     if analysis is not None:
         analysis.plan_item_id = item.id
@@ -1172,18 +1176,23 @@ async def _run_generate_action(
         "app.services.speech_cleanup_preflight.current_analysis_async",
         AsyncMock(return_value=analysis),
     )
+    resolved_source = SimpleNamespace(source_policy_fingerprint="private-fingerprint")
+    if source_storage_path is not None:
+        resolved_source.storage_path = source_storage_path
+        monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
     monkeypatch.setattr(
         "app.services.plan_item_media.resolve_item_narration",
         lambda *_args, **_kwargs: SimpleNamespace(
-            source=SimpleNamespace(source_policy_fingerprint="private-fingerprint"),
+            source=resolved_source,
             reason=None,
             video_present=True,
         ),
     )
-    monkeypatch.setattr(
-        "app.services.speech_cleanup_preflight.preflight_enabled_for_source",
-        lambda *_args, **_kwargs: True,
-    )
+    if source_storage_path is None:
+        monkeypatch.setattr(
+            "app.services.speech_cleanup_preflight.preflight_enabled_for_source",
+            lambda *_args, **_kwargs: True,
+        )
     action_payload = (
         {
             "session_revision": 2,
@@ -2307,3 +2316,132 @@ async def test_stamped_required_v1_without_analysis_row_projects_nothing(
         f"mode={preflight_mode} at percent 0 surfaced an unresolvable card: "
         f"{response.speech_cleanup}"
     )
+
+
+# --- phone (analysis-proxy) sources are never "applicable" ------------------
+#
+# 2026-09-24, thread f249fb29: a phone Talking item in enforce mode projected
+# `speech_cleanup.applicable == True` with `analysis == None`. The scheduler
+# (`schedule_item_preflight_*`) passes `storage_path` to
+# `preflight_enabled_for_source`, which refuses analysis proxies, so no row is
+# ever created -- but the thread projection and the generate action called the
+# same gate WITHOUT `storage_path`. iOS renders that state as an endless
+# "Preparing the speech check…" with no Create button, and a confirm would
+# have 409'd `speech_cleanup_pending`. Both call sites must apply the gate.
+
+_PHONE_PROXY_PATH = "users/u1/plan/p1/analysis-proxy-ios-C9D9D6E8.mp4"
+_CLOUD_PATH = "users/u1/plan/p1/pool/talking.mp4"
+
+
+async def _detail_for_source(monkeypatch: pytest.MonkeyPatch, *, storage_path: str) -> object:
+    owner_id = uuid.uuid4()
+    plan_id, item_id = uuid.uuid4(), uuid.uuid4()
+    item = SimpleNamespace(
+        id=item_id,
+        content_plan_id=plan_id,
+        current_job_id=None,
+        clip_gcs_paths=[storage_path],
+        clip_assignments=[],
+        edit_format="subtitled",
+        audio_mode="original",
+        voiceover_gcs_path=None,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=owner_id, ownership_epoch=0)
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=owner_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=None,
+        active_job_id=None,
+        status="active",
+        revision=9,
+        state={"media_count": 1, "render_destination_intent": "device"},
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    db = Mock(spec=AsyncSession)
+
+    async def get(model: object, _identifier: object, **_kwargs: object) -> object | None:
+        return {PlanItem: item, ContentPlan: plan}.get(model)
+
+    count_result = Mock()
+    count_result.scalar_one.return_value = 0
+    events_result = Mock()
+    events_result.scalars.return_value.all.return_value = []
+    db.get = AsyncMock(side_effect=get)
+    db.execute = AsyncMock(side_effect=[count_result, events_result])
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            source=SimpleNamespace(
+                source_policy_fingerprint="private-fingerprint", storage_path=storage_path
+            ),
+            reason=None,
+            video_present=True,
+        ),
+    )
+    # No row: nothing ever scheduled one for this source.
+    monkeypatch.setattr(
+        "app.services.speech_cleanup_preflight.current_analysis_async",
+        AsyncMock(return_value=None),
+    )
+    return await routes._response(db, thread)
+
+
+@pytest.mark.asyncio
+async def test_phone_proxy_source_is_never_applicable_in_the_thread_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = await _detail_for_source(monkeypatch, storage_path=_PHONE_PROXY_PATH)
+    # `None`, not `{"applicable": True, "analysis": None}` -- the latter is the
+    # exact shape iOS renders as an endless "Preparing the speech check…".
+    assert response.speech_cleanup is None
+
+
+@pytest.mark.asyncio
+async def test_cloud_source_without_a_row_still_projects_pending_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Control for the test above: the same projection for a real cloud source
+    keeps advertising the check while its row is being scheduled."""
+    response = await _detail_for_source(monkeypatch, storage_path=_CLOUD_PATH)
+    assert response.speech_cleanup is not None
+    assert response.speech_cleanup["applicable"] is True
+    assert response.speech_cleanup["analysis"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["generate", "confirm_generation"])
+async def test_phone_proxy_source_generates_without_a_speech_check(
+    monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    """A phone Talking item has no analysis row (and never will); enforce mode
+    must not 409 `speech_cleanup_pending` on Create."""
+    output, controller = await _run_generate_action(
+        monkeypatch,
+        analysis=None,
+        payload={},
+        action=action,
+        source_storage_path=_PHONE_PROXY_PATH,
+    )
+    assert output is not None
+    controller.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cloud_source_without_a_row_is_still_pending_on_generate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Control: the real gate still enforces the check for a cloud source."""
+    with pytest.raises(HTTPException) as excinfo:
+        await _run_generate_action(
+            monkeypatch,
+            analysis=None,
+            payload={},
+            source_storage_path=_CLOUD_PATH,
+        )
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail == "speech_cleanup_pending"
