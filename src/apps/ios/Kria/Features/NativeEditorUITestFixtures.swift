@@ -15,6 +15,7 @@ enum NativeEditorUITestFixtures {
         case allLanes = "all-lanes"
         case stress = "stress-71"
         case unknown = "unknown-sections"
+        case autoScrollExtend = "autoscroll-extend"
     }
 
     struct Fixture: Sendable {
@@ -42,6 +43,7 @@ enum NativeEditorUITestFixtures {
         case .allLanes: allLanes
         case .stress: stress
         case .unknown: unknownSections
+        case .autoScrollExtend: autoScrollExtend
         }
     }
 
@@ -244,6 +246,33 @@ enum NativeEditorUITestFixtures {
                      ], rootExtras: ["future_root_key": .string("keep")])
     }()
 
+    /// KRI-165: 15s of timeline (well beyond one 6s viewport width at 1x
+    /// zoom) so a text-block move/trim genuinely needs the clock to
+    /// auto-scroll to reach past what's visible on launch, rather than a
+    /// single one-shot drag translation reaching it unaided. Clip 1 also
+    /// carries far more `source_duration_s` headroom (20s) than its 5s
+    /// on-timeline duration, so extending its trailing trim past the
+    /// visible window likewise requires auto-scroll to actually fire.
+    static let autoScrollExtend: EditorDraft = {
+        // Clip 1 is short (2s) so its trailing handle is fully on screen at
+        // launch (zoom 1 shows roughly ±3s around the playhead) — its
+        // trailing trim reaches the visible edge with room to spare, and
+        // must auto-scroll from there to use its 18s of source headroom.
+        let clips = [
+            clip(800, start: 0, duration: 2, sourceDuration: 20),
+            clip(801, start: 2, duration: 7),
+            clip(802, start: 9, duration: 6),
+        ]
+        let layer = text(850, content: "Auto-scroll target", x: 0.5, y: 0.5)
+        return draft(clips: clips, text: [layer], captions: false, music: false,
+                     sections: [
+                        "timeline_slots": slots(for: clips),
+                        "text_elements": .array([textRecord(layer, start: 0.2, end: 1, z: 1)]),
+                        "title": .string("Auto-scroll fixture"),
+                        "orientation": .string("9:16"),
+                     ])
+    }()
+
     private static func draft(clips: [EditorClip], text: [TextLayer], captions: Bool, music: Bool,
                               sections: [String: JSONValue], rootExtras: [String: JSONValue] = [:]) -> EditorDraft {
         var root = rootExtras
@@ -262,9 +291,15 @@ enum NativeEditorUITestFixtures {
     }
 
     private static func clip(_ index: Int, start: Double, duration: Double) -> EditorClip {
+        clip(index, start: start, duration: duration, sourceDuration: max(duration, 7.2))
+    }
+
+    /// Explicit `sourceDuration` override for fixtures that need trailing
+    /// trim headroom beyond the default (e.g. KRI-165's auto-scroll tests).
+    private static func clip(_ index: Int, start: Double, duration: Double, sourceDuration: Double) -> EditorClip {
         EditorClip(id: id(index), assetID: id(1_000 + index % 43), sourceClipIndex: index % 43,
                    start: start, end: start + duration, trimIn: 0, trimOut: duration,
-                   sourceDuration: max(duration, 7.2), slotID: "slot-\(index)")
+                   sourceDuration: sourceDuration, slotID: "slot-\(index)")
     }
 
     private static func text(_ index: Int, content: String, x: Double, y: Double) -> TextLayer {

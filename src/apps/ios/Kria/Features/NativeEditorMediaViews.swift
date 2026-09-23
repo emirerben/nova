@@ -950,6 +950,75 @@ private struct NativePreviewObjectView: View {
     }
 }
 
+/// One in-flight drag's auto-scroll bookkeeping. A class (not a struct) so
+/// the display-link tick closure can read/write it by reference without
+/// SwiftUI re-rendering on every tick.
+private final class DragAutoScrollContext {
+    let clockAtStart: TimeInterval
+    let viewportGlobalRange: ClosedRange<CGFloat>
+    /// The raw (uncompensated) translation from the most recent finger
+    /// sample, in seconds. Auto-scroll adds the clock delta on top of this.
+    var lastRaw: TimeInterval = 0
+    /// The finger's most recent global x, used to (re)compute velocity.
+    var lastX: CGFloat
+    /// The marker (moved/trimmed edge) `applyRaw` returned last time it was
+    /// called, from either the finger path or a tick. Comparing this across
+    /// ticks is how a pinned clamp is detected.
+    var lastAppliedMarker: TimeInterval?
+    /// Applies a translation (already clock-compensated) to the session and
+    /// returns a marker for pin detection, or nil if the item disappeared.
+    let applyRaw: (TimeInterval) -> TimeInterval?
+
+    init(clockAtStart: TimeInterval, lastX: CGFloat, viewportGlobalRange: ClosedRange<CGFloat>, applyRaw: @escaping (TimeInterval) -> TimeInterval?) {
+        self.clockAtStart = clockAtStart
+        self.lastX = lastX
+        self.viewportGlobalRange = viewportGlobalRange
+        self.applyRaw = applyRaw
+    }
+}
+
+/// Weak-target CADisplayLink, same structure as
+/// NativeTextAnimationPreviewDisplayLinkTarget (NativeTextAnimationPreview.swift) —
+/// reused rather than writing a second one. Frame rate capped at 60 so a
+/// 120Hz ProMotion touch stream doesn't double up with tick-driven updates.
+private final class NativeTimelineEdgeScroller {
+    private final class Target: NSObject {
+        weak var owner: NativeTimelineEdgeScroller?
+        init(owner: NativeTimelineEdgeScroller) { self.owner = owner }
+        @objc func tick(_ link: CADisplayLink) { owner?.handle(link) }
+    }
+
+    private var displayLink: CADisplayLink?
+    private var lastTimestamp: CFTimeInterval?
+    /// Called every frame with the elapsed time since the previous tick.
+    var onTick: ((TimeInterval) -> Void)?
+
+    var isRunning: Bool { displayLink != nil }
+
+    func start() {
+        guard displayLink == nil else { return }
+        let target = Target(owner: self)
+        let link = CADisplayLink(target: target, selector: #selector(Target.tick(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+        lastTimestamp = nil
+    }
+
+    func stop() {
+        displayLink?.invalidate()
+        displayLink = nil
+        lastTimestamp = nil
+    }
+
+    private func handle(_ link: CADisplayLink) {
+        let elapsed = lastTimestamp.map { link.timestamp - $0 } ?? (1.0 / 60)
+        lastTimestamp = link.timestamp
+        guard elapsed > 0 else { return }
+        onTick?(elapsed)
+    }
+}
+
 /// The playhead stays fixed in the viewport while every track moves beneath it.
 /// Horizontal panning seeks the preview to the time underneath the playhead.
 struct NativeMiniStrip: View {
@@ -986,6 +1055,15 @@ struct NativeMiniStrip: View {
     @State private var cachedClips: [EditorClip] = []
     @State private var didCacheItems = false
     @State private var isPresentingAddClip = false
+    /// Non-nil only while an auto-scroll-eligible drag (timed-block move,
+    /// timed-block trim, or a clip's trailing trim) is active.
+    @State private var autoScroll: DragAutoScrollContext?
+    @State private var edgeScroller = NativeTimelineEdgeScroller()
+    /// A second, independent safety net beside each gesture's own cancel
+    /// detection (@GestureState reset) — stops the scroller if the app
+    /// leaves .active outright (backgrounding, Control Center, a system
+    /// alert), which can race gesture-level cancellation.
+    @Environment(\.scenePhase) private var scenePhase
 
     private let minimumZoom: CGFloat = 0.5
     private let maximumZoom: CGFloat = 24
@@ -1068,8 +1146,11 @@ struct NativeMiniStrip: View {
     private var timelineDuration: TimeInterval {
         // The rendered asset (or the server's expected_duration_s) owns the
         // transport boundary. Stale lane ends must not make the clock promise
-        // seconds that the player cannot show.
-        max(0.1, session.playbackDuration)
+        // seconds that the player cannot show. timelineScrubDuration widens
+        // this while a preview rebuild is pending (mid-gesture or shortly
+        // after) so a clip extension or auto-scroll can reach the timeline's
+        // true projected end instead of stalling at the stale composition.
+        max(0.1, session.timelineScrubDuration)
     }
     private var documentCaptionsEnabled: Bool {
         nativeBool(session.document.captionMeta["enabled"]) ?? !session.document.captionCues.isEmpty
@@ -1127,6 +1208,14 @@ struct NativeMiniStrip: View {
         .padding(.vertical, 4)
         .accessibilityElement(children: .contain)
         .sensoryFeedback(.selection, trigger: boundaryFeedback)
+        .onChange(of: scenePhase) { _, phase in
+            // Second, independent safety net beside each gesture's own
+            // @GestureState cancel detection — a hard app-suspend (Control
+            // Center, backgrounding, a system alert) can race gesture-level
+            // cancellation, and this must never leave the timeline scrolling
+            // with no finger attached.
+            if phase != .active { endAutoScroll() }
+        }
         .sheet(isPresented: $isPresentingAddClip) { NativeEditorAddClipSheet(session: session) }
         // The add-clip sheet closes as soon as a file is chosen, so a failure has to surface here.
         // Suppressed while the sheet is open, where it shows the same error inline.
@@ -1270,12 +1359,21 @@ struct NativeMiniStrip: View {
         GeometryReader { proxy in
             let width = max(proxy.size.width, 1)
             let playheadX = playheadX(for: width)
+            // Read fresh on every body evaluation, same as `width`/`playheadX`
+            // above — not cached via onChange. A begin callback built from
+            // this render's closures always captures a viewport reading no
+            // staler than the view's own layout, and this value changes far
+            // less often than the vertical lane-list scroll would make an
+            // onChange-driven cache churn.
+            let globalFrame = proxy.frame(in: .global)
+            let viewportGlobalRange: ClosedRange<CGFloat> = globalFrame.width > 0
+                ? globalFrame.minX...globalFrame.maxX : 0...0
             ZStack(alignment: .topLeading) {
                 VStack(spacing: rowGap) {
                     ruler(width: width, playheadX: playheadX)
-                    filmstrip(width: width, playheadX: playheadX)
+                    filmstrip(width: width, playheadX: playheadX, viewportGlobalRange: viewportGlobalRange)
                     ForEach(rows) { row in
-                        timedLane(title: row.title, items: row.items, color: KriaColor.softZinc, playheadX: playheadX)
+                        timedLane(title: row.title, items: row.items, color: KriaColor.softZinc, playheadX: playheadX, viewportGlobalRange: viewportGlobalRange)
                             // KRI-131: lets a text selection scroll its row
                             // clear of the floating context capsule.
                             .id(row.id)
@@ -1360,7 +1458,10 @@ struct NativeMiniStrip: View {
     private func originalAudioLane(playheadX: CGFloat) -> some View {
         GeometryReader { viewport in
             let start = max(0, playheadX - CGFloat(clock.currentTime) * pixelsPerSecond)
-            let end = min(viewport.size.width, playheadX + CGFloat(session.duration - clock.currentTime) * pixelsPerSecond)
+            // timelineScrubDuration, not session.duration directly — otherwise
+            // this lane stops growing mid-extension while the duration label
+            // above it keeps growing, visibly disagreeing with the ruler.
+            let end = min(viewport.size.width, playheadX + CGFloat(session.timelineScrubDuration - clock.currentTime) * pixelsPerSecond)
             Label("Original audio", systemImage: "waveform")
                 .font(KriaFont.body(11))
                 .lineLimit(1)
@@ -1375,7 +1476,7 @@ struct NativeMiniStrip: View {
         .clipped()
     }
 
-    private func filmstrip(width: CGFloat, playheadX: CGFloat) -> some View {
+    private func filmstrip(width: CGFloat, playheadX: CGFloat, viewportGlobalRange: ClosedRange<CGFloat>) -> some View {
         ZStack(alignment: .topLeading) {
             Canvas { context, size in
                 for (index, clip) in clips.enumerated() {
@@ -1402,6 +1503,16 @@ struct NativeMiniStrip: View {
             .allowsHitTesting(false)
 
             ForEach(visibleClips(playheadX: playheadX), id: \.element.id) { index, clip in
+                // Only the trailing edge auto-scrolls — a clip's timeline
+                // start is fixed by slot order, so the leading handle never
+                // tracks the finger and clock-delta compensation would
+                // un-trim it. See NativeMiniStrip's design note above.
+                let applyTrailingTrim: (TimeInterval) -> TimeInterval? = { raw in
+                    session.updateTrim(by: raw)
+                    guard let trimmed = session.timelineClips.first(where: { $0.id == clip.id }) else { return nil }
+                    updateTrimHaptics(start: trimmed.start, end: trimmed.end)
+                    return trimmed.end
+                }
                 NativeClipSurface(
                     clip: clip,
                     index: index,
@@ -1412,18 +1523,26 @@ struct NativeMiniStrip: View {
                     onTrimStart: { edge in
                         beginTrimHaptics(selection: EditorSelection(kind: .clip, id: clip.id.uuidString), edge: edge, start: clip.start, end: clip.end)
                         session.beginTrim(clipID: clip.id, edge: edge)
-                    },
-                    onTrimChange: { _, translation in
-                        session.updateTrim(by: translation)
-                        if let trimmed = session.timelineClips.first(where: { $0.id == clip.id }) {
-                            updateTrimHaptics(start: trimmed.start, end: trimmed.end)
+                        if edge == .trailing {
+                            beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: applyTrailingTrim)
                         }
                     },
-                    onTrimEnd: { session.endTrim(); endTrimHaptics() },
+                    onTrimChange: { edge, translation in
+                        if edge == .trailing {
+                            applyCompensatedDrag(raw: translation, applyRaw: applyTrailingTrim)
+                        } else {
+                            session.updateTrim(by: translation)
+                            if let trimmed = session.timelineClips.first(where: { $0.id == clip.id }) {
+                                updateTrimHaptics(start: trimmed.start, end: trimmed.end)
+                            }
+                        }
+                    },
+                    onTrimEnd: { session.endTrim(); endTrimHaptics(); endAutoScroll() },
                     onMove: { offset in
                         session.selectClip(clip.id)
                         session.moveSelected(by: offset)
-                    }
+                    },
+                    onTrailingDragXChange: { x in updateAutoScrollX(x) }
                 )
             }
             if clips.isEmpty {
@@ -1625,13 +1744,45 @@ struct NativeMiniStrip: View {
             boundaries: boundaries, tolerance: 3 / max(1, Double(pixelsPerSecond)))
     }
 
-    private func timedLane(title: String, items: [NativeEditorTimelineItem], color: Color, playheadX: CGFloat) -> some View {
+    private func timedLane(title: String, items: [NativeEditorTimelineItem], color: Color, playheadX: CGFloat, viewportGlobalRange: ClosedRange<CGFloat>) -> some View {
         let packed = title == "TEXT" ? NativeEditorInteraction.packLanes(items) : []
         let lanes = Dictionary(uniqueKeysWithValues: packed.map { ($0.item.selection, $0.lane) })
         let count = max(1, (packed.map(\.lane).max() ?? 0) + 1)
         return ZStack(alignment: .topLeading) {
             ForEach(visibleItems(items, playheadX: playheadX), id: \.selection) { item in
                 let itemFrame = itemFrame(item, playheadX: playheadX).offsetBy(dx: 0, dy: CGFloat(lanes[item.selection] ?? 0) * (secondaryLaneHeight + rowGap))
+                // Shared by the direct finger path and the auto-scroll tick
+                // path so both apply the exact same baseline math and
+                // haptics. Returns a marker (the moved/trimmed edge) so
+                // auto-scroll can detect a pin (the value stopped changing
+                // despite the clock advancing) and stop drifting the handle
+                // away from the finger.
+                let applyMove: (TimeInterval) -> TimeInterval? = { raw in
+                    session.updateTimedBodyMove(by: raw)
+                    guard let moved = session.timelineItems.first(where: { $0.selection == item.selection }) else { return nil }
+                    let aligned = alignmentBoundary(for: moved)
+                    let boundaries = cachedItems.filter { $0.selection != item.selection }.flatMap { [$0.start, $0.end] }
+                        + cachedClips.flatMap { [$0.start, $0.end] }
+                    let crossed = movePreviousEdges.map {
+                        NativeEditorInteraction.crossesAlignment(previousStart: $0.start, previousEnd: $0.end,
+                            start: moved.start, end: moved.end, boundaries: boundaries)
+                    } ?? false
+                    if (crossed || (aligned != nil && aligned != moveAlignment)),
+                       Date().timeIntervalSince(lastAlignmentHapticAt) >= 0.075 {
+                        alignmentHaptic.impactOccurred(intensity: 1)
+                        alignmentHaptic.prepare()
+                        lastAlignmentHapticAt = .now
+                    }
+                    movePreviousEdges = (moved.start, moved.end)
+                    moveAlignment = aligned
+                    return moved.start
+                }
+                let applyTrim: (TimeInterval) -> TimeInterval? = { raw in
+                    session.updateTimedEdgeTrim(by: raw)
+                    guard let trimmed = session.timelineItems.first(where: { $0.selection == item.selection }) else { return nil }
+                    updateTrimHaptics(start: trimmed.start, end: trimmed.end)
+                    return trimEdge == .leading ? trimmed.start : trimmed.end
+                }
                 NativeTimelineBar(
                     item: item,
                     frame: itemFrame,
@@ -1652,45 +1803,25 @@ struct NativeMiniStrip: View {
                         if session.selection != item.selection {
                             session.select(item, seekToStart: false)
                         }
+                        beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: applyMove)
                     },
-                    onMoveChange: {
-                        session.updateTimedBodyMove(by: $0)
-                        if let moved = session.timelineItems.first(where: { $0.selection == item.selection }) {
-                            let aligned = alignmentBoundary(for: moved)
-                            let boundaries = cachedItems.filter { $0.selection != item.selection }.flatMap { [$0.start, $0.end] }
-                                + cachedClips.flatMap { [$0.start, $0.end] }
-                            let crossed = movePreviousEdges.map {
-                                NativeEditorInteraction.crossesAlignment(previousStart: $0.start, previousEnd: $0.end,
-                                    start: moved.start, end: moved.end, boundaries: boundaries)
-                            } ?? false
-                            if (crossed || (aligned != nil && aligned != moveAlignment)),
-                               Date().timeIntervalSince(lastAlignmentHapticAt) >= 0.075 {
-                                alignmentHaptic.impactOccurred(intensity: 1)
-                                alignmentHaptic.prepare()
-                                lastAlignmentHapticAt = .now
-                            }
-                            movePreviousEdges = (moved.start, moved.end)
-                            moveAlignment = aligned
-                        }
-                    },
+                    onMoveChange: { raw in applyCompensatedDrag(raw: raw, applyRaw: applyMove) },
                     onMoveEnd: {
                         lastPanAt = .now
                         moveAlignment = nil
                         movePreviousEdges = nil
                         session.endTimedBodyMove()
+                        endAutoScroll()
                         refreshItems()
                     },
                     onTrimStart: { edge in
                         beginTrimHaptics(selection: item.selection, edge: edge, start: item.start, end: item.end)
                         session.beginTimedEdgeTrim(kind: item.kind, id: item.id, edge: edge)
+                        beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: applyTrim)
                     },
-                    onTrimChange: {
-                        session.updateTimedEdgeTrim(by: $0)
-                        if let trimmed = session.timelineItems.first(where: { $0.selection == item.selection }) {
-                            updateTrimHaptics(start: trimmed.start, end: trimmed.end)
-                        }
-                    },
-                    onTrimEnd: { session.endTimedEdgeTrim(); endTrimHaptics() }
+                    onTrimChange: { raw in applyCompensatedDrag(raw: raw, applyRaw: applyTrim) },
+                    onTrimEnd: { session.endTimedEdgeTrim(); endTrimHaptics(); endAutoScroll() },
+                    onDragXChange: { x in updateAutoScrollX(x) }
                 )
             }
         }
@@ -1801,6 +1932,106 @@ struct NativeMiniStrip: View {
         session.seek(to: target)
     }
 
+    // MARK: - Timeline edge auto-scroll
+
+    /// Starts tracking one auto-scroll-eligible drag. `applyRaw` is the same
+    /// function the finger path uses (via `applyCompensatedDrag`) — the tick
+    /// path and the finger path always apply the exact same math and haptics.
+    private func beginAutoScroll(viewportGlobalRange: ClosedRange<CGFloat>, applyRaw: @escaping (TimeInterval) -> TimeInterval?) {
+        // The session only ever runs one timing-gesture transaction at a
+        // time (activeTimedEdit/activeTrim each guard on being nil), but
+        // the view layer's begin callbacks fire before that guard is
+        // visible here. A second touch reaching this while a first gesture
+        // legitimately owns auto-scroll must not steal the shared context —
+        // that would corrupt the first gesture's clockAtStart compensation,
+        // or have the second touch's (session-layer no-op) end silently
+        // kill the first gesture's still-active auto-scroll.
+        guard autoScroll == nil else { return }
+        let context = DragAutoScrollContext(
+            clockAtStart: clock.currentTime,
+            lastX: (viewportGlobalRange.lowerBound + viewportGlobalRange.upperBound) / 2,
+            viewportGlobalRange: viewportGlobalRange,
+            applyRaw: applyRaw
+        )
+        autoScroll = context
+        edgeScroller.onTick = { [weak context] elapsed in
+            guard let context else { return }
+            tickAutoScroll(context: context, elapsed: elapsed)
+        }
+    }
+
+    /// Applies one finger sample. When no auto-scroll context exists (e.g. a
+    /// leading clip trim, which is excluded — see the design note above),
+    /// `raw` is applied unmodified: identical to the pre-auto-scroll behavior.
+    private func applyCompensatedDrag(raw: TimeInterval, applyRaw: (TimeInterval) -> TimeInterval?) {
+        guard let context = autoScroll else { _ = applyRaw(raw); return }
+        context.lastRaw = raw
+        let effective = raw + (clock.currentTime - context.clockAtStart)
+        if let marker = applyRaw(effective) {
+            context.lastAppliedMarker = marker
+        }
+    }
+
+    /// Reports the finger's latest global x and starts/stops the display
+    /// link based on whether it's currently inside an edge zone.
+    private func updateAutoScrollX(_ x: CGFloat) {
+        guard let context = autoScroll else { return }
+        context.lastX = x
+        let velocity = NativeEditorInteraction.edgeAutoScrollVelocity(
+            x: x, viewport: context.viewportGlobalRange, edgeZone: 56, maxSpeed: max(1, viewportWidth) * 1.2)
+        if velocity == 0 {
+            edgeScroller.stop()
+        } else if !edgeScroller.isRunning {
+            edgeScroller.start()
+        }
+    }
+
+    private func endAutoScroll() {
+        edgeScroller.stop()
+        edgeScroller.onTick = nil
+        autoScroll = nil
+    }
+
+    private func tickAutoScroll(context: DragAutoScrollContext, elapsed: TimeInterval) {
+        let velocity = NativeEditorInteraction.edgeAutoScrollVelocity(
+            x: context.lastX, viewport: context.viewportGlobalRange, edgeZone: 56, maxSpeed: max(1, viewportWidth) * 1.2)
+        guard velocity != 0 else { edgeScroller.stop(); return }
+        let step = NativeEditorInteraction.edgeAutoScrollStep(velocity: velocity, elapsed: elapsed, pixelsPerSecond: pixelsPerSecond)
+        guard step != 0 else { return }
+        let clockBefore = clock.currentTime
+        autoScrollSeek(clockBefore + step)
+        let effective = context.lastRaw + (clock.currentTime - context.clockAtStart)
+        let marker = context.applyRaw(effective)
+        guard let marker else {
+            // The item this gesture was editing is gone — e.g. an external-
+            // keyboard undo raced the drag and removed it from the document.
+            // There is nothing left to compensate for; without this, the
+            // scroller would keep calling applyRaw every tick, always
+            // getting nil back, and just keep seeking the clock forever
+            // with no finger attached to anything. Revert this tick's
+            // speculative advance and stop outright.
+            autoScrollSeek(clockBefore)
+            endAutoScroll()
+            return
+        }
+        if let previous = context.lastAppliedMarker, abs(marker - previous) < 0.0005 {
+            // Pinned at a clamp: the value didn't move despite the clock
+            // advancing. Revert the clock so it (and the handle's on-screen
+            // position, which is computed from clock.currentTime) doesn't
+            // keep drifting away from the finger.
+            autoScrollSeek(clockBefore)
+        } else {
+            context.lastAppliedMarker = marker
+        }
+    }
+
+    /// Widened-bound seek used only by auto-scroll ticks — skips the
+    /// boundary-crossing haptic (that's for a deliberate finger pan, not a
+    /// mechanical per-frame advance).
+    private func autoScrollSeek(_ value: TimeInterval) {
+        session.seek(to: TimelineMath.clamp(value, to: 0...timelineDuration))
+    }
+
     private func timecode(_ value: TimeInterval) -> String {
         let safe = max(0, value.isFinite ? value : 0)
         let minutes = Int(safe) / 60
@@ -1843,6 +2074,7 @@ private struct NativeTimelineBar: View {
     let onTrimStart: (NativeTrimEdge) -> Void
     let onTrimChange: (TimeInterval) -> Void
     let onTrimEnd: () -> Void
+    var onDragXChange: ((CGFloat) -> Void)? = nil
     @State private var isMoving = false
     @GestureState private var moveGestureActive = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1899,7 +2131,10 @@ private struct NativeTimelineBar: View {
                     .onChanged { value in
                         guard canMove, case .second(true, let drag) = value else { return }
                         if !isMoving { isMoving = true; onMoveStart() }
-                        if let drag { onMoveChange(TimeInterval(drag.translation.width / max(1, pixelsPerSecond))) }
+                        if let drag {
+                            onMoveChange(TimeInterval(drag.translation.width / max(1, pixelsPerSecond)))
+                            onDragXChange?(drag.location.x)
+                        }
                     }
                     .onEnded { _ in
                         if isMoving { onMoveEnd() }
@@ -1916,7 +2151,8 @@ private struct NativeTimelineBar: View {
                     touchWidth: min(44, hitWidth / 3),
                     onTrimStart: onTrimStart,
                     onTrimChange: { _, seconds in onTrimChange(seconds) },
-                    onTrimEnd: onTrimEnd
+                    onTrimEnd: onTrimEnd,
+                    onDragXChange: onDragXChange
                 )
                 .offset(x: -(hitWidth - min(44, hitWidth / 3)) / 2)
                 NativeTrimHandle(
@@ -1927,7 +2163,8 @@ private struct NativeTimelineBar: View {
                     touchWidth: min(44, hitWidth / 3),
                     onTrimStart: onTrimStart,
                     onTrimChange: { _, seconds in onTrimChange(seconds) },
-                    onTrimEnd: onTrimEnd
+                    onTrimEnd: onTrimEnd,
+                    onDragXChange: onDragXChange
                 )
                 .offset(x: (hitWidth - min(44, hitWidth / 3)) / 2)
             }
@@ -1965,6 +2202,12 @@ private struct NativeClipSurface: View {
     let onTrimChange: (NativeTrimEdge, TimeInterval) -> Void
     let onTrimEnd: () -> Void
     let onMove: (TimeInterval) -> Void
+    /// Only the trailing handle forwards drag position — a clip's timeline
+    /// `start` is fixed by slot order (reflowSlots is a no-op), so a leading
+    /// trim never moves the handle on screen; feeding auto-scroll's clock
+    /// delta back into that translation would un-trim the clip with no
+    /// finger movement. See NativeMiniStrip's design note.
+    var onTrailingDragXChange: ((CGFloat) -> Void)? = nil
 
     private let minimumDuration: TimeInterval = 0.1
 
@@ -2012,7 +2255,8 @@ private struct NativeClipSurface: View {
                     visualOffset: 22,
                     onTrimStart: onTrimStart,
                     onTrimChange: onTrimChange,
-                    onTrimEnd: onTrimEnd
+                    onTrimEnd: onTrimEnd,
+                    onDragXChange: onTrailingDragXChange
                 )
                     .offset(x: max(0, frame.width - 44))
             }
@@ -2036,7 +2280,14 @@ private struct NativeTrimHandle: View {
     let onTrimStart: (NativeTrimEdge) -> Void
     let onTrimChange: (NativeTrimEdge, TimeInterval) -> Void
     let onTrimEnd: () -> Void
+    var onDragXChange: ((CGFloat) -> Void)? = nil
     @State private var isDragging = false
+    // SwiftUI never calls onEnded for a cancelled gesture (a system gesture,
+    // Control Center, or the outer vertical ScrollView stealing the touch).
+    // @GestureState resets to its initial value on both a normal end AND a
+    // cancel, so it's the only reliable cancel signal — same pattern as
+    // NativeTimelineBar's moveGestureActive.
+    @GestureState private var dragActive = false
 
     var body: some View {
         ZStack {
@@ -2053,6 +2304,7 @@ private struct NativeTrimHandle: View {
             // as a scrub.
             .highPriorityGesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .updating($dragActive) { _, active, _ in active = true }
                     .onChanged { value in
                         if !isDragging {
                             isDragging = true
@@ -2062,6 +2314,7 @@ private struct NativeTrimHandle: View {
                         // down. The session applies it to one captured baseline.
                         let seconds = TimeInterval(value.translation.width / max(1, pixelsPerSecond))
                         onTrimChange(edge, seconds)
+                        onDragXChange?(value.location.x)
                     }
                     .onEnded { value in
                         if !isDragging { onTrimStart(edge) }
@@ -2071,6 +2324,18 @@ private struct NativeTrimHandle: View {
                         isDragging = false
                     }
             )
+            .onChange(of: dragActive) { _, active in
+                if !active && isDragging {
+                    isDragging = false
+                    onTrimEnd()
+                }
+            }
+            .onDisappear {
+                if isDragging {
+                    isDragging = false
+                    onTrimEnd()
+                }
+            }
             .accessibilityLabel(edge == .leading ? "Trim block start" : "Trim block end")
             .accessibilityIdentifier(edge == .leading ? "native-editor-trim-leading" : "native-editor-trim-trailing")
             .accessibilityHint("Drag to adjust the selected block")

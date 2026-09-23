@@ -323,6 +323,92 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertLessThan(Double(clip.value as? String ?? "0") ?? 0, before)
     }
 
+    // KRI-165: dragging a clip's trailing trim handle to the timeline edge
+    // and holding there must keep extending the clip — the timeline
+    // auto-scrolls so the handle stays reachable past what was on screen at
+    // gesture start. The fixture's clip 1 carries far more source-duration
+    // headroom (20s) than a single translation from the handle's actual
+    // on-screen position to the edge could reach (well under a second here),
+    // so any extension beyond a few seconds only happens if the HOLD kept
+    // advancing the clock — proven independently via native-editor-current-time,
+    // which nothing else touches during a clip-trim gesture.
+    func testDraggingTrailingClipHandleToRightEdgeAutoScrollsPastVisibleWindow() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-autoscroll-extend"]
+        app.launch()
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 8))
+        let time = app.descendants(matching: .any)["native-editor-current-time"].firstMatch
+        let initialTime = time.value as? String
+        let initialDuration = Double(clip.value as? String ?? "0") ?? 0
+
+        clip.tap()
+        let handle = app.descendants(matching: .any)["native-editor-trim-trailing"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 2))
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let edge = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: edge, withVelocity: 40, thenHoldForDuration: 1.5)
+
+        XCTAssertNotEqual(time.value as? String, initialTime,
+            "auto-scroll must advance the clock while the finger holds at the edge")
+        let finalDuration = Double(clip.value as? String ?? "0") ?? 0
+        XCTAssertGreaterThan(finalDuration - initialDuration, 3,
+            "a one-shot drag from the handle's actual position could not reach this far without auto-scroll")
+    }
+
+    // KRI-165: same drag-and-hold pattern, on a text block. A long press
+    // (not a quick swipe — see testQuickSwipeStartingOnTextScrubsWithoutMovingBlock)
+    // picks the block up, then holding at the edge must move it well past
+    // the visible window at gesture start.
+    func testLongPressDraggingTextBlockToRightEdgeAutoScrollsPastVisibleWindow() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-autoscroll-extend"]
+        app.launch()
+        let text = app.buttons["native-editor-timeline-text-00000000-0000-4000-8000-000000000850"].firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 8))
+        let time = app.descendants(matching: .any)["native-editor-current-time"].firstMatch
+        let initialTime = time.value as? String
+        let initialTiming = text.value as? String
+
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        let start = text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let edge = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5))
+        start.press(forDuration: 0.6, thenDragTo: edge, withVelocity: 40, thenHoldForDuration: 1.5)
+
+        XCTAssertNotEqual(time.value as? String, initialTime,
+            "auto-scroll must advance the clock while the finger holds at the edge")
+        XCTAssertNotEqual(text.value as? String, initialTiming,
+            "the block must have moved well past its original position")
+    }
+
+    // KRI-165 regression guard: a clip's leading trim handle never tracks
+    // the finger (the clip's timeline start is fixed by slot order — see
+    // NativeMiniStrip's design note), so it must never auto-scroll even
+    // while the finger holds inside an edge zone. If this regressed, a
+    // leading trim would keep un-trimming itself with no further finger
+    // movement.
+    func testDraggingLeadingClipHandleNearEdgeDoesNotAutoScroll() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-autoscroll-extend"]
+        app.launch()
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 8))
+        let time = app.descendants(matching: .any)["native-editor-current-time"].firstMatch
+        let initialTime = time.value as? String
+
+        clip.tap()
+        let handle = app.descendants(matching: .any)["native-editor-trim-leading"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 2))
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let edge = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: edge, withVelocity: 40, thenHoldForDuration: 1.5)
+
+        XCTAssertEqual(time.value as? String, initialTime,
+            "a leading clip trim must never auto-scroll the clock, even while holding near an edge")
+    }
+
     func testTappingClipAlignsItsBeginningUnderPlayhead() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor"]
