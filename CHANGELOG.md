@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.156.0] - 2026-09-23
+
+### Changed
+- feat(creator): KRI-118 L2 — main-creator story shapes, repairs, and silent-degradation fixes (#1173) <!-- release-pr: 1173 -->
+
 ## [0.76.155.0] - 2026-09-23
 
 ### Changed
