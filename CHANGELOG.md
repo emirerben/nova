@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.165.0] - 2026-09-23
+
+### Changed
+- perf(ios-ci): cut iOS CI time and fix editor UI idle stalls (KRI-168) (#1181) <!-- release-pr: 1181 -->
+
 ## [0.76.164.0] - 2026-09-23
 
 ### Changed
