@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, PlanItem
 from app.services.content_plan_persona import require_plan_persona_owned
 from app.tasks import transcript_analyze as task_module
@@ -66,7 +67,8 @@ def test_fence_locks_plan_persona_item_in_order(monkeypatch: pytest.MonkeyPatch)
 
     class _FenceSession:
         def get(self, model, _pk, **kwargs):  # noqa: ANN001
-            assert kwargs == {"with_for_update": True}
+            lock = CONTENT_PLAN_LOCK if model is ContentPlan else True
+            assert kwargs == {"with_for_update": lock}
             events.append(model.__name__)
             return {ContentPlan: plan, PlanItem: item}[model]
 

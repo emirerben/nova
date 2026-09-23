@@ -18,6 +18,7 @@ import structlog
 
 from app.config import settings
 from app.database import sync_session
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, PlanItem
 from app.services.content_plan_persona import (
     PlanPersonaOwnershipError,
@@ -98,7 +99,7 @@ def _run(plan_item_id: str, *, expected_ownership_epoch: int | None = None) -> N
             log.warning("conformance_build.missing_item", plan_item_id=plan_item_id)
             return
 
-        plan = session.get(ContentPlan, item_ref.content_plan_id, with_for_update=True)
+        plan = session.get(ContentPlan, item_ref.content_plan_id, with_for_update=CONTENT_PLAN_LOCK)
         if plan is None:
             log.warning("conformance_build.missing_plan", plan_item_id=plan_item_id)
             return
@@ -289,7 +290,7 @@ def _run(plan_item_id: str, *, expected_ownership_epoch: int | None = None) -> N
 
     # ── Persist verdict ───────────────────────────────────────────────────────
     with sync_session() as session:
-        plan = session.get(ContentPlan, content_plan_id, with_for_update=True)
+        plan = session.get(ContentPlan, content_plan_id, with_for_update=CONTENT_PLAN_LOCK)
         if plan is None:
             log.warning("conformance_build.plan_gone_after_agent", plan_item_id=plan_item_id)
             return

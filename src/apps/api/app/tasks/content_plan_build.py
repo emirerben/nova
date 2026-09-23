@@ -30,6 +30,7 @@ from app.agents._schemas.content_plan import (
 from app.agents._schemas.persona import Persona
 from app.agents.content_plan_generator import ContentPlanGeneratorAgent
 from app.database import sync_session
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, CreationThread, CreatorAgentSession, Job, PlanItem, User
 from app.models import Persona as PersonaRow
 from app.services.content_plan_dedup import choose_replacements, flag_replacement_indices
@@ -108,7 +109,9 @@ def _lock_owned_plan_persona(
     # serializes correctly, but the Python attributes stay pre-lock. The epoch
     # comparison below would then read a stale ownership_epoch and wave through
     # the exact stale worker this fence exists to stop.
-    plan = session.get(ContentPlan, plan_id, with_for_update=True, populate_existing=True)
+    plan = session.get(
+        ContentPlan, plan_id, with_for_update=CONTENT_PLAN_LOCK, populate_existing=True
+    )
     if plan is None:
         return None
     persona = load_owned_plan_persona_sync(session, plan, for_update=True)

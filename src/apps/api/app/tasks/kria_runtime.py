@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.language import is_paraphrase_only
@@ -292,7 +293,8 @@ def _complete_draft_turn(
                 PlanItem.id == thread_ref.active_plan_item_id,
                 ContentPlan.user_id == thread_ref.creator_id,
             )
-            .with_for_update()
+            # `of=`: the joined PlanItem row is locked FOR UPDATE just below.
+            .with_for_update(of=ContentPlan, **CONTENT_PLAN_LOCK)
         ).scalar_one_or_none()
         item = db.execute(
             select(PlanItem).where(PlanItem.id == thread_ref.active_plan_item_id).with_for_update()
@@ -1117,7 +1119,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 ContentPlan.id == item_ref.content_plan_id,
                 ContentPlan.user_id == approval_ref.creator_id,
             )
-            .with_for_update()
+            .with_for_update(**CONTENT_PLAN_LOCK)
         ).scalar_one_or_none()
         item = db.execute(
             select(PlanItem).where(PlanItem.id == item_ref.id).with_for_update()
@@ -1705,7 +1707,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             return "ignored", None
 
         plan = db.execute(
-            select(ContentPlan).where(ContentPlan.id == item_ref.content_plan_id).with_for_update()
+            select(ContentPlan)
+            .where(ContentPlan.id == item_ref.content_plan_id)
+            .with_for_update(**CONTENT_PLAN_LOCK)
         ).scalar_one_or_none()
         item = db.execute(
             select(PlanItem).where(PlanItem.id == item_ref.id).with_for_update()

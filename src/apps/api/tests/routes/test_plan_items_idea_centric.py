@@ -20,6 +20,7 @@ from app.agents._runtime import ModelInvocation
 from app.agents.idea_expander import FilmingShot, IdeaExpanderInput
 from app.auth import get_current_user
 from app.database import get_db
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.main import app
 from app.routes import plan_items
 
@@ -412,7 +413,7 @@ def test_delete_linked_idea_removes_seed_and_item_atomically(client: TestClient)
     assert "FOR UPDATE" in str(item_stmt).upper()
     assert item_stmt.get_execution_options()["populate_existing"] is True
     locked_plan_call = db.get.await_args_list[1]
-    assert locked_plan_call.kwargs["with_for_update"] is True
+    assert locked_plan_call.kwargs["with_for_update"] == CONTENT_PLAN_LOCK
 
 
 def test_delete_idea_owner_mismatch_has_no_partial_write(client: TestClient) -> None:

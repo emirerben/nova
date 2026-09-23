@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.database import get_db
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, Job, PlanItem
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
@@ -98,7 +99,7 @@ async def create_manual_draft(
             .where(ContentPlan.user_id == user.id)
             .order_by(ContentPlan.created_at.desc())
             .limit(1)
-            .with_for_update()
+            .with_for_update(**CONTENT_PLAN_LOCK)
             .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
@@ -236,7 +237,7 @@ async def initialize_manual_draft(
         await db.execute(
             select(ContentPlan)
             .where(ContentPlan.id == visible_item.content_plan_id, ContentPlan.user_id == user.id)
-            .with_for_update()
+            .with_for_update(**CONTENT_PLAN_LOCK)
             .execution_options(populate_existing=True)
         )
     ).scalar_one()

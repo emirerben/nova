@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import (
     ContentPlan,
     CreatorAgentEvent,
@@ -245,7 +246,10 @@ async def require_current_attempt(
     if not ref or not item_ref:
         raise HTTPException(409, "Creator preparation changed")
     plan = await db.get(
-        ContentPlan, item_ref.content_plan_id, with_for_update=True, populate_existing=True
+        ContentPlan,
+        item_ref.content_plan_id,
+        with_for_update=CONTENT_PLAN_LOCK,
+        populate_existing=True,
     )
     item = await db.get(PlanItem, ref.plan_item_id, with_for_update=True, populate_existing=True)
     session = await db.get(

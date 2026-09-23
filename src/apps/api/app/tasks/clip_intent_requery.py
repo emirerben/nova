@@ -19,6 +19,7 @@ from app.agents._runtime import RunContext
 from app.agents.clip_question import ClipQuestionAgent, ClipQuestionOutput
 from app.config import settings
 from app.database import sync_session
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, PlanItem, PlanItemAsset
 from app.services.clip_intent_resolution import (
     ANSWER_QUERIES_KEY,
@@ -60,7 +61,9 @@ class VisionQueryJob(BaseModel):
 
 def _owned_asset(db: Any, job: VisionQueryJob) -> PlanItemAsset | None:
     """Reload under the canonical Plan -> Persona -> Item -> Asset fence."""
-    plan = db.get(ContentPlan, job.plan_id, with_for_update=True, populate_existing=True)
+    plan = db.get(
+        ContentPlan, job.plan_id, with_for_update=CONTENT_PLAN_LOCK, populate_existing=True
+    )
     if (
         plan is None
         or plan.user_id != job.user_id

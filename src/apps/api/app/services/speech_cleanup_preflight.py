@@ -13,6 +13,7 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, Job, Persona, PlanItem, SpeechCleanupAnalysis
 from app.services.active_narration_source import ActiveNarrationResolution, ActiveNarrationSource
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
@@ -822,7 +823,7 @@ def prepare_snapshot_mismatch_reanalysis(
     if plan_id is None:
         return SnapshotMismatchReanalysis(None)
 
-    plan = db.get(ContentPlan, plan_id, with_for_update=True, populate_existing=True)
+    plan = db.get(ContentPlan, plan_id, with_for_update=CONTENT_PLAN_LOCK, populate_existing=True)
     if plan is None:
         return SnapshotMismatchReanalysis(None)
     persona = db.get(Persona, plan.persona_id, with_for_update=True, populate_existing=True)

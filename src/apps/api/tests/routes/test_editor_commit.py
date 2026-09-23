@@ -25,6 +25,7 @@ import app.routes.generative_jobs as gj
 from app.agents._schemas.text_element import TextElement
 from app.auth import get_current_user
 from app.database import get_db
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.main import app
 from app.models import ContentPlan, Persona, PlanItem
 from app.pipeline.narrated_assembler import is_valid_caption_font
@@ -4791,7 +4792,9 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
     assert item.theme == "Fresh title"
     assert item.user_edited is True
     db.commit.assert_awaited_once()  # ONE transaction for job-JSON + title
-    db.get.assert_any_await(ContentPlan, plan.id, populate_existing=True, with_for_update=True)
+    db.get.assert_any_await(
+        ContentPlan, plan.id, populate_existing=True, with_for_update=CONTENT_PLAN_LOCK
+    )
     db.get.assert_any_await(gj.Job, job.id, populate_existing=True, with_for_update=True)
     regen.apply_async.assert_called_once()
 

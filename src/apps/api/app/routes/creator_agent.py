@@ -66,7 +66,7 @@ from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCrea
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
-from app.db_locks import acquire_locked_rows
+from app.db_locks import CONTENT_PLAN_LOCK, acquire_locked_rows
 from app.limiter import limiter
 from app.models import (
     AgentRun,
@@ -290,7 +290,7 @@ async def _owned_context(
         ContentPlan,
         item_ref.content_plan_id,
         populate_existing=for_update,
-        with_for_update=for_update,
+        with_for_update=CONTENT_PLAN_LOCK if for_update else False,
     )
     if plan is None or plan.user_id != user_id:
         raise HTTPException(status_code=404, detail="Plan item not found")

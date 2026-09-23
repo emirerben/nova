@@ -23,6 +23,7 @@ from sqlalchemy.orm import selectinload
 from app import storage
 from app.auth import CurrentUser
 from app.database import get_db
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, CreationThread, PlanItem
 from app.models import Persona as PersonaRow
 from app.routes.plan_items import (
@@ -635,7 +636,7 @@ async def _load_owned_plan(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
     stmt = select(ContentPlan).where(ContentPlan.id == pid, ContentPlan.user_id == user_id)
     if for_update:
-        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        stmt = stmt.with_for_update(**CONTENT_PLAN_LOCK).execution_options(populate_existing=True)
     if with_items:
         stmt = stmt.options(selectinload(ContentPlan.items).selectinload(PlanItem.current_job))
     plan = (await db.execute(stmt)).scalar_one_or_none()
