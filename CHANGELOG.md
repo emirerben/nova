@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.173.0] - 2026-09-23
+
+### Changed
+- fix(ios): explain failed Visuals in the editor and retry transient failures (#1188) <!-- release-pr: 1188 -->
+
 ## [0.76.172.0] - 2026-09-23
 
 ### Changed
