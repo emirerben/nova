@@ -178,3 +178,62 @@ public enum KriaBranding {
     }
 #endif
 }
+
+#if canImport(AVFoundation)
+/// Caches the outro's decoded AVFoundation properties across every
+/// composition built in this process.
+///
+/// The outro is a fixed, bundled resource that never changes at runtime, but
+/// `AVPlayerPreviewComposer.makePreview` previously reloaded its duration,
+/// natural size and preferred transform with three sequential async
+/// AVFoundation calls on EVERY call -- and the native editor's live preview
+/// rebuilds on every document edit (`NativeEditorSession.rebuildSourcePreview`),
+/// so a single editing session can pay that cost many times over. Measured
+/// live: the CI native UI suite's "UI execution (full)" phase went from
+/// ~27 min to ~40-43 min across the two runs immediately after branding
+/// became the editor's live-preview default (PR #1155, 2026-09-22), pushing
+/// it past the job's 60-minute ceiling.
+///
+/// Only the plain data properties are cached, not the `AVAssetTrack` itself --
+/// reusing one loaded track as the source for `insertTimeRange` across
+/// multiple, unrelated compositions is documented AVFoundation usage in
+/// principle, but broke in practice here (AVFoundationErrorDomain -11800 on
+/// the second composition), so each call still asks for its own fresh track.
+/// That's the one async hop this doesn't save; the other three are exactly
+/// the ones that never change between calls.
+@MainActor final class KriaOutroAssetCache {
+    static let shared = KriaOutroAssetCache()
+
+    struct Loaded: Sendable {
+        let duration: CMTime
+        let naturalSize: CGSize
+        let preferredTransform: CGAffineTransform
+    }
+
+    private var loaded: Loaded?
+    private var inFlight: Task<Loaded?, Error>?
+
+    /// nil means the bundle is missing the outro (or it has no readable
+    /// video track) -- the same "fail the composition" case the uncached
+    /// path had, left for the caller to turn into `missingBrandingResource`.
+    func load() async throws -> Loaded? {
+        if let loaded { return loaded }
+        if let inFlight { return try await inFlight.value }
+        let task = Task<Loaded?, Error> {
+            guard let url = KriaBranding.outroURL() else { return nil }
+            let asset = AVURLAsset(url: url)
+            guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
+            let duration = try await asset.load(.duration)
+            guard duration.seconds > 0 else { return nil }
+            let naturalSize = try await track.load(.naturalSize)
+            let preferredTransform = try await track.load(.preferredTransform)
+            return Loaded(duration: duration, naturalSize: naturalSize, preferredTransform: preferredTransform)
+        }
+        inFlight = task
+        defer { inFlight = nil }
+        let result = try await task.value
+        loaded = result
+        return result
+    }
+}
+#endif

@@ -350,30 +350,29 @@ struct PreviewAudioBinding: Sendable {
             layers.append(watermark)
         }
         if branding.outro {
-            guard let outroURL = KriaBranding.outroURL() else {
+            // Duration/naturalSize/preferredTransform are cached across every
+            // composition built in this process -- see `KriaOutroAssetCache`'s
+            // own docs. The track itself is still loaded fresh per call: reusing
+            // one loaded `AVAssetTrack` as the insert source for more than one
+            // composition threw AVFoundationErrorDomain -11800 on the second use.
+            guard let outroURL = KriaBranding.outroURL(), let cached = try await KriaOutroAssetCache.shared.load() else {
                 throw MediaEngineError.missingBrandingResource(KriaBranding.outroFileName)
             }
             let outro = AVURLAsset(url: outroURL)
             guard let source = try await outro.loadTracks(withMediaType: .video).first,
                   let track = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                // A present-but-unreadable outro would insert nothing and leave
+                // `brandedTotal` at the edit's own length: the same over-declared
+                // tail as a missing file, so it fails the same way.
                 throw MediaEngineError.missingBrandingResource(KriaBranding.outroFileName)
             }
-            let duration = try await outro.load(.duration)
-            // A present-but-unreadable outro would insert nothing and leave
-            // `brandedTotal` at the edit's own length: the same over-declared
-            // tail as a missing file, so it fails the same way.
-            guard duration.seconds > 0 else {
-                throw MediaEngineError.missingBrandingResource(KriaBranding.outroFileName)
-            }
-            try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: source, at: time(total))
-            let size = try await source.load(.naturalSize)
-            let preferred = try await source.load(.preferredTransform)
-            let end = total + duration.seconds
+            try track.insertTimeRange(CMTimeRange(start: .zero, duration: cached.duration), of: source, at: time(total))
+            let end = total + cached.duration.seconds
             layers.append(RecipeVideoLayer(
                 trackID: track.trackID, image: nil,
-                transform: KriaBranding.coverTransform(naturalSize: size, preferred: preferred, canvas: canvas),
+                transform: KriaBranding.coverTransform(naturalSize: cached.naturalSize, preferred: cached.preferredTransform, canvas: canvas),
                 start: total, end: end, fadeIn: 0, isPrimary: false, clipID: "kria-outro",
-                naturalSize: size, preferredTransform: preferred, visualOrder: 9_001))
+                naturalSize: cached.naturalSize, preferredTransform: cached.preferredTransform, visualOrder: 9_001))
             brandedTotal = end
         }
 
