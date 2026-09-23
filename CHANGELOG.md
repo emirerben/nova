@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.170.0] - 2026-09-23
+
+### Fixed
+- fix(autoplace): retry transient Gemini failures in analyze_pool_asset (#1189) <!-- release-pr: 1189 -->
+
 ## [0.76.169.0] - 2026-09-23
 
 ### Fixed
