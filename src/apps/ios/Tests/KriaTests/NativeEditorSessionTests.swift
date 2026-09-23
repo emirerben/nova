@@ -187,7 +187,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let (session, uploads, target) = await Self.devicePlacementSession()
         let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "proxy",
             sourceIndex: 9, source: ["duration_s": .number(1)], error: nil, reasonCode: nil, retryable: false)
-        while session.document.clips.count < 20 {
+        while session.document.clips.count < NativeEditorSession.maxTimelineClips {
             let nextTarget = EditorSourceRegistrationTarget(itemID: target.itemID, variantID: target.variantID,
                 clientImportID: UUID(), baseGeneration: target.baseGeneration, guidedRevisionNumber: 7, sourceKind: .footage)
             let placement = PendingEditorSourcePlacement(id: UUID(), target: nextTarget, lane: .timeline, visual: nil, localDurationS: 1)
@@ -198,9 +198,9 @@ final class NativeEditorSessionTests: XCTestCase {
         uploads.beginEditorPlacement(late)
         do {
             try await session.placeEditorSource(late, response: response)
-            XCTFail("A ready import must not exceed the current twenty-clip limit")
+            XCTFail("A ready import must not exceed the clip limit")
         } catch {}
-        XCTAssertEqual(session.document.clips.count, 20)
+        XCTAssertEqual(session.document.clips.count, NativeEditorSession.maxTimelineClips)
         XCTAssertTrue(uploads.containsEditorPlacement(late.id))
     }
 
@@ -280,6 +280,22 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNotNil(device.addClipUnavailableReason)
         let (cloud, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
         XCTAssertEqual(cloud.canAddTimelineMedia, cloud.addClipUnavailableReason == nil)
+    }
+
+    // KRI-166: the cap is 50 (matching server + creation), not the old 20 — an
+    // edit with 20+ clips must still be able to add another.
+    func testClipCapIsFiftyAndAddClipStaysAllowedPastTwenty() async throws {
+        XCTAssertEqual(NativeEditorSession.maxTimelineClips, 50)
+        let (cloud, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
+        XCTAssertLessThan(cloud.draft.clips.count, 20)
+        XCTAssertTrue(cloud.canAddTimelineMedia)
+        while cloud.draft.clips.count < 25 {
+            let slot = try XCTUnwrap(cloud.document.clips.first)
+            cloud.transactDocument(section: .timeline) { $0.clips.append(slot) }
+        }
+        XCTAssertGreaterThanOrEqual(cloud.draft.clips.count, 25)
+        XCTAssertTrue(cloud.canAddTimelineMedia, "25 clips is under the 50 cap")
+        XCTAssertNil(cloud.addClipUnavailableReason)
     }
 
     func testCloudVariantKeepsCropSpeedAndLookEditable() async throws {

@@ -455,6 +455,10 @@ struct NativeEditorTemporaryVideo {
     /// nearest beat; no-grid variants snap it to the nearest half second — the
     /// same server-side resolution every other slot edit already goes through.
     private static let addedClipDurationS: Double = 3.0
+    /// Most clips one edit can hold. Matches the server's add-clip pool cap
+    /// (`_MAX_POOL_CLIPS`) and the creation cap (`_MAX_CLIPS_PER_ITEM`), both 50 —
+    /// a lower number here made edits created with 21+ clips unable to add more.
+    static let maxTimelineClips = 50
     private var authoredVisualSources: [String: ResolvedEditorSource] = [:]
     private var variantKey: String?
     private var jobID: UUID?
@@ -2249,7 +2253,7 @@ struct NativeEditorTemporaryVideo {
             addClipError = "The timeline can’t be edited right now. Try adding it again in a moment."
             return
         }
-        guard draft.clips.count < 20 else {
+        guard draft.clips.count < Self.maxTimelineClips else {
             addClipError = "This edit already has the maximum number of clips."
             return
         }
@@ -2585,7 +2589,7 @@ struct NativeEditorTemporaryVideo {
     }
 
     var canAddTimelineMedia: Bool {
-        canEditTimeline && draft.clips.count < 20 && (!rendersOnDevice || canRegisterPhoneSources)
+        canEditTimeline && draft.clips.count < Self.maxTimelineClips && (!rendersOnDevice || canRegisterPhoneSources)
     }
     /// KRI-166: why `canAddTimelineMedia` is false, for the quick-add menu's
     /// Video row (which otherwise just greys out). Mirrors the three
@@ -2593,7 +2597,7 @@ struct NativeEditorTemporaryVideo {
     var addClipUnavailableReason: String? {
         if rendersOnDevice && !canRegisterPhoneSources { return "Adding media isn’t available for this edit on this iPhone." }
         if !canEditTimeline { return "This edit’s timeline can’t be changed." }
-        if draft.clips.count >= 20 { return "An edit can have up to 20 clips." }
+        if draft.clips.count >= Self.maxTimelineClips { return "An edit can have up to \(Self.maxTimelineClips) clips." }
         return nil
     }
 

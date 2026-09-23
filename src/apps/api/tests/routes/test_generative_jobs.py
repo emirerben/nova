@@ -4236,9 +4236,9 @@ async def test_add_clip_rejects_when_pool_at_max(monkeypatch):
 
     user = SimpleNamespace(id=uuid.uuid4())
     path = f"users/{user.id}/generative/abc123def456/clip.mp4"
-    # _MAX_CLIPS is 20 — a job that already reached the cap must reject a
-    # 21st clip rather than silently growing the render past its budget.
-    full_pool = [f"users/{user.id}/generative/{i:012x}/clip.mp4" for i in range(20)]
+    # _MAX_POOL_CLIPS is 50 — a job that already reached the cap must reject a
+    # 51st clip rather than silently growing the render past its budget.
+    full_pool = [f"users/{user.id}/generative/{i:012x}/clip.mp4" for i in range(50)]
     job = _add_clip_job(clip_paths=full_pool)
     monkeypatch.setattr(
         "app.routes.generative_jobs._load_generative_job", AsyncMock(return_value=job)
@@ -4259,6 +4259,44 @@ async def test_add_clip_rejects_when_pool_at_max(monkeypatch):
     assert exc.value.status_code == 422
     assert job.all_candidates["clip_paths"] == full_pool
     db.commit.assert_not_awaited()
+
+
+def test_add_clip_pool_cap_matches_creation_cap():
+    """Creation lets an item start with 50 clips; add-clip must not be stricter."""
+    from app.routes.generative_jobs import _MAX_POOL_CLIPS
+    from app.tasks.creator_clip_metadata import _MAX_CLIPS_PER_ITEM
+
+    assert _MAX_POOL_CLIPS == _MAX_CLIPS_PER_ITEM
+
+
+@pytest.mark.asyncio
+async def test_add_clip_accepts_pool_past_the_legacy_20_cap(monkeypatch):
+    """KRI-166: an edit created with 25 clips (allowed up to 50) can take more."""
+    from app.storage import ObjectMetadata
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    path = f"users/{user.id}/generative/abc123def456/clip.mp4"
+    pool = [f"users/{user.id}/generative/{i:012x}/clip.mp4" for i in range(25)]
+    job = _add_clip_job(clip_paths=pool)
+    monkeypatch.setattr(
+        "app.routes.generative_jobs._load_generative_job", AsyncMock(return_value=job)
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs._consume_project_upload_reservations", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.object_metadata",
+        lambda object_path: ObjectMetadata(
+            path=object_path, generation="1", etag="etag", size=1_000, content_type="video/mp4"
+        ),
+    )
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+
+    response = await add_clip(str(job.id), AddClipRequest(gcs_path=path), user, db)
+
+    assert response.clip_index == 25
+    assert job.all_candidates["clip_paths"][-1] == path
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
