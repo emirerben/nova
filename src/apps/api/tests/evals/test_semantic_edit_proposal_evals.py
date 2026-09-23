@@ -173,6 +173,10 @@ def test_semantic_edit_proposal_eval(
         }
     if expected_audio_ids := fixture.meta.get("expected_audio_ids"):
         assert result.output["montage_audio"]["source_media_ids"] == expected_audio_ids
+    if (expected_thoughts := fixture.meta.get("expected_thoughts")) is not None:
+        # Voiceover script must never become chapter text (narration captions
+        # already draw it); see app/agents/spoken_script.py.
+        assert [chapter["thought"] for chapter in result.output["chapters"]] == expected_thoughts
     # Fixture families with fully probed sources also replay the deterministic
     # materializer: semantic output never gets to smuggle a timestamp through
     # this boundary, and every scheduled window stays inside its source.
