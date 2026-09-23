@@ -127,6 +127,11 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     "tasks.reconcile_ai_billing",
     "tasks.reconcile_template_upload_promotions",
     "tasks.reap_stale_device_renders",
+    # Published with a 24h countdown. An ETA message held by the render worker
+    # counts as scheduled, not active/reserved, so render_worker_idle stops the
+    # machine, the message returns to the queue, and the lifecycle backstop
+    # starts it again. The task is one row lock + one storage delete.
+    "tasks.cleanup_unclaimed_omni_asset",
 )
 
 celery_app.conf.update(
