@@ -3317,26 +3317,56 @@ def test_phone_gate_guided_voiceover_rejected_when_new_flag_off(
     assert warning_call.kwargs["phone_gate"] == "guided_voiceover_unavailable"
 
 
-@pytest.mark.parametrize(
-    ("cleanup_choice", "cleanup_contract"),
-    [("clean", "required_v1"), ("keep_original", "off_v1")],
-)
-def test_phone_gate_guided_voiceover_dispatches_when_supported(
-    monkeypatch: pytest.MonkeyPatch,
-    prod_profile: list[str],
-    cleanup_choice: str,
-    cleanup_contract: str,
-) -> None:
-    """KRI-132 phone-voiceover-gate follow-up: an approved guided-voiceover
-    proposal on a phone item dispatches (binds phone sources, mints the Job
-    with a `guided_edit` snapshot carrying the `guided_voiceover_v1` execution
-    contract) once `phone_guided_narration_supported()` holds -- the same
-    approved-proposal requirement (`unapproved_guided`) any other guided phone
-    item is held to still applies; only the unconditional rejection is lifted.
+_GUIDED_SOURCE_FINGERPRINT = "f" * 64
+
+
+def _cleaned_guided_narration(item, plan, cleanup, **provenance) -> dict:  # noqa: ANN001, ANN003
+    """Make ``cleanup`` a hydratable analysis; return the derivative planned from it.
+
+    Mirrors what draft_edit_proposal pins for a clean choice: the synthetic
+    fixture's CutPlan, fenced to this row's identity and cut fingerprint.
     """
+
+    from app.pipeline.speech_cleanup_apply import cut_fingerprint, hydrate_speech_cleanup_snapshot
+    from app.services.speech_cleanup_preflight import analysis_snapshot
+    from tests.services.test_guided_speech_cleanup import load_fixture
+
+    snapshot = load_fixture()["snapshot"]
+    cleanup.window_start_s = 0.0
+    cleanup.window_end_s = snapshot["source"]["window_end_s"]
+    cleanup.engine_version = snapshot["engine_version"]
+    cleanup.detector_version = snapshot["detector_version"]
+    cleanup.candidate_count = 10
+    cleanup.analysis_payload = {
+        **snapshot["analysis"],
+        "source_fingerprint": cleanup.source_policy_fingerprint,
+    }
+    hydrated = hydrate_speech_cleanup_snapshot(analysis_snapshot(cleanup))
+    return {
+        "gcs_path": (
+            f"users/{plan.user_id}/plan/{item.id}/speech-cleanup/{cleanup.id}/{'a' * 32}.wav"
+        ),
+        "generation": "5",
+        "duration_s": 41.59,
+        "speech_cleanup": {
+            "analysis_id": str(cleanup.id),
+            "source_gcs_path": item.voiceover_gcs_path,
+            "source_generation": "1",
+            "source_duration_s": snapshot["source"]["window_end_s"],
+            "cut_sha256": cut_fingerprint(hydrated),
+            **provenance,
+        },
+    }
+
+
+def _dispatch_guided_voiceover_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    cleanup_choice: str | None,
+    narration_for,  # noqa: ANN001
+):
     from app.config import settings
     from app.kria.media_sources import OriginalMediaDescriptor
-    from app.services.creator_execution_contract import GUIDED_VOICEOVER_CONTRACT
     from app.services.generative_jobs import build_generative_job
     from app.services.phone_sources import PhoneSourceBinding
 
@@ -3368,7 +3398,7 @@ def test_phone_gate_guided_voiceover_dispatches_when_supported(
         }
     ]
     item.voiceover_gcs_path = f"users/{plan.user_id}/creation-threads/{thread_id}/voice.m4a"
-    cleanup = _cleanup_analysis(item)
+    cleanup = _cleanup_analysis(item, fingerprint=_GUIDED_SOURCE_FINGERPRINT)
     cleanup.source_storage_path = binding.proxy_path
     cleanup.source_generation = binding.generation
     cleanup.source_media_identity = binding.media_id
@@ -3378,7 +3408,7 @@ def test_phone_gate_guided_voiceover_dispatches_when_supported(
     approved_proposal = {
         "proposal_version": 1,
         "media_digest": "d" * 64,
-        "snapshot": {"narration": {}, "media": []},
+        "snapshot": {"narration": narration_for(item, plan, cleanup), "media": []},
     }
 
     bind_mock = MagicMock(return_value=(binding,))
@@ -3398,7 +3428,7 @@ def test_phone_gate_guided_voiceover_dispatches_when_supported(
         patch(
             "app.services.plan_item_media.resolve_item_narration",
             return_value=SimpleNamespace(
-                source=SimpleNamespace(source_policy_fingerprint="active-source-fingerprint")
+                source=SimpleNamespace(source_policy_fingerprint=_GUIDED_SOURCE_FINGERPRINT)
             ),
         ),
         patch("app.services.phone_sources.bind_phone_sources", bind_mock),
@@ -3415,16 +3445,133 @@ def test_phone_gate_guided_voiceover_dispatches_when_supported(
             ownership_epoch=0,
             creator_strategy=creator_strategy,
             creator_guided_attempt_id=attempt_id,
-            speech_cleanup_analysis_id=str(cleanup.id),
+            speech_cleanup_analysis_id=str(cleanup.id) if cleanup_choice else None,
             speech_cleanup_choice=cleanup_choice,
         )
+    return SimpleNamespace(
+        result=result,
+        session=session,
+        cleanup=cleanup,
+        binding=binding,
+        bind_mock=bind_mock,
+        mock_build=mock_build,
+        approved_proposal=approved_proposal,
+    )
 
-    bind_mock.assert_called_once()
-    assert mock_build.call_args.kwargs["phone_sources"] == (binding,)
-    assert result.outcome == "dispatched"
-    job = session.add.call_args.args[0]
+
+@pytest.mark.parametrize(
+    ("cleanup_choice", "cleanup_contract"),
+    [("clean", "required_v1"), ("keep_original", "off_v1")],
+)
+def test_phone_gate_guided_voiceover_dispatches_when_supported(
+    monkeypatch: pytest.MonkeyPatch,
+    prod_profile: list[str],
+    cleanup_choice: str,
+    cleanup_contract: str,
+) -> None:
+    """KRI-132 phone-voiceover-gate follow-up: an approved guided-voiceover
+    proposal on a phone item dispatches (binds phone sources, mints the Job
+    with a `guided_edit` snapshot carrying the `guided_voiceover_v1` execution
+    contract) once `phone_guided_narration_supported()` holds -- the same
+    approved-proposal requirement (`unapproved_guided`) any other guided phone
+    item is held to still applies; only the unconditional rejection is lifted.
+    A clean choice renders the cleaned derivative its draft pinned.
+    """
+    from app.services.creator_execution_contract import GUIDED_VOICEOVER_CONTRACT
+
+    run = _dispatch_guided_voiceover_cleanup(
+        monkeypatch,
+        cleanup_choice=cleanup_choice,
+        narration_for=(_cleaned_guided_narration if cleanup_choice == "clean" else lambda *_a: {}),
+    )
+
+    run.bind_mock.assert_called_once()
+    assert run.mock_build.call_args.kwargs["phone_sources"] == (run.binding,)
+    assert run.result.outcome == "dispatched"
+    job = run.session.add.call_args.args[0]
     assert job.assembly_plan["guided_edit"]["execution_contract"] == GUIDED_VOICEOVER_CONTRACT
-    assert job.assembly_plan["guided_edit"]["approved_proposal"] == approved_proposal["snapshot"]
-    assert cleanup.decision == cleanup_choice
+    assert (
+        job.assembly_plan["guided_edit"]["approved_proposal"] == run.approved_proposal["snapshot"]
+    )
+    assert run.cleanup.decision == cleanup_choice
     assert job.assembly_plan["speech_cleanup_contract"] == cleanup_contract
     assert job.assembly_plan["speech_cleanup_requested"] is (cleanup_choice == "clean")
+
+
+@pytest.mark.parametrize("narration", ["raw", "derivative"])
+def test_markerless_required_contract_is_checked_after_it_is_final(
+    monkeypatch: pytest.MonkeyPatch,
+    prod_profile: list[str],
+    narration: str,
+) -> None:
+    """With no consent choice (preflight not enforced) the legacy item toggle
+    resolves ``required_v1`` late, without a CutPlan. The narration check runs
+    on that final contract: raw audio keeps rendering as it always did, and a
+    derivative, which no consent snapshot can vouch for, is refused."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "off")
+    monkeypatch.setattr(
+        "app.services.speech_cleanup.contract_for_item", lambda *_a, **_kw: "required_v1"
+    )
+
+    def _narration(item, plan, cleanup):  # noqa: ANN001
+        if narration == "raw":
+            return {"gcs_path": item.voiceover_gcs_path, "generation": "1", "duration_s": 48.6}
+        return _cleaned_guided_narration(item, plan, cleanup)
+
+    run = _dispatch_guided_voiceover_cleanup(
+        monkeypatch, cleanup_choice=None, narration_for=_narration
+    )
+
+    if narration == "derivative":
+        assert run.result.outcome == "speech_cleanup_analysis_conflict"
+        run.session.add.assert_not_called()
+        return
+    assert run.result.outcome == "dispatched"
+    job = run.session.add.call_args.args[0]
+    assert job.assembly_plan["speech_cleanup_contract"] == "required_v1"
+    assert "_speech_cleanup_internal" not in job.assembly_plan
+
+
+@pytest.mark.parametrize(
+    ("cleanup_choice", "case"),
+    [
+        ("clean", "required_without_derivative"),
+        ("clean", "other_analysis"),
+        ("clean", "other_cut"),
+        ("keep_original", "off_with_derivative"),
+    ],
+)
+def test_guided_voiceover_dispatch_binds_narration_to_the_cleanup_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    prod_profile: list[str],
+    cleanup_choice: str,
+    case: str,
+) -> None:
+    """A planned voiceover must match the consent being dispatched, exactly.
+
+    Proposals approved before the derivative existed (raw narration under a
+    clean choice), a cut from another analysis or CutPlan, or a derivative
+    under a kept-original choice would render audio the creator did not pick.
+    They mint no Job, so the planning refund path applies.
+    """
+
+    def _narration(item, plan, cleanup):  # noqa: ANN001
+        if case == "required_without_derivative":
+            return {"gcs_path": item.voiceover_gcs_path, "generation": "1", "duration_s": 48.6}
+        if case == "other_analysis":
+            return _cleaned_guided_narration(item, plan, cleanup, analysis_id=str(uuid.uuid4()))
+        if case == "other_cut":
+            return _cleaned_guided_narration(item, plan, cleanup, cut_sha256="e" * 64)
+        return _cleaned_guided_narration(item, plan, cleanup)
+
+    run = _dispatch_guided_voiceover_cleanup(
+        monkeypatch, cleanup_choice=cleanup_choice, narration_for=_narration
+    )
+
+    assert run.result.outcome == "speech_cleanup_analysis_conflict"
+    run.mock_build.assert_not_called()
+    run.bind_mock.assert_not_called()
+    run.session.add.assert_not_called()
+    run.session.commit.assert_not_called()

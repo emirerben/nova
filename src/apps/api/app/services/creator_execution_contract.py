@@ -10,6 +10,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.agents._schemas.creator_agent import canonical_context_hash, creator_strategies_equal
+from app.services.guided_speech_cleanup import (
+    derivative_path_ok,
+    narration_speech_cleanup,
+    source_identity,
+)
 
 GUIDED_VOICEOVER_CONTRACT = "guided_voiceover_v1"
 CREATOR_FIDELITY_QUEUE = "creator-fidelity-v1"
@@ -24,22 +29,46 @@ def requests_guided_voiceover(strategy: object) -> bool:
     )
 
 
-def narration_matches_item(narration: object, item: Any) -> bool:
-    """Compare the pinned audio identity to the owner-checked current item."""
+def narration_matches_item(narration: object, item: Any, *, owner_id: object = None) -> bool:
+    """Compare the pinned audio identity to the owner-checked current item.
+
+    A cleaned "Clean up speech" derivative matches through its provenance: its
+    raw source must still be the item's voiceover and its own object must live
+    under this owner's item/analysis derivative prefix. That check needs the
+    owner, so a derivative without ``owner_id`` never matches.
+    """
     if not isinstance(narration, Mapping):
         return False
     try:
-        duration = float(narration.get("duration_s", 0))
+        provenance = narration_speech_cleanup(narration)
+    except ValueError:
+        return False
+    if provenance is not None:
+        if owner_id is None or not derivative_path_ok(
+            narration.get("gcs_path"),
+            owner_id=owner_id,
+            item_id=getattr(item, "id", None),
+            analysis_id=provenance.analysis_id,
+        ):
+            return False
+        try:
+            duration = float(narration.get("duration_s", 0))
+        except (TypeError, ValueError):
+            return False
+        if not narration.get("generation") or duration <= 0:
+            return False
+    source_path, source_generation, source_duration = source_identity(narration)
+    try:
         current_duration = float(getattr(item, "voiceover_duration_s", 0) or 0)
     except (TypeError, ValueError):
         return False
     return bool(
-        narration.get("gcs_path")
-        and narration.get("generation")
-        and narration["gcs_path"] == getattr(item, "voiceover_gcs_path", None)
-        and str(narration["generation"]) == str(getattr(item, "voiceover_generation", ""))
-        and duration > 0
-        and abs(duration - current_duration) < 0.001
+        source_path
+        and source_generation
+        and source_path == getattr(item, "voiceover_gcs_path", None)
+        and source_generation == str(getattr(item, "voiceover_generation", ""))
+        and source_duration > 0
+        and abs(source_duration - current_duration) < 0.001
         and getattr(item, "audio_mode", None) == "voiceover"
     )
 
@@ -85,7 +114,8 @@ def validate_execution_binding(
         guided_snapshot.get("execution_contract") != GUIDED_VOICEOVER_CONTRACT
         or not isinstance(narration, Mapping)
         or not narration.get("generation")
-        or narration.get("gcs_path") != voiceover_path
+        # A cleaned derivative binds to the item voiceover it was cut from.
+        or source_identity(narration)[0] != voiceover_path
     ):
         raise ValueError("The confirmed voiceover identity changed")
     identity = guided_snapshot.get("creator_execution_identity")

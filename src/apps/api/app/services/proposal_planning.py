@@ -16,15 +16,42 @@ from app.config import settings
 from app.schemas.edit_frame_schedule import EditFrameSchedule, FrameScheduledMoment
 from app.schemas.edit_proposal import EditProposalSnapshot
 
+# Creator-facing copy. ``reason`` stays the scheduler's diagnostic text (it
+# lands in admin-only ``detail``); only written sentences reach the creator.
+INFEASIBLE_INPUT_MESSAGE = (
+    "Kria can't fit this edit to the footage you added. Add more photos or videos, "
+    "or change the request."
+)
+SCHEDULE_REJECTED_MESSAGE = (
+    "Kria couldn't fit its plan to your footage. Try again, or revise the request."
+)
+# Scheduler reasons that are already written for the creator.
+_CREATOR_WRITTEN_FEASIBILITY_CODES = frozenset({"conflicting_text_bindings"})
+
 
 class SemanticPlanningError(ValueError):
-    """Actionable failure that must never enter the request-blind fallback."""
+    """Actionable failure that must never enter the request-blind fallback.
 
-    def __init__(self, code: str, reason: str, diagnostics: dict) -> None:
+    ``retryable`` is False when the same confirmed inputs cannot pass (a
+    capacity check before any paid call); ``message`` is the creator-facing
+    sentence, ``reason`` the private diagnostic.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        reason: str,
+        diagnostics: dict,
+        *,
+        retryable: bool = True,
+        message: str | None = None,
+    ) -> None:
         super().__init__(reason)
         self.code = code
         self.reason = reason
         self.diagnostics = diagnostics
+        self.retryable = retryable
+        self.message = message or reason
 
 
 def plan_edit_proposal(
@@ -58,7 +85,13 @@ def plan_edit_proposal(
         "fallback_reason": None,
     }
     if feasibility.status == "infeasible":
-        raise SemanticPlanningError("semantic_edit_infeasible", feasibility.reason, diagnostics)
+        raise SemanticPlanningError(
+            "semantic_edit_infeasible",
+            feasibility.reason,
+            diagnostics,
+            retryable=False,
+            message=INFEASIBLE_INPUT_MESSAGE,
+        )
     # Retain the requested target in input: both preflight and allocation use
     # the same pure scheduler and report the exact same clamp, if any.
     try:
@@ -80,7 +113,16 @@ def plan_edit_proposal(
             feasibility=asdict(exc.report),
             fallback_reason=exc.reason,
         )
-        raise SemanticPlanningError("semantic_edit_infeasible", exc.reason, diagnostics) from exc
+        raise SemanticPlanningError(
+            "semantic_edit_infeasible",
+            exc.reason,
+            diagnostics,
+            message=(
+                exc.reason
+                if exc.code in _CREATOR_WRITTEN_FEASIBILITY_CODES
+                else SCHEDULE_REJECTED_MESSAGE
+            ),
+        ) from exc
     diagnostics.update(
         outcome="compiled",
         schedule=result.schedule.model_dump(mode="json"),
