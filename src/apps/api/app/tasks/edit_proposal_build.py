@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import tempfile
 import uuid
 from collections.abc import Callable
@@ -64,6 +65,7 @@ from app.services.edit_proposals import (
     save_proposal_draft,
 )
 from app.services.phone_destination import item_visuals_only_on_device_sync
+from app.services.story_shapes import DAY_VLOG_MIN_SOURCES, humanize_repairs, usable_media_count
 from app.worker import celery_app
 
 if TYPE_CHECKING:
@@ -498,22 +500,37 @@ def _fast_story_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:
 def feasible_guided_duration_s(media: list[MediaRef]) -> float:
     """Conservative, renderer-aware estimate of the story length the uploaded
 
-    media can support. Videos contribute their own probed duration once — a
+    media can support. A video contributes its own probed duration once — a
     beat can never be stretched past what was actually filmed (no
-    slow-mo/loop) — but ONLY when that duration clears
-    `GUIDED_STORY_MIN_MOMENT_S`; a video with no probed duration, a zero
-    duration, or a duration too short to be its own legible moment
-    contributes nothing (not the image credit). This is a pre-agent planning
+    slow-mo/loop). A video SHORTER than `GUIDED_STORY_MIN_MOMENT_S` still
+    contributes its own (shorter) length instead of zero (KRI-118 lane L3 /
+    KRI-129: a short clip is never left out for being short, including at
+    this planning-time estimate) -- `guided_moment_floor_s`
+    (app.pipeline.guided_story) applies the identical floor to a single
+    moment's screen time at render time, and for a duration already below
+    that floor the two are the same number. A video with no probed duration
+    or a zero duration contributes nothing. This is a pre-agent planning
     estimate — guided_story.py's `_source_window` / `_allocate_beat_durations`
     remain the exact, authoritative render-time feasibility check.
     """
+    from app.pipeline.guided_story import guided_moment_floor_s  # noqa: PLC0415
 
     total = 0.0
     for ref in media:
         if ref.kind == "video":
             duration = float(ref.duration_s) if ref.duration_s else 0.0
+            if duration <= 0:
+                continue
             if duration >= GUIDED_STORY_MIN_MOMENT_S:
+                # At or above the per-moment floor: credit the video's own
+                # full length, exactly as before this fix.
                 total += duration
+            else:
+                # Below the floor: guided_moment_floor_s(min_moment_s,
+                # duration) here simply equals duration itself, since
+                # duration < min_moment_s -- named explicitly so this stays
+                # in lockstep with the render-time function it mirrors.
+                total += guided_moment_floor_s(GUIDED_STORY_MIN_MOMENT_S, duration)
         else:
             total += _IMAGE_FEASIBLE_CREDIT_S
     return total
@@ -574,6 +591,34 @@ def cadence_target_duration_s(brief, media: list[MediaRef]) -> int | float | Non
     if capacity_s + 0.001 < required_s:
         raise ValueError("round-robin cadence exceeds available source capacity")
     return brief.duration_s
+
+
+_FALLBACK_TITLE_MAX_CHARS = 40
+_FALLBACK_TITLE_CLAUSE_RE = re.compile(r"[.!?\n]")
+
+
+def _fallback_title(brief) -> str:  # noqa: ANN001
+    """Best-effort human title when neither a confirmed creator title nor a
+    specialist-authored title is available (the deterministic-fallback path).
+
+    Priority: (1) brief.opening_title -- handled by the caller before this is
+    reached; (2) a short derivation from the creator's own request text, when
+    any was given; (3) a generic "Your edit" as the last resort. Replaces the
+    old hard-coded "A few moments" placeholder, which said nothing about the
+    creator's own request.
+    """
+
+    request = (brief.creator_request or "").strip()
+    if not request:
+        return "Your edit"
+    first_clause = _FALLBACK_TITLE_CLAUSE_RE.split(request, maxsplit=1)[0].strip()
+    candidate = first_clause or request
+    if len(candidate) > _FALLBACK_TITLE_MAX_CHARS:
+        truncated = candidate[:_FALLBACK_TITLE_MAX_CHARS]
+        # Prefer a whole-word cut; fall back to the hard truncation when the
+        # first chunk has no space to break on.
+        candidate = truncated.rsplit(" ", 1)[0].strip() or truncated.strip()
+    return candidate or "Your edit"
 
 
 def _fail(
@@ -1526,6 +1571,27 @@ def _run_draft_attempt(
                     )
                     db.commit()
             return
+        if brief.story_shape == "day_vlog" and usable_media_count(media) < DAY_VLOG_MIN_SOURCES:
+            # KRI-118 lane L3: a genuine planning-time refusal, not a silent
+            # downgrade to a generic edit (KRI-129) -- checked here, against
+            # the raw media pool, before either the specialist agent or the
+            # deterministic fallback (neither knows about story_shape) can
+            # silently proceed. story_shapes.repair_day_vlog re-checks the
+            # same contract against the final authored plan as defense in
+            # depth.
+            with sync_session() as db:
+                locked = _locked_item(db, iid, ownership_epoch)
+                item = locked[0] if locked else None
+                current = parse_edit_proposal(item.edit_proposal) if item else None
+                if item and current and current.generation_attempt_id == attempt_id:
+                    _fail(
+                        item,
+                        current,
+                        "day_vlog_needs_two_moments",
+                        "A day vlog needs at least two moments.",
+                    )
+                    db.commit()
+            return
         from app.schemas.edit_proposal import resolve_video_reuse_policy
 
         video_reuse_policy = brief.video_reuse_policy or resolve_video_reuse_policy(
@@ -1810,6 +1876,8 @@ def _run_draft_attempt(
                     opening_title_duration_s=brief.opening_title_duration_s,
                     shot_labels=brief.shot_labels,
                     closing_title=brief.closing_title,
+                    story_shape=brief.story_shape,
+                    hero_media_id=brief.hero_media_id,
                     media=agent_media,
                     clip_intents=_resolved_clip_intents(brief),
                 ),
@@ -1879,6 +1947,8 @@ def _run_draft_attempt(
                             opening_title_duration_s=brief.opening_title_duration_s,
                             shot_labels=brief.shot_labels,
                             closing_title=brief.closing_title,
+                            story_shape=brief.story_shape,
+                            hero_media_id=brief.hero_media_id,
                             media=agent_media,
                             clip_intents=_resolved_clip_intents(brief),
                         ),
@@ -2026,7 +2096,19 @@ def _run_draft_attempt(
                     else None
                 )
             caption_texts = _resolved_caption_texts(_resolved_clip_intents(brief))
+            # KRI-118 lane L3: always-user-visible plain-English notes on what
+            # the deterministic repair layer changed, separate from the
+            # admin-only `planner_fallback` marker on EditProposal (never
+            # exposed here). Bounded to 6 items of <=160 chars each.
+            adjustments = humanize_repairs(list(getattr(output, "repairs", None) or []))
+            if fallback_used:
+                adjustments = [
+                    "Kria used a simpler plan because the planner couldn't finish",
+                    *adjustments,
+                ]
+            adjustments = [message[:160] for message in adjustments][:6]
             snapshot = EditProposalSnapshot(
+                adjustments=adjustments,
                 # KRI-127: the render worker re-grounds every label from these.
                 clip_intents=_resolved_clip_intents(brief),
                 direction=brief.direction,
@@ -2048,7 +2130,7 @@ def _run_draft_attempt(
                 # A confirmed Main Creator title is immutable and beats any
                 # specialist/copy-writer title for every render.
                 title=brief.opening_title
-                or (output.title if output is not None else "A few moments"),
+                or (output.title if output is not None else _fallback_title(brief)),
                 opening_title=brief.opening_title,
                 opening_title_duration_s=brief.opening_title_duration_s,
                 shot_labels=brief.shot_labels,
