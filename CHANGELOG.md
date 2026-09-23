@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.151.0] - 2026-09-23
+
+### Changed
+- KRI-118 L6: honor 4xx detail, split proxy-contract errors, distinguish outdated renderer, fix storage gate (#1169) <!-- release-pr: 1169 -->
+
 ## [0.76.150.0] - 2026-09-23
 
 ### Changed
