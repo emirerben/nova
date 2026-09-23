@@ -6,6 +6,7 @@ all timestamps, durations, source windows, and frame arithmetic.
 
 from __future__ import annotations
 
+import difflib
 import json
 import math
 import re
@@ -75,6 +76,37 @@ _SPOKEN_QUOTE_WHERE_RE = re.compile(
     r"(?:clips?|shots?|photos?|images?|pictures?|videos?|frames?|chapters?|screen)\b)",
     re.IGNORECASE,
 )
+# A creator who explicitly tags a quote as voiceover/script ("VO:", "I say
+# ...") means it regardless of what the ASR transcript happened to catch;
+# that cue alone excludes the quote, even with an empty transcript.
+_SPOKEN_SCRIPT_CUE_RE = re.compile(
+    r"(?:"
+    r"\bVO\b"
+    r"|\bV\.O\."
+    r"|\bvoice[\s-]?over\b"
+    r"|\bnarration\b"
+    r"|\bnarrator\b"
+    r"|\bscript\b"
+    r"|\bspoken\b"
+    r"|\bI\s+say\b"
+    r"|\bI'?m\s+saying\b"
+    r"|\bI\s+am\s+saying\b"
+    r"|\bI\s+will\s+say\b"
+    r"|\bI'?ll\s+say\b"
+    r"|\bwhat\s+I\s+say\b"
+    r"|\bmy\s+voiceover\s+says\b"
+    r"|\bthe\s+voiceover\s+says\b"
+    r"|\bnarration\s+says\b"
+    r"|\b(?:voiceover|VO|spoken)\s+line\b"
+    r")\s*[:\-–—]?\s*$",
+    re.IGNORECASE,
+)
+# A long quote (>= 6 words) that fails an exact transcript match is retried
+# with a bounded number of tolerated word errors — ASR occasionally mis-hears
+# a word or two of an otherwise-correct voiceover line; a short quote never
+# gets this leniency since one differing word out of a handful is more likely
+# a genuine on-screen label than a transcription slip.
+_SPOKEN_SCRIPT_FUZZY_MIN_WORDS = 6
 _QUOTE_LIST_JOIN_RE = re.compile(r"\s*,?\s*(?:(?:and|or|&)\s*)?", re.IGNORECASE)
 _FORBIDDEN_TIMING_KEYS = frozenset(
     {"duration_s", "start_s", "end_s", "source_start_s", "source_end_s", "output_duration_s"}
@@ -239,22 +271,57 @@ def _quote_list_ends(request: str, match: re.Match[str]) -> tuple[re.Match[str],
     return quotes[first], quotes[last]
 
 
+def _transcript_speaks(words: list[str], spoken: list[str]) -> bool:
+    """True when the transcript word-key stream `spoken` speaks quote `words`.
+
+    An exact contiguous match is tried first. A quote long enough (>= 6 words)
+    to survive a couple of wrong words is then retried allowing up to
+    ``len(words) // 4`` substitution/insertion/deletion errors, found via a
+    sliding `difflib.SequenceMatcher` over transcript windows near the quote's
+    length — ASR mis-hears an occasional word (a homophone, a merged phrase)
+    in an otherwise-correct voiceover line, and that must not turn a spoken
+    line into a fabricated on-screen caption.
+    """
+    n = len(words)
+    if n < _SPOKEN_SCRIPT_MIN_WORDS:
+        return False
+    if any(spoken[start : start + n] == words for start in range(len(spoken) - n + 1)):
+        return True
+    if n < _SPOKEN_SCRIPT_FUZZY_MIN_WORDS:
+        return False
+    k = n // 4
+    min_len = max(1, n - k)
+    max_len = min(len(spoken), n + k)
+    for length in range(min_len, max_len + 1):
+        for start in range(0, len(spoken) - length + 1):
+            window = spoken[start : start + length]
+            matcher = difflib.SequenceMatcher(None, words, window, autojunk=False)
+            matched = sum(block.size for block in matcher.get_matching_blocks())
+            if matched >= n - k:
+                return True
+    return False
+
+
 def _is_spoken_script_quote(request: str, match: re.Match[str], spoken: list[str]) -> bool:
     """A quoted sentence the recorded voiceover speaks is its script, not a text overlay.
 
-    Timed narration captions already draw those words, whether the attribution
-    follows the quote ('"...," she said.') or is absent. A short phrase, a
-    placement verb ('Put "..."'), a where-to-show phrase ('"..." over the
-    photo') or any other display instruction keeps the quote as creator copy.
+    Two rules exclude a quote. First, an explicit voiceover/script cue right
+    before it ("VO: ...", "I say ...") means it regardless of the transcript,
+    including an empty one. Otherwise the quote must appear in the transcript,
+    tolerating a bounded number of ASR word errors on long quotes (see
+    `_transcript_speaks`) since a speech model occasionally mis-hears a word
+    or two of a correctly spoken line. Either way, a short phrase, a placement
+    verb ('Put "..."'), a where-to-show phrase ('"..." over the photo') or any
+    other display instruction keeps the quote as creator copy.
     """
     text = match.group(1) or match.group(2) or ""
     words = [key for key in (creator_copy_match_key(word) for word in text.split()) if key]
-    if len(words) < _SPOKEN_SCRIPT_MIN_WORDS or not any(
-        spoken[start : start + len(words)] == words for start in range(len(spoken) - len(words) + 1)
-    ):
-        return False
     head, tail = _quote_list_ends(request, match)
     prefix = _quote_clause_prefix(request, head)
+    # The short-quote gate guards the transcript rule only: an explicit cue
+    # says the creator meant a short line as speech, not as a label.
+    if not _SPOKEN_SCRIPT_CUE_RE.search(prefix) and not _transcript_speaks(words, spoken):
+        return False
     if _SPOKEN_QUOTE_PLACEMENT_RE.search(prefix) or _SPOKEN_QUOTE_WHERE_RE.match(
         request[tail.end() :]
     ):
@@ -289,7 +356,7 @@ def _creator_captions(input: EditProposalAgentInput) -> dict[str, list[str]]:  #
     for match in _QUOTED_TEXT_RE.finditer(input.creator_request):
         if _is_reported_speech_quote(input.creator_request, match):
             continue
-        if spoken and _is_spoken_script_quote(input.creator_request, match, spoken):
+        if _is_spoken_script_quote(input.creator_request, match, spoken):
             continue
         text = (match.group(1) or match.group(2) or "").strip()
         key = creator_copy_match_key(text)
