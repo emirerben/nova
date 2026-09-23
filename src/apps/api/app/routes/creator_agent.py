@@ -715,37 +715,150 @@ def _explicit_guided_voiceover_request(request: str, manifest: Any) -> bool:
     )
 
 
+# A straight or curly single quote doubles as an apostrophe ("intro's",
+# "don't", "the kids' intro"; iOS types ’ for all of them). Treat one as a
+# quote mark only at a word boundary so contractions and possessives never
+# open or close creator copy. Double quotes are never apostrophes.
+_OPEN_QUOTE = r"(?:[\"“]|(?<!\w)['‘])"
+_CLOSE_QUOTE = r"(?:[\"”]|['’](?!\w))"
+_SFX_QUOTED_NAME = rf"{_OPEN_QUOTE}([^\"'”’]{{1,160}}){_CLOSE_QUOTE}"
+
+# Phrases made only of these words ask for effects in general ("add a sound
+# effect", "use a different sound effect"); they never name one.
+_SFX_GENERIC_WORDS = frozenset(
+    "a an the any some one another other same more extra this that these those my your"
+    " our their each every different new random funny fun cool good nice subtle little"
+    " single just only".split()
+)
+_SFX_VERB = r"(?:add|use|choose|pick|place|include)"
+
+
+def _chat_turn_text(creator_request: str) -> str:
+    """Collapse whitespace within each chat turn, keeping turn boundaries.
+
+    Only the turn separators differ from the fully collapsed request, so both
+    strings share character offsets.
+    """
+
+    lines = str(creator_request or "").splitlines()
+    return "\n".join(" ".join(line.split()) for line in lines if line.strip())
+
+
+def _sfx_verb_phrases(request: str) -> list[str]:
+    """Every "add <phrase> sound effect" phrase, one per verb, in order.
+
+    Overlapping candidates let "Add a sound effect. Use the Fah sound effect"
+    reach the named one; a phrase that runs into the next request ("add music
+    but add the whoosh ...") yields to that request's own verb.
+    """
+
+    phrases = []
+    for match in re.finditer(
+        rf"(?=\b{_SFX_VERB}\s+([A-Za-z0-9][A-Za-z0-9 _-]{{0,159}}?)\s+(?:sound\s+effect|sfx)\b)",
+        request,
+        re.IGNORECASE,
+    ):
+        phrase = match.group(1)
+        if not re.search(rf"\b(?:and|but|then|so)\s+{_SFX_VERB}\b", phrase, re.IGNORECASE):
+            phrases.append(phrase)
+    return phrases
+
+
+def _sfx_name_from_phrase(phrase: str, manifest: Any | None) -> str | None:
+    words = phrase.split()
+    if words[0].casefold() in {"no", "not"}:
+        return None  # "include no sound effect", "add no Fah sound effect"
+    if manifest is not None:
+        # "that Fah" / "the More Cowbell": drop only generic leading words, so
+        # a label's own first word survives and "Vine Boom" never becomes a
+        # shorter catalog "Boom".
+        for index in range(len(words)):
+            if index and words[index - 1].casefold() not in _SFX_GENERIC_WORDS:
+                break
+            tail = " ".join(words[index:])
+            if resolve_creator_sfx_catalog_ref(manifest, tail) is not None:
+                return tail
+    if all(word.casefold() in _SFX_GENERIC_WORDS for word in words):
+        return None
+    if words[0].casefold() in {"a", "an", "the"}:
+        words = words[1:]
+    return " ".join(words)
+
+
+def _explicit_sfx_lookup_names(creator_request: str, *, manifest: Any) -> list[str]:
+    """Names worth an exact live-DB lookup beyond the bounded prompt catalog.
+
+    Besides the extracted name, try each verb phrase as literally typed (only
+    "the" dropped, as before) so a published effect such as "Another One" or
+    "A Few Moments Later" still resolves when it is not in the prompt catalog.
+    """
+
+    request = " ".join(str(creator_request or "").split())
+    names = [_explicit_sfx_name(creator_request, manifest=manifest)]
+    for phrase in _sfx_verb_phrases(request)[:3]:
+        literal = re.sub(r"^the\s+(?=\S)", "", phrase, flags=re.IGNORECASE)
+        if literal.casefold() not in {"a", "an", "the", "no", "not", "any", "some"}:
+            names.append(literal)
+    return list(dict.fromkeys(name for name in names if name))
+
+
 def _explicit_sfx_name(creator_request: str, *, manifest: Any | None = None) -> str | None:
     """Extract one explicitly named effect without granting catalog authority."""
 
     request = " ".join(str(creator_request or "").split())
-    patterns = (
-        r"\b(?:sound\s+effect|sfx)\s+(?:named|called|titled)\s+[\"'“‘]([^\"'”’]{1,160})[\"'”’]",
-        r"\b(?:sound\s+effect|sfx)\s*[=:]\s*[\"'“‘]([^\"'”’]{1,160})[\"'”’]",
-        r"[\"'“‘]([^\"'”’]{1,160})[\"'”’]\s+(?:sound\s+effect|sfx)\b",
-        r"\b(?:add|use|choose|pick|place|include)\s+(?:the\s+)?"
-        r"([A-Za-z0-9][A-Za-z0-9 _-]{0,159}?)\s+(?:sound\s+effect|sfx)\b",
+    quoted_patterns = (
+        rf"\b(?:sound\s+effect|sfx)\s+(?:named|called|titled)\s+{_SFX_QUOTED_NAME}",
+        rf"\b(?:sound\s+effect|sfx)\s*[=:]\s*{_SFX_QUOTED_NAME}",
+        rf"{_SFX_QUOTED_NAME}\s+(?:sound\s+effect|sfx)\b",
     )
-    for pattern in patterns:
+    for pattern in quoted_patterns:
         match = re.search(pattern, request, re.IGNORECASE)
-        if match:
+        if match and match.group(1).strip():
             return match.group(1).strip()
-    if manifest is None:
+    unnamed_phrase: str | None = None
+    declined = False
+    for phrase in _sfx_verb_phrases(request):
+        name = _sfx_name_from_phrase(phrase, manifest)
+        if name:
+            return name
+        if phrase.split()[0].casefold() in {"no", "not"}:
+            declined = True
+        elif unnamed_phrase is None:
+            unnamed_phrase = phrase
+    if manifest is None or declined:
         return None
-    catalog_effects = sorted(
-        (item for item in manifest.catalog if item.kind == "sound_effect" and item.label),
-        key=lambda item: len(item.label or ""),
+    catalog_labels = sorted(
+        (
+            str(item.label).strip()
+            for item in manifest.catalog
+            if item.kind == "sound_effect" and item.label
+        ),
+        key=len,
         reverse=True,
     )
-    for effect in catalog_effects:
-        label = str(effect.label or "").strip()
+    for label in catalog_labels:
+        label_re = rf"(?<!\w){re.escape(label)}(?!\w)"
+        if re.search(
+            rf"\b(?:sound\s+effect|sfx)\s+(?:named|called|titled)\s+{label_re}"
+            rf"|\b(?:sound\s+effect|sfx)\s*[=:]\s*{label_re}",
+            request,
+            re.IGNORECASE,
+        ):
+            return label
+    for label in catalog_labels:
         label_re = rf"(?<!\w){re.escape(label)}(?!\w)"
         near_effect = (
             rf"{label_re}.{{0,80}}\b(?:sound\s+effect|sfx)\b"
             rf"|\b(?:sound\s+effect|sfx)\b.{{0,80}}{label_re}"
         )
         if re.search(near_effect, request, re.IGNORECASE):
-            return label
+            if unnamed_phrase is None:
+                return label
+            # "Use a different sound effect, not Fah": an unnamed request next
+            # to a catalog name is ambiguous. Keep the visible failure rather
+            # than drop the name silently or render an effect the creator
+            # declined.
+            return re.sub(r"^the\s+(?=\S)", "", unnamed_phrase, flags=re.IGNORECASE)
     return None
 
 
@@ -891,7 +1004,7 @@ def _apply_explicit_render_intent(
     # names only by exact case-insensitive match against the server manifest;
     # an unresolved name is retained as an inert id so compilation fails
     # visibly rather than silently dropping to optional_treatments.
-    sfx_name = _explicit_sfx_name(request, manifest=manifest)
+    sfx_name = _explicit_sfx_name(creator_request, manifest=manifest)
     if sfx_name:
         resolved = (
             resolve_creator_sfx_catalog_ref(manifest, sfx_name) if manifest is not None else None
@@ -918,12 +1031,17 @@ def _apply_explicit_render_intent(
     # before, falling through only when a tier produces no usable match at
     # all -- once a tier classifies anything, later (more permissive) tiers
     # are never consulted, exactly like the old single-match fallback chain.
+    closing_cue = "closing|ending|end|outro"
+    # Turn boundaries stay so unquoted copy never runs into the next chat turn.
+    title_request = _chat_turn_text(creator_request)
+
     def _classify_title_matches(
         pattern: re.Pattern[str],
+        text_source: str,
     ) -> tuple[str | None, str | None]:
         opening_text: str | None = None
         closing_text: str | None = None
-        for match in pattern.finditer(request):
+        for match in pattern.finditer(text_source):
             text = match.group(1).strip()
             if not text:
                 continue
@@ -934,7 +1052,11 @@ def _apply_explicit_render_intent(
             clause_prefix = request[clause_start + 1 : match.start()]
             if re.search(r"\b(?:do\s+not|don't|dont|without|no)\b", clause_prefix, re.IGNORECASE):
                 continue
-            if re.search(r"\b(?:closing|ending|end|outro)\s*$", clause_prefix, re.IGNORECASE):
+            # The cue precedes the title noun ("closing title ...") or, for
+            # "outro text: ...", opens the match itself.
+            if re.search(rf"\b(?:{closing_cue})\s*$", clause_prefix, re.IGNORECASE) or re.match(
+                rf"(?:{closing_cue})\b", match.group(0), re.IGNORECASE
+            ):
                 if closing_text is None:
                     closing_text = text
             elif opening_text is None:
@@ -943,43 +1065,69 @@ def _apply_explicit_render_intent(
 
     _title_patterns = (
         re.compile(
-            r"[\"'“‘](.{1,280}?)[\"'”’]\s+(?:opening\s+)?(?:title|intro|hook|text)\b",
+            rf"{_OPEN_QUOTE}(.{{1,280}}?){_CLOSE_QUOTE}\s+(?:opening\s+)?(?:title|intro|hook|text)\b",
             re.IGNORECASE,
         ),
         re.compile(
             r"\b(?:opening\s+)?(?:title|intro|hook|text)(?!\s+(?:texts|copies)\b)"
             r"\s*(?:text|copy)?\b\s*"
             r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)?\s*"
-            r"[\"'“‘](.{1,280}?)[\"'”’]",
+            rf"{_OPEN_QUOTE}(.{{1,280}}?){_CLOSE_QUOTE}",
             re.IGNORECASE,
         ),
         # Chat-first users commonly omit quoting for a short title. Stop at
         # the first comma or style qualifier so the rest of the request can
         # never become on-screen copy. Unlike quoted copy, an unquoted title
-        # needs an explicit connector ("is", "should say", or a colon); a
-        # bare "add intro text" is a treatment directive, not literal pixels.
+        # needs a connector that introduces words ("should say", "saying", or
+        # a colon after a copy noun). "is", "to" and "as" describe the intro
+        # ("the intro is too slow", "the hook as it is") and a bare "Intro:" /
+        # "Hook:" labels a direction section; neither is literal pixels, and
+        # on caption-owned formats a stray title fails the whole session.
         re.compile(
-            r"\b(?:opening\s+)?(?:title|intro|hook)(?!\s+(?:texts|copies)\b)"
-            r"\s*(?:text|copy)?\b\s*"
-            r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)\s*"
-            r"([A-Za-z0-9][^,\n]{0,279}?)(?=\s*(?:,|$)|\s+(?:using|with|font|colou?r)\b"
-            r"|\s+(?:use|make|set)\b(?=[^.]{0,80}\b(?:font|text|colou?r)\b))",
+            r"\b(?:"
+            r"(?:opening\s+)?(?:title|intro|hook)(?!\s+(?:texts|copies)\b)"
+            r"\s*(?:text|copy)?\b\s*(?:should\s+say|saying|that\s+says|which\s+says)"
+            r"|(?:(?:opening|intro|hook)\s+)?title(?:\s+(?:text|copy))?\s*:"
+            r"|(?:intro|hook)\s+(?:text|copy)\s*:"
+            r")\s*"
+            r"([A-Za-z0-9][^,\n]{0,279}?)(?=[^\S\n]*(?:,|\n|$)|\s+(?:using|with|font|colou?r)\b"
+            r"|\s+(?:use|make|set)\b(?=[^.]{0,80}\b(?:font|text|colou?r)\b)"
+            # Multi-sentence copy never runs into the next labelled copy.
+            rf"|[.!?;]\s+(?:(?:opening|intro|hook|{closing_cue})\s+)?"
+            r"(?:title|text|copy)(?:\s+(?:text|copy))?\s*:)",
             re.IGNORECASE,
         ),
         # The legacy title grammar permits multi-sentence literal copy. Keep
-        # that contract intact; the newer unquoted "text saying" fallback
-        # stops at punctuation before a following style sentence.
+        # that contract intact; the newer unquoted "text saying" / "outro
+        # text:" fallback stops at punctuation so a following instruction
+        # never becomes pixels. A bare "text is ..." or "Text: ..." usually
+        # describes the captions.
         re.compile(
-            r"\b(?:opening\s+)?(?:text)(?!\s+(?:texts|copies)\b)"
-            r"\s*(?:text|copy)?\b\s*"
-            r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)\s*"
-            r"([A-Za-z0-9][^,.;!?\n]{0,279}?)(?=\s*(?:[,.;!?]|$)|\s+(?:using|with|font|colou?r)\b"
+            r"\b(?:"
+            r"(?:opening\s+)?text(?!\s+(?:texts|copies)\b)"
+            r"\s*(?:text|copy)?\b\s*(?:should\s+say|saying|that\s+says|which\s+says)"
+            rf"|(?:opening|{closing_cue})\s+(?:text|copy)\s*:"
+            r")\s*"
+            r"([A-Za-z0-9][^,.;!?\n]{0,279}?)(?=[^\S\n]*(?:[,.;!?\n]|$)|\s+(?:using|with|font|colou?r)\b"
             r"|\s+(?:use|make|set)\b(?=[^.]{0,80}\b(?:font|text|colou?r)\b))",
             re.IGNORECASE,
         ),
     )
-    for pattern in _title_patterns:
-        opening_title_text, closing_title_text = _classify_title_matches(pattern)
+    # Descriptive wording the older grammar read as a title ("the title is too
+    # long", "Intro: energetic cuts") still claims the unquoted slot, but
+    # supplies no copy: a later "text that says what I say" is caption
+    # direction, never the title.
+    descriptive_title = re.compile(
+        r"\b(?:opening\s+)?(?:title|intro|hook)(?!\s+(?:texts|copies)\b)"
+        r"\s*(?:text|copy)?\b\s*(?:is|to|as|:)\s*([A-Za-z0-9]\S*)",
+        re.IGNORECASE,
+    )
+    for index, pattern in enumerate(_title_patterns):
+        if index == 3 and any(_classify_title_matches(descriptive_title, title_request)):
+            break
+        opening_title_text, closing_title_text = _classify_title_matches(
+            pattern, request if index < 2 else title_request
+        )
         if opening_title_text is not None or closing_title_text is not None:
             if opening_title_text is not None:
                 updates["opening_title"] = opening_title_text
@@ -2610,11 +2758,11 @@ async def _run_planning_turn(
             # Model-authored media references are repaired only at this trust
             # boundary. The subsequent compiler remains strict, so persisted
             # plans can contain only IDs from the authoritative manifest.
-            planning_manifest = await _resolve_explicit_sfx_outside_manifest(
-                db,
-                _explicit_sfx_name(creator_request, manifest=manifest),
-                manifest=manifest,
-            )
+            planning_manifest = manifest
+            for requested_sfx in _explicit_sfx_lookup_names(creator_request, manifest=manifest):
+                planning_manifest = await _resolve_explicit_sfx_outside_manifest(
+                    db, requested_sfx, manifest=planning_manifest
+                )
             strategy = _apply_explicit_render_intent(
                 strategy,
                 creator_request,
