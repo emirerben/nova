@@ -667,6 +667,102 @@ def test_sequence_blocks_draw_above_other_lanes_without_changing_dissolve_seed()
     ]
 
 
+def test_narration_pop_in_label_compiles_as_an_ordinary_layer_above_other_lanes():
+    """Job 76db6913: a narration LABEL (`narration_labels.py::_append_element`,
+    `kind="topic"`) is `role="generative_sequence"` with `effect="pop-in"` --
+    shaped exactly like this fixture's ``narration_label_text_elements`` entry.
+    `_is_sequence_overlay` (text_overlay_skia.py) is False for pop-in, so
+    `_compile_fade_envelope` never stamps a sequence-kind fade for it and the
+    cloud renders it as an ordinary layer too (`_render_sequence_composite`
+    explicitly admits pop-in). The phone compiler must do the same instead of
+    rejecting every `generative_sequence`-role overlay outright."""
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(id="context", text="Context", effect="dissolve-out", start_s=0, end_s=3)
+    ]
+    plan.narration_label_text_elements = [
+        TextElement(
+            id="1fb7922920c25482625f6c9f9b2a4fc5",
+            text="They started building this before the Eiffel Tower, and it's still not finished.",
+            role="generative_sequence",
+            effect="pop-in",
+            position="custom",
+            x_frac=0.08,
+            y_frac=0.12,
+            alignment="left",
+            size_class="small",
+            start_s=0.3,
+            end_s=2.5,
+            source_params={
+                "source_kind": "narration_annotation",
+                "source_word_ids": ["w000000", "w000001"],
+                "transcript_grounded": True,
+                "narration_label_kind": "topic",
+            },
+        )
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert [layer.id for layer in recipe.text_layers] == ["text-0", "narration-0"]
+    label = recipe.text_layers[1]
+    assert label.effect == "pop-in"
+    assert label.fade is None
+
+
+def test_narration_score_pop_in_label_also_compiles_without_a_sequence_fade():
+    """`kind="score"` labels are pop-in too (`_append_element`'s other
+    generative_sequence-role branch) -- same parity reasoning, different
+    geometry (right-aligned, "large" size class)."""
+    plan, bindings = fixture()
+    plan.narration_label_text_elements = [
+        TextElement(
+            id="score-label",
+            text="3-1",
+            role="generative_sequence",
+            effect="pop-in",
+            position="custom",
+            x_frac=0.92,
+            y_frac=0.12,
+            alignment="right",
+            size_class="large",
+            start_s=0,
+            end_s=2,
+            source_params={"narration_label_kind": "score"},
+        )
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)
+    [label] = recipe.text_layers
+    assert label.effect == "pop-in"
+    assert label.fade is None
+
+
+def test_sequence_fade_effect_still_gets_a_sequence_fade_envelope():
+    """The post-compile guard must not swallow a genuine sequence-fade
+    overlay: fade-in (and the other `_SEQUENCE_FADE_EFFECTS`) with
+    `fade_out_ms` still compiles `fade.kind == "sequence"`, unchanged by the
+    KRI narration-label fix."""
+    plan, bindings = fixture()
+    plan.narration_label_text_elements = [
+        TextElement(
+            id="topic-label",
+            text="Topic",
+            role="generative_sequence",
+            effect="fade-in",
+            position="custom",
+            x_frac=0.08,
+            y_frac=0.12,
+            alignment="left",
+            size_class="small",
+            start_s=0,
+            end_s=2,
+            fade_out_ms=400,
+        )
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)
+    [label] = recipe.text_layers
+    assert label.fade.kind == "sequence"
+    assert label.fade.out_ms == 400
+
+
 @pytest.mark.parametrize("kind", ["crossfade", "dip_to_black", "flash"])
 def test_v6_source_audio_transitions_preserve_windows_and_apply_gain_once(kind):
     plan, bindings = transition_fixture(kind, duration=0.12)

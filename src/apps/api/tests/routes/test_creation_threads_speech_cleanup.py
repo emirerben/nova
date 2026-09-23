@@ -14,7 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from app.config import settings
-from app.models import ContentPlan, CreatorAgentSession, Job, Persona, PlanItem
+from app.models import (
+    ContentPlan,
+    CreatorAgentSession,
+    Job,
+    Persona,
+    PlanItem,
+    SpeechCleanupAnalysis,
+)
 from app.routes import creation_threads as routes
 from app.services.active_narration_source import (
     ActiveNarrationResolution,
@@ -2051,6 +2058,146 @@ async def test_generic_publish_failure_retries_without_inventing_cleanup_recover
         "retry_target_job_id": job_id,
     }
     routes.reconcile_render_state.assert_awaited_once_with(db, session)
+
+
+async def _run_unrelated_failure_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    analysis: SimpleNamespace | None,
+    graph: tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace] | None = None,
+) -> AsyncMock:
+    """A "retry" on a Job that failed for a reason unrelated to speech cleanup
+    (KRI incident job 76db6913: `phone_plan_unsupported`), where the client's
+    Retry payload names the analysis it was already confirmed against -- the
+    shape the iOS/web Retry actions send after ANY failed render of a cleaned
+    narrated story. Returns the controller mock so callers can inspect the
+    forwarded ``ConfirmBody``.
+    """
+    thread, session, item = graph or _action_graph()
+    job_id = uuid.uuid4()
+    thread.active_job_id = job_id
+    session.status = "awaiting_confirmation"
+    session.render_attempts = 1
+    session.max_render_attempts = 3
+    new_job_id = uuid.uuid4()
+    failed_job = SimpleNamespace(
+        id=job_id,
+        user_id=thread.creator_id,
+        content_plan_item_id=item.id,
+        status="processing_failed",
+        failure_reason="phone_plan_unsupported",
+        assembly_plan={
+            "creator_generation_id": "phone-unsupported-generation",
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+            "variants": [],
+        },
+    )
+    db = Mock()
+
+    async def get(model: object, identifier: object, **_kwargs: object) -> object | None:
+        if model is CreatorAgentSession:
+            return session
+        if model is Job and identifier == job_id:
+            return failed_job
+        if model is SpeechCleanupAnalysis:
+            return analysis if analysis is not None and identifier == analysis.id else None
+        return None
+
+    db.get = AsyncMock(side_effect=get)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    controller = AsyncMock(
+        return_value=SimpleNamespace(id=str(session.id), current_job_id=str(new_job_id))
+    )
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_repair_missing_thread_job_projection", AsyncMock())
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_sync_agent", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "reconcile_render_state", AsyncMock())
+    monkeypatch.setattr(routes.creator_agent, "confirm_creator_plan_controller", controller)
+
+    payload: dict[str, object] = {}
+    if analysis is not None:
+        payload["speech_cleanup_analysis_id"] = str(analysis.id)
+
+    await routes.action_thread(
+        _request(),
+        str(thread.id),
+        routes.ActionBody(
+            action="retry",
+            payload=payload,
+            client_action_id=f"unrelated-failure-retry:{analysis.id if analysis else 'none'}",
+            expected_revision=thread.revision,
+        ),
+        SimpleNamespace(id=thread.creator_id),
+        db,
+    )
+
+    return controller
+
+
+@pytest.mark.asyncio
+async def test_retry_forwards_decided_ready_analysis_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prod incident (job 76db6913, 2026-09-23): a Retry naming the exact
+    analysis the user already decided "clean" against must forward that
+    decision, or the dispatcher's `_speech_cleanup_dispatch_snapshot` refuses
+    a `ready` row with findings and no choice (`speech_cleanup_analysis_conflict`)
+    -- a Retry after ANY failed render of a cleaned narrated story could never
+    succeed."""
+    graph = _action_graph()
+    _thread, _session, item = graph
+    row = _analysis(item.id, status="ready", candidate_count=2)
+    row.decision = "clean"
+
+    controller = await _run_unrelated_failure_retry(monkeypatch, analysis=row, graph=graph)
+
+    confirmation = controller.await_args.args[1]
+    assert confirmation.speech_cleanup_analysis_id == row.id
+    assert confirmation.speech_cleanup_choice == "clean"
+
+
+@pytest.mark.asyncio
+async def test_retry_forwards_no_choice_for_undecided_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Today's behavior is unchanged for a row the user never decided on --
+    forwarding a choice is only safe when it re-affirms a decision already
+    recorded on that exact row."""
+    graph = _action_graph()
+    _thread, _session, item = graph
+    row = _analysis(item.id, status="ready", candidate_count=2)
+    row.decision = None
+
+    controller = await _run_unrelated_failure_retry(monkeypatch, analysis=row, graph=graph)
+
+    confirmation = controller.await_args.args[1]
+    assert confirmation.speech_cleanup_analysis_id is None
+    assert confirmation.speech_cleanup_choice is None
+
+
+@pytest.mark.asyncio
+async def test_retry_forwards_no_choice_for_superseded_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A superseded row's decision belongs to a source/policy state that no
+    longer exists -- forwarding it would re-affirm stale consent."""
+    graph = _action_graph()
+    _thread, _session, item = graph
+    row = _analysis(item.id, status="ready", candidate_count=2)
+    row.decision = "clean"
+    row.superseded_at = datetime.now(UTC)
+
+    controller = await _run_unrelated_failure_retry(monkeypatch, analysis=row, graph=graph)
+
+    confirmation = controller.await_args.args[1]
+    assert confirmation.speech_cleanup_analysis_id is None
+    assert confirmation.speech_cleanup_choice is None
 
 
 @pytest.mark.asyncio

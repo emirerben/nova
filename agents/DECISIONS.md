@@ -2311,3 +2311,46 @@ registration too). If either becomes post-registration, the same drift returns t
 different field. Also revisit the client dead-end: iOS and web should surface the 409 detail
 and offer "refresh the direction" instead of re-showing a proposal the server will never
 accept (tracked as a follow-up, not part of this change).
+
+## [2026-09-23] Phone guided compiler rejected agent-authored pop-in labels; a failed render was blamed on speech cleanup (prod job 76db6913)
+
+Yasin's iPhone narrated story (thread f07c6df9, `guided_voiceover_v1`, 5 clips + 5 Visuals
+photos + cleaned 48 s voiceover, "Clean up speech and create") failed in the worker with
+`phone_plan_unsupported` / "sequence effect needs composite-stream parity". The same project
+had rendered the day before. The difference: this time `nova.compose.narration_annotations`
+accepted a topic label. `narration_labels._append_element` emits topic/score labels as
+`role="generative_sequence"` + `effect="pop-in"`, and `compile_phone_guided_plan` refused every
+`generative_sequence` overlay whose effect was outside the sequence-fade set. Labels are
+authored after dispatch, so no gate upstream could have caught it.
+
+The reject was stricter than either renderer. The cloud's `_is_sequence_overlay` is False for
+pop-in, so it draws the label as an ordinary pop-in with no sequence fade (its composite fast
+path admits pop-in explicitly); `PortableText.swift` only restricts effects when the compiled
+layer carries `fade.kind == .sequence`. Fix: check the COMPILED layer against the native rule
+(sequence-kind fade ⇒ effect ∈ fade-in/static/none/handwriting/ink-reveal) instead of the raw
+overlay's role. Guards: `tests/pipeline/test_phone_guided_plan.py` (pop-in topic/score labels
+compile with `fade is None`; real sequence fades still fail closed) and the prod replay
+`tests/tasks/test_phone_guided_popin_label_prod_replay.py` (job 76db6913's execution plan
+through `validate_phone_pilot_recipe` under `prod_profile`).
+
+The failure then dead-ended the chat. `_fail_job` stamped
+`speech_cleanup_outcome = failed/internal_error` on every failed `required_v1` preflight Job,
+whatever the cause, so the iOS card read "Speech cleanup couldn't be applied" with "Retry
+cleanup" / "Create without cleanup". The route's cleanup-recovery path only recognises
+`speech_cleanup_failed`, so "Retry cleanup" (a `retry` carrying the analysis id and, by the
+action allowlist, no choice) reached `_speech_cleanup_dispatch_snapshot` with a `ready` row and
+no choice → `speech_cleanup_analysis_conflict` → 409 ("This project changed" on the phone);
+"Create without cleanup" re-planned (proposal v11) and then conflicted on the same `ready` row,
+burning a render attempt. Two fixes: `_fail_job` only stamps a failed cleanup receipt when the
+failure is cleanup-attributed (`speech_cleanup_failure_reason`, `failure_reason ==
+"speech_cleanup_failed"`, or a variant that says so); and a plain `retry` naming an analysis
+row that is the item's current, `ready`, already-decided row forwards that recorded decision
+to the confirm controller. That is the user re-affirming consent already given on that exact
+fingerprint-bound row, not the worker borrowing a previous attempt's choice
+(`edit_proposal_build` still never does that). Undecided or superseded rows forward nothing.
+Guards: `test_fail_job_unrelated_failure_leaves_no_speech_cleanup_outcome`,
+`test_retry_forwards_decided_ready_analysis_choice` (+ undecided/superseded negatives).
+
+**Revisit if:** the phone gets its own sequence compositor (then the parity set can widen), or
+if `_ACTION_PAYLOAD_KEYS["retry"]` grows `speech_cleanup_choice` — at that point the client
+can re-consent explicitly and the route-side forwarding becomes a fallback only.

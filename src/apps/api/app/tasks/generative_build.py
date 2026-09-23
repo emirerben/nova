@@ -27546,17 +27546,42 @@ def _fail_job(
                         patch["speech_cleanup_failure_reason"] = speech_cleanup_failure_reason
                     job.assembly_plan = {**ap, **patch} if patch else ap
 
-                    public_plan = job.assembly_plan
-                    public_outcome = _build_preflight_public_outcome(
-                        public_plan,
-                        job_id=job_id,
-                        failure_reason=speech_cleanup_failure_reason or "internal_error",
+                    # `_build_preflight_public_outcome` unconditionally reports a
+                    # "failed" receipt whenever it is called without bounded
+                    # `results` (the shape used here). Calling it for every
+                    # `_fail_job` on a required_v1+preflight Job -- regardless of
+                    # *why* the job failed -- falsely told users "speech cleanup
+                    # couldn't be applied" for failures that never touched
+                    # cleanup (e.g. a phone-render compile failure). Only stamp
+                    # the receipt when this failure is actually attributable to
+                    # speech cleanup: an explicit cleanup failure reason, the
+                    # `speech_cleanup_failed` failure_reason, or a variant that
+                    # itself recorded a cleanup failure. See prod incident job
+                    # 76db6913 (2026-09-23).
+                    cleanup_attributed = bool(
+                        speech_cleanup_failure_reason
+                        or failure_reason == "speech_cleanup_failed"
+                        or any(
+                            isinstance(v, dict)
+                            and (
+                                v.get("error_class") == "speech_cleanup_failed"
+                                or v.get("speech_cleanup_failure_reason")
+                            )
+                            for v in new_variants
+                        )
                     )
-                    if public_outcome is not None:
-                        job.assembly_plan = {
-                            **public_plan,
-                            "speech_cleanup_outcome": public_outcome,
-                        }
+                    if cleanup_attributed:
+                        public_plan = job.assembly_plan
+                        public_outcome = _build_preflight_public_outcome(
+                            public_plan,
+                            job_id=job_id,
+                            failure_reason=speech_cleanup_failure_reason or "internal_error",
+                        )
+                        if public_outcome is not None:
+                            job.assembly_plan = {
+                                **public_plan,
+                                "speech_cleanup_outcome": public_outcome,
+                            }
 
                 job.status = "processing_failed"
                 job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]

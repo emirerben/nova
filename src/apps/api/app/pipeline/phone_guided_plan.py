@@ -483,17 +483,51 @@ def compile_phone_guided_plan(
     # Keep stable order within each partition, including context/narration lanes.
     ordered_overlays.sort(key=lambda entry: entry[1].get("role") == "generative_sequence")
     for index, (layer_id, overlay) in enumerate(ordered_overlays):
-        if overlay.get("role") == "generative_sequence" and overlay.get("effect", "none") not in {
-            "fade-in",
-            "static",
-            "none",
-            "handwriting",
-            "ink-reveal",
-        }:
-            raise UnsupportedPhonePlan("sequence effect needs composite-stream parity")
         layer, font = compile_text_overlay(
             overlay, layer_id=layer_id, canvas=canvas, dissolve_seed=101 + index * 37
         )
+        # A `role="generative_sequence"` overlay does NOT always compile to a
+        # sequence-fade layer: `_compile_fade_envelope` (portable_text_layout.py)
+        # only stamps `fade.kind == "sequence"` when the overlay's effect is
+        # also in `text_overlay_skia._SEQUENCE_FADE_EFFECTS` (fade-in, static,
+        # none, handwriting, ink-reveal) -- see its `_is_sequence_overlay`
+        # gate. A narration label authored at render time by
+        # `narration_labels.py::_append_element` (kind "topic"/"score") is
+        # `role="generative_sequence"` with `effect="pop-in"`, which never
+        # satisfies that gate, so it compiles with `fade=None` and draws as an
+        # ordinary layer -- exactly how the cloud renders it too:
+        # `text_overlay_skia._is_sequence_overlay` is False for pop-in, so the
+        # cloud's own composite fast path (`_render_sequence_composite`)
+        # explicitly admits pop-in and no sequence fade is ever applied there
+        # either. Rejecting every `generative_sequence`-role overlay outright
+        # (the old pre-check) crashed on this exact shape in prod (job
+        # 76db6913): the reject gate ran on the AGENT-AUTHORED label, which is
+        # written after dispatch, so nothing upstream could catch it.
+        #
+        # The one real composite-stream-parity gap is native: Composition.swift's
+        # `PortableTextLayer.validate()` only restricts `effect` when the
+        # compiled layer actually carries a sequence-kind fade envelope
+        # (`fade?.kind == .sequence`), and even then to the exact same five
+        # effects (`[.static, .none, .fadeIn, .handwriting, .inkReveal]`, see
+        # PortableText.swift). Check the COMPILED layer against that rule
+        # instead of the raw overlay's role, so a real sequence-fade overlay
+        # (fade-in/static/handwriting/ink-reveal with `fade_out_ms`) still
+        # fails closed for any effect the native sequence compositor can't
+        # drive, while pop-in (and any other non-sequence-fade effect) compiles
+        # normally.
+        if (
+            layer.fade is not None
+            and layer.fade.kind == "sequence"
+            and layer.effect
+            not in {
+                "fade-in",
+                "static",
+                "none",
+                "handwriting",
+                "ink-reveal",
+            }
+        ):
+            raise UnsupportedPhonePlan("sequence effect needs composite-stream parity")
         if font is not None:
             manifest[font.id] = font
             assets[font.id] = MediaAsset(

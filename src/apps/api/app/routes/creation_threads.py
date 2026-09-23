@@ -4538,6 +4538,42 @@ async def action_thread(
                     status_code=409,
                     detail="speech_cleanup_analysis_changed",
                 )
+        elif (
+            body.action == "retry"
+            and recovery_action is None
+            and payload.get("speech_cleanup_analysis_id")
+        ):
+            # A plain Retry that names the analysis it was already confirmed
+            # against is the user re-affirming that exact consent (their own
+            # tap on the client's Retry action) -- not opening a new choice.
+            # `_ACTION_PAYLOAD_KEYS["retry"]` deliberately has no
+            # `speech_cleanup_choice`, so without this the dispatcher
+            # (`_speech_cleanup_dispatch_snapshot` in content_plan_build.py)
+            # sees a `ready` row with findings and no choice and refuses with
+            # `speech_cleanup_analysis_conflict`: a Retry after ANY failed
+            # render of a cleaned narrated story could never succeed (prod
+            # incident, job 76db6913, 2026-09-23). Forward the row's own
+            # recorded decision only when the analysis is exactly the one
+            # named, belongs to this thread's active item (ownership), is
+            # still current (not superseded), still `ready`, and was already
+            # decided; any other shape (undecided/superseded/missing/wrong
+            # item) forwards nothing and keeps today's 409 fences below.
+            raw_analysis_id = str(payload.get("speech_cleanup_analysis_id") or "")
+            try:
+                candidate_analysis_id = uuid.UUID(raw_analysis_id)
+            except ValueError:
+                candidate_analysis_id = None
+            if candidate_analysis_id is not None:
+                candidate = await db.get(SpeechCleanupAnalysis, candidate_analysis_id)
+                if (
+                    candidate is not None
+                    and candidate.plan_item_id == thread.active_plan_item_id
+                    and candidate.superseded_at is None
+                    and candidate.status == "ready"
+                    and candidate.decision in {"clean", "keep_original"}
+                ):
+                    cleanup_analysis_id = candidate_analysis_id
+                    cleanup_choice = candidate.decision
         elif body.action in {"generate", "confirm_generation"}:
             raw_analysis_id = payload.get("speech_cleanup_analysis_id")
             if raw_analysis_id is not None:

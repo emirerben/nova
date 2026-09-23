@@ -1024,6 +1024,72 @@ def test_marked_preflight_fail_job_stamps_nonretryable_snapshot_failure(monkeypa
     }
 
 
+def test_fail_job_unrelated_failure_leaves_no_speech_cleanup_outcome(monkeypatch):
+    """Prod incident (job 76db6913, 2026-09-23): a required_v1+snapshot_v1 job that
+    fails for a reason unrelated to speech cleanup (here: a phone-render compile
+    failure) must NOT get a "speech cleanup failed" receipt -- cleanup never ran.
+    """
+    job_id = str(uuid.uuid4())
+    creator_generation = uuid.uuid4().hex
+    job = _FakeJob(
+        status="processing",
+        job_id=job_id,
+        assembly_plan={
+            "creator_generation_id": creator_generation,
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+            "variants": [],
+        },
+    )
+    _patch_job_session(monkeypatch, job)
+
+    assert gb._fail_job(
+        job_id,
+        "sequence effect needs composite-stream parity",
+        failure_reason="phone_plan_unsupported",
+    )
+
+    assert job.status == "processing_failed"
+    assert job.failure_reason == "phone_plan_unsupported"
+    assert job.error_detail == "sequence effect needs composite-stream parity"
+    assert "speech_cleanup_outcome" not in job.assembly_plan
+
+
+def test_fail_job_cleanup_attributed_failure_still_stamps_receipt(monkeypatch):
+    """A failure that IS attributable to speech cleanup (explicit
+    speech_cleanup_failure_reason + failure_reason="speech_cleanup_failed") keeps
+    stamping the bounded public receipt -- only the unattributed case changes."""
+    job_id = str(uuid.uuid4())
+    creator_generation = uuid.uuid4().hex
+    job = _FakeJob(
+        status="processing",
+        job_id=job_id,
+        assembly_plan={
+            "creator_generation_id": creator_generation,
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+            "variants": [],
+        },
+    )
+    _patch_job_session(monkeypatch, job)
+
+    assert gb._fail_job(
+        job_id,
+        "private ffmpeg detail /tmp/voiceover.wav",
+        failure_reason="speech_cleanup_failed",
+        speech_cleanup_failure_reason="apply_failed",
+    )
+
+    assert job.assembly_plan["speech_cleanup_outcome"] == {
+        "job_id": job_id,
+        "render_generation_id": creator_generation,
+        "status": "failed",
+        "removal_count": 0,
+        "removed_ms": 0,
+        "error": {"code": "internal_error", "retryable": True},
+    }
+
+
 def test_snapshot_mismatch_reanalysis_commits_before_post_commit_publish(monkeypatch):
     from app.services.speech_cleanup_preflight import SnapshotMismatchReanalysis
 
