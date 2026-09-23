@@ -2379,3 +2379,185 @@ def test_talking_head_cache_shares_analysis_across_renders(monkeypatch, tmp_path
     assert len(calls["transcribe"]) == 1  # ONE whisper pass across both renders
     assert len(calls["detect"]) == 1
     assert first["silence_cut"] == second["silence_cut"]
+
+
+# ══ guided narrated stories: "Clean up speech" via a pinned derivative ═══════════
+#
+# The guided planner already pinned the cleaned WAV as the approved narration,
+# so the cloud render never cuts again: it proves the derivative is the Job
+# snapshot's exact cut and publishes the same public receipt as other
+# required_v1 renders -- `applied`, never the old uncut `failed/internal_error`.
+
+
+def _guided_cleanup_case(*, contract="required_v1", cleaned=True):
+    from app.pipeline.speech_cleanup_apply import cut_fingerprint
+    from tests.services.test_guided_speech_cleanup import fixture_ids, load_fixture
+
+    fixture = load_fixture()
+    owner_id, item_id, analysis_id = fixture_ids(fixture)
+    source = fixture["snapshot"]["source"]
+    narration = {
+        "gcs_path": source["storage_path"],
+        "generation": source["generation"],
+        "duration_s": source["window_end_s"],
+    }
+    if cleaned:
+        narration = {
+            "gcs_path": (
+                f"users/{owner_id}/plan/{item_id}/speech-cleanup/{analysis_id}/{'0a' * 16}.wav"
+            ),
+            "generation": "1700000000000077",
+            "duration_s": fixture["expected"]["cleaned_duration_s"],
+            "speech_cleanup": {
+                "analysis_id": analysis_id,
+                "source_gcs_path": source["storage_path"],
+                "source_generation": source["generation"],
+                "source_duration_s": source["window_end_s"],
+                "cut_sha256": cut_fingerprint(hydrate_speech_cleanup_snapshot(fixture["snapshot"])),
+            },
+        }
+    plan = {
+        "creator_generation_id": "creator-generation",
+        "speech_cleanup_contract": contract,
+        "speech_cleanup_preflight_contract": "snapshot_v1",
+        "_speech_cleanup_internal": {"preflight_snapshot": fixture["snapshot"]},
+    }
+    guided = {"approved_proposal": {"narration": narration}}
+    return fixture, plan, guided
+
+
+def test_preflight_outcome_builder_is_shared_with_device_completion():
+    from app.services.speech_cleanup_outcome import build_preflight_public_outcome
+
+    assert gb._build_preflight_public_outcome is build_preflight_public_outcome
+
+
+def test_guided_cleanup_receipt_proves_the_derivative_and_reports_the_cut():
+    fixture, plan, guided = _guided_cleanup_case()
+
+    receipt = gb._guided_speech_cleanup_receipt(plan, guided)
+
+    removals = fixture["expected"]["removal_count"]
+    assert receipt["_speech_cleanup_outcome_context"]["output_removal_count"] == removals
+    assert receipt["silence_cut_outcome"] == "applied"
+    assert len(receipt["silence_cut"]["removed"]) == removals
+    assert receipt["silence_cut"]["time_saved_s"] == pytest.approx(7.03, abs=0.01)
+
+
+@pytest.mark.parametrize(
+    "contract, cleaned, expected",
+    [
+        ("required_v1", False, "raise"),
+        ("off_v1", True, "raise"),
+        ("off_v1", False, None),
+        ("legacy_auto", False, None),
+    ],
+)
+def test_guided_cleanup_receipt_fails_closed_or_stays_out_of_the_way(contract, cleaned, expected):
+    from app.services.speech_cleanup import SpeechCleanupFailure
+
+    _fixture, plan, guided = _guided_cleanup_case(contract=contract, cleaned=cleaned)
+    if expected == "raise":
+        with pytest.raises(SpeechCleanupFailure) as failure:
+            gb._guided_speech_cleanup_receipt(plan, guided)
+        assert failure.value.reason == "snapshot_mismatch"
+    else:
+        assert gb._guided_speech_cleanup_receipt(plan, guided) is None
+    assert gb._guided_speech_cleanup_receipt(plan, {"approved_proposal": {}}) is None
+
+
+@pytest.mark.parametrize("claim", ["claimed", "ready"])
+def test_cloud_guided_render_publishes_an_applied_cleanup_receipt(monkeypatch, claim):
+    from contextlib import nullcontext
+
+    from app.pipeline import guided_story
+
+    fixture, plan, guided = _guided_cleanup_case()
+    receipt = gb._guided_speech_cleanup_receipt(plan, guided)
+    rendered = {
+        "variant_id": "guided_story",
+        "rank": 1,
+        "text_mode": "agent_text",
+        "render_status": "ready",
+        "ok": True,
+        "video_path": "generative-jobs/job/guided.mp4",
+    }
+    execution_plan = {
+        "compiler_version": 8,
+        "proposal_version": 1,
+        "selected_media_ids": ["clip"],
+        "beat_windows": [{}],
+    }
+    monkeypatch.setattr(gb, "_guided_execution_plan", lambda *_: (execution_plan, None))
+    monkeypatch.setattr(gb, "record_phase", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_claim_guided_story_attempt", lambda *_: (claim, dict(rendered)))
+    monkeypatch.setattr(gb, "_guided_story_attempt_heartbeat", lambda *_: nullcontext())
+    monkeypatch.setattr(gb, "_update_variant_entry", lambda *a, **k: True)
+    monkeypatch.setattr(guided_story, "render_execution_plan", lambda *a, **k: dict(rendered))
+    monkeypatch.setattr(guided_story, "validate_ready_result", lambda _plan, result, **_: result)
+    monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
+    captured = {}
+
+    def capture_set_status(job_id, status, extra_plan=None, **kwargs):
+        captured.update(status=status, plan=extra_plan, **kwargs)
+
+    monkeypatch.setattr(gb, "_set_status", capture_set_status)
+
+    gb._run_guided_story_job(JOB_ID, guided, render_trace_id="trace", speech_cleanup=receipt)
+
+    assert captured["status"] == "variants_ready"
+    assert captured["plan"]["variants"][0]["silence_cut_outcome"] == "applied"
+    assert captured["plan"]["variants"][0]["silence_cut"] == receipt["silence_cut"]
+    # The private outcome context reaches the receipt builder, not the variant row.
+    assert "_speech_cleanup_outcome_context" not in captured["plan"]["variants"][0]
+    public = gb._build_preflight_public_outcome(
+        plan, job_id=JOB_ID, results=captured["speech_cleanup_public_results"]
+    )
+    assert public == {
+        "job_id": JOB_ID,
+        "render_generation_id": "creator-generation",
+        "status": "applied",
+        "removal_count": fixture["expected"]["removal_count"],
+        "removed_ms": fixture["snapshot"]["analysis"]["public_receipt"]["estimated_removed_ms"],
+    }
+
+
+@pytest.mark.parametrize("cleaned", [True, False])
+def test_cloud_guided_dispatch_binds_cleanup_before_rendering(monkeypatch, cleaned):
+    from contextlib import contextmanager
+
+    from app.services.speech_cleanup import SpeechCleanupFailure
+
+    _fixture, plan, guided = _guided_cleanup_case(cleaned=cleaned)
+    job = types.SimpleNamespace(
+        id=JOB_ID,
+        status="queued",
+        mode="content_plan",
+        assembly_plan={**plan, "guided_edit": guided},
+        all_candidates={"clip_paths": ["users/u/clip.mp4"]},
+    )
+
+    @contextmanager
+    def session():
+        yield types.SimpleNamespace(commit=lambda: None)
+
+    calls = []
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_sync_session", session)
+    monkeypatch.setattr(gb, "_lock_owned_entry_job", lambda _db, _job_id: (job, None))
+    monkeypatch.setattr(gb, "mark_started", lambda _job_id: None)
+    monkeypatch.setattr(gb, "record_phase", lambda *a, **k: None)
+    monkeypatch.setattr(
+        gb, "_run_guided_story_job", lambda job_id, raw, **kwargs: calls.append(kwargs)
+    )
+
+    if not cleaned:
+        with pytest.raises(SpeechCleanupFailure) as failure:
+            gb._run_generative_job_impl(JOB_ID)
+        assert failure.value.reason == "snapshot_mismatch"
+        assert calls == []
+        return
+    gb._run_generative_job_impl(JOB_ID)
+    [kwargs] = calls
+    assert kwargs["speech_cleanup"] == gb._guided_speech_cleanup_receipt(plan, guided)
+    assert kwargs["speech_cleanup"]["silence_cut_outcome"] == "applied"

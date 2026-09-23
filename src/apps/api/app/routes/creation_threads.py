@@ -84,9 +84,12 @@ from app.services.creation_thread_titles import (
     start_title_generation,
 )
 from app.services.creator_direction_receipts import project_direction_receipt
+from app.services.creator_execution_contract import requests_guided_voiceover
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.creator_sessions import reconcile_render_state
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
+from app.services.guided_speech_cleanup import DISABLED_MESSAGE as CLEANUP_DISABLED_MESSAGE
+from app.services.guided_speech_cleanup import guided_voiceover_cleanup_available
 from app.services.job_phases import mark_reattempt, stamp_variant_attempt
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 from app.services.job_storage_paths import (
@@ -1852,6 +1855,11 @@ def _exclude_referenced_project_storage(
 
 _ADJUSTMENTS_NOTICES_CAP = 8
 
+# Session failures whose retry cannot succeed in the same session.
+_NON_RETRYABLE_SESSION_FAILURES = frozenset(
+    {"agent_budget_exhausted", "question_budget_exhausted", "render_identity_mismatch"}
+)
+
 
 def _deduped_capped_strings(values: object, *, cap: int = _ADJUSTMENTS_NOTICES_CAP) -> list[str]:
     """Order-preserving dedupe of a string list, capped for client display."""
@@ -1905,13 +1913,62 @@ def _creator_agent_projection(
     from app.services.creator_preparation import public_preparation
 
     plan = session.active_plan if isinstance(session.active_plan, dict) else {}
+    used = int(getattr(session, "render_attempts", 0) or 0)
+    budget = int(getattr(session, "max_render_attempts", 0) or 0)
+    raw_error = getattr(session, "last_error", None)
+    last_error = raw_error if isinstance(raw_error, dict) else {}
+    failure = None
+    if session.status == "failed":
+        from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
+
+        code = last_error.get("code")
+        phone_gate_codes = {gate_code for gate_code, _message in PHONE_GATE_MESSAGES.values()}
+        raw_retryable = last_error.get("retryable")
+        # Planning failures record their own flag; other writers are known by
+        # code (a fresh session or a different setup is the only way forward).
+        retryable = (
+            raw_retryable
+            if isinstance(raw_retryable, bool)
+            else code not in phone_gate_codes | _NON_RETRYABLE_SESSION_FAILURES
+        )
+        user_message = last_error.get("user_message")
+        if not (isinstance(user_message, str) and user_message) and code in phone_gate_codes:
+            # Phone-gate messages are PHONE_GATE_MESSAGES copy, not exception text.
+            user_message = last_error.get("message")
+        failure = {
+            "code": code,
+            # Only an explicitly user-facing sentence: ``message`` can hold
+            # raw exception text (execution_failed).
+            "message": user_message if isinstance(user_message, str) and user_message else None,
+            "retryable": retryable,
+            "can_retry": retryable and used < budget,
+        }
+    preparation = public_preparation(session)
+    if failure is not None and (preparation or {}).get("status") == "ready":
+        # Shipped iOS builds fall back to preparation.message for the failed
+        # confirmation card's detail line, where a completed preparation's
+        # "Your clips are ready." is stale, including for failures recorded
+        # without a creator-facing sentence (older rows, render failures).
+        # Remove once iOS reads ``failure``.
+        preparation = {
+            **preparation,
+            "message": failure["message"]
+            or (
+                "Try it again."
+                if failure["can_retry"]
+                else "Send a message to try a new direction."
+            ),
+        }
     projection: dict[str, Any] = {
-        **({"preparation": public_preparation(session)} if public_preparation(session) else {}),
+        **({"preparation": preparation} if preparation else {}),
         "status": session.status,
         "revision": session.revision,
         "summary": plan.get("summary"),
         "plan_hash": plan.get("plan_hash"),
         "version": plan.get("version"),
+        "render_attempts": used,
+        "max_render_attempts": budget,
+        **({"failure": failure} if failure is not None else {}),
     }
     # KRI-118 item 3: `story_shape`/`notices` are the Main Creator's own
     # server-repaired direction metadata (app.services.creator_sessions.
@@ -2817,6 +2874,15 @@ async def _agent_message(
             user,
             db,
             allow_chat=True,
+            # Recovering from a failure ("Refresh the direction", "Send a
+            # message to try a new direction") must keep the creator's brief.
+            carried_active_plan=(
+                existing.active_plan
+                if existing is not None
+                and existing.status == "failed"
+                and isinstance(getattr(existing, "active_plan", None), dict)
+                else None
+            ),
         )
     else:
         result = await creator_agent.creator_session_turn_controller(
@@ -3713,6 +3779,7 @@ async def action_thread(
     _stamp_device_intent(thread, user, native_client)
     state = dict(thread.state or {})
     delete_path: str | None = None
+    delete_prefix: str | None = None
     enqueue_variant_retry: tuple[str, str, str] | None = None
     preflight_analysis_id: uuid.UUID | None = None
     if body.action in {"select_format", "select_edit_format"}:
@@ -3847,6 +3914,13 @@ async def action_thread(
                 voiceover_duration_s=None,
                 audio_mode="kria" if item.audio_mode == "voiceover" else item.audio_mode,
             )
+            # Cleaned "Clean up speech" copies of this voice are unusable once
+            # it is gone (narration_matches_item fails) and must not outlive it.
+            from app.services.guided_speech_cleanup import (  # noqa: PLC0415
+                derivative_item_prefix,
+            )
+
+            delete_prefix = derivative_item_prefix(owner_id=owner_id, item_id=item.id)
         mutation = mutate_plan_item_media(
             item,
             detector_policy=current_detector_policy(),
@@ -4151,6 +4225,18 @@ async def action_thread(
                     "direction in that format before confirming."
                 ),
             )
+        if (
+            body.action in {"generate", "confirm_generation"}
+            and payload.get("speech_cleanup_choice") == "clean"
+            and not guided_voiceover_cleanup_available()
+            and requests_guided_voiceover(
+                ((session.active_plan or {}).get("edit_plan") or {}).get("strategy")
+            )
+        ):
+            # A guided narrated story can only honor "Clean up speech" through
+            # the planner's cleaned derivative. Refuse before an attempt is
+            # reserved instead of spending it on a certain planning failure.
+            raise HTTPException(status_code=409, detail=CLEANUP_DISABLED_MESSAGE)
         # Both native speech-choice buttons submit generate, even when the
         # preceding planning attempt failed before creating a Job. Reuse the
         # bounded retry preparation while preserving the newly selected choice
@@ -4186,7 +4272,28 @@ async def action_thread(
                 failed_planning = await _failed_planning_attempt(db, thread, session)
                 failed_before_dispatch = failed_planning is not None
                 failure = failed_planning.failure if failed_planning is not None else None
-                if failure is not None and not failure.retryable:
+                # "Clean up speech isn't available" tells the creator to keep
+                # the original speech; that exact choice must reopen it. A
+                # failure written while cleanup was switched off also reopens
+                # for Clean once cleanup is available (staged enable).
+                choice = payload.get("speech_cleanup_choice")
+                reopens_after_unavailable_cleanup = bool(
+                    failure is not None
+                    and failure.code in {"speech_cleanup_unavailable", "speech_cleanup_disabled"}
+                    and (
+                        choice == "keep_original"
+                        or (
+                            choice == "clean"
+                            and failure.code == "speech_cleanup_disabled"
+                            and guided_voiceover_cleanup_available()
+                        )
+                    )
+                )
+                if (
+                    failure is not None
+                    and not failure.retryable
+                    and not reopens_after_unavailable_cleanup
+                ):
                     raise HTTPException(status_code=409, detail=failure.message)
             if not failed_before_dispatch and (
                 current_job is None
@@ -4497,6 +4604,8 @@ async def action_thread(
             raise HTTPException(status_code=503, detail="Render queue unavailable") from exc
     if delete_path:
         await asyncio.to_thread(storage.delete_object_best_effort, delete_path)
+    if delete_prefix:
+        await asyncio.to_thread(storage.delete_prefix_best_effort, delete_prefix)
     return await _response(db, thread)
 
 

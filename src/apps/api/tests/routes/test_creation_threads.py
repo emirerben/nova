@@ -453,6 +453,114 @@ def test_creator_agent_projection_omits_executable_commands() -> None:
         "summary": "Open on the laugh",
         "plan_hash": "x" * 64,
         "version": 2,
+        "render_attempts": 0,
+        "max_render_attempts": 0,
+    }
+
+
+def test_failed_creator_projection_exposes_reason_budget_and_card_fallback() -> None:
+    reason = "Two captions ask for the same photo. Separate the captions or sources."
+    ready = {"status": "ready", "completed": 9, "total": 9, "message": "Your clips are ready."}
+    session = SimpleNamespace(
+        status="failed",
+        revision=7,
+        render_attempts=1,
+        max_render_attempts=2,
+        active_plan={"summary": "Open on the laugh", "plan_hash": "x" * 64, "version": 2},
+        preparation=dict(ready),
+        last_error={
+            "code": "semantic_edit_infeasible",
+            "message": "Kria couldn't plan this direction. Try it again.",
+            "user_message": reason,
+            "retryable": True,
+        },
+    )
+
+    projection = _creator_agent_projection(session)
+
+    assert projection["failure"] == {
+        "code": "semantic_edit_infeasible",
+        "message": reason,
+        "retryable": True,
+        "can_retry": True,
+    }
+    assert (projection["render_attempts"], projection["max_render_attempts"]) == (1, 2)
+    # Shipped iOS cards fall back to preparation.message: show the reason,
+    # not the stale "Your clips are ready.", without touching the stored row.
+    assert projection["preparation"] == {**ready, "message": reason}
+    assert session.preparation == ready
+
+    session.render_attempts = 2
+    assert _creator_agent_projection(session)["failure"]["can_retry"] is False
+    session.render_attempts = 0
+    session.last_error = {**session.last_error, "retryable": False}
+    assert _creator_agent_projection(session)["failure"] == {
+        "code": "semantic_edit_infeasible",
+        "message": reason,
+        "retryable": False,
+        "can_retry": False,
+    }
+
+    # ``message`` may carry raw exception text; only user_message is projected.
+    # The card still never says "Your clips are ready." for a failed session.
+    session.last_error = {"code": "execution_failed", "message": "RuntimeError: dispatch boom"}
+    projection = _creator_agent_projection(session)
+    assert projection["failure"]["message"] is None
+    assert projection["preparation"] == {**ready, "message": "Try it again."}
+    assert "dispatch boom" not in repr(projection)
+    # A pre-deploy planning failure (no user_message) with no attempt left,
+    # e.g. the stuck thread at 2/2.
+    session.render_attempts = 2
+    session.last_error = {"code": "semantic_edit_infeasible", "retryable": True}
+    assert _creator_agent_projection(session)["preparation"] == {
+        **ready,
+        "message": "Send a message to try a new direction.",
+    }
+    session.render_attempts = 0
+
+    # A failed preparation owns its own message; no preparation is invented.
+    session.last_error = {"code": "semantic_edit_infeasible", "user_message": reason}
+    session.preparation = {**ready, "status": "failed", "message": "Clip analysis failed."}
+    assert _creator_agent_projection(session)["preparation"]["message"] == "Clip analysis failed."
+    session.preparation = None
+    assert "preparation" not in _creator_agent_projection(session)
+
+    session.status = "awaiting_confirmation"
+    assert "failure" not in _creator_agent_projection(session)
+
+
+@pytest.mark.parametrize(
+    ("last_error", "message", "retryable"),
+    [
+        # A fresh session is the only way past these; never offer Retry.
+        ({"code": "agent_budget_exhausted"}, None, False),
+        ({"code": "question_budget_exhausted"}, None, False),
+        # Phone-gate copy is written for the creator (PHONE_GATE_MESSAGES).
+        (
+            {"code": "phone_not_enrolled", "message": "Rendered on your iPhone only."},
+            "Rendered on your iPhone only.",
+            False,
+        ),
+        ({"code": "dispatch_publish_failed", "message": "Give it another go."}, None, True),
+    ],
+)
+def test_failure_projection_knows_writers_without_a_retryable_flag(
+    last_error: dict, message: str | None, retryable: bool
+) -> None:
+    session = SimpleNamespace(
+        status="failed",
+        revision=1,
+        render_attempts=0,
+        max_render_attempts=2,
+        active_plan={},
+        preparation=None,
+        last_error=last_error,
+    )
+    assert _creator_agent_projection(session)["failure"] == {
+        "code": last_error["code"],
+        "message": message,
+        "retryable": retryable,
+        "can_retry": retryable,
     }
 
 
@@ -1025,7 +1133,10 @@ async def test_message_after_terminal_creator_failure_starts_fresh_session(
         active_plan_item_id=uuid.uuid4(),
         active_creator_agent_session_id=failed_session_id,
     )
-    failed_session = SimpleNamespace(id=failed_session_id, status="failed", revision=6)
+    failed_plan = {"creator_request": "Narrated story. Title: 1882.", "edit_plan": {}}
+    failed_session = SimpleNamespace(
+        id=failed_session_id, status="failed", revision=6, active_plan=failed_plan
+    )
     refreshed_result = Mock()
     refreshed_result.scalar_one.return_value = thread
     db = Mock()
@@ -1049,8 +1160,16 @@ async def test_message_after_terminal_creator_failure_starts_fresh_session(
     assert thread.active_creator_agent_session_id == new_session_id
     start.assert_awaited_once()
     assert start.await_args.kwargs["allow_chat"] is True
+    # The fresh session keeps the failed session's brief (journey F1).
+    assert start.await_args.kwargs["carried_active_plan"] is failed_plan
     turn.assert_not_awaited()
     sync_agent.assert_awaited_once_with(db, thread)
+
+    # A completed or cancelled session carries nothing into the next one.
+    failed_session.status = "completed"
+    thread.active_creator_agent_session_id = failed_session_id
+    await routes._agent_message(_request(), thread, body, user, db)
+    assert start.await_args.kwargs["carried_active_plan"] is None
 
 
 @pytest.mark.asyncio
