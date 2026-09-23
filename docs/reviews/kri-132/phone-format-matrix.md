@@ -1,5 +1,7 @@
 # KRI-132: phone-render format & feature matrix
 
+> **Update — KRI-118 (2026-09-23).** This doc is pinned to `origin/main` at `88eb0e5` (2026-09-21); several PRs have landed since. For the current per-format requirements/constraints catalogue and the taste-rule removals in flight, see `docs/reviews/kri-118/video-type-requirements.md`. Notably, `subtitled` and voiceover-carrying `narrated*`/guided-story items now DO have phone compilers (see the Update blocks below), which supersedes parts of the format table's "Blocked" rows as originally written.
+
 ## Summary (plain English)
 
 - **Only three of nine video types have an iPhone render path today: Montage, Day-Vlog, and Single-Hero — and only when they came from an approved guided-story plan.** These three are the "guided" formats; the on-device app compiles a pre-approved edit plan into a native recipe and never touches raw pixels on the server.

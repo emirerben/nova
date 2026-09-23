@@ -2050,7 +2050,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.16.0",
+        prompt_version="1.16.1",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -2086,18 +2086,35 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
 
     def render_prompt(self, input: EditProposalAgentInput) -> str:  # noqa: A002
         prompt_media, _alias_to_id, id_to_alias = _prompt_media(input)
+        video_count = sum(1 for m in prompt_media if m.kind == "video")
         video_footage_s = sum(
             m.duration_s for m in prompt_media if m.kind == "video" and m.duration_s
         )
-        footage_note = (
-            f"Real available video footage totals about {video_footage_s:.1f}s across "
-            f"{sum(1 for m in prompt_media if m.kind == 'video')} shortlisted clip(s). "
-            "Plan beats that "
-            "fit inside what was actually filmed — never invent extra footage or imply a "
-            "clip is longer than it is."
-            if video_footage_s > 0
-            else "No video footage was uploaded — every beat must use only the photos provided."
-        )
+        # video_footage_s == 0 has two different causes that must not share a
+        # message: genuinely no video clips, vs. video clips present but none
+        # carrying a known probed duration. Telling the model "no video
+        # footage was uploaded" in the second case is false and was observed
+        # live to make the model drop real, known videos from its plan
+        # (KRI-118 follow-up, 2026-09-23 — two live-eval fixtures with
+        # duration_s unset on their video media intermittently omitted those
+        # clips under this exact wording).
+        if video_footage_s > 0:
+            footage_note = (
+                f"Real available video footage totals about {video_footage_s:.1f}s across "
+                f"{video_count} shortlisted clip(s). Plan beats that "
+                "fit inside what was actually filmed — never invent extra footage or imply a "
+                "clip is longer than it is."
+            )
+        elif video_count > 0:
+            footage_note = (
+                f"{video_count} video clip(s) are available but their exact duration "
+                "wasn't provided ahead of time. Use them normally in your plan — do not "
+                "treat them as unusable or omit them for lacking a known length."
+            )
+        else:
+            footage_note = (
+                "No video footage was uploaded — every beat must use only the photos provided."
+            )
         fast_timing_note = ""
         if (
             input.video_reuse_policy != "once"

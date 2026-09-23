@@ -337,6 +337,57 @@ def test_redelivery_reuses_pinned_execution_plan_without_rematching(monkeypatch)
     assert track is None
 
 
+@pytest.mark.parametrize("owner", ["job_owner", "other_owner", "other_item"])
+def test_cleaned_narration_must_be_the_jobs_own_derivative(monkeypatch, owner) -> None:
+    """Both renderers play exactly the pinned object: a cleaned narration
+    outside this Job's owner/item/analysis prefix is never mixed in."""
+    from unittest.mock import Mock
+
+    from app.pipeline import guided_story
+    from app.services.speech_cleanup import SpeechCleanupFailure
+    from tests.services.test_guided_speech_cleanup import fixture_ids, load_fixture
+    from tests.tasks.test_phone_guided_dispatch import cleaned_narration
+
+    owner_id, item_id, _analysis = fixture_ids(load_fixture())
+    pinned = {"compiler_version": 1}
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4() if owner == "other_owner" else uuid.UUID(str(owner_id)),
+        content_plan_item_id=uuid.uuid4() if owner == "other_item" else uuid.UUID(str(item_id)),
+        assembly_plan={"guided_story_execution_plan": pinned},
+    )
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, _model, _pk, **_kwargs):
+            return job
+
+    class _Reached(Exception):
+        pass
+
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Session())
+    monkeypatch.setattr(
+        guided_story,
+        "validate_guided_snapshot",
+        lambda _raw: (4, "a" * 64, SimpleNamespace(narration=cleaned_narration())),
+    )
+    # Loading the pinned plan is the next step: reaching it proves the check passed.
+    monkeypatch.setattr(guided_story, "validate_execution_plan", Mock(side_effect=_Reached))
+
+    if owner == "job_owner":
+        with pytest.raises(_Reached):
+            gb._guided_execution_plan(str(job.id), {"snapshot": "approved"})
+        return
+    with pytest.raises(SpeechCleanupFailure) as failure:
+        gb._guided_execution_plan(str(job.id), {"snapshot": "approved"})
+    assert failure.value.reason == "snapshot_mismatch"
+
+
 def test_first_guided_plan_materializes_explicit_licensed_sfx_before_persist(
     monkeypatch,
 ) -> None:

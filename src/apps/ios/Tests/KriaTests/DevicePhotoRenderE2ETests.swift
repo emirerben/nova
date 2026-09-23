@@ -140,6 +140,54 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         XCTAssertTrue(isColor(try sample("photo3", 540, 960), [0, 128, 128]))
     }
 
+    /// "Clean up speech" on a guided narrated story: before planning, the
+    /// server cut the recording's long pauses into a pinned WAV derivative
+    /// (`app/services/guided_speech_cleanup.py`), so the recipe's single
+    /// narration clip plays that cleaned file and captions follow the cleaned
+    /// word times. Proves on the production exporter that the WAV decodes,
+    /// the export matches the cleaned timeline rather than the raw recording,
+    /// and no long pause survives in the rendered audio.
+    func testCleanedNarratedStoryRendersOnTheIPhone() async throws {
+        let input = try inputDirectory()
+        let meta = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: input.appendingPathComponent("e2e.json"))) as? [String: Any]
+        )
+        let caseMeta = try XCTUnwrap(meta["narrated_story_cleaned"] as? [String: Any])
+        let samples = try XCTUnwrap(caseMeta["samples"] as? [[String: Any]])
+        var times: [String: Double] = [:]
+        for sample in samples { times[try XCTUnwrap(sample["name"] as? String)] = try XCTUnwrap(sample["t"] as? Double) }
+
+        let frames = try await render(
+            status: try XCTUnwrap(caseMeta["status_file"] as? String), input: input, bindsFootage: true,
+            output: "narrated-story-cleaned", at: times,
+            footageClips: try XCTUnwrap(caseMeta["clips"] as? [[String: Any]]),
+            voiceoverAssetID: caseMeta["voiceover_asset_id"] as? String,
+            voiceoverFile: caseMeta["voiceover_file"] as? String,
+            captionSamples: try XCTUnwrap(caseMeta["caption_samples"] as? [[String: Any]]), expectsNarrationAudio: true,
+            requiredEffectiveCapabilities: [.stillImages, .narrationAudio],
+            dropCapabilityChecks: ["stillImages", "narrationAudio"]
+        )
+        for sample in samples {
+            let name = try XCTUnwrap(sample["name"] as? String)
+            let expected = try XCTUnwrap(sample["rgb"] as? [Int])
+            let image = try XCTUnwrap(frames[name])
+            XCTAssertTrue(
+                isColor(pixel(image, x: try XCTUnwrap(sample["x"] as? Int), y: try XCTUnwrap(sample["y"] as? Int)), expected),
+                "\(name) did not match \(expected)"
+            )
+        }
+
+        let rawDuration = try XCTUnwrap(caseMeta["raw_voiceover_duration_s"] as? Double)
+        let cleanedDuration = try XCTUnwrap(caseMeta["duration_s"] as? Double)
+        XCTAssertLessThan(cleanedDuration, rawDuration - 5, "the recipe must follow the cleaned voiceover, not the raw recording")
+        let movie = input.appendingPathComponent("frames/narrated-story-cleaned.mp4")
+        let longest = try await longestSilentRun(of: AVURLAsset(url: movie))
+        let allowed = try XCTUnwrap(caseMeta["max_silence_s"] as? Double)
+        let rawLongest = try XCTUnwrap(caseMeta["raw_max_silence_s"] as? Double)
+        XCTAssertLessThan(allowed, rawLongest, "fixture must contain pauses that cleanup removes")
+        XCTAssertLessThanOrEqual(longest, allowed, "a removed pause is still audible in the export")
+    }
+
     private func inputDirectory() throws -> URL {
         guard let path = ProcessInfo.processInfo.environment["KRIA_E2E_DIR"] else { throw XCTSkip("Set KRIA_E2E_DIR to run") }
         return URL(fileURLWithPath: path)
@@ -321,6 +369,43 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             }
         }
         return peak
+    }
+
+    /// Longest stretch (seconds) of the first audio track whose 10 ms windows
+    /// all peak below `threshold`, read via `AVAssetReader` like `peakAmplitude`.
+    private func longestSilentRun(of asset: AVAsset, threshold: Float = 0.01) async throws -> Double {
+        guard let track = try await asset.loadTracks(withMediaType: .audio).first else { return .infinity }
+        let reader = try AVAssetReader(asset: asset)
+        let sampleRate = 48_000.0
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsNonInterleaved: false,
+            AVNumberOfChannelsKey: 1,
+            AVSampleRateKey: sampleRate,
+        ])
+        reader.add(output)
+        _ = reader.startReading()
+        let window = Int(sampleRate / 100)
+        var windowPeak: Float = 0, windowFill = 0, silentWindows = 0, longestWindows = 0
+        while let buffer = output.copyNextSampleBuffer() {
+            guard let blockBuffer = CMSampleBufferGetDataBuffer(buffer) else { continue }
+            let length = CMBlockBufferGetDataLength(blockBuffer)
+            var data = [UInt8](repeating: 0, count: length)
+            _ = CMBlockBufferCopyDataBytes(blockBuffer, atOffset: 0, dataLength: length, destination: &data)
+            data.withUnsafeBytes { raw in
+                for value in raw.bindMemory(to: Float32.self) {
+                    windowPeak = max(windowPeak, abs(value))
+                    windowFill += 1
+                    guard windowFill == window else { continue }
+                    silentWindows = windowPeak < threshold ? silentWindows + 1 : 0
+                    longestWindows = max(longestWindows, silentWindows)
+                    windowPeak = 0; windowFill = 0
+                }
+            }
+        }
+        return Double(longestWindows) / 100
     }
 
     /// Counts pixels within `region` (`[x0, y0, x1, y1]`, top-left origin, as
