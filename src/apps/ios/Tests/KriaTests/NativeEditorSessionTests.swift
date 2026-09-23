@@ -2974,6 +2974,36 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
         uploadFileCalls.append((reservation, fileURL))
         if let uploadFileError { throw uploadFileError }
     }
+    /// The Visuals library `visuals(itemID:)` serves; nil fails the load.
+    var visualPool: [CreationVisual]?
+    /// What reanalyze answers per asset; a missing id fails the request.
+    var retryVisualResults: [String: CreationVisual] = [:]
+    var retriedVisualIDs: [String] = []
+    /// Holds the next reanalyze on the wire until `resumeRetryVisual()`.
+    var suspendNextRetryVisual = false
+    private(set) var retryVisualIsSuspended = false
+    private var retryVisualContinuation: CheckedContinuation<Void, Never>?
+    func visuals(itemID: String) async throws -> CreationVisuals {
+        guard let visualPool else { throw APIError.unsupported }
+        return CreationVisuals(assets: visualPool, maxAssets: 20, occupiedAssets: visualPool.count)
+    }
+    func retryVisual(itemID: String, assetID: String) async throws -> CreationVisual {
+        retriedVisualIDs.append(assetID)
+        if suspendNextRetryVisual {
+            suspendNextRetryVisual = false
+            await withCheckedContinuation { continuation in
+                retryVisualContinuation = continuation
+                retryVisualIsSuspended = true
+            }
+            retryVisualIsSuspended = false
+        }
+        guard let result = retryVisualResults[assetID] else { throw APIError.unsupported }
+        return result
+    }
+    func resumeRetryVisual() {
+        retryVisualContinuation?.resume()
+        retryVisualContinuation = nil
+    }
 }
 
 private final class DelayedSeekPlayer: AVPlayer, @unchecked Sendable {

@@ -427,6 +427,12 @@ struct NativeEditorTemporaryVideo {
     @Published private(set) var visualLibrary: [CreationVisual] = []
     @Published private(set) var visualLibraryLimit = 20
     @Published private(set) var visualLibraryLoading = false
+    /// Automatic reanalysis budget for transient analysis failures. It lives
+    /// on the session, not the panel, so reopening Visuals doesn't reset it.
+    @Published private(set) var visualAutoRetry = VisualAutoRetryScheduler()
+    private var visualPollRunning = false
+    /// Clock seam so a test can step the automatic-retry schedule.
+    var visualAutoRetryClock: () -> Date = { Date() }
     @Published private(set) var isAddingVisual = false
     @Published var visualError: String?
     @Published private(set) var isAddingClip = false
@@ -2434,7 +2440,9 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .text) { doc in var item = doc.textElements[index]; body(&item); doc.textElements[index] = item }
     }
 
-    func refreshVisualLibrary() async {
+    /// Returns whether this call stored a fresh snapshot of the current item's library.
+    @discardableResult
+    func refreshVisualLibrary() async -> Bool {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-analyzing-gallery") {
             visualLibrary = (0..<24).map { index in
@@ -2442,15 +2450,15 @@ struct NativeEditorTemporaryVideo {
                     sourceFilename: "Gallery video \(index)", displayURL: nil, previewURL: nil, retryable: nil,
                     sourceURL: Bundle.main.url(forResource: "montage", withExtension: "mp4"))
             }
-            return
+            return true
         }
         #endif
-        guard let api, let itemID, !visualLibraryLoading else { return }
+        guard let api, let itemID, !visualLibraryLoading else { return false }
         visualLibraryLoading = true
         defer { visualLibraryLoading = false }
         do {
             let library = try await api.visuals(itemID: itemID)
-            guard self.itemID == itemID, !Task.isCancelled else { return }
+            guard self.itemID == itemID, !Task.isCancelled else { return false }
             #if DEBUG
             NativePreviewDiagnostics.record("gallery-refresh", fields: [
                 "count": String(library.assets.count),
@@ -2460,13 +2468,73 @@ struct NativeEditorTemporaryVideo {
             visualLibrary = library.assets
             visualLibraryLimit = library.maxAssets
             visualError = nil
-        } catch { if !Task.isCancelled { visualError = "Your visuals couldn’t load. Try again. " + error.localizedDescription } }
+            return true
+        } catch {
+            if !Task.isCancelled { visualError = "Your visuals couldn’t load. Try again. " + error.localizedDescription }
+            return false
+        }
     }
 
+    /// Statuses the server moves past on its own. A fresh upload and a
+    /// reanalyze both restart at `queued`, which the API reports as `uploaded`
+    /// until `pool_asset_queued_status_enabled` is on.
+    private static let visualInProgressStatuses: Set<String> = ["uploaded", "queued", "pending", "analyzing", "processing"]
+
+    /// Whether the Visuals panel should keep polling: an asset is still being
+    /// analyzed, or a transient failure still has an automatic retry to come.
+    var visualLibraryNeedsPolling: Bool {
+        visualLibrary.contains { Self.visualInProgressStatuses.contains($0.status) || visualAutoRetry.needsObservation(of: $0) }
+    }
+
+    /// One refresh of the library followed by any automatic reanalyze that is
+    /// due. Transient analysis failures (`analysis_temporarily_unavailable`)
+    /// retry on their own: at most three times per asset per editor session,
+    /// 10/20/40 s apart, so reopening the Visuals panel never resets the
+    /// budget. Serialized so an overlapping poll never acts on a snapshot
+    /// older than a reanalyze already in flight.
+    func pollVisualLibrary() async {
+        guard !visualPollRunning else { return }
+        visualPollRunning = true
+        defer { visualPollRunning = false }
+        guard await refreshVisualLibrary(), let api, let itemID else { return }
+        var scheduler = visualAutoRetry
+        let due = scheduler.observe(visualLibrary, now: visualAutoRetryClock())
+        updateVisualAutoRetry(scheduler)
+        guard !due.isEmpty else { return }
+        for assetID in due {
+            let result = try? await api.retryVisual(itemID: itemID, assetID: assetID)
+            recordVisualRetry(assetID, result: result)
+        }
+        await refreshVisualLibrary()
+    }
+
+    /// Publishes only real changes: the panel polls every few seconds and
+    /// every publish re-renders the editor.
+    private func updateVisualAutoRetry(_ scheduler: VisualAutoRetryScheduler) {
+        if scheduler != visualAutoRetry { visualAutoRetry = scheduler }
+    }
+
+    private func recordVisualRetry(_ id: String, result: CreationVisual?) {
+        var scheduler = visualAutoRetry
+        scheduler.recordAttempt(assetID: id, result: result, now: visualAutoRetryClock())
+        updateVisualAutoRetry(scheduler)
+    }
+
+    /// A manual Retry supersedes a pending automatic one, and is refused while
+    /// a reanalyze for the same asset is still awaiting its response.
     func retryLibraryVisual(_ id: String) async {
         guard let api, let itemID else { return }
-        do { _ = try await api.retryVisual(itemID: itemID, assetID: id); await refreshVisualLibrary() }
-        catch { visualError = error.localizedDescription }
+        var scheduler = visualAutoRetry
+        guard scheduler.beginManualRetry(id) else { return }
+        updateVisualAutoRetry(scheduler)
+        do {
+            let result = try await api.retryVisual(itemID: itemID, assetID: id)
+            recordVisualRetry(id, result: result)
+            await refreshVisualLibrary()
+        } catch {
+            recordVisualRetry(id, result: nil)
+            visualError = error.localizedDescription
+        }
     }
 
     // Basic media and cards use the existing lane contract. Only edits that
