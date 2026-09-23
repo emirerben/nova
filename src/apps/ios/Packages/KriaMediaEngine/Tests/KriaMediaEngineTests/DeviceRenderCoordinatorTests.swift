@@ -169,6 +169,64 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
         await exporter.release()
     }
 
+    /// KRI-118: a renderer-version/schema mismatch must be distinguishable
+    /// from a genuinely unsupported edit (`unsupportedRecipe`) so the UI can
+    /// say "update the app" instead of "start a new edit" — retrying either
+    /// way is pointless, but only one of them is fixable by the user at all.
+    func testRendererVersionMismatchRouteReportsRendererOutdatedReasonCode() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(), publisher = RecordingPublisher(), reporter = RecordingFailureReporter()
+        let coordinator = try DeviceRenderCoordinator(
+            directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher, failureReporter: reporter
+        )
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .cloud, reason: "Unsupported renderer version"))
+        await coordinator.waitUntilIdle()
+        await reporter.waitForReport()
+        let receipt = await coordinator.snapshot()
+        XCTAssertEqual(receipt?.phase, .needsAttention)
+        let calls = await reporter.calls
+        XCTAssertEqual(calls.first?.reasonCode, .rendererOutdated)
+    }
+
+    /// A `recipe.validate()` failure surfacing mid-render as a schema-version
+    /// mismatch (not a specific unsupported feature) must also classify as
+    /// `.rendererOutdated`, not the generic `.unsupportedRecipe` bucket.
+    func testSchemaVersionMismatchDuringRenderReportsRendererOutdatedReasonCode() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(), publisher = RecordingPublisher(), reporter = RecordingFailureReporter()
+        let coordinator = try DeviceRenderCoordinator(
+            directory: directory, exporter: exporter, sources: SchemaMismatchSources(), publisher: publisher, failureReporter: reporter
+        )
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+        await reporter.waitForReport()
+        let receipt = await coordinator.snapshot()
+        XCTAssertEqual(receipt?.phase, .needsAttention)
+        let calls = await reporter.calls
+        XCTAssertEqual(calls.first?.reasonCode, .rendererOutdated)
+    }
+
+    /// A `RecipeError` that is NOT a schema-version mismatch (a specific
+    /// unsupported feature within an otherwise-understood recipe) must keep
+    /// classifying as `.unsupportedRecipe`, unchanged by the new distinction.
+    func testUnsupportedFeatureRecipeErrorDuringRenderKeepsUnsupportedRecipeReasonCode() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(), publisher = RecordingPublisher(), reporter = RecordingFailureReporter()
+        let coordinator = try DeviceRenderCoordinator(
+            directory: directory, exporter: exporter, sources: InvalidTimelineSources(), publisher: publisher, failureReporter: reporter
+        )
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+        await reporter.waitForReport()
+        let receipt = await coordinator.snapshot()
+        XCTAssertEqual(receipt?.phase, .needsAttention)
+        let calls = await reporter.calls
+        XCTAssertEqual(calls.first?.reasonCode, .unsupportedRecipe)
+    }
+
     private func request(revision: Int = 1) -> DeviceRenderRequest {
         DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: UUID(), variantID: "original_text", recipeRevision: revision, recipeDigest: "digest-\(revision)"), recipe: MediaEngineFixtures.recipe())
     }
@@ -179,6 +237,12 @@ private struct FixtureSources: DeviceSourceResolving {
 }
 private struct FailingSources: DeviceSourceResolving {
     func resolve(for recipe: EditRecipe) async throws -> [String: URL] { throw SourceAssetError.missingOriginal("clip-1") }
+}
+private struct SchemaMismatchSources: DeviceSourceResolving {
+    func resolve(for recipe: EditRecipe) async throws -> [String: URL] { throw RecipeError.unsupportedSchema(99) }
+}
+private struct InvalidTimelineSources: DeviceSourceResolving {
+    func resolve(for recipe: EditRecipe) async throws -> [String: URL] { throw RecipeError.invalidTimeline }
 }
 private actor RecordingFailureReporter: DeviceRenderFailureReporter {
     private(set) var calls: [(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String)] = []

@@ -282,12 +282,13 @@ enum DeviceRenderButtonTitle {
         }
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let available = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage
-        let bytes = recipe.assets.reduce(Int64(0)) { total, asset in
-            let (sum, overflow) = total.addingReportingOverflow(asset.fingerprint?.byteCount ?? 0)
-            return overflow ? .max : sum
-        }
+        // Storage need scales with the OUTPUT this render will write, not the source
+        // footage (which already lives on the phone) -- see `StorageEstimate.forEstimatedOutput`.
+        let durationS = TimelineMath.totalDuration(of: recipe)
         return CapabilityNegotiator(provider: DefaultRendererCapabilities(capabilities: verified)).decide(
-            for: recipe, freeStorageBytes: available, estimatedTemporaryBytes: StorageEstimate.forAssetBytes(bytes).requiredBytes, thermalState: thermal
+            for: recipe, freeStorageBytes: available,
+            estimatedTemporaryBytes: StorageEstimate.forEstimatedOutput(durationS: durationS).requiredBytes,
+            thermalState: thermal
         )
     }
 }
