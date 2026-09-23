@@ -275,6 +275,7 @@ struct NativeEditorTimeline: View {
 struct NativeEditorContextStrip: View {
     @ObservedObject var session: NativeEditorSession
     let onAdjust: () -> Void
+    let onTransition: () -> Void
 
     var body: some View {
         HStack(spacing: 4) {
@@ -293,6 +294,16 @@ struct NativeEditorContextStrip: View {
             }
             .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
             .accessibilityIdentifier("native-editor-clip-audio")
+
+            if session.canEditOperation(["clips.transitions"], section: .timeline) {
+                Button(action: onTransition) {
+                    Label("Transition", systemImage: "rectangle.on.rectangle.angled")
+                        .frame(minHeight: 44)
+                        .padding(.horizontal, 16)
+                }
+                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                .accessibilityIdentifier("native-editor-clip-transition")
+            }
 
             Button(action: session.deleteSelectedClip) {
                 Label("Delete", systemImage: "trash")

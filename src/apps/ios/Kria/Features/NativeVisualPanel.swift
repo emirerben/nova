@@ -5,7 +5,7 @@ struct NativeVisualPanel: View {
     @Environment(\.nativeEditorPanelLifecycle) private var panelLifecycle
     @State private var lifecycleOwner = UUID()
     enum Tab: String, CaseIterable { case edit = "Edit", animation = "Animation" }
-    enum Category: String, CaseIterable { case media = "Media", cards = "Text cards", motion = "Motion", camera = "Camera FX" }
+    enum Category: String, CaseIterable { case media = "Media", cards = "Text cards", motion = "Motion", camera = "Camera FX", transitions = "Transitions" }
     @ObservedObject var session: NativeEditorSession
     @ObservedObject var uploads: BackgroundUploadCoordinator
     let projectID: UUID
@@ -39,8 +39,18 @@ struct NativeVisualPanel: View {
         guard selected != nil else { return [] }
         return mediaSelected || cardElement != nil ? [.edit, .animation] : [.edit]
     }
+    // Transitions is the one Visuals category deliberately available on
+    // device: unlike cards/motion/camera (not phone-compiled at all),
+    // transitions already are (NativeEditorRenderCompiler maps crossfade/
+    // dip_to_black/flash). Hidden entirely -- not shown-disabled -- when the
+    // capability is closed or there are fewer than 2 active clips (no
+    // boundary to set).
+    private var transitionsCategoryAvailable: Bool {
+        session.canEditOperation(["clips.transitions"], section: .timeline) && session.document.clips.count > 1
+    }
     private var availableCategories: [Category] {
-        session.rendersOnDevice ? [.media] : Category.allCases
+        let base: [Category] = session.rendersOnDevice ? [.media] : [.media, .cards, .motion, .camera]
+        return transitionsCategoryAvailable ? base + [.transitions] : base
     }
     private var editorHeading: String { selected.map { "Edit " + label($0).lowercased() } ?? "Add visual" }
     private var addAction: (() -> Void)? { selected == nil ? nil : { openLibrary() } }
@@ -171,6 +181,7 @@ struct NativeVisualPanel: View {
             case .cards: cards
             case .motion: motion
             case .camera: camera
+            case .transitions: transitionsCategory
             }
 
         }
@@ -350,6 +361,32 @@ struct NativeVisualPanel: View {
         }
         .disabled(!session.canEdit(.cameraEffects))
         .accessibilityIdentifier("native-visual-add-camera-\(easing)")
+    }
+
+    private var transitionsCategory: some View {
+        VStack(spacing: 12) {
+            Text("Sets the transition used between every clip. To change just one, select that clip on the timeline instead.")
+                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+            Picker("Transition", selection: $panelDrafts.wholeVideoTransition) {
+                ForEach(NativeEditorWireContract.transitions, id: \.self) { value in
+                    Text(nativeEditorWireLabel(value)).tag(value)
+                }
+            }
+            .accessibilityIdentifier("native-editor-visuals-transition-picker")
+            slider("Duration", value: $panelDrafts.wholeVideoTransitionDuration, range: 0.1...0.3)
+                .disabled(panelDrafts.wholeVideoTransition == "cut")
+            Button("Apply to whole video") {
+                session.setTransitionAcrossVideo(
+                    transition: panelDrafts.wholeVideoTransition,
+                    durationS: panelDrafts.wholeVideoTransitionDuration
+                )
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("native-editor-visuals-apply-transition")
+            Text("Short clips may shorten or drop a transition to fit.")
+                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+        }
     }
 
     @ViewBuilder private var placement: some View {

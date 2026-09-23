@@ -630,6 +630,21 @@ struct NativeEditorTemporaryVideo {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-song-reference") {
             previewVariant = NativeEditorUITestFixtures.songReferenceVariant
         }
+        // KRI-167: draft-based fixtures never go through `configureCapabilities(from:)`
+        // (that only runs off a network-fetched `variant`), so `rendersOnDevice`
+        // is otherwise unreachable as `true` in a UI test -- and the Visuals
+        // tab's device-only Media restriction is exactly the thing this
+        // ticket needs regression coverage against on the real (device)
+        // rendering path, not just the untested cloud one.
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-device") {
+            rendersOnDevice = true
+        }
+        // KRI-167: no existing shape fixture closes `clips.transitions`, and
+        // UI tests can't construct an EditorDocument directly -- they only
+        // get a process launch arg.
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-transitions-closed") {
+            document.capabilities["clips.transitions"] = EditorCapability(editable: false, reason: "transitions_disabled")
+        }
         #endif
     }
 
@@ -2081,10 +2096,30 @@ struct NativeEditorTemporaryVideo {
     }
     func setClipTransition(clipID: String, transition: String, durationS: Double? = nil) {
         guard NativeEditorWireContract.transitions.contains(transition) else { return }
-        let duration = transition == "cut" ? nil : durationS.map { min(max(0.1, $0), 1) }
+        // 0.3s is the server's hard ceiling (guided_edit_revision.py's
+        // `le=0.3`, and routes/generative_jobs.py silently shrinks anything
+        // larger) -- clamp here, at the mutation, so no caller can produce a
+        // value that only gets shrunk later at Save.
+        let duration = transition == "cut" ? nil : durationS.map { min(max(0.1, $0), 0.3) }
         mutateClip(clipID: clipID) { $0.transitionAfter = transition; $0.transitionDurationS = duration }
     }
     func setClipTransition(clipID: UUID, transition: String, durationS: Double? = nil) { setClipTransition(clipID: clipID.uuidString, transition: transition, durationS: durationS) }
+    /// Sets the same transition on every boundary in one transaction (one
+    /// undo step, one preview recompile) instead of looping
+    /// `setClipTransition` per boundary. A one-time bulk default, not a
+    /// live "setting" -- clips added or split afterward start at "cut" like
+    /// any other new boundary.
+    func setTransitionAcrossVideo(transition: String, durationS: Double? = nil) {
+        guard NativeEditorWireContract.transitions.contains(transition), canEditSection(.timeline) else { return }
+        let duration = transition == "cut" ? nil : durationS.map { min(max(0.1, $0), 0.3) }
+        transactDocument(section: .timeline) { doc in
+            guard doc.clips.count > 1 else { return }
+            for index in doc.clips.indices.dropLast() {
+                doc.clips[index].transitionAfter = transition
+                doc.clips[index].transitionDurationS = duration
+            }
+        }
+    }
     func setClipTiming(clipID: String, inS: Double? = nil, durationS: Double? = nil, durationBeats: Int? = nil) {
         mutateClip(clipID: clipID) { slot in
             if let inS { slot.inS = max(0, inS) }

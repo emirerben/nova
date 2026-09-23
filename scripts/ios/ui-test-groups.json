@@ -83,7 +83,11 @@
       "KriaUITests/NativeEditorInspectorUITests/testConnectedTextPresetAndAnimationPreviewControls",
       "KriaUITests/NativeEditorInspectorUITests/testKeyboardKeepsSourcePreviewVisibleAboveConnectedPanel",
       "KriaUITests/NativeCaptionVisualUITests/testUnfinishedCardSurvivesClosingAndSwitchingTools",
-      "KriaUITests/NativeEditorInspectorUITests/testVisiblePanelHandleExpandsAndRestoresEveryTool"
+      "KriaUITests/NativeEditorInspectorUITests/testVisiblePanelHandleExpandsAndRestoresEveryTool",
+      "KriaUITests/NativeCaptionVisualUITests/testClipSelectionShowsTransitionControl",
+      "KriaUITests/NativeCaptionVisualUITests/testTransitionControlHiddenWhenCapabilityClosed",
+      "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryVisibleOnDevice",
+      "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryHiddenWhenCapabilityClosed"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -104,6 +108,8 @@
     "src/apps/ios/Kria/Features/NativeEditorInspectors.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorComponents.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeVisualPanel.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorPanelDrafts.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorLanePanel.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorUITestFixtures.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorIsland.swift": "editor",
@@ -111,6 +117,7 @@
     "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift": "projects",
     "src/apps/ios/Tests/KriaUITests/EditorUITests.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/NativeCaptionVisualUITests.swift": "editor",
     "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift": "editor",
     "src/apps/ios/Kria/Core/NativeEditorSources.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorProjectHeader.swift": "editor",

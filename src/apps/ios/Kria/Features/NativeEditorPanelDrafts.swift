@@ -13,4 +13,6 @@ final class NativeEditorPanelDrafts: ObservableObject {
     @Published var motionPreset: String?
     @Published var motionAssetIDs: [String] = []
     @Published var cameraIntensity: Double?
+    @Published var wholeVideoTransition = "cut"
+    @Published var wholeVideoTransitionDuration = 0.2
 }
