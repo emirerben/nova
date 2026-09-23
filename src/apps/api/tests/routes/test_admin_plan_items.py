@@ -577,6 +577,29 @@ class TestPlanItemDebugPayload:
         assert body["edit_proposal_unparseable"] is False
         assert body["edit_proposal_raw_keys"] is None
 
+    def test_fractional_brief_and_draft_durations_serialize(self, client):
+        """A narrated brief/draft carries the voiceover's fractional length
+        (ProposalDuration is int | float); the summary must not 500 on it."""
+        raw = _edit_proposal_dict()
+        raw["brief"]["duration_s"] = 41.59
+        raw["draft"]["duration_s"] = 41.59
+        item = _plan_item_row(edit_proposal=raw)
+        gen, _holder = _db_gen(item, [], [])
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = gen
+            try:
+                res = client.get(
+                    f"/admin/plan-items/{item.id}/debug",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 200
+        proposal = res.json()["edit_proposal"]
+        assert proposal["brief"]["duration_s"] == 41.59
+        assert proposal["draft"] == {"beat_count": 1, "duration_s": 41.59}
+
     def test_unparseable_edit_proposal_surfaces_flag_and_keys_only(self, client):
         """A corrupted/legacy JSONB envelope fails EditProposal validation —
         parse_edit_proposal fails closed and returns None. The endpoint must

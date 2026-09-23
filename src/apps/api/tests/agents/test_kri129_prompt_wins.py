@@ -732,11 +732,14 @@ def _pub_group_payload(thoughts: list[str]) -> dict:
     }
 
 
-def test_creator_specified_on_screen_text_is_the_complete_caption_list() -> None:
-    """The creator said what the screen should say ("post match pub"). The
-    model still captioned the park chapter on its own in 2 of 3 live runs; the
-    prompt rule alone did not hold. Any caption that is not one of the
-    creator's own quoted phrases is blanked, and the repair is recorded."""
+def test_creator_specified_on_screen_text_is_not_exhaustive_without_only_or_just() -> None:
+    """The creator quoted one on-screen phrase ("post match pub") without any
+    "only"/"just" exclusivity language nearby (KRI-118 lane L3). That quote is
+    still bound to its own chapter exactly, but it no longer blanks every
+    other chapter's own caption -- the legacy heuristic over-corrected here,
+    silently erasing captions the creator's own request separately asked for
+    (this exact fixture also asks to "Add the name of each sport to the
+    screen")."""
 
     output = EditProposalAgent(None).parse(
         json.dumps(
@@ -751,6 +754,41 @@ def test_creator_specified_on_screen_text_is_the_complete_caption_list() -> None
             )
         ),
         _pub_group_input(),
+    )
+
+    assert [beat.thought for beat in output.story_beats] == [
+        "People enjoy the outdoor atmosphere, walking through the park.",
+        "The creator addresses the camera.",
+        "",
+        "post match pub",
+        "",
+    ]
+    assert not any(repair.startswith("blanked_unrequested_thought") for repair in output.repairs)
+
+
+def test_creator_specified_on_screen_text_is_exhaustive_with_only() -> None:
+    """The same quoted phrase, but the request also says "only" near it: the
+    legacy exhaustive-list behavior still applies, blanking every other
+    chapter's own caption."""
+
+    output = EditProposalAgent(None).parse(
+        json.dumps(
+            _pub_group_payload(
+                [
+                    "People enjoy the outdoor atmosphere, walking through the park.",
+                    "The creator addresses the camera.",
+                    "",
+                    "post match pub",
+                    "",
+                ]
+            )
+        ),
+        _pub_group_input(
+            creator_request=(
+                _load_pub_group_fixture()["request"]
+                + ' Only say "post match pub" on screen, nothing else.'
+            )
+        ),
     )
 
     assert [beat.thought for beat in output.story_beats] == ["", "", "", "post match pub", ""]

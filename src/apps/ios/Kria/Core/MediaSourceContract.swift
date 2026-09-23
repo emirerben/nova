@@ -1,6 +1,41 @@
 import Foundation
 import AVFoundation
+import UniformTypeIdentifiers
 import KriaMediaEngine
+
+/// Specific, user-facing reasons an uploaded clip's analysis-proxy contract can
+/// fail its client-side validation. Mirrors the one-guard-many-causes pattern
+/// `EditorSaveError` uses in `Services.swift`: each distinct violation gets
+/// its own case and copy instead of one generic `APIError.invalidResponse`
+/// for every cause (KRI-118).
+enum MediaSourceContractError: Error, LocalizedError, Equatable, Sendable {
+    /// The source file's container isn't one AVFoundation reliably transcodes
+    /// on-device. Checked before touching the transcode output at all, so
+    /// this fails with actionable copy instead of an opaque AVFoundation
+    /// error surfacing deep inside the proxy transcode.
+    case unsupportedContainer
+    /// Neither the original nor the proxy has a video track to measure.
+    case missingVideoTrack
+    /// The proxy's duration drifted from the original's by more than the
+    /// tolerance (or either duration is unusable), i.e. length changed
+    /// somewhere between capture and upload.
+    case durationMismatch
+    /// The original has audio and the proxy doesn't, or vice versa.
+    case audioPresenceMismatch
+    /// Resolution, frame rate, or orientation fell outside what the analysis
+    /// pipeline accepts.
+    case unsupportedGeometry
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedContainer: "Export this as MP4 or MOV first."
+        case .missingVideoTrack: "This file doesn't have a video track."
+        case .durationMismatch: "This clip's length changed during upload. Try again."
+        case .audioPresenceMismatch: "This clip's audio didn't match after upload. Try again."
+        case .unsupportedGeometry: "This clip couldn't be processed. Try re-exporting it."
+        }
+    }
+}
 
 /// Mirrors `app.kria.media_sources.MediaSourceKind`. "image" is deliberately not a
 /// case: Visuals-pool photos upload in full to the pool and render on the phone from
@@ -110,10 +145,19 @@ struct ProjectMediaUploadContract: Codable, Sendable, Equatable {
     let proxy: AnalysisProxyDescriptor?
 
     @MainActor static func analysisProxy(original: URL, proxy: URL, fingerprint: AssetFingerprint) async throws -> ProjectMediaUploadContract {
+        // Belt-and-suspenders: by the time this runs, `proxy` already exists,
+        // meaning the transcode itself succeeded reading `original`. This
+        // check exists so a caller that validates the source container
+        // *before* transcoding (the earliest point that actually avoids an
+        // opaque AVFoundation failure) can reuse the exact same rule via
+        // `validateSupportedContainer(_:)` below.
+        try Self.validateSupportedContainer(original)
         let source = AVURLAsset(url: original)
         let reduced = AVURLAsset(url: proxy)
         guard let sourceTrack = try await source.loadTracks(withMediaType: .video).first,
-              let proxyTrack = try await reduced.loadTracks(withMediaType: .video).first else { throw APIError.invalidResponse }
+              let proxyTrack = try await reduced.loadTracks(withMediaType: .video).first else {
+            throw MediaSourceContractError.missingVideoTrack
+        }
         let sourceSize = try await sourceTrack.load(.naturalSize)
         let sourceTransform = try await sourceTrack.load(.preferredTransform)
         let sourceDuration = try await source.load(.duration).seconds
@@ -124,15 +168,41 @@ struct ProjectMediaUploadContract: Codable, Sendable, Equatable {
         let proxyHasAudio = !(try await reduced.loadTracks(withMediaType: .audio)).isEmpty
         let orientation = (Int((atan2(sourceTransform.b, sourceTransform.a) * 180 / .pi).rounded()) % 360 + 360) % 360
         guard sourceDuration.isFinite, duration.isFinite, sourceDuration > 0,
-              abs(sourceDuration - duration) <= 0.1, sourceHasAudio == proxyHasAudio,
-              size.width > 0, size.height > 0, size.width <= 640, size.height <= 640,
-              frameRate >= 1, frameRate <= 30, [0, 90, 180, 270].contains(orientation) else { throw APIError.invalidResponse }
+              abs(sourceDuration - duration) <= 0.1 else {
+            throw MediaSourceContractError.durationMismatch
+        }
+        guard sourceHasAudio == proxyHasAudio else {
+            throw MediaSourceContractError.audioPresenceMismatch
+        }
+        guard size.width > 0, size.height > 0, size.width <= 640, size.height <= 640,
+              frameRate >= 1, frameRate <= 30, [0, 90, 180, 270].contains(orientation) else {
+            throw MediaSourceContractError.unsupportedGeometry
+        }
         return ProjectMediaUploadContract(purpose: .analysisProxy, proxy: AnalysisProxyDescriptor(
             original: OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount,
                 durationS: sourceDuration, width: Int(sourceSize.width), height: Int(sourceSize.height),
                 orientationDegrees: orientation, hasAudio: sourceHasAudio),
             durationS: duration, width: Int(size.width), height: Int(size.height), frameRate: frameRate
         ))
+    }
+
+    /// Fails fast when `url`'s container isn't one the on-device proxy
+    /// transcode reliably handles, rather than letting an exotic container
+    /// (e.g. `.avi`, `.mkv`, `.webm`) fail deep inside `AVAssetExportSession`
+    /// with an opaque error. Keyed off the file extension because callers in
+    /// this codebase already normalize a picked/downloaded file's extension
+    /// to match its real container before this point (see
+    /// `NativeDownloadedMedia.fileExtension` for the download path).
+    ///
+    /// Exposed so the transcode call site (`AVFoundationProxyGenerator` /
+    /// `BackgroundUploads.prepare`) can call this BEFORE transcoding — the
+    /// earliest point that actually avoids the opaque failure. `analysisProxy`
+    /// above also calls it, but by then the transcode has already run.
+    static func validateSupportedContainer(_ url: URL) throws {
+        guard let type = UTType(filenameExtension: url.pathExtension.lowercased()),
+              type.conforms(to: .mpeg4Movie) || type.conforms(to: .quickTimeMovie) else {
+            throw MediaSourceContractError.unsupportedContainer
+        }
     }
 
     /// KRI-93: the narration/voiceover counterpart to `analysisProxy`. No dimensions,

@@ -17,7 +17,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.slide_post_compose import compose_slide_post_draft
+from app.schemas.slide_post import (
+    SlideEdits,
+    SlidePostDraft,
+    SlideRef,
+    TextOverlay,
+    bump_slide_post_version,
+)
+from app.services.slide_post_compose import compose_slide_post_draft, propose_slide_post_draft
 
 
 def _asset(kind: str) -> SimpleNamespace:
@@ -100,3 +107,106 @@ async def test_compose_bumps_version_on_retry_without_duplicating_slides() -> No
     assert second.version == first.version + 1
     assert len(second.slides) == len(assets)
     assert {s.asset_id for s in second.slides} == {a.id for a in assets}
+
+
+@pytest.mark.asyncio
+async def test_proposal_fallback_discloses_failure_and_preserves_manual_slide_state() -> None:
+    assets = [_asset("image") for _ in range(2)]
+    current = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[
+            SlideRef(
+                id="stable-slide",
+                asset_id=assets[0].id,
+                kind="image",
+                edits=SlideEdits(text=TextOverlay(content="hello", position="top")),
+            )
+        ],
+        version=4,
+        user_edited=True,
+    )
+    result = await propose_slide_post_draft(
+        item=_item(),
+        assets=assets,
+        platform_profile="tiktok_photo",
+        previous_version=4,
+        current_draft=current,
+        instruction="Lead with the most colorful photo.",
+    )
+    assert result.fallback_used is True
+    assert result.draft.version == 5
+    assert result.draft.slides[0].id == "stable-slide"
+    assert result.draft.slides[0].edits == current.slides[0].edits
+
+
+@pytest.mark.asyncio
+async def test_proposal_fallback_keeps_existing_caption_and_cover_asset() -> None:
+    assets = [_asset("image") for _ in range(2)]
+    current = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[
+            SlideRef(id="custom-a", asset_id=assets[0].id, kind="image"),
+            SlideRef(id="custom-cover", asset_id=assets[1].id, kind="image"),
+        ],
+        cover_index=1,
+        caption="Keep this caption.",
+        version=2,
+    )
+    result = await propose_slide_post_draft(
+        item=_item(),
+        assets=assets,
+        platform_profile="tiktok_photo",
+        previous_version=2,
+        current_draft=current,
+        instruction="Try a different order",
+    )
+    assert result.fallback_used is True
+    assert result.draft.caption == "Keep this caption."
+    assert result.draft.slides[result.draft.cover_index].asset_id == assets[1].id
+
+
+@pytest.mark.asyncio
+async def test_proposal_uses_agent_cover_asset_when_client_slide_id_is_custom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assets = [_asset("image") for _ in range(2)]
+    current = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[
+            SlideRef(id="custom-a", asset_id=assets[0].id, kind="image"),
+            SlideRef(id="custom-b", asset_id=assets[1].id, kind="image"),
+        ],
+    )
+
+    class Agent:
+        def __init__(self, _client):
+            pass
+
+        def run(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                order=[str(assets[1].id), str(assets[0].id)],
+                cover_id=str(assets[0].id),
+                caption="new",
+                alt_text={},
+            )
+
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
+    monkeypatch.setattr("app.services.slide_post_compose.SlidePostComposerAgent", Agent)
+    result = await propose_slide_post_draft(
+        item=_item(),
+        assets=assets,
+        platform_profile="tiktok_photo",
+        previous_version=1,
+        current_draft=current,
+    )
+    assert result.fallback_used is False
+    assert result.draft.slides[result.draft.cover_index].asset_id == assets[0].id
+
+
+def test_bump_revalidates_client_supplied_cover_index() -> None:
+    draft = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[SlideRef(id="one", asset_id=uuid.uuid4(), kind="image")],
+    )
+    with pytest.raises(ValueError, match="cover_index out of range"):
+        bump_slide_post_version(draft, cover_index=1)

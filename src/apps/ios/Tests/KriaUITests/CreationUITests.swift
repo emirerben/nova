@@ -66,7 +66,7 @@ final class CreationUITests: XCTestCase {
         app.launch()
         // Exercise creation on every run, even when a prior project restores.
         createFreshChat(in: app)
-        let prompt = app.staticTexts["What kind of video are we making?"]
+        let prompt = app.staticTexts["What are we making?"]
         XCTAssertTrue(prompt.waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.textFields["Message Kria"].waitForExistence(timeout: 3))
@@ -116,7 +116,7 @@ final class CreationUITests: XCTestCase {
         let gallery = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Gallery'" )).firstMatch
         XCTAssertTrue(gallery.exists)
         gallery.tap()
-        XCTAssertTrue(app.staticTexts["Your finished videos"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Your videos and posts"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["All"].exists)
         XCTAssertTrue(app.buttons["Ready"].exists)
     }
@@ -393,7 +393,7 @@ final class CreationUITests: XCTestCase {
         composer.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
 
-        app.staticTexts["What kind of video are we making?"].tap()
+        app.staticTexts["What are we making?"].tap()
         let keyboardGone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
         XCTAssertEqual(XCTWaiter.wait(for: [keyboardGone], timeout: 5), .completed)
 
@@ -501,7 +501,7 @@ final class CreationUITests: XCTestCase {
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 20), .completed)
         newChat.tap()
-        XCTAssertTrue(app.staticTexts["What kind of video are we making?"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["What are we making?"].waitForExistence(timeout: 20))
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["drawer-new-chat"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
     }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import tempfile
 import uuid
 from collections.abc import Callable
@@ -17,6 +18,7 @@ import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
 from celery.exceptions import MaxRetriesExceededError, Retry
 from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 
 from app.agents._schemas.creator_agent import CreatorEditPlan
 from app.database import sync_session
@@ -63,7 +65,15 @@ from app.services.edit_proposals import (
     phone_story_layouts,
     save_proposal_draft,
 )
+from app.services.guided_speech_cleanup import (
+    GuidedSpeechCleanupError,
+    build_cleaned_narration,
+    load_clean_consent_snapshot,
+    reusable_cleaned_narration,
+    source_identity,
+)
 from app.services.phone_destination import item_visuals_only_on_device_sync
+from app.services.story_shapes import DAY_VLOG_MIN_SOURCES, humanize_repairs, usable_media_count
 from app.worker import celery_app
 
 if TYPE_CHECKING:
@@ -88,7 +98,12 @@ _MONTAGE_REVIEW_KEEP_THRESHOLD = 6.0
 
 
 def _item_narration_identity(item: PlanItem, brief) -> NarrationTrack | None:  # noqa: ANN001
-    """Read the server-pinned recording identity without consulting script text."""
+    """Read the server-pinned recording identity without consulting script text.
+
+    Always the raw item recording: a brief that already holds a cleaned
+    derivative (a re-driven attempt) is compared through its provenance and
+    never carries that derivative, its words or its cut into a new plan.
+    """
 
     seeded = brief.narration
     if seeded is None or getattr(item, "audio_mode", None) != "voiceover":
@@ -98,14 +113,20 @@ def _item_narration_identity(item: PlanItem, brief) -> NarrationTrack | None:  #
         str(getattr(item, "voiceover_generation", "") or ""),
         float(getattr(item, "voiceover_duration_s", 0) or 0),
     )
-    seeded_identity = (seeded.gcs_path, seeded.generation, float(seeded.duration_s))
+    seeded_identity = source_identity(seeded)
     if (
         item_identity[0] != seeded_identity[0]
         or item_identity[1] != seeded_identity[1]
         or abs(item_identity[2] - seeded_identity[2]) > 0.001
     ):
         raise RuntimeError("the pinned voiceover identity changed before proposal planning")
-    return seeded.model_copy(update={"words": []})
+    return NarrationTrack(
+        gcs_path=seeded_identity[0],
+        generation=seeded_identity[1],
+        duration_s=seeded_identity[2],
+        language=seeded.language,
+        caption_style=seeded.caption_style,
+    )
 
 
 def _transcribe_pinned_narration(narration: NarrationTrack) -> NarrationTrack:
@@ -145,6 +166,54 @@ def _transcribe_pinned_narration(narration: NarrationTrack) -> NarrationTrack:
             "language": str(getattr(transcript, "language", "") or ""),
         }
     )
+
+
+def _task_retries(task) -> int:  # noqa: ANN001
+    """Celery's retry count for this delivery (0 for direct/test invocations)."""
+
+    try:
+        return int(getattr(getattr(task, "request", None), "retries", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _discard_derivative_if_voiceover_removed(
+    iid: uuid.UUID,
+    attempt_id: str,
+    ownership_epoch: int,
+    narration: NarrationTrack,
+) -> bool:
+    """Delete a cleaned WAV uploaded after its voiceover was removed.
+
+    Removing the voiceover deletes the item's ``speech-cleanup/`` prefix once,
+    right after that commit. One check after this attempt's upload closes the
+    race: a removal committed earlier is seen here, and a later removal's own
+    delete runs after the upload. A still-attached (or replaced) voiceover
+    keeps its derivatives, since a Job may play the same content-addressed
+    file. Returns True when the attempt must stop.
+    """
+
+    from app import storage  # noqa: PLC0415
+    from app.services.guided_speech_cleanup import (  # noqa: PLC0415
+        CHANGED_MESSAGE,
+        SPEECH_CLEANUP_CHANGED,
+    )
+
+    with sync_session() as db:
+        locked = _locked_item(db, iid, ownership_epoch)
+        if locked is None or getattr(locked[0], "voiceover_gcs_path", None):
+            return False
+        item = locked[0]
+        current = parse_edit_proposal(item.edit_proposal)
+        if (
+            current is not None
+            and current.generation_attempt_id == attempt_id
+            and current.status in {"analyzing", "drafting"}
+        ):
+            _fail(item, current, SPEECH_CLEANUP_CHANGED, CHANGED_MESSAGE, retryable=False)
+            db.commit()
+    storage.delete_object_best_effort(narration.gcs_path)
+    return True
 
 
 def _locked_item(
@@ -498,22 +567,37 @@ def _fast_story_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:
 def feasible_guided_duration_s(media: list[MediaRef]) -> float:
     """Conservative, renderer-aware estimate of the story length the uploaded
 
-    media can support. Videos contribute their own probed duration once — a
+    media can support. A video contributes its own probed duration once — a
     beat can never be stretched past what was actually filmed (no
-    slow-mo/loop) — but ONLY when that duration clears
-    `GUIDED_STORY_MIN_MOMENT_S`; a video with no probed duration, a zero
-    duration, or a duration too short to be its own legible moment
-    contributes nothing (not the image credit). This is a pre-agent planning
+    slow-mo/loop). A video SHORTER than `GUIDED_STORY_MIN_MOMENT_S` still
+    contributes its own (shorter) length instead of zero (KRI-118 lane L3 /
+    KRI-129: a short clip is never left out for being short, including at
+    this planning-time estimate) -- `guided_moment_floor_s`
+    (app.pipeline.guided_story) applies the identical floor to a single
+    moment's screen time at render time, and for a duration already below
+    that floor the two are the same number. A video with no probed duration
+    or a zero duration contributes nothing. This is a pre-agent planning
     estimate — guided_story.py's `_source_window` / `_allocate_beat_durations`
     remain the exact, authoritative render-time feasibility check.
     """
+    from app.pipeline.guided_story import guided_moment_floor_s  # noqa: PLC0415
 
     total = 0.0
     for ref in media:
         if ref.kind == "video":
             duration = float(ref.duration_s) if ref.duration_s else 0.0
+            if duration <= 0:
+                continue
             if duration >= GUIDED_STORY_MIN_MOMENT_S:
+                # At or above the per-moment floor: credit the video's own
+                # full length, exactly as before this fix.
                 total += duration
+            else:
+                # Below the floor: guided_moment_floor_s(min_moment_s,
+                # duration) here simply equals duration itself, since
+                # duration < min_moment_s -- named explicitly so this stays
+                # in lockstep with the render-time function it mirrors.
+                total += guided_moment_floor_s(GUIDED_STORY_MIN_MOMENT_S, duration)
         else:
             total += _IMAGE_FEASIBLE_CREDIT_S
     return total
@@ -574,6 +658,34 @@ def cadence_target_duration_s(brief, media: list[MediaRef]) -> int | float | Non
     if capacity_s + 0.001 < required_s:
         raise ValueError("round-robin cadence exceeds available source capacity")
     return brief.duration_s
+
+
+_FALLBACK_TITLE_MAX_CHARS = 40
+_FALLBACK_TITLE_CLAUSE_RE = re.compile(r"[.!?\n]")
+
+
+def _fallback_title(brief) -> str:  # noqa: ANN001
+    """Best-effort human title when neither a confirmed creator title nor a
+    specialist-authored title is available (the deterministic-fallback path).
+
+    Priority: (1) brief.opening_title -- handled by the caller before this is
+    reached; (2) a short derivation from the creator's own request text, when
+    any was given; (3) a generic "Your edit" as the last resort. Replaces the
+    old hard-coded "A few moments" placeholder, which said nothing about the
+    creator's own request.
+    """
+
+    request = (brief.creator_request or "").strip()
+    if not request:
+        return "Your edit"
+    first_clause = _FALLBACK_TITLE_CLAUSE_RE.split(request, maxsplit=1)[0].strip()
+    candidate = first_clause or request
+    if len(candidate) > _FALLBACK_TITLE_MAX_CHARS:
+        truncated = candidate[:_FALLBACK_TITLE_MAX_CHARS]
+        # Prefer a whole-word cut; fall back to the hard truncation when the
+        # first chunk has no space to break on.
+        candidate = truncated.rsplit(" ", 1)[0].strip() or truncated.strip()
+    return candidate or "Your edit"
 
 
 def _fail(
@@ -675,12 +787,15 @@ def _analyze_clip_assignments(
     attempt_id: str,
     ownership_epoch: int,
     on_complete: Callable[[dict, MediaRef], None] | None = None,
+    allow_drafting: bool = False,
 ) -> list[tuple[dict, MediaRef]] | None:
     """Analyze raw clips three at a time while preserving assignment order.
 
     Pool assets have already been analyzed by their own per-asset Celery tasks.
     This only fans out synchronous source-clip work. ``None`` means the
     proposal attempt was superseded while work was in flight.
+    ``allow_drafting`` keeps a Celery retry that re-drives its own committed
+    drafting transition alive (the analyses are already cached on the item).
     """
 
     if not assignments:
@@ -701,7 +816,7 @@ def _analyze_clip_assignments(
             nonlocal next_index
             if next_index >= len(assignments):
                 return False
-            if not _attempt_is_active(item_id, attempt_id, ownership_epoch):
+            if not _attempt_is_active(item_id, attempt_id, ownership_epoch, allow_drafting):
                 return False
             future = executor.submit(
                 _analyze_clip_assignment, assignments[next_index], pool_by_path
@@ -742,6 +857,7 @@ def _attempt_is_active(
     item_id: uuid.UUID,
     attempt_id: str,
     expected_ownership_epoch: int,
+    allow_drafting: bool = False,
 ) -> bool:
     """Cheap cancellation fence between expensive per-media analyses."""
 
@@ -757,7 +873,7 @@ def _attempt_is_active(
             and int(row.ownership_epoch or 0) == expected_ownership_epoch
             and current
             and current.generation_attempt_id == attempt_id
-            and current.status == "analyzing"
+            and (current.status == "analyzing" or (allow_drafting and current.status == "drafting"))
         )
 
 
@@ -1034,18 +1150,56 @@ def _checkpoint_analyzed_assignment(
             publish_preflight_after_commit(preflight_analysis_id)
 
 
+# Dispatch rejections that the same confirmed plan would hit again: they
+# carry their own creator copy and are never retried or refunded.
+_TERMINAL_DISPATCH_FAILURES: dict[str, tuple[str, str]] = {
+    "speech_cleanup_analysis_conflict": (
+        "speech_cleanup_changed",
+        "The detected pauses changed. Refresh the direction to choose again.",
+    ),
+    "speech_cleanup_recovery_conflict": (
+        "speech_cleanup_changed",
+        "The detected pauses changed. Refresh the direction to choose again.",
+    ),
+    "proposal_render_blocked": (
+        "proposal_render_blocked",
+        "This plan can't render as approved. Revise the direction to try again.",
+    ),
+    "video_required": ("video_required", "Add a video to create this edit."),
+}
+
+
+def _dispatch_failure(result: object) -> tuple[str, str, bool]:
+    """(code, creator message, retryable) for a rejected Creator dispatch."""
+
+    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
+
+    outcome = getattr(result, "outcome", None)
+    reason = getattr(result, "reason", None)
+    if outcome == "invalid_clips" and reason in PHONE_GATE_MESSAGES:
+        code, message = PHONE_GATE_MESSAGES[reason]
+        return code, message, False
+    if outcome in _TERMINAL_DISPATCH_FAILURES:
+        code, message = _TERMINAL_DISPATCH_FAILURES[outcome]
+        return code, message, False
+    return "creator_dispatch_failed", "Kria couldn't start this edit. Try again.", True
+
+
 def _settle_creator_dispatch_failure(
     *,
     item_id: uuid.UUID,
     owner_id: uuid.UUID,
     attempt_id: str,
     ownership_epoch: int,
+    result: object = None,
 ) -> bool:
     """Fail an unbound Creator attempt without discarding its approved inputs.
 
     Existing poll reconciliation fails the exact execution receipt/session and
     projects the chat failure from this envelope. No second thread updater or
     thread lock inversion is needed; native retries retain their budget.
+    ``result`` (the rejected DispatchResult) marks a rejection the same plan
+    would repeat as not retryable, so it is not refunded into a loop.
     """
     with sync_session() as db:
         locked = _locked_item(db, item_id, ownership_epoch)
@@ -1085,7 +1239,8 @@ def _settle_creator_dispatch_failure(
         ]
         if len(matching) != 1:
             return False
-        _fail(item, current, "creator_dispatch_failed", "Kria couldn't start this edit. Try again.")
+        code, message, retryable = _dispatch_failure(result)
+        _fail(item, current, code, message, retryable=retryable)
         db.commit()
         return True
 
@@ -1236,6 +1391,7 @@ def _dispatch_after_auto_design(
                 owner_id=owner_id,
                 attempt_id=attempt_id,
                 ownership_epoch=ownership_epoch,
+                result=result,
             )
         # Legacy auto-design keeps its existing manual Generate behavior.
         log.warning(
@@ -1254,6 +1410,13 @@ def _dispatch_after_auto_design(
     name="app.tasks.edit_proposal_build.draft_edit_proposal",
     max_retries=40,
     default_retry_delay=15,
+    # A transient DB loss re-drives the same attempt instead of stranding it
+    # in analyzing/drafting (2026-09-22 "server closed the connection").
+    # Shares max_retries with the pool-asset waits below.
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,
     **_TASK_LIMITS,
 )
 def draft_edit_proposal(
@@ -1364,6 +1527,13 @@ def _run_draft_attempt(
             proposal = parse_edit_proposal(item.edit_proposal)
             if proposal is None or proposal.generation_attempt_id != attempt_id:
                 return
+            if proposal.status not in {"analyzing", "drafting"}:
+                # Already settled (e.g. a retry after the final commit landed):
+                # the fences below would discard every expensive step anyway.
+                return
+            # Only a Celery retry may resume an attempt whose drafting
+            # transition already committed; see the drafting fence below.
+            redrive_candidate = proposal.status == "drafting" and _task_retries(self) > 0
             pool_rows = db.execute(
                 select(PlanItemAsset.status, PlanItemAsset.user_id).where(
                     PlanItemAsset.plan_item_id == item.id
@@ -1415,6 +1585,27 @@ def _run_draft_attempt(
                 if isinstance(a, dict) and a.get("gcs_path") and a.get("media_id")
             ]
             idea, theme, brief = item.idea, item.theme or "", proposal.brief
+            # "Clean up speech" belongs to this exact confirmed attempt. Load
+            # the consented analysis under the item lock and plan against its
+            # cleaned derivative; never quietly plan the uncut recording.
+            cleanup_payload: dict | None = None
+            cleanup_analysis_id: str | None = None
+            if brief.narration is not None and proposal.design_fallback == MAIN_CREATOR_FAIL_CLOSED:
+                cleanup_context = _creator_dispatch_context_for_guided_attempt(
+                    db,
+                    item_id=item.id,
+                    owner_id=owner_id,
+                    attempt_id=attempt_id,
+                    ownership_epoch=ownership_epoch,
+                )
+                if (cleanup_context or {}).get("speech_cleanup_choice") == "clean":
+                    cleanup_analysis_id = cleanup_context["speech_cleanup_analysis_id"]
+                    try:
+                        cleanup_payload = load_clean_consent_snapshot(db, item, cleanup_analysis_id)
+                    except GuidedSpeechCleanupError as exc:
+                        _fail(item, proposal, exc.code, exc.message, retryable=exc.retryable)
+                        db.commit()
+                        return
             if proposal.planning_started_at is None:
                 proposal = proposal.model_copy(update={"planning_started_at": datetime.now(UTC)})
                 item.edit_proposal = proposal.model_dump(mode="json")
@@ -1424,8 +1615,27 @@ def _run_draft_attempt(
         if narration is not None:
             # The proposal task owns the transcript that reaches approval. It
             # must come from the exact pinned recording, never from the
-            # creator's script or a provider-authored plan field.
-            narration = _transcribe_pinned_narration(narration)
+            # creator's script or a provider-authored plan field. A clean
+            # choice pins the cleaned derivative instead: its duration and
+            # words come from the consented snapshot, not a second Whisper run.
+            # A re-driven attempt reuses the derivative its committed drafting
+            # step pinned (a re-cut on another host may hash differently).
+            if cleanup_payload is not None:
+                narration = reusable_cleaned_narration(
+                    brief.narration if redrive_candidate else None,
+                    narration,
+                    cleanup_payload,
+                    owner_id=owner_id,
+                    item_id=item.id,
+                ) or build_cleaned_narration(
+                    narration, cleanup_payload, owner_id=owner_id, item_id=item.id
+                )
+                if _discard_derivative_if_voiceover_removed(
+                    iid, attempt_id, ownership_epoch, narration
+                ):
+                    return
+            else:
+                narration = _transcribe_pinned_narration(narration)
             brief = brief.model_copy(update={"narration": narration})
 
         # Pool/clip media analysis (_analyze_clip_assignment -> analyze_pool_video /
@@ -1453,6 +1663,7 @@ def _run_draft_attempt(
                 on_complete=lambda analyzed, ref: _checkpoint_analyzed_assignment(
                     iid, attempt_id, ownership_epoch, analyzed, ref
                 ),
+                allow_drafting=redrive_candidate,
             )
         except AssetUnreadableError as exc:
             with sync_session() as db:
@@ -1523,6 +1734,27 @@ def _run_draft_attempt(
                         current,
                         "proposal_required",
                         "Upload media before planning an edit.",
+                    )
+                    db.commit()
+            return
+        if brief.story_shape == "day_vlog" and usable_media_count(media) < DAY_VLOG_MIN_SOURCES:
+            # KRI-118 lane L3: a genuine planning-time refusal, not a silent
+            # downgrade to a generic edit (KRI-129) -- checked here, against
+            # the raw media pool, before either the specialist agent or the
+            # deterministic fallback (neither knows about story_shape) can
+            # silently proceed. story_shapes.repair_day_vlog re-checks the
+            # same contract against the final authored plan as defense in
+            # depth.
+            with sync_session() as db:
+                locked = _locked_item(db, iid, ownership_epoch)
+                item = locked[0] if locked else None
+                current = parse_edit_proposal(item.edit_proposal) if item else None
+                if item and current and current.generation_attempt_id == attempt_id:
+                    _fail(
+                        item,
+                        current,
+                        "day_vlog_needs_two_moments",
+                        "A day vlog needs at least two moments.",
                     )
                     db.commit()
             return
@@ -1656,97 +1888,129 @@ def _run_draft_attempt(
             item = locked[0] if locked else None
             owner_id = locked[1] if locked else None
             current = parse_edit_proposal(item.edit_proposal) if item else None
+            # A Celery retry after a transient DB loss may find its own drafting
+            # transition already committed (same attempt, media and narration
+            # digest): resume at the planner instead of returning into an
+            # attempt nothing would ever settle. A first delivery keeps the
+            # duplicate-delivery refusal.
+            redrive = bool(
+                redrive_candidate
+                and current is not None
+                and current.generation_attempt_id == attempt_id
+                and current.status == "drafting"
+                and current.media_digest == digest
+            )
+            if (
+                redrive_candidate
+                and not redrive
+                and item is not None
+                and current is not None
+                and current.generation_attempt_id == attempt_id
+                and current.status == "drafting"
+            ):
+                # Our own committed drafting step pinned different inputs (e.g.
+                # its cleaned WAV was gone, so a re-cut hashed differently).
+                # Nothing else would ever settle this attempt: fail it.
+                _fail(
+                    item,
+                    current,
+                    "proposal_generation_failed",
+                    "Kria couldn't plan this edit. Try again.",
+                )
+                db.commit()
+                return
             if (
                 item is None
                 or current is None
                 or current.generation_attempt_id != attempt_id
-                or current.status != "analyzing"
+                or (current.status != "analyzing" and not redrive)
             ):
                 return
-            current_assignments = [
-                dict(a)
-                for a in (item.clip_assignments or [])
-                if isinstance(a, dict) and a.get("gcs_path") and a.get("media_id")
-            ]
-            merged_assignments = _merge_analyzed_assignments(
-                current_assignments, analyzed_assignments
-            )
-            if merged_assignments is None:
-                _fail(
-                    item,
-                    current,
-                    "proposal_stale",
-                    "The uploaded media changed while planning.",
+            if not redrive:
+                current_assignments = [
+                    dict(a)
+                    for a in (item.clip_assignments or [])
+                    if isinstance(a, dict) and a.get("gcs_path") and a.get("media_id")
+                ]
+                merged_assignments = _merge_analyzed_assignments(
+                    current_assignments, analyzed_assignments
                 )
-                db.commit()
-                return
-            if not media_generations_match_sync(clip_refs):
-                _fail(
-                    item,
-                    current,
-                    "proposal_stale",
-                    "The uploaded media changed while planning.",
+                if merged_assignments is None:
+                    _fail(
+                        item,
+                        current,
+                        "proposal_stale",
+                        "The uploaded media changed while planning.",
+                    )
+                    db.commit()
+                    return
+                if not media_generations_match_sync(clip_refs):
+                    _fail(
+                        item,
+                        current,
+                        "proposal_stale",
+                        "The uploaded media changed while planning.",
+                    )
+                    db.commit()
+                    return
+                assert owner_id is not None
+                fresh_pool = _pool_refs(db, item, owner_id)
+                fresh_visuals_only = item_visuals_only_on_device_sync(db, item, owner_id)
+                fresh_media = phone_renderable_media(
+                    clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths],
+                    owner_id,
+                    visuals_only_device=fresh_visuals_only,
                 )
-                db.commit()
-                return
-            assert owner_id is not None
-            fresh_pool = _pool_refs(db, item, owner_id)
-            fresh_visuals_only = item_visuals_only_on_device_sync(db, item, owner_id)
-            fresh_media = phone_renderable_media(
-                clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths],
-                owner_id,
-                visuals_only_device=fresh_visuals_only,
-            )
-            if (
-                fresh_visuals_only != visuals_only_device
-                or canonical_media_digest(fresh_media, narration) != digest
-            ):
-                _fail(
-                    item,
-                    current,
-                    "proposal_stale",
-                    "The uploaded media changed while planning.",
+                if (
+                    fresh_visuals_only != visuals_only_device
+                    or canonical_media_digest(fresh_media, narration) != digest
+                ):
+                    _fail(
+                        item,
+                        current,
+                        "proposal_stale",
+                        "The uploaded media changed while planning.",
+                    )
+                    db.commit()
+                    return
+                from app.services.speech_cleanup import (  # noqa: PLC0415
+                    cleanup_inputs,
+                    reconcile_item_policy_change,
                 )
-                db.commit()
-                return
-            from app.services.speech_cleanup import (  # noqa: PLC0415
-                cleanup_inputs,
-                reconcile_item_policy_change,
-            )
 
-            previous_speech_inputs = cleanup_inputs(item)
-            from app.services.plan_item_media import (  # noqa: PLC0415
-                current_detector_policy,
-                mutate_plan_item_media,
-                publish_preflight_after_commit,
-            )
-            from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
-                mutation_current_analysis_sync,
-                schedule_item_preflight_sync,
-            )
+                previous_speech_inputs = cleanup_inputs(item)
+                from app.services.plan_item_media import (  # noqa: PLC0415
+                    current_detector_policy,
+                    mutate_plan_item_media,
+                    publish_preflight_after_commit,
+                )
+                from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                    mutation_current_analysis_sync,
+                    schedule_item_preflight_sync,
+                )
 
-            current_cleanup = mutation_current_analysis_sync(db, item.id, for_update=True)
-            mutate_plan_item_media(
-                item,
-                detector_policy=current_detector_policy(),
-                clip_assignments=merged_assignments,
-                current_analysis=current_cleanup,
-            )
-            reconcile_item_policy_change(item, previous_speech_inputs)
-            drafting = current.model_copy(
-                update={
-                    "proposal_version": current.proposal_version + 1,
-                    "status": "drafting",
-                    "media_digest": digest,
-                    "brief": brief,
-                    "failure": None,
-                }
-            )
-            item.edit_proposal = drafting.model_dump(mode="json")
-            preflight_analysis_id = schedule_item_preflight_sync(db, item)
-            db.commit()
-            if preflight_analysis_id is not None:
-                publish_preflight_after_commit(preflight_analysis_id)
+                current_cleanup = mutation_current_analysis_sync(db, item.id, for_update=True)
+                mutate_plan_item_media(
+                    item,
+                    detector_policy=current_detector_policy(),
+                    clip_assignments=merged_assignments,
+                    current_analysis=current_cleanup,
+                )
+                reconcile_item_policy_change(item, previous_speech_inputs)
+                drafting = current.model_copy(
+                    update={
+                        "proposal_version": current.proposal_version + 1,
+                        "status": "drafting",
+                        "media_digest": digest,
+                        "brief": brief,
+                        "failure": None,
+                    }
+                )
+                item.edit_proposal = drafting.model_dump(mode="json")
+                preflight_analysis_id = schedule_item_preflight_sync(db, item)
+                db.commit()
+                if preflight_analysis_id is not None:
+                    publish_preflight_after_commit(preflight_analysis_id)
 
         def _understanding_fields(ref: MediaRef) -> dict[str, object]:
             # KRI-127: subject/description/on_screen_text/best_moments above
@@ -1810,6 +2074,8 @@ def _run_draft_attempt(
                     opening_title_duration_s=brief.opening_title_duration_s,
                     shot_labels=brief.shot_labels,
                     closing_title=brief.closing_title,
+                    story_shape=brief.story_shape,
+                    hero_media_id=brief.hero_media_id,
                     media=agent_media,
                     clip_intents=_resolved_clip_intents(brief),
                 ),
@@ -1879,6 +2145,8 @@ def _run_draft_attempt(
                             opening_title_duration_s=brief.opening_title_duration_s,
                             shot_labels=brief.shot_labels,
                             closing_title=brief.closing_title,
+                            story_shape=brief.story_shape,
+                            hero_media_id=brief.hero_media_id,
                             media=agent_media,
                             clip_intents=_resolved_clip_intents(brief),
                         ),
@@ -2026,7 +2294,19 @@ def _run_draft_attempt(
                     else None
                 )
             caption_texts = _resolved_caption_texts(_resolved_clip_intents(brief))
+            # KRI-118 lane L3: always-user-visible plain-English notes on what
+            # the deterministic repair layer changed, separate from the
+            # admin-only `planner_fallback` marker on EditProposal (never
+            # exposed here). Bounded to 6 items of <=160 chars each.
+            adjustments = humanize_repairs(list(getattr(output, "repairs", None) or []))
+            if fallback_used:
+                adjustments = [
+                    "Kria used a simpler plan because the planner couldn't finish",
+                    *adjustments,
+                ]
+            adjustments = [message[:160] for message in adjustments][:6]
             snapshot = EditProposalSnapshot(
+                adjustments=adjustments,
                 # KRI-127: the render worker re-grounds every label from these.
                 clip_intents=_resolved_clip_intents(brief),
                 direction=brief.direction,
@@ -2048,7 +2328,7 @@ def _run_draft_attempt(
                 # A confirmed Main Creator title is immutable and beats any
                 # specialist/copy-writer title for every render.
                 title=brief.opening_title
-                or (output.title if output is not None else "A few moments"),
+                or (output.title if output is not None else _fallback_title(brief)),
                 opening_title=brief.opening_title,
                 opening_title_duration_s=brief.opening_title_duration_s,
                 shot_labels=brief.shot_labels,
@@ -2180,6 +2460,25 @@ def _run_draft_attempt(
                 or current.media_digest != digest
             ):
                 return
+            if cleanup_analysis_id is not None:
+                # The consented analysis must still be current when the plan
+                # built on its cut is saved (and possibly auto-approved).
+                try:
+                    current_payload = load_clean_consent_snapshot(db, item, cleanup_analysis_id)
+                except GuidedSpeechCleanupError as exc:
+                    _fail(item, current, exc.code, exc.message, retryable=exc.retryable)
+                    db.commit()
+                    return
+                if current_payload != cleanup_payload:
+                    _fail(
+                        item,
+                        current,
+                        "speech_cleanup_changed",
+                        "The detected pauses changed. Refresh the direction to choose again.",
+                        retryable=False,
+                    )
+                    db.commit()
+                    return
             drafted = save_proposal_draft(
                 item,
                 expected_version=current.proposal_version,
@@ -2221,6 +2520,10 @@ def _run_draft_attempt(
             db.commit()
     except Retry:
         raise
+    except OperationalError:
+        # The failed transaction rolled back, so the attempt is still
+        # analyzing/drafting; draft_edit_proposal's autoretry_for re-drives it.
+        raise
     except SoftTimeLimitExceeded:
         # Celery will terminate the task after this signal. Persist a
         # creator-visible retry state first so the UI never polls an
@@ -2243,6 +2546,33 @@ def _run_draft_attempt(
                 )
                 db.commit()
         raise
+    except GuidedSpeechCleanupError as exc:
+        # Typed clean-choice failure: never degrade to the uncut recording.
+        log.warning(
+            "edit_proposal.speech_cleanup_failed",
+            item_id=item_id,
+            code=exc.code,
+            retryable=exc.retryable,
+        )
+        with sync_session() as db:
+            locked = _locked_item(db, iid, ownership_epoch)
+            item = locked[0] if locked else None
+            current = parse_edit_proposal(item.edit_proposal) if item else None
+            if (
+                item
+                and current
+                and current.generation_attempt_id == attempt_id
+                and current.status in {"analyzing", "drafting"}
+            ):
+                _fail(
+                    item,
+                    current,
+                    exc.code,
+                    exc.message,
+                    retryable=exc.retryable,
+                    detail=_exc_detail(exc.__cause__ or exc),
+                )
+                db.commit()
     except Exception as exc:  # noqa: BLE001
         log.exception("edit_proposal.draft_failed", item_id=item_id)
         with sync_session() as db:
@@ -2274,9 +2604,12 @@ def _run_draft_attempt(
                     exc.code
                     if isinstance(exc, SemanticPlanningError)
                     else "proposal_generation_failed",
-                    exc.reason
+                    # The creator-facing sentence; the scheduler's own
+                    # reason stays in the admin-only detail below.
+                    exc.message
                     if isinstance(exc, SemanticPlanningError)
                     else "Kria couldn't plan this edit. Try again.",
+                    retryable=exc.retryable if isinstance(exc, SemanticPlanningError) else True,
                     detail=_exc_detail(exc),
                 )
                 db.commit()

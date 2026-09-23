@@ -120,6 +120,10 @@ enum DeviceRenderAttentionCopy {
         // Structural, not transient: retrying compiles the same recipe again and fails the
         // same way, so the "Try again" button is hidden for this reason (see `showsRetryButton`).
         "unsupported_recipe": "This edit uses something this iPhone can’t render yet. Start a new edit with a different style instead — trying again won’t change the result.",
+        // Distinct from `unsupported_recipe`: the renderer itself is out of date for this
+        // recipe (version/schema mismatch), not a specific feature it can't produce.
+        // "Start a new edit" wouldn't fix that -- updating the app would.
+        "renderer_outdated": "Update Kria to render this edit.",
         "cancelled_by_user": "Rendering was stopped. Your project is saved.",
     ]
 
@@ -137,7 +141,11 @@ enum DeviceRenderAttentionCopy {
     /// (thermal, storage, export failure) is transient and stays retryable.
     static func showsRetryButton(phase: DeviceRenderPhase, reasonCode: String?) -> Bool {
         guard [.needsAttention, .cancelled, .localReady].contains(phase) else { return false }
-        return !(phase == .needsAttention && reasonCode == "unsupported_recipe")
+        // `renderer_outdated` is structural the same way `unsupported_recipe` is: retrying
+        // recompiles the identical, still-too-new recipe and fails identically.
+        let structuralReasons: Set<String> = ["unsupported_recipe", "renderer_outdated"]
+        guard phase == .needsAttention, let reasonCode else { return true }
+        return !structuralReasons.contains(reasonCode)
     }
 }
 

@@ -128,6 +128,7 @@ from app.services.creator_sessions import (
     append_event,
     compile_active_plan,
     creator_context,
+    creator_media_truncation_notice,
     creator_narration_identity,
     load_intent_clips_for_item,
     reconcile_render_state,
@@ -412,8 +413,50 @@ async def _response(db: AsyncSession, session: CreatorAgentSession) -> CreatorSe
     return _creator_session_response(loaded)
 
 
+# A fresh session that replaces a failed one in the same chat project opens
+# with this system event holding the failed session's brief, so every later
+# turn of the fresh session (a question's answer, a revision, "Retry preparing
+# my clips") still reads it. Its payload has no "message": transcript
+# projection and role-"user" history readers ignore it.
+CARRIED_BRIEF_EVENT = "carried_brief"
+
+
+def _carried_brief(events: list[CreatorAgentEvent]) -> str:
+    """The failed session's brief this session was opened with, or ``""``."""
+
+    for event in sorted(events, key=lambda value: value.sequence):
+        if getattr(event, "event_type", None) == CARRIED_BRIEF_EVENT:
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            return str(payload.get("creator_request") or "").strip()[:CREATOR_REQUEST_MAX_CHARS]
+    return ""
+
+
+def _carried_brief_seed(previous_active_plan: dict[str, Any] | None, message: str) -> str:
+    """The failed session's brief to open a fresh session with, or ``""``.
+
+    Lines the new message already repeats (a creator re-pasting the original
+    prompt) are dropped, and the brief (not the new message) is trimmed so
+    both fit the shared request bound together.
+    """
+
+    if not isinstance(previous_active_plan, dict):
+        return ""
+
+    def normalized(text: str) -> str:
+        return " ".join(text.split()).casefold()
+
+    repeated = normalized(message)
+    lines = [
+        line.strip()
+        for line in str(previous_active_plan.get("creator_request") or "").splitlines()
+        if line.strip() and not re.search(rf"(?<!\w){re.escape(normalized(line))}(?!\w)", repeated)
+    ]
+    budget = CREATOR_REQUEST_MAX_CHARS - len(message.strip()) - 1
+    return "\n".join(lines)[: max(budget, 0)].strip()
+
+
 def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
-    return [
+    turns = [
         {
             "role": event.role,
             "content": str((event.payload or {}).get("message") or "")[:CREATOR_REQUEST_MAX_CHARS],
@@ -421,6 +464,11 @@ def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
         for event in sorted(events, key=lambda value: value.sequence)[-20:]
         if (event.payload or {}).get("message")
     ]
+    carried = _carried_brief(events)
+    if carried:
+        # The failed session's brief opens a fresh session's history.
+        return [{"role": "user", "content": carried}, *turns[-19:]]
+    return turns
 
 
 def _confirmed_creator_request(
@@ -435,6 +483,9 @@ def _confirmed_creator_request(
     ]
     if current_message.strip() and (not messages or messages[-1] != current_message.strip()):
         messages.append(current_message.strip())
+    carried = _carried_brief(events)
+    if carried:
+        messages.insert(0, carried)
     request = "\n".join(messages)
     return request[:CREATOR_REQUEST_MAX_CHARS] if truncate else request
 
@@ -528,7 +579,8 @@ def _original_creator_request_for_refresh(
         if event.role == "user" and str((event.payload or {}).get("message") or "").strip()
     ]
     messages = [message for message in messages if message != REFRESH_DIRECTION_MESSAGE]
-    request = "\n".join(messages)
+    carried = _carried_brief(events)
+    request = "\n".join([carried, *messages] if carried else messages)
     return request[:CREATOR_REQUEST_MAX_CHARS]
 
 
@@ -2013,6 +2065,9 @@ async def _run_planning_turn(
         persona=persona,
         guided_capability_enabled=(True if allow_chat else None),
     )
+    # KRI-118 item 6: a "I used 50 of N items" notice when the manifest cap
+    # actually dropped owned media, so this turn's plan can surface it.
+    media_truncation_notice = await creator_media_truncation_notice(db, item, persona)
     if not manifest.capabilities["dispatch_render"].available:
         locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
         if locked.revision != expected_revision:
@@ -2285,9 +2340,13 @@ async def _run_planning_turn(
                             locked,
                             event_type="assistant_error",
                             payload={
+                                # KRI-118 item 3: this trigger is the planner
+                                # call itself being rate-limited, not clip
+                                # analysis -- give it its own accurate copy
+                                # instead of the clip-intents message below.
                                 "message": (
-                                    "Clip analysis is unavailable right now. "
-                                    "Your request is saved; try again later."
+                                    "I'm getting rate-limited by the planner right now. "
+                                    "Your request is saved; try again in a moment."
                                 ),
                                 "code": "provider_quota_exceeded",
                             },
@@ -2316,8 +2375,11 @@ async def _run_planning_turn(
                 locked,
                 event_type="assistant_error",
                 payload={
+                    # KRI-118 item 3: this trigger is the planner call itself
+                    # being unreachable, not clip analysis -- give it its own
+                    # accurate copy instead of the clip-intents message below.
                     "message": (
-                        "Clip analysis is unavailable right now. "
+                        "I couldn't reach the planner right now. "
                         "Your request is saved; try again later."
                     ),
                     "code": "provider_unavailable",
@@ -2365,6 +2427,18 @@ async def _run_planning_turn(
             },
         )
     else:
+        turn_notices: list[str] = list(filter(None, [media_truncation_notice]))
+        if isinstance(action, AskUser):
+            # KRI-118 item 3: the model DID ask a question here, but the
+            # session's question budget was already exhausted (the only way
+            # `AskUser` reaches this branch instead of the one above) -- make
+            # that substitution visible instead of silently swapping in the
+            # fallback strategy with no explanation.
+            asked_question = " ".join(str(action.question or "").split())[:200]
+            turn_notices.append(
+                "I had more questions but went ahead with: "
+                f"{asked_question or 'a focused edit from your strongest footage'}."
+            )
         strategy = (
             action.strategy
             if isinstance(action, ProposeStrategy)
@@ -2895,6 +2969,7 @@ async def _run_planning_turn(
                 strategy=strategy,
                 summary=summary,
                 creator_request=creator_request,
+                extra_notices=turn_notices,
             )
         except ValueError as exc:
             log.warning(
@@ -3031,6 +3106,16 @@ async def _run_planning_turn(
                 strategy=strategy,
                 summary=MAIN_CREATOR_FALLBACK_SUMMARY,
                 creator_request=creator_request,
+                # KRI-118 item 3: `_fallback_strategy` fires because the
+                # planner's own response couldn't be applied; the real reason
+                # (`exc`) was already logged above for admins
+                # ("main_creator.unsafe_strategy_dropped") but never told to
+                # the creator. Surface a simplified version of the same
+                # reason instead of leaving it log-only.
+                extra_notices=[
+                    f"Simplified this edit because: {str(exc)[:200]}.",
+                    *([media_truncation_notice] if media_truncation_notice else []),
+                ],
             )
         locked.manifest_hash = manifest.manifest_hash
         locked.status = "awaiting_confirmation"
@@ -3049,6 +3134,10 @@ async def _run_planning_turn(
                 "plan_hash": locked.active_plan["plan_hash"],
                 "target_duration_s": locked.active_plan.get("target_duration_s"),
                 "montage_cadence": locked.active_plan.get("montage_cadence"),
+                # KRI-118 items 2/3/6: every deterministic repair or
+                # previously-silent degradation this turn applied, in plain
+                # language -- never a reason to fail the turn.
+                "notices": locked.active_plan.get("notices") or [],
             },
         )
     return await _response(db, locked)
@@ -3083,7 +3172,14 @@ async def start_creator_session_controller(
     db: Annotated[AsyncSession, Depends(get_db)],
     *,
     allow_chat: bool = False,
+    carried_active_plan: dict[str, Any] | None = None,
 ) -> CreatorSessionResponse:
+    """Start (or join) the active Creator session for ``item_id``.
+
+    ``carried_active_plan`` is the plan of a failed session this fresh one
+    replaces in the same chat project, so its brief and accepted strategy are
+    not lost (a refresh re-plans it; a new message adds to it).
+    """
     cost_headers = paid_call_headers(request)
     _require_feature(user.id, allow_chat=allow_chat)
     # Serialize session creation against direct generation's PlanItem lock.
@@ -3185,8 +3281,9 @@ async def start_creator_session_controller(
             ownership_epoch=int(plan.ownership_epoch or 0),
             # Source selection can legitimately be followed by one capacity
             # choice. Keep both deterministic questions inside the session.
-            question_budget=2,
-            max_render_attempts=2,
+            # KRI-118 item 5: settings, not hardcoded literals.
+            question_budget=settings.creator_question_budget,
+            max_render_attempts=settings.creator_max_render_attempts,
             iteration_budget=2,
             events=[],
         )
@@ -3219,10 +3316,31 @@ async def start_creator_session_controller(
     if session.status not in {"briefing", "awaiting_confirmation", "awaiting_feedback"}:
         raise HTTPException(status_code=409, detail="Creator session is busy")
     session.status = "planning" if session.status != "awaiting_feedback" else "revising"
-    previous_active_plan = session.active_plan if isinstance(session.active_plan, dict) else None
+    previous_active_plan = (
+        session.active_plan if isinstance(session.active_plan, dict) else carried_active_plan
+    )
     session.preparation = None
     session.last_error = None
     _reset_render_target(session)
+    history = getattr(session, "events", None)
+    carried_brief = (
+        _carried_brief_seed(carried_active_plan, body.message)
+        if previous_active_plan is carried_active_plan and isinstance(history, list) and not history
+        else ""
+    )
+    if carried_brief:
+        # Durable, not inferred per turn: every later turn of this fresh
+        # session reads the failed session's brief from its own history.
+        seed = await append_event(
+            db,
+            session,
+            event_type=CARRIED_BRIEF_EVENT,
+            role="system",
+            payload={"creator_request": carried_brief},
+        )
+        # Events appended by foreign key are absent from the loaded
+        # collection this request's planning turn reads.
+        history.append(seed)
     await append_event(
         db,
         session,
@@ -3494,6 +3612,17 @@ def _seed_guided_specialist_brief(
     )
     optional_values = {
         "execution_contract": plan.strategy.execution_contract,
+        # KRI-118 item 1: forward the chat-picked story shape (day_vlog/
+        # single_hero) to the guided specialist. `plan.strategy.archetype`
+        # has already been repaired by `compile_strategy_to_plan`
+        # (`repair_creator_strategy_shape`) to only ever be a real,
+        # currently-available shape -- never trusted further here.
+        "story_shape": plan.strategy.archetype,
+        "hero_media_id": (
+            plan.strategy.hero_media_id.removeprefix("asset-")
+            if plan.strategy.hero_media_id
+            else None
+        ),
         "media_scope": (
             plan.strategy.media_scope
             if plan.strategy.media_scope == "all" or guided_selected_scope
@@ -3620,6 +3749,23 @@ class _CommittedRenderPublishFailure(RuntimeError):
     def __init__(self, job_id: uuid.UUID) -> None:
         super().__init__("render dispatch publication failed")
         self.job_id = job_id
+
+
+class _SpeechCleanupUnavailableOnPhone(RuntimeError):
+    """`dispatch_item_render_for` rejected `choice == "clean"` before a Job was
+    minted because this item's active narration source is a phone analysis
+    proxy (KRI-118 L1 item 1, `app.tasks.content_plan_build`). No Job is ever
+    minted for this outcome -- mirrors `_PhoneGateRejected`'s no-job shape.
+    Without this, `outcome.outcome == "speech_cleanup_unavailable_on_phone"`
+    fell through to the generic `raise RuntimeError(f"render dispatch
+    failed: {outcome.outcome}")` a few lines below (KRI-118 item 7)."""
+
+
+# Kept identical to `app.routes.plan_items._SPEECH_CLEANUP_UNAVAILABLE_ON_PHONE_MESSAGE`
+# -- no shared import between the two route modules; keep both in sync.
+_SPEECH_CLEANUP_UNAVAILABLE_ON_PHONE_MESSAGE = (
+    "Speech cleanup can't run on this iPhone project's audio yet — generate without cleanup."
+)
 
 
 class _PhoneGateRejected(RuntimeError):
@@ -3858,6 +4004,23 @@ async def confirm_creator_plan_controller(
         if active.get("version") != body.plan_version or active.get("plan_hash") != body.plan_hash:
             raise HTTPException(status_code=409, detail="Creator plan changed")
         edit_plan = _confirmed_edit_plan(active)
+        from app.services.creator_execution_contract import (  # noqa: PLC0415
+            requests_guided_voiceover,
+        )
+        from app.services.guided_speech_cleanup import (  # noqa: PLC0415
+            DISABLED_MESSAGE,
+            guided_voiceover_cleanup_available,
+        )
+
+        if (
+            body.speech_cleanup_choice == "clean"
+            and requests_guided_voiceover((active.get("edit_plan") or {}).get("strategy"))
+            and not guided_voiceover_cleanup_available()
+        ):
+            # Every confirm route shares this controller: a guided narrated
+            # story can only honor "Clean up speech" through the planner's
+            # cleaned derivative, so refuse before an attempt is reserved.
+            raise HTTPException(status_code=409, detail=DISABLED_MESSAGE)
         if session.ownership_epoch != int(plan_row.ownership_epoch or 0):
             raise HTTPException(status_code=409, detail="Creator ownership changed")
         if session.render_attempts >= session.max_render_attempts:
@@ -4221,6 +4384,9 @@ async def confirm_creator_plan_controller(
                 raise _CommittedRenderPublishFailure(uuid.UUID(outcome.job_id))
             if outcome.outcome == "invalid_clips" and getattr(outcome, "reason", None):
                 raise _PhoneGateRejected(outcome.reason)
+            if outcome.outcome == "speech_cleanup_unavailable_on_phone":
+                # KRI-118 item 7: real typed refusal, not a dispatch failure.
+                raise _SpeechCleanupUnavailableOnPhone
             if outcome.outcome != "dispatched":
                 raise RuntimeError(f"render dispatch failed: {outcome.outcome}")
             job_id = uuid.UUID(outcome.job_id) if outcome.job_id else None
@@ -4313,6 +4479,24 @@ async def confirm_creator_plan_controller(
                 "I couldn't start that render. Your creative plan is still saved.",
             ),
         )
+        failed.status = "failed"
+        failed.last_error = {"code": code, "message": message}
+        failed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)
+        if failed_receipt:
+            failed_receipt.status = "failed"
+            failed_receipt.error = failed.last_error
+            failed_receipt.completed_at = datetime.now(UTC)
+        await append_event(
+            db, failed, event_type="assistant_error", payload={"message": message, "code": code}
+        )
+        return await _response(db, failed)
+    except _SpeechCleanupUnavailableOnPhone:
+        # KRI-118 item 7: no Job was ever minted for this outcome, mirrors
+        # `_PhoneGateRejected` immediately above.
+        await db.rollback()
+        failed = await _load_session(db, creator_session_id, user_id, plan_item_id, for_update=True)
+        code = "speech_cleanup_unavailable_on_phone"
+        message = _SPEECH_CLEANUP_UNAVAILABLE_ON_PHONE_MESSAGE
         failed.status = "failed"
         failed.last_error = {"code": code, "message": message}
         failed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)

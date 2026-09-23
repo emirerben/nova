@@ -1,0 +1,35 @@
+{
+  "failure_reason": "speech_cleanup_failed",
+  "source": "python scripts/admin.py --prod GET /admin/jobs/<redacted>/debug, pulled 2026-09-23",
+  "provenance": "real",
+  "notes": [
+    "Real prod shape: a single-clip 'subtitled' (Talking to camera) job with",
+    "explicit_choice='clean' and execution_contract='required_v1' (opt-in",
+    "speech cleanup, strict mode -- CLAUDE.md SILENCE_CUT_ENABLED /",
+    "RETAKE_CUT_ENABLED). speech_cleanup_failure_reason was 'unsafe_plan':",
+    "app.tasks.generative_build raises SpeechCleanupFailure('unsafe_plan')",
+    "(app/services/speech_cleanup.py's typed exception) when",
+    "strict_silence_cut is on and the computed CutPlan's bailout_reason is",
+    "anything other than None/clip_too_short/no_words -- i.e. the guard",
+    "refused to apply a cut plan it judged unsafe, per CLAUDE.md's",
+    "SILENCE_CUT_ENABLED note ('cleanup cut a word' is a guard bug, not this",
+    "lever; TestRuleZeroCannotCutRealSpeech pins the guard itself). The actual",
+    "bailout determination runs on a real Whisper transcript + ffmpeg silence",
+    "detection, which needs real audio bytes this repo never commits. What",
+    "test_prod_failure_replay.py verifies instead: the SpeechCleanupFailure",
+    "contract itself -- constructing it with reason='unsafe_plan' and",
+    "confirming it carries a stable, typed .reason (never surfaced to the",
+    "worker's failure-reason mapping as a bare 'processing_failed') -- this is",
+    "the same typed-exception shape app.tasks.generative_build's real raise",
+    "site uses verbatim (grep-verified against this exact repo revision)."
+  ],
+  "edit_format": "subtitled",
+  "speech_cleanup": {
+    "explicit_choice": "clean",
+    "execution_contract": "required_v1",
+    "bailout_reason": "unsafe_plan"
+  },
+  "media": [
+    { "media_id": "clip-0", "kind": "video", "duration_s": 22.0 }
+  ]
+}

@@ -60,8 +60,8 @@ final class SourceAssetStoreTests: XCTestCase {
         clip.transform.positionX = .nan
         let recipe = EditRecipe(assets: [MediaAsset(id: "a", relativePath: "a")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [clip])])
         XCTAssertThrowsError(try recipe.validate())
-        XCTAssertEqual(StorageEstimate.forAssetBytes(.max).requiredBytes, .max)
-        XCTAssertEqual(StorageEstimate.forAssetBytes(1, projectCount: .max).requiredBytes, .max)
+        XCTAssertEqual(StorageEstimate.forEstimatedOutput(durationS: .infinity).requiredBytes, .max)
+        XCTAssertEqual(StorageEstimate.forEstimatedOutput(durationS: 60, pendingProjects: .max).requiredBytes, .max)
     }
     func testTextAnimationWireCompatibilityAndUnknownEffects() throws {
         for wire in ["fade_scale", "fadeScale"] {

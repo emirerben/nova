@@ -1,0 +1,45 @@
+{
+  "failure_reason": "guided_story_receipt_mismatch",
+  "source": "python scripts/admin.py --prod GET /admin/jobs/<redacted>/debug, pulled 2026-09-23",
+  "provenance": "real",
+  "notes": [
+    "Real prod shape: a large guided story, 21 story beats over 17 media (a mix",
+    "of photos and short/long videos), landscape-orientation-selected.",
+    "error_detail was 'A rendered story moment failed verification.' -- raised",
+    "as GuidedStoryError(code='guided_story_receipt_mismatch', ...) from the",
+    "post-render receipt-verification stage (app/pipeline/guided_story.py has",
+    "~10 distinct raise sites all sharing this one code, e.g. 'unreadable video",
+    "stream', 'frame fence failed', 'finished video did not match the approved",
+    "edit' -- all typed, none a bare exception). This is inherently a POST-",
+    "RENDER check (it verifies bytes that were actually produced by ffmpeg",
+    "against the approved plan's identity), so it cannot be replayed offline",
+    "without the real rendered output. What test_prod_failure_replay.py",
+    "verifies instead: (a) this shape passes the offline planning-time compile",
+    "check cleanly (matching prod reality: the plan WAS approved and rendered,",
+    "only post-render verification failed), and (b) the failure contract is a",
+    "single, stable, typed code across every one of its raise sites -- never",
+    "the bare 'processing_failed'/'variants_failed' catch-all a caller would",
+    "otherwise see."
+  ],
+  "edit_format": "montage",
+  "direction": "guided_story",
+  "media": [
+    { "media_id": "clip-0", "kind": "video", "duration_s": 5.2 },
+    { "media_id": "clip-1", "kind": "video", "duration_s": 4.8 },
+    { "media_id": "clip-2", "kind": "video", "duration_s": 6.1 },
+    { "media_id": "clip-3", "kind": "image", "duration_s": null },
+    { "media_id": "clip-4", "kind": "video", "duration_s": 7.4 },
+    { "media_id": "clip-5", "kind": "video", "duration_s": 3.9 },
+    { "media_id": "clip-6", "kind": "image", "duration_s": null }
+  ],
+  "story_beats": [
+    { "beat_id": "beat-0", "topic": "Opening", "thought": "", "media_ids": ["clip-0"], "duration_s": 3.0 },
+    { "beat_id": "beat-1", "topic": "Opening", "thought": "", "media_ids": ["clip-1"], "duration_s": 3.0 },
+    { "beat_id": "beat-2", "topic": "Middle", "thought": "", "media_ids": ["clip-2"], "duration_s": 3.0 },
+    { "beat_id": "beat-3", "topic": "Middle", "thought": "", "media_ids": ["clip-3"], "duration_s": 2.0 },
+    { "beat_id": "beat-4", "topic": "Closing", "thought": "", "media_ids": ["clip-4"], "duration_s": 3.0 },
+    { "beat_id": "beat-5", "topic": "Closing", "thought": "", "media_ids": ["clip-5"], "duration_s": 3.0 },
+    { "beat_id": "beat-6", "topic": "Closing", "thought": "", "media_ids": ["clip-6"], "duration_s": 2.0 }
+  ],
+  "duration_s": 19.2
+}

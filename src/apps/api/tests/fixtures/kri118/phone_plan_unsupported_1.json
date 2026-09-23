@@ -1,0 +1,32 @@
+{
+  "failure_reason": "phone_plan_unsupported",
+  "source": "python scripts/admin.py --prod GET /admin/jobs/<redacted>/debug, pulled 2026-09-23",
+  "provenance": "real",
+  "notes": [
+    "Real prod shape: an approved, phone-dispatched guided story (montage) with",
+    "19 analysis-proxy media across 9 beats (several beats hold up to 4",
+    "media_ids each -- the compiler's own _MAX_MEDIA_PER_BEAT). error_detail",
+    "was the exact string below, raised as",
+    "UnsupportedPhonePlan('phone transition needs the full source window')",
+    "from app/pipeline/phone_guided_plan.py:426. The code comment at that raise",
+    "site (as of this pass) cites THIS EXACT JOB by id as the observed case",
+    "that motivated widening the tolerance for small rounding shortfalls",
+    "(KRI-163) while still failing closed for a genuine hole. Reconstructing",
+    "the precise per-moment source_start/source_duration refit that produced",
+    "this specific raise would require the real analysis-proxy files (never",
+    "committed to git); instead this fixture replays the REAL exception object",
+    "and message captured from prod through the REAL worker failure-mapping",
+    "path (app.tasks.generative_build.orchestrate_generative_job ->",
+    "_fail_job), which is exactly the code test_phone_guided_dispatch.py's",
+    "test_phone_plan_failure_persists_failure_reason already exercises for",
+    "synthetic UnsupportedPhonePlan instances -- this fixture's job is to",
+    "confirm the SAME real-world message still maps to the typed",
+    "'phone_plan_unsupported' reason today, not the generic 'phone_plan_failed'",
+    "catch-all a bare RuntimeError would produce."
+  ],
+  "error_message": "phone transition needs the full source window",
+  "edit_format": "montage",
+  "media_count": 19,
+  "beat_count": 9,
+  "phone_render_verified_features": ["basicComposition", "local1080Export", "crossfade", "audioMix"]
+}

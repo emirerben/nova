@@ -531,6 +531,35 @@ async def test_respond_to_dispatch_result_invalid_clips_without_phone_gate_stays
     assert exc.value.detail == "Your clips couldn't be validated — re-upload them and try again"
 
 
+async def test_respond_to_dispatch_result_speech_cleanup_unavailable_on_phone() -> None:
+    """KRI-118 item 7: L1's new outcome gets a real 4xx + copy, not the
+    generic unexpected-outcome 500 it fell through to before this fix."""
+    from fastapi import HTTPException
+
+    result = DispatchResult("speech_cleanup_unavailable_on_phone")
+    with pytest.raises(HTTPException) as exc:
+        await _respond_to_dispatch_result(result, "item-id", uuid.uuid4(), db=None)
+    assert exc.value.status_code == 409
+    assert exc.value.detail.startswith("speech_cleanup_unavailable_on_phone:")
+    assert "iPhone" in exc.value.detail
+
+
+async def test_respond_to_dispatch_result_self_narration_multi_clip_via_phone_gate() -> None:
+    """KRI-118 item 7: L1's other new outcome (a `phone_gate` reason on
+    `invalid_clips`, not a bare outcome) already routes through the existing
+    PHONE_GATE_MESSAGES lookup -- pinned here so it never regresses."""
+    from fastapi import HTTPException
+
+    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES
+
+    result = DispatchResult("invalid_clips", reason="self_narration_multi_clip")
+    with pytest.raises(HTTPException) as exc:
+        await _respond_to_dispatch_result(result, "item-id", uuid.uuid4(), db=None)
+    assert exc.value.status_code == 422
+    code, message = PHONE_GATE_MESSAGES["self_narration_multi_clip"]
+    assert exc.value.detail == f"{code}:{message}"
+
+
 def test_task_side_enforcement_rejects_missing_proposal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

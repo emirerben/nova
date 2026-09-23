@@ -2,6 +2,7 @@ from contextlib import nullcontext
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from app.agents._runtime import (
     AiBudgetExceededError,
@@ -95,6 +96,13 @@ from app.tasks import creator_preparation as task
             "analysis_unavailable",
             True,
             "SECRET_PAYLOAD",
+        ),
+        (
+            "analysis",
+            OperationalError("SECRET_DB_QUERY", {}, Exception("deadlock detected")),
+            "preparation_unavailable",
+            True,
+            "SECRET_DB_QUERY",
         ),
         (
             "resume",

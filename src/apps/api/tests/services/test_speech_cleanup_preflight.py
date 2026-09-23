@@ -23,6 +23,7 @@ from app.services.active_narration_source import (
 from app.services.clip_speech import SilenceDetectionResult
 from app.services.speech_cleanup_preflight import (
     SPEECH_CLEANUP_ENGINE_VERSION,
+    preflight_enabled_for_source,
     refresh_policy_stale_analysis_async,
 )
 
@@ -443,3 +444,49 @@ async def test_preflight_off_never_touches_a_row_or_legacy_consent(
     assert refresh.refreshed is False
     assert row.superseded_at is None
     assert item.speech_cleanup_enabled is True
+
+
+class TestPreflightEnabledForSourceOnPhone:
+    """KRI-118 L1 item 1: clean speech must never be offered on a phone
+    project -- the original audio bytes never reach the server, only a small
+    analysis proxy does, so speech cleanup can never actually run there."""
+
+    def test_enforce_mode_still_enables_a_normal_cloud_source(self) -> None:
+        assert (
+            preflight_enabled_for_source(
+                "fingerprint",
+                mode="enforce",
+                rollout_percent=100,
+                storage_path="users/private/take.wav",
+            )
+            is True
+        )
+
+    def test_analysis_proxy_storage_path_is_rejected_even_at_full_rollout(self) -> None:
+        assert (
+            preflight_enabled_for_source(
+                "fingerprint",
+                mode="enforce",
+                rollout_percent=100,
+                storage_path="users/u/plan/i/analysis-proxy-source.mp4",
+            )
+            is False
+        )
+
+    def test_analysis_proxy_storage_path_is_rejected_in_shadow_mode_too(self) -> None:
+        assert (
+            preflight_enabled_for_source(
+                "fingerprint",
+                mode="shadow",
+                rollout_percent=100,
+                storage_path="analysis-proxy-source.mp4",
+            )
+            is False
+        )
+
+    def test_no_storage_path_falls_back_to_the_pre_existing_cohort_rule(self) -> None:
+        # Byte-identical to before this parameter existed when a caller omits it.
+        assert (
+            preflight_enabled_for_source("fingerprint", mode="enforce", rollout_percent=100) is True
+        )
+        assert preflight_enabled_for_source("fingerprint", mode="off", rollout_percent=100) is False

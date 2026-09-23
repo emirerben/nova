@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -179,10 +180,10 @@ def test_run_slide_post_job_persists_ordered_slides_and_bundle(monkeypatch) -> N
     assert any(key.endswith("cover.jpg") for key in uploaded)
 
 
-def test_run_slide_post_job_drops_foreign_owned_asset_but_keeps_the_rest(monkeypatch) -> None:
-    """A reference to another user's asset (or a deleted/foreign one) is
-    dropped, not fatal — same best-effort posture as a missing clip
-    elsewhere in the pipeline."""
+def test_run_slide_post_job_rejects_incomplete_foreign_owned_draft_before_render(
+    monkeypatch,
+) -> None:
+    """A render must never turn a partial ordered draft into a complete export."""
     job_id = str(uuid.uuid4())
     item_id = uuid.uuid4()
     user_id = uuid.uuid4()
@@ -219,23 +220,15 @@ def test_run_slide_post_job_drops_foreign_owned_asset_but_keeps_the_rest(monkeyp
     ]
 
     monkeypatch.setattr(gb, "_sync_session", lambda: _FakeSession(job, item, assets))
-    _patch_storage_and_ffmpeg(monkeypatch)
-    captured: dict = {}
-    monkeypatch.setattr(
-        gb,
-        "_upsert_variant_entry",
-        lambda _job_id, result: captured.setdefault("result", result) or True,
-    )
-    monkeypatch.setattr(gb, "_finalize_job", lambda _job_id, _results: True)
-
-    gb._run_slide_post_job(job_id, render_trace_id="trace-2")
-
-    result = captured["result"]
-    assert len(result["slides"]) == 1
-    assert result["slides"][0]["asset_id"] == str(good_id)
+    normalize = MagicMock(side_effect=AssertionError("incomplete draft must not render"))
+    monkeypatch.setattr("app.pipeline.slide_post.build.normalize_image_slide", normalize)
+    with pytest.raises(gb.SlidePostPolicyError) as exc_info:
+        gb._run_slide_post_job(job_id, render_trace_id="trace-2")
+    assert exc_info.value.reason == "incomplete_draft_assets"
+    normalize.assert_not_called()
 
 
-def test_run_slide_post_job_raises_when_no_usable_slides_remain(monkeypatch) -> None:
+def test_run_slide_post_job_rejects_unready_draft_asset(monkeypatch) -> None:
     job_id = str(uuid.uuid4())
     item_id = uuid.uuid4()
     user_id = uuid.uuid4()
@@ -263,7 +256,7 @@ def test_run_slide_post_job_raises_when_no_usable_slides_remain(monkeypatch) -> 
 
     with pytest.raises(gb.SlidePostPolicyError) as exc_info:
         gb._run_slide_post_job(job_id, render_trace_id="trace-3")
-    assert exc_info.value.reason == "no_usable_slides"
+    assert exc_info.value.reason == "incomplete_draft_assets"
 
 
 def test_run_slide_post_job_raises_on_empty_draft(monkeypatch) -> None:

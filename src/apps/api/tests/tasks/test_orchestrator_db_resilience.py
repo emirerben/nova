@@ -70,6 +70,9 @@ class TestRetryDecoratorConfig:
             "app.tasks.orchestrate.render_clip",
             "app.tasks.drive_import.import_from_drive",
             "app.tasks.drive_import.batch_import_from_drive",
+            # Guided proposal drafting (2026-09-22: a dropped connection during
+            # the drafting UPDATE turned a retryable blip into a failed plan).
+            "app.tasks.edit_proposal_build.draft_edit_proposal",
         ],
     )
     def test_task_retries_on_transient_db_errors(self, import_path: str):
@@ -124,6 +127,9 @@ class TestRetryDecoratorConfig:
             "app.tasks.orchestrate.render_clip",
             "app.tasks.drive_import.import_from_drive",
             "app.tasks.drive_import.batch_import_from_drive",
+            # Guided proposal drafting (2026-09-22: a dropped connection during
+            # the drafting UPDATE turned a retryable blip into a failed plan).
+            "app.tasks.edit_proposal_build.draft_edit_proposal",
         ],
     )
     def test_task_retry_budget_covers_documented_incident(self, import_path: str):

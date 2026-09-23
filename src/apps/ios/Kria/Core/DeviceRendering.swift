@@ -325,7 +325,7 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
         var retries = 0
         while true {
             do { return try await api.downloadDeviceAsset(DeviceAssetDownloadBody(identity: request.identity, assetID: asset.id)) }
-            catch APIError.requestFailed(status: 429) where retries < 3 {
+            catch APIError.requestFailed(status: 429, detail: _) where retries < 3 {
                 retries += 1
                 try await Task.sleep(for: rateLimitBackoff)
             }

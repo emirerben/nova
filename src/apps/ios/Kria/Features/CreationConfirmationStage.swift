@@ -79,12 +79,56 @@ extension CreationThread {
     }
 }
 
-/// Non-transient phone-gate rejections (`app.tasks.content_plan_build.PHONE_GATE_MESSAGES`
-/// on the server): confirming again fails identically until something about the
-/// project changes, so "Retry generation" is misleading here (KRI-132).
+/// Non-retryable structural/deterministic rejections: confirming again fails
+/// identically until something about the project changes (a different format,
+/// a voiceover removed, re-enrolling), so "Retry generation" is misleading
+/// here (KRI-132). Originally just the phone-gate family
+/// (`app.tasks.content_plan_build.PHONE_GATE_MESSAGES`); KRI-118 items 1-2
+/// (`app.routes.creator_agent`) added two more deterministic `last_error`
+/// codes that fail the same session, before any Job exists, the same way:
+/// - `strategy_invalid` (`app.services.creator_errors.CreatorStrategyError`)
+/// - `phone_self_narration_multi_clip` (self-narration across 2+ clips has no
+///   phone compiler yet -- `PHONE_GATE_MESSAGES["self_narration_multi_clip"]`)
+/// - `speech_cleanup_unavailable_on_phone` (cleanup requested on an
+///   analysis-proxy phone source, which never carries the real audio bytes)
+/// All literals verified against `origin/feat/kri118-l4-thread-api-2026-09-23`.
+/// `format_mismatch` (KRI-118 L4) was deliberately NOT added here: it is
+/// raised synchronously as a 409 detail on the confirm action itself (never a
+/// `last_error`/`assistant_error` code this property can see), and is already
+/// surfaced correctly through `CreationConfirmationConflict`.
 let nonRetryablePhoneGateErrorCodes: Set<String> = [
     "phone_not_enrolled", "phone_plan_unapproved", "phone_format_unavailable", "phone_voiceover_unavailable",
+    "strategy_invalid", "phone_self_narration_multi_clip", "speech_cleanup_unavailable_on_phone",
 ]
+
+/// KRI-118 item 2: `day_vlog`/`single_hero` still report `edit_format:
+/// "montage"` to the chat picker (the picker only ever offers Montage for the
+/// whole `GUIDED_EDIT_FORMATS` family), so the actual shape rides separately
+/// on `creator_agent.story_shape` (`app.services.creator_sessions.
+/// compile_active_plan` / `_creator_agent_projection`, lane L2/L4). Nil (no
+/// subtitle) for any other or absent shape -- this is a label, not a new
+/// picker entry.
+func storyShapeSubtitle(creatorAgent: [String: JSONValue]?) -> String? {
+    switch creatorAgent?["story_shape"]?.stringValue {
+    case "day_vlog": "Day vlog"
+    case "single_hero": "Single hero"
+    default: nil
+    }
+}
+
+/// KRI-118 item 3: server-authored "what Kria changed" notes -- `notices` are
+/// the Main Creator's own server-repaired direction notes
+/// (`compile_active_plan`, lane L2); `adjustments` are the guided
+/// specialist's structural repair notes on the item's edit proposal
+/// (`app.services.story_shapes.humanize_repairs`, lane L3). Merge
+/// adjustments-first, then notices, dropping any repeat across the two lists
+/// so the same note never shows twice. Empty when both are empty or absent.
+func mergedWhatKriaChanged(creatorAgent: [String: JSONValue]?) -> [String] {
+    let adjustments = (creatorAgent?["adjustments"]?.arrayValue ?? []).compactMap(\.stringValue)
+    let notices = (creatorAgent?["notices"]?.arrayValue ?? []).compactMap(\.stringValue)
+    var seen = Set<String>()
+    return (adjustments + notices).filter { seen.insert($0).inserted }
+}
 
 struct CreationConfirmationStage: View {
     let thread: CreationThread
@@ -109,10 +153,19 @@ struct CreationConfirmationStage: View {
         isFailure && thread.lastAssistantErrorCode.map(nonRetryablePhoneGateErrorCodes.contains) == true
     }
 
+    private var storyShapeLabel: String? { storyShapeSubtitle(creatorAgent: thread.creatorAgent) }
+    private var whatKriaChanged: [String] { mergedWhatKriaChanged(creatorAgent: thread.creatorAgent) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(isFailure ? "Your project is safe" : "Here’s the direction I’ll use")
                 .font(KriaFont.display(24))
+            if let storyShapeLabel {
+                Text(storyShapeLabel)
+                    .font(KriaFont.body(12).weight(.medium))
+                    .foregroundStyle(KriaColor.zinc)
+                    .accessibilityIdentifier("creation-confirmation-story-shape")
+            }
             ChatResponseText(content: proposalSummary, startedAt: responseStartedAt)
                 .font(KriaFont.body(14))
                 .copyableMessage(proposalSummary, previewShape: RoundedRectangle(cornerRadius: 8))
@@ -139,10 +192,26 @@ struct CreationConfirmationStage: View {
             } else {
                 retryOrCreateButton(payload: [:])
             }
+            if !whatKriaChanged.isEmpty { whatKriaChangedDisclosure }
             Text("You can also send a message to change the direction.")
                 .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
         }
         .accessibilityIdentifier("creation-confirmation")
+    }
+
+    private var whatKriaChangedDisclosure: some View {
+        DisclosureGroup("What Kria changed (\(whatKriaChanged.count))") {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(whatKriaChanged.enumerated()), id: \.offset) { _, note in
+                    Text(note).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+                }
+            }
+            .padding(.top, 4)
+            .accessibilityIdentifier("creation-confirmation-what-changed-list")
+        }
+        .font(KriaFont.body(13).weight(.medium))
+        .foregroundStyle(KriaColor.ink)
+        .accessibilityIdentifier("creation-confirmation-what-changed")
     }
 
     /// "Retry generation" for an ordinary failure; for a non-transient phone-gate

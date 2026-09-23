@@ -105,7 +105,9 @@ async def _summarize(prompt: str) -> str:
     # A dedicated async client makes cancellation/timeout close its connection.
     async with genai.Client(
         api_key=settings.gemini_api_key,
-        http_options=types.HttpOptions(timeout=TITLE_TIMEOUT_S * 1000),
+        # Gemini rejects provider deadlines below 10 seconds. The outer
+        # wait_for still limits the background naming task to eight seconds.
+        http_options=types.HttpOptions(timeout=10_000),
     ).aio as client:
         response = await client.models.generate_content(
             model=settings.gemini_model,

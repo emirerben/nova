@@ -1260,6 +1260,138 @@ async def test_speech_choice_reopens_exact_failed_planning_attempt(monkeypatch, 
     assert output.active_job_id is not None
 
 
+@pytest.mark.parametrize(
+    ("code", "choice", "enabled", "reopens"),
+    [
+        ("speech_cleanup_disabled", "keep_original", False, True),
+        ("speech_cleanup_unavailable", "keep_original", False, True),
+        # Choosing Clean again while cleanup is still off reports it again.
+        ("speech_cleanup_disabled", "clean", False, False),
+        # A failure written before the staged enable must not block Clean
+        # once cleanup is on (API restarted before the workers).
+        ("speech_cleanup_disabled", "clean", True, True),
+        # The 5-minute window does not change with the flag.
+        ("speech_cleanup_unavailable", "clean", True, False),
+    ],
+)
+async def test_keep_original_reopens_an_unavailable_cleanup_failure(
+    monkeypatch, code, choice, enabled, reopens
+):
+    """ "Keep the original speech to create this video" must be a way forward."""
+    from app.services.guided_speech_cleanup import DISABLED_MESSAGE
+
+    monkeypatch.setattr(settings, "guided_voiceover_speech_cleanup_enabled", enabled)
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    graph = _failed_planning_graph()
+    _thread, session, item = graph
+    item.edit_proposal["failure"] = {
+        "code": code,
+        "message": DISABLED_MESSAGE,
+        "retryable": False,
+    }
+    row = _analysis(item.id)
+    payload = {"speech_cleanup_analysis_id": str(row.id), "speech_cleanup_choice": choice}
+
+    if not reopens:
+        with pytest.raises(HTTPException) as exc:
+            await _run_generate_action(monkeypatch, graph=graph, analysis=row, payload=payload)
+        assert (exc.value.status_code, exc.value.detail) == (409, DISABLED_MESSAGE)
+        assert session.status == "failed"
+        return
+    _output, controller = await _run_generate_action(
+        monkeypatch, graph=graph, analysis=row, payload=payload
+    )
+    assert session.status == "awaiting_confirmation"
+    assert controller.await_args.args[1].speech_cleanup_choice == choice
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_guided_voiceover_clean_choice_is_refused_while_cleanup_is_off(monkeypatch, enabled):
+    """Refused before an attempt is reserved, not spent on a certain failure."""
+    from app.services.creator_execution_contract import GUIDED_VOICEOVER_CONTRACT
+    from app.services.guided_speech_cleanup import DISABLED_MESSAGE
+
+    monkeypatch.setattr(settings, "guided_voiceover_speech_cleanup_enabled", enabled)
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    graph = _action_graph()
+    _thread, session, item = graph
+    session.active_plan["edit_plan"] = {
+        "strategy": {
+            "execution_contract": GUIDED_VOICEOVER_CONTRACT,
+            "render_program": "guided",
+            "audio_strategy": "voiceover",
+        }
+    }
+    row = _analysis(item.id)
+    payload = {"speech_cleanup_analysis_id": str(row.id), "speech_cleanup_choice": "clean"}
+
+    if enabled:
+        _output, controller = await _run_generate_action(
+            monkeypatch, graph=graph, analysis=row, payload=payload
+        )
+        controller.assert_awaited_once()
+        return
+    with pytest.raises(HTTPException) as exc:
+        await _run_generate_action(monkeypatch, graph=graph, analysis=row, payload=payload)
+    assert (exc.value.status_code, exc.value.detail) == (409, DISABLED_MESSAGE)
+    routes.creator_agent.confirm_creator_plan_controller.assert_not_awaited()
+    assert session.status == "awaiting_confirmation"
+
+
+async def test_removing_the_voiceover_deletes_its_cleaned_derivatives(monkeypatch):
+    from app.services.guided_speech_cleanup import derivative_item_prefix
+
+    thread, _session, item = _action_graph()
+    voiceover = "users/legacy/voiceover.m4a"
+    thread.state = {"media": [{"media_id": "voice-1", "kind": "audio"}], "media_count": 1}
+    item.clip_gcs_paths = []
+    item.clip_assignments = []
+    item.voiceover_gcs_path = voiceover
+    item.audio_mode = "voiceover"
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    mutate = Mock(return_value=SimpleNamespace(source_changed=False))
+    deleted: list[tuple[str, str]] = []
+
+    async def to_thread(function, argument):  # noqa: ANN001, ANN202
+        deleted.append((function.__name__, argument))
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_reject_input_mutation_while_rendering", AsyncMock())
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_legacy_media_path", lambda *_args: voiceover)
+    monkeypatch.setattr(routes, "_ensure_speech_cleanup_preflight", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes.asyncio, "to_thread", to_thread)
+    monkeypatch.setattr("app.services.plan_item_media.mutate_plan_item_media", mutate)
+    monkeypatch.setattr(
+        "app.services.speech_cleanup_preflight.mutation_current_analysis_async",
+        AsyncMock(return_value=None),
+    )
+    body = routes.ActionBody(
+        action="remove_media",
+        payload={"media_id": "voice-1"},
+        client_action_id="remove-voiceover",
+        expected_revision=4,
+    )
+
+    await routes.action_thread(
+        _request(), str(thread.id), body, SimpleNamespace(id=thread.creator_id), db
+    )
+
+    assert mutate.call_args.kwargs["voiceover_gcs_path"] is None
+    # A legacy (shared) raw path is kept; the item-scoped derivatives are not.
+    assert deleted == [
+        (
+            "delete_prefix_best_effort",
+            derivative_item_prefix(owner_id=thread.creator_id, item_id=item.id),
+        )
+    ]
+
+
 @pytest.mark.parametrize("choice", ["clean", "keep_original"])
 @pytest.mark.parametrize(
     "rejection",

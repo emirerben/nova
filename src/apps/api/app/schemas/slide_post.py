@@ -149,4 +149,11 @@ def bump_slide_post_version(draft: SlidePostDraft, **updates: object) -> SlidePo
     writer for `clip_gcs_paths`.
     """
 
-    return draft.model_copy(update={**updates, "version": draft.version + 1, "user_edited": True})
+    # ``model_copy(update=...)`` deliberately skips Pydantic validation.  A
+    # route using it for client supplied slides could otherwise persist an
+    # invalid cover index or duplicate stable slide id.  Revalidate the full
+    # JSON shape at this persistence boundary.
+    return SlidePostDraft.model_validate(
+        draft.model_dump(mode="python")
+        | {**updates, "version": draft.version + 1, "user_edited": True}
+    )

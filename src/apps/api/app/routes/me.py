@@ -563,6 +563,9 @@ class LibraryJob(BaseModel):
     poster_status: Literal["ready", "repairing", "unavailable"]
     download_url: str | None = None
     output_variant_id: str | None = None
+    # Present only for the selected, rendered slides variant. Other jobs and
+    # legacy/malformed assembly plans remain null for backwards compatibility.
+    slide_count: int | None = None
     tiktok_publishable: bool = False
     tiktok_publication: LibraryTikTokPublication | None = None
     created_at: datetime
@@ -810,6 +813,24 @@ def _to_library_job(
         except Exception:  # noqa: BLE001 — a library row must survive signing failure
             log.warning("library_download_sign_failed", job_id=str(job.id), exc_info=True)
     plan = job.assembly_plan or {}
+    slide_count: int | None = None
+    if output_variant_id == "slides" and isinstance(plan, dict):
+        variants = plan.get("variants")
+        matches = (
+            [
+                variant
+                for variant in variants
+                if isinstance(variant, dict)
+                and variant.get("variant_id") == "slides"
+                and variant.get("resolved_archetype") == "slides"
+            ]
+            if isinstance(variants, list)
+            else []
+        )
+        if len(matches) == 1 and isinstance(matches[0].get("slides"), list):
+            rendered_slides = matches[0]["slides"]
+            if all(isinstance(slide, dict) for slide in rendered_slides):
+                slide_count = len(rendered_slides)
     has_owned_output = bool(
         output_path
         or plan.get("output_path")
@@ -827,6 +848,7 @@ def _to_library_job(
         poster_status=_library_poster_status(job, preview, poster_url),
         download_url=download_url,
         output_variant_id=output_variant_id,
+        slide_count=slide_count,
         tiktok_publishable=bool(output_url and has_owned_output),
         tiktok_publication=(
             LibraryTikTokPublication(

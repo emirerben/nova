@@ -11,6 +11,7 @@ from app.agents.edit_proposal import (
     EditProposalMedia,
 )
 from app.agents.semantic_edit_proposal import (
+    _CAPTION_RETRY_HINT,
     _GROUP_RETRY_HINT,
     SemanticEditProposalAgent,
     semantic_plan_from_legacy,
@@ -269,45 +270,61 @@ def test_nonlabel_long_thought_still_fails_schema_validation() -> None:
 
 
 def test_server_owned_title_and_shot_label_bindings_are_removed_with_repairs() -> None:
-    raw = json.loads(
-        _raw(
-            text_bindings=[
-                {"text": "London day", "chapter_ids": ["one"]},
-                {"text": "Park Walk", "chapter_ids": ["one"]},
-                {"text": "Wrap", "chapter_ids": ["two"]},
-                {"text": "post match pub", "chapter_ids": ["two"]},
-            ]
-        )
-    )
+    bindings = [
+        {"text": "London day", "chapter_ids": ["one"]},
+        {"text": "Park Walk", "chapter_ids": ["one"]},
+        {"text": "Wrap", "chapter_ids": ["two"]},
+        {"text": "post match pub", "chapter_ids": ["two"]},
+    ]
     plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
-        json.dumps(raw), _input(shot_labels=["Park Walk", "Pub Talk"], closing_title="Wrap")
+        _raw(text_bindings=bindings),
+        _input(shot_labels=["Park Walk", "Pub Talk"], closing_title="Wrap"),
     )
-    assert [binding.text for binding in plan.text_bindings] == ["post match pub"]
+    # Guided stories never render the montage lane: it is dropped wholesale.
+    assert plan.text_bindings == []
     assert plan.repairs == [
         "replaced_server_owned_shot_label_thought:0",
         "replaced_server_owned_shot_label_thought:1",
-        "dropped_server_owned_text_binding:0",
-        "dropped_server_owned_text_binding:1",
-        "dropped_server_owned_text_binding:2",
+        "dropped_non_montage_text_bindings:4",
     ]
+    fast = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        _raw(text_bindings=[bindings[0], bindings[3]]),
+        _input(direction="fast_montage", closing_title="Wrap"),
+    )
+    assert "dropped_server_owned_text_binding:0" in fast.repairs
+    assert [binding.text for binding in fast.text_bindings] == ["post match pub"] * 2
 
 
-def test_normalized_server_title_echo_drops_without_explicit_caption_variant() -> None:
+@pytest.mark.parametrize(
+    "direction, repair",
+    [
+        ("fast_montage", "dropped_server_owned_text_binding:0"),
+        ("guided_story", "dropped_non_montage_text_bindings:1"),
+    ],
+)
+def test_normalized_server_title_echo_drops_without_explicit_caption_variant(
+    direction: str, repair: str
+) -> None:
     raw = _raw(text_bindings=[{"text": "LONDON DAY", "chapter_ids": ["one"]}])
     plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
-        raw, _input(creator_request="")
+        raw, _input(direction=direction, creator_request="")
     )
     assert plan.text_bindings == []
-    assert "dropped_server_owned_text_binding:0" in plan.repairs
+    assert repair in plan.repairs
 
 
 def test_distinct_caption_variant_of_server_title_is_preserved() -> None:
     raw = _raw(text_bindings=[{"text": "us", "chapter_ids": ["one"]}])
-    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
-        raw,
-        _input(opening_title="US", creator_request='Show "us" on the first clip.'),
+    input = _input(opening_title="US", creator_request='Show "us" on the first clip.')
+    plan = SemanticEditProposalAgent(None).parse(raw, input)  # type: ignore[arg-type]
+    # Guided copy renders through thoughts, so binding-only creator copy moves there.
+    assert plan.text_bindings == []
+    assert [chapter.thought for chapter in plan.chapters] == ["us", ""]
+    assert "moved_creator_caption_binding_to_thought:0:0" in plan.repairs
+    fast = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        raw, input.model_copy(update={"direction": "fast_montage"})
     )
-    assert [binding.text for binding in plan.text_bindings] == ["us"]
+    assert [binding.text for binding in fast.text_bindings] == ["us"]
 
 
 def test_prompt_rewrites_server_constraints_to_short_aliases() -> None:
@@ -429,7 +446,12 @@ def test_distinct_exact_creator_caption_variants_survive_thoughts_and_bindings()
     input = _input(creator_request='Show "US" on first clip and show "us" on second clip.')
     plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
     assert [chapter.thought for chapter in plan.chapters] == ["US", "us"]
-    assert [binding.text for binding in plan.text_bindings] == ["US", "us"]
+    # Thoughts are the guided lane; the montage bindings are never rendered.
+    assert plan.text_bindings == []
+    fast = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw), input.model_copy(update={"direction": "fast_montage"})
+    )
+    assert {binding.text for binding in fast.text_bindings} == {"US", "us"}
 
 
 def test_distinct_creator_caption_variant_must_not_be_missing_or_ambiguous() -> None:
@@ -479,6 +501,775 @@ def test_resolved_caption_echo_cannot_remain_on_unrelated_media(direction, op) -
     assert [
         (binding.text, binding.chapter_ids, binding.media_ids) for binding in plan.text_bindings
     ] == ([("After the match", ["two"], [])] if direction == "fast_montage" else [])
+
+
+@pytest.mark.parametrize(
+    "creator_request",
+    [
+        'Create a narrated story. He reportedly said: "My client is not in a hurry."',
+        'Write a narrated story where he said: "My client is not in a hurry."',
+        'He said: "My client is not in a hurry." Put that video on screen.',
+        'He said, "My client is not in a hurry."',
+        'He said: "My client is not in a hurry." on the video.',
+        'Use the words he said: "My client is not in a hurry." for the voiceover.',
+        'He said: "My client is not in a hurry." \u2014 use that quote for the voiceover.',
+    ],
+)
+def test_narrated_reported_speech_is_not_required_on_screen(creator_request: str) -> None:
+    raw = json.loads(_raw())
+    for chapter in raw["chapters"]:
+        chapter["thought"] = ""
+    input = _input(
+        creator_request=creator_request,
+        narration_duration_s=24,
+    )
+
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+
+    assert [chapter.thought for chapter in plan.chapters] == ["", ""]
+    assert plan.text_bindings == []
+
+
+@pytest.mark.parametrize(
+    "creator_request",
+    [
+        'Create a narrated story. Put "My client is not in a hurry." on screen.',
+        'Create a narrated story. He reportedly said: "My client is not in a hurry." '
+        'Put "My client is not in a hurry." on screen.',
+        'Show the words he said: "My client is not in a hurry."',
+        'Put the words he said: "My client is not in a hurry." on the opening clip.',
+        'He reportedly said: "My client is not in a hurry." on screen.',
+        'He reportedly said: "My client is not in a hurry." as a caption.',
+        'He reportedly said: "My client is not in a hurry." \u2014 put that quote on screen.',
+    ],
+)
+def test_narrated_explicit_display_copy_remains_required(creator_request: str) -> None:
+    raw = json.loads(_raw())
+    for chapter in raw["chapters"]:
+        chapter["thought"] = ""
+    input = _input(creator_request=creator_request, narration_duration_s=24)
+
+    with pytest.raises(SchemaError, match="creator caption was dropped"):
+        SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+
+    raw["chapters"][0]["thought"] = "My client is not in a hurry."
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert plan.chapters[0].thought == "My client is not in a hurry."
+
+
+def test_narrated_reported_speech_does_not_replace_explicit_caption() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = ""
+    raw["chapters"][1]["thought"] = "After the match"
+    input = _input(
+        creator_request="Create a narrated story. "
+        'He reportedly said: "My client is not in a hurry." '
+        'Put "After the match" on screen over the pub clip.',
+        narration_duration_s=24,
+    )
+
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["", "After the match"]
+
+    raw["chapters"][1]["thought"] = ""
+    with pytest.raises(SchemaError, match="creator caption was dropped"):
+        SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+
+
+def test_display_instruction_in_previous_clause_does_not_own_reported_speech() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = "Intro"
+    raw["chapters"][1]["thought"] = ""
+    input = _input(
+        creator_request='Show "Intro" on screen, then he said: "My client is not in a hurry."',
+        narration_duration_s=24,
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["Intro", ""]
+
+
+@pytest.mark.parametrize("direction", ["guided_story", "text_explainer"])
+def test_narrated_story_without_creator_copy_blanks_ai_thoughts(direction: str) -> None:
+    """Timed voiceover captions own the body text; AI thoughts would burn over them."""
+    raw = _raw(text_bindings=[{"text": "A voiceover line", "chapter_ids": ["one"]}])
+    input = _input(direction=direction, creator_request="", narration_duration_s=24)
+    plan = SemanticEditProposalAgent(None).parse(raw, input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["", ""]
+    assert plan.text_bindings == []
+    assert plan.repairs[-3:] == [
+        "dropped_non_montage_text_bindings:1",
+        "blanked_narrated_thought:0",
+        "blanked_narrated_thought:1",
+    ]
+
+
+def test_narration_keeps_shot_labels_resolved_captions_and_unnarrated_drafts() -> None:
+    labels = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        _raw(), _input(shot_labels=["Park Walk", "Pub Talk"], narration_duration_s=24)
+    )
+    assert [chapter.thought for chapter in labels.chapters] == ["Park Walk", "Pub Talk"]
+    caption = ResolvedClipIntent(
+        intent_id="pub",
+        op="caption",
+        attribute="pub",
+        caption_text="After the match",
+        assignments=[ClipAssignment(media_id="pub")],
+    )
+    captioned = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        _raw(), _input(creator_request="", clip_intents=[caption], narration_duration_s=24)
+    )
+    assert [chapter.thought for chapter in captioned.chapters] == ["", "After the match"]
+    unnarrated = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        _raw(), _input(creator_request="")
+    )
+    assert [chapter.thought for chapter in unnarrated.chapters] == [
+        "A model caption",
+        "POST MATCH PUB",
+    ]
+
+
+def test_fast_montage_narration_keeps_thoughts_and_bindings() -> None:
+    raw = _raw(text_bindings=[{"text": "post match pub", "chapter_ids": ["two"]}])
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        raw, _input(direction="fast_montage", narration_duration_s=24)
+    )
+    assert [binding.text for binding in plan.text_bindings] == ["post match pub"] * 2
+    assert not any(
+        repair.startswith(("blanked_narrated", "dropped_non_montage")) for repair in plan.repairs
+    )
+
+
+@pytest.mark.parametrize("narration_duration_s", [None, 24])
+def test_non_montage_bindings_drop_before_the_twelve_item_cap(
+    narration_duration_s: float | None,
+) -> None:
+    """A narrated story may echo every voiceover sentence as a binding (13 here)."""
+    raw = _raw(
+        text_bindings=[{"text": f"Voiceover line {i}", "chapter_ids": ["one"]} for i in range(13)]
+    )
+    input = _input(creator_request="", narration_duration_s=narration_duration_s)
+    plan = SemanticEditProposalAgent(None).parse(raw, input)  # type: ignore[arg-type]
+    assert plan.text_bindings == []
+    assert "dropped_non_montage_text_bindings:13" in plan.repairs
+    with pytest.raises(SchemaError, match="at most 12"):
+        SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+            raw, input.model_copy(update={"direction": "fast_montage"})
+        )
+
+
+def test_moved_caption_uses_media_target_and_never_overwrites_creator_copy() -> None:
+    raw = json.loads(_raw(text_bindings=[{"text": "post match pub", "media_ids": ["m002"]}]))
+    raw["chapters"][1]["thought"] = ""
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["", "post match pub"]
+    assert "moved_creator_caption_binding_to_thought:0:1" in plan.repairs
+    # An invented thought is blanked first, so its chapter can receive the caption.
+    raw["chapters"][1]["thought"] = "Invented"
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["", "post match pub"]
+    # The only target already shows other creator copy: never overwrite it. A
+    # retry cannot free that shot, so the story renders what fits and says so.
+    raw = json.loads(_raw(text_bindings=[{"text": "post match pub", "media_ids": ["m001"]}]))
+    raw["chapters"][0]["thought"] = "Park intro"
+    raw["chapters"][1]["thought"] = ""
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw), _input(creator_request='Show "Park intro" and "post match pub".')
+    )
+    assert [chapter.thought for chapter in plan.chapters] == ["Park intro", ""]
+    assert "unplaceable_creator_caption:0" in plan.repairs
+    assert not any(repair.startswith("moved_creator_caption") for repair in plan.repairs)
+
+
+def test_narrated_quoted_caption_bound_only_as_binding_still_renders_as_thought() -> None:
+    raw = json.loads(
+        _raw(
+            text_bindings=[
+                {"text": "A voiceover line", "chapter_ids": ["one"]},
+                {"text": "After the match", "chapter_ids": ["two"]},
+            ]
+        )
+    )
+    raw["chapters"][0]["thought"] = "A voiceover line"
+    raw["chapters"][1]["thought"] = "Another voiceover line"
+    input = _input(
+        creator_request='Narrated story. Put "After the match" on screen over the pub clip.',
+        narration_duration_s=24,
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["", "After the match"]
+    assert plan.text_bindings == []
+    assert "moved_creator_caption_binding_to_thought:1:1" in plan.repairs
+
+
+def _shared_chapter_raw(**updates: object) -> dict:
+    raw = json.loads(_raw(**updates))
+    raw["chapters"] = [
+        {
+            **raw["chapters"][0],
+            "thought": "",
+            "weight": 3,
+            "sources": [{"media_id": "m001", "weight": 1}, {"media_id": "m002", "weight": 2}],
+        }
+    ]
+    return raw
+
+
+@pytest.mark.parametrize("narration_duration_s", [None, 24])
+def test_second_caption_on_a_shared_chapter_splits_its_shot_into_a_chapter(
+    narration_duration_s: float | None,
+) -> None:
+    """Two quoted captions on two shots the model grouped: neither is dropped."""
+    raw = _shared_chapter_raw(
+        text_bindings=[
+            {"text": "Park walk", "media_ids": ["m001"]},
+            {"text": "After the match", "media_ids": ["m002"]},
+        ]
+    )
+    input = _input(
+        creator_request='Put "Park walk" on screen over the park clip and "After the match" '
+        "on screen over the pub clip.",
+        narration_duration_s=narration_duration_s,
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [
+        (chapter.chapter_id, chapter.role, chapter.thought, [s.media_id for s in chapter.sources])
+        for chapter in plan.chapters
+    ] == [
+        ("one", "hook", "Park walk", ["park"]),
+        ("one-part-1", "build", "After the match", ["pub"]),
+    ]
+    assert [chapter.weight for chapter in plan.chapters] == pytest.approx([1, 2])
+    assert "split_creator_caption_source:0:0" in plan.repairs
+
+
+def _image_input(count: int, **updates: object) -> EditProposalAgentInput:
+    media = [
+        EditProposalMedia(media_id=f"p{index:02d}", lane="asset", kind="image")
+        for index in range(1, count + 1)
+    ]
+    values: dict[str, object] = {
+        "media": media,
+        "selected_media_ids": [row.media_id for row in media],
+        "target_duration_s": 2.0 * count,
+        "opening_title": "",
+    }
+    values.update(updates)
+    return _input(**values)
+
+
+def _image_chapter(chapter_id: str, first: int, last: int, thought: str = "") -> dict:
+    return {
+        "chapter_id": chapter_id,
+        "topic": "Shots",
+        "thought": thought,
+        "role": "build",
+        "weight": last - first + 1,
+        "layout": "fullscreen",
+        "sources": [{"media_id": f"m{index:03d}"} for index in range(first, last + 1)],
+    }
+
+
+_THREE_CAPTIONS = {"m001": "Stone arches", "m002": "Blue door", "m003": "Old port"}
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        ["m001", "m002", "m003"],
+        ["m002", "m001", "m003"],
+        ["m003", "m002", "m001"],
+        ["m002", "m003", "m001"],
+    ],
+)
+def test_captions_on_every_shot_of_one_chapter_plan_in_any_binding_order(
+    order: list[str],
+) -> None:
+    """Each caption isolates its own shot, including a middle one, in any order."""
+    raw = {
+        "title": "x",
+        "chapters": [{**_image_chapter("one", 1, 3), "role": "hook"}, _image_chapter("two", 4, 4)],
+        "text_bindings": [
+            {"text": _THREE_CAPTIONS[alias], "media_ids": [alias]} for alias in order
+        ],
+    }
+    input = _image_input(
+        4,
+        creator_request='Put "Stone arches" on screen over the first shot, "Blue door" on '
+        'screen over the second and "Old port" on screen over the third.',
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [
+        (chapter.thought, [s.media_id for s in chapter.sources]) for chapter in plan.chapters
+    ] == [
+        ("Stone arches", ["p01"]),
+        ("Blue door", ["p02"]),
+        ("Old port", ["p03"]),
+        ("", ["p04"]),
+    ]
+    assert [chapter.role for chapter in plan.chapters] == ["hook", "build", "build", "build"]
+    assert [chapter.weight for chapter in plan.chapters] == pytest.approx([1, 1, 1, 1])
+    beats = schedule_semantic_edit(plan, input).story_beats
+    assert [beat.thought for beat in beats] == ["Stone arches", "Blue door", "Old port", ""]
+
+
+def test_caption_bound_to_one_shot_covers_only_that_shot() -> None:
+    raw = {
+        "title": "x",
+        "chapters": [{**_image_chapter("one", 1, 3), "role": "hook"}, _image_chapter("two", 4, 4)],
+        "text_bindings": [{"text": "Blue door", "media_ids": ["m002"]}],
+    }
+    input = _image_input(4, creator_request='Put "Blue door" on screen over the second shot.')
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [
+        (chapter.thought, [s.media_id for s in chapter.sources]) for chapter in plan.chapters
+    ] == [
+        ("", ["p01"]),
+        ("Blue door", ["p02"]),
+        ("", ["p03"]),
+        ("", ["p04"]),
+    ]
+    assert "split_creator_caption_source:0:1" in plan.repairs
+
+
+def test_split_chapter_ids_never_collide_with_scheduler_beat_ids() -> None:
+    """A >4-source remainder beats as '<id>-2'; a split piece must not take that id."""
+    raw = {
+        "title": "x",
+        "chapters": [{**_image_chapter("one", 1, 7), "role": "hook"}, _image_chapter("two", 8, 8)],
+        "text_bindings": [
+            {"text": "Harbour lights", "media_ids": ["m004"]},
+            {"text": "Last boat", "media_ids": ["m007"]},
+            {"text": "First light", "media_ids": ["m001"]},
+        ],
+    }
+    input = _image_input(
+        8,
+        creator_request='Put "Harbour lights" on screen over the fourth shot, "Last boat" on '
+        'screen over the seventh and "First light" on screen over the first.',
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters if chapter.thought] == [
+        "First light",
+        "Harbour lights",
+        "Last boat",
+    ]
+    beat_ids = [beat.beat_id for beat in schedule_semantic_edit(plan, input).story_beats]
+    assert len(beat_ids) == len(set(beat_ids))
+    # One caption on the last shot leaves the first piece ("one") with six
+    # sources, which beat as "one" and "one-2"; the new piece must take neither.
+    raw["text_bindings"] = [{"text": "Last boat", "media_ids": ["m007"]}]
+    input = _image_input(8, creator_request='Put "Last boat" on screen over the seventh shot.')
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    beat_ids = [beat.beat_id for beat in schedule_semantic_edit(plan, input).story_beats]
+    assert len(beat_ids) == len(set(beat_ids)) == 4
+
+
+def _twenty_beat_raw(first_thought: str) -> dict:
+    """19 chapters and 20 beats: a 4-source chapter, a 5-source one, 17 single shots."""
+    chapters = [
+        {**_image_chapter("c1", 1, 4, first_thought), "role": "hook"},
+        _image_chapter("c2", 5, 9),
+        *(_image_chapter(f"c{index - 7}", index, index) for index in range(10, 27)),
+    ]
+    return {
+        "title": "x",
+        "chapters": chapters,
+        "text_bindings": [{"text": "Fresh figs", "media_ids": ["m004"]}],
+    }
+
+
+def test_split_that_would_pass_the_beat_limit_keeps_the_whole_chapter() -> None:
+    input = _image_input(26, creator_request='Put "Fresh figs" on screen over the fig photo.')
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(_twenty_beat_raw("")), input
+    )
+    assert len(plan.chapters) == 19
+    assert plan.chapters[0].thought == "Fresh figs"
+    assert not any(repair.startswith("split_creator_caption_source") for repair in plan.repairs)
+    assert len(schedule_semantic_edit(plan, input).story_beats) == 20
+    # With the chapter already captioned and the split over the beat limit,
+    # there is nowhere to draw it: never schedule a 21st beat or overwrite
+    # "Market day"; render what fits and record the unplaceable caption.
+    agent = SemanticEditProposalAgent(None)
+    captioned_input = input.model_copy(
+        update={
+            "creator_request": 'Put "Market day" on screen over the stall photos and '
+            '"Fresh figs" on screen over the fig photo.'
+        }
+    )
+    plan = agent.parse(  # type: ignore[arg-type]
+        json.dumps(_twenty_beat_raw("Market day")), captioned_input
+    )
+    assert len(plan.chapters) == 19
+    assert [chapter.thought for chapter in plan.chapters if chapter.thought] == ["Market day"]
+    assert "unplaceable_creator_caption:0" in plan.repairs
+    assert agent._schema_retry_hint is None
+    assert len(schedule_semantic_edit(plan, captioned_input).story_beats) == 20
+
+
+_THREE_QUOTED_CAPTIONS = 'Show "Park intro", "post match pub" and "Cheers".'
+
+
+@pytest.mark.parametrize(
+    "direction, bindings",
+    [
+        *(
+            pytest.param(direction, bindings, id=f"{direction}-{case}")
+            for direction in ("guided_story", "text_explainer")
+            for case, bindings in (
+                ("never_bound", []),
+                ("other_text", [{"text": "invented", "chapter_ids": ["one"]}]),
+                (
+                    "no_real_target",
+                    [
+                        {"text": "post match pub", "chapter_ids": ["missing"]},
+                        {"text": "Cheers", "media_ids": ["m000"]},
+                    ],
+                ),
+                # One caption is proven unplaceable; the omitted one still fails.
+                ("beside_unplaceable", [{"text": "post match pub", "media_ids": ["m001"]}]),
+            )
+        ),
+        pytest.param("fast_montage", [], id="fast_montage-never_bound"),
+    ],
+)
+def test_caption_the_model_never_placed_fails_with_a_server_retry_hint(
+    direction: str, bindings: list[dict]
+) -> None:
+    """Only a binding to real, fully taken chapters excuses a caption."""
+    raw = json.loads(_raw(text_bindings=bindings))
+    raw["chapters"][0]["thought"] = "Park intro"
+    raw["chapters"][1]["thought"] = ""
+    agent = SemanticEditProposalAgent(None)
+    with pytest.raises(SchemaError, match="creator caption was dropped"):
+        agent.parse(  # type: ignore[arg-type]
+            json.dumps(raw),
+            _input(direction=direction, creator_request=_THREE_QUOTED_CAPTIONS),
+        )
+    assert agent._schema_retry_hint == _CAPTION_RETRY_HINT
+
+
+@pytest.mark.parametrize("direction", ["guided_story", "text_explainer"])
+def test_moved_caption_never_targets_a_resolved_group_chapter(direction: str) -> None:
+    """The group intent owns that chapter's thought; it would overwrite the caption."""
+    group = ResolvedClipIntent(
+        intent_id="pub",
+        op="group",
+        attribute="pub",
+        creator_text="post match pub",
+        assignments=[ClipAssignment(media_id="pub")],
+    )
+    raw = json.loads(_raw(text_bindings=[{"text": "Cheers", "media_ids": ["m002"]}]))
+    raw["chapters"][1]["thought"] = ""
+    input = _input(
+        direction=direction,
+        creator_request='Put "Cheers" on screen over the pub clip.',
+        clip_intents=[group],
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    # The group keeps its chapter; the caption never moves to the free park chapter.
+    assert [chapter.thought for chapter in plan.chapters] == ["", "post match pub"]
+    assert "unplaceable_creator_caption:0" in plan.repairs
+    assert not any(repair.startswith("moved_creator_caption") for repair in plan.repairs)
+
+
+_SPORTS_DAY_IDS = ["clip_park", "clip_soccer", "clip_volleyball", "clip_speech", "clip_pub"]
+
+
+def _sports_day_input(direction: str, caption_request: str) -> EditProposalAgentInput:
+    """The X2/X4 differential shapes: five single-shot clips under once reuse."""
+    return _input(
+        direction=direction,
+        creator_request="Group the pub videos together and call that chapter 'post match "
+        "pub', order the park clips first and include the part where I talk to the camera. "
+        + caption_request,
+        opening_title="Park then pub",
+        target_duration_s=25,
+        video_reuse_policy="once",
+        selected_media_ids=_SPORTS_DAY_IDS,
+        media=[
+            EditProposalMedia(media_id=media_id, lane="clip", kind="video", duration_s=5.0)
+            for media_id in _SPORTS_DAY_IDS
+        ],
+        clip_intents=[
+            ResolvedClipIntent(
+                intent_id="park-first",
+                op="order",
+                attribute="park clips",
+                position="first",
+                assignments=[ClipAssignment(media_id="clip_park")],
+            ),
+            ResolvedClipIntent(
+                intent_id="pub-group",
+                op="group",
+                attribute="pub videos",
+                creator_text="post match pub",
+                assignments=[ClipAssignment(media_id="clip_pub")],
+            ),
+            ResolvedClipIntent(
+                intent_id="speech",
+                op="include",
+                attribute="where I talk to the camera",
+                assignments=[ClipAssignment(media_id="clip_speech")],
+            ),
+        ],
+    )
+
+
+def _sports_day_raw(speech_thought: str, bindings: list[dict]) -> str:
+    topics = ["Park", "Soccer", "Volleyball", "Talking", "Pub"]
+    thoughts = ["", "", "", speech_thought, "post match pub"]
+    return json.dumps(
+        {
+            "title": "Park then pub",
+            "chapters": [
+                {
+                    "chapter_id": f"chapter-{index + 1}",
+                    "topic": topic,
+                    "thought": thought,
+                    "role": "hook" if index == 0 else "payoff" if index == 4 else "build",
+                    "weight": 0.2,
+                    "layout": "fullscreen",
+                    "sources": [{"media_id": f"m{index + 1:03d}", "weight": 1.0}],
+                }
+                for index, (topic, thought) in enumerate(zip(topics, thoughts, strict=True))
+            ],
+            "text_bindings": bindings,
+        }
+    )
+
+
+@pytest.mark.parametrize("direction", ["guided_story", "text_explainer"])
+def test_second_caption_for_a_captioned_single_shot_renders_what_fits(direction: str) -> None:
+    """X2: two quoted captions for one clip under once reuse; a retry cannot fit both."""
+    input = _sports_day_input(
+        direction, 'Put "Hello" and "Goodbye" on screen over the talking clip.'
+    )
+    raw = _sports_day_raw("Hello", [{"text": "Goodbye", "media_ids": ["m004"]}])
+    plan = SemanticEditProposalAgent(None).parse(raw, input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == [
+        "",
+        "",
+        "",
+        "Hello",
+        "post match pub",
+    ]
+    assert "unplaceable_creator_caption:0" in plan.repairs
+    beats = schedule_semantic_edit(plan, input).story_beats
+    assert [beat.thought for beat in beats if beat.thought] == ["Hello", "post match pub"]
+
+
+@pytest.mark.parametrize("direction", ["guided_story", "text_explainer"])
+def test_quoted_caption_on_a_resolved_group_member_renders_what_fits(direction: str) -> None:
+    """X4: the group owns its chapter's thought; the caption never lands elsewhere."""
+    input = _sports_day_input(direction, 'Put "Cheers" on screen over the pub clip.')
+    raw = _sports_day_raw("", [{"text": "Cheers", "media_ids": ["m005"]}])
+    plan = SemanticEditProposalAgent(None).parse(raw, input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["", "", "", "", "post match pub"]
+    assert "unplaceable_creator_caption:0" in plan.repairs
+    beats = schedule_semantic_edit(plan, input).story_beats
+    assert [beat.thought for beat in beats if beat.thought] == ["post match pub"]
+
+
+def test_narrated_second_caption_on_a_captioned_photo_renders_what_fits() -> None:
+    """N3: a narrated story quotes two captions for one photo under once reuse."""
+    input = _input(
+        creator_request='Narrated story. Put "1882" and "Keeper" on screen over the old portrait.',
+        narration_duration_s=24,
+        video_reuse_policy="once",
+        opening_title="One light on the coast",
+        selected_media_ids=["park", "pub", "portrait"],
+        media=[
+            *(media.model_copy(update={"duration_s": 5.0}) for media in _input().media),
+            EditProposalMedia(
+                media_id="portrait", lane="asset", kind="image", summary="an old portrait"
+            ),
+        ],
+    )
+    raw = json.loads(_raw(text_bindings=[{"text": "Keeper", "media_ids": ["m003"]}]))
+    for chapter in raw["chapters"]:
+        chapter["sources"][0].pop("candidate_index")
+    raw["chapters"][0]["thought"] = "Every ship looked for one light."
+    raw["chapters"][1]["thought"] = "She kept watch for forty winters."
+    raw["chapters"].insert(
+        1,
+        {
+            "chapter_id": "portrait",
+            "topic": "The first keeper",
+            "thought": "1882",
+            "role": "build",
+            "weight": 1,
+            "layout": "fullscreen",
+            "sources": [{"media_id": "m003", "weight": 1}],
+        },
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    # Voiceover lines are blanked; the portrait keeps "1882" and "Keeper" is recorded.
+    assert [chapter.thought for chapter in plan.chapters] == ["", "1882", ""]
+    assert "unplaceable_creator_caption:0" in plan.repairs
+    assert {"blanked_narrated_thought:0", "blanked_narrated_thought:2"} <= set(plan.repairs)
+    beats = schedule_semantic_edit(plan, input).story_beats
+    assert [beat.thought for beat in beats if beat.thought] == ["1882"]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"thought": "The last voiceover line", "sources": []},
+        {"thought": "The last voiceover line", "sources": [{"media_id": "m000"}]},
+    ],
+    ids=["sourceless", "invented_alias"],
+)
+def test_narrated_extra_line_chapter_is_dropped_not_fatal(extra: dict) -> None:
+    """Narrated thoughts never render, so they cannot keep a groundless chapter."""
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = "x" * 400  # over the 280-char schema cap
+    raw["chapters"].append({"chapter_id": "three", "topic": "End", "role": "payoff", **extra})
+    input = _input(creator_request="", narration_duration_s=24)
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.chapter_id for chapter in plan.chapters] == ["one", "two"]
+    assert [chapter.thought for chapter in plan.chapters] == ["", ""]
+    assert {"blanked_narrated_thought:0", "blanked_narrated_thought:1"} <= set(plan.repairs)
+    with pytest.raises(SchemaError):
+        SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+            json.dumps(raw), input.model_copy(update={"narration_duration_s": None})
+        )
+
+
+@pytest.mark.parametrize(
+    "creator_request, required",
+    [
+        ('Narrated. "The sea keeps its own hours," she reportedly said.', False),
+        ('Narrated. Locals call it "the sea keeps its own hours".', False),
+        ('Narrated. "The sea keeps its own hours" on screen over the pub clip.', True),
+        ('Narrated. Caption the pub clip "The sea keeps its own hours".', True),
+    ],
+)
+def test_quote_spoken_in_the_voiceover_is_script_not_required_copy(
+    creator_request: str, required: bool
+) -> None:
+    words = "then she said the sea keeps its own hours and left".split()
+    narration_words = [
+        {"text": word, "start_s": index * 0.5, "end_s": index * 0.5 + 0.4}
+        for index, word in enumerate(words)
+    ]
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = ""
+    raw["chapters"][1]["thought"] = "The sea keeps its own hours"
+    input = _input(
+        creator_request=creator_request,
+        narration_duration_s=24,
+        narration_words=narration_words,
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    expected = "The sea keeps its own hours" if required else ""
+    assert [chapter.thought for chapter in plan.chapters] == ["", expected]
+    raw["chapters"][1]["thought"] = ""
+    if required:
+        with pytest.raises(SchemaError, match="creator caption was dropped"):
+            SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    else:
+        SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+
+
+_SEA_LINE = "The sea keeps its own hours"
+
+
+@pytest.mark.parametrize(
+    "creator_request, thoughts",
+    [
+        (f'Narrated. Add "{_SEA_LINE}" to the pub clip.', ["", _SEA_LINE]),
+        (f'Narrated. Write "{_SEA_LINE}".', ["", _SEA_LINE]),
+        (f'Narrated. "{_SEA_LINE}" over the pub photo.', ["", _SEA_LINE]),
+        (f'Narrated. "{_SEA_LINE}" as text.', ["", _SEA_LINE]),
+        ('Narrated. Locals call it "own hours".', ["", "own hours"]),
+        (f'Narrated. Label them "Last orders" and "{_SEA_LINE}".', ["Last orders", _SEA_LINE]),
+        (f'Narrated. "{_SEA_LINE}" and "Last orders" on screen.', ["Last orders", _SEA_LINE]),
+    ],
+    ids=["add", "write", "over_photo", "as_text", "short_label", "list_cue", "list_suffix"],
+)
+def test_spoken_quote_with_explicit_placement_stays_creator_copy(
+    creator_request: str, thoughts: list[str]
+) -> None:
+    """Explicit on-screen copy the voiceover also speaks must still render."""
+    words = "then she said the sea keeps its own hours and left".split()
+    narration_words = [
+        {"text": word, "start_s": index * 0.5, "end_s": index * 0.5 + 0.4}
+        for index, word in enumerate(words)
+    ]
+    input = _input(
+        creator_request=creator_request,
+        narration_duration_s=24,
+        narration_words=narration_words,
+    )
+    raw = json.loads(_raw())
+    for chapter, thought in zip(raw["chapters"], thoughts, strict=True):
+        chapter["thought"] = thought
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == thoughts
+    raw["chapters"][1]["thought"] = ""
+    with pytest.raises(SchemaError, match="creator caption was dropped"):
+        SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+
+
+_PORTRAIT_CAPTION = ResolvedClipIntent(
+    intent_id="portrait",
+    op="caption",
+    attribute="the pub clip",
+    creator_text="1882",
+    caption_text="1882",
+    assignments=[ClipAssignment(media_id="pub")],
+)
+
+
+@pytest.mark.parametrize("copy", ["quoted", "resolved_intent"])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"thought": "The last voiceover line", "sources": []},
+        {"thought": "The last voiceover line", "sources": [{"media_id": "m000"}]},
+    ],
+    ids=["sourceless", "invented_alias"],
+)
+def test_narrated_draft_thoughts_blank_before_validation_beside_creator_copy(
+    extra: dict, copy: str
+) -> None:
+    """One creator caption must not bring back the narrated prod failure shapes."""
+    raw = json.loads(_raw())
+    raw["chapters"][0]["thought"] = "x" * 400  # over the 280-char schema cap
+    raw["chapters"][1]["thought"] = "1882"
+    raw["chapters"].append({"chapter_id": "three", "topic": "End", "role": "payoff", **extra})
+    input = _input(
+        creator_request='Put "1882" on screen over the pub clip.',
+        narration_duration_s=24,
+        clip_intents=[_PORTRAIT_CAPTION] if copy == "resolved_intent" else None,
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert [chapter.chapter_id for chapter in plan.chapters] == ["one", "two"]
+    assert [chapter.thought for chapter in plan.chapters] == ["", "1882"]
+    assert "blanked_narrated_thought:0" in plan.repairs
+
+
+def test_repeated_source_in_one_chapter_merges_into_one_longer_window() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"][1]["sources"] = [
+        {"media_id": "m002", "weight": 1},
+        {"media_id": "m002", "weight": 2},
+    ]
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
+    assert [(s.media_id, s.weight) for s in plan.chapters[1].sources] == [("pub", 3)]
+    assert "merged_repeated_source:1:1" in plan.repairs
+
+
+def test_non_list_bindings_only_fail_the_montage_that_renders_them() -> None:
+    raw = _raw(text_bindings={"text": "A voiceover line"})
+    plan = SemanticEditProposalAgent(None).parse(raw, _input())  # type: ignore[arg-type]
+    assert plan.text_bindings == []
+    assert "dropped_invalid_non_montage_text_bindings" in plan.repairs
+    with pytest.raises(SchemaError, match="text_bindings must be a list"):
+        SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+            raw, _input(direction="fast_montage")
+        )
 
 
 def test_quoted_caption_without_cue_words_is_enforced_for_non_english_request() -> None:
@@ -578,35 +1369,73 @@ def test_resolved_caption_intents_reject_conflicting_or_missing_members() -> Non
         )  # type: ignore[arg-type]
 
 
-def test_resolved_label_generic_text_binding_is_dropped_for_grounded_lane() -> None:
-    input = _input(
-        creator_request="",
-        clip_intents=[
-            ResolvedClipIntent(
-                intent_id="sport",
-                op="label",
-                attribute="sport",
-                assignments=[ClipAssignment(media_id="park", value="Running")],
-            )
-        ],
-    )
+_RUNNING_LABEL = ResolvedClipIntent(
+    intent_id="sport",
+    op="label",
+    attribute="sport",
+    assignments=[ClipAssignment(media_id="park", value="Running")],
+)
+
+
+@pytest.mark.parametrize(
+    "direction, repair",
+    [
+        ("fast_montage", "dropped_grounded_label_text_binding:0"),
+        ("guided_story", "dropped_non_montage_text_bindings:1"),
+    ],
+)
+def test_resolved_label_generic_text_binding_is_dropped_for_grounded_lane(
+    direction: str, repair: str
+) -> None:
+    input = _input(direction=direction, creator_request="", clip_intents=[_RUNNING_LABEL])
     raw = json.loads(_raw(text_bindings=[{"text": "Running", "media_ids": ["m001"]}]))
     plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
     assert plan.text_bindings == []
-    assert "dropped_grounded_label_text_binding:0" in plan.repairs
+    assert repair in plan.repairs
 
 
-def test_unrequested_generic_text_binding_is_dropped_when_captions_are_explicit() -> None:
+def test_binding_only_label_copy_is_not_moved_into_a_guided_thought() -> None:
+    """The grounded label lane already draws it; a thought would draw it twice."""
+    input = _input(
+        creator_request='Show "Running" on the park clip.', clip_intents=[_RUNNING_LABEL]
+    )
+    raw = _raw(text_bindings=[{"text": "Running", "media_ids": ["m001"]}])
+    plan = SemanticEditProposalAgent(None).parse(raw, input)  # type: ignore[arg-type]
+    assert [chapter.thought for chapter in plan.chapters] == ["", ""]
+    assert not any(repair.startswith("moved_creator_caption") for repair in plan.repairs)
+
+
+@pytest.mark.parametrize(
+    "direction, repair",
+    [
+        ("fast_montage", "dropped_unrequested_text_binding:0"),
+        ("guided_story", "dropped_non_montage_text_bindings:1"),
+    ],
+)
+def test_unrequested_generic_text_binding_is_dropped_when_captions_are_explicit(
+    direction: str, repair: str
+) -> None:
     raw = _raw(text_bindings=[{"text": "invented", "chapter_ids": ["one"]}])
-    plan = SemanticEditProposalAgent(None).parse(raw, _input())  # type: ignore[arg-type]
-    assert plan.text_bindings == []
-    assert "dropped_unrequested_text_binding:0" in plan.repairs
+    plan = SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+        raw, _input(direction=direction)
+    )
+    assert repair in plan.repairs
+    # fast_montage re-binds the allowlisted thought; guided keeps it as a thought.
+    assert [binding.text for binding in plan.text_bindings] == (
+        ["post match pub"] if direction == "fast_montage" else []
+    )
 
 
 def test_unrequested_binding_with_unknown_target_still_rejects() -> None:
     raw = _raw(text_bindings=[{"text": "invented", "chapter_ids": ["missing"]}])
     with pytest.raises(SchemaError, match="references unknown target"):
-        SemanticEditProposalAgent(None).parse(raw, _input())  # type: ignore[arg-type]
+        SemanticEditProposalAgent(None).parse(  # type: ignore[arg-type]
+            raw, _input(direction="fast_montage")
+        )
+    # A guided story never renders the montage lane, so its targets are not validated.
+    plan = SemanticEditProposalAgent(None).parse(raw, _input())  # type: ignore[arg-type]
+    assert plan.text_bindings == []
+    assert "dropped_non_montage_text_bindings:1" in plan.repairs
 
 
 def test_missing_explicit_creator_caption_still_rejects_after_binding_repair() -> None:
@@ -777,17 +1606,18 @@ def test_exclusive_group_rejects_mixed_chapter_even_with_server_annotation() -> 
         )
 
 
+class _QueuedClient:
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = responses
+        self.prompts: list[str] = []
+
+    def invoke(self, **kwargs: object) -> ModelInvocation:
+        self.prompts.append(str(kwargs["prompt"]))
+        return ModelInvocation(raw_text=self.responses.pop(0))
+
+
 @pytest.mark.parametrize("op", ["group", "caption"])
 def test_group_schema_retry_names_exclusive_aliases_without_model_output(op) -> None:
-    class FakeClient:
-        def __init__(self, responses: list[str]) -> None:
-            self.responses = responses
-            self.prompts: list[str] = []
-
-        def invoke(self, **kwargs: object) -> ModelInvocation:
-            self.prompts.append(str(kwargs["prompt"]))
-            return ModelInvocation(raw_text=self.responses.pop(0))
-
     group = ResolvedClipIntent(
         intent_id="park-only",
         op=op,
@@ -798,7 +1628,7 @@ def test_group_schema_retry_names_exclusive_aliases_without_model_output(op) -> 
     invalid = json.loads(_raw())
     invalid["chapters"][0]["topic"] = "MODEL_ONLY_POLLUTION"
     invalid["chapters"][0]["sources"] = [{"media_id": "m001"}, {"media_id": "m002"}]
-    client = FakeClient([json.dumps(invalid), _raw()])
+    client = _QueuedClient([json.dumps(invalid), _raw()])
     agent = SemanticEditProposalAgent(client)  # type: ignore[arg-type]
     agent.spec = replace(agent.spec, model="test-model", max_attempts=2)
 
@@ -833,6 +1663,65 @@ def test_label_count_retry_includes_exact_count_without_echoing_model_output() -
     assert "Return exactly 2 chapters" in hint
     assert "each video alias can appear only once" in hint
     assert "MODEL_ONLY_POLLUTION" not in hint
+
+
+def test_surplus_unknown_alias_chapter_is_dropped_and_shifted_aliases_retry_with_range() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"].append(
+        {
+            **raw["chapters"][1],
+            "chapter_id": "ghost",
+            "thought": "",
+            "sources": [{"media_id": "m000"}],
+        }
+    )
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
+    assert [chapter.chapter_id for chapter in plan.chapters] == ["one", "two"]
+    assert plan.repairs[:2] == [
+        "dropped_unknown_media_chapter:2",
+        "dropped_unknown_media_source:2:0",
+    ]
+    # An invented alias standing in for a real source is not surplus: never guess.
+    raw = json.loads(_raw())
+    raw["chapters"][1]["sources"] = [{"media_id": "m000", "candidate_index": 0}]
+    agent = SemanticEditProposalAgent(None)  # type: ignore[arg-type]
+    with pytest.raises(SchemaError, match="source references unknown media"):
+        agent.parse(json.dumps(raw), _input())
+    hint = agent.schema_clarification()
+    assert "m001 through m002" in hint
+    assert "there is no m000" in hint
+    assert "POST MATCH PUB" not in hint
+
+
+def test_shifted_alias_retry_prompt_lists_the_valid_alias_range() -> None:
+    invalid = json.loads(_raw())
+    invalid["chapters"][1]["topic"] = "MODEL_ONLY_POLLUTION"
+    invalid["chapters"][1]["sources"] = [{"media_id": "m000"}]
+    client = _QueuedClient([json.dumps(invalid), _raw()])
+    agent = SemanticEditProposalAgent(client)  # type: ignore[arg-type]
+    agent.spec = replace(agent.spec, model="test-model", max_attempts=2)
+
+    plan = agent.run(_input())
+
+    assert [chapter.chapter_id for chapter in plan.chapters] == ["one", "two"]
+    assert len(client.prompts) == 2
+    assert "there is no m000" not in client.prompts[0]
+    assert "valid media aliases are m001 through m002" in client.prompts[1]
+    assert "MODEL_ONLY_POLLUTION" not in client.prompts[1]
+
+
+def test_unknown_alias_chapter_with_copy_still_rejects() -> None:
+    raw = json.loads(_raw())
+    raw["chapters"].append(
+        {
+            **raw["chapters"][1],
+            "chapter_id": "ghost",
+            "thought": "Invented",
+            "sources": [{"media_id": "m000"}],
+        }
+    )
+    with pytest.raises(SchemaError, match="unknown media"):
+        SemanticEditProposalAgent(None).parse(json.dumps(raw), _input())  # type: ignore[arg-type]
 
 
 def _misassigned_group_case():
@@ -946,6 +1835,39 @@ def test_resolved_group_recovery_rejects_unsafe_moves(unsafe) -> None:
         input.shot_labels = [f"Label {i}" for i in range(len(raw["chapters"]))]
     with pytest.raises(SchemaError):
         SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bound_chapter", [1, -1])
+def test_guided_group_caption_binding_does_not_block_group_recovery(bound_chapter: int) -> None:
+    """Server-placed group copy is not moved from a dropped binding into a thought."""
+    raw, input = _misassigned_group_case()
+    input.direction = "guided_story"
+    group = next(intent for intent in input.clip_intents if intent.op == "group")
+    raw["chapters"][-1]["thought"] = ""
+    raw["text_bindings"] = [
+        {"text": group.creator_text, "chapter_ids": [raw["chapters"][bound_chapter]["chapter_id"]]}
+    ]
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert any(repair.startswith("recovered_misassigned_group:") for repair in plan.repairs)
+    assert not any(repair.startswith("moved_creator_caption") for repair in plan.repairs)
+    assert plan.chapters[-1].thought == group.creator_text
+    assert plan.text_bindings == []
+
+
+@pytest.mark.parametrize("direction", ["guided_story", "text_explainer"])
+def test_caption_beside_a_misassigned_group_member_lands_after_recovery(direction: str) -> None:
+    """Recovery first moves the stray pub clip out; its old chapter can then take copy."""
+    raw, input = _misassigned_group_case()
+    input.direction = direction
+    input.creator_request += ' Put "Warm up" on screen over the eleventh clip.'
+    raw["text_bindings"] = [{"text": "Warm up", "media_ids": ["m011"]}]
+    plan = SemanticEditProposalAgent(None).parse(json.dumps(raw), input)  # type: ignore[arg-type]
+    assert any(repair.startswith("recovered_misassigned_group:") for repair in plan.repairs)
+    captioned = next(chapter for chapter in plan.chapters if chapter.thought == "Warm up")
+    assert [source.media_id for source in captioned.sources] == [input.media[10].media_id]
+    group = next(intent for intent in input.clip_intents if intent.op == "group")
+    assert [source.media_id for source in plan.chapters[-1].sources] == group.media_ids()
+    assert plan.chapters[-1].thought == group.creator_text
 
 
 def test_valid_contiguous_group_chapters_are_not_merged_by_recovery() -> None:
