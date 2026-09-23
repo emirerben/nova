@@ -2,10 +2,22 @@ import pytest
 
 from app.config import settings
 from app.kria.media_sources import OriginalMediaDescriptor
+from app.kria.recipes import MediaAsset
+from app.kria.recipes_v2 import EditRecipeV2
+from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.pipeline.phone_subtitled_lanes import (
+    PhoneSubtitledLanes,
+    ResolvedSoundEffect,
+    SubtitledEndingClip,
+    SubtitledLaneError,
+    SubtitledOverlayCard,
+    SubtitledSoundEffect,
+    sfx_path_is_playable,
+)
 from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
 from app.services.phone_rollout import validate_phone_pilot_recipe
-from app.services.phone_sources import PhoneSourceBinding
+from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
 
 def _binding(
@@ -36,6 +48,80 @@ _CUES = [
     {"text": "Hello everyone", "start_s": 0.0, "end_s": 1.5},
     {"text": "welcome back", "start_s": 1.5, "end_s": 3.0},
 ]
+
+
+PHOTO_ID = "photo-1"
+PHOTO_PATH = "users/owner/plan/item/pool/photo-1.jpg"
+VIDEO_ID = "video-1"
+VIDEO_PATH = "users/owner/plan/item/pool/video-1.mov"
+
+
+def _photo_visual(**changes) -> PhoneVisualBinding:
+    return PhoneVisualBinding(
+        **{
+            "media_id": PHOTO_ID,
+            "gcs_path": PHOTO_PATH,
+            "generation": "77",
+            "sha256": "b" * 64,
+            "byte_count": 2048,
+        }
+        | changes
+    )
+
+
+def _pool_video_visual(**changes) -> PhoneVisualBinding:
+    return PhoneVisualBinding(
+        **{
+            "media_id": VIDEO_ID,
+            "gcs_path": VIDEO_PATH,
+            "generation": "88",
+            "sha256": "c" * 64,
+            "byte_count": 4096,
+            "kind": "video",
+            "duration_s": 6.0,
+            "width": 1920,
+            "height": 1080,
+            "orientation_degrees": 90,
+        }
+        | changes
+    )
+
+
+def _overlay_card(**changes) -> SubtitledOverlayCard:
+    return SubtitledOverlayCard(
+        **{
+            "id": "card-1",
+            "media_id": PHOTO_ID,
+            "gcs_path": PHOTO_PATH,
+            "generation": "77",
+            "start_s": 1.0,
+            "end_s": 3.0,
+        }
+        | changes
+    )
+
+
+def _sfx_asset(catalog_id: str = "pop", *, generation: str = "1") -> LibraryRenderAsset:
+    return LibraryRenderAsset(
+        id=f"sfx-asset-{catalog_id}",
+        catalog="sound_effect",
+        catalog_id=catalog_id,
+        generation=generation,
+        fingerprint=RenderFingerprint(sha256="d" * 64, byte_count=512),
+    )
+
+
+def _resolved_sfx(**changes) -> ResolvedSoundEffect:
+    defaults = {
+        "request": SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=1.0),
+        "asset": _sfx_asset(),
+        "duration_s": 1.0,
+    }
+    defaults.update(changes)
+    return ResolvedSoundEffect(**defaults)
+
+
+# --- Pre-existing behaviour (unchanged) --------------------------------------
 
 
 def test_compiles_single_clip_with_captions_and_original_audio():
@@ -159,3 +245,392 @@ def test_unexpected_caption_compilation_failure_fails_closed(monkeypatch):
     bindings = (_binding(duration_s=10.0),)
     with pytest.raises(UnsupportedPhonePlan, match="unable to compile captions"):
         compile_phone_subtitled_plan(bindings, caption_cues=_CUES)
+
+
+# --- KRI-174 Phase 1: byte-identity with no lanes ----------------------------
+
+
+def test_no_lanes_is_byte_identical_across_default_forms():
+    bindings = (_binding(duration_s=10.0),)
+    baseline = compile_phone_subtitled_plan(bindings, caption_cues=_CUES)
+    explicit_empty_visuals = compile_phone_subtitled_plan(
+        bindings, caption_cues=_CUES, visuals=(), lanes=None
+    )
+    empty_lanes = compile_phone_subtitled_plan(
+        bindings, caption_cues=_CUES, visuals=(), lanes=PhoneSubtitledLanes()
+    )
+    assert baseline.model_dump_json() == explicit_empty_visuals.model_dump_json()
+    assert baseline.model_dump_json() == empty_lanes.model_dump_json()
+    assert len(baseline.tracks) == 1
+
+
+# --- Overlays lane ------------------------------------------------------------
+
+
+def test_overlay_card_compiles_onto_a_silent_overlay_track():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _photo_visual()
+    card = _overlay_card()
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[card]),
+    )
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    assert overlay_track.kind == "overlay"
+    assert len(overlay_track.clips) == 1
+    clip = overlay_track.clips[0]
+    assert clip.id == "subtitled-overlay-card-1"
+    assert clip.volume == 0
+    assert clip.source_start == pytest.approx(0.0)
+    assert clip.source_duration == pytest.approx(2.0)
+    assert clip.timeline_start == pytest.approx(1.0)
+    placement = clip.visual_placement
+    assert placement is not None
+    assert placement.order == 1
+    assert placement.width_fraction == pytest.approx(0.35)
+    assert placement.x_fraction == pytest.approx(0.5)
+    assert placement.y_fraction == pytest.approx(0.4)
+    assert placement.window_start == pytest.approx(1.0)
+    assert placement.window_end == pytest.approx(3.0)
+    assert placement.fade_in is False and placement.fade_out is False
+    asset = visual.render_asset()
+    assert asset in recipe.asset_manifest.assets
+    projected = next(a for a in recipe.assets if a.id == asset.id)
+    assert isinstance(projected, MediaAsset)
+    assert projected.duration is None and projected.natural_size is None
+    assert {"visualBlocks", "alphaOverlay", "audioMix"} <= recipe.required_capabilities
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def test_overlay_fade_flag_sets_both_fade_in_and_fade_out():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _photo_visual()
+    card = _overlay_card(fade=True)
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[card]),
+    )
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    placement = overlay_track.clips[0].visual_placement
+    assert placement.fade_in is True and placement.fade_out is True
+
+
+def test_overlay_y_frac_clamped_into_caption_band_top():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _photo_visual()
+    card = _overlay_card(y_frac=0.9)
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[card]),
+    )
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    assert overlay_track.clips[0].visual_placement.y_fraction == pytest.approx(0.62)
+
+
+def test_overlays_sorted_by_z_then_start_then_id():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _photo_visual()
+    cards = [
+        _overlay_card(id="c-last", z=1, start_s=0.5, end_s=1.5),
+        _overlay_card(id="a-first", z=0, start_s=2.0, end_s=3.0),
+        _overlay_card(id="b-second", z=0, start_s=0.0, end_s=1.0),
+    ]
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=cards),
+    )
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    assert [clip.id for clip in overlay_track.clips] == [
+        "subtitled-overlay-b-second",
+        "subtitled-overlay-a-first",
+        "subtitled-overlay-c-last",
+    ]
+    assert [clip.visual_placement.order for clip in overlay_track.clips] == [1, 2, 3]
+
+
+def test_overlay_card_outside_timeline_is_dropped_silently():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _photo_visual()
+    inside = _overlay_card(id="inside", start_s=1.0, end_s=2.0)
+    outside = _overlay_card(id="outside", start_s=20.0, end_s=25.0)
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[inside, outside]),
+    )
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    assert [clip.id for clip in overlay_track.clips] == ["subtitled-overlay-inside"]
+
+
+def test_overlay_video_visual_is_rejected_as_a_lane_error():
+    bindings = (_binding(duration_s=10.0),)
+    video_visual = _pool_video_visual()
+    card = _overlay_card(media_id=VIDEO_ID, gcs_path=VIDEO_PATH, generation="88")
+    with pytest.raises(SubtitledLaneError) as excinfo:
+        compile_phone_subtitled_plan(
+            bindings,
+            caption_cues=[],
+            visuals=(video_visual,),
+            lanes=PhoneSubtitledLanes(overlays=[card]),
+        )
+    assert excinfo.value.lane == "overlays"
+    assert excinfo.value.capability == "visualBlocks"
+
+
+def test_overlay_unknown_media_id_is_rejected_as_a_lane_error():
+    bindings = (_binding(duration_s=10.0),)
+    card = _overlay_card()
+    with pytest.raises(SubtitledLaneError) as excinfo:
+        compile_phone_subtitled_plan(
+            bindings,
+            caption_cues=[],
+            visuals=(),
+            lanes=PhoneSubtitledLanes(overlays=[card]),
+        )
+    assert excinfo.value.lane == "overlays"
+
+
+def test_no_overlay_track_when_all_cards_drop_outside_timeline():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _photo_visual()
+    outside = _overlay_card(start_s=20.0, end_s=25.0)
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[outside]),
+    )
+    assert not any(t.id == "subtitled-overlays" for t in recipe.tracks)
+    assert "visualBlocks" not in recipe.required_capabilities
+
+
+# --- Sound-effects lane -------------------------------------------------------
+
+
+def test_sfx_playable_extension_helper():
+    assert sfx_path_is_playable("sound-effects/pop.M4A") is True
+    assert sfx_path_is_playable("sound-effects/pop.wav") is True
+    assert sfx_path_is_playable("sound-effects/pop.mp3") is True
+    assert sfx_path_is_playable("sound-effects/pop.aac") is True
+    assert sfx_path_is_playable("sound-effects/pop.ogg") is False
+
+
+def test_sfx_compiles_onto_a_shared_audio_track_with_volume_forwarded():
+    bindings = (_binding(duration_s=10.0),)
+    resolved = _resolved_sfx()
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        lanes=PhoneSubtitledLanes(sound_effects=[resolved]),
+    )
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    assert sfx_track.kind == "audio"
+    assert len(sfx_track.clips) == 1
+    clip = sfx_track.clips[0]
+    assert clip.id == "sfx-sfx-1"
+    assert clip.timeline_start == pytest.approx(1.0)
+    assert clip.source_duration == pytest.approx(1.0)
+    assert clip.volume == pytest.approx(1.0)
+    assert {"soundEffects", "audioMix"} <= recipe.required_capabilities
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def test_sfx_volume_is_forwarded_from_the_request():
+    bindings = (_binding(duration_s=10.0),)
+    resolved = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=1.0, volume=0.4)
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], lanes=PhoneSubtitledLanes(sound_effects=[resolved])
+    )
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    assert sfx_track.clips[0].volume == pytest.approx(0.4)
+
+
+def test_sfx_is_clamped_to_the_timeline_end():
+    bindings = (_binding(duration_s=10.0),)
+    resolved = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=9.5), duration_s=3.0
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], lanes=PhoneSubtitledLanes(sound_effects=[resolved])
+    )
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    assert sfx_track.clips[0].source_duration == pytest.approx(0.5)
+
+
+def test_sfx_starting_after_timeline_end_is_skipped():
+    bindings = (_binding(duration_s=10.0),)
+    resolved = _resolved_sfx(request=SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=10.0))
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], lanes=PhoneSubtitledLanes(sound_effects=[resolved])
+    )
+    assert not any(t.id == "sfx" for t in recipe.tracks)
+    assert "soundEffects" not in recipe.required_capabilities
+
+
+def test_shared_catalog_id_reuses_one_manifest_entry():
+    bindings = (_binding(duration_s=10.0),)
+    asset = _sfx_asset("pop")
+    first = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=1.0), asset=asset
+    )
+    second = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-2", catalog_id="pop", at_s=3.0), asset=asset
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], lanes=PhoneSubtitledLanes(sound_effects=[first, second])
+    )
+    sfx_assets = [a for a in recipe.asset_manifest.assets if isinstance(a, LibraryRenderAsset)]
+    assert len(sfx_assets) == 1
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    assert {clip.source_asset_id for clip in sfx_track.clips} == {asset.id}
+
+
+def test_sfx_ordered_by_at_s_then_id():
+    bindings = (_binding(duration_s=10.0),)
+    later = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-later", catalog_id="pop", at_s=5.0),
+        asset=_sfx_asset("pop"),
+    )
+    earlier = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-earlier", catalog_id="ding", at_s=1.0),
+        asset=_sfx_asset("ding"),
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], lanes=PhoneSubtitledLanes(sound_effects=[later, earlier])
+    )
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    assert [clip.id for clip in sfx_track.clips] == ["sfx-sfx-earlier", "sfx-sfx-later"]
+
+
+# --- Ending-clip lane ---------------------------------------------------------
+
+
+def test_ending_clip_appends_a_second_main_track_clip_muted():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _pool_video_visual(duration_s=6.0)
+    ending = SubtitledEndingClip(media_id=VIDEO_ID, gcs_path=VIDEO_PATH, generation="88")
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(ending_clip=ending),
+    )
+    main_track = next(t for t in recipe.tracks if t.id == "subtitled")
+    assert len(main_track.clips) == 2
+    ending_clip = main_track.clips[1]
+    assert ending_clip.id == "clip-ending"
+    assert ending_clip.volume == 0
+    assert ending_clip.timeline_start == pytest.approx(10.0)
+    assert ending_clip.source_start == pytest.approx(0.0)
+    assert ending_clip.source_duration == pytest.approx(6.0)
+    assert recipe.duration == pytest.approx(16.0)
+    assert {"visualVideos", "audioMix"} <= recipe.required_capabilities
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def test_ending_clip_honours_trim_start_and_max_duration():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _pool_video_visual(duration_s=6.0)
+    ending = SubtitledEndingClip(
+        media_id=VIDEO_ID,
+        gcs_path=VIDEO_PATH,
+        generation="88",
+        trim_start_s=1.0,
+        max_duration_s=2.0,
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(ending_clip=ending),
+    )
+    main_track = next(t for t in recipe.tracks if t.id == "subtitled")
+    ending_clip = main_track.clips[1]
+    assert ending_clip.source_start == pytest.approx(1.0)
+    assert ending_clip.source_duration == pytest.approx(2.0)
+    assert recipe.duration == pytest.approx(12.0)
+
+
+def test_ending_clip_requires_a_video_visual():
+    bindings = (_binding(duration_s=10.0),)
+    photo = _photo_visual()
+    ending = SubtitledEndingClip(media_id=PHOTO_ID, gcs_path=PHOTO_PATH, generation="77")
+    with pytest.raises(SubtitledLaneError) as excinfo:
+        compile_phone_subtitled_plan(
+            bindings,
+            caption_cues=[],
+            visuals=(photo,),
+            lanes=PhoneSubtitledLanes(ending_clip=ending),
+        )
+    assert excinfo.value.lane == "ending_clip"
+    assert excinfo.value.capability == "visualVideos"
+
+
+def test_ending_clip_trim_past_source_duration_is_rejected():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _pool_video_visual(duration_s=6.0)
+    ending = SubtitledEndingClip(
+        media_id=VIDEO_ID, gcs_path=VIDEO_PATH, generation="88", trim_start_s=10.0
+    )
+    with pytest.raises(SubtitledLaneError) as excinfo:
+        compile_phone_subtitled_plan(
+            bindings,
+            caption_cues=[],
+            visuals=(visual,),
+            lanes=PhoneSubtitledLanes(ending_clip=ending),
+        )
+    assert excinfo.value.lane == "ending_clip"
+
+
+def test_sfx_may_extend_over_the_ending_clip():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _pool_video_visual(duration_s=6.0)
+    ending = SubtitledEndingClip(media_id=VIDEO_ID, gcs_path=VIDEO_PATH, generation="88")
+    resolved = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=14.0), duration_s=3.0
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(ending_clip=ending, sound_effects=[resolved]),
+    )
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    assert len(sfx_track.clips) == 1
+    # timeline_end = 10 (speaker) + 6 (ending) = 16, so a 3s effect at 14s fits.
+    assert sfx_track.clips[0].source_duration == pytest.approx(2.0)
+
+
+# --- Full recipe: all three lanes together -----------------------------------
+
+
+def test_all_three_lanes_together_pass_phone_pilot_validation(monkeypatch):
+    bindings = (_binding(duration_s=10.0),)
+    photo = _photo_visual()
+    video = _pool_video_visual(duration_s=6.0)
+    card = _overlay_card()
+    ending = SubtitledEndingClip(media_id=VIDEO_ID, gcs_path=VIDEO_PATH, generation="88")
+    resolved = _resolved_sfx()
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=_CUES,
+        visuals=(photo, video),
+        lanes=PhoneSubtitledLanes(overlays=[card], sound_effects=[resolved], ending_clip=ending),
+    )
+    monkeypatch.setattr(settings, "phone_editor_media_enabled", True)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+    assert recipe.model_validate(recipe.model_dump(mode="json")) == recipe

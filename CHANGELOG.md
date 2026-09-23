@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.178.0] - 2026-09-23
+
+### Changed
+- feat(phone): subtitled recipe carries stickers, SFX and a muted ending clip (KRI-174 Phase 1) (#1196) <!-- release-pr: 1196 -->
+
 ## [0.76.177.0] - 2026-09-23
 
 ### Changed
