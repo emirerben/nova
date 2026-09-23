@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.154.0] - 2026-09-23
+
+### Changed
+- KRI-118 L1: phone-render gate fixes (speech cleanup, musicBed, self-narration, visual_blocks, mute windows) (#1170) <!-- release-pr: 1170 -->
+
+## [0.76.153.0] - 2026-09-23
+
+### Changed
+- fix(plan): don't tell the specialist there's no video when duration is just unknown (#1176) <!-- release-pr: 1176 -->
+
+## [0.76.152.0] - 2026-09-23
+
+### Changed
+- fix(narrated): plan voiceover stories reliably, make Clean up speech real, recover from planning failures (#1166) <!-- release-pr: 1166 -->
+
+## [0.76.151.0] - 2026-09-23
+
+### Changed
+- KRI-118 L6: honor 4xx detail, split proxy-contract errors, distinguish outdated renderer, fix storage gate (#1169) <!-- release-pr: 1169 -->
+
+## [0.76.150.0] - 2026-09-23
+
+### Changed
+- docs(KRI-118): per-edit-type requirements audit (lane L0) (#1168) <!-- release-pr: 1168 -->
+
 ## [0.76.149.0] - 2026-09-23
 
 ### Changed

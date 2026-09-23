@@ -73,6 +73,16 @@ MAX_CREATOR_MEDIA_REFS = 50
 CREATOR_VISIBLE_ASSET_STATES = ("uploaded", "queued", "analyzing", "ready")
 CREATOR_CONTEXT_MAX_CHARS = 3900
 EXECUTION_RECEIPT_LEASE_S = CREATOR_EXECUTION_RECEIPT_LEASE_S
+# A guided planning failure happens before any Job exists, so it refunds the
+# render attempt its confirmation reserved, like every other pre-Job failure.
+# Bounded per confirmed plan so a failure that keeps repeating cannot loop
+# paid planner calls.
+MAX_PLANNING_FAILURE_REFUNDS = 2
+# Codes whose ProposalFailure.message is itself a generic "try again"; the
+# thread keeps its own sentence for them instead of stacking two.
+_GENERIC_PLANNING_FAILURE_CODES = frozenset(
+    {"proposal_generation_failed", "proposal_generation_timeout", "creator_dispatch_failed"}
+)
 
 _PHASE_TO_PUBLIC = {
     "briefing": "briefing",
@@ -823,19 +833,63 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             # lease. The stable attempt identity prevents a stale failure from
             # terminating a newer Creator execution.
             failure_code = proposal_code or "proposal_generation_failed"
+            raw_message = failure.get("message") if isinstance(failure, dict) else None
+            failure_message = raw_message.strip()[:500] if isinstance(raw_message, str) else ""
+            retryable = not (isinstance(failure, dict) and failure.get("retryable") is False)
             receipt.status = "failed"
             receipt.error = {"code": failure_code}
             receipt.completed_at = datetime.now(UTC)
+            refunds = int(active.get("planning_failure_refunds") or 0)
+            if retryable and refunds < MAX_PLANNING_FAILURE_REFUNDS:
+                # No Job was minted, so refund the attempt this confirmation
+                # reserved. Runs once per failure: the receipt just left
+                # running/succeeded and the phase becomes failed, so neither
+                # the receipt query nor this branch can select it again. The
+                # counter survives re-confirmation (it spreads active_plan).
+                session.render_attempts = max(0, int(session.render_attempts or 0) - 1)
+                session.iteration_count = max(
+                    0, int(getattr(session, "iteration_count", 0) or 0) - 1
+                )
+                session.active_plan = {**active, "planning_failure_refunds": refunds + 1}
             session.phase = "failed"
+            # After the refund decision: a retryable failure with no attempt
+            # left must not invite a retry the route will refuse. A new chat
+            # message starts a fresh session (and budget) instead.
+            budget = getattr(session, "max_render_attempts", None)
+            out_of_attempts = bool(
+                retryable
+                and budget is not None
+                and int(session.render_attempts or 0) >= int(budget or 0)
+            )
+            if out_of_attempts:
+                failure_message = "Send a message to try a new direction."
             session.last_error = {
                 "code": failure_code,
-                "message": "Kria couldn't plan this direction. Try it again.",
+                "message": (
+                    "Kria couldn't plan this direction. Try it again."
+                    if retryable and not out_of_attempts
+                    else "Kria couldn't plan this direction."
+                ),
+                # ProposalFailure.message is already public (only .detail is
+                # admin-only); the thread projects it as the failure reason.
+                "user_message": failure_message or None,
+                "retryable": retryable,
             }
+            if failure_message and (
+                out_of_attempts
+                or not retryable
+                or failure_code not in _GENERIC_PLANNING_FAILURE_CODES
+            ):
+                event_message = f"I couldn't plan that direction. {failure_message}"
+            elif retryable:
+                event_message = "I couldn't plan that direction. Try it again."
+            else:
+                event_message = "I couldn't plan that direction."
             await append_event(
                 db,
                 session,
                 event_type="assistant_render_failed",
-                payload={"message": "I couldn't plan that direction. Try it again."},
+                payload={"message": event_message, "code": failure_code},
             )
             return True
         if not exact_job:

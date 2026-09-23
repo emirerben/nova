@@ -252,6 +252,32 @@ def test_expanded_bindings_deduplicate_and_conflicts_fail_closed():
         schedule_semantic_edit(plan, _input())
 
 
+@pytest.mark.parametrize("direction", ["guided_story", "text_explainer"])
+def test_non_montage_bindings_are_never_scheduled(direction):
+    """A reused photo with a different voiceover line per chapter (prod shape)."""
+    media = [
+        EditProposalMedia(media_id="clip-0", lane="clip", kind="video", duration_s=10),
+        EditProposalMedia(media_id="photo-0", lane="asset", kind="image"),
+    ]
+    plan = SemanticEditPlan.model_validate(
+        {
+            **_plan(("clip-0", "photo-0", "photo-0"), candidate=False).model_dump(),
+            "text_bindings": [
+                {"text": "First voiceover line", "chapter_ids": ["chapter-1"]},
+                {"text": "Second voiceover line", "chapter_ids": ["chapter-2"]},
+            ],
+        }
+    )
+    result = schedule_semantic_edit(
+        plan, _input(direction=direction, media=media, narration_duration_s=12)
+    )
+    assert result.montage_text_bindings == []
+    assert "scheduler_dropped_non_montage_text_bindings:2" in result.repairs
+    # fast_montage renders the lane, so its one-caption-per-source rule still holds.
+    with pytest.raises(FeasibilityError, match="conflicting requested captions"):
+        schedule_semantic_edit(plan, _input(media=media, narration_duration_s=12))
+
+
 def test_creator_labels_retain_user_provenance():
     plan = _plan()
     labels = ["One", "Two", "Three"]

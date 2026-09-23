@@ -76,9 +76,31 @@ def test_item_narration_identity_requires_the_seeded_voiceover_contract() -> Non
         update={"words": []}
     )
     assert proposal_build._item_narration_identity(item, ProposalBrief()) is None
+    # A re-driven clean attempt seeds the cleaned derivative; planning always
+    # restarts from the raw recording, never the derivative, its words or cut.
+    cleaned = NarrationTrack(
+        gcs_path="users/u/plan/i/speech-cleanup/a/" + "b" * 32 + ".wav",
+        generation="99",
+        duration_s=3.9,
+        words=[{"text": "Hi.", "start_s": 0.1, "end_s": 0.4}],
+        language="en",
+        caption_style="sentence",
+        speech_cleanup={
+            "analysis_id": "0f0f0f0f-3333-4333-8333-333333333333",
+            "source_gcs_path": narration.gcs_path,
+            "source_generation": narration.generation,
+            "source_duration_s": narration.duration_s,
+            "cut_sha256": "c" * 64,
+        },
+    )
+    assert proposal_build._item_narration_identity(
+        item, ProposalBrief(narration=cleaned)
+    ) == narration.model_copy(update={"language": "en", "caption_style": "sentence"})
     item.voiceover_generation = "8"
     with pytest.raises(RuntimeError, match="identity changed"):
         proposal_build._item_narration_identity(item, brief)
+    with pytest.raises(RuntimeError, match="identity changed"):
+        proposal_build._item_narration_identity(item, ProposalBrief(narration=cleaned))
 
 
 def test_pinned_narration_transcription_revalidates_typed_words(monkeypatch) -> None:
@@ -307,6 +329,10 @@ def test_attempt_fence_requires_exact_epoch_attempt_and_active_status(monkeypatc
     assert proposal_build._attempt_is_active(item_id, "attempt-1", 8) is False
     row.edit_proposal = _proposal(status="drafting")
     assert proposal_build._attempt_is_active(item_id, "attempt-1", 7) is False
+    # Only a Celery retry re-driving its own committed drafting transition.
+    assert proposal_build._attempt_is_active(item_id, "attempt-1", 7, True) is True
+    row.edit_proposal = _proposal(status="draft")
+    assert proposal_build._attempt_is_active(item_id, "attempt-1", 7, True) is False
 
 
 def test_attempt_wants_auto_finalize_reads_approval_mode_off_the_row(monkeypatch) -> None:
@@ -3191,3 +3217,670 @@ def test_creator_dispatch_failure_settlement_fences(monkeypatch, fence):
     )
     assert item.edit_proposal == original
     assert db.commits == 0
+
+
+# ── Clean up speech: guided voiceover plans against its cleaned derivative ──
+
+
+class _CleanupDb(_Db):
+    """``_Db`` plus the one SpeechCleanupAnalysis lookup the consent load does."""
+
+    def __init__(self, row) -> None:  # noqa: ANN001
+        super().__init__(_Result(rows=[]))
+        self.row = row
+
+    def get(self, _model, identifier, **_kwargs):  # noqa: ANN001, ANN003
+        return self.row if self.row is not None and self.row.id == identifier else None
+
+
+def _clean_guided_attempt(
+    monkeypatch,
+    tmp_path,
+    *,
+    choice: str | None = "clean",
+    voiceover_duration_s: float | None = None,
+):
+    """A Main Creator guided voiceover attempt over the synthetic 48.6 s fixture.
+
+    Storage is the local fixture backend holding a real AAC tone, so the
+    FFmpeg cut, ffprobe and immutable upload all run for real.
+    """
+
+    from app.config import settings
+    from app.schemas.edit_proposal import MAIN_CREATOR_FAIL_CLOSED
+    from tests.services.test_guided_speech_cleanup import (
+        analysis_row,
+        guided_voiceover_item,
+        load_fixture,
+        raw_narration,
+        write_tone_voiceover,
+    )
+
+    fixture = load_fixture()
+    owner_id = uuid.UUID(fixture["owner_id"])
+    item_id = uuid.UUID(fixture["plan_item_id"])
+    raw = raw_narration(fixture)
+    if voiceover_duration_s is not None:
+        raw = raw.model_copy(update={"duration_s": voiceover_duration_s})
+    root = tmp_path / "bucket"
+    monkeypatch.setattr(settings, "storage_provider", "local")
+    monkeypatch.setattr(settings, "e2e_fixtures", True)
+    monkeypatch.setattr(settings, "local_storage_root", str(root))
+    monkeypatch.setattr(settings, "guided_voiceover_speech_cleanup_enabled", True)
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    write_tone_voiceover(root / raw.gcs_path, duration_s=raw.duration_s, generation=raw.generation)
+
+    videos = [
+        MediaRef(
+            lane="clip",
+            media_id=f"video-{index}",
+            gcs_path=f"users/{owner_id}/plan/{item_id}/video-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=5.04,
+        )
+        for index in range(5)
+    ]
+    photos = [
+        MediaRef(
+            lane="asset",
+            media_id=f"photo-{index}",
+            gcs_path=f"users/{owner_id}/plan/{item_id}/photo-{index}.jpg",
+            generation="1",
+            kind="image",
+        )
+        for index in range(5)
+    ]
+    item = guided_voiceover_item(
+        fixture,
+        idea="Harbor story",
+        theme="",
+        voiceover_duration_s=raw.duration_s,
+        clip_assignments=[{"media_id": ref.media_id, "gcs_path": ref.gcs_path} for ref in videos],
+        clip_gcs_paths=[ref.gcs_path for ref in videos],
+    )
+    item.edit_proposal = EditProposal(
+        proposal_version=1,
+        generation_attempt_id="attempt-1",
+        status="analyzing",
+        design_fallback=MAIN_CREATOR_FAIL_CLOSED,
+        brief=ProposalBrief(
+            direction="guided_story",
+            pace="relaxed",
+            duration_s=48.618667,
+            narration=raw,
+            video_reuse_policy="once",
+            media_scope="all",
+        ),
+    ).model_dump(mode="json")
+    row = analysis_row(item, fixture)
+    db = _CleanupDb(row)
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    monkeypatch.setattr(proposal_build, "_pool_refs", lambda *_a, **_kw: photos)
+    monkeypatch.setattr(
+        proposal_build,
+        "_analyze_clip_assignments",
+        lambda assignments, *_a, **_kw: list(zip(assignments, videos, strict=True)),
+    )
+    monkeypatch.setattr(proposal_build, "media_generations_match_sync", lambda _refs: True)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    context = {"creator_strategy": {}}
+    if choice is not None:
+        context.update(
+            speech_cleanup_analysis_id=fixture["snapshot"]["analysis_id"],
+            speech_cleanup_choice=choice,
+        )
+    monkeypatch.setattr(
+        proposal_build,
+        "_creator_dispatch_context_for_guided_attempt",
+        lambda *_a, **_kw: context,
+    )
+    raw_words = [
+        SimpleNamespace(
+            text=word["text"], start_s=word["start_s"], end_s=word["end_s"], confidence=1
+        )
+        for word in fixture["snapshot"]["analysis"]["timed_words"]
+    ]
+    whisper = Mock(return_value=SimpleNamespace(words=raw_words, language="en"))
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", whisper)
+
+    agent_inputs = []
+    output_media = videos + photos
+    groups = [output_media[index : index + 4] for index in range(0, len(output_media), 4)]
+
+    def _run(agent, agent_input, ctx=None):  # noqa: ANN001, ARG001
+        agent_inputs.append(agent_input)
+        total = agent_input.narration_duration_s
+        first = len(groups[0]) * 1.4
+        durations = [first] + [(total - first) / (len(groups) - 1)] * (len(groups) - 1)
+        return agent.parse(
+            json.dumps(
+                {
+                    "title": "Harbor light",
+                    "duration_s": total,
+                    "story_beats": [
+                        {
+                            "topic": f"Chapter {index + 1}",
+                            "thought": "The narration carries this chapter.",
+                            "media_ids": [ref.media_id for ref in group],
+                            "duration_s": durations[index],
+                        }
+                        for index, group in enumerate(groups)
+                    ],
+                }
+            ),
+            agent_input,
+        )
+
+    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run)
+    return SimpleNamespace(
+        fixture=fixture,
+        owner_id=owner_id,
+        item_id=item_id,
+        item=item,
+        row=row,
+        raw=raw,
+        root=root,
+        whisper=whisper,
+        agent_inputs=agent_inputs,
+    )
+
+
+def _draft(attempt, *, retries: int = 0) -> EditProposal:  # noqa: ANN001
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(request=SimpleNamespace(retries=retries)),
+        attempt.item_id,
+        str(attempt.item_id),
+        "attempt-1",
+        0,
+        auto_finalize=False,
+    )
+    return parse_edit_proposal(attempt.item.edit_proposal)
+
+
+def _derivatives(attempt) -> list:  # noqa: ANN001
+    prefix = attempt.root / f"users/{attempt.owner_id}/plan/{attempt.item_id}/speech-cleanup"
+    return sorted(path for path in prefix.rglob("*") if path.is_file()) if prefix.exists() else []
+
+
+def test_clean_choice_plans_against_cleaned_derivative(monkeypatch, tmp_path) -> None:
+    from app.pipeline.guided_story import validate_proposal_compiles
+    from app.services.guided_speech_cleanup import derivative_path_ok
+
+    attempt = _clean_guided_attempt(monkeypatch, tmp_path)
+
+    persisted = _draft(attempt)
+
+    assert persisted is not None and persisted.status == "draft", persisted.failure
+    narration = persisted.draft.narration
+    expected = attempt.fixture["expected"]
+    provenance = narration.speech_cleanup
+    assert provenance is not None
+    assert provenance.analysis_id == attempt.fixture["snapshot"]["analysis_id"]
+    assert (provenance.source_gcs_path, provenance.source_generation) == (
+        attempt.raw.gcs_path,
+        attempt.raw.generation,
+    )
+    assert derivative_path_ok(
+        narration.gcs_path,
+        owner_id=attempt.owner_id,
+        item_id=attempt.item_id,
+        analysis_id=provenance.analysis_id,
+    )
+    assert (attempt.root / narration.gcs_path).read_bytes()[:4] == b"RIFF"
+    assert narration.duration_s == pytest.approx(expected["cleaned_duration_s"], abs=0.05)
+    # The planner saw the cleaned timeline and the remapped snapshot words.
+    [agent_input] = attempt.agent_inputs
+    assert agent_input.narration_duration_s == narration.duration_s
+    assert agent_input.target_duration_s == pytest.approx(narration.duration_s)
+    assert len(agent_input.narration_words) == expected["cleaned_word_count"]
+    assert agent_input.narration_words[-1]["end_s"] == pytest.approx(
+        expected["cleaned_last_word_end_s"], abs=1e-3
+    )
+    attempt.whisper.assert_not_called()
+    assert persisted.draft.duration_s == narration.duration_s
+    assert persisted.brief.narration == narration
+    assert persisted.media_digest == canonical_media_digest(persisted.draft.media, narration)
+    assert persisted.media_digest != canonical_media_digest(
+        persisted.draft.media, narration.model_copy(update={"speech_cleanup": None})
+    )
+    validate_proposal_compiles(persisted.draft)
+
+
+def test_clean_choice_redrive_reuses_the_same_derivative(monkeypatch, tmp_path) -> None:
+    attempt = _clean_guided_attempt(monkeypatch, tmp_path)
+    first = _draft(attempt)
+    assert first.status == "draft", first.failure
+    # A Celery retry after a DB loss finds its own committed drafting transition.
+    attempt.item.edit_proposal = first.model_copy(
+        update={
+            "proposal_version": first.proposal_version + 1,
+            "status": "drafting",
+            "draft": None,
+        }
+    ).model_dump(mode="json")
+
+    second = _draft(attempt, retries=1)
+
+    assert second.status == "draft", second.failure
+    assert len(attempt.agent_inputs) == 2
+    assert second.draft.narration == first.draft.narration
+    assert second.media_digest == first.media_digest
+    assert len(_derivatives(attempt)) == 1
+    attempt.whisper.assert_not_called()
+
+
+@pytest.mark.parametrize("pinned", ["present", "missing"])
+def test_clean_choice_redrive_keeps_its_pinned_derivative_across_hosts(
+    monkeypatch, tmp_path, pinned: str
+) -> None:
+    """A re-cut on another CPU can hash to another name; reuse the pinned file."""
+    from app.pipeline import speech_cleanup_apply as apply_mod
+
+    attempt = _clean_guided_attempt(monkeypatch, tmp_path)
+    first = _draft(attempt)
+    assert first.status == "draft", first.failure
+    attempt.item.edit_proposal = first.model_copy(
+        update={
+            "proposal_version": first.proposal_version + 1,
+            "status": "drafting",
+            "draft": None,
+        }
+    ).model_dump(mode="json")
+    recut = Mock(wraps=apply_mod.apply_speech_cleanup_to_audio)
+    monkeypatch.setattr(apply_mod, "apply_speech_cleanup_to_audio", recut)
+    if pinned == "missing":
+        (attempt.root / first.draft.narration.gcs_path).unlink()
+
+    second = _draft(attempt, retries=1)
+
+    if pinned == "missing":
+        # A re-created object is a new generation, so the committed drafting
+        # step's inputs no longer match: fail retryably, never strand.
+        assert recut.call_count == 1
+        assert second.status == "failed"
+        assert (second.failure.code, second.failure.retryable) == (
+            "proposal_generation_failed",
+            True,
+        )
+        return
+    assert second.status == "draft", second.failure
+    assert second.draft.narration == first.draft.narration
+    assert second.media_digest == first.media_digest
+    recut.assert_not_called()
+    assert len(_derivatives(attempt)) == 1
+
+
+def test_derivative_uploaded_after_its_voiceover_was_removed_is_deleted(
+    monkeypatch, tmp_path
+) -> None:
+    """Removing the voiceover deletes its cleaned copies once; a later upload goes too."""
+    from app import storage
+    from app.pipeline import speech_cleanup_apply as apply_mod
+    from app.services.guided_speech_cleanup import derivative_item_prefix
+
+    attempt = _clean_guided_attempt(monkeypatch, tmp_path)
+    cut = apply_mod.apply_speech_cleanup_to_audio
+
+    def _remove_voiceover_mid_cut(snapshot, source, output, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        # remove_media commits, then runs its one prefix delete, while this
+        # attempt is between download and upload.
+        attempt.item.voiceover_gcs_path = None
+        attempt.item.voiceover_generation = None
+        attempt.item.voiceover_duration_s = None
+        attempt.item.audio_mode = "kria"
+        storage.delete_prefix_best_effort(
+            derivative_item_prefix(owner_id=attempt.owner_id, item_id=attempt.item_id)
+        )
+        return cut(snapshot, source, output, **kwargs)
+
+    monkeypatch.setattr(apply_mod, "apply_speech_cleanup_to_audio", _remove_voiceover_mid_cut)
+
+    persisted = _draft(attempt)
+
+    assert persisted.status == "failed"
+    assert (persisted.failure.code, persisted.failure.retryable) == (
+        "speech_cleanup_changed",
+        False,
+    )
+    assert _derivatives(attempt) == []
+    assert attempt.agent_inputs == []  # no paid planner call for a removed voice
+
+
+@pytest.mark.parametrize(
+    ("case", "code", "retryable"),
+    [
+        ("flag_off", "speech_cleanup_disabled", False),
+        ("superseded", "speech_cleanup_changed", False),
+        ("fingerprint_drift", "speech_cleanup_changed", False),
+        ("window_capped", "speech_cleanup_unavailable", False),
+        ("raw_replaced", "speech_cleanup_changed", False),
+        ("download_failed", "speech_cleanup_unavailable", True),
+    ],
+)
+def test_clean_choice_fails_closed_instead_of_planning_raw_audio(
+    monkeypatch, tmp_path, case: str, code: str, retryable: bool
+) -> None:
+    import os
+
+    from app.config import settings
+
+    attempt = _clean_guided_attempt(
+        monkeypatch, tmp_path, voiceover_duration_s=400.0 if case == "window_capped" else None
+    )
+    if case == "flag_off":
+        monkeypatch.setattr(settings, "guided_voiceover_speech_cleanup_enabled", False)
+    elif case == "superseded":
+        attempt.row.superseded_at = object()
+    elif case == "fingerprint_drift":
+        attempt.row.source_policy_fingerprint = "d" * 64
+    elif case == "raw_replaced":
+        os.utime(attempt.root / attempt.raw.gcs_path, ns=(1, 1))
+    elif case == "download_failed":
+        monkeypatch.setattr(
+            "app.storage.download_generation_to_file", Mock(side_effect=OSError("disk"))
+        )
+
+    persisted = _draft(attempt)
+
+    assert persisted.status == "failed"
+    assert (persisted.failure.code, persisted.failure.retryable) == (code, retryable)
+    assert persisted.design_fallback == "main_creator_fail_closed"
+    assert persisted.draft is None
+    assert attempt.agent_inputs == []
+    attempt.whisper.assert_not_called()
+    assert _derivatives(attempt) == []
+
+
+def test_clean_choice_refuses_to_save_a_plan_after_its_analysis_is_superseded(
+    monkeypatch, tmp_path
+) -> None:
+    import app.agents.edit_proposal as edit_proposal_agent
+
+    attempt = _clean_guided_attempt(monkeypatch, tmp_path)
+    planned = edit_proposal_agent.EditProposalAgent.run
+
+    def _supersede_while_planning(agent, agent_input, ctx=None):  # noqa: ANN001
+        attempt.row.superseded_at = object()
+        return planned(agent, agent_input, ctx)
+
+    monkeypatch.setattr(edit_proposal_agent.EditProposalAgent, "run", _supersede_while_planning)
+
+    persisted = _draft(attempt)
+
+    assert persisted.status == "failed"
+    assert (persisted.failure.code, persisted.failure.retryable) == (
+        "speech_cleanup_changed",
+        False,
+    )
+    assert persisted.draft is None
+
+
+@pytest.mark.parametrize("choice", ["keep_original", None])
+def test_keep_original_and_no_choice_still_plan_the_raw_recording(
+    monkeypatch, tmp_path, choice: str | None
+) -> None:
+    attempt = _clean_guided_attempt(monkeypatch, tmp_path, choice=choice)
+
+    persisted = _draft(attempt)
+
+    assert persisted.status == "draft", persisted.failure
+    narration = persisted.draft.narration
+    assert narration.speech_cleanup is None
+    assert (narration.gcs_path, narration.generation, narration.duration_s) == (
+        attempt.raw.gcs_path,
+        attempt.raw.generation,
+        attempt.raw.duration_s,
+    )
+    attempt.whisper.assert_called_once()
+    [agent_input] = attempt.agent_inputs
+    assert agent_input.narration_duration_s == attempt.raw.duration_s
+    assert _derivatives(attempt) == []
+
+
+# ── Transient DB loss re-drives draft_edit_proposal (2026-09-22 incident) ──
+
+
+def _connection_drop():
+    from sqlalchemy.exc import OperationalError
+
+    return OperationalError(
+        "UPDATE plan_items SET edit_proposal=...",
+        {},
+        Exception("server closed the connection unexpectedly"),
+    )
+
+
+class _LiveProposalRow:
+    """``_attempt_is_active``'s row, always reading the item's current envelope."""
+
+    def __init__(self, item) -> None:  # noqa: ANN001
+        self._item = item
+        self.ownership_epoch = 0
+
+    @property
+    def edit_proposal(self):  # noqa: ANN201
+        return self._item.edit_proposal
+
+
+def _auto_design_with_live_fence(monkeypatch, *, planner):  # noqa: ANN001
+    """Real ``_attempt_is_active`` over a live row; planner is the given stub."""
+
+    real_attempt_is_active = proposal_build._attempt_is_active
+    item_id, owner_id = uuid.uuid4(), uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    db = _Db(_Result(row=_LiveProposalRow(item), rows=[]))
+    monkeypatch.setattr(proposal_build, "sync_session", lambda: nullcontext(db))
+    _auto_finalize_common_mocks(monkeypatch, item, owner_id)
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", real_attempt_is_active)
+    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", planner)
+    dispatched = []
+    monkeypatch.setattr(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        lambda *a, **_k: dispatched.append(a) or SimpleNamespace(outcome="dispatched"),
+    )
+    return item, item_id, dispatched
+
+
+def test_draft_task_autoretries_only_transient_db_errors() -> None:
+    from sqlalchemy.exc import DBAPIError, OperationalError
+
+    task = proposal_build.draft_edit_proposal
+    assert task.autoretry_for == (OperationalError,)
+    assert DBAPIError not in task.autoretry_for
+    assert task.retry_backoff and not task.retry_jitter and task.max_retries >= 7
+
+
+def test_connection_drop_propagates_without_a_terminal_failure(monkeypatch) -> None:
+    from sqlalchemy.exc import OperationalError
+
+    item, item_id, _dispatched = _auto_design_with_live_fence(
+        monkeypatch, planner=lambda *_a, **_k: pytest.fail("planner must not run")
+    )
+    monkeypatch.setattr(proposal_build, "_pool_refs", Mock(side_effect=_connection_drop()))
+
+    with pytest.raises(OperationalError):
+        proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted.status == "analyzing"
+    assert persisted.failure is None
+
+
+def test_retry_redrives_its_committed_drafting_transition(monkeypatch) -> None:
+    from sqlalchemy.exc import OperationalError
+
+    calls = []
+
+    def _planner(_agent, _input, **_kw):  # noqa: ANN001
+        calls.append(1)
+        if len(calls) == 1:
+            raise _connection_drop()  # the DB drops after the drafting commit
+        return _FakeAgentOutput([_PROD_CLIP_ASSIGNMENT["media_id"]])
+
+    item, item_id, dispatched = _auto_design_with_live_fence(monkeypatch, planner=_planner)
+    task = proposal_build.draft_edit_proposal
+    with pytest.raises(OperationalError):
+        task.run(str(item_id), "attempt-1", 0)
+    assert parse_edit_proposal(item.edit_proposal).status == "drafting"
+
+    task.push_request(retries=1)
+    try:
+        task.run(str(item_id), "attempt-1", 0)
+    finally:
+        task.pop_request()
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert len(calls) == 2
+    assert persisted.status == "approved", persisted.failure
+    assert len(dispatched) == 1
+
+
+def test_retry_that_finds_different_pinned_inputs_fails_instead_of_stranding(
+    monkeypatch,
+) -> None:
+    """A re-drive whose drafting commit pinned other inputs (e.g. a cleaned WAV
+    that hashed differently on another worker build) settles the attempt."""
+    from sqlalchemy.exc import OperationalError
+
+    calls = []
+
+    def _planner(_agent, _input, **_kw):  # noqa: ANN001
+        calls.append(1)
+        raise _connection_drop()
+
+    item, item_id, dispatched = _auto_design_with_live_fence(monkeypatch, planner=_planner)
+    task = proposal_build.draft_edit_proposal
+    with pytest.raises(OperationalError):
+        task.run(str(item_id), "attempt-1", 0)
+    drafting = parse_edit_proposal(item.edit_proposal)
+    assert drafting.status == "drafting"
+    item.edit_proposal = drafting.model_copy(update={"media_digest": "0" * 64}).model_dump(
+        mode="json"
+    )
+
+    task.push_request(retries=1)
+    try:
+        task.run(str(item_id), "attempt-1", 0)
+    finally:
+        task.pop_request()
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert (persisted.status, persisted.failure.code) == ("failed", "proposal_generation_failed")
+    assert persisted.failure.retryable
+    assert len(calls) == 1  # the planner never ran on inputs nobody approved
+    # (The legacy clip-only auto-design then bypasses, as for any failure.)
+    assert len(dispatched) <= 1
+
+
+@pytest.mark.parametrize(
+    ("result", "code", "retryable"),
+    [
+        (
+            SimpleNamespace(outcome="invalid_clips", reason="not_enrolled"),
+            "phone_not_enrolled",
+            False,
+        ),
+        (
+            SimpleNamespace(outcome="speech_cleanup_analysis_conflict", reason=None),
+            "speech_cleanup_changed",
+            False,
+        ),
+        (SimpleNamespace(outcome="video_required", reason=None), "video_required", False),
+        (SimpleNamespace(outcome="invalid_clips", reason=None), "creator_dispatch_failed", True),
+        (SimpleNamespace(outcome="publish_failed", reason=None), "creator_dispatch_failed", True),
+        (None, "creator_dispatch_failed", True),
+    ],
+)
+def test_rejected_dispatch_that_would_repeat_is_not_retryable(result, code, retryable) -> None:
+    """A phone-gate or consent conflict rejects the same plan again: never
+    refund it into a retry loop, and say why in written copy."""
+    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES
+
+    got_code, message, got_retryable = proposal_build._dispatch_failure(result)
+    assert (got_code, got_retryable) == (code, retryable)
+    if code == "phone_not_enrolled":
+        assert message == PHONE_GATE_MESSAGES["not_enrolled"][1]
+    assert "Try again" in message if retryable else "Try again" not in message
+
+
+def test_first_delivery_still_refuses_a_drafting_attempt(monkeypatch) -> None:
+    from sqlalchemy.exc import OperationalError
+
+    calls = []
+
+    def _planner(_agent, _input, **_kw):  # noqa: ANN001
+        calls.append(1)
+        raise _connection_drop()
+
+    item, item_id, dispatched = _auto_design_with_live_fence(monkeypatch, planner=_planner)
+    with pytest.raises(OperationalError):
+        proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
+
+    # A duplicate delivery (retries == 0) never re-runs the planner.
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
+
+    assert len(calls) == 1
+    assert parse_edit_proposal(item.edit_proposal).status == "drafting"
+    assert dispatched == []
+
+
+def test_settled_attempt_skips_every_expensive_step(monkeypatch) -> None:
+    item, item_id, _dispatched = _auto_design_with_live_fence(
+        monkeypatch, planner=lambda *_a, **_k: pytest.fail("planner must not run")
+    )
+    item.edit_proposal = _proposal(status="failed")
+    monkeypatch.setattr(proposal_build, "_pool_refs", Mock(side_effect=AssertionError("no")))
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(request=SimpleNamespace(retries=3)),
+        item_id,
+        str(item_id),
+        "attempt-1",
+        0,
+        auto_finalize=False,
+    )
+
+    assert parse_edit_proposal(item.edit_proposal).status == "failed"
+
+
+def test_semantic_planning_failure_keeps_its_retryability(monkeypatch) -> None:
+    """A pre-LLM infeasibility is a function of the confirmed inputs; retrying
+    the same confirmation cannot pass, so the failure must say so."""
+
+    from app.services.proposal_planning import SemanticPlanningError
+
+    item_id, owner_id = uuid.uuid4(), uuid.uuid4()
+    item = _prod_item(item_id)
+    db = _Db(_Result(rows=[]))
+    monkeypatch.setattr(proposal_build, "sync_session", lambda: nullcontext(db))
+    _auto_finalize_common_mocks(monkeypatch, item, owner_id)
+    monkeypatch.setattr(proposal_build, "_attempt_wants_auto_finalize", lambda *_a, **_kw: False)
+    monkeypatch.setattr("app.config.settings.edit_proposal_semantic_enabled", True)
+    error = SemanticPlanningError(
+        "semantic_edit_infeasible",
+        "pinned timing exceeds footage capacity",
+        {},
+        retryable=False,
+        message="Add more photos or videos.",
+    )
+    monkeypatch.setattr(
+        "app.services.proposal_planning.plan_edit_proposal", Mock(side_effect=error)
+    )
+
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted.failure.code == "semantic_edit_infeasible"
+    assert persisted.failure.retryable is False
+    # The creator (chat event, iOS card) reads written copy; the scheduler's
+    # diagnostic reason stays in the admin-only detail.
+    assert persisted.failure.message == "Add more photos or videos."
+    assert "pinned timing" in persisted.failure.detail

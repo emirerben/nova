@@ -3368,7 +3368,7 @@ async def _proposal_media_is_current(
     if narration is not None:
         from app.services.creator_execution_contract import narration_matches_item  # noqa: PLC0415
 
-        if not narration_matches_item(narration.model_dump(mode="json"), item):
+        if not narration_matches_item(narration.model_dump(mode="json"), item, owner_id=user_id):
             return False
         try:
             audio_metadata = await asyncio.to_thread(storage.object_metadata, narration.gcs_path)
@@ -3706,7 +3706,7 @@ async def edit_proposal_conversation_turn(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
                     "code": exc.code,
-                    "message": exc.reason,
+                    "message": exc.message,
                 },
             ) from exc
         except Exception as exc:  # noqa: BLE001 - every invalid revision must release its fence

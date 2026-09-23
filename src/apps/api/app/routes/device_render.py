@@ -41,7 +41,9 @@ from app.kria.render_assets import LibraryRenderAsset, VisualRenderAsset, Voiceo
 from app.limiter import limiter
 from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, TemporaryMediaUpload
 from app.routes.generative_jobs import PLAYBACK_URL_TTL_MIN
+from app.schemas.edit_proposal import NarrationTrack
 from app.services.content_plan_persona import PlanPersonaOwnershipError, load_owned_plan_persona
+from app.services.creator_execution_contract import narration_matches_item
 from app.services.device_render import (
     apply_device_failure_variant_update,
     apply_retry_variant_reset,
@@ -52,8 +54,14 @@ from app.services.device_render import (
     save_device_record,
     touch_device_poll,
 )
+from app.services.guided_speech_cleanup import (
+    narration_speech_cleanup,
+    require_guided_cleanup_binding,
+)
 from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.render_library import catalog_path, inspect_library_asset
+from app.services.speech_cleanup import SpeechCleanupFailure
+from app.services.speech_cleanup_outcome import build_preflight_public_outcome
 
 router = APIRouter()
 
@@ -275,6 +283,72 @@ async def _visual_download_url(
         raise HTTPException(409, "Visual changed; refresh the recipe") from exc
 
 
+def _approved_guided_narration(assembly: object) -> dict | None:
+    guided = assembly.get("guided_edit") if isinstance(assembly, dict) else None
+    proposal = guided.get("approved_proposal") if isinstance(guided, dict) else None
+    narration = proposal.get("narration") if isinstance(proposal, dict) else None
+    return narration if isinstance(narration, dict) else None
+
+
+def _cleaned_voiceover_path(
+    job: Job, user_id: uuid.UUID, item: PlanItem | None, asset: VoiceoverRenderAsset
+) -> str | None:
+    """The cleaned derivative a "Clean up speech" guided Job plays, else None.
+
+    Returns None only when the Job's approved narration carries no cleanup
+    provenance (the raw-voiceover grant applies unchanged). Otherwise every
+    binding must still hold -- the item's current voiceover is the derivative's
+    raw source, the pinned generation is the derivative's, the object sits
+    under this owner's item/analysis prefix (`narration_matches_item`), and
+    the Job's required_v1 preflight snapshot is the exact cut it records
+    (`require_guided_cleanup_binding`) -- or this raises 409. Such a Job never
+    falls back to granting the uncut recording.
+    """
+    changed = HTTPException(409, "Voiceover changed; refresh the recipe")
+    raw = _approved_guided_narration(job.assembly_plan)
+    try:
+        if narration_speech_cleanup(raw) is None:
+            return None
+        narration = NarrationTrack.model_validate(raw)
+        require_guided_cleanup_binding(job.assembly_plan, narration)
+    except (ValueError, SpeechCleanupFailure) as exc:
+        raise changed from exc
+    if (
+        item is None
+        or narration.generation != asset.generation
+        or not narration_matches_item(narration.model_dump(mode="json"), item, owner_id=user_id)
+    ):
+        raise changed
+    return narration.gcs_path
+
+
+def _device_speech_cleanup_outcome(assembly: dict, job_id: uuid.UUID) -> dict | None:
+    """The public "Clean up speech" receipt for a device-rendered guided story.
+
+    The phone never reaches the cloud finalizer, so completion writes the same
+    receipt: ``applied`` when the published recipe played the cleaned
+    derivative the Job's required_v1 snapshot consented to, ``failed`` when it
+    cannot prove that. None (nothing written) for every other Job, including
+    one whose narration is raw: such a Job was pinned before guided cleanup
+    existed (a new one is refused at dispatch), so a native re-export of it
+    must not gain a false "failed" receipt.
+    """
+    narration = _approved_guided_narration(assembly)
+    if narration is None or assembly.get("speech_cleanup_contract") != "required_v1":
+        return None
+    try:
+        if narration_speech_cleanup(narration) is None:
+            return None
+        context = require_guided_cleanup_binding(assembly, narration)
+    except (ValueError, SpeechCleanupFailure):
+        context = None
+    return build_preflight_public_outcome(
+        assembly,
+        job_id=str(job_id),
+        results=[{"ok": True, "_speech_cleanup_outcome_context": context}],
+    )
+
+
 async def _voiceover_download_url(
     db: AsyncSession, job: Job, user_id: uuid.UUID, asset: VoiceoverRenderAsset
 ) -> str:
@@ -290,19 +364,22 @@ async def _voiceover_download_url(
     re-hashes the downloaded bytes against the pinned SHA-256. The item must
     still be in "voiceover" audio mode with that exact `(path, generation)`
     attached, so a cleared or replaced voiceover fails closed instead of
-    granting different bytes.
+    granting different bytes. A "Clean up speech" guided Job grants its cleaned
+    derivative instead (`_cleaned_voiceover_path`), never the raw recording.
     """
     if job.content_plan_item_id is None or str(job.content_plan_item_id) != asset.plan_item_id:
         raise HTTPException(404, "Voiceover unavailable")
     item = await db.get(PlanItem, job.content_plan_item_id, populate_existing=True)
-    if (
-        item is None
-        or getattr(item, "audio_mode", None) != "voiceover"
-        or not item.voiceover_gcs_path
-        or str(item.voiceover_generation or "") != asset.generation
-    ):
-        raise HTTPException(409, "Voiceover changed; refresh the recipe")
-    path = str(item.voiceover_gcs_path)
+    path = _cleaned_voiceover_path(job, user_id, item, asset)
+    if path is None:
+        if (
+            item is None
+            or getattr(item, "audio_mode", None) != "voiceover"
+            or not item.voiceover_gcs_path
+            or str(item.voiceover_generation or "") != asset.generation
+        ):
+            raise HTTPException(409, "Voiceover changed; refresh the recipe")
+        path = str(item.voiceover_gcs_path)
     await db.rollback()
     try:
         return await asyncio.to_thread(
@@ -629,6 +706,9 @@ async def complete_device_export(
         job.status = "variants_ready"
         job.current_phase = None
         job.finished_at = datetime.now(UTC)
+        outcome = _device_speech_cleanup_outcome(assembly, job.id)
+        if outcome is not None:
+            job.assembly_plan = {**assembly, "speech_cleanup_outcome": outcome}
     cleanup.status = "attached"
     await db.commit()
     return DeviceExportCompleteOut(identity=body.identity)

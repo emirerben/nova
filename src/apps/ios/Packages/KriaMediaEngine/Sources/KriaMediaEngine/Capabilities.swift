@@ -22,9 +22,24 @@ public struct CapabilityNegotiator: Sendable {
         if let freeStorageBytes, let estimatedTemporaryBytes, freeStorageBytes < estimatedTemporaryBytes { return CapabilityDecision(route: .cloud, reason: "Insufficient temporary storage") }
         if thermalState == .serious || thermalState == .critical { return CapabilityDecision(route: .cloud, reason: "Device thermal state is \(thermalState.rawValue)") }
         guard recipe.rendererVersion == "kria-ios-\(recipe.schemaVersion)" else {
+            // Distinct from "Invalid edit recipe" below: this build's renderer
+            // doesn't speak this recipe's version at all, vs. a validate()
+            // failure against a version it does understand. Both used to read
+            // as the same generic string; `DeviceRenderFailureReasonCode
+            // .forRouteDecision` keys off "renderer version" to route this to
+            // `.rendererOutdated` instead of the unsupported-FEATURE bucket.
             return CapabilityDecision(route: .cloud, reason: "Unsupported renderer version")
         }
-        do { try recipe.validate() } catch {
+        do { try recipe.validate() } catch let error as RecipeError {
+            if case .unsupportedSchema = error {
+                // `recipe.validate()` itself detected a schema newer than this
+                // build supports (as opposed to a specific unsupported feature
+                // within an otherwise-valid, understood schema) — same
+                // "update the app" bucket as the renderer-version guard above.
+                return CapabilityDecision(route: .cloud, reason: "Unsupported renderer version for this recipe schema")
+            }
+            return CapabilityDecision(route: .cloud, reason: "Invalid edit recipe")
+        } catch {
             return CapabilityDecision(route: .cloud, reason: "Invalid edit recipe")
         }
         return CapabilityDecision(route: .local)
@@ -36,11 +51,36 @@ public enum ThermalState: String, Sendable { case nominal, fair, serious, critic
 public struct StorageEstimate: Equatable, Sendable {
     public var requiredBytes: Int64
     public init(requiredBytes: Int64) { self.requiredBytes = requiredBytes }
-    public static func forAssetBytes(_ sourceBytes: Int64, projectCount: Int = 1) -> StorageEstimate {
-        let (multiplier, multiplierOverflow) = Int64(max(1, projectCount)).addingReportingOverflow(2)
-        let (bytes, productOverflow) = max(0, sourceBytes).multipliedReportingOverflow(by: multiplier)
-        let (total, sumOverflow) = bytes.addingReportingOverflow(100 * 1024 * 1024)
-        return StorageEstimate(requiredBytes: multiplierOverflow || productOverflow || sumOverflow ? .max : total)
+
+    /// Bytes of free space needed to safely produce a device render's output.
+    ///
+    /// This used to be `(pendingProjects + 2) × sourceBytes + 100MB` —
+    /// treating the *source* footage as needing to be duplicated multiple
+    /// times over. That's wrong: the originals already live on the phone
+    /// before a render starts, and a render only ever writes ONE new file,
+    /// the exported output. A project cut from several GB of 4K/ProRes
+    /// clips would fail this gate on a phone with completely ordinary free
+    /// space (KRI-118).
+    ///
+    /// This instead scales with the estimated OUTPUT size. Kria's exports
+    /// are always short-form (target sub-60s, see root CLAUDE.md) encoded at
+    /// `LocalExportPreset.default`'s H.264 bitrate, so one export is bounded
+    /// to roughly `durationS × videoBitrate / 8` bytes regardless of how much
+    /// source footage it was cut from. `pendingProjects` scales that bounded
+    /// per-export estimate — each queued render eventually writes its own
+    /// output — not the (irrelevant) source bytes. The 1.2x headroom + flat
+    /// 200MB floor cover encoder/container overhead and any other transient
+    /// files (thumbnails, muxed intermediates) a render touches.
+    public static func forEstimatedOutput(durationS: TimeInterval, pendingProjects: Int = 0) -> StorageEstimate {
+        let safeDuration = durationS.isFinite ? max(0, durationS) : Double.greatestFiniteMagnitude
+        let bytesPerSecond = Double(LocalExportPreset.default.videoBitrate) / 8.0
+        // Double arithmetic (not Int) so a pathological `pendingProjects` (e.g. `.max`)
+        // overshoots into `required >= Int64.max` below instead of trapping on overflow.
+        let exports = max(1.0, Double(pendingProjects) + 1.0)
+        let estimatedOutputBytes = safeDuration * bytesPerSecond * exports
+        let required = estimatedOutputBytes * 1.2 + 200 * 1024 * 1024
+        guard required.isFinite, required < Double(Int64.max) else { return StorageEstimate(requiredBytes: .max) }
+        return StorageEstimate(requiredBytes: Int64(required))
     }
 }
 

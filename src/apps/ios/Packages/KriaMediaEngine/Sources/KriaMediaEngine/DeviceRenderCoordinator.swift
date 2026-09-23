@@ -41,7 +41,19 @@ public enum DeviceRenderFailureReasonCode: String, Sendable {
     case exportFailed = "export_failed"
     case insufficientStorage = "insufficient_storage"
     case thermal
+    /// A specific feature within an otherwise-understood, valid recipe isn't
+    /// something this renderer can produce (e.g. a missing capability, or a
+    /// `recipe.validate()` failure that isn't a schema-version mismatch).
+    /// Structural, not transient — retrying recompiles the identical recipe
+    /// and fails the same way, so this reason suppresses the retry button.
     case unsupportedRecipe = "unsupported_recipe"
+    /// This build's renderer doesn't speak the recipe's version at all —
+    /// either `rendererVersion`/`schemaVersion` mismatched outright, or
+    /// `recipe.validate()` threw `RecipeError.unsupportedSchema`. Unlike
+    /// `.unsupportedRecipe`, the fix isn't "start a new edit" — it's
+    /// updating the app — so this gets its own reason code and copy.
+    /// Also structural: the retry button is suppressed the same way.
+    case rendererOutdated = "renderer_outdated"
     case cancelledByUser = "cancelled_by_user"
     case unknown
 
@@ -51,6 +63,11 @@ public enum DeviceRenderFailureReasonCode: String, Sendable {
         let lowered = reason.lowercased()
         if lowered.contains("thermal") { return .thermal }
         if lowered.contains("storage") { return .insufficientStorage }
+        // Covers both "Unsupported renderer version" (schemaVersion/rendererVersion
+        // mismatch) and "Unsupported renderer version for this recipe schema"
+        // (recipe.validate() threw RecipeError.unsupportedSchema) — see
+        // `CapabilityNegotiator.decide`.
+        if lowered.contains("renderer version") { return .rendererOutdated }
         return .unsupportedRecipe
     }
 
@@ -58,6 +75,13 @@ public enum DeviceRenderFailureReasonCode: String, Sendable {
     public static func forRenderFailure(_ error: Error) -> Self {
         if error is CancellationError { return .cancelledByUser }
         if case MediaEngineError.insufficientStorage = error { return .insufficientStorage }
+        // A schema-version mismatch surfacing here (recipe.validate() is also
+        // called mid-render by `OriginalSourceResolver.resolve`) means this
+        // build's renderer doesn't understand the recipe's schema at all —
+        // not a specific unsupported feature within a schema it does
+        // understand, which is what the plain `RecipeError` branch below covers.
+        if case RecipeError.unsupportedSchema = error { return .rendererOutdated }
+        if error is RecipeError { return .unsupportedRecipe }
         if error is MediaEngineError || error is SourceAssetError { return .exportFailed }
         return .unknown
     }

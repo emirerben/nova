@@ -1014,7 +1014,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         if let apiError = error as? APIError {
             switch apiError {
             case .offline: return true
-            case .requestFailed(let status): return status >= 500 || status == 429
+            case .requestFailed(let status, _): return status >= 500 || status == 429
             case .invalidResponse, .sessionExpired, .conflict, .unsupported, .contentPlanUnavailable, .editorNotReady: return false
             }
         }
