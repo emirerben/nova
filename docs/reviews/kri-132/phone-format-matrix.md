@@ -21,6 +21,8 @@ The backend and the iOS sources were traced separately; both are in the User Jou
 
 All line numbers were verified against `origin/main` at commit `88eb0e5` (2026-09-21) by grep, not copied from memory. Line numbers in the Update blocks above may drift from the base doc as this repo continues to change; treat them as approximate pointers, not a live index.
 
+> **Update — KRI-118 lane L7 verification matrix (2026-09-23, stacked on L1 phone-gates + L3 guided-specialist).** Added `tests/tasks/test_kri118_type_matrix.py`, a table-driven test covering every `EditFormat` x a representative set of footage shapes, plus `tests/replay/test_prod_failure_replay.py` replaying real prod failure shapes (`guided_story_render_failed`, `guided_story_duration_impossible`, `speech_cleanup_failed`, `phone_plan_unsupported`, `guided_story_receipt_mismatch` — pulled live via `scripts/admin.py --prod`, see `tests/replay/README.md`) against the current planner/compiler chain. All 40 matrix rows and all 5 replay fixtures pass against this repo revision today — no new gaps were found by this pass beyond what L0's audit already documented (talking_head has no phone compiler; slides is unreachable from chat on any account; day-vlog capture-time ordering; the live dispatch-gate voiceover quirk). One confirmed finding worth flagging here: the real `guided_story_duration_impossible` prod shape replayed now COMPILES (previously failed) — consistent with L1/L3's feasibility-floor fixes actually resolving that failure class. See `docs/reviews/kri-118/video-type-requirements.md` §6 for the "Type-matrix test" and "On-device test results doc" links, now filled in (`docs/reviews/kri-118/on-device-script.md`).
+
 ---
 
 ## (a) Format table

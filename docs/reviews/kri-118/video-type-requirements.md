@@ -181,7 +181,7 @@ Three `EditFormat`/direction values exist, are exercised by tests and production
 
 ## 6. Links
 
-- Type-matrix test: *not yet written — placeholder for a later lane to fill in once a `test_edit_type_requirements_matrix.py`-shaped guard exists.*
-- On-device test results doc: *not yet written — placeholder; `docs/reviews/kri-132/phone-format-matrix.md`'s "How verified" section is the closest existing artifact today (simulator runs + `test_phone_format_matrix.py`), but it predates this train's changes and should not be treated as verifying anything in §3.*
+- Type-matrix test: `src/apps/api/tests/tasks/test_kri118_type_matrix.py` (lane L7, 2026-09-23) — table-driven `EditFormat` x footage-shape coverage; also `src/apps/api/tests/replay/test_prod_failure_replay.py` (real prod failure-shape replay, see `src/apps/api/tests/replay/README.md`).
+- On-device test results doc: `docs/reviews/kri-118/on-device-script.md` (lane L7, 2026-09-23) — a manual test script for a human to run on a physical iPhone; results columns are blank pending an actual device run. `docs/reviews/kri-132/phone-format-matrix.md`'s "How verified" section remains the closest existing AUTOMATED-verification artifact (simulator runs + `test_phone_format_matrix.py`), but predates this train's changes and should not be treated as verifying anything in §3.
 - Related, already-committed audits this doc builds on: `docs/reviews/kri-132/phone-format-matrix.md`, `docs/reviews/kri-132/talking-head-subtitled-assessment.md`.
 - Standing rule this doc's classification is built on: KRI-129 ("creator's prompt wins" — see repo memory `kri-129-creators-prompt-wins.md` and the KRI-129-tagged comments throughout `app/agents/edit_proposal.py`).
