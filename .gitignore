@@ -20,6 +20,9 @@ tmp/
 # Pre-PR overlay-verify outputs (reports + montages from `make verify-overlays`)
 .overlay-verify/
 
+# Built sound-effect library (scripts/seed_sfx_library.py build) — audio never in git
+.sfx-library/
+
 # Python
 __pycache__/
 .venv/

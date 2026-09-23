@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.180.0] - 2026-09-23
+
+### Changed
+- feat(sfx): creator sound-effect library, iPhone-safe and reachable by the AI placers (KRI-173) (#1198) <!-- release-pr: 1198 -->
+
+## [0.76.179.0] - 2026-09-23
+
+### Changed
+- feat(copilot): rank the SFX catalog by the creator's request (KRI-173) (#1197) <!-- release-pr: 1197 -->
+
 ## [0.76.178.0] - 2026-09-23
 
 ### Changed
