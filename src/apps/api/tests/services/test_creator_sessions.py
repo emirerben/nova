@@ -462,17 +462,28 @@ async def test_reconcile_expires_the_exact_failed_guided_attempt(monkeypatch) ->
     append.assert_awaited_once()
 
 
-@pytest.mark.asyncio
-async def test_reconcile_exact_main_creator_failure_without_waiting_for_lease(
-    monkeypatch,
-) -> None:
+def _exact_failed_guided_attempt(
+    *,
+    code: str = "proposal_generation_failed",
+    message: str = "Kria couldn't plan this edit. Try again.",
+    retryable: bool = True,
+    render_attempts: int = 1,
+    refunds: int = 0,
+):
+    """A confirmed guided attempt whose async planner committed a failure."""
+
     attempt_id = str(uuid.uuid4())
+    active_plan = {
+        "guided_generation_attempt_id": attempt_id,
+        "edit_plan": {"strategy": {"render_program": "guided"}},
+    }
+    if refunds:
+        active_plan["planning_failure_refunds"] = refunds
     session = _session(
         phase="executing",
-        active_plan={
-            "guided_generation_attempt_id": attempt_id,
-            "edit_plan": {"strategy": {"render_program": "guided"}},
-        },
+        render_attempts=render_attempts,
+        iteration_count=render_attempts,
+        active_plan=active_plan,
     )
     item = SimpleNamespace(
         id=session.plan_item_id,
@@ -482,10 +493,7 @@ async def test_reconcile_exact_main_creator_failure_without_waiting_for_lease(
             generation_attempt_id=attempt_id,
             status="failed",
             approval_mode="auto",
-            failure=ProposalFailure(
-                code="proposal_generation_failed",
-                message="Kria couldn't plan this edit. Try again.",
-            ),
+            failure=ProposalFailure(code=code, message=message, retryable=retryable),
             design_fallback="main_creator_fail_closed",
         ).model_dump(mode="json"),
     )
@@ -496,10 +504,21 @@ async def test_reconcile_exact_main_creator_failure_without_waiting_for_lease(
         completed_at=datetime.now(UTC),
     )
     result = MagicMock()
-    result.scalar_one_or_none.return_value = receipt
+    # Mirrors the receipt query's running/succeeded filter.
+    result.scalar_one_or_none.side_effect = lambda: (
+        receipt if receipt.status in {"running", "succeeded"} else None
+    )
     db = AsyncMock()
     db.get.return_value = item
     db.execute.return_value = result
+    return session, item, receipt, db
+
+
+@pytest.mark.asyncio
+async def test_reconcile_exact_main_creator_failure_without_waiting_for_lease(
+    monkeypatch,
+) -> None:
+    session, item, receipt, db = _exact_failed_guided_attempt()
     append = AsyncMock()
     monkeypatch.setattr(creator_sessions, "append_event", append)
 
@@ -512,6 +531,109 @@ async def test_reconcile_exact_main_creator_failure_without_waiting_for_lease(
     assert receipt.error == {"code": "proposal_generation_failed"}
     assert item.edit_proposal["design_fallback"] == "main_creator_fail_closed"
     append.assert_awaited_once()
+    # No Job was minted, so the reserved render attempt is refunded.
+    assert (session.render_attempts, session.iteration_count) == (0, 0)
+    assert session.active_plan["planning_failure_refunds"] == 1
+    # A generic planner message keeps the thread's own sentence.
+    assert append.await_args.kwargs["payload"] == {
+        "message": "I couldn't plan that direction. Try it again.",
+        "code": "proposal_generation_failed",
+    }
+
+    # Later polls never refund the same failure again: the failed phase
+    # returns early, and even a stale phase finds no running/succeeded receipt.
+    assert await creator_sessions.reconcile_render_state(db, session) is False
+    session.phase = "executing"
+    assert await creator_sessions.reconcile_render_state(db, session) is False
+    assert session.render_attempts == 0
+    assert session.active_plan["planning_failure_refunds"] == 1
+    append.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_planning_failure_carries_the_planner_reason(monkeypatch) -> None:
+    reason = "Two captions ask for the same photo. Separate the captions or sources."
+    session, _item, _receipt, db = _exact_failed_guided_attempt(
+        code="semantic_edit_infeasible", message=reason, render_attempts=2
+    )
+    append = AsyncMock()
+    monkeypatch.setattr(creator_sessions, "append_event", append)
+
+    assert await creator_sessions.reconcile_render_state(db, session) is True
+
+    assert session.last_error == {
+        "code": "semantic_edit_infeasible",
+        "message": "Kria couldn't plan this direction. Try it again.",
+        "user_message": reason,
+        "retryable": True,
+    }
+    assert append.await_args.kwargs["payload"] == {
+        "message": f"I couldn't plan that direction. {reason}",
+        "code": "semantic_edit_infeasible",
+    }
+    # 2/2 used: the refund reopens exactly one retry.
+    assert session.render_attempts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["not_retryable", "refund_cap"])
+async def test_reconcile_planning_failure_refund_is_bounded(monkeypatch, case) -> None:
+    reason = "This footage is too short for a guided edit. Add more media."
+    session, _item, _receipt, db = _exact_failed_guided_attempt(
+        code="guided_edit_infeasible",
+        message=reason,
+        retryable=case != "not_retryable",
+        render_attempts=2,
+        refunds=creator_sessions.MAX_PLANNING_FAILURE_REFUNDS if case == "refund_cap" else 0,
+    )
+    append = AsyncMock()
+    monkeypatch.setattr(creator_sessions, "append_event", append)
+
+    assert await creator_sessions.reconcile_render_state(db, session) is True
+
+    assert session.phase == "failed"
+    assert (session.render_attempts, session.iteration_count) == (2, 2)
+    assert session.active_plan.get("planning_failure_refunds", 0) == (
+        creator_sessions.MAX_PLANNING_FAILURE_REFUNDS if case == "refund_cap" else 0
+    )
+    # Neither case can confirm again in this session, so nothing may promise
+    # that it will: out of attempts points at a new message instead.
+    shown = reason if case == "not_retryable" else "Send a message to try a new direction."
+    assert session.last_error["user_message"] == shown
+    assert append.await_args.kwargs["payload"]["message"] == (
+        f"I couldn't plan that direction. {shown}"
+    )
+    assert session.last_error["message"] == "Kria couldn't plan this direction."
+    assert session.last_error["retryable"] is (case != "not_retryable")
+
+
+@pytest.mark.asyncio
+async def test_planning_failure_refunds_bound_attempts_per_confirmed_plan(monkeypatch) -> None:
+    """Confirm -> fail cycles terminate: the budget plus at most the refund cap."""
+
+    monkeypatch.setattr(creator_sessions, "append_event", AsyncMock())
+    session, item, receipt, db = _exact_failed_guided_attempt(render_attempts=0)
+    planner_runs = 0
+    while session.render_attempts < session.max_render_attempts:
+        assert planner_runs < 10
+        # Mirror the confirm controller: reserve an attempt, mint a fresh
+        # guided attempt id (spreading active_plan) and a fresh receipt.
+        attempt_id = str(uuid.uuid4())
+        session.active_plan = {**session.active_plan, "guided_generation_attempt_id": attempt_id}
+        session.render_attempts += 1
+        session.iteration_count = session.render_attempts
+        session.phase = "executing"
+        item.edit_proposal = {**item.edit_proposal, "generation_attempt_id": attempt_id}
+        receipt.status = "succeeded"
+        planner_runs += 1
+        assert await creator_sessions.reconcile_render_state(db, session) is True
+
+    assert planner_runs == 2 + creator_sessions.MAX_PLANNING_FAILURE_REFUNDS
+    assert session.render_attempts == session.max_render_attempts
+    assert (
+        session.active_plan["planning_failure_refunds"]
+        == creator_sessions.MAX_PLANNING_FAILURE_REFUNDS
+    )
 
 
 @pytest.mark.asyncio

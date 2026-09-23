@@ -16,6 +16,7 @@ from starlette.requests import Request
 
 from app.agents._runtime import ProviderQuotaExceededError, TerminalError
 from app.agents._schemas.creator_agent import (
+    CREATOR_REQUEST_MAX_CHARS,
     AskUser,
     CreativeStrategy,
     CreatorCraftBundle,
@@ -35,6 +36,7 @@ from app.models import CreatorAgentExecution, CreatorAgentSession, Job
 from app.routes import creator_agent as creator_routes
 from app.routes import plan_items as plan_item_routes
 from app.routes.creator_agent import (
+    CARRIED_BRIEF_EVENT,
     REFRESH_DIRECTION_MESSAGE,
     AutoIterationBody,
     ConfirmBody,
@@ -44,6 +46,7 @@ from app.routes.creator_agent import (
     _apply_plan_intent,
     _auto_iteration_already_finalized,
     _balanced_duration_s,
+    _carried_brief_seed,
     _confirmed_creator_request,
     _creator_speech_cut_source_enabled,
     _explicit_media_scope,
@@ -683,6 +686,258 @@ async def test_normal_new_message_after_failed_plan_is_not_pinned(monkeypatch) -
     assert strategy["render_program"] == "native"
     assert strategy["pacing"] == "fast"
     assert strategy["target_duration_s"] == 15
+
+
+def _user_event(sequence: int, message: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        role="user",
+        sequence=sequence,
+        event_type="user_message",
+        payload={"message": message},
+        client_event_id=f"event-{sequence}",
+    )
+
+
+def _carried_brief_event(sequence: int, brief: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        role="system",
+        sequence=sequence,
+        event_type=CARRIED_BRIEF_EVENT,
+        payload={"creator_request": brief},
+        client_event_id=None,
+    )
+
+
+def _assistant_event(sequence: int, message: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        role="assistant",
+        sequence=sequence,
+        event_type="assistant_question",
+        payload={"message": message},
+        client_event_id=None,
+    )
+
+
+async def _run_carried_turn(
+    monkeypatch,
+    *,
+    events: list,
+    message: str,
+    previous_active_plan: dict[str, Any],
+    clip_intents: bool = False,
+) -> tuple[dict[str, Any], SimpleNamespace]:
+    strategy_plan, _original_request, _events = _refresh_retry_fixture()
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": f"clip-{index}", "kind": "video", "duration_s": 4.0} for index in range(6)
+        ],
+        guided_capability_enabled=True,
+    )
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=2,
+        status="planning",
+        events=events,
+        agent_call_count=0,
+        agent_call_budget=8,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=None,
+    )
+    captured: dict[str, Any] = {}
+
+    async def fake_to_thread(_func, agent_input, ctx=None):  # noqa: ARG001
+        captured["agent_input"] = agent_input
+        return SimpleNamespace(
+            action=ProposeStrategy(
+                kind="propose_strategy",
+                strategy=CreativeStrategy.model_validate(strategy_plan["edit_plan"]["strategy"]),
+                summary="The same three-part story.",
+            )
+        )
+
+    monkeypatch.setattr(creator_routes, "log", MagicMock())
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes, "resolve_item_creator_context", AsyncMock(return_value=(manifest, []))
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(creator_routes.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    monkeypatch.setattr(
+        creator_routes, "_response", AsyncMock(return_value=SimpleNamespace(status="ok"))
+    )
+    if clip_intents:
+        from app.services.clip_intent_planning import PlannedIntentResolution  # noqa: PLC0415
+        from app.services.clip_intent_resolution import IntentResolution  # noqa: PLC0415
+
+        async def fake_plan_intents(**kwargs):
+            captured["intent_creator_request"] = kwargs["creator_request"]
+            return PlannedIntentResolution([], IntentResolution())
+
+        monkeypatch.setattr(settings, "clip_intents_enabled", True)
+        monkeypatch.setattr(
+            creator_routes, "load_intent_clips_for_item", AsyncMock(return_value=[])
+        )
+        monkeypatch.setattr(creator_routes, "plan_and_resolve_clip_intents", fake_plan_intents)
+
+    await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=SimpleNamespace(id=uuid.uuid4()),
+        session_id=session.id,
+        expected_revision=2,
+        user_message=message,
+        previous_active_plan=previous_active_plan,
+    )
+    return captured, session
+
+
+def _words(text: str) -> str:
+    return " ".join(text.split())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    [
+        "fresh_session_message",
+        "fresh_session_refresh",
+        "same_session_message",
+        "fresh_session_second_turn",
+        "fresh_session_retry_preparing",
+        "fresh_session_refresh_then_revision",
+    ],
+)
+async def test_fresh_session_after_a_failure_keeps_the_creators_brief(monkeypatch, case) -> None:
+    """A message after a failed session starts a new one; the brief must survive
+    it, on that first turn and on every later turn of the fresh session."""
+
+    failed_plan, original_request, _events = _refresh_retry_fixture()
+    brief = _carried_brief_event(0, original_request)
+    # The fresh session's own plan after its first turn: no carry marker.
+    own_plan = {**failed_plan, "creator_request": f"{original_request}\nSlower, please"}
+    previous_active_plan = failed_plan
+    if case == "fresh_session_message":
+        message = "Slower, please"
+        events = [brief, _user_event(1, message)]
+        expected_request = [original_request, message]
+        expected_conversation = [original_request, message]
+    elif case == "fresh_session_refresh":
+        message = REFRESH_DIRECTION_MESSAGE
+        events = [brief, _user_event(1, message)]
+        expected_request = [original_request]
+        expected_conversation = [original_request, message]
+    elif case == "same_session_message":
+        # The session's own plan: its earlier messages are already in events.
+        message = "Slower, please"
+        events = [_user_event(0, original_request), _user_event(1, message)]
+        expected_request = [original_request, message]
+        expected_conversation = [original_request, message]
+    elif case == "fresh_session_second_turn":
+        message = "Make the title red"
+        previous_active_plan = own_plan
+        events = [
+            brief,
+            _user_event(1, "Slower, please"),
+            _assistant_event(2, "Here is the plan"),
+            _user_event(3, message),
+        ]
+        expected_request = [original_request, "Slower, please", message]
+        expected_conversation = [original_request, "Slower, please", "Here is the plan", message]
+    elif case == "fresh_session_retry_preparing":
+        # Preparation failed on the fresh session's first turn; the retry
+        # resumes that turn's saved message.
+        message = "Slower, please"
+        events = [
+            brief,
+            _user_event(1, message),
+            _assistant_event(2, "Clip analysis is unavailable"),
+            _user_event(3, "Retry preparing my clips"),
+        ]
+        expected_request = [original_request, message, "Retry preparing my clips", message]
+        expected_conversation = [
+            original_request,
+            message,
+            "Clip analysis is unavailable",
+            "Retry preparing my clips",
+        ]
+    else:
+        message = "Make the title red"
+        previous_active_plan = {**failed_plan, "creator_request": original_request}
+        events = [
+            brief,
+            _user_event(1, REFRESH_DIRECTION_MESSAGE),
+            _assistant_event(2, "Same plan"),
+            _user_event(3, message),
+        ]
+        expected_request = [original_request, REFRESH_DIRECTION_MESSAGE, message]
+        expected_conversation = [original_request, REFRESH_DIRECTION_MESSAGE, "Same plan", message]
+
+    captured, session = await _run_carried_turn(
+        monkeypatch,
+        events=events,
+        message=message,
+        previous_active_plan=previous_active_plan,
+    )
+
+    agent_input = captured["agent_input"]
+    expected = _words(" ".join(expected_request))
+    assert _words(agent_input.creator_request) == expected
+    assert _words(session.active_plan["creator_request"]) == expected
+    # The model sees the brief once, before the fresh session's own turns,
+    # whether it came from this session's events or from the failed session.
+    assert [turn["content"] for turn in agent_input.conversation] == expected_conversation
+
+
+@pytest.mark.asyncio
+async def test_clip_intent_planning_reads_the_carried_brief(monkeypatch) -> None:
+    """Clip-specific instructions in the failed session's brief stay verifiable."""
+
+    failed_plan, original_request, _events = _refresh_retry_fixture()
+    captured, _session = await _run_carried_turn(
+        monkeypatch,
+        events=[_carried_brief_event(0, original_request), _user_event(1, "Slower, please")],
+        message="Slower, please",
+        previous_active_plan=failed_plan,
+        clip_intents=True,
+    )
+
+    assert _words(captured["intent_creator_request"]) == _words(
+        f"{original_request} Slower, please"
+    )
+
+
+def test_carried_brief_seed_skips_repeated_lines_and_keeps_the_new_message() -> None:
+    original = "Narrated story about the bridge.\nTitle: 1882.\nNo other text."
+    carried = {"creator_request": f"{original}\nSlower, please"}
+
+    # Re-pasting the original prompt keeps only what it does not repeat.
+    assert _carried_brief_seed(carried, original) == "Slower, please"
+    assert _carried_brief_seed({"creator_request": original}, f"  {original}  ") == ""
+    # Whole words only: "eye" is not repeated by "eyes".
+    assert _carried_brief_seed({"creator_request": "eye"}, "Big eyes") == "eye"
+    assert _carried_brief_seed(None, "Slower") == ""
+
+    # The brief, not the new message, gives way at the shared bound.
+    message = "Make the title red"
+    long_brief = "x" * (CREATOR_REQUEST_MAX_CHARS - 5)
+    seed = _carried_brief_seed({"creator_request": long_brief}, message)
+    events = [_carried_brief_event(0, seed), _user_event(1, message)]
+    request = _confirmed_creator_request(events, message)
+    assert len(request) <= CREATOR_REQUEST_MAX_CHARS
+    assert request.endswith(f"\n{message}")
 
 
 def test_is_refresh_retry_message_exact_match_only() -> None:
@@ -5227,10 +5482,21 @@ async def test_start_rejects_fresh_auto_design_even_with_old_terminal_job(monkey
 
 
 @pytest.mark.asyncio
-async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("carried", "has_history"),
+    [
+        (None, False),
+        ({"creator_request": "Narrated story. Title: 1882."}, False),
+        ({"creator_request": "Narrated story. Title: 1882."}, True),
+    ],
+)
+async def test_start_locks_an_existing_session_before_appending(
+    monkeypatch, carried, has_history
+) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
     item = SimpleNamespace(id=uuid.uuid4())
     plan = SimpleNamespace(ownership_epoch=4)
+    history = [_user_event(0, "Earlier message")] if has_history else []
     session = SimpleNamespace(
         id=uuid.uuid4(),
         creator_id=user.id,
@@ -5238,6 +5504,7 @@ async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> 
         status="briefing",
         revision=0,
         active_plan=None,
+        events=list(history),
     )
     db = AsyncMock()
     duplicate_result = MagicMock()
@@ -5254,7 +5521,8 @@ async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> 
     monkeypatch.setattr(creator_routes, "_latest_session", AsyncMock(return_value=session))
     load_session = AsyncMock(return_value=session)
     monkeypatch.setattr(creator_routes, "_load_session", load_session)
-    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    append_event = AsyncMock(side_effect=lambda *_args, **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
     planning = AsyncMock(return_value=SimpleNamespace(id="response"))
     monkeypatch.setattr(creator_routes, "_run_planning_turn", planning)
 
@@ -5276,11 +5544,29 @@ async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> 
         user,
         db,
         allow_chat=True,
+        carried_active_plan=carried,
     )
 
     load_session.assert_awaited_once_with(db, session.id, user.id, item.id, for_update=True)
     planning.assert_awaited_once()
     assert planning.await_args.kwargs["allow_chat"] is True
+    # A session without its own plan continues the failed session's plan.
+    assert planning.await_args.kwargs["previous_active_plan"] is carried
+    appended = [call.kwargs for call in append_event.await_args_list]
+    assert appended[-1]["event_type"] == "user_message"
+    if carried is not None and not has_history:
+        # A fresh session opens with the failed session's brief, durably, and
+        # this request's planning turn already sees it.
+        assert [event["event_type"] for event in appended] == [
+            CARRIED_BRIEF_EVENT,
+            "user_message",
+        ]
+        assert appended[0]["role"] == "system"
+        assert appended[0]["payload"] == {"creator_request": "Narrated story. Title: 1882."}
+        assert [event.event_type for event in session.events] == [CARRIED_BRIEF_EVENT]
+    else:
+        assert len(appended) == 1
+        assert len(session.events) == len(history)
 
 
 @pytest.mark.asyncio
@@ -5749,6 +6035,74 @@ async def test_confirm_without_an_active_plan_returns_conflict(monkeypatch) -> N
 
     assert caught.value.status_code == 409
     assert caught.value.detail == "Creator plan changed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_direct_confirm_refuses_guided_clean_choice_while_cleanup_is_off(
+    monkeypatch, enabled: bool
+) -> None:
+    """The plan-item confirm route shares the thread route's flag-off refusal."""
+    from app.services.creator_execution_contract import GUIDED_VOICEOVER_CONTRACT
+    from app.services.guided_speech_cleanup import DISABLED_MESSAGE
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4(), current_job_id=None)
+    plan = SimpleNamespace(ownership_epoch=1)
+    strategy = {
+        "execution_contract": GUIDED_VOICEOVER_CONTRACT,
+        "render_program": "guided",
+        "audio_strategy": "voiceover",
+    }
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item.id,
+        status="awaiting_confirmation",
+        revision=0,
+        # A different epoch is the next fence: reaching it proves the
+        # cleanup check let the confirmation through.
+        ownership_epoch=0,
+        active_plan={"version": 1, "plan_hash": "a" * 64, "edit_plan": {"strategy": strategy}},
+        render_attempts=0,
+        max_render_attempts=2,
+    )
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db = AsyncMock()
+    db.execute.return_value = receipt_result
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_execution_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_rollout_percent", 100)
+    monkeypatch.setattr(settings, "guided_voiceover_speech_cleanup_enabled", enabled)
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(
+        creator_routes, "_owned_context", AsyncMock(return_value=(item, plan, SimpleNamespace()))
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(creator_routes, "_confirmed_edit_plan", lambda _active: object())
+
+    with pytest.raises(HTTPException) as caught:
+        await creator_routes.confirm_creator_plan(
+            str(item.id),
+            ConfirmBody(
+                session_id=session.id,
+                expected_revision=0,
+                plan_version=1,
+                plan_hash="a" * 64,
+                client_event_id="confirm-clean-1",
+                speech_cleanup_analysis_id=uuid.uuid4(),
+                speech_cleanup_choice="clean",
+            ),
+            user,
+            db,
+        )
+
+    assert caught.value.status_code == 409
+    expected = "Creator ownership changed" if enabled else DISABLED_MESSAGE
+    assert caught.value.detail == expected
+    assert session.render_attempts == 0
+    assert session.status == "awaiting_confirmation"
 
 
 @pytest.mark.asyncio

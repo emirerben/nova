@@ -690,7 +690,16 @@ def schedule_semantic_edit(plan: SemanticEditPlan, input: EditProposalAgentInput
         ]
     bindings: list[MontageTextBinding] = []
     bound_text: dict[str, str] = {}
-    for binding in plan.text_bindings:
+    # Per-source montage text renders only for fast_montage. Its unique-source
+    # invariant must not fail a guided_story/text_explainer plan that can never
+    # draw it (e.g. a legacy projection or a refreshed revision).
+    text_bindings = plan.text_bindings if input.direction == "fast_montage" else []
+    schedule_repairs = (
+        [f"scheduler_dropped_non_montage_text_bindings:{len(plan.text_bindings)}"]
+        if plan.text_bindings and not text_bindings
+        else []
+    )
+    for binding in text_bindings:
         targets = binding.media_ids or [
             slot.media_id for slot in slots if slot.chapter_id in binding.chapter_ids
         ]
@@ -718,7 +727,7 @@ def schedule_semantic_edit(plan: SemanticEditPlan, input: EditProposalAgentInput
             "semantic text bindings expand beyond the proposal limit",
             feasibility,
         )
-    repairs = list(plan.repairs)
+    repairs = [*plan.repairs, *schedule_repairs]
     if feasibility.status == "clamped":
         repairs.append("target_duration_clamped_to_capacity")
     repairs.extend(

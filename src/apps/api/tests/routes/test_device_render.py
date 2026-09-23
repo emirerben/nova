@@ -1,5 +1,6 @@
 """HTTP owner fences, upload idempotency, and finalization races."""
 
+import copy
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from app.database import get_db
 from app.kria.device_render import make_device_request
 from app.kria.recipes import EditRecipeV1
 from app.main import app
+from app.pipeline.speech_cleanup_apply import cut_fingerprint, hydrate_speech_cleanup_snapshot
 from app.routes import device_render as routes
 from app.services.device_render import (
     device_record,
@@ -21,6 +23,8 @@ from app.services.device_render import (
     pin_device_request,
     save_device_record,
 )
+from tests.services.test_guided_speech_cleanup import fixture_ids as cleanup_fixture_ids
+from tests.services.test_guided_speech_cleanup import load_fixture as load_cleanup_fixture
 
 
 def scalar(value):
@@ -726,6 +730,180 @@ def test_voiceover_download_rejects_changed_voiceovers(fixture, monkeypatch, mut
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == "Voiceover changed; refresh the recipe"
     assert signer.call_count == int(mutation in {"removed", "unsignable"})
+
+
+# --- "Clean up speech": a guided Job's cleaned derivative, never raw bytes ---
+#
+# The synthetic preflight snapshot's raw source is re-pinned at the recipe's
+# asset generation, so the raw-voiceover grant WOULD sign the raw recording
+# for these Jobs: every rejection below proves there is no fallback to it.
+
+
+def cleanup_snapshot() -> dict:
+    snapshot = copy.deepcopy(load_cleanup_fixture()["snapshot"])
+    snapshot["source"]["generation"] = "42"
+    return snapshot
+
+
+def cleanup_job_plan(narration: dict, *, contract: str = "required_v1") -> dict:
+    """The immutable Job fields a guided "Clean up speech" dispatch pins."""
+    return {
+        "creator_generation_id": "creator-generation",
+        "guided_edit": {"approved_proposal": {"narration": narration}},
+        "speech_cleanup_contract": contract,
+        "speech_cleanup_preflight_contract": "snapshot_v1",
+        "_speech_cleanup_internal": {"preflight_snapshot": cleanup_snapshot()},
+    }
+
+
+def cleaned_narration(*, owner_id=None, analysis_id=None, **provenance) -> dict:
+    fixture_owner, item_id, fixture_analysis = cleanup_fixture_ids(load_cleanup_fixture())
+    analysis_id = analysis_id or fixture_analysis
+    snapshot = cleanup_snapshot()
+    return {
+        "gcs_path": (
+            f"users/{owner_id or fixture_owner}/plan/{item_id}/speech-cleanup/"
+            f"{analysis_id}/{'0a' * 16}.wav"
+        ),
+        "generation": "42",
+        "duration_s": 41.59,
+        "speech_cleanup": {
+            "analysis_id": analysis_id,
+            "source_gcs_path": snapshot["source"]["storage_path"],
+            "source_generation": "42",
+            "source_duration_s": snapshot["source"]["window_end_s"],
+            "cut_sha256": cut_fingerprint(hydrate_speech_cleanup_snapshot(snapshot)),
+            **provenance,
+        },
+    }
+
+
+def cleaned_voiceover_recipe(fixture, monkeypatch, narration=None, **plan):
+    """Pin a guided recipe whose voiceover asset is the item's cleaned derivative."""
+    owner_id, item_id, _analysis_id = cleanup_fixture_ids(load_cleanup_fixture())
+    fixture.user.id = owner_id
+    fixture.job.user_id = owner_id
+    asset, item, signer = voiceover_recipe(fixture, monkeypatch, item_id=item_id)
+    source = cleanup_snapshot()["source"]
+    item.voiceover_gcs_path = source["storage_path"]
+    item.voiceover_duration_s = source["window_end_s"]
+    assert item.voiceover_generation == source["generation"] == asset.generation
+    narration = narration or cleaned_narration()
+    fixture.job.assembly_plan.update(cleanup_job_plan(narration, **plan))
+    return asset, item, signer, narration
+
+
+def test_cleaned_voiceover_download_signs_only_the_derivative(fixture, monkeypatch):
+    asset, item, signer, narration = cleaned_voiceover_recipe(fixture, monkeypatch)
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with(narration["gcs_path"], generation="42")
+    assert item.voiceover_gcs_path != narration["gcs_path"]
+    fixture.db.rollback.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "replaced_raw",
+        "cleared_voiceover",
+        "pinned_generation",
+        "foreign_owner_prefix",
+        "analysis_mismatch",
+        "cut_mismatch",
+        "not_required_contract",
+        "malformed_provenance",
+    ],
+)
+def test_cleaned_voiceover_download_never_falls_back_to_the_raw_recording(
+    fixture, monkeypatch, mutation
+):
+    narration, plan = cleaned_narration(), {}
+    if mutation == "pinned_generation":
+        narration["generation"] = "43"
+    elif mutation == "foreign_owner_prefix":
+        narration = cleaned_narration(owner_id=uuid.uuid4())
+    elif mutation == "analysis_mismatch":
+        narration = cleaned_narration(analysis_id=str(uuid.uuid4()))
+    elif mutation == "cut_mismatch":
+        narration = cleaned_narration(cut_sha256="e" * 64)
+    elif mutation == "not_required_contract":
+        plan = {"contract": "off_v1"}
+    elif mutation == "malformed_provenance":
+        narration["speech_cleanup"] = {"analysis_id": "not-a-uuid"}
+    asset, item, signer, _ = cleaned_voiceover_recipe(fixture, monkeypatch, narration, **plan)
+    if mutation == "replaced_raw":
+        item.voiceover_generation = "43"
+    elif mutation == "cleared_voiceover":
+        item.audio_mode = "kria"
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Voiceover changed; refresh the recipe"
+    signer.assert_not_called()
+
+
+def test_raw_guided_narration_keeps_the_raw_voiceover_grant(fixture, monkeypatch):
+    asset, item, signer = voiceover_recipe(fixture, monkeypatch)
+    raw = {"gcs_path": item.voiceover_gcs_path, "generation": "42", "duration_s": 12.0}
+    fixture.job.assembly_plan.update(cleanup_job_plan(raw, contract="off_v1"))
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with(item.voiceover_gcs_path, generation="42")
+
+
+def complete_device_export(fixture, monkeypatch, plan: dict | None):
+    attempt, _ = prepared(fixture)
+    if plan is not None:
+        fixture.job.assembly_plan.update(plan)
+    mock_storage(fixture, monkeypatch)
+    monkeypatch.setattr(routes, "_verify_export", MagicMock())
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
+    )
+    assert response.status_code == 200, response.text
+    assert fixture.job.status == "variants_ready"
+    return fixture.job.assembly_plan
+
+
+def test_cleaned_guided_completion_records_the_applied_cleanup(fixture, monkeypatch):
+    cleanup = load_cleanup_fixture()
+    plan = complete_device_export(fixture, monkeypatch, cleanup_job_plan(cleaned_narration()))
+    assert plan["speech_cleanup_outcome"] == {
+        "job_id": str(fixture.job.id),
+        "render_generation_id": "creator-generation",
+        "status": "applied",
+        "removal_count": cleanup["expected"]["removal_count"],
+        "removed_ms": cleanup["snapshot"]["analysis"]["public_receipt"]["estimated_removed_ms"],
+    }
+
+
+def test_mismatched_cleaned_guided_completion_records_a_failed_cleanup(fixture, monkeypatch):
+    narration = cleaned_narration(cut_sha256="e" * 64)
+    plan = complete_device_export(fixture, monkeypatch, cleanup_job_plan(narration))
+    assert plan["speech_cleanup_outcome"]["status"] == "failed"
+    assert plan["speech_cleanup_outcome"]["error"] == {"code": "internal_error", "retryable": True}
+
+
+def test_raw_required_guided_completion_writes_no_false_failed_cleanup(fixture, monkeypatch):
+    """A guided Job pinned before cleaned narration existed (raw audio under a
+    required_v1 contract) keeps no receipt when its native edit re-exports."""
+    raw = {"gcs_path": "users/u/plan/i/voiceover.m4a", "generation": "7", "duration_s": 48.6}
+    plan = complete_device_export(fixture, monkeypatch, cleanup_job_plan(raw))
+    assert "speech_cleanup_outcome" not in plan
+
+
+@pytest.mark.parametrize("plan", [None, "off_v1"])
+def test_completion_without_a_required_guided_cleanup_writes_no_receipt(fixture, monkeypatch, plan):
+    raw = {"gcs_path": "users/u/plan/i/voiceover.m4a", "generation": "7", "duration_s": 48.6}
+    extra = cleanup_job_plan(raw, contract=plan) if plan else None
+    assert "speech_cleanup_outcome" not in complete_device_export(fixture, monkeypatch, extra)
 
 
 def test_published_phone_export_edits_pin_next_device_revision(fixture, monkeypatch):

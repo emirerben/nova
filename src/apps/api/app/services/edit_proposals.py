@@ -840,7 +840,7 @@ def validate_approved_proposal_media_sync(  # noqa: ANN001
         from app.services.creator_execution_contract import narration_matches_item  # noqa: PLC0415
         from app.storage import object_metadata  # noqa: PLC0415
 
-        if not narration_matches_item(narration.model_dump(mode="json"), item):
+        if not narration_matches_item(narration.model_dump(mode="json"), item, owner_id=owner_id):
             return "proposal_stale", None
         try:
             audio_metadata = object_metadata(narration.gcs_path)
