@@ -196,16 +196,71 @@ import XCTest
         XCTAssertEqual(scheduler.observe([visual()], now: Self.t0.addingTimeInterval(4_000)), [])
     }
 
-    func testManualRetryCancelsThePendingAutomaticOne() {
+    func testManualRetryDropsThePendingAutomaticOneWithoutSpendingBudget() {
         var scheduler = VisualAutoRetryScheduler()
         XCTAssertEqual(scheduler.observe([visual()], now: Self.t0), [])
-        scheduler.cancel("asset-1")
-        XCTAssertFalse(scheduler.isRetryPending("asset-1"))
+        XCTAssertTrue(scheduler.isRetryPending("asset-1"))
+        XCTAssertTrue(scheduler.beginManualRetry("asset-1"))
+        XCTAssertFalse(scheduler.isRetryPending("asset-1"), "a manual tap isn't an automatic retry")
+        scheduler.recordAttempt(assetID: "asset-1", result: queued(), now: Self.t0.addingTimeInterval(1))
+        XCTAssertEqual(scheduler.attempts(for: "asset-1"), 0)
         // A poll that still shows the old failure reschedules rather than fires.
         XCTAssertEqual(scheduler.observe([visual()], now: Self.t0.addingTimeInterval(10)), [])
-        XCTAssertEqual(scheduler.attempts(for: "asset-1"), 0)
         XCTAssertTrue(scheduler.isRetryPending("asset-1"))
         XCTAssertEqual(scheduler.observe([visual()], now: Self.t0.addingTimeInterval(20)), ["asset-1"])
+        XCTAssertEqual(scheduler.attempts(for: "asset-1"), 1)
+    }
+
+    /// Review finding: the Retry button stayed enabled while the automatic
+    /// reanalyze was awaiting its response, so a tap sent a second concurrent
+    /// POST for the same asset. The sheet disables the button on
+    /// `canRetryManually`, and `retry(_:)` must win `beginManualRetry`.
+    func testManualRetryIsRefusedWhileAnAutomaticAttemptIsInFlight() {
+        var scheduler = VisualAutoRetryScheduler()
+        XCTAssertTrue(scheduler.canRetryManually("asset-1"), "an asset the scheduler has never seen is free")
+        XCTAssertEqual(scheduler.observe([visual()], now: Self.t0), [])
+        XCTAssertTrue(scheduler.canRetryManually("asset-1"), "a scheduled but unsent retry can be taken over by a tap")
+        XCTAssertEqual(scheduler.observe([visual()], now: Self.t0.addingTimeInterval(10)), ["asset-1"])
+        XCTAssertFalse(scheduler.canRetryManually("asset-1"))
+        let before = scheduler
+        XCTAssertFalse(scheduler.beginManualRetry("asset-1"))
+        XCTAssertEqual(scheduler, before, "a refused tap changes nothing")
+        XCTAssertTrue(scheduler.isRetryPending("asset-1"))
+        scheduler.recordAttempt(assetID: "asset-1", result: queued(), now: Self.t0.addingTimeInterval(11))
+        XCTAssertTrue(scheduler.canRetryManually("asset-1"))
+        XCTAssertTrue(scheduler.beginManualRetry("asset-1"))
+    }
+
+    func testNoAutomaticAttemptFiresWhileAManualRetryIsInFlight() {
+        var scheduler = VisualAutoRetryScheduler()
+        XCTAssertEqual(scheduler.observe([visual("a"), visual("b")], now: Self.t0), [])
+        XCTAssertTrue(scheduler.beginManualRetry("a"))
+        XCTAssertFalse(scheduler.beginManualRetry("a"), "a double tap sends one request")
+        XCTAssertFalse(scheduler.canRetryManually("a"))
+        XCTAssertTrue(scheduler.canRetryManually("b"), "other rows stay usable")
+        // The poll still shows both failed: only "b" is fired.
+        XCTAssertEqual(scheduler.observe([visual("a"), visual("b")], now: Self.t0.addingTimeInterval(30)), ["b"])
+        XCTAssertEqual(scheduler.attempts(for: "a"), 0)
+        // The server's dispatch failed inside the tap's POST: the first automatic
+        // attempt for "a" is now owed, 10 s later.
+        scheduler.recordAttempt(assetID: "a", result: visual("a"), now: Self.t0.addingTimeInterval(31))
+        XCTAssertTrue(scheduler.isRetryPending("a"))
+        XCTAssertEqual(scheduler.observe([visual("a"), visual("b")], now: Self.t0.addingTimeInterval(40)), [])
+        XCTAssertEqual(scheduler.observe([visual("a"), visual("b")], now: Self.t0.addingTimeInterval(41)), ["a"])
+        XCTAssertEqual(scheduler.attempts(for: "a"), 1)
+    }
+
+    func testManualRetryOfANonAutomaticFailureNeverSchedulesAnAutomaticOne() {
+        var scheduler = VisualAutoRetryScheduler()
+        let timedOut = visual(code: "analysis_timed_out", detail: "Kria took too long to analyze this file. Try again.")
+        XCTAssertEqual(scheduler.observe([timedOut], now: Self.t0), [])
+        XCTAssertTrue(scheduler.beginManualRetry("asset-1"))
+        scheduler.recordAttempt(assetID: "asset-1", result: timedOut, now: Self.t0.addingTimeInterval(1))
+        XCTAssertFalse(scheduler.isRetryPending("asset-1"))
+        XCTAssertTrue(scheduler.canRetryManually("asset-1"))
+        for offset in stride(from: 5.0, through: 600, by: 5) {
+            XCTAssertEqual(scheduler.observe([timedOut], now: Self.t0.addingTimeInterval(offset)), [])
+        }
     }
 
     func testAssetsAreTrackedIndependentlyAndForgottenWhenRemoved() {

@@ -27,6 +27,10 @@ struct AttachmentSheet: View {
     /// Per-sheet budget for retrying transient analysis failures on the creator's behalf.
     @State private var autoRetry = VisualAutoRetryScheduler()
     @State private var visualPollRunning = false
+    /// The extra poll started when the app returns to the foreground. Kept so
+    /// only one runs at a time and it is cancelled with the sheet; a bare
+    /// `Task` would outlive the sheet and keep acting on its snapshot.
+    @State private var foregroundPoll: Task<Void, Never>?
     @StateObject private var recorder = CreationVoiceRecorder()
 
     init(
@@ -174,7 +178,10 @@ struct AttachmentSheet: View {
                                 }
                                 Spacer()
                                 if asset.status == "failed", asset.retryable != false {
-                                    Button("Retry") { Task { await retry(asset) } }.disabled(mutatingVisual)
+                                    // Disabled while this sheet's automatic reanalyze for the asset is
+                                    // awaiting its response, so a tap can't send a duplicate request.
+                                    Button("Retry") { Task { await retry(asset) } }
+                                        .disabled(mutatingVisual || !autoRetry.canRetryManually(asset.id))
                                 }
                                 Button { Task { await remove(asset) } } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
                                     .accessibilityLabel("Remove \(asset.sourceFilename ?? "visual")")
@@ -203,8 +210,11 @@ struct AttachmentSheet: View {
             // Back in the foreground, poll now: an automatic retry that came due
             // while the app was suspended fires at once instead of up to 5 s later.
             .onChange(of: scenePhase) { _, phase in
-                guard phase == .active, pollsVisuals else { return }
-                Task { await pollVisuals() }
+                guard phase == .active, pollsVisuals, foregroundPoll == nil else { return }
+                foregroundPoll = Task {
+                    await pollVisuals()
+                    foregroundPoll = nil
+                }
             }
             // Uploads wait for the account's capabilities; keep asking rather
             // than leave the sheet on "Checking…" after a failed load. A load
@@ -220,7 +230,11 @@ struct AttachmentSheet: View {
             // Un-choosing a visual in the picker removes it server-side; refresh the pool now rather
             // than on the next poll, or the picker would keep showing it as chosen for a few seconds.
             .onReceive(model.uploads.$photoSelections) { _ in if role == .visual { Task { await loadVisuals() } } }
-            .onDisappear { recorder.discard() }
+            .onDisappear {
+                recorder.discard()
+                foregroundPoll?.cancel()
+                foregroundPoll = nil
+            }
         }
     }
     private func removeAttached(_ attachment: CreationAttachedMedia) async {
@@ -278,12 +292,17 @@ struct AttachmentSheet: View {
         catch { self.error = "Couldn’t remove this visual. \(error.localizedDescription)" }
     }
     private func retry(_ asset: CreationVisual) async {
-        guard let itemID, !mutatingVisual else { return }
+        guard let itemID, !mutatingVisual, autoRetry.beginManualRetry(asset.id) else { return }
         mutatingVisual = true
         defer { mutatingVisual = false }
-        autoRetry.cancel(asset.id)
-        do { _ = try await model.api.retryVisual(itemID: itemID, assetID: asset.id); await loadVisuals() }
-        catch { self.error = "Couldn’t retry this visual. \(error.localizedDescription)" }
+        do {
+            let result = try await model.api.retryVisual(itemID: itemID, assetID: asset.id)
+            autoRetry.recordAttempt(assetID: asset.id, result: result, now: Date())
+            await loadVisuals()
+        } catch {
+            autoRetry.recordAttempt(assetID: asset.id, result: nil, now: Date())
+            self.error = "Couldn’t retry this visual. \(error.localizedDescription)"
+        }
     }
     private func finishRecording() async {
         guard !uploadingRecording, let url = recorder.stop() else { return }

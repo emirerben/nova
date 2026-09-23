@@ -12,6 +12,10 @@ import Foundation
 /// apart, and never touches a failure the server marked non-retryable or
 /// attributed to any other code. Those keep the manual Retry button (when
 /// retryable) or ask the creator to choose the file again.
+///
+/// The manual Retry button goes through `beginManualRetry` too, so the sheet
+/// never has two reanalyze requests on the wire for one asset: a tap during an
+/// automatic attempt is refused, and no automatic attempt fires during a tap.
 struct VisualAutoRetryScheduler: Equatable, Sendable {
     /// The only failure the sheet retries on its own: the server's transient
     /// provider/dispatch code. Other retryable codes stay a manual decision.
@@ -20,13 +24,17 @@ struct VisualAutoRetryScheduler: Equatable, Sendable {
     /// Wait before attempt 1, 2 and 3, counted from the poll that saw the failure.
     static let delays: [TimeInterval] = [10, 20, 40]
 
+    /// Who sent the reanalyze request that is still awaiting its response.
+    enum Request: Equatable, Sendable { case automatic, manual }
+
     struct Entry: Equatable, Sendable {
         /// Automatic reanalyze requests already sent (or in flight) this session.
+        /// Manual taps don't spend this budget.
         var attempts = 0
         /// When the next automatic attempt may fire; nil while none is scheduled.
         var dueAt: Date?
-        /// True from `observe` returning the id until `recordAttempt`.
-        var inFlight = false
+        /// Set from `observe` or `beginManualRetry` until `recordAttempt`.
+        var inFlight: Request?
     }
 
     private(set) var entries: [String: Entry] = [:]
@@ -35,11 +43,14 @@ struct VisualAutoRetryScheduler: Equatable, Sendable {
         asset.status == "failed" && asset.retryable != false && asset.errorCode == retryableErrorCode
     }
 
-    /// Whether the row should say a retry is on its way.
+    /// Whether the row should say an automatic retry is on its way.
     func isRetryPending(_ assetID: String) -> Bool {
         guard let entry = entries[assetID] else { return false }
-        return entry.inFlight || entry.dueAt != nil
+        return entry.inFlight == .automatic || entry.dueAt != nil
     }
+
+    /// False while a reanalyze request for this asset is awaiting its response.
+    func canRetryManually(_ assetID: String) -> Bool { entries[assetID]?.inFlight == nil }
 
     func attempts(for assetID: String) -> Int { entries[assetID]?.attempts ?? 0 }
 
@@ -54,7 +65,7 @@ struct VisualAutoRetryScheduler: Equatable, Sendable {
         var due: [String] = []
         for asset in assets {
             var entry = entries[asset.id] ?? Entry()
-            if entry.inFlight { continue }
+            if entry.inFlight != nil { continue }
             guard Self.qualifies(asset) else {
                 entry.dueAt = nil
                 if entries[asset.id] != nil { entries[asset.id] = entry }
@@ -63,7 +74,7 @@ struct VisualAutoRetryScheduler: Equatable, Sendable {
             if let dueAt = entry.dueAt {
                 if now >= dueAt {
                     entry.dueAt = nil
-                    entry.inFlight = true
+                    entry.inFlight = .automatic
                     entry.attempts += 1
                     due.append(asset.id)
                 }
@@ -75,24 +86,33 @@ struct VisualAutoRetryScheduler: Equatable, Sendable {
         return due
     }
 
-    /// Records the outcome of an attempt `observe` returned: the server's
-    /// response, or nil when the request itself failed. A request that failed
-    /// still spends budget, so a dead network can't turn into a loop. When the
-    /// server answered with the same transient failure (its dispatch path fails
-    /// synchronously), the next attempt is scheduled right away.
+    /// Claims the asset for a manual Retry tap. Returns false, and changes
+    /// nothing, while another reanalyze for it is in flight; otherwise any
+    /// pending automatic attempt is dropped. Report the outcome through
+    /// `recordAttempt`.
+    mutating func beginManualRetry(_ assetID: String) -> Bool {
+        var entry = entries[assetID] ?? Entry()
+        guard entry.inFlight == nil else { return false }
+        entry.inFlight = .manual
+        entry.dueAt = nil
+        entries[assetID] = entry
+        return true
+    }
+
+    /// Records the outcome of an attempt `observe` returned or
+    /// `beginManualRetry` allowed: the server's response, or nil when the
+    /// request itself failed. A failed automatic request still spends budget,
+    /// so a dead network can't turn into a loop. When the server answered with
+    /// the same transient failure (its dispatch path fails synchronously), the
+    /// next automatic attempt is scheduled right away if budget remains.
     mutating func recordAttempt(assetID: String, result: CreationVisual?, now: Date) {
         guard var entry = entries[assetID] else { return }
-        entry.inFlight = false
+        entry.inFlight = nil
         entry.dueAt = nil
         if let result, Self.qualifies(result), let delay = Self.delay(beforeAttempt: entry.attempts + 1) {
             entry.dueAt = now.addingTimeInterval(delay)
         }
         entries[assetID] = entry
-    }
-
-    /// A manual Retry supersedes any pending automatic one.
-    mutating func cancel(_ assetID: String) {
-        entries[assetID]?.dueAt = nil
     }
 
     private static func delay(beforeAttempt attempt: Int) -> TimeInterval? {
