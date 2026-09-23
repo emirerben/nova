@@ -823,7 +823,9 @@ def test_cadence_feasibility_uses_cut_capacity_for_short_sources() -> None:
         ),
     )
 
-    assert proposal_build.feasible_guided_duration_s(media) == 0
+    # KRI-118 lane L3: each 0.8s source now contributes its own (shorter)
+    # length instead of zero -- 5 * 0.8 = 4.0.
+    assert proposal_build.feasible_guided_duration_s(media) == pytest.approx(4.0)
     assert proposal_build.cadence_target_duration_s(brief, media) == 4
 
 
@@ -854,11 +856,14 @@ def test_cadence_target_rejects_duration_that_ends_mid_cycle() -> None:
 
 
 def test_infeasible_footage_skips_agent_and_fails_with_actionable_message(monkeypatch) -> None:
-    """A video shorter than the renderer's own min_moment_s (1.4s) earns ZERO
+    """A single 1.0s video is still below the renderer's own feasibility
 
-    feasibility credit (P2-1b, 2026-08-18 adversarial review) — it can never
-    be its own legible beat moment, so crediting it (even at the image floor)
-    would misrepresent what the footage can actually support.
+    threshold for one source (MIN_GUIDED_DURATION_S=3s) even though it now
+    earns its own duration as feasibility credit (KRI-118 lane L3), not zero
+    (P2-1b, 2026-08-18 adversarial review, credited zero for a too-short
+    video; superseded -- crediting nothing at all understated what the
+    footage can support just as much as the pre-P2-1 image-floor overcredit
+    did).
     """
 
     item_id = uuid.uuid4()
@@ -899,7 +904,7 @@ def test_infeasible_footage_skips_agent_and_fails_with_actionable_message(monkey
     assert persisted.status == "failed"
     assert persisted.failure is not None
     assert persisted.failure.code == "guided_edit_infeasible"
-    assert "0.0" in persisted.failure.message
+    assert "1.0" in persisted.failure.message
     assert db.commits == 3  # planning start, clip checkpoint, terminal infeasible failure
 
 
@@ -968,13 +973,20 @@ def test_mixed_media_capacity_failure_is_persisted_as_actionable_infeasible(
     assert db.commits == 2  # planning start, then terminal capacity failure
 
 
-def test_video_below_min_moment_earns_zero_credit_not_image_credit() -> None:
+def test_video_below_min_moment_earns_its_own_duration_not_zero_or_image_credit() -> None:
+    """KRI-118 lane L3: a video below GUIDED_STORY_MIN_MOMENT_S contributes
+    its own (shorter) duration, not zero (superseding the P2-1b zero-credit
+    fix -- see test_infeasible_footage_skips_agent_and_fails_with_actionable_message)
+    and not the unrelated `_IMAGE_FEASIBLE_CREDIT_S` image floor. A video with
+    no probed duration, or a probed duration of exactly zero, still earns no
+    credit at all -- there is no footage to credit."""
+
     zero_duration = SimpleNamespace(kind="video", duration_s=None)
     zero_flag = SimpleNamespace(kind="video", duration_s=0.0)
     too_short = SimpleNamespace(kind="video", duration_s=1.0)
     assert proposal_build.feasible_guided_duration_s([zero_duration]) == 0.0
     assert proposal_build.feasible_guided_duration_s([zero_flag]) == 0.0
-    assert proposal_build.feasible_guided_duration_s([too_short]) == 0.0
+    assert proposal_build.feasible_guided_duration_s([too_short]) == pytest.approx(1.0)
 
 
 def test_guided_feasibility_threshold_scales_with_media_count_floored_at_min() -> None:
@@ -989,19 +1001,19 @@ def test_guided_feasibility_threshold_scales_with_media_count_floored_at_min() -
 
 
 def test_many_too_short_videos_no_longer_overestimated_via_image_credit_bug() -> None:
-    """Four 0.8s clips (3.2s raw total) cleared the OLD flat 3s floor even
+    """Four 0.8s clips (3.2s raw total) each contribute their own real length
 
-    though not one of them is individually usable as its own beat moment —
-    each was silently credited the FULL _IMAGE_FEASIBLE_CREDIT_S (1.4s) under
-    the pre-P2-1 bug, overestimating total feasibility to 5.6s. Each now
-    correctly earns zero credit (below GUIDED_STORY_MIN_MOMENT_S), so the whole
-    set is correctly infeasible.
+    (KRI-118 lane L3) -- neither the pre-P2-1 bug's FULL _IMAGE_FEASIBLE_CREDIT_S
+    (1.4s each, 5.6s total, overestimating what four 0.8s clips can support)
+    nor the P2-1b zero-credit fix this supersedes (which understated it just
+    as much, in the other direction). The set is still below the 3-source
+    feasibility threshold, so it is correctly infeasible.
     """
 
     media = [SimpleNamespace(kind="video", duration_s=0.8) for _ in range(4)]
     feasible = proposal_build.feasible_guided_duration_s(media)
     threshold = proposal_build.guided_feasibility_threshold_s(len(media))
-    assert feasible == 0.0
+    assert feasible == pytest.approx(3.2)
     assert feasible < threshold
 
 
@@ -1010,7 +1022,9 @@ def test_feasibility_credits_only_the_usable_videos_in_a_mixed_set() -> None:
     too_short = SimpleNamespace(kind="video", duration_s=0.5)
     image = SimpleNamespace(kind="image", duration_s=None)
     feasible = proposal_build.feasible_guided_duration_s([usable, too_short, image])
-    assert feasible == pytest.approx(5.0 + proposal_build._IMAGE_FEASIBLE_CREDIT_S)
+    # KRI-118 lane L3: `too_short` now contributes its own 0.5s instead of
+    # zero, on top of the usable video's full duration and the image credit.
+    assert feasible == pytest.approx(5.0 + 0.5 + proposal_build._IMAGE_FEASIBLE_CREDIT_S)
 
 
 class _FakeBeat:
@@ -1502,11 +1516,73 @@ def test_initial_draft_terminal_agent_failure_uses_renderer_validated_fallback(
     assert persisted.status == "approved"
     assert persisted.last_approved is not None
     snapshot = persisted.last_approved.snapshot
-    assert snapshot.title == "A few moments"
+    # KRI-118 lane L3: the deterministic-fallback title now derives from the
+    # creator's own request when available, else "Your edit" as the last
+    # resort -- _prepare_terminal_agent_attempt's brief has no creator_request.
+    assert snapshot.title == "Your edit"
     assert validated == [snapshot]
     assert {media_id for beat in snapshot.story_beats for media_id in beat.media_ids} == {
         _PROD_CLIP_ASSIGNMENT["media_id"]
     }
+
+
+def test_deterministic_fallback_adjustments_flag_the_simpler_plan(monkeypatch) -> None:
+    """KRI-118 lane L3: `adjustments` is always user-visible (unlike the
+    admin-only `planner_fallback` marker), and leads with a plain-English
+    note whenever the deterministic fallback replaced the specialist."""
+
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None and persisted.status == "approved"
+    snapshot = persisted.last_approved.snapshot
+    assert snapshot.adjustments == ["Kria used a simpler plan because the planner couldn't finish"]
+
+
+def test_draft_snapshot_adjustments_reflect_humanized_specialist_repairs(monkeypatch) -> None:
+    """A successful (non-fallback) draft's `adjustments` are the humanized
+    form of whatever `EditProposalAgentOutput.repairs` the specialist's own
+    parse() recorded."""
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    _auto_finalize_common_mocks(monkeypatch, item, owner_id)
+
+    class _FakeAgentOutputWithRepairs(_FakeAgentOutput):
+        def __init__(self, media_ids, *, duration_s: int = 6, repairs=None) -> None:
+            super().__init__(media_ids, duration_s=duration_s)
+            self.repairs = repairs or []
+
+    monkeypatch.setattr(
+        "app.agents.edit_proposal.EditProposalAgent.run",
+        lambda self, input, **_kw: _FakeAgentOutputWithRepairs(  # noqa: A002
+            [_PROD_CLIP_ASSIGNMENT["media_id"]],
+            repairs=["truncated_thought:0", "truncated_thought:1"],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        lambda *_a, **_kw: SimpleNamespace(outcome="dispatched"),
+    )
+
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None and persisted.status == "approved"
+    snapshot = persisted.last_approved.snapshot
+    assert snapshot.adjustments == ["Shortened an on-screen caption"]
 
 
 def test_initial_narrated_draft_failure_recovers_all_media_with_exact_audio_budget(
