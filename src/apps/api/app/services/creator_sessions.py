@@ -73,6 +73,16 @@ MAX_CREATOR_MEDIA_REFS = 50
 CREATOR_VISIBLE_ASSET_STATES = ("uploaded", "queued", "analyzing", "ready")
 CREATOR_CONTEXT_MAX_CHARS = 3900
 EXECUTION_RECEIPT_LEASE_S = CREATOR_EXECUTION_RECEIPT_LEASE_S
+# A guided planning failure happens before any Job exists, so it refunds the
+# render attempt its confirmation reserved, like every other pre-Job failure.
+# Bounded per confirmed plan so a failure that keeps repeating cannot loop
+# paid planner calls.
+MAX_PLANNING_FAILURE_REFUNDS = 2
+# Codes whose ProposalFailure.message is itself a generic "try again"; the
+# thread keeps its own sentence for them instead of stacking two.
+_GENERIC_PLANNING_FAILURE_CODES = frozenset(
+    {"proposal_generation_failed", "proposal_generation_timeout", "creator_dispatch_failed"}
+)
 
 _PHASE_TO_PUBLIC = {
     "briefing": "briefing",
@@ -527,6 +537,45 @@ async def resolve_item_creator_context(
     return manifest, media_context
 
 
+async def creator_media_truncation_notice(
+    db: AsyncSession, item: PlanItem, persona: Persona
+) -> str | None:
+    """KRI-118 item 6: tell the creator when the manifest actually dropped owned
+    media to the ``MAX_CREATOR_MEDIA_REFS`` cap, instead of ``resolve_item_creator_context``
+    silently showing only the first 50 with no explanation.
+
+    A best-effort count, not a byte-exact replay of that function's dedup
+    logic (in-memory `clip_assignments`/legacy `clip_gcs_paths` length plus a
+    cheap count of the same asset-eligibility query) -- good enough to answer
+    "did truncation actually drop something" without re-running the full
+    resolution twice per turn. Never raises: a missing/unreadable count is
+    only a missed notice, never a reason to fail the turn.
+    """
+
+    try:
+        clip_count = len(getattr(item, "clip_assignments", None) or [])
+        if clip_count == 0:
+            clip_count = len(getattr(item, "clip_gcs_paths", None) or [])
+        asset_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.user_id == persona.user_id,
+                    PlanItemAsset.status.in_(CREATOR_VISIBLE_ASSET_STATES),
+                    PlanItemAsset.deduplicated_to_asset_id.is_(None),
+                )
+            )
+        ).scalar_one()
+        total = clip_count + int(asset_count or 0)
+    except Exception:  # noqa: BLE001
+        return None
+    if total <= MAX_CREATOR_MEDIA_REFS:
+        return None
+    return f"I used {MAX_CREATOR_MEDIA_REFS} of {total} items."
+
+
 async def load_intent_clips_for_item(
     db: AsyncSession, item: PlanItem, persona: Persona
 ) -> list[IntentClip]:
@@ -669,8 +718,16 @@ def compile_active_plan(
     strategy: CreativeStrategy,
     summary: str,
     creator_request: str = "",
+    extra_notices: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Compile an inert, hash-pinned plan with a deterministic public receipt."""
+    """Compile an inert, hash-pinned plan with a deterministic public receipt.
+
+    ``extra_notices`` carries short, user-facing sentences the caller already
+    knows about before compiling (KRI-118 item 3: a silent degradation --
+    an over-budget question, a fallback strategy's own reasoning -- made
+    visible). They are merged ahead of whatever deterministic repairs
+    `compile_strategy_to_plan` itself records on `edit_plan.notices`.
+    """
 
     # Imported lazily so schema-only tests can import this service while the
     # compiler evolves independently.
@@ -678,11 +735,15 @@ def compile_active_plan(
 
     edit_plan: CreatorEditPlan = compile_strategy_to_plan(manifest, strategy)
     prior_version = int((session.active_plan or {}).get("version", 0))
+    notices = [*(extra_notices or []), *edit_plan.notices]
     receipt = {
         "version": prior_version + 1,
         "summary": _clean(summary, 1000) or _clean(strategy.rationale, 1000),
         "creative_rationale": _clean(strategy.rationale, 2000),
         "edit_format": getattr(strategy, "edit_format", None) or manifest.edit_format,
+        # KRI-118 item 1: the FINAL, server-repaired shape (never the raw
+        # model-proposed value) -- see `edit_plan.strategy.archetype`.
+        "story_shape": getattr(edit_plan.strategy, "archetype", None),
         "audio_strategy": getattr(strategy, "audio_strategy", None),
         "story_structure": list(getattr(strategy, "story_structure", []) or []),
         "caption_style": getattr(strategy, "caption_style", None),
@@ -728,6 +789,8 @@ def compile_active_plan(
         receipt["montage_cadence"] = strategy.montage_cadence.model_dump(mode="json")
     if strategy.video_reuse_policy is not None:
         receipt["video_reuse_policy"] = strategy.video_reuse_policy
+    if notices:
+        receipt["notices"] = notices
     receipt["plan_hash"] = canonical_context_hash(receipt)
     return receipt
 
@@ -823,19 +886,63 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             # lease. The stable attempt identity prevents a stale failure from
             # terminating a newer Creator execution.
             failure_code = proposal_code or "proposal_generation_failed"
+            raw_message = failure.get("message") if isinstance(failure, dict) else None
+            failure_message = raw_message.strip()[:500] if isinstance(raw_message, str) else ""
+            retryable = not (isinstance(failure, dict) and failure.get("retryable") is False)
             receipt.status = "failed"
             receipt.error = {"code": failure_code}
             receipt.completed_at = datetime.now(UTC)
+            refunds = int(active.get("planning_failure_refunds") or 0)
+            if retryable and refunds < MAX_PLANNING_FAILURE_REFUNDS:
+                # No Job was minted, so refund the attempt this confirmation
+                # reserved. Runs once per failure: the receipt just left
+                # running/succeeded and the phase becomes failed, so neither
+                # the receipt query nor this branch can select it again. The
+                # counter survives re-confirmation (it spreads active_plan).
+                session.render_attempts = max(0, int(session.render_attempts or 0) - 1)
+                session.iteration_count = max(
+                    0, int(getattr(session, "iteration_count", 0) or 0) - 1
+                )
+                session.active_plan = {**active, "planning_failure_refunds": refunds + 1}
             session.phase = "failed"
+            # After the refund decision: a retryable failure with no attempt
+            # left must not invite a retry the route will refuse. A new chat
+            # message starts a fresh session (and budget) instead.
+            budget = getattr(session, "max_render_attempts", None)
+            out_of_attempts = bool(
+                retryable
+                and budget is not None
+                and int(session.render_attempts or 0) >= int(budget or 0)
+            )
+            if out_of_attempts:
+                failure_message = "Send a message to try a new direction."
             session.last_error = {
                 "code": failure_code,
-                "message": "Kria couldn't plan this direction. Try it again.",
+                "message": (
+                    "Kria couldn't plan this direction. Try it again."
+                    if retryable and not out_of_attempts
+                    else "Kria couldn't plan this direction."
+                ),
+                # ProposalFailure.message is already public (only .detail is
+                # admin-only); the thread projects it as the failure reason.
+                "user_message": failure_message or None,
+                "retryable": retryable,
             }
+            if failure_message and (
+                out_of_attempts
+                or not retryable
+                or failure_code not in _GENERIC_PLANNING_FAILURE_CODES
+            ):
+                event_message = f"I couldn't plan that direction. {failure_message}"
+            elif retryable:
+                event_message = "I couldn't plan that direction. Try it again."
+            else:
+                event_message = "I couldn't plan that direction."
             await append_event(
                 db,
                 session,
                 event_type="assistant_render_failed",
-                payload={"message": "I couldn't plan that direction. Try it again."},
+                payload={"message": event_message, "code": failure_code},
             )
             return True
         if not exact_job:
@@ -1226,6 +1333,7 @@ __all__ = [
     "append_event",
     "compile_active_plan",
     "creator_context",
+    "creator_media_truncation_notice",
     "creator_narration_identity",
     "reconcile_render_state",
     "resolve_item_creator_context",

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app import storage
-from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
+from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.auth import CurrentUser, NativeClient
 from app.config import settings
 from app.database import get_db
@@ -84,9 +84,12 @@ from app.services.creation_thread_titles import (
     start_title_generation,
 )
 from app.services.creator_direction_receipts import project_direction_receipt
+from app.services.creator_execution_contract import requests_guided_voiceover
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.creator_sessions import reconcile_render_state
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
+from app.services.guided_speech_cleanup import DISABLED_MESSAGE as CLEANUP_DISABLED_MESSAGE
+from app.services.guided_speech_cleanup import guided_voiceover_cleanup_available
 from app.services.job_phases import mark_reattempt, stamp_variant_attempt
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 from app.services.job_storage_paths import (
@@ -1600,6 +1603,7 @@ def _job_projection(job: Job | None) -> dict[str, Any] | None:
     if job is None:
         return None
     from app.routes.generative_jobs import _variants_for_response
+    from app.tasks.content_plan_build import humanize_job_failure_reason
 
     # Re-signing is authoritative. A storage/signing outage must be visible to
     # the client instead of returning an expired or stale playback URL.
@@ -1609,6 +1613,10 @@ def _job_projection(job: Job | None) -> dict[str, Any] | None:
         "status": job.status,
         "current_phase": job.current_phase,
         "failure_reason": job.failure_reason,
+        # A sentence, never the raw taxonomy code -- the failure card used to
+        # print `failure_reason` itself verbatim (KRI-163). `failure_reason`
+        # stays above for admin/debug consumers that still want the code.
+        "failure_message": humanize_job_failure_reason(job.failure_reason),
         "variants": variants,
     }
 
@@ -1845,7 +1853,59 @@ def _exclude_referenced_project_storage(
     )
 
 
-def _creator_agent_projection(session: CreatorAgentSession | None) -> dict[str, Any] | None:
+_ADJUSTMENTS_NOTICES_CAP = 8
+
+# Session failures whose retry cannot succeed in the same session.
+_NON_RETRYABLE_SESSION_FAILURES = frozenset(
+    {"agent_budget_exhausted", "question_budget_exhausted", "render_identity_mismatch"}
+)
+
+
+def _deduped_capped_strings(values: object, *, cap: int = _ADJUSTMENTS_NOTICES_CAP) -> list[str]:
+    """Order-preserving dedupe of a string list, capped for client display."""
+
+    if not isinstance(values, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+        if len(out) >= cap:
+            break
+    return out
+
+
+def _edit_proposal_adjustments(item: PlanItem | None) -> list[str]:
+    """KRI-118 item 3: the guided specialist's own repair notes (lane L3).
+
+    `ApprovedProposalSnapshot.snapshot.adjustments` /
+    `EditProposalSnapshot.adjustments` (app/schemas/edit_proposal.py) are the
+    deterministic story-shape repair layer's user-facing "what Kria changed"
+    notes (app.services.story_shapes.humanize_repairs). Both the unapproved
+    draft and the last approved snapshot can carry their own adjustments --
+    merge both so a client sees the full picture regardless of approval
+    state; `_deduped_capped_strings` collapses any overlap.
+    """
+
+    if item is None:
+        return []
+    proposal = parse_edit_proposal(getattr(item, "edit_proposal", None))
+    if proposal is None:
+        return []
+    adjustments: list[str] = []
+    if proposal.draft is not None:
+        adjustments.extend(proposal.draft.adjustments)
+    if proposal.last_approved is not None:
+        adjustments.extend(proposal.last_approved.snapshot.adjustments)
+    return adjustments
+
+
+def _creator_agent_projection(
+    session: CreatorAgentSession | None, *, item: PlanItem | None = None
+) -> dict[str, Any] | None:
     """Expose reviewable strategy metadata, never executable plan commands."""
 
     if session is None:
@@ -1853,14 +1913,80 @@ def _creator_agent_projection(session: CreatorAgentSession | None) -> dict[str, 
     from app.services.creator_preparation import public_preparation
 
     plan = session.active_plan if isinstance(session.active_plan, dict) else {}
-    return {
-        **({"preparation": public_preparation(session)} if public_preparation(session) else {}),
+    used = int(getattr(session, "render_attempts", 0) or 0)
+    budget = int(getattr(session, "max_render_attempts", 0) or 0)
+    raw_error = getattr(session, "last_error", None)
+    last_error = raw_error if isinstance(raw_error, dict) else {}
+    failure = None
+    if session.status == "failed":
+        from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
+
+        code = last_error.get("code")
+        phone_gate_codes = {gate_code for gate_code, _message in PHONE_GATE_MESSAGES.values()}
+        raw_retryable = last_error.get("retryable")
+        # Planning failures record their own flag; other writers are known by
+        # code (a fresh session or a different setup is the only way forward).
+        retryable = (
+            raw_retryable
+            if isinstance(raw_retryable, bool)
+            else code not in phone_gate_codes | _NON_RETRYABLE_SESSION_FAILURES
+        )
+        user_message = last_error.get("user_message")
+        if not (isinstance(user_message, str) and user_message) and code in phone_gate_codes:
+            # Phone-gate messages are PHONE_GATE_MESSAGES copy, not exception text.
+            user_message = last_error.get("message")
+        failure = {
+            "code": code,
+            # Only an explicitly user-facing sentence: ``message`` can hold
+            # raw exception text (execution_failed).
+            "message": user_message if isinstance(user_message, str) and user_message else None,
+            "retryable": retryable,
+            "can_retry": retryable and used < budget,
+        }
+    preparation = public_preparation(session)
+    if failure is not None and (preparation or {}).get("status") == "ready":
+        # Shipped iOS builds fall back to preparation.message for the failed
+        # confirmation card's detail line, where a completed preparation's
+        # "Your clips are ready." is stale, including for failures recorded
+        # without a creator-facing sentence (older rows, render failures).
+        # Remove once iOS reads ``failure``.
+        preparation = {
+            **preparation,
+            "message": failure["message"]
+            or (
+                "Try it again."
+                if failure["can_retry"]
+                else "Send a message to try a new direction."
+            ),
+        }
+    projection: dict[str, Any] = {
+        **({"preparation": preparation} if preparation else {}),
         "status": session.status,
         "revision": session.revision,
         "summary": plan.get("summary"),
         "plan_hash": plan.get("plan_hash"),
         "version": plan.get("version"),
+        "render_attempts": used,
+        "max_render_attempts": budget,
+        **({"failure": failure} if failure is not None else {}),
     }
+    # KRI-118 item 3: `story_shape`/`notices` are the Main Creator's own
+    # server-repaired direction metadata (app.services.creator_sessions.
+    # compile_active_plan, lane L2); `adjustments` merges the guided
+    # specialist's repair notes on the item's edit proposal (lane L3). Both
+    # are best-effort "what Kria changed" surfaces -- omit the keys entirely
+    # when there is nothing to show so this stays additive for callers/tests
+    # that assert an exact dict shape.
+    story_shape = plan.get("story_shape")
+    if isinstance(story_shape, str) and story_shape:
+        projection["story_shape"] = story_shape
+    notices = _deduped_capped_strings(plan.get("notices"))
+    if notices:
+        projection["notices"] = notices
+    adjustments = _deduped_capped_strings(_edit_proposal_adjustments(item))
+    if adjustments:
+        projection["adjustments"] = adjustments
+    return projection
 
 
 def _is_status_only_message(message: str) -> bool:
@@ -2306,22 +2432,55 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> bool:
         return False
     projection = dict(thread.state or {})
     previous_agent = projection.get("creator_agent") or {}
-    active_plan = session.active_plan if isinstance(session.active_plan, dict) else {}
-    from app.services.creator_preparation import public_preparation
-
-    projection["creator_agent"] = {
-        **({"preparation": public_preparation(session)} if public_preparation(session) else {}),
-        "status": session.status,
-        "revision": session.revision,
-        "summary": active_plan.get("summary"),
-        "plan_hash": active_plan.get("plan_hash"),
-        "version": active_plan.get("version"),
-    }
+    # KRI-118 item 3: reuse the same projection helper the main GET path uses
+    # (_response) so story_shape/adjustments/notices reach the poll/SSE sync
+    # path too, not just the initial fetch. `item` is best-effort -- a lookup
+    # failure/absence here must never block syncing the rest of the agent
+    # transcript, so this never raises on a session double that doesn't carry
+    # a real plan_item_id (e.g. a lightweight test double).
+    session_plan_item_id = getattr(session, "plan_item_id", None)
+    item = await db.get(PlanItem, session_plan_item_id) if session_plan_item_id else None
+    projection["creator_agent"] = _creator_agent_projection(session, item=item)
+    # Clip preparation is durable and can take several minutes before it emits
+    # a planner reply. Persist a small, old-client-visible assistant event at
+    # the start of each valid active attempt so polling never looks silent.
+    # The thread is already locked by the polling path; the stable receipt
+    # also makes repeated polls and retries idempotent.
+    preparation = getattr(session, "preparation", None)
+    preparation_attempt_id = (
+        preparation.get("attempt_id") if isinstance(preparation, dict) else None
+    )
+    preparation_status = preparation.get("status") if isinstance(preparation, dict) else None
+    acknowledgement_appended = False
+    if (
+        session.status in {"planning", "revising"}
+        and preparation_status in {"queued", "analyzing", "resolving"}
+        and isinstance(preparation_attempt_id, str)
+    ):
+        try:
+            attempt_id = str(uuid.UUID(preparation_attempt_id))
+        except (TypeError, ValueError, AttributeError):
+            attempt_id = None
+        if attempt_id is not None:
+            receipt_id = f"creator-preparation:{attempt_id}"
+            if await _duplicate(db, thread.id, receipt_id) is None:
+                await _append(
+                    db,
+                    thread,
+                    event_type="status_update",
+                    role="assistant",
+                    content=(
+                        "I’ve saved your request. I’m analyzing your clips and will continue "
+                        "automatically."
+                    ),
+                    client_event_id=receipt_id,
+                )
+                acknowledgement_appended = True
     # Agent events are copied as an inert transcript projection.  Never copy
     # executable operations or external paths from model output.
     seen_ids = list(projection.get("creator_agent_event_ids", []))
     seen = set(seen_ids)
-    appended = False
+    appended = acknowledgement_appended
     events = (
         (
             await db.execute(
@@ -2643,7 +2802,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         if response_active_session_id
         else None,
         active_job_id=str(response_active_job_id) if response_active_job_id else None,
-        creator_agent=_creator_agent_projection(session),
+        creator_agent=_creator_agent_projection(session, item=item),
         job=_job_projection(job),
         media_capabilities=media_capabilities,
         direction_receipt=direction_receipt,
@@ -2715,6 +2874,15 @@ async def _agent_message(
             user,
             db,
             allow_chat=True,
+            # Recovering from a failure ("Refresh the direction", "Send a
+            # message to try a new direction") must keep the creator's brief.
+            carried_active_plan=(
+                existing.active_plan
+                if existing is not None
+                and existing.status == "failed"
+                and isinstance(getattr(existing, "active_plan", None), dict)
+                else None
+            ),
         )
     else:
         result = await creator_agent.creator_session_turn_controller(
@@ -2766,7 +2934,20 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
         )
 
         supported_now = phone_render_supported_formats()
-        formats = {key: value for key, value in formats.items() if value in supported_now}
+        # `slides` is exempt from this filter even though it's never in
+        # `phone_render_supported_formats()`. A slide post has no clip
+        # pipeline at all -- its media lives exclusively in the
+        # `PlanItemAsset` pool (see the `upload-urls` fence above) and its
+        # render always dispatches to the cloud slides renderer
+        # (`content_plan_build.py` / `slide_build.py`), never through the
+        # phone dispatch gate this filter exists to protect. Dropping it
+        # here would just hide a working, cloud-only format from a phone
+        # account for no reason.
+        formats = {
+            key: value
+            for key, value in formats.items()
+            if value in supported_now or value == "slides"
+        }
     return {
         # Runtime v2 cannot create a guided phone job at all, so a pilot account
         # offered v2 would never get its render on the iPhone.
@@ -3598,6 +3779,7 @@ async def action_thread(
     _stamp_device_intent(thread, user, native_client)
     state = dict(thread.state or {})
     delete_path: str | None = None
+    delete_prefix: str | None = None
     enqueue_variant_retry: tuple[str, str, str] | None = None
     preflight_analysis_id: uuid.UUID | None = None
     if body.action in {"select_format", "select_edit_format"}:
@@ -3732,6 +3914,13 @@ async def action_thread(
                 voiceover_duration_s=None,
                 audio_mode="kria" if item.audio_mode == "voiceover" else item.audio_mode,
             )
+            # Cleaned "Clean up speech" copies of this voice are unusable once
+            # it is gone (narration_matches_item fails) and must not outlive it.
+            from app.services.guided_speech_cleanup import (  # noqa: PLC0415
+                derivative_item_prefix,
+            )
+
+            delete_prefix = derivative_item_prefix(owner_id=owner_id, item_id=item.id)
         mutation = mutate_plan_item_media(
             item,
             detector_policy=current_detector_policy(),
@@ -3993,14 +4182,61 @@ async def action_thread(
                     )
                 ).scalar_one_or_none()
         planned_format = (session.active_plan or {}).get("edit_format")
-        if body.action != "revise" and (
+        picked_format = state.get("edit_format")
+        format_mismatch = body.action != "revise" and (
             planned_format not in set(_available_formats().values())
-            or planned_format != state.get("edit_format")
+            or planned_format != picked_format
+        )
+        if (
+            format_mismatch
+            and picked_format == "montage"
+            and planned_format in (GUIDED_EDIT_FORMATS - {"montage"})
         ):
+            # KRI-118 item 2: a plan receipt can still carry the legacy
+            # literal edit_format "day_vlog"/"single_hero" even after L2's
+            # shape repair -- `compile_active_plan`
+            # (app/services/creator_sessions.py) stamps the receipt's
+            # edit_format from the RAW pre-repair strategy, not the
+            # server-repaired `edit_plan.strategy.edit_format` that
+            # `repair_creator_strategy_shape` rewrites to "montage" (+
+            # `story_shape`). The chat picker only ever exposes "montage" as
+            # the Paper format for the whole GUIDED_EDIT_FORMATS family, so a
+            # chat-picked montage confirming a plan whose receipt still says
+            # "day_vlog"/"single_hero" is the SAME format underneath, not a
+            # stale one -- treat it as a match instead of failing the turn.
+            format_mismatch = False
+        if format_mismatch:
             raise HTTPException(
                 status_code=409,
-                detail="Kria must prepare a direction in the selected Paper format",
+                # code: format_mismatch. iOS's `decodeDetail` /
+                # `CreationConfirmationConflict` (Services.swift /
+                # CreationConfirmationStage.swift) only ever reads this field
+                # as a plain string -- never nest a `{"code": ..., ...}` dict
+                # here, or the client's `body["detail"] as? String` parse
+                # silently drops the message and falls back to its generic
+                # "out of date" one. Keep the message a specific sentence
+                # (not a bare whitespace-free "machine code" token, and not
+                # one of the client's exact-matched literals) so it still
+                # resolves through the client's default "offer a direction
+                # refresh" branch.
+                detail=(
+                    "Kria's current direction was prepared for a different "
+                    "format than the one you picked. Ask Kria for a new "
+                    "direction in that format before confirming."
+                ),
             )
+        if (
+            body.action in {"generate", "confirm_generation"}
+            and payload.get("speech_cleanup_choice") == "clean"
+            and not guided_voiceover_cleanup_available()
+            and requests_guided_voiceover(
+                ((session.active_plan or {}).get("edit_plan") or {}).get("strategy")
+            )
+        ):
+            # A guided narrated story can only honor "Clean up speech" through
+            # the planner's cleaned derivative. Refuse before an attempt is
+            # reserved instead of spending it on a certain planning failure.
+            raise HTTPException(status_code=409, detail=CLEANUP_DISABLED_MESSAGE)
         # Both native speech-choice buttons submit generate, even when the
         # preceding planning attempt failed before creating a Job. Reuse the
         # bounded retry preparation while preserving the newly selected choice
@@ -4036,7 +4272,28 @@ async def action_thread(
                 failed_planning = await _failed_planning_attempt(db, thread, session)
                 failed_before_dispatch = failed_planning is not None
                 failure = failed_planning.failure if failed_planning is not None else None
-                if failure is not None and not failure.retryable:
+                # "Clean up speech isn't available" tells the creator to keep
+                # the original speech; that exact choice must reopen it. A
+                # failure written while cleanup was switched off also reopens
+                # for Clean once cleanup is available (staged enable).
+                choice = payload.get("speech_cleanup_choice")
+                reopens_after_unavailable_cleanup = bool(
+                    failure is not None
+                    and failure.code in {"speech_cleanup_unavailable", "speech_cleanup_disabled"}
+                    and (
+                        choice == "keep_original"
+                        or (
+                            choice == "clean"
+                            and failure.code == "speech_cleanup_disabled"
+                            and guided_voiceover_cleanup_available()
+                        )
+                    )
+                )
+                if (
+                    failure is not None
+                    and not failure.retryable
+                    and not reopens_after_unavailable_cleanup
+                ):
                     raise HTTPException(status_code=409, detail=failure.message)
             if not failed_before_dispatch and (
                 current_job is None
@@ -4347,6 +4604,8 @@ async def action_thread(
             raise HTTPException(status_code=503, detail="Render queue unavailable") from exc
     if delete_path:
         await asyncio.to_thread(storage.delete_object_best_effort, delete_path)
+    if delete_prefix:
+        await asyncio.to_thread(storage.delete_prefix_best_effort, delete_prefix)
     return await _response(db, thread)
 
 

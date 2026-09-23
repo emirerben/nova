@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import TypeVar
 
 import structlog
 from sqlalchemy import or_, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agents._runtime import (
@@ -27,6 +31,7 @@ from app.models import (
     CreatorAgentSession,
     CreatorPlanningAttempt,
     PlanItem,
+    PlanItemAsset,
 )
 from app.schemas.edit_proposal import MediaRef
 from app.services.creator_clip_analysis import (
@@ -48,6 +53,11 @@ from app.worker import celery_app
 log = structlog.get_logger()
 LEASE_SECONDS = 1830  # exceeds the hard task limit; a live provider call is never reclaimed
 MAX_ATTEMPTS = 3
+POOL_REDISPATCH_AFTER = timedelta(minutes=2)
+POOL_REDISPATCH_BATCH = 10
+DB_TRANSACTION_ATTEMPTS = 4
+_RETRYABLE_DB_SQLSTATES = frozenset({"40P01", "40001"})
+_T = TypeVar("_T")
 
 
 class PreparationStale(RuntimeError):
@@ -56,6 +66,39 @@ class PreparationStale(RuntimeError):
 
 class PreparationPending(RuntimeError):
     pass
+
+
+def _retry_db_transaction(identifier: uuid.UUID, action: str, operation: Callable[[], _T]) -> _T:
+    """Retry only aborted DB transactions, never provider calls or media work.
+
+    Each operation opens its own Session. PostgreSQL rolls back the victim of
+    a deadlock/serialization conflict, so the next invocation starts fresh.
+    """
+    failures = 0
+    while True:
+        try:
+            return operation()
+        except DBAPIError as exc:
+            sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+            failures += 1
+            if sqlstate not in _RETRYABLE_DB_SQLSTATES or failures >= DB_TRANSACTION_ATTEMPTS:
+                if sqlstate in _RETRYABLE_DB_SQLSTATES:
+                    log.warning(
+                        "creator_preparation.db_conflict_exhausted",
+                        attempt_id=str(identifier),
+                        action=action,
+                        sqlstate=sqlstate,
+                        attempts=failures,
+                    )
+                raise
+            log.warning(
+                "creator_preparation.db_conflict_retry",
+                attempt_id=str(identifier),
+                action=action,
+                sqlstate=sqlstate,
+                retry=failures,
+            )
+            time.sleep(0.05 * 2 ** (failures - 1))
 
 
 def _locked(db, identifier: uuid.UUID, *, token: str | None = None):
@@ -90,6 +133,10 @@ def _locked(db, identifier: uuid.UUID, *, token: str | None = None):
 
 
 def _claim(identifier: uuid.UUID):
+    return _retry_db_transaction(identifier, "claim", lambda: _claim_once(identifier))
+
+
+def _claim_once(identifier: uuid.UUID):
     with sync_session() as db:
         graph = _locked(db, identifier)
         if graph is None:
@@ -126,6 +173,12 @@ def _claim(identifier: uuid.UUID):
 
 
 def _checkpoint(identifier: uuid.UUID, token: str, analyzed: dict) -> None:
+    _retry_db_transaction(
+        identifier, "checkpoint", lambda: _checkpoint_once(identifier, token, analyzed)
+    )
+
+
+def _checkpoint_once(identifier: uuid.UUID, token: str, analyzed: dict) -> None:
     with sync_session() as db:
         graph = _locked(db, identifier, token=token)
         if graph is None:
@@ -199,6 +252,22 @@ def _checkpoint(identifier: uuid.UUID, token: str, analyzed: dict) -> None:
         db.commit()
 
 
+def _check_source_ownership(identifier: uuid.UUID, token: str, raw: dict, creator_id: str) -> None:
+    def check() -> None:
+        with sync_session() as db:
+            graph = _locked(db, identifier, token=token)
+            if graph is None or not owns_attempt(*graph[:4], graph[4]):
+                raise PreparationStale()
+            allowed_prefixes = (
+                f"users/{creator_id}/",
+                f"plan/{getattr(graph[2], 'id', '')}/seed/",
+            )
+            if not str(raw.get("gcs_path") or "").startswith(allowed_prefixes):
+                raise PermissionError("source is not owned")
+
+    _retry_db_transaction(identifier, "source_ownership", check)
+
+
 def _analyze_sources(
     identifier: uuid.UUID, token: str, sources: list[dict], ctx: RunContext
 ) -> None:
@@ -235,16 +304,7 @@ def _analyze_sources(
             raw = next(iterator, None)
             if raw is None:
                 return
-            with sync_session() as db:
-                graph = _locked(db, identifier, token=token)
-                if graph is None or not owns_attempt(*graph[:4], graph[4]):
-                    raise PreparationStale()
-                allowed_prefixes = (
-                    f"users/{ctx.creator_id}/",
-                    f"plan/{getattr(graph[2], 'id', '')}/seed/",
-                )
-                if not str(raw.get("gcs_path") or "").startswith(allowed_prefixes):
-                    raise PermissionError("source is not owned")
+            _check_source_ownership(identifier, token, raw, ctx.creator_id)
             clip_ctx = replace(
                 ctx,
                 request_id=f"{identifier}:{raw['media_id']}:{raw.get('storage_generation', '')}",
@@ -360,6 +420,14 @@ def _supersede(db, attempt, session, plan):
 
 
 def _fail(identifier: uuid.UUID, token: str, code: str, *, retryable: bool) -> None:
+    _retry_db_transaction(
+        identifier,
+        "record_failure",
+        lambda: _fail_once(identifier, token, code, retryable=retryable),
+    )
+
+
+def _fail_once(identifier: uuid.UUID, token: str, code: str, *, retryable: bool) -> None:
     with sync_session() as db:
         graph = _locked(db, identifier, token=token)
         if graph is None:
@@ -370,6 +438,88 @@ def _fail(identifier: uuid.UUID, token: str, code: str, *, retryable: bool) -> N
         else:
             _supersede(db, attempt, session, plan)
         db.commit()
+
+
+def _defer_pending(identifier: uuid.UUID, token: str) -> list[tuple[str, str, str | None]]:
+    def defer() -> list[tuple[str, str, str | None]]:
+        dispatches = []
+        with sync_session() as db:
+            graph = _locked(db, identifier, token=token)
+            if graph:
+                attempt, session, *_ = graph
+                if not owns_attempt(*graph[:4], graph[4]):
+                    _supersede(db, attempt, session, graph[2])
+                elif datetime.now(UTC) - attempt.created_at > timedelta(minutes=10):
+                    _record_failure(db, attempt, session, "analysis_unavailable", retryable=True)
+                else:
+                    attempt.status = "queued"
+                    attempt.attempts -= 1
+                    attempt.lease_until = None
+                    dispatches = _pending_pool_dispatches(graph[5], datetime.now(UTC))
+                db.commit()
+        return dispatches
+
+    return _retry_db_transaction(identifier, "defer_pending", defer)
+
+
+def _pending_pool_dispatches(
+    assets: list[PlanItemAsset], now: datetime
+) -> list[tuple[str, str, str | None]]:
+    """Re-send old unclaimed receipts without invalidating broker backlog.
+
+    Called under the owned preparation's Plan/Item locks, which also fence
+    pool claims. Commit these cooldowns before publishing outside the locks.
+    The ten-minute preparation deadline bounds retries for each original token.
+    """
+    dispatches = []
+    for asset in assets:
+        dispatched_at = asset.analysis_last_dispatched_at or asset.created_at
+        if (
+            asset.status != "queued"
+            or asset.analysis_started_at is not None
+            or not asset.analysis_attempt_token
+            or not asset.gcs_generation
+            or dispatched_at is None
+            or dispatched_at > now - POOL_REDISPATCH_AFTER
+        ):
+            continue
+        asset.analysis_last_dispatched_at = now
+        dispatches.append((str(asset.id), asset.analysis_attempt_token, asset.correlation_id))
+        if len(dispatches) >= POOL_REDISPATCH_BATCH:
+            break
+    return dispatches
+
+
+def _publish_pending_pool_dispatches(
+    attempt_id: str, dispatches: list[tuple[str, str, str | None]]
+) -> None:
+    if not dispatches:
+        return
+    from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
+
+    for asset_id, token, correlation_id in dispatches:
+        headers = {"pool_asset_attempt_token": token}
+        if correlation_id:
+            headers["x-correlation-id"] = correlation_id
+        try:
+            receipt = analyze_pool_asset.apply_async(
+                args=[asset_id, False],
+                queue=settings.pool_asset_analysis_queue,
+                headers=headers,
+            )
+            log.info(
+                "creator_preparation.pool_redispatched",
+                attempt_id=attempt_id,
+                asset_id=asset_id,
+                task_id=receipt.id,
+            )
+        except Exception as exc:  # noqa: BLE001 — retry after the persisted cooldown
+            log.warning(
+                "creator_preparation.pool_redispatch_failed",
+                attempt_id=attempt_id,
+                asset_id=asset_id,
+                error_type=type(exc).__name__,
+            )
 
 
 @celery_app.task(
@@ -400,28 +550,21 @@ def prepare_creator_clips(attempt_id: str) -> None:
             if k in inputs
         },
     )
+    failure_stage = "analysis"
     try:
         # Preparation precedes Job creation. Agent runs are attributed through
         # RunContext.creator_agent_session_id and durable progress through the attempt.
         with pipeline_trace_for(None):
             _analyze_sources(identifier, token, sources, ctx)
+            failure_stage = "planning"
             asyncio.run(_resume(identifier, token, inputs, creator_id, session_id))
     except PreparationPending:
         # Pool tasks already own this work. Recheck later without spending
-        # provider budget or consuming a crash-recovery attempt.
-        with sync_session() as db:
-            graph = _locked(db, identifier, token=token)
-            if graph:
-                attempt, session, *_ = graph
-                if not owns_attempt(*graph[:4], graph[4]):
-                    _supersede(db, attempt, session, graph[2])
-                elif datetime.now(UTC) - attempt.created_at > timedelta(minutes=10):
-                    _record_failure(db, attempt, session, "analysis_unavailable", retryable=True)
-                else:
-                    attempt.status = "queued"
-                    attempt.attempts -= 1
-                    attempt.lease_until = None
-                db.commit()
+        # provider budget or consuming a crash-recovery attempt. A queued
+        # receipt can outlive a lost broker message: re-send the same token,
+        # whose locked claim prevents duplicate provider work.
+        dispatches = _defer_pending(identifier, token)
+        _publish_pending_pool_dispatches(attempt_id, dispatches)
     except ProviderQuotaExceededError as exc:
         log.warning(
             "creator_preparation.provider_denied",
@@ -436,11 +579,27 @@ def prepare_creator_clips(attempt_id: str) -> None:
         _fail(identifier, token, "provider_outcome_unknown", retryable=False)
     except (PreparationStale, PermissionError, FileNotFoundError, ValueError):
         _fail(identifier, token, "media_unavailable", retryable=False)
+    except DBAPIError as exc:
+        log.warning(
+            "creator_preparation.database_failed",
+            attempt_id=attempt_id,
+            stage=failure_stage,
+            sqlstate=getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None),
+        )
+        _fail(identifier, token, "preparation_unavailable", retryable=True)
     except Exception as exc:  # noqa: BLE001 — creators get stable safe errors
         log.warning(
-            "creator_preparation.failed", attempt_id=attempt_id, error_type=type(exc).__name__
+            "creator_preparation.failed",
+            attempt_id=attempt_id,
+            stage=failure_stage,
+            error_type=type(exc).__name__,
         )
-        _fail(identifier, token, "analysis_unavailable", retryable=True)
+        _fail(
+            identifier,
+            token,
+            "planning_unavailable" if failure_stage == "planning" else "analysis_unavailable",
+            retryable=True,
+        )
 
 
 @celery_app.task(name="tasks.reconcile_creator_preparations", soft_time_limit=45, time_limit=60)

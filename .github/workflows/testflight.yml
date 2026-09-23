@@ -48,8 +48,12 @@ jobs:
               .github/workflows/ios.yml \
               .github/workflows/testflight.yml \
               .claude/worktrees \
-              src/apps/api/app/config.py \
-              src/apps/api/app/services/mobile_auth.py; then
+              src/apps/api \
+              src/packages/motion-runtime \
+              Dockerfile \
+              .dockerignore \
+              fly.toml \
+              scripts/fly-deploy-with-retry.sh; then
               echo "eligible=false" >> "$GITHUB_OUTPUT"
               echo "Skipping stale iOS result: main advanced with a release input."
               exit 0
@@ -72,14 +76,18 @@ jobs:
             echo "eligible=true" >> "$GITHUB_OUTPUT"
           fi
           if git diff --quiet "$HEAD_SHA^" "$HEAD_SHA" -- \
-            src/apps/api/app/config.py \
-            src/apps/api/app/services/mobile_auth.py; then
+            src/apps/api \
+            src/packages/motion-runtime \
+            Dockerfile \
+            .dockerignore \
+            fly.toml \
+            scripts/fly-deploy-with-retry.sh; then
             echo "requires_api_deploy=false" >> "$GITHUB_OUTPUT"
           else
             echo "requires_api_deploy=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Wait for the matching production mobile-auth deploy
+      - name: Wait for the matching production API deploy
         if: steps.gate.outputs.eligible == 'true' && steps.gate.outputs.requires_api_deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}

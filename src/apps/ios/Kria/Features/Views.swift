@@ -3,95 +3,6 @@ import AuthenticationServices
 import PhotosUI
 import AVKit
 
-struct SignInView: View {
-    @EnvironmentObject private var auth: AuthStore
-    @EnvironmentObject private var model: AppModel
-    @State private var message: String?
-    @State private var appleNonce = UUID().uuidString
-    // Visible in every build configuration, Release included — the server,
-    // not the client, decides whether `auth/mobile/reviewer-login` is
-    // available (404 when the feature is disabled). Exists so Apple's Beta
-    // App Review team can sign in with a demo username/password instead of
-    // Sign in with Apple/Google. See KRI-111.
-    @State private var showsReviewerSignIn = false
-    var body: some View {
-        GeometryReader { viewport in
-        ScrollView {
-        VStack(alignment: .leading, spacing: 28) {
-            KriaWordmark()
-            Spacer()
-            Text("Make something\nworth sharing.").font(KriaFont.display(42)).foregroundStyle(KriaColor.ink)
-            Text("Kria turns the footage in your camera roll into a considered short-form cut.").font(KriaFont.body(17)).foregroundStyle(KriaColor.zinc).fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            #if !LIVE_GOOGLE_ONLY
-            SignInWithAppleButton(.signIn, onRequest: handleAppleRequest, onCompletion: handleApple)
-                .signInWithAppleButtonStyle(.black).frame(height: 52).clipShape(Capsule()).accessibilityLabel("Sign in with Apple")
-            #endif
-            Button("Continue with Google") { Task { await signInWithGoogle() } }.buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity)
-            Button("Sign in with email") { showsReviewerSignIn = true }
-                .font(.footnote)
-                .foregroundStyle(KriaColor.zinc)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .accessibilityIdentifier("signin.email")
-            if AppConfiguration.current.allowsDevelopmentAuth {
-                Button("Continue with local account") {
-                    do { try auth.signIn(with: MobileSession(accessToken: "local-access", refreshToken: "local-refresh", expiresIn: 3600), displayName: "Local creator") }
-                    catch { message = error.localizedDescription }
-                }.buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity)
-            }
-            if let message { Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }
-            Text("By signing in, you agree to Kria’s Terms and Privacy Policy.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-            KriaLegalLinks()
-        }
-        .frame(minHeight: max(0, viewport.size.height - 48), alignment: .leading)
-        .padding(24).frame(maxWidth: 520).frame(maxWidth: .infinity, alignment: .leading)
-        }
-        }
-        .sheet(isPresented: $showsReviewerSignIn) { ReviewerSignInView() }
-    }
-    private func handleAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
-        appleNonce = UUID().uuidString
-        request.requestedScopes = [.fullName, .email]
-        request.nonce = appleNonce.sha256Hex
-    }
-    private func signInWithGoogle() async {
-        do {
-            let credential = try await GoogleAuthProvider().signIn()
-            let session = try await model.api.exchangeMobileToken(credential, provider: "google")
-            try auth.signIn(with: session, displayName: credential.displayName)
-        } catch { message = error.localizedDescription }
-    }
-    private func handleApple(_ result: Result<ASAuthorization, any Error>) {
-        switch result {
-        case .success(let authorization):
-            Task { @MainActor in
-                do {
-                    let credential = try AppleAuthProvider().credential(from: authorization, nonce: appleNonce)
-                    let session = try await model.api.exchangeMobileToken(credential, provider: "apple")
-                    try auth.signIn(with: session, displayName: credential.displayName)
-                } catch { message = error.localizedDescription }
-            }
-        case .failure: message = AuthError.cancelled.localizedDescription
-        }
-    }
-}
-
-struct OnboardingView: View {
-    @EnvironmentObject private var model: AppModel
-    @State private var page = 0
-    private let pages = [("Your footage, edited with intent.", "Tell Kria what you want to feel. It will find the story in your clips."), ("Keep the final say.", "Kria prepares a cut and shows you what changed before anything renders."), ("Pick up where you left off.", "Your projects, conversations, and finished videos stay connected to your Kria account.")]
-    var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Spacer()
-            Text(pages[page].0).font(KriaFont.display(38))
-            Text(pages[page].1).font(KriaFont.body(18)).foregroundStyle(KriaColor.zinc)
-            HStack(spacing: 8) { ForEach(pages.indices, id: \.self) { index in Capsule().fill(index == page ? KriaColor.ink : KriaColor.line).frame(width: index == page ? 28 : 8, height: 6) } }
-            Spacer()
-            Button(page == pages.count - 1 ? "Start creating" : "Continue") { if page == pages.count - 1 { model.completeOnboarding() } else { withAnimation { page += 1 } } }.buttonStyle(KriaPrimaryButtonStyle())
-        }.padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-    }
-}
-
 struct MainShellView: View {
     @EnvironmentObject private var model: AppModel
     @State private var tab = 0
@@ -291,7 +202,7 @@ struct GalleryView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         Text("Gallery")
                             .font(KriaFont.body(29))
-                        Text("Your finished videos")
+                        Text("Your videos and posts")
                             .font(KriaFont.body(14))
                             .foregroundStyle(KriaColor.zinc)
                     }
@@ -350,11 +261,17 @@ struct GalleryView: View {
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), spacing: 20) {
                             ForEach(projects) { project in
                                 if project.status == .ready {
-                                    NavigationLink(destination: ResultsView(project: project, libraryJobID: project.id)) {
+                                    NavigationLink {
+                                        if project.isSlidePost {
+                                            SlidePostWorkspaceView(project: project)
+                                        } else {
+                                            ResultsView(project: project, libraryJobID: project.id)
+                                        }
+                                    } label: {
                                         GalleryProjectCard(project: project)
                                     }
                                     .buttonStyle(.plain)
-                                    .accessibilityLabel("Play \(project.workspaceTitle)")
+                                    .accessibilityLabel("\(project.isSlidePost ? "Open post" : "Play") \(project.workspaceTitle)")
                                 } else {
                                     Button {
                                         model.selectProject(project)
@@ -434,6 +351,10 @@ private struct GalleryProjectCard: View {
             Text(project.workspaceTitle)
                 .font(KriaFont.body(13).weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
+            if project.isSlidePost {
+                Text(project.slideCount.map { "Photo & video post · \($0) slides" } ?? "Photo & video post")
+                    .font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc)
+            }
             Text(project.updatedAt, style: .relative)
                 .font(KriaFont.body(11))
                 .foregroundStyle(KriaColor.zinc)

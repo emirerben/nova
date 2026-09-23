@@ -169,7 +169,6 @@ enum AccountIdentity {
     @Published var projects: [ProjectSummary] = []
     @Published var libraryProjects: [ProjectSummary] = []
     @Published var selectedProject: ProjectSummary?
-    @Published var hasCompletedOnboarding: Bool
     @Published private(set) var isCreatingProject = false
     @Published var isLoading = false
     @Published var errorMessage: String?
@@ -204,13 +203,11 @@ enum AccountIdentity {
         self.uploads = BackgroundUploadCoordinator(api: api)
         self.deviceRenders = DeviceRenderSessions(api: api)
         self.cache = cache
-        hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "kria.onboarding.complete")
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {
             projects = cached.map(\.summary).filter { !deletedProjectIDs.contains($0.id) }
             projectsState = .loaded
         }
     }
-    func completeOnboarding() { hasCompletedOnboarding = true; UserDefaults.standard.set(true, forKey: "kria.onboarding.complete") }
     func loadProjects() async {
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {
             projects = cached.map(\.summary).filter { !deletedProjectIDs.contains($0.id) }

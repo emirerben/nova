@@ -2,6 +2,121 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.159.0] - 2026-09-23
+
+### Changed
+- test(kri118): L7 verification matrix + prod failure replay (#1172) <!-- release-pr: 1172 -->
+
+## [0.76.158.0] - 2026-09-23
+
+### Changed
+- feat(ios): chat UI for KRI-118 thread API (L5) (#1175) <!-- release-pr: 1175 -->
+
+## [0.76.157.0] - 2026-09-23
+
+### Changed
+- fix(creation-threads): slides on phone, legacy shape tolerance, story_shape/adjustments/notices (KRI-118 L4) (#1174) <!-- release-pr: 1174 -->
+
+## [0.76.156.0] - 2026-09-23
+
+### Changed
+- feat(creator): KRI-118 L2 — main-creator story shapes, repairs, and silent-degradation fixes (#1173) <!-- release-pr: 1173 -->
+
+## [0.76.155.0] - 2026-09-23
+
+### Changed
+- KRI-118 lane L3: apply creator's-prompt-wins rule to guided-story specialist (#1171) <!-- release-pr: 1171 -->
+
+## [0.76.154.0] - 2026-09-23
+
+### Changed
+- KRI-118 L1: phone-render gate fixes (speech cleanup, musicBed, self-narration, visual_blocks, mute windows) (#1170) <!-- release-pr: 1170 -->
+
+## [0.76.153.0] - 2026-09-23
+
+### Changed
+- fix(plan): don't tell the specialist there's no video when duration is just unknown (#1176) <!-- release-pr: 1176 -->
+
+## [0.76.152.0] - 2026-09-23
+
+### Changed
+- fix(narrated): plan voiceover stories reliably, make Clean up speech real, recover from planning failures (#1166) <!-- release-pr: 1166 -->
+
+## [0.76.151.0] - 2026-09-23
+
+### Changed
+- KRI-118 L6: honor 4xx detail, split proxy-contract errors, distinguish outdated renderer, fix storage gate (#1169) <!-- release-pr: 1169 -->
+
+## [0.76.150.0] - 2026-09-23
+
+### Changed
+- docs(KRI-118): per-edit-type requirements audit (lane L0) (#1168) <!-- release-pr: 1168 -->
+
+## [0.76.149.0] - 2026-09-23
+
+### Changed
+- fix(ios): stop reloading the branded outro's static properties on every editor composition (#1167) <!-- release-pr: 1167 -->
+
+## [0.76.148.0] - 2026-09-23
+
+### Changed
+- fix(chat): honor Gemini minimum provider deadline (KRI-162) (#1151) <!-- release-pr: 1151 -->
+
+## [0.76.147.0] - 2026-09-23
+
+### Changed
+- fix(ios): preserve plan_hash in the slow-creation UI-test fixture (KRI-160 follow-up) (#1164) <!-- release-pr: 1164 -->
+
+## [0.76.146.0] - 2026-09-22
+
+### Changed
+- fix(planner): distinguish story quotations from requested captions (#1165) <!-- release-pr: 1165 -->
+
+## [0.76.145.0] - 2026-09-22
+
+### Changed
+- Fix creator clip preparation deadlocks (#1163) <!-- release-pr: 1163 -->
+
+## [0.76.144.0] - 2026-09-22
+
+### Changed
+- Fix narrated workflow planning recovery (#1160) <!-- release-pr: 1160 -->
+
+## [0.76.143.0] - 2026-09-22
+
+### Added
+- feat(ios): create and export native photo and video posts (KRI-160) (#1158) <!-- release-pr: 1158 -->
+
+## [0.76.142.0] - 2026-09-22
+
+### Added
+- feat(ios): a proper signup screen — frame-stack hero, entrance motion, matched consent (KRI-161) (#1159) <!-- release-pr: 1159 -->
+
+## [0.76.141.0] - 2026-09-22
+
+### Changed
+- fix(ios): shorten crossfade instead of refusing to build the editor's own composition (KRI-163 follow-up) (#1157) <!-- release-pr: 1157 -->
+
+## [0.76.140.0] - 2026-09-22
+
+### Fixed
+- fix(ios): show Kria branding in the first editor preview (#1155) <!-- release-pr: 1155 -->
+
+## [0.76.139.0] - 2026-09-22
+
+### Changed
+- fix(phone): shorten crossfade instead of refusing the render (KRI-163) (#1156) <!-- release-pr: 1156 -->
+
+## [0.76.138.0] - 2026-09-22
+
+### Fixed
+- fix(creator): acknowledge preparation and recover unclaimed analysis (#1152) <!-- release-pr: 1152 -->
+
+## [0.76.137.0] - 2026-09-22
+
+### Fixed
+- fix: restore exported voiceover and sentence captions (#1149) <!-- release-pr: 1149 -->
+
 ## [0.76.136.0] - 2026-09-22
 
 ### Changed

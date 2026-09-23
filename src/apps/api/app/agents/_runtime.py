@@ -92,8 +92,16 @@ class SchemaError(AgentError):
     """Output failed Pydantic / value validation after parse."""
 
 
+class _OutputTruncatedError(SchemaError):
+    """Provider ended the response before a complete schema could be produced."""
+
+
 class TerminalError(AgentError):
     """Exhausted retries and fallbacks. Caller decides graceful degradation."""
+
+
+class TerminalSchemaError(TerminalError):
+    """Schema retries exhausted, distinct from provider/control-plane failures."""
 
 
 class ProviderQuotaExceededError(TerminalError):
@@ -201,6 +209,13 @@ class AgentSpec:
     # response must never enter AgentRun, Langfuse, or error-preview logs.
     # Input/output projections still provide safe ids, counts, and statuses.
     sensitive_io: bool = False
+    # KRI-118 item 4: how many extra attempts a SchemaError/parse failure may
+    # burn before `_run_on_model` gives up and raises (matches
+    # `enable_clarification_retries`'s "one clarification retry" cap for
+    # every OTHER agent's default). Raise only for an agent whose schema is
+    # genuinely hard to hit in one shot; a higher value costs a real extra
+    # model call on every schema miss.
+    schema_retry_limit: int = 1
 
 
 @dataclass(slots=True)
@@ -384,9 +399,16 @@ class Agent(ABC, Generic[InputT, OutputT]):
         )
 
     def schema_clarification(self) -> str:
+        # KRI-118 item 4: `_run_on_model` stashes the real parse/validation
+        # error (truncated) on `_last_schema_error` before calling this, so
+        # the retry prompt names the actual problem instead of only a
+        # generic reminder. An agent that overrides this method (e.g.
+        # MainCreatorAgent's own `_schema_feedback`) may ignore it.
+        hint = getattr(self, "_last_schema_error", "")
         return (
             "\n\nIMPORTANT: return ONLY valid JSON matching the schema above. "
             "No markdown fences, no prose, no comments."
+            + (f"\nFix this schema error: {hint}" if hint else "")
         )
 
     def compute(self, input: InputT) -> OutputT:  # noqa: A002, ARG002
@@ -508,8 +530,11 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 raise TerminalError(self._terminal_message("refusal", exc)) from exc
             except SchemaError as exc:
                 # Schema retries already exhausted — same model can't fix it; fallback won't either.
+                output_truncated = isinstance(exc, _OutputTruncatedError)
                 self._log_outcome(
-                    outcome="terminal_schema",
+                    outcome=(
+                        "terminal_output_truncated" if output_truncated else "terminal_schema"
+                    ),
                     model=stats.model_used or model,
                     stats=stats,
                     fallback_used=fallback_used,
@@ -518,7 +543,12 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     error=str(exc),
                     input_dict=input_dump,
                 )
-                raise TerminalError(self._terminal_message("schema", exc)) from exc
+                if output_truncated:
+                    # A complete user restatement cannot repair a provider
+                    # output-budget failure. Keep it out of the recoverable
+                    # schema subtype so callers retain their retry path.
+                    raise TerminalError(self._terminal_message("output truncated", exc)) from exc
+                raise TerminalSchemaError(self._terminal_message("schema", exc)) from exc
             except TransientError as exc:
                 last_exc = exc
                 # Try the next model in the fallback chain.
@@ -776,7 +806,10 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 # Same logic as refusal: skip the schema-clarification retry
                 # for agents whose caller can fall through cheaper than a
                 # second Gemini call.
-                if stats.schema_retries >= 1 or not self.spec.enable_clarification_retries:
+                if (
+                    stats.schema_retries >= self.spec.schema_retry_limit
+                    or not self.spec.enable_clarification_retries
+                ):
                     if isinstance(exc, SchemaError):
                         raise
                     raise SchemaError(f"{self.spec.name}: parse failed — {exc}") from exc
@@ -788,6 +821,10 @@ class Agent(ABC, Generic[InputT, OutputT]):
                         raise
                     raise SchemaError(f"{self.spec.name}: parse failed — {exc}") from exc
                 stats.schema_retries += 1
+                # KRI-118 item 4: make the real error available to
+                # `schema_clarification()` (truncated so a huge validation
+                # dump never blows the prompt budget).
+                self._last_schema_error = str(exc)[:400]
                 prompt = self.render_prompt(input) + self.schema_clarification()
                 continue
 
@@ -843,7 +880,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     # knob to turn instead of falling through to the generic
                     # "empty response" / "Invalid JSON" path.
                     if fin_name == "MAX_TOKENS":
-                        raise SchemaError(
+                        raise _OutputTruncatedError(
                             "model truncated output — finish_reason=MAX_TOKENS. "
                             "Increase max_output_tokens."
                         )

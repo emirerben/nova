@@ -89,5 +89,69 @@ final class ClipTransitionCompositionTests: XCTestCase {
             }
         }
     }
+
+    /// A single flat-color asset for the KRI-163-follow-up tests below, which
+    /// only need to know whether `makePreview` throws -- not what it renders.
+    @MainActor private func grayAsset() throws -> (directory: URL, url: URL) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let context = CIContext()
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        let url = directory.appendingPathComponent("gray.png")
+        try context.writePNGRepresentation(of: CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5))
+            .cropped(to: CGRect(x: 0, y: 0, width: 16, height: 16)), to: url, format: .RGBA8, colorSpace: space)
+        return (directory, url)
+    }
+
+    // KRI-163 follow-up: a recipe built directly by this compositor (the
+    // native editor's own local preview/export) has no refit awareness of
+    // its own, unlike the server's phone-plan compiler -- an authored fade
+    // can arrive here with only some of its requested overlap actually
+    // available. These three tests pin the same clamp/cut/refuse behavior
+    // `phone_guided_plan.py`'s equivalent server-side fix already has,
+    // applied at this shared choke point instead.
+
+    @MainActor func testCrossfadeShortensWhenThePreviousClipRunsShort() async throws {
+        let (directory, url) = try grayAsset()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recipe = EditRecipe(canvas: Canvas(width: 16, height: 16), assets: [MediaAsset(id: "gray", relativePath: "gray.png")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [
+            // "a" ends at 1.95 (a 0.05s refit shrink off a nominal 2s clip);
+            // "b" starts at 1.7, expecting a 0.3s fade -- only 0.25s of real
+            // overlap exists. Must compile with the fade shortened, not throw.
+            TimelineClip(id: "a", sourceAssetID: "gray", sourceDuration: 1.95),
+            TimelineClip(id: "b", sourceAssetID: "gray", sourceDuration: 2, timelineStart: 1.7, transition: Transition(duration: 0.3)),
+        ])])
+        _ = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: ["gray": url])
+    }
+
+    @MainActor func testCrossfadeDropsToACutWhenLessThanAFrameOfOverlapRemains() async throws {
+        let (directory, url) = try grayAsset()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recipe = EditRecipe(canvas: Canvas(width: 16, height: 16), assets: [MediaAsset(id: "gray", relativePath: "gray.png")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [
+            // Only 0.01s of overlap remains -- under one frame at 30fps, too
+            // little to render any crossfade at all. Dropped to a hard cut
+            // rather than refused outright.
+            TimelineClip(id: "a", sourceAssetID: "gray", sourceDuration: 1.71),
+            TimelineClip(id: "b", sourceAssetID: "gray", sourceDuration: 2, timelineStart: 1.7, transition: Transition(duration: 0.3)),
+        ])])
+        _ = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: ["gray": url])
+    }
+
+    @MainActor func testCrossfadeStillThrowsOnAGenuineGap() async throws {
+        let (directory, url) = try grayAsset()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recipe = EditRecipe(canvas: Canvas(width: 16, height: 16), assets: [MediaAsset(id: "gray", relativePath: "gray.png")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [
+            // "a" ends at 1.0, entirely before "b" starts (1.7) -- a real
+            // gap, not a rounding-margin shortfall the clamp can absorb.
+            TimelineClip(id: "a", sourceAssetID: "gray", sourceDuration: 1),
+            TimelineClip(id: "b", sourceAssetID: "gray", sourceDuration: 2, timelineStart: 1.7, transition: Transition(duration: 0.3)),
+        ])])
+        do {
+            _ = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: ["gray": url])
+            XCTFail("expected invalidTimeline")
+        } catch {
+            XCTAssertEqual(error as? RecipeError, .invalidTimeline)
+        }
+    }
 }
 #endif

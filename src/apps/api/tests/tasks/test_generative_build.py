@@ -846,10 +846,42 @@ def test_finalize_status_all_failed(monkeypatch):
     monkeypatch.setattr(
         gb,
         "_set_status",
-        lambda jid, status, extra_plan=None, **kwargs: seen.update(status=status),
+        lambda jid, status, extra_plan=None, **kwargs: seen.update(
+            status=status, failure_reason=kwargs.get("failure_reason")
+        ),
     )
     gb._finalize_job("j", [{"variant_id": "a", "rank": 1, "text_mode": "lyrics", "ok": False}])
     assert seen["status"] == "variants_failed"
+    # KRI-163: a NULL failure_reason here left the client's failure card with
+    # nothing to show. No error_class on the one failed variant -> "unknown"
+    # rather than None (reaper.py's own convention for the same gap).
+    assert seen["failure_reason"] == "unknown"
+
+
+def test_finalize_status_all_failed_derives_reason_from_first_variants_error_class(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        gb,
+        "_set_status",
+        lambda jid, status, extra_plan=None, **kwargs: seen.update(
+            status=status, failure_reason=kwargs.get("failure_reason")
+        ),
+    )
+    gb._finalize_job(
+        "j",
+        [
+            {
+                "variant_id": "a",
+                "rank": 1,
+                "text_mode": "lyrics",
+                "ok": False,
+                "error_class": "ffmpeg_failed",
+            },
+            {"variant_id": "b", "rank": 2, "text_mode": "agent_text", "ok": False},
+        ],
+    )
+    assert seen["status"] == "variants_failed"
+    assert seen["failure_reason"] == "ffmpeg_failed"
 
 
 @pytest.mark.parametrize(
@@ -4680,6 +4712,29 @@ def test_run_generative_job_forwards_masonry_preset_to_montage_renderer(monkeypa
     gb._run_generative_job("44444444-4444-4444-4444-444444444444")
 
     assert seen["montage_preset"] == "masonry"
+
+
+def test_run_generative_job_names_the_missing_originals_rejection(monkeypatch):
+    """KRI-163: an analysis-proxy-only clip set (no phone sources, no
+    original cloud paths) used to leave `failure_reason` NULL -- the client's
+    failure card had nothing to show beyond the generic heading."""
+    import app.kria.media_sources as media_sources
+
+    job = _FakeJob(assembly_plan={})
+    job.status = "queued"
+    job.mode = "generative"
+    job.all_candidates = {"clip_paths": ["users/u/plan/i/analysis-proxy.mp4"]}
+    _patch_job_session(monkeypatch, job)
+
+    def _boom(*_a, **_k):
+        raise ValueError("originals required")
+
+    monkeypatch.setattr(media_sources, "require_cloud_source_paths", _boom, raising=False)
+
+    gb._run_generative_job("55555555-5555-5555-5555-555555555555")
+
+    assert job.status == "processing_failed"
+    assert job.failure_reason == "originals_not_uploaded"
 
 
 # ── Resumable variants (survive deploy/OOM kills) ──────────────────────────────

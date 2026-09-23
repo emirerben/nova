@@ -99,11 +99,11 @@ final class ChatWorkspaceTests: XCTestCase {
             role: "assistant",
             eventType: "format_prompt",
             content: "Choose a format",
-            payload: ["formats": .object(["montage": .string("montage"), "narrated": .string("narrated_planned")])],
+            payload: ["formats": .object(["montage": .string("montage"), "narrated": .string("narrated_planned"), "slides": .string("slides")])],
             createdAt: .now
         )
 
-        XCTAssertEqual(CreationFormat.available(in: [prompt]), [.montage, .narrated])
+        XCTAssertEqual(CreationFormat.available(in: [prompt]), [.montage, .narrated, .slides])
     }
 
     func testAcceptedMutationRefreshFailureDoesNotReportTheMutationAsRejected() async throws {
@@ -297,9 +297,17 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertEqual(FootageReadiness.overallProgress(uploads: [3], preparingCount: 0), 1, "clamped to a valid ProgressView value")
     }
 
+    /// The fallback is what the composer/picker allow before `/capabilities`
+    /// has loaded (or if it fails to load) -- it must match the server's real
+    /// default (50) for every format except talking-to-camera, which is
+    /// genuinely capped at 1 clip server-side. A stale lower fallback (the
+    /// old value was 10) under-caps what a slow/offline first load allows.
     func testCreationFormatFallbackClipLimitProtectsTalkingToCameraOffline() {
         XCTAssertEqual(CreationFormat.talkingToCamera.fallbackMaximumClipCount, 1)
-        XCTAssertEqual(CreationFormat.montage.fallbackMaximumClipCount, 10)
+        XCTAssertEqual(CreationFormat.montage.fallbackMaximumClipCount, 50)
+        XCTAssertEqual(CreationFormat.narrated.fallbackMaximumClipCount, 50)
+        XCTAssertEqual(CreationFormat.slides.fallbackMaximumClipCount, 50)
+        XCTAssertEqual(CreationFormat.fallbackMaximumClipCountWithoutFormat, 50)
     }
 
     func testAttachedClipCountIgnoresVoiceoverAndVisualMedia() {
@@ -437,6 +445,28 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertEqual(
             WorkspaceStage.resolve(status: .ready, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true, preparationFailed: true),
             .failed
+        )
+    }
+
+    func testPreparationFailureOutranksLegacyCreationConfirmation() {
+        XCTAssertEqual(
+            FailedWorkspacePresentation.resolve(runtimeVersion: 1, preparationFailed: true, hasConfirmablePlan: true),
+            .preparationRetry
+        )
+        XCTAssertEqual(
+            FailedWorkspacePresentation.resolve(runtimeVersion: 1, preparationFailed: false, hasConfirmablePlan: true),
+            .legacyCreationConfirmation
+        )
+        XCTAssertEqual(
+            FailedWorkspacePresentation.resolve(runtimeVersion: 2, preparationFailed: false, hasConfirmablePlan: true),
+            .genericFailure
+        )
+    }
+
+    func testLegacyFailureWithoutAPlanUsesGenericRecovery() {
+        XCTAssertEqual(
+            FailedWorkspacePresentation.resolve(runtimeVersion: 1, preparationFailed: false, hasConfirmablePlan: false),
+            .genericFailure
         )
     }
 

@@ -6,8 +6,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.kria.render_assets import VisualRenderAsset
+from app.kria.render_assets import VisualRenderAsset, VoiceoverRenderAsset
+from app.models import Job, PlanItem
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.pipeline.speech_cleanup_apply import cut_fingerprint, hydrate_speech_cleanup_snapshot
+from app.schemas.edit_proposal import NarrationTrack
 from app.services import phone_visuals
 from app.services.device_render import device_status
 from app.services.generative_jobs import build_generative_job
@@ -16,6 +19,8 @@ from app.services.pool_asset_refs import job_references_pool_asset
 from app.tasks import generative_build as gb
 from tests.pipeline.test_phone_guided_plan import fixture, narration_bed, narration_track
 from tests.services import test_phone_visuals as photos
+from tests.services.test_guided_speech_cleanup import fixture_ids as cleanup_fixture_ids
+from tests.services.test_guided_speech_cleanup import load_fixture as load_cleanup_fixture
 
 
 def setup(monkeypatch):
@@ -525,15 +530,15 @@ def test_narration_plan_resolves_and_pins_the_bed(monkeypatch):
     bed = narration_bed(duration_s=3.0)  # matches plan.narration's 3s duration
     calls = []
 
-    def fake_bed(job_id, gcs_path):
-        calls.append((job_id, gcs_path))
+    def fake_bed(job_id, gcs_path, *, narration=None):
+        calls.append((job_id, gcs_path, narration))
         return bed
 
     monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", fake_bed, raising=False)
 
     gb._run_generative_job(str(job.id))
 
-    assert calls == [(str(job.id), plan.narration.gcs_path)]
+    assert calls == [(str(job.id), plan.narration.gcs_path, plan.narration)]
     assert job.status == "awaiting_device"
     request = device_status(job, "guided_story").request
     voice_asset_id = f"voiceover-{bed.plan_item_id}"
@@ -547,7 +552,9 @@ def test_narration_plan_resolves_and_pins_the_bed(monkeypatch):
 def test_narration_bed_generation_mismatch_fails_closed(monkeypatch):
     job, snapshot, session, planner, cloud, plan = narration_setup(monkeypatch)
     stale_bed = narration_bed(generation="stale-generation")
-    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", lambda *a: stale_bed, raising=False)
+    monkeypatch.setattr(
+        gb, "_resolve_phone_voiceover_bed", lambda *a, **k: stale_bed, raising=False
+    )
 
     with pytest.raises(UnsupportedPhonePlan, match="replaced since approval"):
         gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
@@ -557,7 +564,7 @@ def test_narration_bed_generation_mismatch_fails_closed(monkeypatch):
 
 def test_narration_bed_missing_fails_closed(monkeypatch):
     job, snapshot, session, planner, cloud, plan = narration_setup(monkeypatch)
-    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", lambda *a: None, raising=False)
+    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", lambda *a, **k: None, raising=False)
 
     with pytest.raises(UnsupportedPhonePlan, match="replaced since approval"):
         gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
@@ -571,7 +578,7 @@ def test_narration_flag_off_fails_closed_before_resolving_a_bed(monkeypatch):
     monkeypatch.setattr(
         gb,
         "_resolve_phone_voiceover_bed",
-        lambda *a: (bed_calls.append(a), narration_bed())[1],
+        lambda *a, **k: (bed_calls.append(a), narration_bed())[1],
         raising=False,
     )
 
@@ -590,7 +597,7 @@ def test_plan_without_narration_never_looks_up_a_bed(monkeypatch):
     monkeypatch.setattr(
         gb,
         "_resolve_phone_voiceover_bed",
-        lambda *a: (bed_calls.append(a), narration_bed())[1],
+        lambda *a, **k: (bed_calls.append(a), narration_bed())[1],
         raising=False,
     )
 
@@ -600,4 +607,141 @@ def test_plan_without_narration_never_looks_up_a_bed(monkeypatch):
     assert job.status == "awaiting_device"
     request = device_status(job, "guided_story").request
     assert request.recipe.audio.narration_asset_id is None
+    cloud.assert_not_called()
+
+
+# --- "Clean up speech": the cleaned derivative is the guided narration bed ---
+#
+# The draft task pinned a cleaned WAV as the approved narration. The worker
+# must pin THAT object (not the item's raw recording) as the device bed, and a
+# required_v1 Job whose plan still carries the raw recording must fail as a
+# speech-cleanup failure instead of quietly shipping uncut audio.
+
+DERIVATIVE_GENERATION = "1700000000000077"
+
+
+def cleaned_narration(*, item_id=None, **provenance):
+    fixture = load_cleanup_fixture()
+    owner_id, fixture_item_id, analysis_id = cleanup_fixture_ids(fixture)
+    source = fixture["snapshot"]["source"]
+    snapshot = hydrate_speech_cleanup_snapshot(fixture["snapshot"])
+    return NarrationTrack.model_validate(
+        {
+            **narration_track(duration_s=3.0).model_dump(mode="json"),
+            "gcs_path": (
+                f"users/{owner_id}/plan/{item_id or fixture_item_id}/speech-cleanup/"
+                f"{analysis_id}/{'0a' * 16}.wav"
+            ),
+            "generation": DERIVATIVE_GENERATION,
+            "speech_cleanup": {
+                "analysis_id": analysis_id,
+                "source_gcs_path": source["storage_path"],
+                "source_generation": source["generation"],
+                "source_duration_s": source["window_end_s"],
+                "cut_sha256": cut_fingerprint(snapshot),
+                **provenance,
+            },
+        }
+    )
+
+
+def cleanup_setup(monkeypatch, narration, *, contract="required_v1"):
+    """A guided phone job pinned to a confirmed cleanup contract and snapshot."""
+    job, snapshot, session, planner, cloud, plan = narration_setup(monkeypatch)
+    fixture = load_cleanup_fixture()
+    owner_id, item_id, _analysis_id = cleanup_fixture_ids(fixture)
+    plan.narration = narration
+    planner.return_value = (plan.model_dump(mode="json"), None)
+    contract_fields = {
+        "speech_cleanup_contract": contract,
+        "speech_cleanup_preflight_contract": "snapshot_v1",
+        "_speech_cleanup_internal": {"preflight_snapshot": fixture["snapshot"]},
+    }
+    snapshot.update(copy.deepcopy(contract_fields))
+    job.assembly_plan.update(copy.deepcopy(contract_fields))
+    job.user_id = owner_id
+    job.content_plan_item_id = item_id
+    source = fixture["snapshot"]["source"]
+    item = SimpleNamespace(
+        id=item_id,
+        audio_mode="voiceover",
+        voiceover_gcs_path=source["storage_path"],
+        voiceover_generation=source["generation"],
+        voiceover_duration_s=source["window_end_s"],
+    )
+    session.get.side_effect = lambda model, key, **kwargs: {Job: job, PlanItem: item}[model]
+    inspected = []
+
+    def inspect(path, *, asset_id, plan_item_id):
+        inspected.append(path)
+        return VoiceoverRenderAsset(
+            id=asset_id,
+            plan_item_id=plan_item_id,
+            generation=DERIVATIVE_GENERATION,
+            fingerprint={"sha256": "d" * 64, "byte_count": 288_000},
+        )
+
+    monkeypatch.setattr("app.services.phone_voiceover.inspect_voiceover_asset", inspect)
+    return job, cloud, item, inspected
+
+
+def test_cleaned_narration_pins_the_derivative_bed(monkeypatch):
+    derivative = cleaned_narration()
+    job, cloud, item, inspected = cleanup_setup(monkeypatch, derivative)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert inspected == [derivative.gcs_path]  # never the item's raw recording
+    request = device_status(job, "guided_story").request
+    [voice] = [a for a in request.recipe.asset_manifest.assets if a.kind == "voiceover"]
+    assert (voice.id, voice.generation) == (f"voiceover-{item.id}", DERIVATIVE_GENERATION)
+    [narration] = [t for t in request.recipe.tracks if t.kind == "audio"]
+    [clip] = narration.clips
+    assert (clip.source_asset_id, clip.source_start) == (voice.id, 0)
+    assert clip.source_duration == pytest.approx(derivative.duration_s)
+    # Recipes carry identities only; storage paths stay in private job state.
+    assert derivative.gcs_path not in request.model_dump_json()
+    cloud.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "narration, contract",
+    [
+        pytest.param(lambda: narration_track(duration_s=3.0), "required_v1", id="raw_required"),
+        pytest.param(cleaned_narration, "off_v1", id="derivative_without_consent"),
+        pytest.param(lambda: cleaned_narration(cut_sha256="e" * 64), "required_v1", id="other_cut"),
+    ],
+)
+def test_cleanup_contract_mismatch_fails_as_speech_cleanup_failed(monkeypatch, narration, contract):
+    job, cloud, _item, inspected = cleanup_setup(monkeypatch, narration(), contract=contract)
+
+    _args, kwargs = run_until_failure(monkeypatch, job)
+
+    assert kwargs.get("failure_reason") == "speech_cleanup_failed"
+    assert kwargs.get("speech_cleanup_failure_reason") == "snapshot_mismatch"
+    assert inspected == []
+    assert "_device_render_v1" not in job.assembly_plan
+    cloud.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "drift", ["replaced_raw", "cleared_voiceover", "foreign_owner", "other_item_prefix"]
+)
+def test_cleaned_narration_bed_fails_closed_when_its_source_drifts(monkeypatch, drift):
+    narration = cleaned_narration(item_id=uuid.uuid4()) if drift == "other_item_prefix" else None
+    job, cloud, item, inspected = cleanup_setup(monkeypatch, narration or cleaned_narration())
+    if drift == "replaced_raw":
+        item.voiceover_generation = "1700000000000009"
+    elif drift == "cleared_voiceover":
+        item.audio_mode = "kria"
+    elif drift == "foreign_owner":
+        job.user_id = uuid.uuid4()
+
+    args, kwargs = run_until_failure(monkeypatch, job)
+
+    assert kwargs.get("failure_reason") == "phone_plan_unsupported"
+    assert "no longer available for phone rendering" in args[1]
+    assert inspected == []
+    assert "_device_render_v1" not in job.assembly_plan
     cloud.assert_not_called()

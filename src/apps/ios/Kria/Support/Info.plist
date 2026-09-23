@@ -32,8 +32,8 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>NSPhotoLibraryAddUsageDescription</key><string>Save finished Kria videos to Photos.</string>
-	<key>NSPhotoLibraryUsageDescription</key><string>Choose footage and save finished videos.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key><string>Save finished Kria photos and videos to Photos.</string>
+	<key>NSPhotoLibraryUsageDescription</key><string>Choose photos and videos and save finished posts.</string>
 	<key>NSMicrophoneUsageDescription</key><string>Record narration for your edit.</string>
 	<key>ITSAppUsesNonExemptEncryption</key><false/>
 </dict>

@@ -36,6 +36,9 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
     /// proposed on top of it). Drives `workspaceStage`/`workspaceStatusLabel`
     /// precedence so a pending plan is never hidden behind an old cut.
     var awaitsConfirmation: Bool = false
+    var editFormat: String?
+    var slideCount: Int?
+    var isSlidePost: Bool { editFormat == "slides" || outputVariantID == "slides" }
 
     init(
         id: UUID,
@@ -51,7 +54,9 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
         serverRevision: Int = 0,
         activeJobID: UUID? = nil,
         activePlanItemID: String? = nil,
-        awaitsConfirmation: Bool = false
+        awaitsConfirmation: Bool = false,
+        editFormat: String? = nil,
+        slideCount: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -67,6 +72,8 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
         self.activeJobID = activeJobID
         self.activePlanItemID = activePlanItemID
         self.awaitsConfirmation = awaitsConfirmation
+        self.editFormat = editFormat
+        self.slideCount = slideCount
     }
 }
 
@@ -113,6 +120,8 @@ struct RenderReceipt: Codable, Identifiable, Hashable, Sendable {
     var activeJobID: UUID?
     var outputVariantID: String?
     var activePlanItemID: String?
+    var editFormat: String?
+    var slideCount: Int?
     init(id: UUID, title: String, status: ProjectStatus = .draft, updatedAt: Date = .now, posterURL: URL? = nil) {
         self.id = id; self.title = title; self.statusRaw = status.rawValue; self.updatedAt = updatedAt; self.posterURLString = posterURL?.absoluteString; self.runtimeVersion = 2; self.serverRevision = 0; self.outputVariantID = nil; self.activePlanItemID = nil
     }
@@ -129,7 +138,9 @@ struct RenderReceipt: Codable, Identifiable, Hashable, Sendable {
             runtimeVersion: runtimeVersion,
             serverRevision: serverRevision,
             activeJobID: activeJobID,
-            activePlanItemID: activePlanItemID
+            activePlanItemID: activePlanItemID,
+            editFormat: editFormat,
+            slideCount: slideCount
         )
     }
 }
@@ -187,10 +198,10 @@ struct RenderReceipt: Codable, Identifiable, Hashable, Sendable {
             let id = project.id
             let descriptor = FetchDescriptor<CachedProject>(predicate: #Predicate { $0.id == id })
             if let cached = try context.fetch(descriptor).first {
-                cached.title = project.title; cached.statusRaw = project.status.rawValue; cached.updatedAt = project.updatedAt; cached.posterURLString = project.posterURL?.absoluteString; cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID; cached.outputVariantID = project.outputVariantID; cached.activePlanItemID = project.activePlanItemID
+                cached.title = project.title; cached.statusRaw = project.status.rawValue; cached.updatedAt = project.updatedAt; cached.posterURLString = project.posterURL?.absoluteString; cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID; cached.outputVariantID = project.outputVariantID; cached.activePlanItemID = project.activePlanItemID; cached.editFormat = project.editFormat; cached.slideCount = project.slideCount
             } else {
                 let cached = CachedProject(id: id, title: project.title, status: project.status, updatedAt: project.updatedAt, posterURL: project.posterURL)
-                cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID; cached.outputVariantID = project.outputVariantID; cached.activePlanItemID = project.activePlanItemID
+                cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID; cached.outputVariantID = project.outputVariantID; cached.activePlanItemID = project.activePlanItemID; cached.editFormat = project.editFormat; cached.slideCount = project.slideCount
                 context.insert(cached)
             }
         }
@@ -206,7 +217,7 @@ struct RenderReceipt: Codable, Identifiable, Hashable, Sendable {
             try upsert([project]); return
         }
         guard cached.serverRevision == expectedServerRevision else { throw CacheConflictError.staleProject(expected: expectedServerRevision, actual: cached.serverRevision) }
-        cached.title = project.title; cached.statusRaw = project.status.rawValue; cached.updatedAt = project.updatedAt; cached.posterURLString = project.posterURL?.absoluteString; cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID; cached.outputVariantID = project.outputVariantID; cached.activePlanItemID = project.activePlanItemID
+        cached.title = project.title; cached.statusRaw = project.status.rawValue; cached.updatedAt = project.updatedAt; cached.posterURLString = project.posterURL?.absoluteString; cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID; cached.outputVariantID = project.outputVariantID; cached.activePlanItemID = project.activePlanItemID; cached.editFormat = project.editFormat; cached.slideCount = project.slideCount
         try context.save()
     }
     func removeProject(_ id: UUID) throws {

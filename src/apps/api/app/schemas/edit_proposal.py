@@ -59,6 +59,11 @@ MediaLane = Literal["clip", "asset"]
 MediaKind = Literal["image", "video"]
 MediaScope = Literal["all", "selected"]
 VideoReusePolicy = Literal["once", "distinct_windows", "allow_repeat"]
+# KRI-118 lane L3: chat-picked "shapes" under Montage (day_vlog / single_hero).
+# A parallel Main Creator lane (L2) sets these on the brief; the deterministic
+# repair layer that enforces each shape's contract lives in
+# app.services.story_shapes.
+StoryShape = Literal["day_vlog", "single_hero"]
 NARRATION_FPS = 30
 
 
@@ -660,6 +665,7 @@ def recognize_image_layout(text: str) -> BeatLayout | None:
 MAX_EDIT_PROPOSAL_MEDIA = 150
 GUIDED_STORY_MIN_MOMENT_S = 1.4
 MAIN_CREATOR_FAIL_CLOSED = "main_creator_fail_closed"
+_UUID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 # Who/what approved a proposal — "auto" for AI-designs-by-default
 # (GUIDED_AUTO_DESIGN_ENABLED); "user" for an explicit creator approval.
 ApprovalMode = Literal["user", "auto"]
@@ -698,6 +704,23 @@ class NarrationWord(BaseModel):
         return self
 
 
+class NarrationSpeechCleanup(BaseModel):
+    """Provenance of a cleaned voiceover derivative ("Clean up speech").
+
+    The derivative is the exact file the renderer plays, so ``NarrationTrack``
+    keeps meaning "this object, this duration, these words". This record binds
+    it back to the raw item voiceover and to the confirmed preflight CutPlan.
+    """
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, frozen=True)
+
+    analysis_id: str = Field(pattern=_UUID_PATTERN)
+    source_gcs_path: str = Field(min_length=1)
+    source_generation: str = Field(min_length=1)
+    source_duration_s: float = Field(gt=0)
+    cut_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class NarrationTrack(BaseModel):
     """Generation-pinned recorded narration and its authoritative word timing."""
 
@@ -708,6 +731,16 @@ class NarrationTrack(BaseModel):
     duration_s: float = Field(gt=0)
     words: list[NarrationWord] = Field(default_factory=list)
     language: str = Field(default="", max_length=16)
+    # Caption presentation belongs to the approved voiceover. Omission keeps
+    # legacy snapshot hashes and deterministic compiler replay unchanged.
+    caption_style: Literal["sentence", "word"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # Set only when gcs_path is a cleaned derivative. Omission keeps legacy
+    # dumps and canonical_media_digest byte-identical.
+    speech_cleanup: NarrationSpeechCleanup | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_words(self) -> NarrationTrack:
@@ -876,6 +909,18 @@ class EditProposalSnapshot(BaseModel):
         max_length=MAX_CLIP_INTENTS,
         exclude_if=lambda value: value is None,
     )
+    # KRI-118 lane L3: user-visible, plain-English notes on what the
+    # deterministic repair layer (app.services.story_shapes.humanize_repairs)
+    # changed about the authored plan -- e.g. a day_vlog transition clamp, or
+    # a single_hero shape that could not apply. Always user-facing, unlike
+    # the admin-only `planner_fallback` on EditProposal; when the planner's
+    # own deterministic fallback was used, that fact is prepended here too.
+    # Bounded to keep the snapshot small; the source list may be longer.
+    adjustments: list[Annotated[str, Field(max_length=160)]] = Field(
+        default_factory=list,
+        max_length=6,
+        exclude_if=lambda value: not value,
+    )
 
     @field_validator("shot_labels", mode="before")
     @classmethod
@@ -942,6 +987,8 @@ class EditProposalSnapshot(BaseModel):
     @model_validator(mode="after")
     def validate_beat_media(self) -> EditProposalSnapshot:
         known = {m.media_id for m in self.media}
+        # Also read by the montage-audio check, which every direction reaches.
+        by_id = {ref.media_id: ref for ref in self.media}
         if len(known) != len(self.media):
             raise ValueError("proposal media IDs must be unique")
         for beat in self.story_beats:
@@ -977,7 +1024,6 @@ class EditProposalSnapshot(BaseModel):
             missing = {cut.media_id for cut in self.fast_cuts} - known
             if missing:
                 raise ValueError("fast montage cuts reference missing media IDs")
-            by_id = {ref.media_id: ref for ref in self.media}
             quick_mixed_timing = uses_quick_photo_long_video_timing(self.mixed_media_timing)
             if (
                 self.narration is None
@@ -1377,6 +1423,16 @@ class ProposalBrief(BaseModel):
     # Main Creator can pin the short-form delivery canvas without changing
     # ordinary guided-edit orientation inference. None preserves legacy briefs.
     output_orientation: OutputOrientation | None = None
+    # KRI-118 lane L3: a chat-picked story shape (day_vlog / single_hero), set
+    # by the parallel Main Creator lane (L2). None preserves every existing
+    # brief byte-identically. hero_media_id names the hero clip for
+    # single_hero; it is ignored for every other shape.
+    story_shape: StoryShape | None = Field(default=None, exclude_if=lambda value: value is None)
+    hero_media_id: str | None = Field(
+        default=None,
+        max_length=100,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class EditConversationTurn(BaseModel):
@@ -1518,14 +1574,19 @@ def canonical_media_digest(
         # Preserve the exact pre-narration digest for already persisted plans.
         payload = json.dumps(identities, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     else:
+        narration_identity: dict[str, object] = {
+            "gcs_path": narration.gcs_path,
+            "generation": narration.generation,
+            "duration_s": round(float(narration.duration_s), 6),
+        }
+        if narration.speech_cleanup is not None:
+            # Pins a cleaned derivative to its raw source and CutPlan so the
+            # client-writable snapshot cannot swap either under the approval.
+            narration_identity["speech_cleanup"] = narration.speech_cleanup.model_dump(mode="json")
         payload = json.dumps(
             {
                 "media": identities,
-                "narration": {
-                    "gcs_path": narration.gcs_path,
-                    "generation": narration.generation,
-                    "duration_s": round(float(narration.duration_s), 6),
-                },
+                "narration": narration_identity,
             },
             sort_keys=True,
             separators=(",", ":"),

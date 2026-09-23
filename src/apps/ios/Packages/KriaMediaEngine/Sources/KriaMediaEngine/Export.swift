@@ -44,9 +44,8 @@ public extension LocalExporting {
     public let preset: LocalExportPreset
     public let instrumentation: (any MediaInstrumentation)?
     /// Brand furniture on the exported file: the watermark for the length of
-    /// the edit, then the outro. This is the only place it is applied -- the
-    /// editor's own composition stays unbranded so the creator's timeline
-    /// stays theirs. Pass `.none` for an internal export that must not carry it.
+    /// the edit, then the outro, matching the editor's source preview.
+    /// Pass `.none` for an internal export that must not carry it.
     public let branding: KriaBranding.Options
     public init(stateStore: any ExportStatePersisting, preset: LocalExportPreset = .default, instrumentation: (any MediaInstrumentation)? = nil, branding: KriaBranding.Options = .standard) { self.stateStore = stateStore; self.preset = preset; self.instrumentation = instrumentation; self.branding = branding }
     // `branding` is a `let` holding a Sendable value type, so reading it off

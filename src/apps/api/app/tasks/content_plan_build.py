@@ -633,6 +633,12 @@ DispatchOutcome = Literal[
     "speech_cleanup_unavailable",
     "speech_cleanup_recovery_conflict",
     "speech_cleanup_analysis_conflict",
+    # KRI-118 L1 item 1: `choice == "clean"` was submitted for an item whose
+    # clips are phone/analysis-proxy sourced. The real audio bytes never
+    # leave the device, so speech cleanup can never run there -- refused
+    # explicitly, before any Job row exists, rather than falling through to
+    # the generic `speech_cleanup_analysis_conflict` above.
+    "speech_cleanup_unavailable_on_phone",
     "video_required",
 ]
 
@@ -746,7 +752,134 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
         "Remove the extra clips (or add one) and try again. No fallback edit was "
         "rendered.",
     ),
+    # KRI-118 L1 item 3: self-narration (no recorded voiceover) across 2+
+    # clips has no phone compiler (`talking_head` isn't phone-supported).
+    # Distinct code/copy from `unsupported_format` so the creator hears an
+    # actionable fix instead of the generic "this kind of video" message.
+    "self_narration_multi_clip": (
+        "phone_self_narration_multi_clip",
+        "Narrating across several clips isn't on iPhone yet. Record a voiceover, "
+        "or keep one clip for talking-to-camera.",
+    ),
 }
+
+
+# `Job.failure_reason` -> a human sentence for the client's failure card
+# (KRI-163). `PHONE_GATE_MESSAGES` above covers a rejection BEFORE a Job
+# exists; this covers the render taxonomy a Job can carry once minted, across
+# `tasks/generative_build.py`, `tasks/template_orchestrate.py`, and
+# `tasks/reaper.py`. The client used to print `failure_reason` itself under
+# "Your project is safe" -- a raw machine token, and for the majority of
+# real failures (a NULL failure_reason) nothing at all. Every code that
+# reaches a client MUST resolve to a sentence here: look it up with
+# `humanize_job_failure_reason` rather than reading this dict directly, so an
+# unrecognized or dynamic-suffix code (`single_hero_*`, `day_vlog_*`,
+# `guided_story_*` from `_classify_error`) still gets a real sentence instead
+# of silently falling through to nothing.
+JOB_FAILURE_MESSAGES: dict[str, str] = {
+    "phone_plan_unsupported": (
+        "This edit can't render on your iPhone the way it's set up right now. "
+        "Try again, or ask for a change to the direction."
+    ),
+    "phone_plan_failed": (
+        "This edit couldn't render on your iPhone. Try again, or ask for a change to the direction."
+    ),
+    "originals_not_uploaded": (
+        "Your original footage wasn't uploaded, so this can't render on your "
+        "iPhone. Reattach your clips and try again."
+    ),
+    "processing_timeout": (
+        "Processing timed out — your clips are heavy (likely 4K/HDR). Try fewer or shorter clips."
+    ),
+    "speech_cleanup_failed": (
+        "Cleaning up the audio didn't finish. Try again, or turn off speech cleanup."
+    ),
+    "no_labeled_tracks": (
+        "No matching music was found for this edit. Try again, or pick a track yourself."
+    ),
+    "matching_failed": "Matching your footage to music didn't finish. Try again.",
+    "auto_music_disabled": "Automatic music matching is turned off right now. Try again later.",
+    "dispatch_publish_failed": "The render couldn't be handed to the queue. Give it another go.",
+    "drive_import_failed": "Importing from Drive didn't finish. Try again.",
+    "drive_import_dispatch_failed": "Importing from Drive didn't finish. Try again.",
+    "upload_promotion_failed": "Saving your upload didn't finish. Try again.",
+    "skia_disabled": "This edit needs a renderer that's temporarily turned off. Try again later.",
+    "cancelled_by_admin": "This render was cancelled.",
+    "render_oom": "Rendering ran out of memory — your clips are heavy. Try fewer or shorter clips.",
+    "ffmpeg_failed": "Something went wrong while assembling your video. Try again.",
+    "gemini_analysis_failed": "Analyzing your footage didn't finish. Try again.",
+    "analysis_failed": "Analyzing your footage didn't finish. Try again.",
+    "copy_generation_failed": "Writing your video's captions didn't finish. Try again.",
+    "output_upload_failed": "Your finished video couldn't be saved. Try again.",
+    "user_clip_download_failed": (
+        "One of your clips couldn't be downloaded. Reattach it and try again."
+    ),
+    "user_clip_unusable": (
+        "One of your clips couldn't be used (it may be corrupted or unsupported). "
+        "Try a different clip."
+    ),
+    "template_misconfigured": "This template has a configuration problem. Try a different one.",
+    "template_assets_missing": "This template is missing assets it needs. Try a different one.",
+    "artifact_eligibility_revoked": "This export is no longer available.",
+    "eligibility_changed_during_export": "Something changed while exporting. Try again.",
+}
+
+# Never blank: an unrecognized or None-but-status-failed code still needs a
+# real sentence, not a fallthrough to nothing.
+_DEFAULT_JOB_FAILURE_MESSAGE = (
+    "Something went wrong and this render didn't finish. Your direction and "
+    "footage are still saved — try again."
+)
+
+
+def humanize_job_failure_reason(failure_reason: str | None) -> str | None:
+    """A sentence for `Job.failure_reason`, never the raw machine code (KRI-163).
+
+    None in, None out -- callers use this to fill a display field only when
+    the job actually carries a reason (or has failed at all); a job that
+    hasn't failed has no `failure_reason` and needs no message.
+    """
+    if not failure_reason:
+        return None
+    return JOB_FAILURE_MESSAGES.get(failure_reason, _DEFAULT_JOB_FAILURE_MESSAGE)
+
+
+def _guided_cleanup_matches_contract(
+    narration: object,
+    contract: str | None,
+    preflight_snapshot: dict | None,
+) -> bool:
+    """Bind an approved guided narration to the dispatch speech-cleanup contract.
+
+    ``required_v1`` with a preflight snapshot may only render the cleaned
+    derivative planned from this exact analysis and CutPlan. Every other
+    contract, including a markerless ``required_v1`` from the legacy item
+    toggle (no consented CutPlan exists), renders the raw voiceover.
+    """
+
+    from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
+        SpeechCleanupSnapshotError,
+        cut_fingerprint,
+        hydrate_speech_cleanup_snapshot,
+    )
+    from app.services.guided_speech_cleanup import narration_speech_cleanup  # noqa: PLC0415
+
+    try:
+        provenance = narration_speech_cleanup(narration)
+    except ValueError:
+        return False
+    if contract != "required_v1" or preflight_snapshot is None:
+        return provenance is None
+    if provenance is None or not isinstance(preflight_snapshot, dict):
+        return False
+    try:
+        snapshot = hydrate_speech_cleanup_snapshot(preflight_snapshot)
+    except SpeechCleanupSnapshotError:
+        return False
+    return (
+        provenance.analysis_id == snapshot.analysis_id
+        and provenance.cut_sha256 == cut_fingerprint(snapshot)
+    )
 
 
 def _speech_cleanup_dispatch_snapshot(
@@ -767,6 +900,23 @@ def _speech_cleanup_dispatch_snapshot(
     )
     from app.services.speech_cleanup_preflight import analysis_snapshot  # noqa: PLC0415
 
+    resolution = resolve_item_narration(item, detector_policy=current_detector_policy())
+    if choice == "clean":
+        from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+
+        # KRI-118 L1 item 1: gate on the ACTIVE narration source speech
+        # cleanup would actually operate on -- a phone project's recorded
+        # voiceover (when audio_mode == "voiceover") is a normal, fully
+        # uploaded audio file, never an analysis proxy, even though this
+        # same item's VIDEO clips are proxies; only the source cleanup would
+        # actually touch matters here. `preflight_enabled_for_source`
+        # already stops such a source from ever being scheduled (no
+        # analysis row -> no offered choice), but a stale/forged client
+        # request could still submit `choice == "clean"` against a row that
+        # predates the item becoming phone-sourced -- refuse explicitly
+        # here, before any Job row exists.
+        if resolution.source is not None and is_analysis_proxy_path(resolution.source.storage_path):
+            return DispatchResult("speech_cleanup_unavailable_on_phone")
     try:
         identifier = uuid.UUID(str(analysis_id))
     except (TypeError, ValueError):
@@ -777,7 +927,6 @@ def _speech_cleanup_dispatch_snapshot(
         with_for_update=True,
         populate_existing=True,
     )
-    resolution = resolve_item_narration(item, detector_policy=current_detector_policy())
     if (
         row is None
         or row.plan_item_id != item.id
@@ -1320,7 +1469,7 @@ def _dispatch_item_render(
 
     if guided_voiceover:
         if approved_proposal is None or not narration_matches_item(
-            approved_proposal["snapshot"].get("narration"), item
+            approved_proposal["snapshot"].get("narration"), item, owner_id=plan.user_id
         ):
             return DispatchResult("proposal_stale")
 
@@ -1401,6 +1550,7 @@ def _dispatch_item_render(
             resolution.source.source_policy_fingerprint,
             mode=settings.speech_cleanup_preflight_mode,
             rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+            storage_path=resolution.source.storage_path,
         ):
             return DispatchResult("speech_cleanup_analysis_conflict")
     if speech_cleanup_analysis_id is not None or speech_cleanup_choice is not None:
@@ -1521,6 +1671,16 @@ def _dispatch_item_render(
                 reason=str(exc),
             )
             return DispatchResult("speech_cleanup_unavailable")
+    if guided_voiceover and approved_proposal is not None:
+        if not _guided_cleanup_matches_contract(
+            approved_proposal["snapshot"].get("narration"),
+            speech_cleanup_contract,
+            preflight_snapshot,
+        ):
+            # The planner cut (or did not cut) a different voiceover than the
+            # creator's current consent. Checked once the contract is final and
+            # before any commit: no Job is minted and no decision is persisted.
+            return DispatchResult("speech_cleanup_analysis_conflict")
     # Narrative clip order (filming-guide alignment): reorder clip_paths so the
     # guide's shot clips come first IN GUIDE ORDER (clip_assignments stores them
     # in attach-request order, which is client-controlled and not the guide
@@ -1617,6 +1777,19 @@ def _dispatch_item_render(
                         # else (0 or 2+ clips, or the self-narration flag
                         # off) fails closed instead of binding phone sources
                         # for an edit that might resolve to `talking_head`.
+                        if len(clip_paths) >= 2:
+                            # KRI-118 L1 item 3: defense-in-depth mirror of
+                            # `creator_capabilities.resolve_creator_manifest`'s
+                            # `phone_format:{format}` gate -- that check
+                            # already refuses this at planning time, before a
+                            # Job is minted; this catches a stale client or a
+                            # replan race with a distinct reason/message
+                            # rather than the generic `unsupported_format`.
+                            phone_gate = "self_narration_multi_clip"
+                            raise ValueError(
+                                f"analysis proxies cannot self-narrate '{fmt}' across "
+                                "multiple clips on iPhone yet"
+                            )
                         if not (
                             settings.narrated_self_narration_enabled
                             and "subtitled" in supported_now
@@ -2001,6 +2174,7 @@ def dispatch_item_render_for(
     expected_job_id: str | None = None,
     expected_render_generation_id: str | None = None,
     expected_speech_cleanup_analysis_id: str | None = None,
+    expected_slide_post_version: int | None = None,
     reject_active_creator_session: bool = False,
 ) -> DispatchResult:
     """Load + lock a plan item, re-check for an active render, then dispatch.
@@ -2062,6 +2236,26 @@ def dispatch_item_render_for(
         if item is None or item.content_plan_id != plan.id:
             log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
             return DispatchResult("missing_row")
+        # Native slide-post creation authorizes one exact persisted revision.
+        # Recheck under the dispatcher row lock so a concurrent PUT cannot make
+        # this render an old draft after the route's read-time validation.
+        if expected_slide_post_version is not None:
+            from app.pipeline.slide_post.profiles import SlideInput, validate  # noqa: PLC0415
+            from app.schemas.slide_post import parse_slide_post  # noqa: PLC0415
+
+            draft = parse_slide_post(item.slide_post)
+            if (
+                item.edit_format != "slides"
+                or draft is None
+                or not draft.slides
+                or draft.version != expected_slide_post_version
+            ):
+                return DispatchResult("slide_post_version_conflict")
+            if not validate(
+                draft.platform_profile,
+                [SlideInput(slide_id=ref.id, kind=ref.kind) for ref in draft.slides],
+            ).ok:
+                return DispatchResult("slide_post_invalid")
         # This check deliberately lives behind the canonical Plan -> Persona ->
         # PlanItem locks. A route-side async check either races session start or,
         # if it holds the same item lock while awaiting this sync dispatcher,

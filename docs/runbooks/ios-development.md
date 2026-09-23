@@ -165,6 +165,17 @@ Media direct manipulation freezes the surrounding composed layers while the gest
 
 Download follows the video currently shown in the editor. A ready source preview is exported locally from the current edit recipe; a matching device-local file is used directly, and a server-rendered result is downloaded only when the source preview is unavailable and the render receipt still matches the current project generation. While a source preview is preparing, the last finished render may remain visible, but canvas editing and download stay disabled until the displayed video is known to be current.
 
+The first source-composed editor preview includes the Kria watermark and outro,
+matching local export before the user saves or downloads. In
+`NativeEditorSession`, `duration` remains the editable content length;
+`playbackDuration` includes the outro while the source composition is displayed.
+Transport, scrubbing, and replay use the playback duration, while clip and text
+authoring stay within the editable duration. Branding remains outside the edit
+recipe, so rebuilding the preview or exporting does not append it twice.
+Internal thumbnail and blur-fill sampling remains unbranded by default.
+
+For device-rendered narration, rebuilding the editor resolves the voiceover from the current published device recipe and its authorized asset grant/cache. Do not infer narration from the cloud-only render receipt or rely on an in-memory render session surviving an app restart. A generation change invalidates resolved audio. Guided sentence captions are a render projection of the original word cues: retain their canonical IDs and timing, carry `caption_meta` through draft hydration, and hold the complete sentence between its spoken words. Approved editorial/clean narration starts above the bottom fifth at `y_frac=0.7`; saved caption edits take precedence.
+
 For repeatable visual review, a Debug build accepts `-ui-testing-brand` with
 `KRIA_BRAND_STATE` set to `format`, `footage`, `direction`, `rendering`, `ready`,
 `editor`, `projects`, `gallery`, `gallery-posters`, `signin`, `account`, or `recovery`.
@@ -557,3 +568,40 @@ open native rendering capability gates or change cloud render behavior.
 Validation: `pytest tests/routes/test_native_timeline_sources.py
  tests/routes/test_generative_timeline.py tests/routes/test_generative_jobs.py
  tests/routes/test_editor_commit.py` from `src/apps/api`.
+
+### Signup screen (KRI-161)
+
+Paper source of truth: https://app.paper.design/file/01M34NT2NRNCP6R49KGW19EY4M
+("Kria iOS — Signup", board V1 · Frame stack). `SignInView.swift` and the
+`AIConsentView` half of `AccountPrivacyViews.swift` are the two screens this
+covers.
+
+- **Never Fraunces on these two screens.** `KriaFont.headline` (Inter Bold,
+  `DesignSystem/DesignTokens.swift`) is the only display type allowed in
+  `SignInView.swift` and `AccountPrivacyViews.swift`; `KriaFont.display`
+  (Fraunces) stays everywhere else, including the account-deletion flow, which
+  was split into its own `AccountDeletionView.swift` file specifically so this
+  rule can be source-scanned per file. Guard:
+  `Tests/KriaTests/SignInTypographyGuardTests.swift`.
+- **Motion:** `Features/SignInMotion.swift` defines the entrance stagger
+  (`SignInMotion.Element` — wordmark → hero → headline → promise → providers →
+  footer, each with its own delay) and the ambient hero loop constants
+  (`ambientPeriod`/`ambientDrift`/`ambientTilt`). `View.signInEntrance(_:appeared:reduceMotion:)`
+  applies the opacity/offset stagger; buttons stay hittable from frame 0
+  regardless of animation state. Reduce Motion (system setting or the
+  `UI_TEST_REDUCE_MOTION=1` override other motion-bearing views already use)
+  renders everything fully visible immediately, with no animation. The hero's
+  three portrait frames drift only once their own entrance has settled, and
+  only while the app is active, Reduce Motion is off, and the reviewer
+  sign-in sheet isn't up.
+- **Fixture states** via `-ui-testing-brand` + `KRIA_BRAND_STATE`: `signin`
+  (default empty state), `signin-error` (seeds a Google-cancellation message
+  through `SignInView(initialMessage:)`), `consent` (`AIConsentView`).
+  `BrandPreviewHost` also honours `UI_TEST_DYNAMIC_TYPE_SIZE=accessibility5`
+  (alongside the older `KRIA_BRAND_LARGE_TEXT=1` → `.accessibility3`).
+- Coverage: `Tests/KriaTests/SignInMotionTests.swift` (pure timing/curve
+  constants), `SignInTypographyGuardTests.swift`, and
+  `Tests/KriaUITests/SignInUITests.swift` (provider/legal-link presence,
+  email sheet, largest Dynamic Type reachability, Reduce Motion
+  immediacy, error-message announcement). `scripts/ios/ui-test-groups.json`
+  maps these sources and tests into the `projects` UI group.

@@ -31,6 +31,51 @@ from app.schemas.semantic_edit import (
 _QUOTED_TEXT_RE = re.compile(
     r"[\"\u201c\u201d]([^\"\u201c\u201d]{1,120})[\"\u201c\u201d]|(?<!\w)'([^']{1,120})'(?!\w)"
 )
+_SPEECH_ATTRIBUTION_RE = re.compile(
+    r"\b(?:said|says|wrote|writes|replied|replies|remarked|remarks|stated|states|asked|asks"
+    r"|told\s+(?:me|us|them|him|her))\s*[:,]?\s*$",
+    re.IGNORECASE,
+)
+_DISPLAY_COPY_CUE_RE = re.compile(
+    r"\b(?:captions?|subtitles?|overlays?|labels?|titles?|show|display)\b"
+    r"|\bon[\s-]?screen\b",
+    re.IGNORECASE,
+)
+_DISPLAY_QUOTE_TARGET = (
+    r"(?:on[\s-]?screen\b"
+    r"|(?:as|in|for)\s+(?:(?:a|an|the)\s+)?(?:caption|subtitle|overlay|label|title)\b)"
+)
+_QUOTE_MEDIA_TARGET = (
+    r"on\s+(?:(?:a|an|the)\s+)?(?:(?:opening|first|last|closing)\s+)?"
+    r"(?:clip|shot|image|frame|video)\b"
+)
+_QUOTE_PLACEMENT_RE = re.compile(
+    r"\b(?:write|print|render|put|add|use)\s+"
+    r"(?:(?:the|these|those|his|her|their|a|an|this|that)\s+)?(?:words?|quotes?|text|lines?)\b",
+    re.IGNORECASE,
+)
+_DISPLAY_QUOTE_SUFFIX_RE = re.compile(
+    rf"^\s*(?:[,;:\u2014-]\s*)?(?:{_DISPLAY_QUOTE_TARGET}"
+    r"|(?:put|show|display|use)\s+(?:that|this|those|these)\s+"
+    rf"(?:quotes?|text|words?|lines?|captions?)\s+(?:{_DISPLAY_QUOTE_TARGET}|{_QUOTE_MEDIA_TARGET})"
+    rf"|(?:put|show|display|use)\s+(?:that|this|it)\s+{_DISPLAY_QUOTE_TARGET})",
+    re.IGNORECASE,
+)
+# The voiceover-script exclusion must never swallow explicit on-screen copy.
+# A short quote is far likelier a label than a spoken sentence, and a
+# placement verb before the quote or a where-to-show phrase after it keeps
+# it as creator copy even when the voiceover also says those words.
+_SPOKEN_SCRIPT_MIN_WORDS = 4
+_SPOKEN_QUOTE_PLACEMENT_RE = re.compile(
+    r"\b(?:put|add|write|place|overlay|type|print|text)\b", re.IGNORECASE
+)
+_SPOKEN_QUOTE_WHERE_RE = re.compile(
+    r"\s*(?:[,;:—-]\s*)?(?:as\s+(?:on[\s-]?screen\s+)?text\b"
+    r"|(?:on|over|across)\s+(?:(?:the|this|that|each|every|a|an)\s+)?(?:[\w-]+\s+){0,3}"
+    r"(?:clips?|shots?|photos?|images?|pictures?|videos?|frames?|chapters?|screen)\b)",
+    re.IGNORECASE,
+)
+_QUOTE_LIST_JOIN_RE = re.compile(r"\s*,?\s*(?:(?:and|or|&)\s*)?", re.IGNORECASE)
 _FORBIDDEN_TIMING_KEYS = frozenset(
     {"duration_s", "start_s", "end_s", "source_start_s", "source_end_s", "output_duration_s"}
 )
@@ -41,6 +86,21 @@ _GROUP_RETRY_HINT = (
     "assigned aliases in its block; keep every other alias outside that block, even when "
     "the setting is similar."
 )
+_CAPTION_RETRY_HINT = (
+    "Correction: each quoted caption must be the thought of its own chapter, and that "
+    "chapter must contain the caption's source, outside any resolved GROUP or CAPTION block."
+)
+
+
+def _unknown_media_retry_hint(media_count: int) -> str:
+    """Server-derived alias range only; never echoes the rejected output."""
+    last = f"m{media_count:03d}"
+    return (
+        f"Correction: the only valid media aliases are m001 through {last} "
+        f"({media_count} sources, numbered from m001; there is no m000). Every "
+        "chapters[].sources[].media_id must be one of them. Never invent an alias "
+        "or add a chapter without a real source."
+    )
 
 
 def _validate_reuse_once(plan: SemanticEditPlan, input: EditProposalAgentInput) -> None:  # noqa: A002
@@ -127,6 +187,81 @@ def _semantic_required_media_ids(input: EditProposalAgentInput) -> set[str]:  # 
     return required
 
 
+def _is_reported_speech_quote(request: str, match: re.Match[str]) -> bool:
+    """Do not turn attributed story dialogue into a required text overlay.
+
+    Keep the quote fallback for unclassified copy, including non-English
+    captions. Only an adjacent speech attribution establishes this exclusion;
+    an explicit display instruction attached to that quote overrides it.
+    """
+    prefix = _quote_clause_prefix(request, match)
+    if not _SPEECH_ATTRIBUTION_RE.search(prefix):
+        return False
+    return not _quote_has_display_instruction(request, match, prefix)
+
+
+def _quote_clause_prefix(request: str, match: re.Match[str]) -> str:
+    before_quote = request[: match.start()].rstrip().removesuffix(",")
+    return re.split(r"[.!?\n,;]|\b(?:then|and|but)\b", before_quote, flags=re.I)[-1]
+
+
+def _quote_has_display_instruction(request: str, match: re.Match[str], prefix: str) -> bool:
+    # A period can sit inside the quoted speech. Do not borrow an instruction
+    # from the next sentence (e.g. 'He said "... ." Put "real copy" on screen').
+    # Only a postfix that directly assigns this quote to a display lane counts.
+    return bool(
+        _DISPLAY_COPY_CUE_RE.search(prefix)
+        or _DISPLAY_QUOTE_SUFFIX_RE.search(request[match.end() :])
+        or (
+            _QUOTE_PLACEMENT_RE.search(prefix)
+            and re.match(rf"\s*{_QUOTE_MEDIA_TARGET}", request[match.end() :], re.I)
+        )
+    )
+
+
+def _quote_list_ends(request: str, match: re.Match[str]) -> tuple[re.Match[str], re.Match[str]]:
+    """First and last quote of a list such as 'Label them "A", "B" and "C"'.
+
+    A display cue before the list or a placement after it covers every item,
+    not only the adjacent one.
+    """
+    quotes = list(_QUOTED_TEXT_RE.finditer(request))
+    at = next(index for index, quote in enumerate(quotes) if quote.start() == match.start())
+    first = last = at
+    while first > 0 and _QUOTE_LIST_JOIN_RE.fullmatch(
+        request[quotes[first - 1].end() : quotes[first].start()]
+    ):
+        first -= 1
+    while last + 1 < len(quotes) and _QUOTE_LIST_JOIN_RE.fullmatch(
+        request[quotes[last].end() : quotes[last + 1].start()]
+    ):
+        last += 1
+    return quotes[first], quotes[last]
+
+
+def _is_spoken_script_quote(request: str, match: re.Match[str], spoken: list[str]) -> bool:
+    """A quoted sentence the recorded voiceover speaks is its script, not a text overlay.
+
+    Timed narration captions already draw those words, whether the attribution
+    follows the quote ('"...," she said.') or is absent. A short phrase, a
+    placement verb ('Put "..."'), a where-to-show phrase ('"..." over the
+    photo') or any other display instruction keeps the quote as creator copy.
+    """
+    text = match.group(1) or match.group(2) or ""
+    words = [key for key in (creator_copy_match_key(word) for word in text.split()) if key]
+    if len(words) < _SPOKEN_SCRIPT_MIN_WORDS or not any(
+        spoken[start : start + len(words)] == words for start in range(len(spoken) - len(words) + 1)
+    ):
+        return False
+    head, tail = _quote_list_ends(request, match)
+    prefix = _quote_clause_prefix(request, head)
+    if _SPOKEN_QUOTE_PLACEMENT_RE.search(prefix) or _SPOKEN_QUOTE_WHERE_RE.match(
+        request[tail.end() :]
+    ):
+        return False
+    return not _quote_has_display_instruction(request, tail, prefix)
+
+
 def _creator_captions(input: EditProposalAgentInput) -> dict[str, list[str]]:  # noqa: A002
     """Creator-quoted captions are a complete allowlist (KRI-129)."""
     if input.shot_labels:
@@ -149,7 +284,13 @@ def _creator_captions(input: EditProposalAgentInput) -> dict[str, list[str]]:  #
                 phrases[key].append(text)
         return phrases
     phrases: dict[str, list[str]] = {}
+    words = (str(word.get("text") or "") for word in input.narration_words)
+    spoken = [key for key in map(creator_copy_match_key, words) if key]
     for match in _QUOTED_TEXT_RE.finditer(input.creator_request):
+        if _is_reported_speech_quote(input.creator_request, match):
+            continue
+        if spoken and _is_spoken_script_quote(input.creator_request, match, spoken):
+            continue
         text = (match.group(1) or match.group(2) or "").strip()
         key = creator_copy_match_key(text)
         if key:
@@ -227,6 +368,176 @@ def _blank_grounded_label_thoughts(
         ):
             chapter.thought = ""
             repairs.append(f"blanked_grounded_label_thought:{index}")
+
+
+def _restore_dropped_creator_captions(
+    plan: SemanticEditPlan,
+    input: EditProposalAgentInput,  # noqa: A002
+    dropped: list[tuple[int, dict]],
+    alias_to_id: dict[str, str],
+    allowed: set[str],
+    repairs: list[str],
+) -> set[str]:
+    """Keep allowlisted creator copy from a dropped non-montage binding renderable.
+
+    Guided stories render chapter thoughts, not montage bindings. Move exact
+    creator copy to the first empty thought among its valid targets so the
+    allowlist check below validates text that will actually be drawn.
+
+    Returns the captions proven unplaceable: bound to real chapters, but each
+    one already shows creator copy and cannot split, or is owned by a resolved
+    group/caption intent. A retry cannot fix that (e.g. two captions on one
+    shot under once reuse), so the story renders without that caption and
+    records ``unplaceable_creator_caption:<binding index>``.
+    """
+    if input.shot_labels or not dropped:
+        return set()
+    captions = _creator_captions(input)
+    if not captions:
+        return set()
+    # Resolved caption/group copy is placed by _apply_resolved_caption_intents
+    # and resolved labels by the grounded label lane. Moving either here would
+    # duplicate it.
+    server_placed = _resolved_label_texts(input) | {
+        intent.caption_text if intent.op == "caption" else intent.creator_text
+        for intent in input.clip_intents or []
+        if intent.status == "resolved" and intent.op in {"caption", "group"}
+    }
+    # Those intents also own the thought of every chapter holding their
+    # sources, so a moved caption would be overwritten there.
+    server_media = {
+        alias_to_id.get(assignment.media_id, assignment.media_id)
+        for intent in input.clip_intents or []
+        if intent.status == "resolved" and intent.op in {"caption", "group"}
+        for assignment in intent.assignments
+    }
+    unplaceable: dict[str, int] = {}
+    for binding_index, raw in dropped:
+        exact = _resolve_creator_caption(raw["text"].strip(), captions)
+        if (
+            exact is None
+            or exact in server_placed
+            or any(chapter.thought == exact for chapter in plan.chapters)
+        ):
+            continue
+        index_by_id = {chapter.chapter_id: i for i, chapter in enumerate(plan.chapters)}
+        chapter_ids = raw.get("chapter_ids") if isinstance(raw.get("chapter_ids"), list) else []
+        media_ids = raw.get("media_ids") if isinstance(raw.get("media_ids"), list) else []
+        targets = {index_by_id[str(cid)] for cid in chapter_ids if str(cid) in index_by_id}
+        resolved = {_alias_or_id(str(mid), alias_to_id, allowed) for mid in media_ids} - {None}
+        targets.update(
+            i
+            for i, chapter in enumerate(plan.chapters)
+            if any(source.media_id in resolved for source in chapter.sources)
+        )
+        bound_to_real_chapter = bool(targets)
+        targets = {
+            i
+            for i in targets
+            if not any(source.media_id in server_media for source in plan.chapters[i].sources)
+        }
+        target = next((i for i in sorted(targets) if not plan.chapters[i].thought), None)
+        split: int | None = None
+        if target is None:
+            # Every target already shows copy (e.g. two quoted captions on two
+            # shots the model put in one chapter): give the bound shot its own
+            # chapter rather than failing the story.
+            for index in sorted(targets):
+                split = _isolate_bound_sources(plan, index, resolved)
+                if split is not None:
+                    break
+            target = split
+        else:
+            # A caption bound to some shots of a chapter covers only those
+            # shots, and a later caption on a sibling shot keeps a free chapter.
+            # When a limit blocks the split, the whole chapter carries it.
+            split = _isolate_bound_sources(plan, target, resolved)
+            target = target if split is None else split
+        if split is not None:
+            repairs.append(f"split_creator_caption_source:{binding_index}:{split}")
+        if target is not None:
+            plan.chapters[target].thought = exact
+            repairs.append(f"moved_creator_caption_binding_to_thought:{binding_index}:{target}")
+        elif bound_to_real_chapter:
+            unplaceable.setdefault(exact, binding_index)
+    # A later binding of the same caption may still have found a free chapter.
+    # A binding with no real target proves nothing: that caption stays required.
+    shown = {chapter.thought for chapter in plan.chapters}
+    for text, binding_index in unplaceable.items():
+        if text not in shown:
+            repairs.append(f"unplaceable_creator_caption:{binding_index}")
+    return {text for text in unplaceable if text not in shown}
+
+
+# The scheduler names a chapter's later 4-source beats "<chapter_id>-2" ...
+# up to "-20" (80 sources); a new chapter id must never equal one of them.
+_MAX_BEAT_SUFFIX = 20
+
+
+def _beat_ids(chapter_id: str) -> set[str]:
+    return {chapter_id, *(f"{chapter_id}-{k}" for k in range(2, _MAX_BEAT_SUFFIX + 1))}
+
+
+def _isolate_bound_sources(plan: SemanticEditPlan, index: int, media_ids: set[str]) -> int | None:
+    """Give a contiguous run of bound sources its own chapter: before, bound, after.
+
+    Sources never reorder, so any order intent still holds, and each piece
+    takes its sources' share of the chapter weight. The first piece keeps the
+    chapter id and role (later pieces never open as a hook); the first
+    unbound piece keeps the chapter's existing thought. Returns the bound
+    piece's index, or None when the chapter is only the bound run, the run is
+    not contiguous, or the chapter/beat limits or ids block the split.
+    """
+    chapter = plan.chapters[index]
+    positions = [i for i, source in enumerate(chapter.sources) if source.media_id in media_ids]
+    if (
+        not positions
+        or len(positions) == len(chapter.sources)
+        or positions[-1] - positions[0] + 1 != len(positions)
+    ):
+        return None
+    start, end = positions[0], positions[-1] + 1
+    bound_at = 1 if start else 0
+    pieces = [
+        part
+        for part in (chapter.sources[:start], chapter.sources[start:end], chapter.sources[end:])
+        if part
+    ]
+    others = [other for other in plan.chapters if other is not chapter]
+    beats = sum(math.ceil(len(other.sources) / 4) for other in others)
+    if (
+        len(others) + len(pieces) > 20
+        or beats + sum(math.ceil(len(part) / 4) for part in pieces) > 20
+    ):
+        return None
+    taken = set().union(*(_beat_ids(other.chapter_id) for other in plan.chapters))
+    piece_ids = [chapter.chapter_id]
+    base = re.sub(r"(?:-part-\d+)+$", "", chapter.chapter_id) or chapter.chapter_id
+    number = 0
+    while len(piece_ids) < len(pieces):
+        number += 1
+        candidate = f"{base}-part-{number}"
+        if len(candidate) > 97:  # its "-20" beat id must fit the 100-char schema
+            return None
+        if not _beat_ids(candidate) & taken:
+            taken |= _beat_ids(candidate)
+            piece_ids.append(candidate)
+    total = sum(source.weight for source in chapter.sources)
+    thought_at = 1 if bound_at == 0 else 0
+    plan.chapters[index : index + 1] = [
+        chapter.model_copy(
+            update={
+                "chapter_id": piece_id,
+                "sources": part,
+                "weight": chapter.weight * sum(source.weight for source in part) / total,
+                "thought": chapter.thought if position == thought_at else "",
+                "role": "build" if position and chapter.role == "hook" else chapter.role,
+            },
+            deep=True,
+        )
+        for position, (piece_id, part) in enumerate(zip(piece_ids, pieces, strict=True))
+    ]
+    return index + bound_at
 
 
 def _candidate_index(media: object, source_start_s: float) -> int | None:
@@ -486,6 +797,13 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
                         "in order. Put opening footage inside the first labeled chapter; "
                         "do not add an introduction or ending chapter."
                     )
+            elif str(exc) in {
+                "semantic_edit_proposal: source references unknown media",
+                "semantic_edit_proposal: text binding references unknown media",
+            }:
+                self._schema_retry_hint = _unknown_media_retry_hint(len(input.media))
+            elif str(exc) == "semantic_edit_proposal: creator caption was dropped":
+                self._schema_retry_hint = _CAPTION_RETRY_HINT
             raise
 
     def schema_clarification(self) -> str:
@@ -508,7 +826,23 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         allowed = set(id_to_alias)
         normalized = {**payload, "montage_audio": input.montage_audio, "repairs": []}
         parse_repairs: list[str] = []
+        unknown_sources: list[str] = []
         normalized_chapters: list[dict] = []
+        # A recorded voiceover owns body text: its timed captions are
+        # server-drawn. Any thought that is not creator-confirmed copy (a
+        # quoted or resolved caption; shot labels are handled below) is AI
+        # draft text that guided_story._text_elements would burn over those
+        # captions. Blank it before validation so it never decides a
+        # chapter's fate (e.g. an extra sourceless chapter for the last
+        # voiceover line, or a thought over the schema's length cap), even
+        # when the creator also asked for some on-screen copy.
+        narrated = (
+            input.direction != "fast_montage"
+            and input.narration_duration_s is not None
+            and not input.shot_labels
+        )
+        narrated_copy = _creator_captions(input) if narrated else {}
+        narrated_repairs: list[str] = []
         for chapter_index, raw_chapter in enumerate(payload["chapters"]):
             if not isinstance(raw_chapter, dict):
                 raise SchemaError(
@@ -519,11 +853,14 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             raw_sources = raw_chapter.get("sources")
             if not isinstance(raw_sources, list):
                 raise SchemaError(f"semantic_edit_proposal: chapter {chapter_index} needs sources")
+            raw_thought = str(raw_chapter.get("thought") or "").strip()
+            if narrated and creator_copy_match_key(raw_thought) not in narrated_copy:
+                raw_thought = ""
             if not raw_sources:
                 # The server renders titles separately. Gemini sometimes adds
                 # an otherwise-empty title/outro chapter despite that contract;
                 # it has no editorial source or copy to preserve, so omit it.
-                thought = str(raw_chapter.get("thought") or "").strip()
+                thought = raw_thought
                 server_titles = {
                     title for title in (input.opening_title, input.closing_title) if title
                 }
@@ -546,7 +883,8 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
                 if media_id is None and str(raw_source.get("media_id") or "") in allowed:
                     media_id = str(raw_source["media_id"])
                 if media_id is None:
-                    raise SchemaError("semantic_edit_proposal: source references unknown media")
+                    unknown_sources.append(f"{chapter_index}:{source_index}")
+                    continue
                 candidate_index = raw_source.get("candidate_index")
                 moments = next(row.best_moments for row in input.media if row.media_id == media_id)
                 if candidate_index is not None:
@@ -566,8 +904,43 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
                         raise SchemaError(
                             "semantic_edit_proposal: source references unknown candidate"
                         )
+                repeated = next((row for row in sources if row["media_id"] == media_id), None)
+                weights = (
+                    None if repeated is None else (repeated.get("weight"), raw_source.get("weight"))
+                )
+                if weights is not None and all(
+                    weight is None
+                    or (isinstance(weight, int | float) and not isinstance(weight, bool))
+                    for weight in weights
+                ):
+                    # One shot listed twice in a chapter (e.g. reused for a
+                    # described but unattached photo) is one longer window.
+                    repeated["weight"] = sum(1.0 if w is None else w for w in weights)
+                    parse_repairs.append(f"merged_repeated_source:{chapter_index}:{source_index}")
+                    continue
                 sources.append({**raw_source, "media_id": media_id})
+            if not sources:
+                # Every source was an invented alias (m000). Only an otherwise
+                # empty chapter may go; its copy has no grounded footage.
+                if raw_thought:
+                    raise SchemaError("semantic_edit_proposal: source references unknown media")
+                parse_repairs.append(f"dropped_unknown_media_chapter:{chapter_index}")
+                continue
+            if narrated and str(raw_chapter.get("thought") or "").strip() and not raw_thought:
+                raw_chapter = {**raw_chapter, "thought": ""}
+                narrated_repairs.append(f"blanked_narrated_thought:{len(normalized_chapters)}")
             normalized_chapters.append({**raw_chapter, "sources": sources})
+        if unknown_sources:
+            covered = {
+                source["media_id"]
+                for chapter in normalized_chapters
+                for source in chapter["sources"]
+            }
+            # Surplus only: every real alias is still used, so the invented
+            # one cannot be an off-by-one substitute for a real source.
+            if not set(alias_to_id.values()) <= covered:
+                raise SchemaError("semantic_edit_proposal: source references unknown media")
+            parse_repairs.extend(f"dropped_unknown_media_source:{ref}" for ref in unknown_sources)
         if input.shot_labels and input.direction != "fast_montage":
             if len(normalized_chapters) != len(input.shot_labels):
                 raise SchemaError(
@@ -584,7 +957,26 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         normalized["chapters"] = normalized_chapters
         raw_bindings = payload.get("text_bindings", [])
         if not isinstance(raw_bindings, list):
-            raise SchemaError("semantic_edit_proposal: text_bindings must be a list")
+            if input.direction == "fast_montage":
+                raise SchemaError("semantic_edit_proposal: text_bindings must be a list")
+            if raw_bindings is not None:
+                parse_repairs.append("dropped_invalid_non_montage_text_bindings")
+            raw_bindings = []
+        dropped_bindings: list[tuple[int, dict]] = []
+        if input.direction != "fast_montage":
+            # Only fast_montage renders the per-source montage lane (the
+            # guided_story compiler ignores it elsewhere, and revisions strip
+            # it). Drop it before validation so the 12-item cap, targets, and
+            # per-source conflicts of an unrendered lane can never fail a
+            # story whose visible copy lives in chapter thoughts.
+            dropped_bindings = [
+                (index, raw_binding)
+                for index, raw_binding in enumerate(raw_bindings)
+                if isinstance(raw_binding, dict) and isinstance(raw_binding.get("text"), str)
+            ]
+            if raw_bindings:
+                parse_repairs.append(f"dropped_non_montage_text_bindings:{len(raw_bindings)}")
+            raw_bindings = []
         normalized_bindings: list[dict] = []
         for index, raw_binding in enumerate(raw_bindings):
             if not isinstance(raw_binding, dict):
@@ -644,11 +1036,19 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
                         plan.text_bindings.append(
                             SemanticTextBinding(text=exact, chapter_ids=[chapter.chapter_id])
                         )
+        repairs.extend(narrated_repairs)
         _validate_reuse_once(plan, input)
         self._recover_single_misassigned_group(plan, input, alias_to_id, repairs)
+        unplaceable: set[str] = set()
+        if input.direction != "fast_montage":
+            # After group recovery: a stray group member moved out of a
+            # chapter frees that chapter (and its shots) for creator copy.
+            unplaceable = _restore_dropped_creator_captions(
+                plan, input, dropped_bindings, alias_to_id, allowed, repairs
+            )
         self._apply_resolved_caption_intents(plan, input, alias_to_id)
         self._add_creator_caption_bindings(plan, input)
-        self._enforce_creator_text_bindings(plan, input)
+        self._enforce_creator_text_bindings(plan, input, unplaceable)
         if len(plan.text_bindings) > 12:
             raise SchemaError("semantic_edit_proposal: creator bindings exceed the 12-item limit")
         plan.repairs.extend(repairs)
@@ -879,9 +1279,16 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
 
     @staticmethod
     def _enforce_creator_text_bindings(
-        plan: SemanticEditPlan, input: EditProposalAgentInput
+        plan: SemanticEditPlan,
+        input: EditProposalAgentInput,  # noqa: A002
+        unplaceable: set[str],
     ) -> None:
-        """Quoted creator captions form a complete text-binding allowlist."""
+        """Quoted creator captions form a complete text-binding allowlist.
+
+        ``unplaceable`` excuses only captions a dropped binding tied to real
+        chapters that could not take them (see _restore_dropped_creator_captions);
+        a caption the model never placed anywhere still fails.
+        """
         captions = _creator_captions(input)
         label_keys = _resolved_label_keys(input)
         label_texts = _resolved_label_texts(input)
@@ -902,15 +1309,18 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             key = creator_copy_match_key(binding.text)
             if key not in captions or binding.text not in captions[key]:
                 raise SchemaError("semantic_edit_proposal: unrequested text binding was invented")
+        # Only fast_montage draws bindings; elsewhere a caption counts as
+        # present only when a chapter thought will render it.
+        rendered_bindings = plan.text_bindings if input.direction == "fast_montage" else []
         present = [
             text
             for text in [
                 *(chapter.thought for chapter in plan.chapters),
-                *(binding.text for binding in plan.text_bindings),
+                *(binding.text for binding in rendered_bindings),
             ]
             if text
         ]
-        required_captions = _caption_texts(captions) - label_texts
+        required_captions = _caption_texts(captions) - label_texts - unplaceable
         if not required_captions <= set(present):
             raise SchemaError("semantic_edit_proposal: creator caption was dropped")
 

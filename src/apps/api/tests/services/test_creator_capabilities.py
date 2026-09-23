@@ -411,6 +411,62 @@ def _phone_manifest(monkeypatch, edit_format, media, *, has_voiceover=False):
     )
 
 
+@pytest.mark.parametrize("edit_format", ["narrated", "narrated_planned", "narrated_ready"])
+def test_phone_self_narration_two_clips_refused_with_typed_reason(monkeypatch, edit_format) -> None:
+    """KRI-118 L1 item 3: self-narration (no recorded voiceover) across 2+
+    clips has no phone compiler (`talking_head`, which 2+ self-narrated
+    clips would resolve to, is never phone-supported). Refused at planning
+    time with its own reason/copy, distinct from `phone_format_unavailable`."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = _phone_manifest(
+        monkeypatch,
+        edit_format,
+        [
+            {"media_id": "phone-a", "kind": "video"},
+            {"media_id": "phone-b", "kind": "video"},
+        ],
+        has_voiceover=False,
+    )
+    entry = manifest.capabilities[f"phone_format:{edit_format}"]
+    assert entry.available is False
+    assert entry.reason_code == "self_narration_multi_clip"
+    assert "Narrating across several clips isn't on iPhone yet" in entry.reason
+
+
+def test_phone_self_narration_one_clip_still_available(monkeypatch) -> None:
+    """The single-clip self-narration shape (unaffected by the new refusal)."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = _phone_manifest(
+        monkeypatch,
+        "narrated",
+        [{"media_id": "phone-a", "kind": "video"}],
+        has_voiceover=False,
+    )
+    entry = manifest.capabilities["phone_format:narrated"]
+    assert entry.available is True
+
+
+def test_phone_narrated_voiceover_two_clips_is_unaffected(monkeypatch) -> None:
+    """The multi-clip refusal is specific to self-narration (no recorded
+    voiceover) -- a narrated item WITH a recorded voiceover across 2+ clips
+    is a totally different (and phone-supported, once rolled out) lane."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = _phone_manifest(
+        monkeypatch,
+        "narrated",
+        [
+            {"media_id": "phone-a", "kind": "video"},
+            {"media_id": "phone-b", "kind": "video"},
+        ],
+        has_voiceover=True,
+    )
+    entry = manifest.capabilities["phone_format:narrated"]
+    assert entry.available is True
+
+
 def test_phone_subtitled_one_clip_no_voiceover_compiles_native(monkeypatch) -> None:
     """KRI-132 follow-up: subtitled ("Talking to camera") is audio-led and has
     no guided-story lane -- exactly one clip, no voiceover, resolves "native"
@@ -903,6 +959,56 @@ def test_phone_manifest_never_advertises_lanes_the_phone_compiler_rejects(monkey
         "draft_guided_proposal",
         "dispatch_render",
     ]
+
+
+def test_visual_blocks_stays_unsupported_without_editor_media_flag(monkeypatch) -> None:
+    """KRI-118 L1 item 5: `visualBlocks` verified alone is not enough --
+    the editor-media rollout flag must also be on, mirroring
+    `phone_rollout.validate_phone_pilot_recipe`'s exact rule."""
+    manifest = _phone_manifest_with_pool(monkeypatch, [], verified_features=["visualBlocks"])
+    assert manifest.capabilities["visual_blocks"].available is False
+    assert manifest.capabilities["visual_blocks"].reason_code == "unsupported_on_phone"
+
+
+def test_visual_blocks_stays_unsupported_without_verified_feature(monkeypatch) -> None:
+    """The rollout flag alone is not enough either -- the device must have
+    verified `visualBlocks`."""
+    monkeypatch.setattr(capabilities.settings, "phone_editor_media_enabled", True)
+    manifest = _phone_manifest_with_pool(monkeypatch, [], verified_features=[])
+    assert manifest.capabilities["visual_blocks"].available is False
+    assert manifest.capabilities["visual_blocks"].reason_code == "unsupported_on_phone"
+
+
+def test_visual_blocks_available_once_flag_and_capability_both_hold(monkeypatch) -> None:
+    """Both conditions met: `visual_blocks` becomes available, unlike its
+    permanently-unsupported siblings (sound_effects/media_overlays/etc)."""
+    monkeypatch.setattr(capabilities.settings, "phone_editor_media_enabled", True)
+    manifest = _phone_manifest_with_pool(monkeypatch, [], verified_features=["visualBlocks"])
+    assert manifest.capabilities["visual_blocks"].available is True
+    for name in _PHONE_UNSUPPORTED:
+        if name == "visual_blocks":
+            continue
+        assert manifest.capabilities[name].available is False
+
+
+def test_visual_blocks_generic_setting_off_still_wins_on_phone(monkeypatch) -> None:
+    """The generic `visual_blocks_enabled` feature gate (cloud and phone
+    alike) is still respected even when the phone-specific conditions hold.
+    Sets state directly (rather than through `_phone_manifest_with_pool`,
+    which calls `_enable_guided` and would re-flip the generic setting back
+    on) so the off-setting sticks for the single manifest resolution."""
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "phone_editor_media_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "phone_render_verified_features", ["visualBlocks"])
+    monkeypatch.setattr(capabilities.settings, "visual_blocks_enabled", False)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+    )
+    assert manifest.capabilities["visual_blocks"].available is False
 
 
 def test_phone_named_sfx_request_fails_up_front_with_phone_copy(monkeypatch) -> None:
@@ -1867,3 +1973,104 @@ def test_visuals_only_phone_manifest_still_refuses_voiceover(monkeypatch) -> Non
     )
     phone = manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO]
     assert (phone.available, phone.reason_code) == (False, "unsupported_phone_audio")
+
+
+# ── KRI-118 item 1/2: story shapes (day_vlog/single_hero) under Montage ──────
+
+
+def _shape_manifest(monkeypatch, *, has_voiceover: bool = False):
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "creator_montage_shapes_enabled", True)
+    return capabilities.resolve_creator_manifest(
+        item_id="item-shape",
+        edit_format="montage",
+        has_voiceover=has_voiceover,
+        media=[
+            {"media_id": "clip-1", "kind": "video", "duration_s": 5.0},
+            {"media_id": "clip-2", "kind": "video", "duration_s": 5.0},
+        ],
+    )
+
+
+def test_available_shape_round_trips_through_compile(monkeypatch) -> None:
+    manifest = _shape_manifest(monkeypatch)
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage",
+            archetype="single_hero",
+            hero_media_id="clip-1",
+            render_program="guided",
+            media_scope="all",
+        ),
+    )
+    assert plan.strategy.archetype == "single_hero"
+    assert plan.strategy.hero_media_id == "clip-1"
+    assert plan.notices == []
+
+
+def test_shape_with_voiceover_is_dropped_with_a_notice(monkeypatch) -> None:
+    manifest = _shape_manifest(monkeypatch, has_voiceover=True)
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage",
+            archetype="day_vlog",
+            render_program="native",
+            audio_strategy="voiceover",
+            selected_media_ids=["clip-1"],
+        ),
+    )
+    assert plan.strategy.render_program == "native"
+    assert plan.strategy.archetype is None
+    assert plan.strategy.hero_media_id is None
+    assert plan.notices == ["Day vlog shape needs music; kept a regular montage."]
+
+
+def test_shapes_disabled_by_flag_drop_with_a_notice(monkeypatch) -> None:
+    manifest = _shape_manifest(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "creator_montage_shapes_enabled", False)
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage",
+            archetype="single_hero",
+            hero_media_id="clip-1",
+            render_program="guided",
+            media_scope="all",
+        ),
+    )
+    assert plan.strategy.archetype is None
+    assert any("needs music" in notice for notice in plan.notices)
+
+
+def test_stale_edit_format_day_vlog_is_rewritten_to_montage_with_a_notice(monkeypatch) -> None:
+    manifest = _shape_manifest(monkeypatch)
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="day_vlog",
+            render_program="guided",
+            media_scope="all",
+        ),
+    )
+    assert plan.strategy.edit_format == "montage"
+    assert plan.strategy.archetype == "day_vlog"
+    assert plan.notices == ["Reading this as a montage in the day-vlog style."]
+
+
+def test_stale_edit_format_single_hero_is_rewritten_to_montage_with_a_notice(
+    monkeypatch,
+) -> None:
+    manifest = _shape_manifest(monkeypatch)
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="single_hero",
+            render_program="native",
+            selected_media_ids=["clip-1"],
+        ),
+    )
+    assert plan.strategy.edit_format == "montage"
+    assert plan.strategy.archetype == "single_hero"
+    assert plan.notices == ["Reading this as a montage in the single-hero style."]

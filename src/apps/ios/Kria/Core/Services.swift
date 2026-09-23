@@ -78,6 +78,10 @@ struct KeychainTokenStore: TokenStore, @unchecked Sendable {
 struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { "Secure sign-in storage is unavailable." } }
 
 protocol KriaAPIClient: Sendable {
+    func slidePost(itemID: String) async throws -> SlidePostState
+    func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal
+    func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft
+    func generateSlidePost(itemID: String, expectedVersion: Int) async throws
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse
     func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget
     func reserveDeviceExport(_ body: DeviceExportUploadBody) async throws -> DeviceExportUploadTarget
@@ -154,6 +158,10 @@ protocol KriaAPIClient: Sendable {
 /// implemented by a substitute.
 extension KriaAPIClient {
     func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster] { throw APIError.unsupported }
+    func slidePost(itemID: String) async throws -> SlidePostState { throw APIError.unsupported }
+    func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal { throw APIError.unsupported }
+    func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft { throw APIError.unsupported }
+    func generateSlidePost(itemID: String, expectedVersion: Int) async throws { throw APIError.unsupported }
     func requestAccountDeletion() async throws -> AccountDeletionRequest { throw APIError.unsupported }
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
@@ -302,7 +310,8 @@ struct CreationThread: Codable, Identifiable, Sendable {
             serverRevision: revision,
             activeJobID: activeJobID.flatMap(UUID.init(uuidString:)),
             activePlanItemID: activePlanItemID,
-            awaitsConfirmation: awaitsNewPlanConfirmation
+            awaitsConfirmation: awaitsNewPlanConfirmation,
+            editFormat: state?["format"]?.stringValue ?? state?["edit_format"]?.stringValue
         )
     }
 
@@ -393,12 +402,16 @@ struct CreationJob: Codable, Sendable {
     let status: String
     let currentPhase: String?
     let failureReason: String?
+    /// A human sentence for `failureReason`, never the raw taxonomy code
+    /// (KRI-163) -- prefer this over `failureReason` in any user-facing copy.
+    let failureMessage: String?
     let variants: [CreationVariant]
 
     enum CodingKeys: String, CodingKey {
         case id, status, variants
         case currentPhase = "current_phase"
         case failureReason = "failure_reason"
+        case failureMessage = "failure_message"
     }
 
     init(from decoder: Decoder) throws {
@@ -407,6 +420,7 @@ struct CreationJob: Codable, Sendable {
         status = try values.decode(String.self, forKey: .status)
         currentPhase = try values.decodeIfPresent(String.self, forKey: .currentPhase)
         failureReason = try values.decodeIfPresent(String.self, forKey: .failureReason)
+        failureMessage = try values.decodeIfPresent(String.self, forKey: .failureMessage)
         variants = try values.decodeIfPresent([CreationVariant].self, forKey: .variants) ?? []
     }
 }
@@ -956,8 +970,7 @@ struct KriaAPI: KriaAPIClient {
             }
         }
         if http.statusCode == 409 || http.statusCode == 412 {
-            let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            let detail = body?["detail"] as? String
+            let detail = Self.decodeDetail(from: data)
             #if DEBUG
             let code: String = switch detail {
             case "Content plan is unavailable": "plan_unavailable"
@@ -983,7 +996,7 @@ struct KriaAPI: KriaAPIClient {
             #if DEBUG
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
-            throw APIError.requestFailed(status: http.statusCode)
+            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data)))
         }
         if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return empty }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return try decoder.decode(T.self, from: data)
@@ -991,6 +1004,14 @@ struct KriaAPI: KriaAPIClient {
     private func clearExpiredSession() {
         try? tokenStore.delete()
         NotificationCenter.default.post(name: .kriaSessionExpired, object: nil)
+    }
+    /// Best-effort decode of the server's `{"detail": "..."}` error-body shape
+    /// (FastAPI's default `HTTPException` envelope). Shared by the 409/412
+    /// conflict path and the general non-2xx path below so both surface the
+    /// same server-authored message instead of discarding the response body.
+    private static func decodeDetail(from data: Data) -> String? {
+        guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        return body["detail"] as? String
     }
 }
 enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
@@ -1084,6 +1105,8 @@ private struct LibraryResponse: Decodable {
         let posterStatus: String?
         let outputURL: String?
         let outputVariantID: String?
+        let slideCount: Int?
+        let contentPlanItemID: String?
         let createdAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -1093,6 +1116,8 @@ private struct LibraryResponse: Decodable {
             case posterStatus = "poster_status"
             case outputURL = "output_url"
             case outputVariantID = "output_variant_id"
+            case slideCount = "slide_count"
+            case contentPlanItemID = "content_plan_item_id"
             case createdAt = "created_at"
         }
 
@@ -1107,7 +1132,11 @@ private struct LibraryResponse: Decodable {
                 outputURL: outputURL.flatMap(URL.init(string:)),
                 outputVariantID: outputVariantID,
                 posterIdentity: posterIdentity,
-                posterStatus: posterStatus
+                posterStatus: posterStatus,
+                activeJobID: UUID(uuidString: id),
+                activePlanItemID: contentPlanItemID,
+                editFormat: outputVariantID == "slides" ? "slides" : nil,
+                slideCount: slideCount
             )
         }
     }
@@ -1159,7 +1188,12 @@ private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let sna
 private struct DraftUndoRequest: Encodable { let expectedRevision: Int; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision" } }
 enum APIError: Error, LocalizedError, Equatable {
     /// The server answered with a status the request doesn't accept.
-    case requestFailed(status: Int)
+    /// `detail` carries the server's `detail` string when its error body had
+    /// one (FastAPI's default `HTTPException` envelope). It never affects
+    /// equality — see `RequestFailureDetail` — so every existing
+    /// `.requestFailed(status:)` comparison and pattern still matches
+    /// regardless of what the body decoded to.
+    case requestFailed(status: Int, detail: RequestFailureDetail = RequestFailureDetail(nil))
     case offline, invalidResponse, sessionExpired, unsupported, contentPlanUnavailable, editorNotReady
     /// A 409/412. `detail` carries the server's `detail` string when it sent one.
     case conflict(detail: ConflictDetail)
@@ -1168,6 +1202,9 @@ enum APIError: Error, LocalizedError, Equatable {
     static let conflict = APIError.conflict(detail: ConflictDetail(nil))
     /// The server's human-readable reason for a conflict, if it sent one.
     var conflictDetail: String? { if case let .conflict(detail) = self { detail.message } else { nil } }
+    /// The server's human-readable reason for a non-2xx failure, if it sent
+    /// one. Additive: most call sites still only care about `status`.
+    var requestFailureDetail: String? { if case let .requestFailed(_, detail) = self { detail.message } else { nil } }
     var errorDescription: String? {
         switch self {
         case .sessionExpired: "Your session expired. Please sign in again."
@@ -1176,11 +1213,25 @@ enum APIError: Error, LocalizedError, Equatable {
         case .editorNotReady: "This video has no ready edit to open."
         case .unsupported: "This API client does not support native editor saves."
         case .offline: "Kria couldn’t complete that request. Check your connection and try again."
-        case let .requestFailed(status) where RequestFailureCause(status: status) == .server:
+        case let .requestFailed(status, _) where RequestFailureCause(status: status) == .server:
             "Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment."
         case .requestFailed, .invalidResponse: "Kria couldn’t complete that request."
         }
     }
+}
+
+/// Server text attached to `APIError.requestFailed`. Mirrors `ConflictDetail`
+/// below: every detail compares equal so existing `.requestFailed(status:)`
+/// equality checks and patterns keep matching however the body decoded.
+struct RequestFailureDetail: Equatable, Sendable, CustomStringConvertible {
+    let message: String?
+    init(_ message: String?) {
+        let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.message = trimmed?.isEmpty == false ? trimmed : nil
+    }
+    static func == (_: RequestFailureDetail, _: RequestFailureDetail) -> Bool { true }
+    /// Diagnostics print errors with `String(describing:)`; keep server text out of them.
+    var description: String { message == nil ? "none" : "present" }
 }
 
 /// Server text attached to `APIError.conflict`. Every detail compares equal, so
@@ -1211,7 +1262,7 @@ enum RequestFailureCause: Equatable, Sendable {
     init(_ error: Error) {
         switch error {
         case APIError.offline: self = .connection
-        case let APIError.requestFailed(status): self = Self(status: status)
+        case let APIError.requestFailed(status, _): self = Self(status: status)
         case let error as URLError where Self.transportCodes.contains(error.code): self = .connection
         default: self = .other
         }
@@ -1396,8 +1447,9 @@ extension DraftSnapshot {
             var editorPayload = Self.object(document["editor_payload"]) ?? [:]
             var sections = Self.object(editorPayload["sections"]) ?? [:]
             let directKeys = [
-                "text_elements", "caption_cues", "captions_enabled", "caption_size_px",
+                "text_elements", "caption_cues", "caption_meta", "captions_enabled", "caption_size_px",
                 "caption_highlight_color", "caption_stroke_width", "caption_shadow_enabled", "caption_editor_style",
+                "caption_margin_v", "caption_y_frac",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
                 "motion_runtime_hash", "camera_effects", "carousel_moment",

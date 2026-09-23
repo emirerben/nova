@@ -15,6 +15,8 @@ struct BrandPreviewHost: View {
         Group {
             switch state {
             case "signin": SignInView()
+            case "signin-error": SignInView(initialMessage: "Google sign-in was cancelled.")
+            case "consent": AIConsentView(accept: {}, decline: {})
             case "account": NavigationStack { AccountView() }
             case "gallery": NavigationStack { GalleryView() }
             case "gallery-posters":
@@ -52,9 +54,15 @@ struct BrandPreviewHost: View {
                 }
             }
         }
-        .environment(\.dynamicTypeSize, ProcessInfo.processInfo.environment["KRIA_BRAND_LARGE_TEXT"] == "1" ? .accessibility3 : .large)
+        .environment(\.dynamicTypeSize, dynamicTypeOverride)
         .background(KriaColor.paper)
         .task { model.projects = PreviewFixtures.projects; model.selectedProject = project; model.libraryProjects = [PreviewFixtures.projects[1]] }
+    }
+
+    private var dynamicTypeOverride: DynamicTypeSize {
+        if ProcessInfo.processInfo.environment["UI_TEST_DYNAMIC_TYPE_SIZE"] == "accessibility5" { return .accessibility5 }
+        if ProcessInfo.processInfo.environment["KRIA_BRAND_LARGE_TEXT"] == "1" { return .accessibility3 }
+        return .large
     }
 }
 #endif

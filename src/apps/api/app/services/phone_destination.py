@@ -90,6 +90,30 @@ def visuals_only_on_device(
 
     if not settings.phone_rendering_for(user_id) or not has_device_intent(thread_state):
         return False
+    # KRI-118 L1 item 4 (investigated, left unchanged): `_run_phone_guided_job`
+    # (generative_build.py) and `compile_phone_guided_plan` clearly DO support
+    # a visuals-only pool (empty phone-source bindings) together with a pinned
+    # narration bed in the SAME compile -- see `compile_phone_guided_plan`'s
+    # "May be empty: a project with no footage renders from pinned Visuals
+    # alone" bindings comment and its independent `plan.narration` handling.
+    # That is evidence the *guided-story narration lane specifically*
+    # (`GUIDED_VOICEOVER_CONTRACT`, gated by `phone_guided_narration_
+    # supported()`) could in principle relax this rule's blanket
+    # `has_voiceover` exclusion.
+    #
+    # Left unchanged anyway: this function (and `item_visuals_only_on_device`/
+    # `_sync` below) has no way to tell "this is specifically a guided-
+    # voiceover-contract request" apart from an ordinary montage/narrated
+    # voiceover -- `has_voiceover` is a blanket bool, and the guided_voiceover
+    # signal only exists as a runtime `creator_strategy` flag the one caller
+    # in `content_plan_build._dispatch_item_render` already ANDs in
+    # separately (`not guided_voiceover`) rather than passing down here. Per
+    # this module's own docstring, "the manifest, the media digests, the
+    # render dispatch and the job builder must all ask this rule" -- relaxing
+    # it only for the one call site this lane owns would create exactly the
+    # cross-consumer disagreement that docstring warns about, without a
+    # broader audit of every other caller this PR does not own. Flagged as an
+    # open question for a follow-up lane.
     if has_clip_sources or has_voiceover:
         return False
     if (
