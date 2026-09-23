@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.150.0] - 2026-09-23
+
+### Changed
+- docs(KRI-118): per-edit-type requirements audit (lane L0) (#1168) <!-- release-pr: 1168 -->
+
 ## [0.76.149.0] - 2026-09-23
 
 ### Changed
