@@ -117,7 +117,6 @@
     "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift": "projects",
     "src/apps/ios/Tests/KriaUITests/EditorUITests.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift": "editor",
-    "src/apps/ios/Tests/KriaUITests/NativeCaptionVisualUITests.swift": "editor",
     "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift": "editor",
     "src/apps/ios/Kria/Core/NativeEditorSources.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorProjectHeader.swift": "editor",
