@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.177.0] - 2026-09-23
+
+### Changed
+- fix(creator): stop ordinary chat wording from becoming titles or sound effects (#1195) <!-- release-pr: 1195 -->
+
 ## [0.76.176.0] - 2026-09-23
 
 ### Changed
