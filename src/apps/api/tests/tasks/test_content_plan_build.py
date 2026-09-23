@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.agents._schemas.content_plan import PlanItemSpec
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, Job, PlanItem, SpeechCleanupAnalysis
 from app.models import Persona as PersonaRow
 from app.schemas.slide_post import SlidePostDraft, SlideRef
@@ -1961,7 +1962,7 @@ def test_locked_plan_persona_uses_global_lock_order() -> None:
     # ownership_epoch, and the epoch check silently passes for a stale worker.
     # Pin it so the pairing cannot be dropped.
     session.get.assert_called_once_with(
-        ContentPlan, plan_id, with_for_update=True, populate_existing=True
+        ContentPlan, plan_id, with_for_update=CONTENT_PLAN_LOCK, populate_existing=True
     )
     load_persona.assert_called_once_with(session, plan, for_update=True)
 
@@ -2864,7 +2865,7 @@ def test_generate_ideas_stale_success_does_not_write_after_sibling_terminalizes(
     final_session.get.assert_any_call(
         ContentPlan,
         uuid.UUID(plan_id),
-        with_for_update=True,
+        with_for_update=CONTENT_PLAN_LOCK,
         populate_existing=True,
     )
     final_session.add.assert_not_called()
@@ -2912,7 +2913,7 @@ def test_generate_ideas_stale_failure_does_not_overwrite_ready_plan() -> None:
     failed_transition_session.get.assert_any_call(
         ContentPlan,
         uuid.UUID(plan_id),
-        with_for_update=True,
+        with_for_update=CONTENT_PLAN_LOCK,
         populate_existing=True,
     )
     failed_transition_session.commit.assert_not_called()

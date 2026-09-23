@@ -29,7 +29,7 @@ from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_F
 from app.auth import CurrentUser, NativeClient
 from app.config import settings
 from app.database import get_db
-from app.db_locks import acquire_locked_rows
+from app.db_locks import CONTENT_PLAN_LOCK, acquire_locked_rows
 from app.kria.api_schemas import KriaProblemOut, ThreadDeltaOut
 from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
@@ -1295,7 +1295,7 @@ async def _project(db: AsyncSession, user: CurrentUser) -> tuple[ContentPlan, Pl
             .where(ContentPlan.user_id == user.id)
             .order_by(ContentPlan.updated_at.desc())
             .limit(1)
-            .with_for_update()
+            .with_for_update(**CONTENT_PLAN_LOCK)
         )
     ).scalar_one_or_none()
     if plan is None:
@@ -3228,7 +3228,8 @@ async def open_editor_thread(
             select(PlanItem, ContentPlan)
             .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
             .where(PlanItem.id == body.item_id, ContentPlan.user_id == user.id)
-            .with_for_update()
+            # One lock mode covers both joined rows; the plan needs NO KEY UPDATE.
+            .with_for_update(**CONTENT_PLAN_LOCK)
         )
     ).first()
     if owned is None:
@@ -5148,7 +5149,7 @@ async def delete_thread(
             ContentPlan,
             thread.content_plan_id,
             populate_existing=True,
-            with_for_update=True,
+            with_for_update=CONTENT_PLAN_LOCK,
         )
         if plan is None or plan.user_id != user.id:
             raise HTTPException(status_code=404, detail="Creation thread not found")

@@ -62,6 +62,7 @@ from app.agents._schemas.edit_format import (
 )
 from app.config import settings
 from app.database import sync_session as _sync_session
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import Job, MusicTrack
 from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
 from app.pipeline.generative_decision import (
@@ -899,7 +900,7 @@ def _lock_owned_entry_job(db, job_id: str) -> tuple[Job, int | None] | None:  # 
     if item_ref is None:
         log.error("generative_plan_owner_gate_missing_item", job_id=job_id)
         return None
-    plan = db.get(ContentPlan, item_ref.content_plan_id, with_for_update=True)
+    plan = db.get(ContentPlan, item_ref.content_plan_id, with_for_update=CONTENT_PLAN_LOCK)
     if plan is None:
         log.error("generative_plan_owner_gate_missing_plan", job_id=job_id)
         return None

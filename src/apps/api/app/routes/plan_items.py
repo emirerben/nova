@@ -43,6 +43,7 @@ from app.agents.music_matcher import _sanitize_text
 from app.auth import SYNTHETIC_USER_ID, CurrentUser
 from app.config import settings
 from app.database import get_db
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.limiter import limiter
 from app.models import (
     ContentPlan,
@@ -1084,7 +1085,7 @@ async def add_idea(
     plan_stmt = (
         select(ContentPlan)
         .where(ContentPlan.id == pid, ContentPlan.user_id == user.id)
-        .with_for_update()
+        .with_for_update(**CONTENT_PLAN_LOCK)
         .execution_options(populate_existing=True)
     )
     plan = (await db.execute(plan_stmt)).scalar_one_or_none()
@@ -1268,7 +1269,7 @@ async def _load_owned_item_context(
             ContentPlan,
             item.content_plan_id,
             populate_existing=True,
-            with_for_update=True,
+            with_for_update=CONTENT_PLAN_LOCK,
         )
     else:
         plan = await db.get(ContentPlan, item.content_plan_id)

@@ -933,22 +933,21 @@ struct KriaAPI: KriaAPIClient {
         let storedSession = requiresAuth ? try tokenStore.read() : nil
         if let token = storedSession?.accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let bodyData { request.httpBody = bodyData; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        var (data, response) = try await session.data(for: request)
-        if requiresAuth, let http = response as? HTTPURLResponse, http.statusCode == 401, let storedSession {
-            let refreshed: MobileSession
-            do {
-                refreshed = try await refreshCoordinator.refresh(
-                    failedAccessToken: storedSession.accessToken,
-                    baseURL: baseURL,
-                    tokenStore: tokenStore,
-                    session: session
-                )
-            } catch let error as APIError where error == .sessionExpired {
-                clearExpiredSession()
-                throw error
-            }
-            request.setValue("Bearer \(refreshed.accessToken)", forHTTPHeaderField: "Authorization")
-            (data, response) = try await session.data(for: request)
+        var (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth)
+        // The server answers a request Postgres aborted as a deadlock victim with
+        // `409 {"code": "concurrent_update", "retryable": true}`. It was rolled back, so
+        // nothing changed and nothing was saved: send the identical request again (each
+        // mutating call carries its own idempotency key) instead of reporting a conflict.
+        var concurrentUpdateRetries = 0
+        while concurrentUpdateRetries < Self.concurrentUpdateRetryLimit,
+              let http = response as? HTTPURLResponse,
+              let delay = Self.concurrentUpdateRetryDelay(data: data, response: http) {
+            concurrentUpdateRetries += 1
+            #if DEBUG
+            NativePreviewDiagnostics.record("http-concurrent-update-retry", fields: ["attempt": String(concurrentUpdateRetries)])
+            #endif
+            try await Task.sleep(for: delay)
+            (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth)
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         if requiresAuth, http.statusCode == 401 { clearExpiredSession(); throw APIError.sessionExpired }
@@ -964,7 +963,7 @@ struct KriaAPI: KriaAPIClient {
         if http.statusCode == 409 || http.statusCode == 412 {
             let detail = Self.decodeDetail(from: data)
             #if DEBUG
-            let code: String = switch detail {
+            let code: String = Self.concurrentUpdateRetryDelay(data: data, response: http) != nil ? "concurrent_update" : switch detail {
             case "Content plan is unavailable": "plan_unavailable"
             case "Video is not ready to open in the editor.": "editor_not_ready"
             case "baseline_conflict": "baseline_conflict"
@@ -992,6 +991,40 @@ struct KriaAPI: KriaAPIClient {
         }
         if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return empty }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return try decoder.decode(T.self, from: data)
+    }
+    /// Sends `request`, refreshing an expired access token once.
+    private func send(_ request: inout URLRequest, storedSession: MobileSession?, requiresAuth: Bool) async throws -> (Data, URLResponse) {
+        var (data, response) = try await session.data(for: request)
+        if requiresAuth, let http = response as? HTTPURLResponse, http.statusCode == 401, let storedSession {
+            let refreshed: MobileSession
+            do {
+                refreshed = try await refreshCoordinator.refresh(
+                    failedAccessToken: storedSession.accessToken,
+                    baseURL: baseURL,
+                    tokenStore: tokenStore,
+                    session: session
+                )
+            } catch let error as APIError where error == .sessionExpired {
+                clearExpiredSession()
+                throw error
+            }
+            request.setValue("Bearer \(refreshed.accessToken)", forHTTPHeaderField: "Authorization")
+            (data, response) = try await session.data(for: request)
+        }
+        return (data, response)
+    }
+    /// Resends of one request the server rolled back as a deadlock victim.
+    static let concurrentUpdateRetryLimit = 2
+    /// How long to wait before resending, or nil when the response is not the
+    /// server's retryable `concurrent_update` 409. Honors `Retry-After` (capped
+    /// at 2 s) plus jitter, so two uploads that deadlocked together don't collide again.
+    static func concurrentUpdateRetryDelay(data: Data, response: HTTPURLResponse) -> Duration? {
+        guard response.statusCode == 409,
+              let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              body["code"] as? String == "concurrent_update", body["retryable"] as? Bool == true
+        else { return nil }
+        let advised = response.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init) ?? 0.25
+        return .milliseconds(Int(min(max(advised, 0), 2) * 1000) + Int.random(in: 0...250))
     }
     private func clearExpiredSession() {
         try? tokenStore.delete()

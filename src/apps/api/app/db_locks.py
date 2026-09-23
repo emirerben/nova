@@ -24,6 +24,8 @@ Rules:
 ``tests/routes/test_lock_order.py`` statically enforces this over the route,
 task, and service modules; use :func:`acquire_locked_rows` when a code path
 needs several of these rows so the order cannot be typed wrong by hand.
+
+Order alone does not cover ``ContentPlan``: see :data:`CONTENT_PLAN_LOCK`.
 """
 
 from __future__ import annotations
@@ -69,6 +71,25 @@ CANONICAL_LOCK_ORDER: tuple[type, ...] = (
 
 _RANK: dict[type, int] = {model: index for index, model in enumerate(CANONICAL_LOCK_ORDER)}
 
+#: How every ``ContentPlan`` row lock is taken: ``SELECT ... FOR NO KEY UPDATE``.
+#: Pass it as ``db.get(ContentPlan, ident, with_for_update=CONTENT_PLAN_LOCK)``
+#: or ``select(ContentPlan)....with_for_update(**CONTENT_PLAN_LOCK)``.
+#:
+#: Every chat a creator opens shares one ContentPlan row, and writing a row
+#: that references it (a ``creation_threads`` revision bump, a new PlanItem)
+#: makes PostgreSQL take ``FOR KEY SHARE`` on the plan for the foreign-key
+#: check.  Plain ``FOR UPDATE`` blocks that lock, and the lock order above
+#: cannot see the cycle it closes: a Visuals upload held the plan ``FOR UPDATE``
+#: and waited for the PlanItem, while the chat poll held that PlanItem and
+#: waited on the plan's foreign-key check.  Prod, 2026-09-23: concurrent photo
+#: uploads deadlocked and came back as 409s.  ``FOR NO KEY UPDATE`` still
+#: serializes every plan writer against every other; it only lets foreign-key
+#: checks through.  Nothing needs more: a plan's key never changes, and its row
+#: is deleted only by the ``users`` cascade.
+#: ``tests/routes/test_content_plan_lock_mode.py`` enforces this for every
+#: ContentPlan lock under ``app/``.
+CONTENT_PLAN_LOCK: dict[str, bool] = {"key_share": True}
+
 T = TypeVar("T")
 
 
@@ -108,6 +129,10 @@ def _ordered(targets: Mapping[type, Any]) -> list[tuple[type, Any]]:
     return requested
 
 
+def _lock_mode(model: type) -> bool | dict[str, bool]:
+    return CONTENT_PLAN_LOCK if model is ContentPlan else True
+
+
 async def acquire_locked_rows(
     db: AsyncSession,
     targets: Mapping[type, uuid.UUID | str | None],
@@ -116,6 +141,7 @@ async def acquire_locked_rows(
 ) -> dict[type, Any]:
     """``SELECT ... FOR UPDATE`` each requested row in canonical order.
 
+    A ``ContentPlan`` is locked ``FOR NO KEY UPDATE`` (:data:`CONTENT_PLAN_LOCK`).
     ``targets`` maps a model class to the primary key to lock; ``None`` skips
     that model.  Returns a ``{model: row_or_None}`` mapping.  The sort is what
     makes the call site order-proof -- callers may pass the models in any
@@ -127,7 +153,7 @@ async def acquire_locked_rows(
     extra: dict[str, Any] = {"populate_existing": True} if populate_existing else {}
     rows: dict[type, Any] = {}
     for model, ident in _ordered(targets):
-        rows[model] = await db.get(model, ident, with_for_update=True, **extra)
+        rows[model] = await db.get(model, ident, with_for_update=_lock_mode(model), **extra)
     return rows
 
 
@@ -142,5 +168,5 @@ def acquire_locked_rows_sync(
     extra: dict[str, Any] = {"populate_existing": True} if populate_existing else {}
     rows: dict[type, Any] = {}
     for model, ident in _ordered(targets):
-        rows[model] = db.get(model, ident, with_for_update=True, **extra)
+        rows[model] = db.get(model, ident, with_for_update=_lock_mode(model), **extra)
     return rows

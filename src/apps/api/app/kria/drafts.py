@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.api_schemas import DraftSnapshotOut
 from app.kria.runtime import RuntimeFailure, _append_event, _owned_thread, _promote_queued_successor
 from app.models import (
@@ -131,7 +132,8 @@ async def _target(
         )
     )
     if lock_item:
-        statement = statement.with_for_update()
+        # The join locks the plan row too, so it takes the plan's lock mode.
+        statement = statement.with_for_update(**CONTENT_PLAN_LOCK)
     item = (await db.execute(statement)).scalar_one_or_none()
     if item is None:
         raise RuntimeFailure(404, "draft_target_missing", "Editable video not found", phase="tool")

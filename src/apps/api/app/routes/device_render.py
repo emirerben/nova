@@ -21,6 +21,7 @@ from app import storage
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.device_render import (
     BRAND_TAIL_SECONDS,
     DeviceAssetDownloadBody,
@@ -88,7 +89,10 @@ async def _owned_job(db: AsyncSession, user_id: uuid.UUID, job_id: uuid.UUID) ->
         if item is None:
             raise HTTPException(409, "Project changed")
         plan = await db.get(
-            ContentPlan, item.content_plan_id, with_for_update=True, populate_existing=True
+            ContentPlan,
+            item.content_plan_id,
+            with_for_update=CONTENT_PLAN_LOCK,
+            populate_existing=True,
         )
         if plan is None or plan.user_id != user_id:
             raise HTTPException(404, "Job not found")

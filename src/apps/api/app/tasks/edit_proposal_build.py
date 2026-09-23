@@ -22,6 +22,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.agents._schemas.creator_agent import CreatorEditPlan
 from app.database import sync_session
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -224,7 +225,7 @@ def _locked_item(
     ref = db.get(PlanItem, item_id)
     if ref is None:
         return None
-    plan = db.get(ContentPlan, ref.content_plan_id, with_for_update=True)
+    plan = db.get(ContentPlan, ref.content_plan_id, with_for_update=CONTENT_PLAN_LOCK)
     if plan is None:
         return None
     load_owned_plan_persona_sync(db, plan, for_update=True)

@@ -25,6 +25,7 @@ from app.agents._runtime import (
 )
 from app.config import settings
 from app.database import sync_session
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import (
     ContentPlan,
     CreatorAgentEvent,
@@ -109,7 +110,10 @@ def _locked(db, identifier: uuid.UUID, *, token: str | None = None):
     if item_ref is None:
         return None
     plan = db.get(
-        ContentPlan, item_ref.content_plan_id, with_for_update=True, populate_existing=True
+        ContentPlan,
+        item_ref.content_plan_id,
+        with_for_update=CONTENT_PLAN_LOCK,
+        populate_existing=True,
     )
     item = db.get(PlanItem, ref.plan_item_id, with_for_update=True, populate_existing=True)
     session = db.get(

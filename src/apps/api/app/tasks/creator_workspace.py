@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from app.agents.detect_plan_relevance import DetectPlanRelevanceAgent
 from app.database import sync_session
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, CreatorWorkspaceProposal, PlanItem
 from app.worker import celery_app
 
@@ -67,7 +68,7 @@ def detect_plan_relevance(self, proposal_id: str) -> None:
                 return
             if row.status not in {"pending", "processing"}:
                 return
-            plan = db.get(ContentPlan, row.plan_id, with_for_update=True)
+            plan = db.get(ContentPlan, row.plan_id, with_for_update=CONTENT_PLAN_LOCK)
             if plan is None or plan.user_id != row.creator_id:
                 row.status = "failed"
                 row.error_code = "plan_not_owned"
@@ -111,7 +112,7 @@ def detect_plan_relevance(self, proposal_id: str) -> None:
             )
             if row is None or row.status != "processing":
                 return
-            plan = db.get(ContentPlan, row.plan_id, with_for_update=True)
+            plan = db.get(ContentPlan, row.plan_id, with_for_update=CONTENT_PLAN_LOCK)
             if plan is None or plan.user_id != row.creator_id:
                 row.status = "failed"
                 row.error_code = "plan_not_owned"

@@ -17,6 +17,7 @@ import structlog
 
 from app.config import settings
 from app.database import sync_session
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, PlanItem
 from app.services.plan_clips import ensure_clip_media_ids
 from app.worker import celery_app
@@ -105,7 +106,7 @@ def _lock_owned_item(
     item_ref = session.get(PlanItem, item_id)
     if item_ref is None:
         return None
-    plan = session.get(ContentPlan, item_ref.content_plan_id, with_for_update=True)
+    plan = session.get(ContentPlan, item_ref.content_plan_id, with_for_update=CONTENT_PLAN_LOCK)
     if (
         plan is None
         or int(getattr(plan, "ownership_epoch", 0) or 0) != expected_ownership_epoch

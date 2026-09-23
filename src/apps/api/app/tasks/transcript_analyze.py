@@ -19,6 +19,7 @@ import structlog
 from celery.exceptions import SoftTimeLimitExceeded
 
 from app.database import sync_session
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, PlanItem
 from app.services.content_plan_persona import (
     PlanPersonaOwnershipError,
@@ -46,7 +47,7 @@ def _lock_owned_plan_item(
     expected_epoch: int | None = None,
 ) -> tuple[ContentPlan, PlanItem] | None:
     """Lock and validate Plan -> Persona -> Item in global mutation order."""
-    plan = db.get(ContentPlan, plan_id, with_for_update=True)
+    plan = db.get(ContentPlan, plan_id, with_for_update=CONTENT_PLAN_LOCK)
     if plan is None:
         return None
     load_owned_plan_persona_sync(db, plan, for_update=True)

@@ -35,6 +35,7 @@ from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import Persona as PersonaRow
 from app.models import User
 from app.services.ai_usage_headers import paid_call_headers
@@ -331,7 +332,7 @@ async def reset_persona(
                 select(ContentPlan)
                 .where(ContentPlan.user_id == user.id)
                 .order_by(ContentPlan.id)
-                .with_for_update()
+                .with_for_update(**CONTENT_PLAN_LOCK)
             )
         )
         .scalars()

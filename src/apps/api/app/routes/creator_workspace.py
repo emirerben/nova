@@ -19,6 +19,7 @@ from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import (
     ContentPlan,
     CreatorAgentSession,
@@ -332,7 +333,7 @@ async def _owned_plan(
         raise HTTPException(status_code=400, detail="bad plan id") from exc
     stmt = select(ContentPlan).where(ContentPlan.id == pid, ContentPlan.user_id == user_id)
     if for_update:
-        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        stmt = stmt.with_for_update(**CONTENT_PLAN_LOCK).execution_options(populate_existing=True)
     plan = (await db.execute(stmt)).scalar_one_or_none()
     if plan is None:
         raise HTTPException(status_code=404, detail="Plan not found")

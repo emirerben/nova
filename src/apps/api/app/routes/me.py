@@ -39,6 +39,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.recipes import EditRecipeV1, adapt_authoritative_job_snapshot
 from app.models import (
     VIDEO_FEEDBACK_THUMB_SIGNALS,
@@ -302,7 +303,7 @@ async def _provision_editor_plan(db: AsyncSession, user: User) -> tuple[ContentP
             .where(ContentPlan.user_id == user.id)
             .order_by(ContentPlan.created_at.desc())
             .limit(1)
-            .with_for_update()
+            .with_for_update(**CONTENT_PLAN_LOCK)
             .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
@@ -1920,7 +1921,7 @@ async def delete_my_job(
             await db.execute(
                 select(ContentPlan)
                 .where(ContentPlan.id == plan_id, ContentPlan.user_id == user.id)
-                .with_for_update()
+                .with_for_update(**CONTENT_PLAN_LOCK)
                 .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
@@ -2238,7 +2239,7 @@ async def open_job_in_editor(
                 ContentPlan.user_id == user.id,
                 ContentPlan.id == linked_plan_id,
             )
-            .with_for_update()
+            .with_for_update(**CONTENT_PLAN_LOCK)
             .execution_options(populate_existing=True)
         )
     else:
@@ -2247,7 +2248,7 @@ async def open_job_in_editor(
             .where(ContentPlan.user_id == user.id)
             .order_by(ContentPlan.created_at.desc())
             .limit(1)
-            .with_for_update()
+            .with_for_update(**CONTENT_PLAN_LOCK)
             .execution_options(populate_existing=True)
         )
     plan = (await db.execute(plan_stmt)).scalar_one_or_none()
@@ -2463,7 +2464,7 @@ async def add_job_to_plan(
             .where(ContentPlan.user_id == user.id)
             .order_by(ContentPlan.created_at.desc())
             .limit(1)
-            .with_for_update()
+            .with_for_update(**CONTENT_PLAN_LOCK)
         )
     ).scalar_one_or_none()
     if plan is None:
@@ -2576,7 +2577,9 @@ async def create_feedback(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
         plan = (
             await db.execute(
-                select(ContentPlan).where(ContentPlan.id == plan_uuid).with_for_update()
+                select(ContentPlan)
+                .where(ContentPlan.id == plan_uuid)
+                .with_for_update(**CONTENT_PLAN_LOCK)
             )
         ).scalar_one_or_none()
         if plan is None or plan.user_id != user.id:
@@ -3184,7 +3187,7 @@ async def confirm_account_deletion(
                 select(ContentPlan.id)
                 .where(ContentPlan.user_id == user.id)
                 .order_by(ContentPlan.id)
-                .with_for_update()
+                .with_for_update(**CONTENT_PLAN_LOCK)
             )
         )
         .scalars()
