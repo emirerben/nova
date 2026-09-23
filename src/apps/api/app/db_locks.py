@@ -34,6 +34,8 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, TypeVar
 
+from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -155,6 +157,44 @@ async def acquire_locked_rows(
     for model, ident in _ordered(targets):
         rows[model] = await db.get(model, ident, with_for_update=_lock_mode(model), **extra)
     return rows
+
+
+async def acquire_key_share_rows(
+    db: AsyncSession,
+    targets: Mapping[type, uuid.UUID | str | None],
+) -> None:
+    """``SELECT ... FOR KEY SHARE`` each referenced row in canonical order.
+
+    FOR KEY SHARE is the lock PostgreSQL's foreign-key check takes on a parent
+    row, late, inside an UPDATE: a second UPDATE of a row in one transaction
+    re-checks every foreign key of that row, changed or not.  Taking the lock
+    explicitly before the first write turns those implicit checks into
+    re-locks, so they can no longer wait behind a transaction that already
+    holds the parent ``FOR UPDATE`` while this one holds rows it needs.  Only
+    the key is selected, so no ORM state is loaded or refreshed.
+    """
+
+    for model, ident in _ordered(targets):
+        await db.execute(
+            select(model.id).where(model.id == ident).with_for_update(read=True, key_share=True)
+        )
+
+
+#: PostgreSQL transient-concurrency SQLSTATEs.  ``40P01`` is deadlock_detected:
+#: two transactions took the same row locks in opposite order and the server
+#: aborted one of them.  ``40001`` is serialization_failure.  Both mean "your
+#: transaction lost a race", not "the request was invalid" -- the same work
+#: succeeds on retry.
+RETRYABLE_SQLSTATES = frozenset({"40P01", "40001"})
+
+
+def transient_sqlstate(exc: BaseException) -> str | None:
+    """Return the SQLSTATE if ``exc`` wraps a retryable serialization error."""
+
+    if not isinstance(exc, DBAPIError):
+        return None
+    sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+    return sqlstate if sqlstate in RETRYABLE_SQLSTATES else None
 
 
 def acquire_locked_rows_sync(

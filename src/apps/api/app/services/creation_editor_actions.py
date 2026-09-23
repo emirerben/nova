@@ -115,8 +115,9 @@ async def execute_visual_removal(db: Any, thread: Any, body: Any, user: Any) -> 
     if duplicate:
         if duplicate.event_type != "user_message" or duplicate.content != body.message:
             raise HTTPException(status_code=409, detail="Idempotency key reused")
+        # rollback() expires ``user``; reload with the id captured above.
         await db.rollback()
-        return await routes._load(thread_id, user, db)
+        return await routes._load(thread_id, user, db, creator_id=user_id)
     if thread.status != "active" or thread.revision != body.expected_revision:
         raise HTTPException(status_code=409, detail="Creation thread changed")
     # Refresh and hold the item before validating its current-job pointer, as

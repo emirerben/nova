@@ -17,6 +17,7 @@ from app.agents._runtime import (
     ProviderOutcomeUnknownError,
 )
 from app.config import settings
+from app.db_locks import transient_sqlstate
 from app.limiter import limiter
 from app.routes import (
     admin,
@@ -148,23 +149,6 @@ def _cors_headers_for(request: Request) -> dict[str, str]:
     }
 
 
-#: PostgreSQL transient-concurrency SQLSTATEs.  ``40P01`` is deadlock_detected:
-#: two transactions took the same row locks in opposite order and the server
-#: aborted one of them.  ``40001`` is serialization_failure.  Both mean "your
-#: transaction lost a race", not "the request was invalid" -- the same call
-#: succeeds on retry, so it must not surface as a 500.
-_RETRYABLE_SQLSTATES = frozenset({"40P01", "40001"})
-
-
-def _transient_sqlstate(exc: BaseException) -> str | None:
-    """Return the SQLSTATE if ``exc`` wraps a retryable serialization error."""
-
-    if not isinstance(exc, DBAPIError):
-        return None
-    sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
-    return sqlstate if sqlstate in _RETRYABLE_SQLSTATES else None
-
-
 @app.exception_handler(AiBudgetExceededError)
 async def ai_budget_exhausted_handler(request: Request, exc: AiBudgetExceededError) -> JSONResponse:
     """Return one stable, cache-aware contract for every paid-call breaker."""
@@ -293,7 +277,7 @@ async def ai_provider_outcome_unknown_handler(
 async def transient_db_conflict_handler(request: Request, exc: DBAPIError) -> JSONResponse:
     """Surface deadlock/serialization aborts as a retryable 409, never a 500."""
 
-    sqlstate = _transient_sqlstate(exc)
+    sqlstate = transient_sqlstate(exc)
     if sqlstate is None:
         return await unhandled_exception_handler(request, exc)
     request_id = (

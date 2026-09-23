@@ -372,12 +372,14 @@ async def start_omni_asset(
     records[asset_id] = record
     job.assembly_plan = assembly
     await db.commit()
+    # A rollback in the failure path expires ``job``; keep its id.
+    job_id = job.id
 
     try:
         from app.tasks.omni_generate import generate_omni_asset  # noqa: PLC0415
 
         generate_omni_asset.apply_async(
-            kwargs={"job_id": str(job.id), "asset_id": asset_id},
+            kwargs={"job_id": str(job_id), "asset_id": asset_id},
             task_id=f"omni-{asset_id}",
         )
     except Exception as exc:
@@ -388,7 +390,7 @@ async def start_omni_asset(
         locked_job = (
             await db.execute(
                 select(Job)
-                .where(Job.id == job.id)
+                .where(Job.id == job_id)
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )
@@ -408,7 +410,7 @@ async def start_omni_asset(
                 await db.rollback()
         else:
             await db.rollback()
-        log.warning("omni_asset.enqueue_failed", job_id=str(job.id), error=str(exc))
+        log.warning("omni_asset.enqueue_failed", job_id=str(job_id), error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="omni_generation_queue_unavailable",
