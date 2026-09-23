@@ -1161,7 +1161,6 @@ struct NativeMiniStrip: View {
     /// jumping straight to the add-clip sheet, so Visual/Text are reachable
     /// from the same discoverable entry point video already had.
     @State private var isPresentingAddMenu = false
-    @Namespace private var quickAddNamespace
     /// Selecting Video/Visual/Text (`NativeMiniStrip`'s owner routes these).
     var onSelectVisual: () -> Void = {}
     var onSelectText: () -> Void = {}
@@ -1172,7 +1171,6 @@ struct NativeMiniStrip: View {
     private let filmstripHeight: CGFloat = 44
     private let secondaryLaneHeight: CGFloat = 44
     private let rowGap: CGFloat = 6
-    private let quickAddChromeID = "quickAddChrome"
     private let quickAddSpring = Animation.spring(response: 0.34, dampingFraction: 0.88)
 
     init(
@@ -1396,16 +1394,7 @@ struct NativeMiniStrip: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(KriaColor.ink)
-            .background {
-                // Shares identity with the popover's own background (below)
-                // via matchedGeometryEffect, so opening the menu reads as
-                // this circle growing into it, not a separate element
-                // appearing — the "+" morphs into the chooser.
-                if !isPresentingAddMenu {
-                    Circle().fill(KriaColor.softZinc)
-                        .matchedGeometryEffect(id: quickAddChromeID, in: quickAddNamespace)
-                }
-            }
+            .background(KriaColor.softZinc, in: Circle())
             .disabled(session.isAddingClip)
             // Anchored to the button's own bounds (no separate coordinate-
             // space plumbing needed) and elevated above the scrollable lanes
@@ -1416,8 +1405,15 @@ struct NativeMiniStrip: View {
             // of any zIndex set deeper inside, which silently ate every tap
             // meant for the menu's rows when the scrim lived up there.
             .overlay(alignment: .topTrailing) {
-                if isPresentingAddMenu {
-                    ZStack(alignment: .topTrailing) {
+                // The ZStack itself is persistent and only its children are
+                // conditional: a transition on a child of a ZStack that is
+                // itself being inserted never runs, so the menu's box would
+                // grow while its labels just faded in at full size (the text
+                // visibly led the box). Here the menu — box and labels — is
+                // one view with one scale+fade transition, so they can't
+                // drift apart.
+                ZStack(alignment: .topTrailing) {
+                    if isPresentingAddMenu {
                         // Centered on the button's top-trailing corner (the
                         // offset re-centers what `.topTrailing` alignment
                         // would otherwise extend only left/down), so it
@@ -1429,9 +1425,10 @@ struct NativeMiniStrip: View {
                             .offset(x: 2000, y: -2000)
                             .contentShape(Rectangle())
                             .onTapGesture { closeAddMenu() }
+                            .transition(.identity)
                         quickAddMenu
                             .offset(y: 52)
-                            .transition(.opacity.combined(with: .scale(scale: 0.6, anchor: .topTrailing)))
+                            .transition(.scale(scale: 0.3, anchor: .topTrailing).combined(with: .opacity))
                     }
                 }
             }
@@ -1458,9 +1455,8 @@ struct NativeMiniStrip: View {
         withAnimation(reduceMotion ? nil : quickAddSpring) { isPresentingAddMenu = false }
     }
 
-    /// KRI-166: the "+" chooser. Shares `quickAddChromeID` with the collapsed
-    /// button's own background so the two read as one shape growing open,
-    /// not a separate popup appearing. Video keeps its existing add-clip
+    /// KRI-166: the "+" chooser. Box and labels are one view so they scale in
+    /// together from the button's corner. Video keeps its existing add-clip
     /// sheet; Visual/Text route to the same tool the bottom rail already
     /// opens for them (no separate disabled state here — those tools have
     /// never pre-disabled themselves, any capability limits surface once
@@ -1485,7 +1481,6 @@ struct NativeMiniStrip: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(KriaColor.paper)
                 .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(KriaColor.softZinc, lineWidth: 1))
-                .matchedGeometryEffect(id: quickAddChromeID, in: quickAddNamespace)
         )
         .shadow(color: .black.opacity(0.14), radius: 18, y: 6)
         .fixedSize()
