@@ -3120,6 +3120,8 @@ def _run_phone_dispatch(
     phone_narration_rendering_enabled: bool = False,
     phone_render_verified_features: list | None = None,
     clip_count: int = 1,
+    phone_lane_request: dict | None = None,
+    phone_subtitled_media_lanes_enabled: bool = False,
 ):
     from app.config import settings
 
@@ -3127,6 +3129,11 @@ def _run_phone_dispatch(
     if voiceover:
         item.audio_mode = "voiceover"
         item.voiceover_gcs_path = "users/u/plan/i/voice.m4a"
+    # KRI-174 Phase 1.5: admin-authored subtitled media-lane request, plumbed
+    # straight onto the item the same way `PUT /admin/plan-items/{id}/phone-
+    # lanes` will (the column is added by a concurrent PR; SimpleNamespace
+    # here tolerates its absence exactly like `getattr` in the implementation).
+    item.phone_lane_request = phone_lane_request
     plan = SimpleNamespace(
         id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0
     )
@@ -3146,6 +3153,9 @@ def _run_phone_dispatch(
     )
     monkeypatch.setattr(
         settings, "phone_render_verified_features", phone_render_verified_features or []
+    )
+    monkeypatch.setattr(
+        settings, "phone_subtitled_media_lanes_enabled", phone_subtitled_media_lanes_enabled
     )
 
     approved_proposal = (
@@ -3376,6 +3386,174 @@ def test_phone_gate_voiceover_dispatches_when_flag_and_capability_verified(
     assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
     assert result.outcome == "dispatched"
     assert result.reason is None
+
+
+# --- KRI-174 Phase 1.5: admin-authored subtitled media-lane request forwarding -----
+
+_LANE_REQUEST = {
+    "overlays": [
+        {
+            "id": "o1",
+            "media_id": "5b3f6a1e-8f1c-4c55-9a8e-2f7d1c9b0a11",
+            "gcs_path": "users/u/plan/i/pool/photo.jpg",
+            "generation": "77",
+            "start_s": 0.0,
+            "end_s": 1.0,
+        }
+    ],
+    "sound_effects": [],
+    "ending_clip": None,
+}
+
+
+def test_phone_subtitled_lanes_forwarded_when_eligible_and_flag_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A subtitled phone item with an admin-authored request and the flag ON
+    forwards it to `build_generative_job` alongside `phone_sources`."""
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="subtitled",
+        approved=False,
+        phone_lane_request=_LANE_REQUEST,
+        phone_subtitled_media_lanes_enabled=True,
+    )
+
+    bind_mock.assert_called_once()
+    assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
+    assert mock_build.call_args.kwargs["phone_subtitled_lanes"] == _LANE_REQUEST
+    assert result.outcome == "dispatched"
+
+
+def test_phone_subtitled_lanes_absent_when_flag_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same subtitled item + request, but the flag is OFF: the request must
+    never reach `build_generative_job` -- byte-identical to the pre-feature
+    call for every existing subtitled dispatch."""
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="subtitled",
+        approved=False,
+        phone_lane_request=_LANE_REQUEST,
+        phone_subtitled_media_lanes_enabled=False,
+    )
+
+    bind_mock.assert_called_once()
+    assert "phone_subtitled_lanes" not in mock_build.call_args.kwargs
+    assert result.outcome == "dispatched"
+
+
+def test_phone_subtitled_lanes_absent_for_montage_phone_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A montage/guided phone item never carries the lane request even with
+    the flag ON and an admin-authored request sitting on the item -- only
+    the exact shape that lands on `_run_phone_subtitled_job` is eligible."""
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="montage",
+        approved=True,
+        phone_lane_request=_LANE_REQUEST,
+        phone_subtitled_media_lanes_enabled=True,
+    )
+
+    bind_mock.assert_called_once()
+    assert "phone_subtitled_lanes" not in mock_build.call_args.kwargs
+    assert result.outcome == "dispatched"
+
+
+def test_phone_subtitled_lanes_forwarded_for_self_narrated_single_clip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The self-narration single-clip shape (no recorded voiceover) also
+    lands on `_run_phone_subtitled_job`, so it is equally eligible."""
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="narrated",
+        approved=False,
+        clip_count=1,
+        phone_narration_rendering_enabled=True,
+        phone_render_verified_features=["narrationAudio"],
+        phone_lane_request=_LANE_REQUEST,
+        phone_subtitled_media_lanes_enabled=True,
+    )
+
+    bind_mock.assert_called_once()
+    assert mock_build.call_args.kwargs["phone_subtitled_lanes"] == _LANE_REQUEST
+    assert result.outcome == "dispatched"
+
+
+def test_phone_subtitled_lanes_invalid_request_maps_to_invalid_clips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An invalid admin-authored request raises inside `build_generative_job`
+    (the real implementation, not the mock here) -- `_dispatch_item_render`
+    must map that ValueError to the same `invalid_clips` DispatchResult path
+    every other phone ValueError uses."""
+    from app.config import settings
+    from app.kria.media_sources import OriginalMediaDescriptor
+    from app.services.phone_sources import PhoneSourceBinding
+
+    item = _phone_dispatch_item("subtitled", clip_count=1)
+    item.phone_lane_request = {"overlays": [{"id": "o1"}]}  # missing required fields
+    plan = SimpleNamespace(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0
+    )
+    session = MagicMock()
+
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "edit_format_talking_head_enabled", True)
+    monkeypatch.setattr(settings, "narrated_self_narration_enabled", True)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(settings, "phone_narration_rendering_enabled", False)
+    monkeypatch.setattr(settings, "phone_render_verified_features", [])
+    monkeypatch.setattr(settings, "phone_subtitled_media_lanes_enabled", True)
+
+    # A real binding is required here (unlike the mocked-`build_generative_job`
+    # tests above): this test exercises the REAL `build_generative_job`, whose
+    # own phone-sources validation needs `.proxy_path`/`.media_id` attributes.
+    real_binding = PhoneSourceBinding(
+        media_id="registered-spine-0",
+        proxy_path=item.clip_gcs_paths[0],
+        generation="generation-17",
+        original=OriginalMediaDescriptor(
+            sha256="a" * 64,
+            byte_count=1000,
+            duration_s=12,
+            width=1920,
+            height=1080,
+            has_audio=True,
+        ),
+    )
+    bind_mock = MagicMock(return_value=(real_binding,))
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch(
+            "app.services.edit_proposals.validate_approved_proposal_media_sync",
+            return_value=(None, None),
+        ),
+        patch("app.services.phone_sources.bind_phone_sources", bind_mock),
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+        patch("app.tasks.content_plan_build.log") as mock_log,
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+        )
+
+    bind_mock.assert_called_once()
+    assert result.outcome == "invalid_clips"
+    warning_call = mock_log.warning.call_args
+    assert warning_call.kwargs["error"] == "phone lane request is invalid"
 
 
 def _guided_voiceover_dispatch_setup(
