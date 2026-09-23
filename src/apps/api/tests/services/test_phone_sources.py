@@ -116,6 +116,32 @@ def test_private_photo_receipts_removed_at_every_public_nesting_level():
     ) == {"variants": [{"variant_id": "guided_story"}]}
 
 
+def test_private_subtitled_lane_request_removed_at_every_public_nesting_level():
+    # KRI-174 Phase 1.5: the admin-authored subtitled media-lane request
+    # (`_phone_subtitled_lanes_v1`) carries pool storage paths on its overlay
+    # and ending-clip entries -- never creator-safe.
+    lanes = {
+        "overlays": [
+            {
+                "id": "o1",
+                "media_id": "5b3f6a1e-8f1c-4c55-9a8e-2f7d1c9b0a11",
+                "gcs_path": "users/u/plan/i/pool/photo.jpg",
+                "generation": "77",
+                "start_s": 0.0,
+                "end_s": 1.0,
+            }
+        ],
+        "sound_effects": [],
+        "ending_clip": None,
+    }
+    assert _strip_private_state(
+        {
+            "_phone_subtitled_lanes_v1": lanes,
+            "variants": [{"_phone_subtitled_lanes_v1": lanes, "variant_id": "subtitled"}],
+        }
+    ) == {"variants": [{"variant_id": "subtitled"}]}
+
+
 # --- KRI-121 round 2: pool-video receipts -------------------------------------
 
 PHOTO_RECEIPT = {

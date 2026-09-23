@@ -511,6 +511,44 @@ Required capabilities added per lane: overlays → `visualBlocks`,
 **Rollback:** `fly secrets set PHONE_SUBTITLED_MEDIA_LANES_ENABLED=false --app
 nova-video` + `fly machine restart <id>` (api + worker).
 
+**Authoring a lane request by hand (Phase 1.5, admin-only).** Until Phase 2
+grounds lanes from the prompt, an admin stores a request on the plan item and
+dispatch copies it into the job snapshot on the NEXT Generate/Retry (flag on,
+phone-rendered `subtitled` item only):
+
+```bash
+python scripts/admin.py --prod GET    plan-items/<item_id>/phone-lanes
+python scripts/admin.py --prod PUT    plan-items/<item_id>/phone-lanes --data-file lanes.json
+python scripts/admin.py --prod DELETE plan-items/<item_id>/phone-lanes
+```
+
+`lanes.json` names Visuals by their `PlanItemAsset` id and sound effects by
+catalog id; the route resolves the storage pins and rejects anything that is
+not a ready image/video in that item's pool or a published, phone-playable
+effect. Time the triggers from the variant's `overlay_transcript` (raw Whisper
+words, `GET /admin/jobs/{id}`), not from the corrected captions:
+
+```json
+{
+  "overlays": [
+    {"id": "rank-3", "media_id": "<badge-3 png>", "start_s": 3.2, "end_s": 5.0, "y_frac": 0.18, "scale": 0.22},
+    {"id": "photo-leao", "media_id": "<leao jpg>", "start_s": 5.0, "end_s": 8.4, "x_frac": 0.72, "y_frac": 0.40, "scale": 0.36, "fade": true},
+    {"id": "cross-1", "media_id": "<cross png>", "start_s": 6.1, "end_s": 7.0, "x_frac": 0.30, "y_frac": 0.40, "scale": 0.25, "z": 1},
+    {"id": "goat", "media_id": "<goat png>", "start_s": 21.0, "end_s": 24.0, "y_frac": 0.20, "scale": 0.30}
+  ],
+  "sound_effects": [
+    {"id": "buzz-1", "catalog_id": "<Wrong buzzer id>", "at_s": 6.1},
+    {"id": "ding-1", "catalog_id": "<Correct ding id>", "at_s": 8.4, "volume": 0.9}
+  ],
+  "ending_clip": {"media_id": "<ending mp4>", "max_duration_s": 3.0}
+}
+```
+
+`y_frac` above `0.62` is clamped by the compiler so no card lands in the
+caption band. The request is private job state (`_phone_subtitled_lanes_v1`,
+stripped from public assembly-plan responses) and stays on the item until
+deleted, so clear it once Phase 2 owns the lanes.
+
 ## Implemented foundations
 
 - `KriaMediaEngine/SourceAssetStore.swift` binds opaque server media IDs to

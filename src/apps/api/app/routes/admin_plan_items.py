@@ -26,6 +26,21 @@ to a structural summary before it reaches this response:
     started_at/versions survive.
 So this endpoint never leaks creator text into logs, admin screenshots, or
 a support ticket, even though it is admin-only.
+
+PUT/GET/DELETE /admin/plan-items/{item_id}/phone-lanes (KRI-174 Phase 1.5) are
+the one WRITE surface in this otherwise read-only file. They let an operator
+hand-author a `PhoneSubtitledLaneRequest`
+(`app.pipeline.phone_subtitled_lanes`) on a plan item before the prompt-
+grounding phase that will eventually author these automatically exists. The
+admin passes ASSET IDS (Visuals-pool `PlanItemAsset.id` / sound-effect
+catalog ids), never storage paths — PUT resolves each id against the item's
+own ready pool rows / the published sound-effect catalog server-side and
+persists the fully-resolved request (with `gcs_path`/`generation` filled in)
+on `PlanItem.phone_lane_request`. That JSON is private job state: the render
+dispatcher copies it verbatim into
+`Job.assembly_plan["_phone_subtitled_lanes_v1"]` for the item's NEXT
+Generate/Retry, and it is stripped from any public assembly-plan response.
+Nothing here takes effect while `PHONE_SUBTITLED_MEDIA_LANES_ENABLED` is off.
 """
 
 from __future__ import annotations
@@ -36,13 +51,21 @@ from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
+from app.config import settings
 from app.database import get_db
-from app.models import AgentRun, Job, PlanItem, PlanItemAsset
+from app.models import AgentRun, Job, PlanItem, PlanItemAsset, SoundEffect
+from app.pipeline.phone_subtitled_lanes import (
+    PhoneSubtitledLaneRequest,
+    SubtitledEndingClip,
+    SubtitledOverlayCard,
+    SubtitledSoundEffect,
+    sfx_path_is_playable,
+)
 from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
 from app.routes.admin import _require_admin
 from app.routes.plan_items import derive_item_status
@@ -513,4 +536,290 @@ async def get_plan_item_debug(
         edit_proposal=edit_proposal_payload,
         edit_proposal_unparseable=edit_proposal_unparseable,
         edit_proposal_raw_keys=edit_proposal_raw_keys,
+    )
+
+
+# ── Phone subtitled lanes (admin write) ─────────────────────────────────────
+#
+# See the module docstring. The admin-facing request schemas below mirror
+# `app.pipeline.phone_subtitled_lanes`'s `Subtitled*` models but take an
+# asset id instead of a resolved `gcs_path`/`generation` pin -- the route
+# resolves that pin server-side and never trusts a caller-supplied path.
+
+_ADMIN_LANE_ID_PATTERN = r"^\S+$"
+
+
+class AdminOverlayCard(BaseModel):
+    """One overlay card requested over the speaker clip, by asset id."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=80, pattern=_ADMIN_LANE_ID_PATTERN)
+    media_id: str = Field(min_length=1, max_length=160, pattern=_ADMIN_LANE_ID_PATTERN)
+    start_s: float = Field(ge=0)
+    end_s: float = Field(gt=0)
+    x_frac: float = Field(default=0.5, ge=0, le=1)
+    y_frac: float = Field(default=0.4, ge=0, le=1)
+    scale: float = Field(default=0.35, ge=0.05, le=1)
+    fade: bool = False
+    z: int = Field(default=0, ge=0)
+
+
+class AdminSoundEffect(BaseModel):
+    """One catalog sound effect requested at a point on the timeline, by
+    catalog id."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=80, pattern=_ADMIN_LANE_ID_PATTERN)
+    catalog_id: str = Field(min_length=1, max_length=160, pattern=_ADMIN_LANE_ID_PATTERN)
+    at_s: float = Field(ge=0)
+    volume: float = Field(default=1.0, ge=0, le=2)
+
+
+class AdminEndingClip(BaseModel):
+    """An optional muted Visuals-pool video appended after the speaker clip,
+    by asset id."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: str = Field(min_length=1, max_length=160, pattern=_ADMIN_LANE_ID_PATTERN)
+    trim_start_s: float = Field(default=0.0, ge=0)
+    max_duration_s: float | None = Field(default=None, gt=0)
+
+
+class AdminPhoneLaneRequest(BaseModel):
+    """The PUT request body: an unresolved lane request expressed entirely
+    in asset ids the route must resolve before it can be stored."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    overlays: list[AdminOverlayCard] = Field(default_factory=list)
+    sound_effects: list[AdminSoundEffect] = Field(default_factory=list)
+    ending_clip: AdminEndingClip | None = None
+
+
+class PhoneLanesResponse(BaseModel):
+    item_id: str
+    phone_lane_request: dict[str, Any] | None
+    flag_enabled: bool
+
+
+class PhoneLanesPutResponse(PhoneLanesResponse):
+    note: str
+
+
+_PHONE_LANES_NOTE = (
+    "This lane request applies to the NEXT Generate or Retry of this item, "
+    "and only while PHONE_SUBTITLED_MEDIA_LANES_ENABLED is on."
+)
+
+
+async def _load_plan_item_or_404(db: AsyncSession, item_id: str) -> PlanItem:
+    """Shared 404 behavior for the phone-lanes endpoints: an unknown id and a
+    malformed (non-UUID) id both read as "not found", matching `/debug`."""
+    try:
+        item_uuid = uuid.UUID(item_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
+
+    item_res = await db.execute(select(PlanItem).where(PlanItem.id == item_uuid))
+    item = item_res.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
+    return item
+
+
+def _require_bound_asset(
+    assets_by_media_id: dict[str, PlanItemAsset],
+    item: PlanItem,
+    media_id: str,
+    *,
+    kind: str,
+    role: str,
+) -> PlanItemAsset:
+    """Resolve one requested `media_id` to a ready, in-item, generation-pinned
+    `PlanItemAsset` of the required `kind`, or raise a 422 naming `role` and
+    `media_id`. Never trusts a caller-supplied path/generation."""
+    noun = "image" if kind == "image" else "video"
+    asset = assets_by_media_id.get(media_id)
+    if (
+        asset is None
+        or asset.plan_item_id != item.id
+        or asset.status != "ready"
+        or asset.kind != kind
+        or not asset.gcs_generation
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"{role} references media {media_id} which is not a ready "
+                f"{noun} in this item's Visuals"
+            ),
+        )
+    return asset
+
+
+@router.get("/{item_id}/phone-lanes", response_model=PhoneLanesResponse)
+async def get_plan_item_phone_lanes(
+    item_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_require_admin),
+) -> PhoneLanesResponse:
+    """Read-only: never writes. Returns the stored request verbatim (or None)."""
+    item = await _load_plan_item_or_404(db, item_id)
+    return PhoneLanesResponse(
+        item_id=str(item.id),
+        phone_lane_request=item.phone_lane_request,
+        flag_enabled=settings.phone_subtitled_media_lanes_enabled,
+    )
+
+
+@router.put("/{item_id}/phone-lanes", response_model=PhoneLanesPutResponse)
+async def put_plan_item_phone_lanes(
+    item_id: str,
+    body: AdminPhoneLaneRequest,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_require_admin),
+) -> PhoneLanesPutResponse:
+    """Resolve every asset id + catalog id in `body` and persist the fully
+    resolved `PhoneSubtitledLaneRequest` on the item. 422s name the offending
+    card/effect and why; 404 matches `/debug` (unknown or malformed id)."""
+    item = await _load_plan_item_or_404(db, item_id)
+
+    overlay_ids = [card.id for card in body.overlays]
+    if len(overlay_ids) != len(set(overlay_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="overlay cards must have unique ids within one request",
+        )
+    sfx_ids = [sfx.id for sfx in body.sound_effects]
+    if len(sfx_ids) != len(set(sfx_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="sound effects must have unique ids within one request",
+        )
+
+    media_ids = {card.media_id for card in body.overlays}
+    if body.ending_clip is not None:
+        media_ids.add(body.ending_clip.media_id)
+
+    assets_by_media_id: dict[str, PlanItemAsset] = {}
+    if media_ids:
+        parsed_ids: list[uuid.UUID] = []
+        for media_id in media_ids:
+            try:
+                parsed_ids.append(uuid.UUID(media_id))
+            except (ValueError, AttributeError, TypeError):
+                continue  # unresolved below -> 422 via _require_bound_asset
+        if parsed_ids:
+            assets_res = await db.execute(
+                select(PlanItemAsset).where(PlanItemAsset.id.in_(parsed_ids))
+            )
+            assets_by_media_id = {str(a.id): a for a in assets_res.scalars().all()}
+
+    overlay_cards: list[SubtitledOverlayCard] = []
+    for card in body.overlays:
+        asset = _require_bound_asset(
+            assets_by_media_id, item, card.media_id, kind="image", role=f"overlay card '{card.id}'"
+        )
+        try:
+            overlay_cards.append(
+                SubtitledOverlayCard(
+                    id=card.id,
+                    media_id=card.media_id,
+                    gcs_path=asset.gcs_path,
+                    generation=str(asset.gcs_generation),
+                    start_s=card.start_s,
+                    end_s=card.end_s,
+                    x_frac=card.x_frac,
+                    y_frac=card.y_frac,
+                    scale=card.scale,
+                    fade=card.fade,
+                    z=card.z,
+                )
+            )
+        except ValidationError as exc:
+            reason = exc.errors()[0].get("msg", "invalid")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"overlay card '{card.id}' is invalid: {reason}",
+            ) from exc
+
+    sound_effects: list[SubtitledSoundEffect] = []
+    for sfx in body.sound_effects:
+        catalog = await db.get(SoundEffect, sfx.catalog_id)
+        if (
+            catalog is None
+            or catalog.published_at is None
+            or catalog.archived_at is not None
+            or catalog.status != "ready"
+            or not catalog.audio_gcs_path
+            or not sfx_path_is_playable(catalog.audio_gcs_path)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"sound effect '{sfx.id}' references catalog_id {sfx.catalog_id} "
+                    "which is not a published, playable sound effect"
+                ),
+            )
+        sound_effects.append(
+            SubtitledSoundEffect(
+                id=sfx.id, catalog_id=sfx.catalog_id, at_s=sfx.at_s, volume=sfx.volume
+            )
+        )
+
+    ending_clip: SubtitledEndingClip | None = None
+    if body.ending_clip is not None:
+        asset = _require_bound_asset(
+            assets_by_media_id, item, body.ending_clip.media_id, kind="video", role="ending clip"
+        )
+        ending_clip = SubtitledEndingClip(
+            media_id=body.ending_clip.media_id,
+            gcs_path=asset.gcs_path,
+            generation=str(asset.gcs_generation),
+            trim_start_s=body.ending_clip.trim_start_s,
+            max_duration_s=body.ending_clip.max_duration_s,
+        )
+
+    try:
+        lane_request = PhoneSubtitledLaneRequest(
+            overlays=overlay_cards,
+            sound_effects=sound_effects,
+            ending_clip=ending_clip,
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"invalid phone lane request: {exc.errors()[0].get('msg', 'invalid')}",
+        ) from exc
+
+    stored = lane_request.model_dump(mode="json")
+    item.phone_lane_request = stored
+    await db.commit()
+
+    return PhoneLanesPutResponse(
+        item_id=str(item.id),
+        phone_lane_request=stored,
+        flag_enabled=settings.phone_subtitled_media_lanes_enabled,
+        note=_PHONE_LANES_NOTE,
+    )
+
+
+@router.delete("/{item_id}/phone-lanes", response_model=PhoneLanesResponse)
+async def delete_plan_item_phone_lanes(
+    item_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_require_admin),
+) -> PhoneLanesResponse:
+    """Clear any stored lane request. Idempotent: clearing an already-empty
+    item still commits and returns the same None shape."""
+    item = await _load_plan_item_or_404(db, item_id)
+    item.phone_lane_request = None
+    await db.commit()
+    return PhoneLanesResponse(
+        item_id=str(item.id),
+        phone_lane_request=None,
+        flag_enabled=settings.phone_subtitled_media_lanes_enabled,
     )

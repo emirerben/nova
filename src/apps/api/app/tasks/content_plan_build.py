@@ -1719,6 +1719,13 @@ def _dispatch_item_render(
 
         phone_sources = ()
         phone_gate: str | None = None
+        # KRI-174 Phase 1.5: set True only on the exact fmt/self-narration
+        # shape that `generative_build._run_phone_subtitled_job` will land
+        # on (mirrors its own `declared_format == "subtitled" or (... and
+        # not has_voiceover_candidate)` dispatch check) -- everything else
+        # (guided/montage phone formats, narrated-with-voiceover) must never
+        # carry an admin-authored subtitled lane request.
+        phone_subtitled_eligible = False
         if any(is_analysis_proxy_path(path) for path in clip_paths):
             if not settings.phone_rendering_for(plan.user_id):
                 phone_gate = "not_enrolled"
@@ -1827,6 +1834,14 @@ def _dispatch_item_render(
                 elif fmt not in supported_now:
                     phone_gate = "unsupported_format"
                     raise ValueError(f"analysis proxies cannot render '{fmt}' on iPhone yet")
+                # KRI-174 Phase 1.5: reaching here (no raise above) means this
+                # is exactly the shape that lands on `_run_phone_subtitled_job`
+                # -- declared `subtitled`, or self-narration (no recorded
+                # voiceover) on a NARRATED_EDIT_FORMATS item, which the gate
+                # above only let through for the single-clip case.
+                phone_subtitled_eligible = fmt == "subtitled" or (
+                    fmt in NARRATED_EDIT_FORMATS and not has_recorded_voiceover
+                )
             # KRI-132: a recorded voiceover must never dispatch a phone job
             # doomed to fail in the worker (`_run_phone_montage_job` raises
             # "Phone rendering does not yet support voiceover edits" when the
@@ -1841,6 +1856,29 @@ def _dispatch_item_render(
                     phone_gate = "voiceover_unavailable"
                     raise ValueError("phone rendering does not yet support voiceover edits")
             phone_sources = bind_phone_sources(list(item.clip_assignments or []), clip_paths)
+        # KRI-174 Phase 1.5: admin-authored via `PUT
+        # /admin/plan-items/{id}/phone-lanes` (`PlanItem.phone_lane_request`).
+        # Gated on the same flag `_run_phone_subtitled_job` checks, plus the
+        # exact fmt/self-narration shape it actually dispatches to
+        # (`phone_subtitled_eligible` above) -- a guided/montage phone item,
+        # or one with an ineligible format, never carries this key even if an
+        # admin saved a request on the item. `getattr` tolerates a row from
+        # before the column existed. The worker drops any lane it cannot
+        # honor and records `phone_lane_receipt`; an invalid request raises
+        # ValueError inside `build_generative_job`, which the caller below
+        # maps to `invalid_clips`.
+        phone_lane_request = getattr(item, "phone_lane_request", None)
+        phone_subtitled_lanes = (
+            phone_lane_request
+            if (
+                settings.phone_subtitled_media_lanes_enabled
+                and phone_sources
+                and phone_subtitled_eligible
+                and isinstance(phone_lane_request, dict)
+                and phone_lane_request
+            )
+            else None
+        )
         job = build_generative_job(
             user_id=plan.user_id,
             clip_paths=clip_paths,
@@ -1907,6 +1945,7 @@ def _dispatch_item_render(
             creator_request=str(creator_request or "")[:12000],
             **({"phone_sources": phone_sources} if phone_sources else {}),
             **({"render_on_device": True} if visuals_only_device else {}),
+            **({"phone_subtitled_lanes": phone_subtitled_lanes} if phone_subtitled_lanes else {}),
         )
         # Pin one immutable identity for this Creator-confirmed render before
         # the worker is queued.  Native variants historically received no

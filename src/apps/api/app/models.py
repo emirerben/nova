@@ -2794,6 +2794,11 @@ class PlanItem(Base):
     # (never mutate in-place) so SQLAlchemy detects the change.
     scenes: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     user_edited: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # KRI-174 Phase 1.5: admin-authored `PhoneSubtitledLaneRequest` JSON
+    # (app.pipeline.phone_subtitled_lanes) copied into the job snapshot at
+    # dispatch (`Job.assembly_plan["_phone_subtitled_lanes_v1"]`). Written only
+    # via PUT/DELETE /admin/plan-items/{id}/phone-lanes. None = no lanes.
+    phone_lane_request: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
