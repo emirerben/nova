@@ -35,6 +35,14 @@ import XCTest
         return try! JSONSerialization.data(withJSONObject: ["jobs": [job]])
     }
 
+    /// Kept nonisolated: URL handlers run on CFNetwork's thread, and a closure
+    /// literal written inside this @MainActor class inherits MainActor
+    /// isolation, so Swift 6's executor check traps the test host.
+    nonisolated static func unavailablePostersResponse(_ ids: [UUID]) -> Data {
+        let jobs: [[String: Any]] = ids.map { ["id": $0.uuidString, "poster_url": NSNull(), "poster_identity": "selected:video.mp4", "poster_status": "unavailable"] }
+        return try! JSONSerialization.data(withJSONObject: ["jobs": jobs])
+    }
+
     private func deferredAPI() -> KriaAPI {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [LibraryPosterDeferredProtocol.self]
@@ -109,13 +117,12 @@ import XCTest
 
     func testRecoveryBatchesTwentyAndGivesEveryEligibleJobATurn() async {
         let projects = (0..<21).map { _ in readyProject() }
-        var batches: [[UUID]] = []
+        let log = PosterBatchLog()
         NativeEditorURLProtocol.handler = { request in
             let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: [String]])
             let ids = try XCTUnwrap(body["job_ids"]).compactMap(UUID.init(uuidString:))
-            batches.append(ids)
-            let jobs = ids.map { ["id": $0.uuidString, "poster_url": NSNull(), "poster_identity": "selected:video.mp4", "poster_status": "unavailable"] as [String: Any] }
-            return (200, try! JSONSerialization.data(withJSONObject: ["jobs": jobs]))
+            log.append(ids)
+            return (200, Self.unavailablePostersResponse(ids))
         }
         let model = AppModel(api: NativeEditorTestSupport.api())
         model.libraryProjects = projects
@@ -123,6 +130,7 @@ import XCTest
 
         await model.recoverLibraryPosters(sleep: Self.immediateSleep)
 
+        let batches = log.batches
         XCTAssertEqual(batches.map(\.count), [20, 1])
         XCTAssertEqual(Set(batches.flatMap { $0 }), Set(projects.map(\.id)))
     }
@@ -256,6 +264,15 @@ actor PosterDelayRecorder {
     private var recorded: [TimeInterval] = []
     func record(_ delay: TimeInterval) { recorded.append(delay) }
     func values() -> [TimeInterval] { recorded }
+}
+
+/// Synchronous URL handlers can't await an actor, so batches are recorded
+/// under a lock from CFNetwork's thread.
+final class PosterBatchLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [[UUID]] = []
+    func append(_ ids: [UUID]) { lock.withLock { recorded.append(ids) } }
+    var batches: [[UUID]] { lock.withLock { recorded } }
 }
 
 /// A controllable protocol kept local to poster recovery tests for future
