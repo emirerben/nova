@@ -135,6 +135,40 @@ enum NativeEditorInteraction {
         return min(max(TimeInterval(x / width) * duration, 0), duration)
     }
 
+    /// Signed auto-scroll velocity (points/second) for a finger at `x` during
+    /// a timeline drag. Zero away from the edges; ramps quadratically toward
+    /// `maxSpeed` as the finger nears either edge. `edgeZone` is capped to a
+    /// quarter of the viewport width so the two zones can never overlap on a
+    /// narrow screen.
+    static func edgeAutoScrollVelocity(x: CGFloat, viewport: ClosedRange<CGFloat>, edgeZone: CGFloat, maxSpeed: CGFloat) -> CGFloat {
+        guard x.isFinite, viewport.lowerBound.isFinite, viewport.upperBound.isFinite,
+              edgeZone.isFinite, edgeZone > 0, maxSpeed.isFinite, maxSpeed > 0 else { return 0 }
+        let width = viewport.upperBound - viewport.lowerBound
+        guard width > 0 else { return 0 }
+        let zone = min(edgeZone, width / 4)
+        guard zone > 0 else { return 0 }
+        if x <= viewport.lowerBound + zone {
+            let depth = min(1, max(0, (viewport.lowerBound + zone - x) / zone))
+            return -maxSpeed * depth * depth
+        }
+        if x >= viewport.upperBound - zone {
+            let depth = min(1, max(0, (x - (viewport.upperBound - zone)) / zone))
+            return maxSpeed * depth * depth
+        }
+        return 0
+    }
+
+    /// Converts a per-tick auto-scroll velocity into a clock delta (seconds).
+    /// `elapsed` is clamped to one 30fps frame so a main-thread hitch (a
+    /// debugger pause, a heavy render) can never jump the timeline in a
+    /// single tick.
+    static func edgeAutoScrollStep(velocity: CGFloat, elapsed: TimeInterval, pixelsPerSecond: CGFloat) -> TimeInterval {
+        guard velocity.isFinite, elapsed.isFinite, elapsed > 0,
+              pixelsPerSecond.isFinite, pixelsPerSecond > 0 else { return 0 }
+        let bounded = min(elapsed, 1.0 / 30.0)
+        return TimeInterval(velocity * bounded) / TimeInterval(pixelsPerSecond)
+    }
+
     /// Expands a visual region without moving its center until both dimensions
     /// meet the 44-point accessibility target.
     static func hitRect(_ rect: CGRect, minimum: CGFloat = minimumHitTarget) -> CGRect {

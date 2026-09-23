@@ -115,6 +115,53 @@ final class NativeEditorInteractionTests: XCTestCase {
         XCTAssertEqual(hit.width, 44); XCTAssertEqual(hit.height, 44); XCTAssertEqual(hit.midX, 16); XCTAssertEqual(hit.midY, 20)
     }
 
+    func testEdgeAutoScrollVelocityIsZeroAwayFromEdgesAndRampsAtEdges() {
+        let viewport: ClosedRange<CGFloat> = 0...300
+        XCTAssertEqual(NativeEditorInteraction.edgeAutoScrollVelocity(x: 150, viewport: viewport, edgeZone: 56, maxSpeed: 360), 0)
+        XCTAssertEqual(NativeEditorInteraction.edgeAutoScrollVelocity(x: 56, viewport: viewport, edgeZone: 56, maxSpeed: 360), 0)
+
+        let leftEdge = NativeEditorInteraction.edgeAutoScrollVelocity(x: 0, viewport: viewport, edgeZone: 56, maxSpeed: 360)
+        XCTAssertEqual(leftEdge, -360, accuracy: 0.001)
+        let rightEdge = NativeEditorInteraction.edgeAutoScrollVelocity(x: 300, viewport: viewport, edgeZone: 56, maxSpeed: 360)
+        XCTAssertEqual(rightEdge, 360, accuracy: 0.001)
+
+        // Monotonic ramp: deeper into the zone is never slower.
+        let shallow = NativeEditorInteraction.edgeAutoScrollVelocity(x: 40, viewport: viewport, edgeZone: 56, maxSpeed: 360)
+        let deep = NativeEditorInteraction.edgeAutoScrollVelocity(x: 10, viewport: viewport, edgeZone: 56, maxSpeed: 360)
+        XCTAssertLessThan(shallow, 0)
+        XCTAssertLessThan(deep, shallow)
+    }
+
+    func testEdgeAutoScrollVelocityCapsZoneAtQuarterWidthOnNarrowViewports() {
+        // A 100pt viewport with a requested 56pt zone must cap at 25pt so the
+        // two zones can never overlap; the true edge zone boundary is at x=25/x=75.
+        let viewport: ClosedRange<CGFloat> = 0...100
+        XCTAssertEqual(NativeEditorInteraction.edgeAutoScrollVelocity(x: 26, viewport: viewport, edgeZone: 56, maxSpeed: 360), 0)
+        XCTAssertNotEqual(NativeEditorInteraction.edgeAutoScrollVelocity(x: 24, viewport: viewport, edgeZone: 56, maxSpeed: 360), 0)
+    }
+
+    func testEdgeAutoScrollVelocityDegenerateInputsReturnZero() {
+        let viewport: ClosedRange<CGFloat> = 0...300
+        XCTAssertEqual(NativeEditorInteraction.edgeAutoScrollVelocity(x: .nan, viewport: viewport, edgeZone: 56, maxSpeed: 360), 0)
+        XCTAssertEqual(NativeEditorInteraction.edgeAutoScrollVelocity(x: 0, viewport: 0...0, edgeZone: 56, maxSpeed: 360), 0)
+        XCTAssertEqual(NativeEditorInteraction.edgeAutoScrollVelocity(x: 0, viewport: viewport, edgeZone: 0, maxSpeed: 360), 0)
+        XCTAssertEqual(NativeEditorInteraction.edgeAutoScrollVelocity(x: 0, viewport: viewport, edgeZone: 56, maxSpeed: 0), 0)
+    }
+
+    func testEdgeAutoScrollStepConvertsVelocityToSecondsAndClampsHitches() {
+        // 100pt/s at 50 points-per-second of timeline == 2s of content per second.
+        let step = NativeEditorInteraction.edgeAutoScrollStep(velocity: 100, elapsed: 1.0 / 60, pixelsPerSecond: 50)
+        XCTAssertEqual(step, (100 * (1.0 / 60)) / 50, accuracy: 0.0001)
+
+        // A main-thread hitch (0.5s gap) must not jump more than one 30fps frame's worth.
+        let hitch = NativeEditorInteraction.edgeAutoScrollStep(velocity: 100, elapsed: 0.5, pixelsPerSecond: 50)
+        let capped = NativeEditorInteraction.edgeAutoScrollStep(velocity: 100, elapsed: 1.0 / 30, pixelsPerSecond: 50)
+        XCTAssertEqual(hitch, capped, accuracy: 0.0001)
+
+        XCTAssertEqual(NativeEditorInteraction.edgeAutoScrollStep(velocity: 100, elapsed: 1.0 / 60, pixelsPerSecond: 0), 0)
+        XCTAssertEqual(NativeEditorInteraction.edgeAutoScrollStep(velocity: 100, elapsed: 0, pixelsPerSecond: 50), 0)
+    }
+
     func testTouchingIntervalsShareLaneAndOverlapsDoNot() {
         let first = NativeEditorTimelineItem(selection: EditorSelection(kind: .text, id: "first"), start: 0, end: 1, sourceIndex: 0)
         let touching = NativeEditorTimelineItem(selection: EditorSelection(kind: .text, id: "touching"), start: 1, end: 2, sourceIndex: 1)

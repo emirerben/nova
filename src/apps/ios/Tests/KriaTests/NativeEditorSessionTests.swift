@@ -1214,6 +1214,33 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.duration, 7, accuracy: 0.0001)
     }
 
+    // REGRESSION: timelineScrubDuration must equal playbackDuration whenever
+    // no preview rebuild is pending or in flight — auto-scroll and any seek
+    // widen against timelineScrubDuration, so if this baseline case were
+    // ever wrong (e.g. permanently widened, as it would be if gated on
+    // `sourcePreviewTask != nil` — that field is never reset to nil after a
+    // rebuild completes), every seek in the app would silently accept times
+    // past the real end. This fixture has no source compiler installed, so
+    // scheduleSourcePreviewUpdate's very first guard bails before any
+    // rebuild is ever scheduled — sourcePreviewSequence and
+    // sourcePreviewSettledSequence both stay at their initial 0.
+    func testTimelineScrubDurationEqualsPlaybackDurationWithNoRebuildPending() {
+        let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 4, trimIn: 1, trimOut: 5, sourceDuration: 8)
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        XCTAssertEqual(session.timelineScrubDuration, session.playbackDuration, accuracy: 0.0001)
+
+        // Also holds mid-gesture and after a trim that extends the clip —
+        // the deferral machinery this test guards against only ever engages
+        // when a real source compiler is installed (see
+        // rebuildSourcePreview's first guard), which this fixture has none
+        // of, so a timing gesture here never marks a rebuild pending either.
+        session.beginTrim(clipID: clip.id, edge: .trailing)
+        session.updateTrim(by: 3)
+        XCTAssertEqual(session.timelineScrubDuration, session.playbackDuration, accuracy: 0.0001)
+        session.endTrim()
+        XCTAssertEqual(session.timelineScrubDuration, session.playbackDuration, accuracy: 0.0001)
+    }
+
     func testReturningTrimGestureToBaselineLeavesNoUndoEntry() {
         let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 4, trimIn: 1, trimOut: 5, sourceDuration: 8)
         let original = EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0)

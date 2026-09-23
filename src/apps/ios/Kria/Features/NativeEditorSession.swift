@@ -99,6 +99,20 @@ struct NativeEditorTemporaryVideo {
         }
         return duration
     }
+    /// The scrub/seek boundary while a preview rebuild is pending or in
+    /// flight. `playbackDuration` is the *composition's* duration, which is
+    /// stale until the rebuild lands — sometimes for seconds after a timing
+    /// gesture ends on a heavy document. Auto-scroll (and any seek) must be
+    /// allowed to reach the timeline's true projected end during that window,
+    /// not just the last-compiled composition's end. Gated on preview
+    /// staleness rather than gesture activity so the bound stays widened for
+    /// as long as the async rebuild is actually pending, not just while a
+    /// finger is on screen.
+    var timelineScrubDuration: TimeInterval {
+        (sourcePreviewUpdateDeferred || sourcePreviewSequence != sourcePreviewSettledSequence)
+            ? max(playbackDuration, timelineProjection.totalDuration)
+            : playbackDuration
+    }
     @Published var isPlaying = false
     @Published var isSaving = false
     @Published var hasUnsavedChanges = false
@@ -282,6 +296,12 @@ struct NativeEditorTemporaryVideo {
     private var resolvedSources: [Int: ResolvedEditorSource]?
     private var sourcePreviewTask: Task<Void, Never>?
     private var sourcePreviewSequence = 0
+    /// The last `sourcePreviewSequence` a `rebuildSourcePreview` attempt
+    /// actually settled (success or failure) — never a superseded/cancelled
+    /// attempt. `sourcePreviewTask` itself is never reset to nil on
+    /// completion, so comparing sequence numbers (not `sourcePreviewTask !=
+    /// nil`) is the only reliable "is a rebuild still pending" signal.
+    private var sourcePreviewSettledSequence = 0
     private var sourcePreviewGeneration: String?
     private var sourcePreviewUpdateDeferred = false
     var hasSourcePreview: Bool { sourcePreviewState == .ready }
@@ -1637,6 +1657,7 @@ struct NativeEditorTemporaryVideo {
             if let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
                (try? preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)) != nil {
                 sourcePreviewState = .ready
+                sourcePreviewSettledSequence = sequence
                 if !isPlaying { seek(to: currentTime) }
                 prepareInteractionLayers()
                 return
@@ -1651,6 +1672,7 @@ struct NativeEditorTemporaryVideo {
             sourcePreview = preview
             installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe))
             sourcePreviewState = .ready
+            sourcePreviewSettledSequence = sequence
             if resumePlayback {
                 player?.seek(to: CMTime(seconds: min(latestTime, max(0, playbackDuration - 1.0 / 600)), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
                 activatePreviewAudio()
@@ -1670,6 +1692,13 @@ struct NativeEditorTemporaryVideo {
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
             failSourcePreview(error)
+            sourcePreviewSettledSequence = sequence
+            // failSourcePreview -> restoreFinishedRenderFallback -> installPlayer
+            // does not reseek. Without this, a clock pushed past the real
+            // (finished-render) length by an in-progress auto-scroll or trim
+            // has nothing to re-clamp it once the widened scrub bound above
+            // narrows back — the transport would sit past the actual end.
+            if currentTime > playbackDuration { seek(to: playbackDuration) }
         }
     }
 
@@ -1772,7 +1801,12 @@ struct NativeEditorTemporaryVideo {
             player?.pause()
             isPlaying = false
         }
-        let clamped = min(max(0, time), max(0, playbackDuration))
+        // The clock/scrub range uses timelineScrubDuration (widened while a
+        // preview rebuild is pending) so auto-scroll and any seek can reach
+        // the timeline's true end. requestScrubFrame below still clamps the
+        // actual *frame request* to playbackDuration — the composition can
+        // only render what it has compiled until the rebuild lands.
+        let clamped = min(max(0, time), max(0, timelineScrubDuration))
         currentTime = clamped
         if requestScrubFrame(at: clamped) {
             seekRecoveryTask?.cancel()
@@ -4027,7 +4061,11 @@ struct NativeEditorTemporaryVideo {
         duration = durationSourcesInvalidated ? timelineDuration : (authoritativeDuration ?? mediaDuration ?? timelineDuration)
         if !duration.isFinite || duration < 0 { duration = max(0, timelineDuration) }
         timelineItemsCache = nil
-        if currentTime > playbackDuration { seek(to: playbackDuration) }
+        // Uses timelineScrubDuration, not playbackDuration: this runs on
+        // every timing-gesture sample (updateTrim/updateTimedEdit), and
+        // clamping to the stale composition length here would fight
+        // auto-scroll's own widened bound mid-drag.
+        if currentTime > timelineScrubDuration { seek(to: timelineScrubDuration) }
     }
 
     private func setAuthoritativeDuration(_ value: TimeInterval?) {
