@@ -19,7 +19,16 @@ from app.agents.edit_proposal import (
     _media_prompt_dict,
     _required_media_ids,
 )
+from app.agents.spoken_script import (
+    QUOTED_TEXT_RE,
+    is_reported_speech_quote,
+    is_spoken_script_copy,
+    is_spoken_script_quote,
+    narration_word_keys,
+    quote_text,
+)
 from app.pipeline.prompt_loader import load_prompt
+from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_proposal import creator_copy_match_key
 from app.schemas.semantic_edit import (
     SemanticChapter,
@@ -28,54 +37,6 @@ from app.schemas.semantic_edit import (
     SemanticTextBinding,
 )
 
-_QUOTED_TEXT_RE = re.compile(
-    r"[\"\u201c\u201d]([^\"\u201c\u201d]{1,120})[\"\u201c\u201d]|(?<!\w)'([^']{1,120})'(?!\w)"
-)
-_SPEECH_ATTRIBUTION_RE = re.compile(
-    r"\b(?:said|says|wrote|writes|replied|replies|remarked|remarks|stated|states|asked|asks"
-    r"|told\s+(?:me|us|them|him|her))\s*[:,]?\s*$",
-    re.IGNORECASE,
-)
-_DISPLAY_COPY_CUE_RE = re.compile(
-    r"\b(?:captions?|subtitles?|overlays?|labels?|titles?|show|display)\b"
-    r"|\bon[\s-]?screen\b",
-    re.IGNORECASE,
-)
-_DISPLAY_QUOTE_TARGET = (
-    r"(?:on[\s-]?screen\b"
-    r"|(?:as|in|for)\s+(?:(?:a|an|the)\s+)?(?:caption|subtitle|overlay|label|title)\b)"
-)
-_QUOTE_MEDIA_TARGET = (
-    r"on\s+(?:(?:a|an|the)\s+)?(?:(?:opening|first|last|closing)\s+)?"
-    r"(?:clip|shot|image|frame|video)\b"
-)
-_QUOTE_PLACEMENT_RE = re.compile(
-    r"\b(?:write|print|render|put|add|use)\s+"
-    r"(?:(?:the|these|those|his|her|their|a|an|this|that)\s+)?(?:words?|quotes?|text|lines?)\b",
-    re.IGNORECASE,
-)
-_DISPLAY_QUOTE_SUFFIX_RE = re.compile(
-    rf"^\s*(?:[,;:\u2014-]\s*)?(?:{_DISPLAY_QUOTE_TARGET}"
-    r"|(?:put|show|display|use)\s+(?:that|this|those|these)\s+"
-    rf"(?:quotes?|text|words?|lines?|captions?)\s+(?:{_DISPLAY_QUOTE_TARGET}|{_QUOTE_MEDIA_TARGET})"
-    rf"|(?:put|show|display|use)\s+(?:that|this|it)\s+{_DISPLAY_QUOTE_TARGET})",
-    re.IGNORECASE,
-)
-# The voiceover-script exclusion must never swallow explicit on-screen copy.
-# A short quote is far likelier a label than a spoken sentence, and a
-# placement verb before the quote or a where-to-show phrase after it keeps
-# it as creator copy even when the voiceover also says those words.
-_SPOKEN_SCRIPT_MIN_WORDS = 4
-_SPOKEN_QUOTE_PLACEMENT_RE = re.compile(
-    r"\b(?:put|add|write|place|overlay|type|print|text)\b", re.IGNORECASE
-)
-_SPOKEN_QUOTE_WHERE_RE = re.compile(
-    r"\s*(?:[,;:—-]\s*)?(?:as\s+(?:on[\s-]?screen\s+)?text\b"
-    r"|(?:on|over|across)\s+(?:(?:the|this|that|each|every|a|an)\s+)?(?:[\w-]+\s+){0,3}"
-    r"(?:clips?|shots?|photos?|images?|pictures?|videos?|frames?|chapters?|screen)\b)",
-    re.IGNORECASE,
-)
-_QUOTE_LIST_JOIN_RE = re.compile(r"\s*,?\s*(?:(?:and|or|&)\s*)?", re.IGNORECASE)
 _FORBIDDEN_TIMING_KEYS = frozenset(
     {"duration_s", "start_s", "end_s", "source_start_s", "source_end_s", "output_duration_s"}
 )
@@ -187,96 +148,43 @@ def _semantic_required_media_ids(input: EditProposalAgentInput) -> set[str]:  # 
     return required
 
 
-def _is_reported_speech_quote(request: str, match: re.Match[str]) -> bool:
-    """Do not turn attributed story dialogue into a required text overlay.
-
-    Keep the quote fallback for unclassified copy, including non-English
-    captions. Only an adjacent speech attribution establishes this exclusion;
-    an explicit display instruction attached to that quote overrides it.
-    """
-    prefix = _quote_clause_prefix(request, match)
-    if not _SPEECH_ATTRIBUTION_RE.search(prefix):
-        return False
-    return not _quote_has_display_instruction(request, match, prefix)
+def _intent_copy(intent: ResolvedClipIntent) -> str | None:
+    """A resolved caption/group intent's on-screen phrase, if it has one."""
+    if intent.status != "resolved":
+        return None
+    if intent.op == "caption":
+        return intent.caption_text
+    return intent.creator_text if intent.op == "group" else None
 
 
-def _quote_clause_prefix(request: str, match: re.Match[str]) -> str:
-    before_quote = request[: match.start()].rstrip().removesuffix(",")
-    return re.split(r"[.!?\n,;]|\b(?:then|and|but)\b", before_quote, flags=re.I)[-1]
-
-
-def _quote_has_display_instruction(request: str, match: re.Match[str], prefix: str) -> bool:
-    # A period can sit inside the quoted speech. Do not borrow an instruction
-    # from the next sentence (e.g. 'He said "... ." Put "real copy" on screen').
-    # Only a postfix that directly assigns this quote to a display lane counts.
-    return bool(
-        _DISPLAY_COPY_CUE_RE.search(prefix)
-        or _DISPLAY_QUOTE_SUFFIX_RE.search(request[match.end() :])
-        or (
-            _QUOTE_PLACEMENT_RE.search(prefix)
-            and re.match(rf"\s*{_QUOTE_MEDIA_TARGET}", request[match.end() :], re.I)
-        )
-    )
-
-
-def _quote_list_ends(request: str, match: re.Match[str]) -> tuple[re.Match[str], re.Match[str]]:
-    """First and last quote of a list such as 'Label them "A", "B" and "C"'.
-
-    A display cue before the list or a placement after it covers every item,
-    not only the adjacent one.
-    """
-    quotes = list(_QUOTED_TEXT_RE.finditer(request))
-    at = next(index for index, quote in enumerate(quotes) if quote.start() == match.start())
-    first = last = at
-    while first > 0 and _QUOTE_LIST_JOIN_RE.fullmatch(
-        request[quotes[first - 1].end() : quotes[first].start()]
-    ):
-        first -= 1
-    while last + 1 < len(quotes) and _QUOTE_LIST_JOIN_RE.fullmatch(
-        request[quotes[last].end() : quotes[last + 1].start()]
-    ):
-        last += 1
-    return quotes[first], quotes[last]
-
-
-def _is_spoken_script_quote(request: str, match: re.Match[str], spoken: list[str]) -> bool:
-    """A quoted sentence the recorded voiceover speaks is its script, not a text overlay.
-
-    Timed narration captions already draw those words, whether the attribution
-    follows the quote ('"...," she said.') or is absent. A short phrase, a
-    placement verb ('Put "..."'), a where-to-show phrase ('"..." over the
-    photo') or any other display instruction keeps the quote as creator copy.
-    """
-    text = match.group(1) or match.group(2) or ""
-    words = [key for key in (creator_copy_match_key(word) for word in text.split()) if key]
-    if len(words) < _SPOKEN_SCRIPT_MIN_WORDS or not any(
-        spoken[start : start + len(words)] == words for start in range(len(spoken) - len(words) + 1)
-    ):
-        return False
-    head, tail = _quote_list_ends(request, match)
-    prefix = _quote_clause_prefix(request, head)
-    if _SPOKEN_QUOTE_PLACEMENT_RE.search(prefix) or _SPOKEN_QUOTE_WHERE_RE.match(
-        request[tail.end() :]
-    ):
-        return False
-    return not _quote_has_display_instruction(request, tail, prefix)
+def _spoken_intent_copy(input: EditProposalAgentInput) -> set[str]:  # noqa: A002
+    """Resolved caption/group copy the voiceover already says (see spoken_script)."""
+    spoken = narration_word_keys(input.narration_words)
+    return {
+        text
+        for intent in input.clip_intents or []
+        if (text := _intent_copy(intent))
+        and is_spoken_script_copy(text, input.creator_request, spoken)
+    }
 
 
 def _creator_captions(input: EditProposalAgentInput) -> dict[str, list[str]]:  # noqa: A002
-    """Creator-quoted captions are a complete allowlist (KRI-129)."""
+    """Creator-quoted captions are a complete allowlist (KRI-129).
+
+    Voiceover script (a quoted line or caption/group intent copy the recorded
+    narration says) is excluded: timed narration captions already draw it.
+    """
     if input.shot_labels:
         return {}
-    resolved = [
-        intent.caption_text
+    spoken_copy = _spoken_intent_copy(input)
+    intents = [
+        intent
         for intent in input.clip_intents or []
-        if intent.status == "resolved" and intent.op == "caption" and intent.caption_text
+        if (text := _intent_copy(intent)) and text not in spoken_copy
     ]
+    resolved = [intent.caption_text for intent in intents if intent.op == "caption"]
     if resolved:
-        resolved.extend(
-            intent.creator_text
-            for intent in input.clip_intents or []
-            if intent.status == "resolved" and intent.op == "group" and intent.creator_text
-        )
+        resolved.extend(intent.creator_text for intent in intents if intent.op == "group")
         phrases: dict[str, list[str]] = {}
         for text in resolved:
             key = creator_copy_match_key(text)
@@ -284,32 +192,22 @@ def _creator_captions(input: EditProposalAgentInput) -> dict[str, list[str]]:  #
                 phrases[key].append(text)
         return phrases
     phrases: dict[str, list[str]] = {}
-    words = (str(word.get("text") or "") for word in input.narration_words)
-    spoken = [key for key in map(creator_copy_match_key, words) if key]
-    for match in _QUOTED_TEXT_RE.finditer(input.creator_request):
-        if _is_reported_speech_quote(input.creator_request, match):
+    spoken = narration_word_keys(input.narration_words)
+    for match in QUOTED_TEXT_RE.finditer(input.creator_request):
+        if is_reported_speech_quote(input.creator_request, match):
             continue
-        if spoken and _is_spoken_script_quote(input.creator_request, match, spoken):
+        if is_spoken_script_quote(input.creator_request, match, spoken):
             continue
-        text = (match.group(1) or match.group(2) or "").strip()
+        text = quote_text(match).strip()
         key = creator_copy_match_key(text)
         if key:
             if text not in phrases.setdefault(key, []):
                 phrases[key].append(text)
-    for intent in input.clip_intents or []:
-        if intent.status != "resolved":
-            continue
-        text = (
-            intent.caption_text
-            if intent.op == "caption"
-            else intent.creator_text
-            if intent.op == "group"
-            else None
-        )
-        if text:
-            key = creator_copy_match_key(text)
-            if text not in phrases.setdefault(key, []):
-                phrases[key].append(text)
+    for intent in intents:
+        text = _intent_copy(intent)
+        key = creator_copy_match_key(text)
+        if text not in phrases.setdefault(key, []):
+            phrases[key].append(text)
     for title in (input.opening_title, input.closing_title):
         if title:
             key = creator_copy_match_key(title)
@@ -1218,9 +1116,14 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
     def _apply_resolved_caption_intents(
         plan: SemanticEditPlan, input: EditProposalAgentInput, aliases: dict[str, str]
     ) -> None:
-        """Bind trusted resolved captions to their exclusive assigned chapter(s)."""
+        """Bind trusted resolved captions to their exclusive assigned chapter(s).
+
+        Copy the voiceover already says still gets its exclusive block, but
+        no chapter thought: timed narration captions draw those words.
+        """
         if input.shot_labels:
             return
+        spoken_copy = _spoken_intent_copy(input)
         assigned: dict[str, str] = {}
         caption_texts = {
             intent.caption_text
@@ -1263,6 +1166,8 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
                     raise SchemaError(
                         "semantic_edit_proposal: caption intent has unrelated sources"
                     )
+                if text in spoken_copy:
+                    continue
                 prior = assigned.get(plan.chapters[index].chapter_id)
                 if prior is not None and prior != text:
                     raise SchemaError(

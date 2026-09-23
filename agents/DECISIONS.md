@@ -2353,8 +2353,10 @@ Decisions:
 
 - Same pattern as `draft_edit_proposal`: `bind=True` and `self.retry(countdown=15,
   max_retries=4)`, but the retry fires only when the failure's underlying cause is classified
-  transient, whichever wrapper it arrives in. `_is_transient_analysis_failure` walks the cause
-  chain and reuses the existing classifiers: `_is_genai_transient` (5xx / 429), the agent
+  transient, whichever wrapper it arrives in. `_is_transient_analysis_failure` walks the explicit
+  `__cause__` chain (never implicit `__context__`, so a bug raised while a 503 is being handled,
+  such as a failing `release_paid_call`, is not laundered into a retry) and reuses the existing
+  classifiers: `_is_genai_transient` (5xx / 429), the agent
   runtime's `TransientError`, and transport errors (dropped connection, read timeout). A
   quota-shaped 429 anywhere in the chain is never transient. `_analyze_image`/`_analyze_video`
   wrap every provider-region failure as `AnalysisTemporarilyUnavailableError`, including
@@ -2384,7 +2386,8 @@ Guards in `tests/tasks/test_autoplace_tasks.py`:
 `test_analyze_pool_asset_transient_gemini_error_retries_instead_of_terminal`,
 `test_analyze_pool_asset_deterministic_failure_is_not_retried`,
 `test_analyze_pool_asset_retry_budget_exhaustion_persists_terminal_failure`,
-`test_video_analysis_failure_is_classified_by_its_cause_chain`, and
+`test_video_analysis_failure_is_classified_by_its_cause_chain`,
+`test_analyze_pool_asset_bug_with_implicit_503_context_is_not_retried`, and
 `test_analyze_pool_asset_persists_safe_retryable_failure[transient_retries_exhausted]`.
 
 **Revisit if:** Gemini outages routinely outlast ~1 minute (lengthen the countdown or add

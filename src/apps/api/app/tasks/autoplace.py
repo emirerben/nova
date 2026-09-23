@@ -89,6 +89,8 @@ _POOL_ANALYSIS_MAX_RETRIES = 4
 # (maintenance._POOL_ANALYZING_STALE_AFTER). No retry is scheduled once the
 # chain's wall time (from the attempt's first invocation) plus the countdown
 # would exceed this budget; the run falls through to the terminal persist.
+# 360s + one last retry capped by the 240s soft limit = 600s, the reaper's
+# 10-min window (which is measured from each retry's own re-armed start anyway).
 _POOL_ANALYSIS_RETRY_BUDGET_S = 360
 # Wall-clock (epoch seconds) of the attempt's first invocation. A header, like
 # the attempt token, so a retry published mid rolling-deploy never hands an old
@@ -873,6 +875,12 @@ def _is_transient_analysis_failure(exc: BaseException) -> bool:
     <- ServerError), and transport failures (dropped connection, read timeout).
     A quota-shaped 429 anywhere in the chain is a provider denial: never
     transient.
+
+    Follows explicit `__cause__` only, never implicit `__context__`. Every real
+    transient chain in the stack is built with `raise ... from`, while a bug
+    raised WHILE a 503 is being handled (e.g. `release_paid_call` failing inside
+    the ledger's or the runtime's `except` block) carries that 503 only as
+    implicit context. Following context would retry that bug four times.
     """
     import httpx  # noqa: PLC0415
 
@@ -882,7 +890,7 @@ def _is_transient_analysis_failure(exc: BaseException) -> bool:
     link: BaseException | None = exc
     while link is not None and len(chain) < 16 and all(link is not seen for seen in chain):
         chain.append(link)
-        link = link.__cause__ or (None if link.__suppress_context__ else link.__context__)
+        link = link.__cause__
     if any(isinstance(e, Exception) and classify_provider_error(e) is not None for e in chain):
         return False
     return any(
