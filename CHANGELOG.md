@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.154.0] - 2026-09-23
+
+### Changed
+- KRI-118 L1: phone-render gate fixes (speech cleanup, musicBed, self-narration, visual_blocks, mute windows) (#1170) <!-- release-pr: 1170 -->
+
 ## [0.76.153.0] - 2026-09-23
 
 ### Changed
