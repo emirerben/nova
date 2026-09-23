@@ -7,6 +7,14 @@ Two light LLM tasks — NO ffmpeg here (renders stay on overlay-jobs):
       (+ PIL size for aspect); video → probe_video (server-side duration/aspect,
       never client-trusted) + best-effort clip analysis. Keyless machines get a
       filename-derived stub analysis so the flow still completes (finding 10).
+      A failure whose root cause is a provider transient (Gemini 5xx /
+      non-quota 429, dropped connection, transport timeout) is retried as a
+      fresh Celery invocation under the SAME attempt token — the row stays
+      `analyzing` (media readiness already published) and only flips to the
+      terminal `analysis_temporarily_unavailable` contract once
+      `_POOL_ANALYSIS_MAX_RETRIES` or `_POOL_ANALYSIS_RETRY_BUDGET_S` runs out.
+      Deterministic failures (a post-processing bug, malformed model JSON)
+      stay terminal on the first invocation.
 
   match_overlay_suggestions(job_id, variant_id, user_id)
       the matcher. transcript_source (Whisper fallback, persisted run-once) →
@@ -38,6 +46,7 @@ from typing import Any
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
 from celery import current_task
+from celery.exceptions import MaxRetriesExceededError
 
 from app.agents._provider_errors import classify_provider_error
 from app.agents._runtime import (
@@ -46,6 +55,7 @@ from app.agents._runtime import (
     ProviderOutcomeUnknownError,
     ProviderQuotaExceededError,
     RunContext,
+    TransientError,
 )
 from app.database import sync_session as _sync_session
 from app.db_locks import CONTENT_PLAN_LOCK
@@ -60,6 +70,30 @@ from app.worker import celery_app
 log = structlog.get_logger()
 
 _AUTOPLACE_TASK_LIMITS = {"soft_time_limit": 240, "time_limit": 300}
+
+# analyze_pool_asset used to be single-attempt: one Gemini 503 persisted a
+# terminal `failed` row that nothing re-dispatched (the reaper never touches
+# `failed`). 2026-09-23 15:27-15:29 UTC: 16 of 17 generateContent calls on the
+# autoplace machine returned 503 and every asset went terminal with
+# analysis_attempt_count=1 (iOS Add-media rows showed "Failed"). A transient
+# provider failure now re-drives the same attempt via `self.retry`; each retry
+# is a fresh invocation bounded by `_AUTOPLACE_TASK_LIMITS`, so the worker.py
+# time-limit < visibility_timeout invariant holds per attempt. Mirrors
+# `draft_edit_proposal` (edit_proposal_build.py).
+_POOL_ANALYSIS_RETRY_COUNTDOWN_S = 15
+_POOL_ANALYSIS_MAX_RETRIES = 4
+# The count alone does not bound wall time: a video invocation already retries
+# internally (gemini_upload_and_wait ~99s of backoff + the agent runtime's own
+# schedule) and can approach the 240s soft limit, so 5 invocations could keep a
+# Visual `analyzing` for ~20 min — past the reaper's 10-min `analyzing` window
+# (maintenance._POOL_ANALYZING_STALE_AFTER). No retry is scheduled once the
+# chain's wall time (from the attempt's first invocation) plus the countdown
+# would exceed this budget; the run falls through to the terminal persist.
+_POOL_ANALYSIS_RETRY_BUDGET_S = 360
+# Wall-clock (epoch seconds) of the attempt's first invocation. A header, like
+# the attempt token, so a retry published mid rolling-deploy never hands an old
+# worker an unexpected kwarg.
+_POOL_ANALYSIS_RETRY_STARTED_HEADER = "pool_asset_retry_started_at"
 
 # A manual re-match commits this token before broker publication.  Every write
 # from that task must still see the same token, otherwise a newer request (or
@@ -826,6 +860,46 @@ class AnalysisTemporarilyUnavailableError(RuntimeError):
     """The media is readable but the configured analysis provider failed."""
 
 
+def _is_transient_analysis_failure(exc: BaseException) -> bool:
+    """True only when a pool-analysis failure has a transient provider cause.
+
+    `_analyze_image`/`_analyze_video` wrap EVERY post-decode failure as
+    AnalysisTemporarilyUnavailableError — including deterministic bugs (an
+    AttributeError in post-processing, malformed model JSON). The wrapper says
+    nothing about whether a retry can help; the preserved cause chain does. So
+    walk it and reuse the classifiers the rest of the stack already applies:
+    `_is_genai_transient` (5xx / 429), the agent runtime's `TransientError`
+    (the video chain is GeminiAnalysisError <- TerminalError <- TransientError
+    <- ServerError), and transport failures (dropped connection, read timeout).
+    A quota-shaped 429 anywhere in the chain is a provider denial: never
+    transient.
+    """
+    import httpx  # noqa: PLC0415
+
+    from app.agents._model_client import _is_genai_transient  # noqa: PLC0415
+
+    chain: list[BaseException] = []
+    link: BaseException | None = exc
+    while link is not None and len(chain) < 16 and all(link is not seen for seen in chain):
+        chain.append(link)
+        link = link.__cause__ or (None if link.__suppress_context__ else link.__context__)
+    if any(isinstance(e, Exception) and classify_provider_error(e) is not None for e in chain):
+        return False
+    return any(
+        isinstance(e, (TransientError, ConnectionError, TimeoutError, httpx.TransportError))
+        or (isinstance(e, Exception) and _is_genai_transient(e))
+        for e in chain
+    )
+
+
+def _pool_retry_started_at(request: Any) -> float | None:
+    headers = getattr(request, "headers", None) or {}
+    try:
+        return float(headers.get(_POOL_ANALYSIS_RETRY_STARTED_HEADER))
+    except (TypeError, ValueError):
+        return None
+
+
 def _stub_analysis(asset: PlanItemAsset) -> dict:
     """Keyless fallback: a filename-derived subject so the heuristic matcher
     still has tokens to work with (finding 10 — flow completes without keys)."""
@@ -1330,8 +1404,13 @@ def _lock_owned_pool_asset(
     return plan, item, asset
 
 
-@celery_app.task(name="app.tasks.autoplace.analyze_pool_asset", **_AUTOPLACE_TASK_LIMITS)
+@celery_app.task(
+    bind=True,
+    name="app.tasks.autoplace.analyze_pool_asset",
+    **_AUTOPLACE_TASK_LIMITS,
+)
 def analyze_pool_asset(
+    self,  # noqa: ANN001
     asset_id: str,
     refresh: bool = False,
     attempt_token: str | None = None,
@@ -1342,11 +1421,26 @@ def analyze_pool_asset(
     the whole time — it never leaves the matcher pool and the rail button never
     flickers off; only the analysis payload is swapped on success. A failed
     refresh keeps the previous working analysis (never degrades a ready asset).
+
+    Transient provider failures retry (`_POOL_ANALYSIS_MAX_RETRIES` x
+    `_POOL_ANALYSIS_RETRY_COUNTDOWN_S`) under the same attempt token. A retry
+    re-enters its own in-flight `analyzing` row; the terminal
+    `analysis_temporarily_unavailable` contract is persisted only after the
+    last retry is exhausted, and stays byte-identical to the single-attempt
+    version.
     """
     # Keep the broker payload compatible with pre-0.28 workers during the
     # rolling deploy: the fence travels in a Celery header, not a third
     # positional argument. Direct task invocations may still pass it.
     attempt_token = _pool_attempt_token(attempt_token)
+    # 0 on the first invocation; Celery re-sends the header + args on retry, so
+    # a retry carries the same token and re-enters its own attempt below.
+    retry_attempt = int(getattr(self.request, "retries", 0) or 0)
+    # Wall-clock start of this attempt's retry chain (see
+    # _POOL_ANALYSIS_RETRY_BUDGET_S). A first invocation always starts a chain.
+    retry_started_at = (
+        _pool_retry_started_at(self.request) if retry_attempt else None
+    ) or time.time()
 
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
     from app.storage import (  # noqa: PLC0415
@@ -1405,19 +1499,40 @@ def analyze_pool_asset(
             if current_token and not attempt_token:
                 log.info("autoplace.asset_missing_attempt", asset_id=asset_id)
                 return
-            if asset.status not in {"uploaded", "queued"}:
-                return
-            now = datetime.now(UTC)
-            dispatched_at = getattr(asset, "analysis_last_dispatched_at", None)
-            if dispatched_at is not None:
-                queue_wait_s = max(0.0, (now - dispatched_at).total_seconds())
-            asset.status = "analyzing"
-            asset.media_status = "pending"
-            asset.analysis_started_at = now
-            asset.error_code = None
-            asset.error_detail = None
-            asset.error_retryable = False
-            db.commit()
+            if retry_attempt:
+                # A Celery retry re-enters the attempt it belongs to: the row
+                # was deliberately left `analyzing` (never flipped to failed
+                # before exhaustion) and its media readiness/preview were
+                # already published by the first invocation. Re-arm the
+                # reaper's `analyzing` staleness clock now that the retried run
+                # has actually started. The countdown + queue wait before this
+                # point still count against the previous run's start, which is
+                # one reason the chain is also bounded by
+                # _POOL_ANALYSIS_RETRY_BUDGET_S.
+                if asset.status != "analyzing":
+                    log.info(
+                        "autoplace.asset_retry_not_analyzing",
+                        asset_id=asset_id,
+                        status=asset.status,
+                        retries=retry_attempt,
+                    )
+                    return
+                asset.analysis_started_at = datetime.now(UTC)
+                db.commit()
+            else:
+                if asset.status not in {"uploaded", "queued"}:
+                    return
+                now = datetime.now(UTC)
+                dispatched_at = getattr(asset, "analysis_last_dispatched_at", None)
+                if dispatched_at is not None:
+                    queue_wait_s = max(0.0, (now - dispatched_at).total_seconds())
+                asset.status = "analyzing"
+                asset.media_status = "pending"
+                asset.analysis_started_at = now
+                asset.error_code = None
+                asset.error_detail = None
+                asset.error_retryable = False
+                db.commit()
 
     with pipeline_trace_for(scope):
         analysis: dict | None = None
@@ -1426,6 +1541,9 @@ def analyze_pool_asset(
         dims: tuple[int, int] | None = None
         has_alpha: bool | None = None
         failed = False
+        # True only for failures worth re-driving (provider transient); the
+        # terminal persist below is skipped while a retry is still available.
+        transient_failure = False
         timeout_exc: SoftTimeLimitExceeded | None = None
         failure_code: str | None = None
         failure_detail: str | None = None
@@ -1511,6 +1629,14 @@ def analyze_pool_asset(
                             else "preview_generation_failed"
                         ),
                     )
+                # The paid-call ledger keys a Gemini call by request_id (+ prompt/
+                # media). A deliberate Celery retry is a NEW paid attempt, so it
+                # needs its own key: reusing the first invocation's key is refused
+                # once that call is `settled` (200 with unusable output) or
+                # `unknown`, which would turn a retry into a non-retryable
+                # provider_outcome_unknown. The first invocation keeps the exact
+                # key it always had, so broker redelivery stays idempotent.
+                retry_key_suffix = f":retry{retry_attempt}" if retry_attempt else ""
                 if kind == "video":
                     analysis, aspect, duration, dims = _analyze_video(
                         local,
@@ -1518,7 +1644,7 @@ def analyze_pool_asset(
                         creator_id=str(plan.user_id),
                         run_context=RunContext(
                             creator_id=str(plan.user_id),
-                            request_id=f"pool-video:{scope}:{asset_id}",
+                            request_id=f"pool-video:{scope}:{asset_id}{retry_key_suffix}",
                             usage_purpose="optional_background",
                         ),
                     )
@@ -1529,7 +1655,7 @@ def analyze_pool_asset(
                         creator_id=str(plan.user_id),
                         run_context=RunContext(
                             creator_id=str(plan.user_id),
-                            request_id=f"pool-image:{scope}:{asset_id}",
+                            request_id=f"pool-image:{scope}:{asset_id}{retry_key_suffix}",
                             usage_purpose="optional_background",
                         ),
                     )
@@ -1564,10 +1690,21 @@ def analyze_pool_asset(
                 "or MOV."
             )
             failed = True
-        except AnalysisTemporarilyUnavailableError:
+        except AnalysisTemporarilyUnavailableError as exc:
             failure_code = "analysis_temporarily_unavailable"
             failure_detail = "Kria temporarily couldn't analyze this file. Try again."
             failed = True
+            # The wrapper also carries deterministic bugs; only a transient
+            # root cause earns a retry. Anything else stays terminal on this
+            # invocation, exactly as before retries existed.
+            transient_failure = _is_transient_analysis_failure(exc)
+            cause = exc.__cause__
+            log.warning(
+                "autoplace.analysis_unavailable",
+                asset_id=asset_id,
+                cause_type=type(cause).__name__ if cause is not None else None,
+                transient=transient_failure,
+            )
         except (
             AiBudgetExceededError,
             CostControlUnavailableError,
@@ -1595,13 +1732,74 @@ def analyze_pool_asset(
         except Exception as exc:
             failure_code = "analysis_temporarily_unavailable"
             failure_detail = "Kria temporarily couldn't analyze this file. Try again."
+            transient_failure = _is_transient_analysis_failure(exc)
             log.warning(
                 "autoplace.analysis_failed",
                 asset_id=asset_id,
                 error_code=failure_code,
                 error_type=type(exc).__name__,
+                transient=transient_failure,
             )
             failed = True
+
+        chain_elapsed_s = time.time() - retry_started_at
+        if (
+            transient_failure
+            and chain_elapsed_s + _POOL_ANALYSIS_RETRY_COUNTDOWN_S > _POOL_ANALYSIS_RETRY_BUDGET_S
+        ):
+            # Out of wall-clock budget: fall through to the terminal persist.
+            log.warning(
+                "autoplace.analysis_retry_budget_exhausted",
+                asset_id=asset_id,
+                error_code=failure_code,
+                retries=retry_attempt,
+                chain_elapsed_s=round(chain_elapsed_s, 3),
+                budget_s=_POOL_ANALYSIS_RETRY_BUDGET_S,
+                correlation_id=correlation_id,
+            )
+        elif transient_failure:
+            log.warning(
+                "autoplace.analysis_retry",
+                asset_id=asset_id,
+                error_code=failure_code,
+                retries=retry_attempt,
+                max_retries=_POOL_ANALYSIS_MAX_RETRIES,
+                countdown_s=_POOL_ANALYSIS_RETRY_COUNTDOWN_S,
+                duration_s=round(time.monotonic() - started_monotonic, 3),
+                chain_elapsed_s=round(chain_elapsed_s, 3),
+                correlation_id=correlation_id,
+            )
+            _record(
+                "pool_asset_analysis_retry",
+                asset_id=asset_id,
+                error_code=failure_code,
+                retries=retry_attempt,
+            )
+            try:
+                # The attempt token rides in the payload too, so a retry never
+                # depends on the header round-trip alone; kwargs are cleared
+                # because `refresh` is re-sent positionally. Passing `headers`
+                # replaces the request's, so carry them over (token,
+                # correlation id) and add the chain start time.
+                raise self.retry(
+                    args=(asset_id, refresh, attempt_token),
+                    kwargs={},
+                    headers={
+                        **(getattr(self.request, "headers", None) or {}),
+                        _POOL_ANALYSIS_RETRY_STARTED_HEADER: f"{retry_started_at:.3f}",
+                    },
+                    countdown=_POOL_ANALYSIS_RETRY_COUNTDOWN_S,
+                    max_retries=_POOL_ANALYSIS_MAX_RETRIES,
+                )
+            except MaxRetriesExceededError:
+                # Fall through to the unchanged terminal-failure persist.
+                log.warning(
+                    "autoplace.analysis_retries_exhausted",
+                    asset_id=asset_id,
+                    error_code=failure_code,
+                    retries=retry_attempt,
+                    correlation_id=correlation_id,
+                )
 
         with _sync_session() as db:
             try:
@@ -1700,6 +1898,7 @@ def analyze_pool_asset(
             error_code=failure_code if persisted_status == "failed" else None,
             correlation_id=correlation_id,
             attempt=getattr(asset, "analysis_attempt_count", None),
+            retries=retry_attempt,
         )
         _record(
             "pool_asset_analyzed",
