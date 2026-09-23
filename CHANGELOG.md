@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.167.0] - 2026-09-23
+
+### Changed
+- fix(narrated): spoken lines never become labels; phone draws labels like cloud; cleanup failures attributed correctly; no stuck 'preparing' (#1185) <!-- release-pr: 1185 -->
+
 ## [0.76.166.0] - 2026-09-23
 
 ### Changed
