@@ -633,6 +633,12 @@ DispatchOutcome = Literal[
     "speech_cleanup_unavailable",
     "speech_cleanup_recovery_conflict",
     "speech_cleanup_analysis_conflict",
+    # KRI-118 L1 item 1: `choice == "clean"` was submitted for an item whose
+    # clips are phone/analysis-proxy sourced. The real audio bytes never
+    # leave the device, so speech cleanup can never run there -- refused
+    # explicitly, before any Job row exists, rather than falling through to
+    # the generic `speech_cleanup_analysis_conflict` above.
+    "speech_cleanup_unavailable_on_phone",
     "video_required",
 ]
 
@@ -746,6 +752,15 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
         "Remove the extra clips (or add one) and try again. No fallback edit was "
         "rendered.",
     ),
+    # KRI-118 L1 item 3: self-narration (no recorded voiceover) across 2+
+    # clips has no phone compiler (`talking_head` isn't phone-supported).
+    # Distinct code/copy from `unsupported_format` so the creator hears an
+    # actionable fix instead of the generic "this kind of video" message.
+    "self_narration_multi_clip": (
+        "phone_self_narration_multi_clip",
+        "Narrating across several clips isn't on iPhone yet. Record a voiceover, "
+        "or keep one clip for talking-to-camera.",
+    ),
 }
 
 
@@ -847,6 +862,23 @@ def _speech_cleanup_dispatch_snapshot(
     )
     from app.services.speech_cleanup_preflight import analysis_snapshot  # noqa: PLC0415
 
+    resolution = resolve_item_narration(item, detector_policy=current_detector_policy())
+    if choice == "clean":
+        from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+
+        # KRI-118 L1 item 1: gate on the ACTIVE narration source speech
+        # cleanup would actually operate on -- a phone project's recorded
+        # voiceover (when audio_mode == "voiceover") is a normal, fully
+        # uploaded audio file, never an analysis proxy, even though this
+        # same item's VIDEO clips are proxies; only the source cleanup would
+        # actually touch matters here. `preflight_enabled_for_source`
+        # already stops such a source from ever being scheduled (no
+        # analysis row -> no offered choice), but a stale/forged client
+        # request could still submit `choice == "clean"` against a row that
+        # predates the item becoming phone-sourced -- refuse explicitly
+        # here, before any Job row exists.
+        if resolution.source is not None and is_analysis_proxy_path(resolution.source.storage_path):
+            return DispatchResult("speech_cleanup_unavailable_on_phone")
     try:
         identifier = uuid.UUID(str(analysis_id))
     except (TypeError, ValueError):
@@ -857,7 +889,6 @@ def _speech_cleanup_dispatch_snapshot(
         with_for_update=True,
         populate_existing=True,
     )
-    resolution = resolve_item_narration(item, detector_policy=current_detector_policy())
     if (
         row is None
         or row.plan_item_id != item.id
@@ -1481,6 +1512,7 @@ def _dispatch_item_render(
             resolution.source.source_policy_fingerprint,
             mode=settings.speech_cleanup_preflight_mode,
             rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+            storage_path=resolution.source.storage_path,
         ):
             return DispatchResult("speech_cleanup_analysis_conflict")
     if speech_cleanup_analysis_id is not None or speech_cleanup_choice is not None:
@@ -1697,6 +1729,19 @@ def _dispatch_item_render(
                         # else (0 or 2+ clips, or the self-narration flag
                         # off) fails closed instead of binding phone sources
                         # for an edit that might resolve to `talking_head`.
+                        if len(clip_paths) >= 2:
+                            # KRI-118 L1 item 3: defense-in-depth mirror of
+                            # `creator_capabilities.resolve_creator_manifest`'s
+                            # `phone_format:{format}` gate -- that check
+                            # already refuses this at planning time, before a
+                            # Job is minted; this catches a stale client or a
+                            # replan race with a distinct reason/message
+                            # rather than the generic `unsupported_format`.
+                            phone_gate = "self_narration_multi_clip"
+                            raise ValueError(
+                                f"analysis proxies cannot self-narrate '{fmt}' across "
+                                "multiple clips on iPhone yet"
+                            )
                         if not (
                             settings.narrated_self_narration_enabled
                             and "subtitled" in supported_now

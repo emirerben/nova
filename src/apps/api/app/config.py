@@ -1154,6 +1154,12 @@ class Settings(BaseSettings):
     main_creator_agent_freeform_uploads_enabled: bool = False
     main_creator_agent_workspace_enabled: bool = False
     main_creator_agent_rollout_percent: int = Field(default=0, ge=0, le=100)
+    # KRI-118: story-shape capability flag consumed by the Main Creator agent
+    # (a separate lane) to gate offering montage "shapes" as a creator-facing
+    # concept. Not wired to anything in this module or its callers; added
+    # here so that lane can read it without a second config PR. Ships
+    # default ON per that lane's rollout plan.
+    creator_montage_shapes_enabled: bool = True
 
     @model_validator(mode="after")
     def reject_guided_edit_before_strict_renderer(self) -> "Settings":
