@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.158.0] - 2026-09-23
+
+### Changed
+- feat(ios): chat UI for KRI-118 thread API (L5) (#1175) <!-- release-pr: 1175 -->
+
 ## [0.76.157.0] - 2026-09-23
 
 ### Changed
