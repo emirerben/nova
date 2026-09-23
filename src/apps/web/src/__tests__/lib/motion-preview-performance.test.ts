@@ -38,6 +38,14 @@ const SAMPLE_COUNT = 24;
  * the smallest ratio) keeps the ratio centred on the same value whether the
  * machine is idle or thrashing. A genuine regression raises the draw cost in
  * every block, including the cheapest one.
+ *
+ * Within a block each side is sampled back-to-back in its own phase. The
+ * browser twin (MotionPreviewPerformanceFixture.tsx) interleaves the two sides
+ * instead, because its 1x and 2x pages share one small CI runner and phased
+ * sampling let that load land on one side of the ratio. Keep this one phased:
+ * on Apple Silicon under load, back-to-back interleaved samples split between
+ * performance and efficiency cores, which the median/trimmed-mean pair reads
+ * unevenly (0.16-1.14 at 3x load). See agents/DECISIONS.md (2026-09-24).
  */
 const MEASUREMENT_BLOCKS = 3;
 /** Samples dropped from each end before averaging, so a scheduler preemption

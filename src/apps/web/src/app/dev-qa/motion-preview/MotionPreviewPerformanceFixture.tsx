@@ -17,6 +17,10 @@ const LONG_TASK_MS = 50;
 // runner speed without normalizing away a regression in drawMotionFrame.
 // Minimize each side independently; taking the smallest ratio would favor
 // a preempted calibration sample and could conceal a real slowdown.
+// One deliberate difference: here calibration and draw samples are
+// interleaved, alternating which runs first. The e2e 1x and 2x pages run at
+// the same time on one small CI runner, and sampling each side in its own phase
+// let that load land on one side of the ratio (agents/DECISIONS.md, 2026-09-24).
 const CALIBRATION_ITERATIONS = 80;
 const SAMPLE_COUNT = 24;
 const MEASUREMENT_BLOCKS = 3;
@@ -64,6 +68,8 @@ interface BenchmarkResult {
   drawCostRatio: number;
   drawCostCeiling: number;
   drawMultiplier: number;
+  /** Per-block "draw/calibration" ms, logged by the e2e spec for diagnosis. */
+  blocks: string;
 }
 
 function drawCalibrationWorkload(CanvasKit: any, canvas: any, font: any): void {
@@ -110,6 +116,7 @@ export default function MotionPreviewPerformanceFixture() {
     drawCostRatio: 0,
     drawCostCeiling: MAX_DRAW_COST_RATIO,
     drawMultiplier: 1,
+    blocks: "",
   });
 
   useEffect(() => {
@@ -162,28 +169,35 @@ export default function MotionPreviewPerformanceFixture() {
           observedDurations.push(...list.getEntries().map((entry) => entry.duration));
         });
         observer.observe({ type: "longtask", buffered: false });
+        const benchmarkSurface = surface;
+        const motionResources = resources;
+        const timedFrame = async (run: () => void): Promise<number | null> => {
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          if (cancelled) return null;
+          const started = performance.now();
+          run();
+          benchmarkSurface.flush();
+          return performance.now() - started;
+        };
         const drawDurations: number[] = [];
         const blocks = [] as Array<{ calibrationCost: number; drawCost: number }>;
         for (let block = 0; block < MEASUREMENT_BLOCKS; block += 1) {
           const calibrationDurations: number[] = [];
-          for (let index = 0; index < SAMPLE_COUNT; index += 1) {
-            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-            if (cancelled) return;
-            const started = performance.now();
-            drawCalibrationWorkload(CanvasKit, canvas, calibrationFont);
-            surface.flush();
-            calibrationDurations.push(performance.now() - started);
-          }
           drawDurations.length = 0;
           for (let index = 0; index < SAMPLE_COUNT; index += 1) {
-            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-            if (cancelled) return;
-            const started = performance.now();
-            for (let repeat = 0; repeat < drawMultiplier; repeat += 1) {
-              drawMotionFrame(CanvasKit, canvas, scenes, (index * 5) % 360, 360, 640, resources);
-            }
-            surface.flush();
-            drawDurations.push(performance.now() - started);
+            const calibrate = () => drawCalibrationWorkload(CanvasKit, canvas, calibrationFont);
+            const draw = () => {
+              for (let repeat = 0; repeat < drawMultiplier; repeat += 1) {
+                drawMotionFrame(CanvasKit, canvas, scenes, (index * 5) % 360, 360, 640, motionResources);
+              }
+            };
+            // Alternate the order so neither side always runs right after the other.
+            const calibrationFirst = index % 2 === 0;
+            const first = await timedFrame(calibrationFirst ? calibrate : draw);
+            const second = await timedFrame(calibrationFirst ? draw : calibrate);
+            if (first === null || second === null) return;
+            calibrationDurations.push(calibrationFirst ? first : second);
+            drawDurations.push(calibrationFirst ? second : first);
           }
           blocks.push({ calibrationCost: median(calibrationDurations), drawCost: trimmedMean(drawDurations) });
         }
@@ -201,6 +215,9 @@ export default function MotionPreviewPerformanceFixture() {
           drawCostRatio,
           drawCostCeiling: MAX_DRAW_COST_RATIO,
           drawMultiplier,
+          blocks: blocks
+            .map((block) => `${block.drawCost.toFixed(2)}/${block.calibrationCost.toFixed(2)}`)
+            .join(", "),
         });
       } catch {
         if (!cancelled) setResult((current) => ({ ...current, status: "failed" }));
@@ -230,6 +247,7 @@ export default function MotionPreviewPerformanceFixture() {
         data-draw-cost-ratio={result.drawCostRatio.toFixed(3)}
         data-draw-cost-ceiling={result.drawCostCeiling.toFixed(3)}
         data-draw-multiplier={result.drawMultiplier}
+        data-blocks={result.blocks}
         aria-hidden="true"
       />
     </main>

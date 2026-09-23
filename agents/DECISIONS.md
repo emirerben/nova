@@ -2393,3 +2393,53 @@ Guards in `tests/tasks/test_autoplace_tasks.py`:
 **Revisit if:** Gemini outages routinely outlast ~1 minute (lengthen the countdown or add
 backoff), or GCS download errors start stranding uploads (google-cloud-storage errors are not
 classified transient, so a failed download is still terminal on the first failure).
+
+---
+
+## [2026-09-24] Browser motion benchmark interleaves its samples; the Jest twin stays phased
+
+`e2e/motion-preview.spec.ts` › "the calibrated budget catches a doubled draw workload"
+failed 4/4 attempts on PR #1197, a diff that never touches the page. It was not new. Across
+the last 87 Mobile E2E runs the 2x ratio read ≤ 0.8 on **33 first attempts (38%)**; the
+Playwright retry hid most of them, and 7 of 33 retries failed too. The 1x ratio in the same
+runs held at 0.43-0.55 (sd 0.025), so an honest 2x should read about 0.95. The 2x ratio
+measured 0.64-1.14 (median 0.85, sd 0.098). It was biased low, not just noisy.
+
+**Not the flush.** `?benchmark=2x` repeats `drawMotionFrame` but flushes once. Flush costs
+~0.2ms against a ~3.9ms 1x draw, so an idle 2x run measures 1.95x the 1x ratio. That falls
+~2.5% short of a true doubling. The failing runs were short by 25-50%.
+
+**Cause: phased sampling under concurrent load.** Playwright runs 2 workers on one small
+shared runner, so the 1x and 2x pages execute at the same moment. Each page sampled 24
+calibrations, then 24 draws, per block, and kept each side's cheapest block. The two pages
+load the CPU differently from phase to phase, and the 2x page runs longer. A calibration
+phase could overlap the other page's heavy work while a draw phase ran alone. The
+independent minimums then paired a quiet draw with a contended calibration, which pulls the
+ratio down. The 2x test sits 0.15 above the ceiling, so that bias was enough to fail it.
+The 1x test sits 0.3 below, so it absorbed the same bias.
+
+**Fix:** the browser fixture interleaves calibration and draw samples, one per frame, and
+alternates which runs first. Load at any moment now lands on both sides. Statistics,
+workloads, blocks and the 0.8 ceiling are unchanged. Idle it reads the same as before
+(1x 0.49-0.52, 2x 0.96-1.00 on arm64). The spec now also logs per-block draw/calibration
+costs, so the next excursion can be diagnosed from the CI log.
+
+**Why the Jest twin does not follow.** The 2026-09-08 entry rejected interleaving on
+measured evidence, and it reproduces on an M-series Mac. With 36 busy loops (3x load),
+back-to-back interleaved samples in Node read 0.16-1.14 (median 0.86, so the 1x test would
+fail); phased read 0.30-0.73. The cause is the hybrid CPU. Confined to efficiency cores
+only (`taskpolicy -c background`, 2x load), interleaved reads 0.46-0.52 and phased
+0.42-0.50. Under load the unconfined thread migrates between P and E cores, 2-3x apart in
+speed. Back-to-back alternation spreads each side across both core types, and median
+(calibration) against trimmed mean (draw) reads that split unevenly. The browser page
+waits a frame before every sample, its renderer outranks background load, and both
+variants read 0.49-0.51 (1x) and 0.96-0.98 (2x) under the same 3x load. CI runners are
+uniform x86, where either scheme works. So Node keeps phased sampling (it is not flaky in
+CI, and interleaving would make local `npm test` flaky on a busy Mac). The browser, whose
+real problem is a concurrently running page, interleaves.
+
+**Lesson:** an independent-minimum estimator is only unbiased when both sides see the same
+conditions. Phased sampling guarantees that for random, short interference, not for load
+that shifts on the same timescale as the phases. Check where the benchmark actually runs
+before trusting a local contention study: here that was concurrent pages on a small runner, and
+locally it was a hybrid CPU.
