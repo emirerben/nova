@@ -12,7 +12,9 @@
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 
 /** Display order: editing staples first, reactions next, niche last. Every
- *  API category must appear here; anything else falls into "Other". */
+ *  API category must appear here; anything else falls into "Other". Kept in
+ *  step with the API's SFX_CATEGORIES by
+ *  src/apps/api/tests/services/test_sfx_catalog_web_parity.py. */
 export const SFX_CATEGORY_ORDER = [
   "transition",
   "impact",
@@ -56,7 +58,7 @@ const WORD_RE = /[\p{L}\p{N}]+/gu;
 const MARKS_RE = /\p{M}+/gu;
 
 // Words that describe the request, not the sound ("a buzzer sound effect").
-// Same list as the API resolver's `_FILLER`.
+// Same list as the API resolver's `_FILLER` (parity test named above).
 const QUERY_FILLER = new Set([
   "a", "an", "the", "some", "any", "sound", "sounds", "effect", "effects", "sfx",
   "noise", "my", "this", "that", "it", "of", "to", "for", "with", "and", "please",

@@ -116,11 +116,11 @@ describe("sfxQueryMatcher", () => {
   it("keeps non-ASCII letters inside words and folds accents", () => {
     expect(sfxWords("Olé şok!")).toEqual(["ole", "sok"]);
     // Decomposed (NFD) text reads the same as composed text.
-    expect(sfxWords("Şok")).toEqual(["sok"]);
+    expect(sfxWords("S\u0327ok")).toEqual(["sok"]);
     const ok = effect("ok", "OK chime", "approval", ["ok"]);
     // "şok" must not collapse to "ok" and match unrelated effects.
     expect(sfxQueryMatcher("şok")(ok)).toBe(false);
-    expect(sfxQueryMatcher("Şok")(ok)).toBe(false);
+    expect(sfxQueryMatcher("S\u0327ok")(ok)).toBe(false);
     expect(sfxQueryMatcher("ok")(ok)).toBe(true);
     expect(sfxQueryMatcher("ole")(effect("ole", "Olé crowd", "sports"))).toBe(true);
   });
@@ -251,9 +251,9 @@ describe("groupSfxEffects", () => {
   });
 
   it("orders exactly the nine categories the KRI-173 API ships", () => {
-    // Hand-kept copy of SFX_CATEGORIES in the API's app/services/sfx_catalog.py
-    // (KRI-173). This pins the web list; it cannot see the API, so a new API
-    // category must be added here and to SFX_CATEGORY_ORDER together.
+    // Pins the web list; the API side of the contract is
+    // src/apps/api/tests/services/test_sfx_catalog_web_parity.py, which fails
+    // when SFX_CATEGORIES and SFX_CATEGORY_ORDER drift apart.
     expect([...SFX_CATEGORY_ORDER].sort()).toEqual(
       ["approval", "comedy", "impact", "money", "rejection", "sports", "suspense", "transition", "ui"],
     );
