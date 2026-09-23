@@ -130,7 +130,9 @@ class ProposalBriefPayload(BaseModel):
     goal_length: int
     creator_request_length: int
     pace: str
-    duration_s: int
+    # ProposalDuration is int | float: a narrated brief carries the
+    # voiceover's fractional length, which an int field rejects (500).
+    duration_s: float
 
 
 class ProposalFailurePayload(BaseModel):
@@ -160,7 +162,7 @@ class LastApprovedSummaryPayload(BaseModel):
 
 class DraftSummaryPayload(BaseModel):
     beat_count: int
-    duration_s: int
+    duration_s: float
 
 
 class PlannerFallbackPayload(BaseModel):

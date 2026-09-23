@@ -785,3 +785,107 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
     base = next(uploads.glob("base_1_guided_story_*.mp4"))
     base_probe = probe_video(str(base))
     assert (base_probe.width, base_probe.height) == (canvas.width, canvas.height)
+
+
+def test_real_ffmpeg_pinned_narration_mixes_a_cleaned_wav_derivative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A "Clean up speech" guided narration is a pinned PCM WAV derivative.
+
+    The cloud mixer must fetch that exact generation, keep its container
+    suffix, and re-encode it to AAC at the approved story duration (the
+    cleaned bed ends ~10 ms before the frame-rounded timeline, as in prod).
+    """
+    from app import storage
+    from app.pipeline.guided_story import _mix_pinned_narration
+    from app.schemas.edit_proposal import NarrationTrack
+
+    story_s = 4.0
+    video = tmp_path / "story.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black:s=360x640:r=30:d={story_s}",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            str(video),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    wav = tmp_path / "cleaned.wav"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=3.99",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_s16le",
+            "-y",
+            str(wav),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    assert wav.read_bytes()[:4] == b"RIFF"
+    analysis_id = "0f0f0f0f-3333-4333-8333-333333333333"
+    narration = NarrationTrack(
+        gcs_path=f"users/owner/plan/item/speech-cleanup/{analysis_id}/{'0a' * 16}.wav",
+        generation="7",
+        duration_s=3.99,
+        speech_cleanup={
+            "analysis_id": analysis_id,
+            "source_gcs_path": "users/owner/plan/item/voiceover.m4a",
+            "source_generation": "1",
+            "source_duration_s": 4.7,
+            "cut_sha256": "c" * 64,
+        },
+    )
+    downloads: list[tuple[str, str, str]] = []
+
+    def download(path: str, local: str, *, generation: str) -> None:
+        downloads.append((path, Path(local).name, generation))
+        shutil.copyfile(wav, local)
+
+    monkeypatch.setattr(storage, "object_metadata", lambda _path: SimpleNamespace(generation="7"))
+    monkeypatch.setattr(storage, "download_generation_to_file", download)
+    output = tmp_path / "mixed.mp4"
+
+    _mix_pinned_narration(
+        str(video), str(output), narration, tmpdir=str(tmp_path), duration_s=story_s
+    )
+
+    assert downloads == [(narration.gcs_path, "guided_narration.wav", "7")]
+    probe = probe_video(str(output))
+    assert probe.has_audio is True
+    assert probe.duration_s == pytest.approx(story_s, abs=0.1)
+    codecs = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "csv=p=0",
+            str(output),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert codecs == ["aac"]

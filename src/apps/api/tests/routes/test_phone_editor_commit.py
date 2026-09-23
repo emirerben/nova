@@ -17,17 +17,21 @@ from tests.pipeline.test_phone_guided_plan import fixture
 from tests.services import test_phone_visuals as photos
 
 
-def phone_job(monkeypatch, *, photo=False):
-    """``photo`` appends a Visuals-pool still whose receipt the worker pinned."""
+def phone_job(monkeypatch, *, photo=False, narration=None, bed=None):
+    """``photo`` appends a Visuals-pool still whose receipt the worker pinned;
+    ``narration`` + ``bed`` pin a recorded voiceover the way the worker did."""
     monkeypatch.setattr(gj.settings, "phone_rendering_enabled", True)
     monkeypatch.setattr(
         gj.settings,
         "phone_render_verified_features",
         ["basicComposition", "local1080Export", "positionedText", "animatedText", "audioMix"]
-        + (["stillImages"] if photo else []),
+        + (["stillImages"] if photo else [])
+        + (["narrationAudio"] if narration is not None else []),
     )
     monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", False)
     plan, bindings = photos.photo_plan() if photo else fixture()
+    if narration is not None:
+        plan.narration = narration
     visuals = (photos.photo_visual(),) if photo else ()
     plan.text_elements = [
         TextElement(
@@ -74,7 +78,7 @@ def phone_job(monkeypatch, *, photo=False):
             job_id=job.id,
             variant_id="guided_story",
             revision=1,
-            recipe=compile_phone_guided_plan(plan, bindings, visuals=visuals),
+            recipe=compile_phone_guided_plan(plan, bindings, visuals=visuals, narration=bed),
         ),
         base_generation="first",
     )
@@ -190,6 +194,36 @@ def test_phone_save_atomically_pins_revision_without_cloud_dispatch(monkeypatch)
     assert job.assembly_plan == before
     save(job, generation=prep["generation"])
     assert device_status(job, "guided_story").request.identity.recipe_revision == 3
+
+
+def test_phone_save_recompiles_with_the_cleaned_narration_bed(monkeypatch):
+    """A "Clean up speech" story keeps playing its derivative after a native Save.
+
+    Save never re-downloads the voiceover: it reuses the bed pinned in the
+    previous immutable recipe, which for a cleaned story is the WAV derivative
+    at its cleaned duration -- the raw recording must not come back.
+    """
+    from tests.pipeline.test_phone_guided_plan import narration_bed
+    from tests.tasks.test_phone_guided_dispatch import DERIVATIVE_GENERATION, cleaned_narration
+
+    narration = cleaned_narration()
+    bed = narration_bed(generation=DERIVATIVE_GENERATION, duration_s=narration.duration_s)
+    job = phone_job(monkeypatch, narration=narration, bed=bed)
+    before = device_status(job, "guided_story").request
+
+    save(job)
+
+    after = device_status(job, "guided_story").request
+    assert after.identity.recipe_revision == before.identity.recipe_revision + 1
+    assert "After" in after.model_dump_json()
+    voices = [a for a in after.recipe.asset_manifest.assets if a.kind == "voiceover"]
+    assert voices == [a for a in before.recipe.asset_manifest.assets if a.kind == "voiceover"]
+    assert voices[0].generation == DERIVATIVE_GENERATION
+    [track] = [t for t in after.recipe.tracks if t.kind == "audio"]
+    [clip] = track.clips
+    assert (clip.source_asset_id, clip.source_start) == (voices[0].id, 0)
+    assert clip.source_duration == pytest.approx(narration.duration_s)
+    assert after.recipe.audio.narration_asset_id == voices[0].id
 
 
 @pytest.mark.parametrize("failure", ["capability", "cohort", "rollback", "binding"])

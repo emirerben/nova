@@ -1,0 +1,792 @@
+{
+  "agent": "nova.plan.semantic_edit_proposal",
+  "prompt_version": "2.0.12",
+  "input": {
+    "direction": "guided_story",
+    "pace": "relaxed",
+    "target_duration_s": 48.618667,
+    "narration_duration_s": 48.618667,
+    "narration_words": [
+      {
+        "text": "Every",
+        "start_s": 2.14,
+        "end_s": 2.499,
+        "confidence": 1.0
+      },
+      {
+        "text": "ship",
+        "start_s": 2.562,
+        "end_s": 2.921,
+        "confidence": 1.0
+      },
+      {
+        "text": "that",
+        "start_s": 2.984,
+        "end_s": 3.343,
+        "confidence": 1.0
+      },
+      {
+        "text": "reached",
+        "start_s": 3.406,
+        "end_s": 3.765,
+        "confidence": 1.0
+      },
+      {
+        "text": "this",
+        "start_s": 3.828,
+        "end_s": 4.187,
+        "confidence": 1.0
+      },
+      {
+        "text": "bay",
+        "start_s": 4.25,
+        "end_s": 4.609,
+        "confidence": 1.0
+      },
+      {
+        "text": "for",
+        "start_s": 4.672,
+        "end_s": 5.031,
+        "confidence": 1.0
+      },
+      {
+        "text": "a",
+        "start_s": 5.094,
+        "end_s": 5.453,
+        "confidence": 1.0
+      },
+      {
+        "text": "century",
+        "start_s": 5.516,
+        "end_s": 5.875,
+        "confidence": 1.0
+      },
+      {
+        "text": "looked",
+        "start_s": 5.938,
+        "end_s": 6.296,
+        "confidence": 1.0
+      },
+      {
+        "text": "for",
+        "start_s": 6.36,
+        "end_s": 6.718,
+        "confidence": 1.0
+      },
+      {
+        "text": "one",
+        "start_s": 6.782,
+        "end_s": 7.14,
+        "confidence": 1.0
+      },
+      {
+        "text": "light.",
+        "start_s": 7.204,
+        "end_s": 7.562,
+        "confidence": 1.0
+      },
+      {
+        "text": "The",
+        "start_s": 8.626,
+        "end_s": 8.984,
+        "confidence": 1.0
+      },
+      {
+        "text": "first",
+        "start_s": 9.048,
+        "end_s": 9.406,
+        "confidence": 1.0
+      },
+      {
+        "text": "keeper",
+        "start_s": 9.47,
+        "end_s": 9.828,
+        "confidence": 1.0
+      },
+      {
+        "text": "arrived",
+        "start_s": 9.892,
+        "end_s": 10.25,
+        "confidence": 1.0
+      },
+      {
+        "text": "with",
+        "start_s": 10.314,
+        "end_s": 10.672,
+        "confidence": 1.0
+      },
+      {
+        "text": "a",
+        "start_s": 10.736,
+        "end_s": 11.094,
+        "confidence": 1.0
+      },
+      {
+        "text": "lamp,",
+        "start_s": 11.158,
+        "end_s": 11.516,
+        "confidence": 1.0
+      },
+      {
+        "text": "a",
+        "start_s": 11.58,
+        "end_s": 11.938,
+        "confidence": 1.0
+      },
+      {
+        "text": "logbook",
+        "start_s": 12.002,
+        "end_s": 12.36,
+        "confidence": 1.0
+      },
+      {
+        "text": "and",
+        "start_s": 12.424,
+        "end_s": 12.782,
+        "confidence": 1.0
+      },
+      {
+        "text": "a",
+        "start_s": 12.845,
+        "end_s": 13.204,
+        "confidence": 1.0
+      },
+      {
+        "text": "cat.",
+        "start_s": 13.267,
+        "end_s": 13.626,
+        "confidence": 1.0
+      },
+      {
+        "text": "She",
+        "start_s": 14.689,
+        "end_s": 15.048,
+        "confidence": 1.0
+      },
+      {
+        "text": "kept",
+        "start_s": 15.111,
+        "end_s": 15.47,
+        "confidence": 1.0
+      },
+      {
+        "text": "watch",
+        "start_s": 15.533,
+        "end_s": 15.892,
+        "confidence": 1.0
+      },
+      {
+        "text": "for",
+        "start_s": 15.955,
+        "end_s": 16.314,
+        "confidence": 1.0
+      },
+      {
+        "text": "forty",
+        "start_s": 16.377,
+        "end_s": 16.736,
+        "confidence": 1.0
+      },
+      {
+        "text": "winters.",
+        "start_s": 16.799,
+        "end_s": 17.158,
+        "confidence": 1.0
+      },
+      {
+        "text": "She",
+        "start_s": 17.221,
+        "end_s": 17.58,
+        "confidence": 1.0
+      },
+      {
+        "text": "reportedly",
+        "start_s": 17.643,
+        "end_s": 18.002,
+        "confidence": 1.0
+      },
+      {
+        "text": "said:",
+        "start_s": 18.065,
+        "end_s": 18.424,
+        "confidence": 1.0
+      },
+      {
+        "text": "\"The",
+        "start_s": 18.487,
+        "end_s": 18.846,
+        "confidence": 1.0
+      },
+      {
+        "text": "sea",
+        "start_s": 18.909,
+        "end_s": 19.268,
+        "confidence": 1.0
+      },
+      {
+        "text": "keeps",
+        "start_s": 19.331,
+        "end_s": 19.69,
+        "confidence": 1.0
+      },
+      {
+        "text": "its",
+        "start_s": 19.753,
+        "end_s": 20.112,
+        "confidence": 1.0
+      },
+      {
+        "text": "own",
+        "start_s": 20.175,
+        "end_s": 20.534,
+        "confidence": 1.0
+      },
+      {
+        "text": "hours.\"",
+        "start_s": 20.597,
+        "end_s": 20.956,
+        "confidence": 1.0
+      },
+      {
+        "text": "Then",
+        "start_s": 22.019,
+        "end_s": 22.378,
+        "confidence": 1.0
+      },
+      {
+        "text": "the",
+        "start_s": 22.441,
+        "end_s": 22.8,
+        "confidence": 1.0
+      },
+      {
+        "text": "keepers",
+        "start_s": 22.863,
+        "end_s": 23.222,
+        "confidence": 1.0
+      },
+      {
+        "text": "left",
+        "start_s": 23.285,
+        "end_s": 23.644,
+        "confidence": 1.0
+      },
+      {
+        "text": "and",
+        "start_s": 23.707,
+        "end_s": 24.066,
+        "confidence": 1.0
+      },
+      {
+        "text": "the",
+        "start_s": 24.129,
+        "end_s": 24.488,
+        "confidence": 1.0
+      },
+      {
+        "text": "tower",
+        "start_s": 24.551,
+        "end_s": 24.91,
+        "confidence": 1.0
+      },
+      {
+        "text": "went",
+        "start_s": 24.973,
+        "end_s": 25.332,
+        "confidence": 1.0
+      },
+      {
+        "text": "dark.",
+        "start_s": 25.395,
+        "end_s": 25.754,
+        "confidence": 1.0
+      },
+      {
+        "text": "Storms",
+        "start_s": 26.817,
+        "end_s": 27.176,
+        "confidence": 1.0
+      },
+      {
+        "text": "cracked",
+        "start_s": 27.239,
+        "end_s": 27.598,
+        "confidence": 1.0
+      },
+      {
+        "text": "the",
+        "start_s": 27.661,
+        "end_s": 28.02,
+        "confidence": 1.0
+      },
+      {
+        "text": "lens",
+        "start_s": 28.083,
+        "end_s": 28.442,
+        "confidence": 1.0
+      },
+      {
+        "text": "room",
+        "start_s": 28.505,
+        "end_s": 28.864,
+        "confidence": 1.0
+      },
+      {
+        "text": "and",
+        "start_s": 28.927,
+        "end_s": 29.285,
+        "confidence": 1.0
+      },
+      {
+        "text": "the",
+        "start_s": 29.349,
+        "end_s": 29.707,
+        "confidence": 1.0
+      },
+      {
+        "text": "stairs",
+        "start_s": 29.771,
+        "end_s": 30.129,
+        "confidence": 1.0
+      },
+      {
+        "text": "rusted",
+        "start_s": 30.193,
+        "end_s": 30.551,
+        "confidence": 1.0
+      },
+      {
+        "text": "through.",
+        "start_s": 30.615,
+        "end_s": 30.973,
+        "confidence": 1.0
+      },
+      {
+        "text": "Neighbours",
+        "start_s": 32.037,
+        "end_s": 32.395,
+        "confidence": 1.0
+      },
+      {
+        "text": "repaired",
+        "start_s": 32.459,
+        "end_s": 32.817,
+        "confidence": 1.0
+      },
+      {
+        "text": "it",
+        "start_s": 32.881,
+        "end_s": 33.239,
+        "confidence": 1.0
+      },
+      {
+        "text": "one",
+        "start_s": 33.303,
+        "end_s": 33.661,
+        "confidence": 1.0
+      },
+      {
+        "text": "weekend",
+        "start_s": 33.725,
+        "end_s": 34.083,
+        "confidence": 1.0
+      },
+      {
+        "text": "at",
+        "start_s": 34.147,
+        "end_s": 34.505,
+        "confidence": 1.0
+      },
+      {
+        "text": "a",
+        "start_s": 34.569,
+        "end_s": 34.927,
+        "confidence": 1.0
+      },
+      {
+        "text": "time,",
+        "start_s": 34.991,
+        "end_s": 35.349,
+        "confidence": 1.0
+      },
+      {
+        "text": "paid",
+        "start_s": 35.413,
+        "end_s": 35.771,
+        "confidence": 1.0
+      },
+      {
+        "text": "for",
+        "start_s": 35.835,
+        "end_s": 36.193,
+        "confidence": 1.0
+      },
+      {
+        "text": "with",
+        "start_s": 36.256,
+        "end_s": 36.615,
+        "confidence": 1.0
+      },
+      {
+        "text": "bake",
+        "start_s": 36.678,
+        "end_s": 37.037,
+        "confidence": 1.0
+      },
+      {
+        "text": "sales.",
+        "start_s": 37.1,
+        "end_s": 37.459,
+        "confidence": 1.0
+      },
+      {
+        "text": "This",
+        "start_s": 38.522,
+        "end_s": 38.881,
+        "confidence": 1.0
+      },
+      {
+        "text": "spring",
+        "start_s": 38.944,
+        "end_s": 39.303,
+        "confidence": 1.0
+      },
+      {
+        "text": "the",
+        "start_s": 39.366,
+        "end_s": 39.725,
+        "confidence": 1.0
+      },
+      {
+        "text": "beam",
+        "start_s": 39.788,
+        "end_s": 40.147,
+        "confidence": 1.0
+      },
+      {
+        "text": "turned",
+        "start_s": 40.21,
+        "end_s": 40.569,
+        "confidence": 1.0
+      },
+      {
+        "text": "again",
+        "start_s": 40.632,
+        "end_s": 40.991,
+        "confidence": 1.0
+      },
+      {
+        "text": "for",
+        "start_s": 41.054,
+        "end_s": 41.413,
+        "confidence": 1.0
+      },
+      {
+        "text": "the",
+        "start_s": 41.476,
+        "end_s": 41.835,
+        "confidence": 1.0
+      },
+      {
+        "text": "first",
+        "start_s": 41.898,
+        "end_s": 42.257,
+        "confidence": 1.0
+      },
+      {
+        "text": "time",
+        "start_s": 42.32,
+        "end_s": 42.679,
+        "confidence": 1.0
+      },
+      {
+        "text": "in",
+        "start_s": 42.742,
+        "end_s": 43.101,
+        "confidence": 1.0
+      },
+      {
+        "text": "decades.",
+        "start_s": 43.164,
+        "end_s": 43.523,
+        "confidence": 1.0
+      },
+      {
+        "text": "Would",
+        "start_s": 44.586,
+        "end_s": 44.945,
+        "confidence": 1.0
+      },
+      {
+        "text": "you",
+        "start_s": 45.008,
+        "end_s": 45.367,
+        "confidence": 1.0
+      },
+      {
+        "text": "climb",
+        "start_s": 45.43,
+        "end_s": 45.789,
+        "confidence": 1.0
+      },
+      {
+        "text": "those",
+        "start_s": 45.852,
+        "end_s": 46.211,
+        "confidence": 1.0
+      },
+      {
+        "text": "stairs",
+        "start_s": 46.274,
+        "end_s": 46.633,
+        "confidence": 1.0
+      },
+      {
+        "text": "every",
+        "start_s": 46.696,
+        "end_s": 47.055,
+        "confidence": 1.0
+      },
+      {
+        "text": "night?",
+        "start_s": 47.118,
+        "end_s": 47.477,
+        "confidence": 1.0
+      }
+    ],
+    "media_scope": "all",
+    "selected_media_ids": null,
+    "video_reuse_policy": "once",
+    "creator_request": "Narrated story. My voiceover is uploaded, so match the video length to it. Title: \"One light on the coast\". Use every uploaded file, in this order, and show each shot while I say its line: the lighthouse from the rocks below, then a close up of the lamp · Every ship that reached this bay for a century looked for one light. an old portrait of the first keeper · The first keeper arrived with a lamp, a logbook and a cat. the two old sepia photos of the cottage, the second one with the keeper at the door · She kept watch for forty winters. She reportedly said: \"The sea keeps its own hours.\" the old sepia photo of the dark tower · Then the keepers left and the tower went dark. the old sepia photo of the rusted stairs · Storms cracked the lens room and the stairs rusted through. volunteers painting the tower · Neighbours repaired it one weekend at a time, paid for with bake sales. the lamp room with the new lens · This spring the beam turned again for the first time in decades. the whole headland at dusk · Would you climb those stairs every night? Caption the voiceover one sentence at a time and keep the captions out of the lowest fifth of the frame. Show no other text besides the title. Calm pace with soft crossfades. Give the five photos a slow zoom. Keep the sepia shots sepia; colour returns with the modern shots",
+    "goal": "Opening on the lighthouse as the voiceover starts; moving into the sepia photos of the first keeper; showing the restoration as the story reaches today; ending on the headland at dusk for the closing question",
+    "idea": "Untitled video",
+    "theme": "",
+    "review_feedback": "",
+    "opening_title": "One light on the coast",
+    "opening_title_duration_s": null,
+    "closing_title": null,
+    "shot_labels": null,
+    "clip_intents": null,
+    "montage_audio": null,
+    "montage_cadence": null,
+    "mixed_media_timing": null,
+    "media": [
+      {
+        "media_id": "video-01",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.041667,
+        "setting": "rocky coast",
+        "subject": "headland",
+        "summary": "the headland and lighthouse at dusk",
+        "activity": "",
+        "description": "the headland and lighthouse at dusk",
+        "best_moments": [
+          {
+            "start_s": 0.0,
+            "end_s": 3.966,
+            "energy": 4.0,
+            "description": "coastal moment 1-1"
+          }
+        ],
+        "transcript": "",
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-01.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "media_id": "video-02",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.033333,
+        "setting": "rocky coast",
+        "subject": "lamp room",
+        "summary": "the lamp room with a new lens turning",
+        "activity": "",
+        "description": "the lamp room with a new lens turning",
+        "best_moments": [
+          {
+            "start_s": 0.0,
+            "end_s": 3.966,
+            "energy": 4.0,
+            "description": "coastal moment 2-1"
+          }
+        ],
+        "transcript": "",
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-02.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "media_id": "video-03",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.041667,
+        "setting": "rocky coast",
+        "subject": "tower",
+        "summary": "volunteers painting the lighthouse tower",
+        "activity": "",
+        "description": "volunteers painting the lighthouse tower",
+        "best_moments": [],
+        "transcript": "",
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-03.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "media_id": "video-04",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.041667,
+        "setting": "rocky coast",
+        "subject": "lamp",
+        "summary": "a close up of the lighthouse lamp",
+        "activity": "",
+        "description": "a close up of the lighthouse lamp",
+        "best_moments": [
+          {
+            "start_s": 0.0,
+            "end_s": 1.5,
+            "energy": 4.0,
+            "description": "coastal moment 4-1"
+          },
+          {
+            "start_s": 2.5,
+            "end_s": 4.0,
+            "energy": 5.0,
+            "description": "coastal moment 4-2"
+          }
+        ],
+        "transcript": "",
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-04.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "media_id": "video-05",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5.041667,
+        "setting": "rocky coast",
+        "subject": "lighthouse",
+        "summary": "the lighthouse seen from the rocks below",
+        "activity": "",
+        "description": "the lighthouse seen from the rocks below",
+        "best_moments": [
+          {
+            "start_s": 0.0,
+            "end_s": 1.5,
+            "energy": 4.0,
+            "description": "coastal moment 5-1"
+          },
+          {
+            "start_s": 2.5,
+            "end_s": 4.0,
+            "energy": 5.0,
+            "description": "coastal moment 5-2"
+          }
+        ],
+        "transcript": "",
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "video-05.mp4",
+        "speaks_to_camera": false
+      },
+      {
+        "media_id": "image-06",
+        "lane": "asset",
+        "kind": "image",
+        "duration_s": null,
+        "setting": "",
+        "subject": "keeper portrait",
+        "summary": "a sepia portrait of a woman in a keeper's coat",
+        "activity": "",
+        "description": "a sepia portrait of a woman in a keeper's coat",
+        "best_moments": [],
+        "transcript": "",
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-06.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "media_id": "image-07",
+        "lane": "asset",
+        "kind": "image",
+        "duration_s": null,
+        "setting": "",
+        "subject": "keeper at the door",
+        "summary": "a sepia photo of a keeper standing at a cottage door",
+        "activity": "",
+        "description": "a sepia photo of a keeper standing at a cottage door",
+        "best_moments": [],
+        "transcript": "",
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-07.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "media_id": "image-08",
+        "lane": "asset",
+        "kind": "image",
+        "duration_s": null,
+        "setting": "",
+        "subject": "rusted stairs",
+        "summary": "a sepia photo of rusted spiral stairs",
+        "activity": "",
+        "description": "a sepia photo of rusted spiral stairs",
+        "best_moments": [],
+        "transcript": "",
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-08.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "media_id": "image-09",
+        "lane": "asset",
+        "kind": "image",
+        "duration_s": null,
+        "setting": "",
+        "subject": "stone cottage",
+        "summary": "a sepia photo of a stone cottage beside a lighthouse",
+        "activity": "",
+        "description": "a sepia photo of a stone cottage beside a lighthouse",
+        "best_moments": [],
+        "transcript": "",
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-09.jpg",
+        "speaks_to_camera": false
+      },
+      {
+        "media_id": "image-10",
+        "lane": "asset",
+        "kind": "image",
+        "duration_s": null,
+        "setting": "",
+        "subject": "dark tower",
+        "summary": "a sepia photo of an unlit lighthouse tower",
+        "activity": "",
+        "description": "a sepia photo of an unlit lighthouse tower",
+        "best_moments": [],
+        "transcript": "",
+        "user_context": "",
+        "on_screen_text": "",
+        "source_filename": "image-10.jpg",
+        "speaks_to_camera": false
+      }
+    ]
+  },
+  "raw_text": "{\n  \"schema_version\": 1,\n  \"title\": \"One light on the coast\",\n  \"chapters\": [\n    {\n      \"chapter_id\": \"chapter-1\",\n      \"topic\": \"A light every ship looked for\",\n      \"thought\": \"\",\n      \"role\": \"hook\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m005\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m004\",\n          \"weight\": 1\n        }\n      ]\n    },\n    {\n      \"chapter_id\": \"chapter-2\",\n      \"topic\": \"The first keeper arrives\",\n      \"thought\": \"\",\n      \"role\": \"build\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m007\",\n          \"weight\": 1\n        }\n      ]\n    },\n    {\n      \"chapter_id\": \"chapter-3\",\n      \"topic\": \"Forty winters on watch\",\n      \"thought\": \"\",\n      \"role\": \"build\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m006\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m008\",\n          \"weight\": 1\n        },\n        {\n          \"media_id\": \"m010\",\n          \"weight\": 1\n        }\n      ]\n    },\n    {\n      \"chapter_id\": \"chapter-4\",\n      \"topic\": \"The tower goes dark\",\n      \"thought\": \"\",\n      \"role\": \"build\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m002\",\n          \"weight\": 1,\n          \"candidate_index\": 0\n        }\n      ]\n    },\n    {\n      \"chapter_id\": \"chapter-5\",\n      \"topic\": \"Storm damage\",\n      \"thought\": \"\",\n      \"role\": \"build\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m009\",\n          \"weight\": 1\n        }\n      ]\n    },\n    {\n      \"chapter_id\": \"chapter-6\",\n      \"topic\": \"Neighbours restore it\",\n      \"thought\": \"\",\n      \"role\": \"build\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m003\",\n          \"weight\": 1\n        }\n      ]\n    },\n    {\n      \"chapter_id\": \"chapter-7\",\n      \"topic\": \"The beam returns\",\n      \"thought\": \"\",\n      \"role\": \"payoff\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m001\",\n          \"weight\": 1,\n          \"candidate_index\": 0\n        }\n      ]\n    },\n    {\n      \"chapter_id\": \"chapter-8\",\n      \"topic\": \"The closing question\",\n      \"thought\": \"\",\n      \"role\": \"payoff\",\n      \"weight\": 1,\n      \"layout\": \"fullscreen\",\n      \"sources\": [\n        {\n          \"media_id\": \"m000\",\n          \"weight\": 1\n        }\n      ]\n    }\n  ],\n  \"text_bindings\": [\n    {\n      \"text\": \"Every ship that reached this bay for a century looked for one light.\",\n      \"chapter_ids\": [\n        \"chapter-1\"\n      ],\n      \"media_ids\": []\n    },\n    {\n      \"text\": \"The first keeper arrived with a lamp, a logbook and a cat.\",\n      \"chapter_ids\": [\n        \"chapter-2\"\n      ],\n      \"media_ids\": []\n    },\n    {\n      \"text\": \"She kept watch for forty winters. She reportedly said: \\\"The sea keeps its own hours.\\\"\",\n      \"chapter_ids\": [\n        \"chapter-3\"\n      ],\n      \"media_ids\": []\n    },\n    {\n      \"text\": \"Then the keepers left and the tower went dark.\",\n      \"chapter_ids\": [\n        \"chapter-4\"\n      ],\n      \"media_ids\": []\n    },\n    {\n      \"text\": \"Storms cracked the lens room and the stairs rusted through.\",\n      \"chapter_ids\": [\n        \"chapter-5\"\n      ],\n      \"media_ids\": []\n    },\n    {\n      \"text\": \"Neighbours repaired it one weekend at a time, paid for with bake sales.\",\n      \"chapter_ids\": [\n        \"chapter-6\"\n      ],\n      \"media_ids\": []\n    },\n    {\n      \"text\": \"This spring the beam turned again for the first time in decades.\",\n      \"chapter_ids\": [\n        \"chapter-7\"\n      ],\n      \"media_ids\": []\n    },\n    {\n      \"text\": \"Would you climb those stairs every night?\",\n      \"chapter_ids\": [\n        \"chapter-8\"\n      ],\n      \"media_ids\": []\n    }\n  ]\n}",
+  "meta": {
+    "source": "Synthetic reproduction of a narrated guided story whose voiceover lines came back as chapter text bindings; media, copy, and word timings are generated test data.",
+    "case": "A surplus empty chapter on an invented m000 alias is dropped while every real alias stays covered.",
+    "expected_title": "One light on the coast"
+  }
+}

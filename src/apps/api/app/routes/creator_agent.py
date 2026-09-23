@@ -412,8 +412,50 @@ async def _response(db: AsyncSession, session: CreatorAgentSession) -> CreatorSe
     return _creator_session_response(loaded)
 
 
+# A fresh session that replaces a failed one in the same chat project opens
+# with this system event holding the failed session's brief, so every later
+# turn of the fresh session (a question's answer, a revision, "Retry preparing
+# my clips") still reads it. Its payload has no "message": transcript
+# projection and role-"user" history readers ignore it.
+CARRIED_BRIEF_EVENT = "carried_brief"
+
+
+def _carried_brief(events: list[CreatorAgentEvent]) -> str:
+    """The failed session's brief this session was opened with, or ``""``."""
+
+    for event in sorted(events, key=lambda value: value.sequence):
+        if getattr(event, "event_type", None) == CARRIED_BRIEF_EVENT:
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            return str(payload.get("creator_request") or "").strip()[:CREATOR_REQUEST_MAX_CHARS]
+    return ""
+
+
+def _carried_brief_seed(previous_active_plan: dict[str, Any] | None, message: str) -> str:
+    """The failed session's brief to open a fresh session with, or ``""``.
+
+    Lines the new message already repeats (a creator re-pasting the original
+    prompt) are dropped, and the brief (not the new message) is trimmed so
+    both fit the shared request bound together.
+    """
+
+    if not isinstance(previous_active_plan, dict):
+        return ""
+
+    def normalized(text: str) -> str:
+        return " ".join(text.split()).casefold()
+
+    repeated = normalized(message)
+    lines = [
+        line.strip()
+        for line in str(previous_active_plan.get("creator_request") or "").splitlines()
+        if line.strip() and not re.search(rf"(?<!\w){re.escape(normalized(line))}(?!\w)", repeated)
+    ]
+    budget = CREATOR_REQUEST_MAX_CHARS - len(message.strip()) - 1
+    return "\n".join(lines)[: max(budget, 0)].strip()
+
+
 def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
-    return [
+    turns = [
         {
             "role": event.role,
             "content": str((event.payload or {}).get("message") or "")[:CREATOR_REQUEST_MAX_CHARS],
@@ -421,6 +463,11 @@ def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
         for event in sorted(events, key=lambda value: value.sequence)[-20:]
         if (event.payload or {}).get("message")
     ]
+    carried = _carried_brief(events)
+    if carried:
+        # The failed session's brief opens a fresh session's history.
+        return [{"role": "user", "content": carried}, *turns[-19:]]
+    return turns
 
 
 def _confirmed_creator_request(
@@ -435,6 +482,9 @@ def _confirmed_creator_request(
     ]
     if current_message.strip() and (not messages or messages[-1] != current_message.strip()):
         messages.append(current_message.strip())
+    carried = _carried_brief(events)
+    if carried:
+        messages.insert(0, carried)
     request = "\n".join(messages)
     return request[:CREATOR_REQUEST_MAX_CHARS] if truncate else request
 
@@ -528,7 +578,8 @@ def _original_creator_request_for_refresh(
         if event.role == "user" and str((event.payload or {}).get("message") or "").strip()
     ]
     messages = [message for message in messages if message != REFRESH_DIRECTION_MESSAGE]
-    request = "\n".join(messages)
+    carried = _carried_brief(events)
+    request = "\n".join([carried, *messages] if carried else messages)
     return request[:CREATOR_REQUEST_MAX_CHARS]
 
 
@@ -3083,7 +3134,14 @@ async def start_creator_session_controller(
     db: Annotated[AsyncSession, Depends(get_db)],
     *,
     allow_chat: bool = False,
+    carried_active_plan: dict[str, Any] | None = None,
 ) -> CreatorSessionResponse:
+    """Start (or join) the active Creator session for ``item_id``.
+
+    ``carried_active_plan`` is the plan of a failed session this fresh one
+    replaces in the same chat project, so its brief and accepted strategy are
+    not lost (a refresh re-plans it; a new message adds to it).
+    """
     cost_headers = paid_call_headers(request)
     _require_feature(user.id, allow_chat=allow_chat)
     # Serialize session creation against direct generation's PlanItem lock.
@@ -3219,10 +3277,31 @@ async def start_creator_session_controller(
     if session.status not in {"briefing", "awaiting_confirmation", "awaiting_feedback"}:
         raise HTTPException(status_code=409, detail="Creator session is busy")
     session.status = "planning" if session.status != "awaiting_feedback" else "revising"
-    previous_active_plan = session.active_plan if isinstance(session.active_plan, dict) else None
+    previous_active_plan = (
+        session.active_plan if isinstance(session.active_plan, dict) else carried_active_plan
+    )
     session.preparation = None
     session.last_error = None
     _reset_render_target(session)
+    history = getattr(session, "events", None)
+    carried_brief = (
+        _carried_brief_seed(carried_active_plan, body.message)
+        if previous_active_plan is carried_active_plan and isinstance(history, list) and not history
+        else ""
+    )
+    if carried_brief:
+        # Durable, not inferred per turn: every later turn of this fresh
+        # session reads the failed session's brief from its own history.
+        seed = await append_event(
+            db,
+            session,
+            event_type=CARRIED_BRIEF_EVENT,
+            role="system",
+            payload={"creator_request": carried_brief},
+        )
+        # Events appended by foreign key are absent from the loaded
+        # collection this request's planning turn reads.
+        history.append(seed)
     await append_event(
         db,
         session,
@@ -3858,6 +3937,23 @@ async def confirm_creator_plan_controller(
         if active.get("version") != body.plan_version or active.get("plan_hash") != body.plan_hash:
             raise HTTPException(status_code=409, detail="Creator plan changed")
         edit_plan = _confirmed_edit_plan(active)
+        from app.services.creator_execution_contract import (  # noqa: PLC0415
+            requests_guided_voiceover,
+        )
+        from app.services.guided_speech_cleanup import (  # noqa: PLC0415
+            DISABLED_MESSAGE,
+            guided_voiceover_cleanup_available,
+        )
+
+        if (
+            body.speech_cleanup_choice == "clean"
+            and requests_guided_voiceover((active.get("edit_plan") or {}).get("strategy"))
+            and not guided_voiceover_cleanup_available()
+        ):
+            # Every confirm route shares this controller: a guided narrated
+            # story can only honor "Clean up speech" through the planner's
+            # cleaned derivative, so refuse before an attempt is reserved.
+            raise HTTPException(status_code=409, detail=DISABLED_MESSAGE)
         if session.ownership_epoch != int(plan_row.ownership_epoch or 0):
             raise HTTPException(status_code=409, detail="Creator ownership changed")
         if session.render_attempts >= session.max_render_attempts:

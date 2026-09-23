@@ -829,6 +829,44 @@ def humanize_job_failure_reason(failure_reason: str | None) -> str | None:
     return JOB_FAILURE_MESSAGES.get(failure_reason, _DEFAULT_JOB_FAILURE_MESSAGE)
 
 
+def _guided_cleanup_matches_contract(
+    narration: object,
+    contract: str | None,
+    preflight_snapshot: dict | None,
+) -> bool:
+    """Bind an approved guided narration to the dispatch speech-cleanup contract.
+
+    ``required_v1`` with a preflight snapshot may only render the cleaned
+    derivative planned from this exact analysis and CutPlan. Every other
+    contract, including a markerless ``required_v1`` from the legacy item
+    toggle (no consented CutPlan exists), renders the raw voiceover.
+    """
+
+    from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
+        SpeechCleanupSnapshotError,
+        cut_fingerprint,
+        hydrate_speech_cleanup_snapshot,
+    )
+    from app.services.guided_speech_cleanup import narration_speech_cleanup  # noqa: PLC0415
+
+    try:
+        provenance = narration_speech_cleanup(narration)
+    except ValueError:
+        return False
+    if contract != "required_v1" or preflight_snapshot is None:
+        return provenance is None
+    if provenance is None or not isinstance(preflight_snapshot, dict):
+        return False
+    try:
+        snapshot = hydrate_speech_cleanup_snapshot(preflight_snapshot)
+    except SpeechCleanupSnapshotError:
+        return False
+    return (
+        provenance.analysis_id == snapshot.analysis_id
+        and provenance.cut_sha256 == cut_fingerprint(snapshot)
+    )
+
+
 def _speech_cleanup_dispatch_snapshot(
     session,  # noqa: ANN001
     item: PlanItem,
@@ -1400,7 +1438,7 @@ def _dispatch_item_render(
 
     if guided_voiceover:
         if approved_proposal is None or not narration_matches_item(
-            approved_proposal["snapshot"].get("narration"), item
+            approved_proposal["snapshot"].get("narration"), item, owner_id=plan.user_id
         ):
             return DispatchResult("proposal_stale")
 
@@ -1601,6 +1639,16 @@ def _dispatch_item_render(
                 reason=str(exc),
             )
             return DispatchResult("speech_cleanup_unavailable")
+    if guided_voiceover and approved_proposal is not None:
+        if not _guided_cleanup_matches_contract(
+            approved_proposal["snapshot"].get("narration"),
+            speech_cleanup_contract,
+            preflight_snapshot,
+        ):
+            # The planner cut (or did not cut) a different voiceover than the
+            # creator's current consent. Checked once the contract is final and
+            # before any commit: no Job is minted and no decision is persisted.
+            return DispatchResult("speech_cleanup_analysis_conflict")
     # Narrative clip order (filming-guide alignment): reorder clip_paths so the
     # guide's shot clips come first IN GUIDE ORDER (clip_assignments stores them
     # in attach-request order, which is client-controlled and not the guide
