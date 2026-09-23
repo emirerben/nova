@@ -1157,6 +1157,14 @@ struct NativeMiniStrip: View {
     /// leaves .active outright (backgrounding, Control Center, a system
     /// alert), which can race gesture-level cancellation.
     @Environment(\.scenePhase) private var scenePhase
+    /// KRI-166: the "+" opens a small chooser (Video/Visual/Text) instead of
+    /// jumping straight to the add-clip sheet, so Visual/Text are reachable
+    /// from the same discoverable entry point video already had.
+    @State private var isPresentingAddMenu = false
+    @Namespace private var quickAddNamespace
+    /// Selecting Video/Visual/Text (`NativeMiniStrip`'s owner routes these).
+    var onSelectVisual: () -> Void = {}
+    var onSelectText: () -> Void = {}
 
     private let minimumZoom: CGFloat = 0.5
     private let maximumZoom: CGFloat = 24
@@ -1164,11 +1172,21 @@ struct NativeMiniStrip: View {
     private let filmstripHeight: CGFloat = 44
     private let secondaryLaneHeight: CGFloat = 44
     private let rowGap: CGFloat = 6
+    private let quickAddChromeID = "quickAddChrome"
+    private let quickAddSpring = Animation.spring(response: 0.34, dampingFraction: 0.88)
 
-    init(session: NativeEditorSession, bottomClearance: CGFloat = 0, isCovered: Bool = false) {
+    init(
+        session: NativeEditorSession,
+        bottomClearance: CGFloat = 0,
+        isCovered: Bool = false,
+        onSelectVisual: @escaping () -> Void = {},
+        onSelectText: @escaping () -> Void = {}
+    ) {
         self.session = session
         self.bottomClearance = bottomClearance
         self.isCovered = isCovered
+        self.onSelectVisual = onSelectVisual
+        self.onSelectText = onSelectText
         _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
@@ -1268,7 +1286,10 @@ struct NativeMiniStrip: View {
             if isCovered {
                 Color.clear.frame(height: 44).accessibilityHidden(true)
             } else {
-                controls
+                // zIndex above the scrollable lanes below so the "+"
+                // button's own popover overlay (attached to the button, not
+                // hoisted to a separate layer) always paints on top of them.
+                controls.zIndex(1)
             }
             if let message = session.addClipUnavailableMessage {
                 Text(message).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
@@ -1359,17 +1380,63 @@ struct NativeMiniStrip: View {
                 .accessibilityIdentifier("native-editor-duration")
 
             Spacer(minLength: 8)
-            Button { isPresentingAddClip = true } label: {
+            Button {
+                withAnimation(reduceMotion ? nil : quickAddSpring) { isPresentingAddMenu.toggle() }
+            } label: {
                 // The picker sheet has already closed by the time the upload runs, so this is the
                 // only place the user can see that a clip is still on its way.
-                if session.isAddingClip {
+                if session.isAddingClip && !isPresentingAddMenu {
                     ProgressView().frame(width: 44, height: 44)
                 } else {
-                    Image(systemName: "plus").frame(width: 44, height: 44)
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .semibold))
+                        .rotationEffect(.degrees(isPresentingAddMenu ? 45 : 0))
+                        .frame(width: 44, height: 44)
                 }
             }
-            .disabled(!canAddClip || session.isAddingClip)
-            .accessibilityLabel(session.isAddingClip ? "Adding clip" : "Add clip or photo")
+            .buttonStyle(.plain)
+            .foregroundStyle(KriaColor.ink)
+            .background {
+                // Shares identity with the popover's own background (below)
+                // via matchedGeometryEffect, so opening the menu reads as
+                // this circle growing into it, not a separate element
+                // appearing — the "+" morphs into the chooser.
+                if !isPresentingAddMenu {
+                    Circle().fill(KriaColor.softZinc)
+                        .matchedGeometryEffect(id: quickAddChromeID, in: quickAddNamespace)
+                }
+            }
+            .disabled(session.isAddingClip)
+            // Anchored to the button's own bounds (no separate coordinate-
+            // space plumbing needed) and elevated above the scrollable lanes
+            // below via `.zIndex` on the button itself. The scrim lives in
+            // this SAME overlay, behind the menu, rather than as its own
+            // top-level `.overlay()` on an ancestor — an ancestor's overlay
+            // paints (and hit-tests) above ALL of its descendants regardless
+            // of any zIndex set deeper inside, which silently ate every tap
+            // meant for the menu's rows when the scrim lived up there.
+            .overlay(alignment: .topTrailing) {
+                if isPresentingAddMenu {
+                    ZStack(alignment: .topTrailing) {
+                        // Centered on the button's top-trailing corner (the
+                        // offset re-centers what `.topTrailing` alignment
+                        // would otherwise extend only left/down), so it
+                        // covers the whole strip around the menu. Bounded by
+                        // the timeline area's own `.clipped()` in
+                        // `connectedEditorArea`.
+                        Color.black.opacity(0.001)
+                            .frame(width: 4000, height: 4000)
+                            .offset(x: 2000, y: -2000)
+                            .contentShape(Rectangle())
+                            .onTapGesture { closeAddMenu() }
+                        quickAddMenu
+                            .offset(y: 52)
+                            .transition(.opacity.combined(with: .scale(scale: 0.6, anchor: .topTrailing)))
+                    }
+                }
+            }
+            .zIndex(2)
+            .accessibilityLabel(isPresentingAddMenu ? "Close add menu" : (session.isAddingClip ? "Adding clip" : "Add to timeline"))
             .accessibilityIdentifier("native-editor-add-clip")
             Button(action: session.undo) {
                 Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44)
@@ -1385,6 +1452,62 @@ struct NativeMiniStrip: View {
             .accessibilityIdentifier("native-editor-redo")
         }
         .padding(.horizontal, 4)
+    }
+
+    private func closeAddMenu() {
+        withAnimation(reduceMotion ? nil : quickAddSpring) { isPresentingAddMenu = false }
+    }
+
+    /// KRI-166: the "+" chooser. Shares `quickAddChromeID` with the collapsed
+    /// button's own background so the two read as one shape growing open,
+    /// not a separate popup appearing. Video keeps its existing add-clip
+    /// sheet; Visual/Text route to the same tool the bottom rail already
+    /// opens for them (no separate disabled state here — those tools have
+    /// never pre-disabled themselves, any capability limits surface once
+    /// the panel is open, same as tapping the rail directly).
+    private var quickAddMenu: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            quickAddRow("Video", icon: "film", enabled: canAddClip) {
+                closeAddMenu()
+                isPresentingAddClip = true
+            }
+            quickAddRow("Visual", icon: "photo.on.rectangle", enabled: true) {
+                closeAddMenu()
+                onSelectVisual()
+            }
+            quickAddRow("Text", icon: "textformat", enabled: true) {
+                closeAddMenu()
+                onSelectText()
+            }
+        }
+        .padding(6)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(KriaColor.paper)
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(KriaColor.softZinc, lineWidth: 1))
+                .matchedGeometryEffect(id: quickAddChromeID, in: quickAddNamespace)
+        )
+        .shadow(color: .black.opacity(0.14), radius: 18, y: 6)
+        .fixedSize()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Add to timeline")
+    }
+
+    private func quickAddRow(_ title: String, icon: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon).font(.system(size: 15, weight: .medium)).frame(width: 22)
+                Text(title).font(KriaFont.body(14).weight(.medium))
+                Spacer(minLength: 12)
+            }
+            .padding(.horizontal, 10)
+            .frame(width: 168, height: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(enabled ? KriaColor.ink : KriaColor.mutedInk)
+        .disabled(!enabled)
+        .accessibilityIdentifier("native-editor-add-menu-\(title.lowercased())")
     }
 
     private func zoomButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
@@ -1645,8 +1768,48 @@ struct NativeMiniStrip: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityHidden(true)
             }
+            if let outro = NativeEditorInteraction.outroRange(
+                lastClipEnd: lastClipEnd, playbackDuration: timelineDuration,
+                isBrandedPreview: session.isPlayingBrandedSourcePreview
+            ) {
+                outroPlaceholder(range: outro, playheadX: playheadX, width: width)
+            }
         }
         .frame(height: filmstripHeight)
+    }
+
+    /// KRI-166: the end of the editable content, before the branded outro
+    /// tail. Never `session.duration` — a rendered MP4's `duration` may
+    /// already include the outro (`NativeEditorSession.playbackDuration`).
+    private var lastClipEnd: TimeInterval { clips.map(\.end).max() ?? 0 }
+
+    private func outroPlaceholder(range: ClosedRange<TimeInterval>, playheadX: CGFloat, width: CGFloat) -> some View {
+        let start = playheadX + CGFloat(range.lowerBound - clock.currentTime) * pixelsPerSecond
+        let end = playheadX + CGFloat(range.upperBound - clock.currentTime) * pixelsPerSecond
+        let clippedStart = max(0, start)
+        let clippedWidth = max(0, min(end, width) - clippedStart)
+        return ZStack(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(KriaColor.softZinc)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(KriaColor.zinc, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            Label("Kria outro", systemImage: "lock.fill")
+                .font(KriaFont.body(11))
+                .foregroundStyle(KriaColor.mutedInk)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+        }
+        .frame(width: clippedWidth, height: filmstripHeight)
+        // `.position()`, not `.offset()` — matches NativeTimelineBar/
+        // NativeClipSurface's own pattern for absolute placement in this
+        // ZStack; `.offset()` on a sibling here has previously desynced its
+        // rendered position during playback (KRI-166 lesson).
+        .position(x: clippedStart + clippedWidth / 2, y: filmstripHeight / 2)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Kria outro")
+        .accessibilityHint("Plays after your last clip. Not editable.")
+        .accessibilityIdentifier("native-editor-outro-placeholder")
     }
 
     private func refreshItems() {

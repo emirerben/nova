@@ -96,6 +96,24 @@ enum NativeEditorInteraction {
 
     static let minimumHitTarget: CGFloat = 44
 
+    /// KRI-166: the gap after the last clip that should read as the branded
+    /// Kria outro placeholder. A branded preview trusts a small gap (0.05s
+    /// epsilon, never a bare `> 0` — float-residue rounds to millis
+    /// elsewhere in this file); anywhere else a gap could just be encode
+    /// rounding, so it needs a full second — a conservative round number
+    /// below the outro's real 1.6s length, chosen for simplicity rather
+    /// than matching it exactly.
+    static func outroRange(
+        lastClipEnd: TimeInterval,
+        playbackDuration: TimeInterval,
+        isBrandedPreview: Bool
+    ) -> ClosedRange<TimeInterval>? {
+        guard lastClipEnd.isFinite, playbackDuration.isFinite, playbackDuration >= lastClipEnd else { return nil }
+        let threshold: TimeInterval = isBrandedPreview ? 0.05 : 1.0
+        guard playbackDuration - lastClipEnd >= threshold else { return nil }
+        return lastClipEnd...playbackDuration
+    }
+
     /// Timeline intervals are half-open. An item ending exactly at the clock
     /// is inactive, preventing boundary captions/text from flashing together.
     static func isVisible(start: TimeInterval, end: TimeInterval, at time: TimeInterval) -> Bool {

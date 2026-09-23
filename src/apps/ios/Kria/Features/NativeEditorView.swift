@@ -326,7 +326,10 @@ struct NativeEditorView: View {
         let clearance = NativeEditorIslandMetrics.bottomClearance(showsContext: showsContext, safeAreaBottom: bottomInset)
         return GeometryReader { area in
             ZStack(alignment: .bottom) {
-                NativeEditorTimeline(session: session, uploads: model.uploads, bottomClearance: clearance, isCovered: panelIsOpen)
+                NativeEditorTimeline(
+                    session: session, uploads: model.uploads, bottomClearance: clearance, isCovered: panelIsOpen,
+                    onSelectVisual: { selectTool(.visuals) }, onSelectText: { selectTool(.text) }
+                )
                     .ignoresSafeArea(.container, edges: .bottom)
                     // Safe-area expansion must not let the retained timeline
                     // paint over the preview when the keyboard shortens us.

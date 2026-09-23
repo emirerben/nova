@@ -245,6 +245,10 @@ struct NativeEditorTimeline: View {
     @ObservedObject var uploads: BackgroundUploadCoordinator
     var bottomClearance: CGFloat = 0
     var isCovered = false
+    /// KRI-166: the "+" chooser's Visual/Text selections route to the same
+    /// tool the bottom rail already opens for them.
+    var onSelectVisual: () -> Void = {}
+    var onSelectText: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 6) {
@@ -262,7 +266,10 @@ struct NativeEditorTimeline: View {
                 }
                 .accessibilityIdentifier("native-editor-pending-timeline-import")
             }
-            NativeMiniStrip(session: session, bottomClearance: bottomClearance, isCovered: isCovered)
+            NativeMiniStrip(
+                session: session, bottomClearance: bottomClearance, isCovered: isCovered,
+                onSelectVisual: onSelectVisual, onSelectText: onSelectText
+            )
                 .frame(maxHeight: .infinity)
                 .accessibilityIdentifier("native-editor-mini-strip")
         }

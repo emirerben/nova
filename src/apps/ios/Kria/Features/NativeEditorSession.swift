@@ -94,7 +94,7 @@ struct NativeEditorTemporaryVideo {
     /// The visible source composition includes the outro after the editable
     /// content. Transport and scrubbing must reach that tail as well.
     var playbackDuration: TimeInterval {
-        if let sourcePreview, player?.currentItem === sourcePreview.preview.playerItem {
+        if isPlayingBrandedSourcePreview, let sourcePreview {
             return sourcePreview.preview.description.duration
         }
         return duration
@@ -112,6 +112,15 @@ struct NativeEditorTemporaryVideo {
         (sourcePreviewUpdateDeferred || sourcePreviewSequence != sourcePreviewSettledSequence)
             ? max(playbackDuration, timelineProjection.totalDuration)
             : playbackDuration
+    }
+    /// KRI-166: true while the player shows the branded source preview
+    /// (always built with `branding: .standard`, see `scheduleSourcePreviewUpdate`)
+    /// rather than a rendered MP4. The outro placeholder trusts a much smaller
+    /// gap after the last clip in this mode, since the outro is guaranteed to
+    /// be there; a rendered asset's `duration` may already bake the tail in.
+    var isPlayingBrandedSourcePreview: Bool {
+        guard let sourcePreview else { return false }
+        return player?.currentItem === sourcePreview.preview.playerItem
     }
     @Published var isPlaying = false
     @Published var isSaving = false

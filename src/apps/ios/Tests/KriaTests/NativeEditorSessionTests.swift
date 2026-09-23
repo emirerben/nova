@@ -663,6 +663,9 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.prepareFixtureSourcePreview(url: sourceURL)
 
         XCTAssertTrue(session.hasSourcePreview)
+        // KRI-166: the outro placeholder trusts a much smaller gap when this
+        // is true, since the player is showing the always-branded preview.
+        XCTAssertTrue(session.isPlayingBrandedSourcePreview)
         let item = try XCTUnwrap(session.player?.currentItem)
         let previewDuration = try await item.asset.load(.duration).seconds
         let outro = try await AVURLAsset(url: XCTUnwrap(KriaBranding.outroURL())).load(.duration).seconds
@@ -690,6 +693,11 @@ final class NativeEditorSessionTests: XCTestCase {
         session.beginTextCreation()
         XCTAssertLessThanOrEqual(try XCTUnwrap(session.pendingText).endS, session.duration)
         session.cancelTextCreation()
+    }
+
+    func testIsPlayingBrandedSourcePreviewFalseBeforeAPreviewIsReady() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        XCTAssertFalse(session.isPlayingBrandedSourcePreview)
     }
 
     func testDisplayedSourcePreviewExportsAPlayableVideo() async throws {
