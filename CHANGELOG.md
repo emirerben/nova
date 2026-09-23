@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.147.0] - 2026-09-23
+
+### Changed
+- fix(ios): preserve plan_hash in the slow-creation UI-test fixture (KRI-160 follow-up) (#1164) <!-- release-pr: 1164 -->
+
 ## [0.76.146.0] - 2026-09-22
 
 ### Changed
