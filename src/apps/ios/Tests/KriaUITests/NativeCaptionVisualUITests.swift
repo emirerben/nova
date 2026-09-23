@@ -110,8 +110,11 @@ final class NativeCaptionVisualUITests: XCTestCase {
         let visual = app.descendants(matching: .any)["native-editor-timeline-visual_block-paper-media"].firstMatch
         XCTAssertTrue(visual.waitForExistence(timeout: 20))
         visual.tap()
-        let handle = app.descendants(matching: .any)["native-editor-timeline-resize"].firstMatch
-        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        // KRI-170: only the panel handle grows the panel now (the timeline
+        // handle resizes just the preview).
+        let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 5))
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 10))
         start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -180)))
         for name in ["Zoom", "Rotation"] {
             let slider = app.sliders[name]
