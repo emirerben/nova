@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.157.0] - 2026-09-23
+
+### Changed
+- fix(creation-threads): slides on phone, legacy shape tolerance, story_shape/adjustments/notices (KRI-118 L4) (#1174) <!-- release-pr: 1174 -->
+
 ## [0.76.156.0] - 2026-09-23
 
 ### Changed
