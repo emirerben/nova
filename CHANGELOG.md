@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.161.0] - 2026-09-23
+
+### Fixed
+- fix(ios): compiler must clamp crossfade duration to the projected overlap (KRI-164) (#1177) <!-- release-pr: 1177 -->
+
 ## [0.76.160.0] - 2026-09-23
 
 ### Fixed
