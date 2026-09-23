@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.176.0] - 2026-09-23
+
+### Changed
+- fix(planner): voiceover script never becomes on-screen chapter text (#1192) <!-- release-pr: 1192 -->
+
+## [0.76.175.0] - 2026-09-23
+
+### Fixed
+- fix(worker): route omni unclaimed-asset cleanup to the maintenance queue (#1191) <!-- release-pr: 1191 -->
+
+## [0.76.174.0] - 2026-09-23
+
+### Changed
+- fix(autoplace): classify retry causes by explicit __cause__ only (#1194) <!-- release-pr: 1194 -->
+
+## [0.76.173.0] - 2026-09-23
+
+### Changed
+- fix(ios): explain failed Visuals in the editor and retry transient failures (#1188) <!-- release-pr: 1188 -->
+
+## [0.76.172.0] - 2026-09-23
+
+### Changed
+- feat(ios): offer every web font in the editor and draw each choice in its own typeface (KRI-171) (#1193) <!-- release-pr: 1193 -->
+
 ## [0.76.171.0] - 2026-09-23
 
 ### Changed

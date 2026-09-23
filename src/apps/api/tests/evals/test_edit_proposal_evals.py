@@ -65,6 +65,10 @@ def test_edit_proposal_eval(
                         f"{media_id} repeated while an unused source was still available"
                     )
                 seen.add(media_id)
+    if (expected_thoughts := fixture.meta.get("expected_thoughts")) is not None:
+        # Voiceover script must never become chapter text (narration captions
+        # already draw it); see app/agents/spoken_script.py.
+        assert [beat["thought"] for beat in result.output["story_beats"]] == expected_thoughts
     shot_labels = fixture.input.get("shot_labels")
     if shot_labels:
         # Exact creator copy is burned verbatim: labeled beats carry exactly the

@@ -40,6 +40,7 @@ _MAINTENANCE_PYTHON_IDENTIFIERS: tuple[str, ...] = (
     "schedule_tiktok_account_syncs",
     "cleanup_tiktok_publications",
     "manage_render_worker_lifecycle",
+    "cleanup_unclaimed_omni_asset",
 )
 
 
@@ -107,6 +108,32 @@ def test_poster_repair_queue_is_a_property_of_the_task_not_the_dispatcher() -> N
     assert route == {"queue": settings.poster_repair_queue}
     assert "tasks.repair_job_poster" not in MAINTENANCE_TASK_NAMES
     assert route["queue"] != "maintenance"
+
+
+def test_omni_cleanup_resolves_off_the_render_worker_queues() -> None:
+    """The 24h-countdown omni cleanup must never land on the render worker.
+
+    `generate_omni_asset` publishes it with `countdown=24h` and no `queue=`.
+    On the default `celery` queue the autostopped `worker` machine holds the
+    ETA message as *scheduled*, which `render_worker_idle` does not count, so
+    every idle stop hands the message back to the queue and the next lifecycle
+    tick starts the machine again. The ETA also outlives the broker
+    visibility_timeout, so Redis redelivers it every ~32 minutes anyway.
+
+    Resolved through Celery's real router (not the task_routes dict) and
+    bound to the task object, so a task rename or a route-order change fails
+    here instead of silently falling back to `celery`.
+    """
+    from app.services.queue_state import RENDER_WORKER_QUEUES
+    from app.tasks.omni_generate import cleanup_unclaimed_omni_asset
+    from app.worker import MAINTENANCE_TASK_NAMES, celery_app
+
+    name = cleanup_unclaimed_omni_asset.name
+    resolved = celery_app.amqp.router.route({}, name, args=(), kwargs={})["queue"].name
+
+    assert name in MAINTENANCE_TASK_NAMES
+    assert resolved == "maintenance"
+    assert resolved not in RENDER_WORKER_QUEUES
 
 
 def test_creator_memory_claim_and_process_use_maintenance_queue() -> None:

@@ -39,7 +39,12 @@ from pathlib import Path
 import pytest
 
 from app.agents._runtime import SchemaError
-from app.agents.edit_proposal import EditProposalAgent, EditProposalAgentInput, EditProposalMedia
+from app.agents.edit_proposal import (
+    EditProposalAgent,
+    EditProposalAgentInput,
+    EditProposalMedia,
+    _creator_quoted_on_screen_text,
+)
 from app.schemas.edit_proposal import MontageAudioPlan
 from tests.agents.test_edit_proposal_agent import _input as _seven_media_input
 from tests.agents.test_edit_proposal_agent import _raw as _seven_media_raw
@@ -823,3 +828,114 @@ def test_ai_draft_captions_stay_when_the_creator_named_no_on_screen_text() -> No
 
     assert [beat.thought for beat in output.story_beats][:2] == ["Park moments.", "Speech time."]
     assert not any(repair.startswith("blanked_unrequested") for repair in output.repairs)
+
+
+# ---------------------------------------------------------------------------
+# Voiceover script never becomes chapter text (legacy mirror of the semantic
+# planner's spoken-script exclusion, app.agents.spoken_script).
+# ---------------------------------------------------------------------------
+
+
+def _sagrada_input(**overrides: object) -> EditProposalAgentInput:
+    from tests.agents.test_semantic_edit_proposal import (  # noqa: PLC0415
+        SAGRADA_VO_REQUEST,
+        sagrada_narration_words,
+    )
+
+    values: dict[str, object] = {
+        "creator_request": SAGRADA_VO_REQUEST,
+        "opening_title": "Building since 1882",
+        "closing_title": None,
+        "narration_duration_s": 60,
+        "narration_words": sagrada_narration_words(),
+    }
+    values.update(overrides)
+    return _pub_group_input(**values)
+
+
+def test_legacy_vo_prefixed_script_lines_never_become_chapter_thoughts_despite_asr_errors() -> None:
+    """Real prod request: every spoken line is tagged 'VO:' and the ASR
+    transcript mis-hears three of them. A beat echoing a line -- in the
+    creator's spelling, or in the ASR's -- must not also render as chapter
+    text over the voiceover captions; an unrelated AI draft stays."""
+
+    agent_input = _sagrada_input()
+    assert _creator_quoted_on_screen_text(agent_input) == {}
+
+    output = EditProposalAgent(None).parse(
+        json.dumps(
+            _pub_group_payload(
+                [
+                    "In 1936, his workshop is set on fire. Plans burned, models smashed.",
+                    "The models are placed back together.",
+                    "",
+                    "Would you wait 144 years?",
+                    "Scaffolding rises over the city.",
+                ]
+            )
+        ),
+        agent_input,
+    )
+
+    assert [beat.thought for beat in output.story_beats] == [
+        "",
+        "",
+        "",
+        "",
+        "Scaffolding rises over the city.",
+    ]
+    assert {
+        "blanked_spoken_script_thought:0",
+        "blanked_spoken_script_thought:1",
+        "blanked_spoken_script_thought:3",
+    } <= set(output.repairs)
+
+
+@pytest.mark.parametrize(
+    "creator_request, kept",
+    [
+        ('Narrated. VO: "The sea keeps its own hours".', False),
+        ('Narrated. I say "The sea keeps its own hours".', False),
+        ('Narrated. VO: "The sea keeps its own hours" on screen over the pub clip.', True),
+        ('Narrated. Locals often mention "The sea keeps its own hours".', True),
+    ],
+    ids=[
+        "vo_cue_blanks",
+        "i_say_cue_blanks",
+        "cue_with_display_override_stays_creator_copy",
+        "no_cue_no_transcript_stays_creator_copy",
+    ],
+)
+def test_legacy_quoted_vo_line_is_script_not_creator_copy(creator_request: str, kept: bool) -> None:
+    quote = "The sea keeps its own hours"
+    agent_input = _sagrada_input(creator_request=creator_request, narration_words=[])
+    assert (_creator_quoted_on_screen_text(agent_input) != {}) is kept
+
+    output = EditProposalAgent(None).parse(
+        json.dumps(_pub_group_payload(["", "", "", quote, ""])), agent_input
+    )
+
+    assert output.story_beats[3].thought == (quote if kept else "")
+
+
+def test_legacy_vo_caption_intent_is_not_applied_as_chapter_text() -> None:
+    """A chat turn resolved the creator's 'VO:' line into a caption intent. The
+    caption lane skips it, and the model's echo of it (the prompt told the
+    model to write it) is blanked like any other voiceover script."""
+
+    from tests.agents.test_edit_proposal_clip_intents import _caption_intent  # noqa: PLC0415
+
+    fixture = _load_pub_group_fixture()
+    pub_ids = [row["media_id"] for row in fixture["media"]][8:16]
+    agent_input = _sagrada_input(
+        clip_intents=[_caption_intent(pub_ids, "Would you wait 144 years?")]
+    )
+
+    output = EditProposalAgent(None).parse(
+        json.dumps(_pub_group_payload(["Park light.", "", "", "Would you wait 144 years?", ""])),
+        agent_input,
+    )
+
+    assert [beat.thought for beat in output.story_beats] == ["Park light.", "", "", "", ""]
+    assert not any(repair.startswith("caption_applied:") for repair in output.repairs)
+    assert "blanked_spoken_script_thought:3" in output.repairs

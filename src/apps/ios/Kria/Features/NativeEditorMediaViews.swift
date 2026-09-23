@@ -941,7 +941,7 @@ private struct NativePreviewObjectView: View {
                     .background(.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else if object.render == .text {
                 Text(object.text ?? object.title)
-                    .font(object.style == "Fraunces" ? KriaFont.display(24) : KriaFont.body(22).weight(.bold))
+                    .font(NativeFontCatalog.shared.previewFont(object.style, size: 22))
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
                     .lineLimit(3)

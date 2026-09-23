@@ -203,16 +203,11 @@ struct NativeEditorTextPanel: View {
     }
 
     private func fontMenu(expanded: Bool) -> some View {
-        Menu {
-            ForEach(["Inter Regular", "Inter", "Fraunces", "Space Grotesk"], id: \.self) { family in
-                Button(family) { session.setTextStyle(id: id, style: family) }
-            }
-        } label: {
-            HStack { Text(string("font_family", "Inter")).lineLimit(1); Spacer(); Image(systemName: "chevron.down") }
-                .padding(.horizontal, 12).frame(maxWidth: expanded ? .infinity : nil, minHeight: 44)
-                .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
-        }
-        .accessibilityIdentifier("native-editor-text-font")
+        NativeFontPicker(
+            selection: string("font_family", "Inter"),
+            accessibilityID: "native-editor-text-font"
+        ) { if let family = $0 { session.setTextStyle(id: id, style: family) } }
+        .frame(maxWidth: expanded ? .infinity : nil)
     }
 
     private func alignmentControl(expanded: Bool) -> some View {

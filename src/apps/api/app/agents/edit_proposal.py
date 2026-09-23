@@ -13,6 +13,15 @@ import structlog
 from pydantic import BaseModel, Field, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
+from app.agents.spoken_script import (
+    QUOTED_TEXT_RE,
+    is_spoken_script_copy,
+    is_spoken_script_quote,
+    narration_word_keys,
+    quote_text,
+    transcript_speaks,
+    word_keys,
+)
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_frame_schedule import EditFrameSchedule
@@ -669,12 +678,16 @@ def _resolved_caption_intents(
 
     if input.shot_labels or not input.clip_intents or input.direction == "fast_montage":
         return []
+    # Copy the recorded voiceover already says is script, not a caption:
+    # timed narration captions draw it (see app.agents.spoken_script).
+    spoken = narration_word_keys(input.narration_words)
     return [
         intent
         for intent in input.clip_intents
         if intent.status == "resolved"
         and intent.op == "caption"
         and (intent.caption_text or "").strip()
+        and not is_spoken_script_copy(intent.caption_text, input.creator_request, spoken)
     ]
 
 
@@ -1467,22 +1480,22 @@ def _creator_protected_media_ids(input: EditProposalAgentInput) -> set[str]:  # 
     return protected
 
 
-_QUOTED_TEXT_RE = re.compile(
-    r"[\"\u201c\u201d]([^\"\u201c\u201d]{1,120})[\"\u201c\u201d]|(?<!\w)'([^']{1,120})'(?!\w)"
-)
-
-
 def _creator_quoted_on_screen_text(input: EditProposalAgentInput) -> dict[str, str]:  # noqa: A002
     """Phrases the creator put in quotes: the on-screen text they specified.
 
     A creator who quotes what the screen should say ("post match pub") has
     given the complete list of captions. Titles are quoted too but rendered
-    by the server, so they are excluded from the caption allowlist.
+    by the server, so they are excluded from the caption allowlist, and so is
+    voiceover script ('VO: "..."', or a line the narration speaks): timed
+    narration captions already draw it.
     """
 
     phrases: dict[str, str] = {}
-    for match in _QUOTED_TEXT_RE.finditer(input.creator_request):
-        text = (match.group(1) or match.group(2) or "").strip()
+    spoken = narration_word_keys(input.narration_words)
+    for match in QUOTED_TEXT_RE.finditer(input.creator_request):
+        if is_spoken_script_quote(input.creator_request, match, spoken):
+            continue
+        text = quote_text(match).strip()
         key = creator_copy_match_key(text)
         if key:
             phrases.setdefault(key, text)
@@ -1490,6 +1503,25 @@ def _creator_quoted_on_screen_text(input: EditProposalAgentInput) -> dict[str, s
         if title:
             phrases.pop(creator_copy_match_key(title), None)
     return phrases
+
+
+def _spoken_script_keys(input: EditProposalAgentInput, spoken: list[str]) -> set[str]:  # noqa: A002
+    """Match keys of voiceover script: spoken-script quotes and caption copy."""
+    keys = {
+        creator_copy_match_key(quote_text(match))
+        for match in QUOTED_TEXT_RE.finditer(input.creator_request)
+        if is_spoken_script_quote(input.creator_request, match, spoken)
+    }
+    keys.update(
+        creator_copy_match_key(intent.caption_text)
+        for intent in input.clip_intents or []
+        if intent.status == "resolved"
+        and intent.op == "caption"
+        and intent.caption_text
+        and is_spoken_script_copy(intent.caption_text, input.creator_request, spoken)
+    )
+    keys.discard("")
+    return keys
 
 
 # How close "only"/"just" must sit to a quoted phrase to read as the creator
@@ -1511,7 +1543,7 @@ def _creator_quoted_captions_are_exhaustive(request: str) -> bool:
     say 'post match pub' for the pub clips").
     """
 
-    for match in _QUOTED_TEXT_RE.finditer(request):
+    for match in QUOTED_TEXT_RE.finditer(request):
         window = request[
             max(0, match.start() - _EXCLUSIVE_QUOTE_WINDOW_CHARS) : match.end()
             + _EXCLUSIVE_QUOTE_WINDOW_CHARS
@@ -2682,6 +2714,8 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         creator_quotes_are_exhaustive = bool(creator_quotes) and (
             _creator_quoted_captions_are_exhaustive(input.creator_request)
         )
+        spoken = narration_word_keys(input.narration_words)
+        script_keys = _spoken_script_keys(input, spoken) if not creator_labels else set()
         for beat_index, beat in enumerate(output.story_beats):
             if beat_index in creator_beat_indexes or (creator_labels and not beat.thought.strip()):
                 # Confirmed creator copy is not an AI draft: it is never
@@ -2704,6 +2738,15 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 # Not signaled as exhaustive: leave this beat's own thought
                 # alone here and let it fall through to the normal AI-draft
                 # screening below, instead of wiping it.
+            if beat.thought.strip() and (
+                creator_copy_match_key(beat.thought) in script_keys
+                or transcript_speaks(word_keys(beat.thought), spoken)
+            ):
+                # Voiceover script echoed as chapter text would repeat the
+                # timed narration captions on screen.
+                beat.thought = ""
+                repairs.append(f"blanked_spoken_script_thought:{beat_index}")
+                continue
             has_creator_context = any(
                 media_by_id[media_id].user_context.strip() for media_id in beat.media_ids
             )

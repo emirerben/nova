@@ -347,7 +347,6 @@ private struct NativeSelectedTextInspector: View {
     @State private var shadow = false
     @State private var behindSubject = false
     @State private var stroke = 0.0
-    private let styles = ["Fraunces", "Inter", "Space Grotesk"]
 
     private var layer: EditorTextElement? { session.document.textElements.first(where: { $0.id == selection.id }) }
     private var canEditTextFields: Bool { nativeEditorEditable(session, keys: ["text_elements"], fallback: session.canEditText) }
@@ -366,15 +365,16 @@ private struct NativeSelectedTextInspector: View {
                 .accessibilityIdentifier("native-editor-selected-text-apply")
             }
             Section("Style") {
-                Picker("Text style", selection: $style) {
-                    ForEach(styles, id: \.self, content: Text.init)
-                }
-                .pickerStyle(.menu)
-                .onChange(of: style) { _, value in
+                NativeFontPicker(
+                    selection: style,
+                    accessibilityLabelText: "Text style",
+                    accessibilityID: "native-editor-selected-text-style"
+                ) { value in
+                    guard let value else { return }
+                    style = value
                     session.setTextStyle(id: selection.id, style: value)
                 }
                 .disabled(!canEditTextFields)
-                .accessibilityIdentifier("native-editor-selected-text-style")
             }
             Section("Layout") {
                 NativeEditorSlider(session: session, value: $size, in: 8...160, step: 1) { Text("Text size") }
@@ -525,10 +525,15 @@ private struct NativeSelectedCaptionInspector: View {
                 .onChange(of: style) { _, value in session.setCaptionStyle(value.lowercased()) }
                 .disabled(!session.canEditCaptions)
                 .accessibilityIdentifier("native-editor-selected-caption-style")
-                Picker("Font", selection: $font) {
-                    ForEach(NativeEditorWireContract.captionFonts, id: \.self, content: Text.init)
+                NativeFontPicker(
+                    selection: font,
+                    accessibilityLabelText: "Caption font",
+                    accessibilityID: "native-editor-selected-caption-font"
+                ) { value in
+                    guard let value else { return }
+                    font = value
+                    session.setCaptionFont(value)
                 }
-                .onChange(of: font) { _, value in session.setCaptionFont(value) }
                 NativeEditorSlider(session: session, value: $size, in: 36...160, step: 1) { Text("Caption size") }
                     .onChange(of: size) { _, value in session.setCaptionSize(value) }
                 NativeEditorSlider(session: session, value: $y, in: 0.30...0.90, step: 0.01) { Text("Caption position") }

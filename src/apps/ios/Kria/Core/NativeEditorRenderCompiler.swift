@@ -23,13 +23,11 @@ enum NativeEditorRenderError: Error, Equatable {
 
     init(fontDirectory: URL) throws {
         handwritingLayout = try AuthoredHandwritingLayout(url: fontDirectory.appendingPathComponent("handwriting-strokes.json"))
-        struct Registry: Decodable {
-            struct Entry: Decodable { let file: String }
-            let fonts: [String: Entry]
+        // Last-wins, like the backend: the registry repeats "Outfit" (see NativeFontRegistry).
+        guard let registry = NativeFontRegistry.entries(from: try Data(contentsOf: fontDirectory.appendingPathComponent("font-registry.json"))) else {
+            throw NativeEditorRenderError.missingFont("font-registry.json")
         }
-        let registry = try JSONDecoder().decode(Registry.self,
-            from: Data(contentsOf: fontDirectory.appendingPathComponent("font-registry.json")))
-        fontAliases = registry.fonts.mapValues(\.file)
+        fontAliases = registry.mapValues(\.file)
         fontInstances = try JSONDecoder().decode([String: [String: Double]].self, from: Data(contentsOf: fontDirectory.appendingPathComponent("native-font-instances.json")))
         fontURLs = Dictionary(uniqueKeysWithValues: try FileManager.default.contentsOfDirectory(
             at: fontDirectory, includingPropertiesForKeys: nil

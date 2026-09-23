@@ -123,13 +123,12 @@ struct NativeVisualPanel: View {
         // Un-choosing a visual in the picker removes it server-side without touching `records`.
         .onChange(of: uploads.photoSelections) { _, _ in Task { await session.refreshVisualLibrary() } }
         .task {
-            await session.refreshVisualLibrary()
-            // Pending assets may finish analysis after the upload record is removed.
+            await session.pollVisualLibrary()
+            // Pending assets may finish analysis after the upload record is
+            // removed, and transient failures retry on their own while polled.
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
-                if session.visualLibrary.contains(where: { ["pending", "analyzing", "processing"].contains($0.status) }) {
-                    await session.refreshVisualLibrary()
-                }
+                if session.visualLibraryNeedsPolling { await session.pollVisualLibrary() }
             }
         }
         .onChange(of: selected, initial: true) { _, _ in
@@ -223,9 +222,13 @@ struct NativeVisualPanel: View {
                                 VStack(spacing: 0) {
                                     Button { Task { await session.addLibraryVisual(asset) } } label: { assetTile(asset) }
                                         .disabled(asset.status != "ready" || session.isAddingVisual || !session.canAuthorVisuals)
+                                        .accessibilityLabel(Self.assetAccessibilityLabel(asset, retryingAutomatically: session.visualAutoRetry.isRetryPending(asset.id)))
                                         .accessibilityIdentifier("native-editor-add-visual-" + asset.id)
                                     if asset.retryable == true {
+                                        // Disabled while a reanalyze for this asset awaits its response,
+                                        // so a tap can't send a duplicate request.
                                         Button("Retry") { Task { await session.retryLibraryVisual(asset.id) } }
+                                            .disabled(!session.visualAutoRetry.canRetryManually(asset.id))
                                             .accessibilityLabel("Retry " + (asset.sourceFilename ?? "visual"))
                                     }
                                 }.frame(maxWidth: .infinity)
@@ -245,10 +248,33 @@ struct NativeVisualPanel: View {
             NativeVisualThumbnail(asset: asset)
                 .frame(height: 76).clipped().clipShape(RoundedRectangle(cornerRadius: 9))
             Text(asset.sourceFilename ?? "Visual").font(KriaFont.body(11)).lineLimit(1).frame(height: 14)
-            Text(asset.status == "ready" ? " " : asset.status.capitalized)
-                .font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk).lineLimit(1).frame(height: 14)
-                .accessibilityHidden(asset.status == "ready")
+            if asset.status == "failed" {
+                // A 3-up tile fits only part of the server's explanation, so it
+                // truncates; the next step keeps its own line so truncation never
+                // cuts it off, and the tile's accessibility label reads it all.
+                let caption = asset.statusCaptionParts(retryingAutomatically: session.visualAutoRetry.isRetryPending(asset.id))
+                Text(caption.explanation)
+                    .font(KriaFont.body(11)).foregroundStyle(KriaColor.failureText)
+                    .multilineTextAlignment(.center).lineLimit(3)
+                if let nextStep = caption.nextStep {
+                    Text(nextStep)
+                        .font(KriaFont.body(11).weight(.medium)).foregroundStyle(KriaColor.ink)
+                        .multilineTextAlignment(.center).lineLimit(2)
+                }
+            } else {
+                Text(asset.status == "ready" ? " " : asset.status.capitalized)
+                    .font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk).lineLimit(1).frame(height: 14)
+                    .accessibilityHidden(asset.status == "ready")
+            }
         }
+    }
+
+    /// The library tile's VoiceOver label: its filename and, unless it's
+    /// ready, the whole status caption the tile may only show in part.
+    static func assetAccessibilityLabel(_ asset: CreationVisual, retryingAutomatically: Bool) -> String {
+        let name = asset.sourceFilename ?? "Visual"
+        guard asset.status != "ready" else { return name }
+        return name + ", " + asset.statusCaption(retryingAutomatically: retryingAutomatically)
     }
 
     private var cards: some View {
@@ -437,9 +463,10 @@ struct NativeVisualPanel: View {
                 } else if let element = cardElement {
                     TextField("Card text", text: Binding(get: { cardElement?.text ?? "" }, set: { session.updateTextContent(id: element.id, content: $0) }), axis: .vertical)
                         .focused($editingText).padding(12).background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
-                    Picker("Font", selection: Binding(get: { cardElement?.raw["font_family"]?.stringValue ?? "Inter" }, set: { session.setTextStyle(id: element.id, style: $0) })) {
-                        ForEach(["Inter Regular", "Inter", "Fraunces", "Space Grotesk"], id: \.self) { Text($0).tag($0) }
-                    }.frame(minHeight: 44)
+                    NativeFontPicker(
+                        selection: cardElement?.raw["font_family"]?.stringValue ?? "Inter",
+                        accessibilityID: "native-editor-card-font"
+                    ) { if let family = $0 { session.setTextStyle(id: element.id, style: family) } }
                     ColorPicker("Text color", selection: Binding(get: { nativeEditorColor(cardElement?.raw["color"]?.stringValue ?? "#FFFFFF") }, set: { session.setTextColor(id: element.id, color: nativeEditorHex($0)) }), supportsOpacity: false).frame(minHeight: 44)
                     slider("Size", value: Binding(get: { cardElement.map(NativeEditorSession.textSize) ?? 72 }, set: { session.setTextSize(id: element.id, sizePX: $0) }), range: 8...240)
                 } else if selected.kind == .motionScene {
