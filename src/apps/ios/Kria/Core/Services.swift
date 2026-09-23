@@ -963,12 +963,13 @@ struct KriaAPI: KriaAPIClient {
         if http.statusCode == 409 || http.statusCode == 412 {
             let detail = Self.decodeDetail(from: data)
             #if DEBUG
-            let code: String = Self.concurrentUpdateRetryDelay(data: data, response: http) != nil ? "concurrent_update" : switch detail {
+            var code: String = switch detail {
             case "Content plan is unavailable": "plan_unavailable"
             case "Video is not ready to open in the editor.": "editor_not_ready"
             case "baseline_conflict": "baseline_conflict"
             default: "other_conflict"
             }
+            if Self.concurrentUpdateRetryDelay(data: data, response: http) != nil { code = "concurrent_update" }
             NativePreviewDiagnostics.record("http-conflict", fields: ["code": code])
             #endif
             if detail == "Content plan is unavailable" { throw APIError.contentPlanUnavailable }
