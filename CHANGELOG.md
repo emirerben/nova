@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.163.0] - 2026-09-23
+
+### Fixed
+- fix(ci): cover branded outro in iOS scrub regression (#1162) <!-- release-pr: 1162 -->
+
 ## [0.76.162.0] - 2026-09-23
 
 ### Changed
