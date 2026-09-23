@@ -444,6 +444,15 @@ export default function SfxLane({
             <PopoverContent
               align="start"
               aria-label="Sound effects"
+              // Radix hears Escape on the document before the search field
+              // does: with a query typed, let SfxPicker clear it instead of
+              // dismissing the popover.
+              onEscapeKeyDown={(e) => {
+                const target = e.target;
+                if (target instanceof HTMLInputElement && target.type === "search" && target.value) {
+                  e.preventDefault();
+                }
+              }}
               className="flex max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(22rem,calc(100vw-2rem))] flex-col rounded-lg border-zinc-200 bg-white p-2 shadow-lg"
             >
               <SfxPicker

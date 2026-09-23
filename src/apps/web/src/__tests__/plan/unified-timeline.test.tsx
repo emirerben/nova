@@ -263,6 +263,21 @@ describe("UnifiedTimeline — glossary picker", () => {
     expect(within(picker).getAllByRole("button", { pressed: false })).toHaveLength(1);
   });
 
+  it("Escape in a non-empty search clears it first, then closes the picker", async () => {
+    const effects = [makeGlossaryEffect({ id: "g1", name: "Whoosh" })];
+    render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: effects })} />);
+    const picker = await openGlossaryPicker();
+    const search = within(picker).getByRole("searchbox");
+
+    fireEvent.change(search, { target: { value: "boom" } });
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Sound effects" })).toBeInTheDocument();
+    expect(search).toHaveValue("");
+
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Sound effects" })).toBeNull();
+  });
+
   it("ArrowDown from the popover search moves focus onto the first effect", async () => {
     const effects = [
       makeGlossaryEffect({ id: "g1", name: "Whoosh", category: "transition" }),

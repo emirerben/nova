@@ -113,12 +113,42 @@ describe("sfxQueryMatcher", () => {
     expect(sfxQueryMatcher("noise")(LIBRARY[0])).toBe(false);
   });
 
-  it("keeps non-ASCII letters inside words", () => {
-    expect(sfxWords("Olé şok!")).toEqual(["olé", "şok"]);
+  it("keeps non-ASCII letters inside words and folds accents", () => {
+    expect(sfxWords("Olé şok!")).toEqual(["ole", "sok"]);
+    // Decomposed (NFD) text reads the same as composed text.
+    expect(sfxWords("Şok")).toEqual(["sok"]);
     const ok = effect("ok", "OK chime", "approval", ["ok"]);
     // "şok" must not collapse to "ok" and match unrelated effects.
     expect(sfxQueryMatcher("şok")(ok)).toBe(false);
+    expect(sfxQueryMatcher("Şok")(ok)).toBe(false);
     expect(sfxQueryMatcher("ok")(ok)).toBe(true);
+    expect(sfxQueryMatcher("ole")(effect("ole", "Olé crowd", "sports"))).toBe(true);
+  });
+
+  it("finds Latin words typed with Turkish dotted/dotless i", () => {
+    const impact = effect("impact", "Impact hit", "impact");
+    expect(sfxQueryMatcher("İmpact")(impact)).toBe(true);
+    expect(sfxQueryMatcher("ımpact")(impact)).toBe(true);
+  });
+
+  it("folds -es plurals on either side", () => {
+    const punch = effect("punch", "Punch hit", "impact", ["crashes"]);
+    expect(sfxQueryMatcher("punches")(punch)).toBe(true);
+    expect(sfxQueryMatcher("crash")(punch)).toBe(true);
+    expect(sfxQueryMatcher("glitches")(effect("g", "Glitch", "transition"))).toBe(true);
+  });
+
+  it("does not throw on a malformed search_terms payload", () => {
+    const bad = { ...effect("x", "Airhorn"), search_terms: "airhorn" as unknown as string[] };
+    expect(() => sfxQueryMatcher("airhorn")(bad)).not.toThrow();
+    expect(sfxQueryMatcher("airhorn")(bad)).toBe(true);
+  });
+
+  it("re-indexes an effect whose terms were replaced", () => {
+    const e = effect("r", "Riser", "suspense", ["build"]);
+    expect(sfxQueryMatcher("tension")(e)).toBe(false);
+    e.search_terms = ["tension"];
+    expect(sfxQueryMatcher("tension")(e)).toBe(true);
   });
 });
 
@@ -163,6 +193,24 @@ describe("groupSfxEffects", () => {
       ["transition", ["c", "b", "a"]],
       ["other", ["z"]],
     ]);
+  });
+
+  it("matches a half-typed word exactly as typed", () => {
+    const whip = effect("whip", "Whip pan", "transition");
+    const whistle = effect("whistle", "Referee whistle", "sports");
+    const keys = (query: string) =>
+      groupSfxEffects([whip, whistle], query).flatMap((g) => ids(g.effects));
+    // "whis" must not fold to "whi" and pull in "Whip pan".
+    expect(keys("whis")).toEqual(["whistle"]);
+  });
+
+  it("keeps results while a filler word is half-typed", () => {
+    const keys = (query: string) =>
+      groupSfxEffects(LIBRARY, query).flatMap((g) => ids(g.effects));
+    expect(keys("wrong buzzer sou")).toEqual(["buzz"]);
+    expect(keys("wrong buzzer e")).toEqual(["buzz"]);
+    // A lone half-word is not dropped.
+    expect(keys("sou")).toEqual([]);
   });
 
   it("falls back to word starts for the last word only when nothing matches whole", () => {

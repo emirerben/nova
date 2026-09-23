@@ -87,14 +87,24 @@ export default function SfxPicker({
   }
 
   function handleListKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     const all = options();
     const index = all.indexOf(e.target as HTMLButtonElement);
     if (index < 0) return;
-    e.preventDefault();
-    const next = e.key === "ArrowDown" ? all[index + 1] : all[index - 1];
-    if (next) next.focus();
-    else if (e.key === "ArrowUp") inputRef.current?.focus();
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = e.key === "ArrowDown" ? all[index + 1] : all[index - 1];
+      if (next) next.focus();
+      else if (e.key === "ArrowUp") inputRef.current?.focus();
+      return;
+    }
+    // Typing on a row goes back to the search field. Backspace/Delete must
+    // never reach the editor's delete-selection shortcut, which would remove
+    // the effect the creator just added. Space/Enter still activate the row.
+    const printable = e.key.length === 1 && e.key !== " " && !e.metaKey && !e.ctrlKey && !e.altKey;
+    if (e.key === "Backspace" || e.key === "Delete" || printable) {
+      e.stopPropagation();
+      inputRef.current?.focus();
+    }
   }
 
   const compact = density === "compact";
@@ -116,6 +126,7 @@ export default function SfxPicker({
             placeholder="Search effects"
             aria-label="Search sound effects"
             aria-controls={listId}
+            maxLength={80}
             autoComplete="off"
             spellCheck={false}
             className="h-11 rounded-lg border-zinc-200 bg-white pl-9 text-[#0c0c0e] sm:h-9"
@@ -128,7 +139,7 @@ export default function SfxPicker({
       <div id={listId} ref={listRef} onKeyDown={handleListKeyDown} className={listClassName}>
         {groups.length === 0 ? (
           <div className="rounded-lg border border-dashed border-zinc-300 px-3 py-3 text-[12px] text-ink-2">
-            <p>No effects match &ldquo;{query.trim()}&rdquo;.</p>
+            <p className="[overflow-wrap:anywhere]">No effects match &ldquo;{query.trim()}&rdquo;.</p>
             <Button
               type="button"
               variant="link"

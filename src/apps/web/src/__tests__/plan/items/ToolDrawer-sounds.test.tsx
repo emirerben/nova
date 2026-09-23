@@ -289,4 +289,33 @@ describe("SfxPicker — direct props", () => {
     rerender(<SfxPicker effects={LIBRARY} onPick={jest.fn()} />);
     expect(effectButtons()[0]).not.toHaveClass("scroll-mt-14");
   });
+
+  it("sends typing on a row back to search so Backspace never deletes the new SFX", () => {
+    // Stands in for EditorShell's document-level delete-selection shortcut.
+    const editorKeyDown = jest.fn();
+    render(
+      <div onKeyDown={editorKeyDown}>
+        <SfxPicker effects={LIBRARY} onPick={jest.fn()} />
+      </div>,
+    );
+    const row = screen.getByRole("button", { name: /Wrong buzzer/ });
+
+    row.focus();
+    fireEvent.keyDown(row, { key: "Backspace" });
+    expect(search()).toHaveFocus();
+    expect(editorKeyDown).not.toHaveBeenCalled();
+
+    row.focus();
+    fireEvent.keyDown(row, { key: "Delete" });
+    fireEvent.keyDown(row, { key: "b" });
+    expect(search()).toHaveFocus();
+    expect(editorKeyDown).not.toHaveBeenCalled();
+
+    // Space and shortcuts stay with the row / the editor.
+    row.focus();
+    fireEvent.keyDown(row, { key: " " });
+    fireEvent.keyDown(row, { key: "z", metaKey: true });
+    expect(row).toHaveFocus();
+    expect(editorKeyDown).toHaveBeenCalledTimes(2);
+  });
 });

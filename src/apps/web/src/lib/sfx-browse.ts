@@ -47,11 +47,13 @@ export interface SfxGroup {
   effects: SoundEffectSummary[];
 }
 
-// Letters and digits in any script, so "şok" stays one word instead of
-// matching "ok". Lowercasing is locale-independent on purpose:
-// toLocaleLowerCase() on a Turkish browser turns "UI" into "uı", which would
-// never match the "ui" search term.
+// Letters and digits in any script. Text is decomposed and stripped of
+// accents first, so "Olé" reads "ole", "şok" reads "sok" (one word — never
+// "ok"), and a Turkish "İmpact" or "ımpact" still finds "Impact".
+// Lowercasing is locale-independent on purpose: toLocaleLowerCase() on a
+// Turkish browser turns "UI" into "uı", which would never match "ui".
 const WORD_RE = /[\p{L}\p{N}]+/gu;
+const MARKS_RE = /\p{M}+/gu;
 
 // Words that describe the request, not the sound ("a buzzer sound effect").
 // Same list as the API resolver's `_FILLER`.
@@ -67,28 +69,51 @@ function stem(word: string): string {
     : word;
 }
 
-function rawWords(text: string | null | undefined): string[] {
-  return String(text ?? "").toLowerCase().match(WORD_RE) ?? [];
+// Every form a word can match as: itself, the API's `_stem`, and "-es" off
+// sh/ch/x/z/ss plurals ("punches" → "punch"), which `_stem` misses. Both the
+// query and the effect words expand this way, so either side may be plural.
+function wordForms(word: string): string[] {
+  const forms = [word, stem(word)];
+  if (word.length > 4 && /(?:sh|ch|x|z|ss)es$/.test(word)) forms.push(word.slice(0, -2));
+  return forms;
 }
 
-/** Whole words of `text`, lowercased and plural-folded. */
+function rawWords(text: unknown): string[] {
+  return (
+    String(text ?? "")
+      .normalize("NFKD")
+      .replace(MARKS_RE, "")
+      .toLowerCase()
+      .replace(/ı/g, "i")
+      .match(WORD_RE) ?? []
+  );
+}
+
+/** Whole words of `text`, lowercased, accent-folded and plural-folded. */
 export function sfxWords(text: string | null | undefined): string[] {
   return rawWords(text).map(stem);
 }
 
 // Effect objects are stable across renders, so index each one's words once
-// instead of re-splitting the whole library on every keystroke.
-const effectWordCache = new WeakMap<SoundEffectSummary, Set<string>>();
+// instead of re-splitting the whole library on every keystroke. The entry is
+// reused only while the name and terms are the same values.
+const effectWordCache = new WeakMap<
+  SoundEffectSummary,
+  { name: string; terms: SoundEffectSummary["search_terms"]; words: Set<string> }
+>();
 
 function effectWords(effect: SoundEffectSummary): Set<string> {
-  let words = effectWordCache.get(effect);
-  if (!words) {
-    words = new Set([
-      ...sfxWords(effect.name),
-      ...(effect.search_terms ?? []).flatMap((term) => sfxWords(term)),
-    ]);
-    effectWordCache.set(effect, words);
+  const cached = effectWordCache.get(effect);
+  if (cached && cached.name === effect.name && cached.terms === effect.search_terms) {
+    return cached.words;
   }
+  // Defensive: a malformed payload must not take the picker down.
+  const terms: unknown[] = Array.isArray(effect.search_terms) ? effect.search_terms : [];
+  const words = new Set<string>();
+  for (const word of [...rawWords(effect.name), ...terms.flatMap((term) => rawWords(term))]) {
+    for (const form of wordForms(word)) words.add(form);
+  }
+  effectWordCache.set(effect, { name: effect.name, terms: effect.search_terms, words });
   return words;
 }
 
@@ -117,13 +142,15 @@ export function sfxQueryMatcher(
   // Filler is checked before the plural fold, like the API ("this" ≠ "thi").
   const words = rawWords(query);
   const meaningful = words.filter((word) => !QUERY_FILLER.has(word));
-  const wanted = (meaningful.length > 0 ? meaningful : words).map(stem);
+  const wanted = meaningful.length > 0 ? meaningful : words;
   if (wanted.length === 0) return () => true;
   const whole = prefixLast ? wanted.slice(0, -1) : wanted;
+  // The half-typed word is matched exactly as typed ("whis" never folds to
+  // "whi" and pulls in "Whip").
   const partial = prefixLast ? wanted[wanted.length - 1] : null;
   return (effect) => {
     const have = effectWords(effect);
-    if (!whole.every((word) => have.has(word))) return false;
+    if (!whole.every((word) => wordForms(word).some((form) => have.has(form)))) return false;
     if (partial === null) return true;
     for (const word of have) if (word.startsWith(partial)) return true;
     return false;
@@ -145,10 +172,18 @@ const byName = (a: SoundEffectSummary, b: SoundEffectSummary) =>
  *  "Other" (legacy/unknown category) last. Groups are A→Z and never empty.
  *  Whole-word matches win; only when there are none does the last word match
  *  as a word start, so "whoo" finds "Whoosh" while "tap" still skips
- *  "Tape rewind". */
+ *  "Tape rewind". A half-typed filler word ("whoosh sou…") that empties the
+ *  results is dropped, so the list doesn't blink out while typing it. */
 export function groupSfxEffects(effects: SoundEffectSummary[], query = ""): SfxGroup[] {
   let matched = effects.filter(sfxQueryMatcher(query));
   if (matched.length === 0) matched = effects.filter(sfxQueryMatcher(query, { prefixLast: true }));
+  if (matched.length === 0) {
+    const words = rawWords(query);
+    const last = words[words.length - 1];
+    if (words.length > 1 && Array.from(QUERY_FILLER).some((filler) => filler.startsWith(last))) {
+      return groupSfxEffects(effects, words.slice(0, -1).join(" "));
+    }
+  }
   const buckets = new Map<SfxGroupKey, SoundEffectSummary[]>();
   for (const effect of matched) {
     const key = groupKey(effect.category);
