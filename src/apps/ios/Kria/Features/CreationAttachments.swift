@@ -15,6 +15,7 @@ struct AttachmentSheet: View {
     let refresh: () async -> Void
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var role: CreationMediaRole = .clip
     @State private var pool: CreationVisuals?
     @State private var error: String?
@@ -23,6 +24,13 @@ struct AttachmentSheet: View {
     @State private var pendingRemoval: CreationActionIdentity?
     @State private var uploadingRecording = false
     @State private var pendingRecords: [UploadRecoveryRecord] = []
+    /// Per-sheet budget for retrying transient analysis failures on the creator's behalf.
+    @State private var autoRetry = VisualAutoRetryScheduler()
+    @State private var visualPollRunning = false
+    /// The extra poll started when the app returns to the foreground. Kept so
+    /// only one runs at a time and it is cancelled with the sheet; a bare
+    /// `Task` would outlive the sheet and keep acting on its snapshot.
+    @State private var foregroundPoll: Task<Void, Never>?
     @StateObject private var recorder = CreationVoiceRecorder()
 
     init(
@@ -52,6 +60,7 @@ struct AttachmentSheet: View {
     private var usesVisualPoolOnly: Bool { format?.usesVisualPool == true }
 
     private var itemID: String? { thread?.activePlanItemID }
+    private var pollsVisuals: Bool { capabilities?.visualsEnabled == true || usesVisualPoolOnly }
     private var limit: CreationMediaLimit? { capabilities?.media?[role.capabilityKey] }
     private var media: [CreationAttachedMedia] { CreationAttachedMedia.parse(thread?.state ?? [:]) }
     private var maximum: Int {
@@ -162,11 +171,17 @@ struct AttachmentSheet: View {
                                     .frame(width: 52, height: 64).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
                                 VStack(alignment: .leading) {
                                     Text(asset.sourceFilename ?? "Visual").lineLimit(1)
-                                    Text(asset.status.capitalized).font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc)
+                                    Text(asset.statusCaption(retryingAutomatically: autoRetry.isRetryPending(asset.id)))
+                                        .font(KriaFont.body(11))
+                                        .foregroundStyle(asset.status == "failed" ? KriaColor.failureText : KriaColor.zinc)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                                 Spacer()
                                 if asset.status == "failed", asset.retryable != false {
-                                    Button("Retry") { Task { await retry(asset) } }.disabled(mutatingVisual)
+                                    // Disabled while this sheet's automatic reanalyze for the asset is
+                                    // awaiting its response, so a tap can't send a duplicate request.
+                                    Button("Retry") { Task { await retry(asset) } }
+                                        .disabled(mutatingVisual || !autoRetry.canRetryManually(asset.id))
                                 }
                                 Button { Task { await remove(asset) } } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
                                     .accessibilityLabel("Remove \(asset.sourceFilename ?? "visual")")
@@ -186,10 +201,19 @@ struct AttachmentSheet: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(recorder.isRecording) } }
             .interactiveDismissDisabled(recorder.isRecording)
             .task {
-                guard capabilities?.visualsEnabled == true || usesVisualPoolOnly else { return }
+                guard pollsVisuals else { return }
                 while !Task.isCancelled {
-                    await loadVisuals()
+                    await pollVisuals()
                     do { try await Task.sleep(for: .seconds(5)) } catch { return }
+                }
+            }
+            // Back in the foreground, poll now: an automatic retry that came due
+            // while the app was suspended fires at once instead of up to 5 s later.
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active, pollsVisuals, foregroundPoll == nil else { return }
+                foregroundPoll = Task {
+                    await pollVisuals()
+                    foregroundPoll = nil
                 }
             }
             // Uploads wait for the account's capabilities; keep asking rather
@@ -206,7 +230,11 @@ struct AttachmentSheet: View {
             // Un-choosing a visual in the picker removes it server-side; refresh the pool now rather
             // than on the next poll, or the picker would keep showing it as chosen for a few seconds.
             .onReceive(model.uploads.$photoSelections) { _ in if role == .visual { Task { await loadVisuals() } } }
-            .onDisappear { recorder.discard() }
+            .onDisappear {
+                recorder.discard()
+                foregroundPoll?.cancel()
+                foregroundPoll = nil
+            }
         }
     }
     private func removeAttached(_ attachment: CreationAttachedMedia) async {
@@ -226,10 +254,35 @@ struct AttachmentSheet: View {
             error = "This project changed. Review the attached files and try again."
         } catch { self.error = "Couldn’t remove the file. \(error.localizedDescription)" }
     }
-    private func loadVisuals() async {
-        guard let itemID else { return }
-        do { pool = try await model.api.visuals(itemID: itemID); error = nil }
-        catch { self.error = "Kria couldn’t load your visuals. \(error.localizedDescription)" }
+    @discardableResult
+    private func loadVisuals() async -> Bool {
+        guard let itemID else { return false }
+        do { pool = try await model.api.visuals(itemID: itemID); error = nil; return true }
+        catch { self.error = "Kria couldn’t load your visuals. \(error.localizedDescription)"; return false }
+    }
+    /// One poll of the pool followed by any automatic reanalyze that is due.
+    /// Serialized so a foreground pass never acts on a snapshot older than a
+    /// reanalyze the poll loop already has in flight.
+    private func pollVisuals() async {
+        guard !visualPollRunning else { return }
+        visualPollRunning = true
+        defer { visualPollRunning = false }
+        guard await loadVisuals() else { return }
+        await retryFailedVisualsAutomatically()
+    }
+    /// Transient analysis failures (`analysis_temporarily_unavailable`) retry on
+    /// their own: at most three times per asset per sheet, 10/20/40 s apart.
+    /// The server re-runs analysis on the object it already holds; nothing
+    /// re-uploads, and non-retryable failures are never touched.
+    private func retryFailedVisualsAutomatically() async {
+        guard let itemID, !mutatingVisual, let assets = pool?.assets else { return }
+        let due = autoRetry.observe(assets, now: Date())
+        guard !due.isEmpty else { return }
+        for assetID in due {
+            let result = try? await model.api.retryVisual(itemID: itemID, assetID: assetID)
+            autoRetry.recordAttempt(assetID: assetID, result: result, now: Date())
+        }
+        await loadVisuals()
     }
     private func remove(_ asset: CreationVisual) async {
         guard let itemID, !mutatingVisual else { return }
@@ -239,11 +292,17 @@ struct AttachmentSheet: View {
         catch { self.error = "Couldn’t remove this visual. \(error.localizedDescription)" }
     }
     private func retry(_ asset: CreationVisual) async {
-        guard let itemID, !mutatingVisual else { return }
+        guard let itemID, !mutatingVisual, autoRetry.beginManualRetry(asset.id) else { return }
         mutatingVisual = true
         defer { mutatingVisual = false }
-        do { _ = try await model.api.retryVisual(itemID: itemID, assetID: asset.id); await loadVisuals() }
-        catch { self.error = "Couldn’t retry this visual. \(error.localizedDescription)" }
+        do {
+            let result = try await model.api.retryVisual(itemID: itemID, assetID: asset.id)
+            autoRetry.recordAttempt(assetID: asset.id, result: result, now: Date())
+            await loadVisuals()
+        } catch {
+            autoRetry.recordAttempt(assetID: asset.id, result: nil, now: Date())
+            self.error = "Couldn’t retry this visual. \(error.localizedDescription)"
+        }
     }
     private func finishRecording() async {
         guard !uploadingRecording, let url = recorder.stop() else { return }
