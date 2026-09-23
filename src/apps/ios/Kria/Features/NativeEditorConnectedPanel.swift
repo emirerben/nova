@@ -14,17 +14,32 @@ enum NativeEditorPanel: Equatable {
     }
 }
 
-/// The panel and timeline resize handles share one expansion value. Keeping
-/// the drag math here makes both handles continuous in global coordinates and
-/// gives the connected handle a real, accessible hit target.
+/// The panel and timeline resize handles each own their own value (KRI-170).
+/// Keeping the drag math here makes both handles continuous in global
+/// coordinates and gives them a real, accessible hit target. `range` is how
+/// many points of finger travel move `value` by one unit; `bounds` may extend
+/// below zero (the preview handle grows the preview with negative values).
 struct NativeEditorPanelResizeGrabber: View {
     @Binding var expansion: CGFloat
     let range: CGFloat
     let reduceMotion: Bool
     let accessibilityIdentifier: String
     var topAligned = false
+    var bounds: ClosedRange<CGFloat> = 0...1
+    var accessibilityTitle = "Editor panel size"
+    var accessibilityHint = "Swipe up or down to resize the editor panel"
+    /// Spoken value, given the current value and its bounds.
+    var describe: (CGFloat, ClosedRange<CGFloat>) -> String = { value, bounds in
+        "\(Int(((value - bounds.lowerBound) / max(0.0001, bounds.upperBound - bounds.lowerBound)) * 100)) percent expanded"
+    }
+    /// Signed fraction of the span added by a VoiceOver "increment".
+    var incrementFraction: CGFloat = 0.25
     @State private var dragOrigin: CGFloat?
     @State private var feedback = 0
+
+    private func clamp(_ value: CGFloat) -> CGFloat {
+        min(bounds.upperBound, max(bounds.lowerBound, value))
+    }
 
     var body: some View {
         Capsule()
@@ -38,11 +53,11 @@ struct NativeEditorPanelResizeGrabber: View {
                     .onChanged { value in
                         guard range > 0 else { return }
                         if dragOrigin == nil {
-                            dragOrigin = expansion
+                            dragOrigin = clamp(expansion)
                             feedback += 1
                         }
-                        let next = min(1, max(0, (dragOrigin ?? 0) - value.translation.height / range))
-                        if next != expansion && (next == 0 || next == 1) { feedback += 1 }
+                        let next = clamp((dragOrigin ?? 0) - value.translation.height / range)
+                        if next != expansion && (next == bounds.lowerBound || next == bounds.upperBound) { feedback += 1 }
                         expansion = next
                     }
                     .onEnded { _ in
@@ -52,12 +67,13 @@ struct NativeEditorPanelResizeGrabber: View {
             )
             .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: feedback)
             .accessibilityElement()
-            .accessibilityLabel("Editor panel size")
-            .accessibilityValue("\(Int(expansion * 100)) percent expanded")
-            .accessibilityHint("Swipe up or down to resize the editor panel and preview")
+            .accessibilityLabel(accessibilityTitle)
+            .accessibilityValue(describe(expansion, bounds))
+            .accessibilityHint(accessibilityHint)
             .accessibilityAdjustableAction { direction in
-                let step: CGFloat = direction == .increment ? 0.25 : -0.25
-                let next = min(1, max(0, expansion + step))
+                let span = bounds.upperBound - bounds.lowerBound
+                let step = (direction == .increment ? incrementFraction : -incrementFraction) * span
+                let next = clamp(expansion + step)
                 guard next != expansion else { return }
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { expansion = next }
                 feedback += 1

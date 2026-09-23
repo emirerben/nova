@@ -20,8 +20,18 @@ struct NativeEditorView: View {
     @State private var showsConversation = false
     @State private var selectedTextForActions: String?
     @State private var keyboardVisible = false
-    @State private var timelineExpansion: CGFloat = 0
+    /// KRI-170: the timeline handle and the panel handle are independent.
+    /// `previewResize` is in points (positive shrinks the preview, negative
+    /// grows it); `panelExpansion` is 0…1 and may lift the panel over the preview.
+    @State private var previewResize: CGFloat = 0
+    @State private var panelExpansion: CGFloat = 0
     @State private var topChromeHeight: CGFloat = 0
+    /// `previewFullscreen` mounts the overlay; `fullscreenExpanded` drives its
+    /// grow/shrink so the overlay can animate out before it is removed.
+    @State private var previewFullscreen = false
+    @State private var fullscreenExpanded = false
+    @State private var previewGlobalFrame: CGRect = .zero
+    @State private var wasPlayingBeforeFullscreen = false
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
@@ -90,6 +100,11 @@ struct NativeEditorView: View {
             .font(KriaFont.body())
             .foregroundStyle(KriaColor.ink)
             .background(KriaColor.paper)
+            .overlay {
+                if previewFullscreen {
+                    fullscreenOverlay(viewport: viewport)
+                }
+            }
             .navigationBarBackButtonHidden(true)
             .sheet(item: $inspector) { inspector in
                 NativeEditorInspectorView(inspector: inspector, session: session)
@@ -97,6 +112,11 @@ struct NativeEditorView: View {
                     .presentationDragIndicator(.visible)
             }
             .onChange(of: session.selectionRequest) { _, _ in routeSelection() }
+            // A tall panel is a per-session choice: opening a tool later must
+            // never start out covering the preview.
+            .onChange(of: panel == nil) { _, closed in
+                if closed { panelExpansion = 0 }
+            }
             .onChange(of: session.pendingText == nil) { _, finished in
                 if finished {
                     resignKeyboard()
@@ -154,27 +174,21 @@ struct NativeEditorView: View {
     }
 
     @ViewBuilder private func editor(viewport: GeometryProxy) -> some View {
-        let referenceHeight = !keyboardVisible
-            ? viewport.size.height + viewport.safeAreaInsets.top + viewport.safeAreaInsets.bottom
-            : viewport.size.height
-        let portraitHeight = dynamicTypeSize.isAccessibilitySize ? 150 : min(284, max(150, referenceHeight * 0.34))
-        // Banners and the posting-song bar share this fixed-height column.
-        // Their measured height comes out of the preview so the timeline and
-        // tool rail stay on screen.
-        let portraitBudget = max(80, portraitHeight - topChromeHeight)
-        let preferredPreviewHeight = session.previewAspectRatio > 1 ? min(124, portraitBudget) : portraitBudget
-        // Reserve room for the header, divider and usable text controls above
-        // the keyboard rather than allowing their minimum heights to overflow.
-        let defaultPreviewHeight = keyboardVisible
-            ? min(preferredPreviewHeight, max(80, viewport.size.height - 320 - topChromeHeight))
-            : preferredPreviewHeight
-        let resizeRange = max(0, defaultPreviewHeight - 80)
+        let metrics = NativeEditorLayoutMetrics(
+            viewportSize: viewport.size,
+            safeAreaTop: viewport.safeAreaInsets.top,
+            safeAreaBottom: viewport.safeAreaInsets.bottom,
+            topChromeHeight: topChromeHeight,
+            previewAspectRatio: session.previewAspectRatio,
+            keyboardVisible: keyboardVisible,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
         let showsTimeline = panel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
         // KRI-131: the context capsule now floats over the timeline instead
         // of pushing it up, so selecting a clip/text no longer shrinks the
         // preview.
-        let previewHeight = max(80, defaultPreviewHeight - timelineExpansion * resizeRange)
+        let previewHeight = metrics.previewHeight(resize: previewResize)
         VStack(spacing: 0) {
             NativeEditorProjectHeader(
                 title: project.workspaceTitle, session: session, exporter: exporter,
@@ -202,9 +216,10 @@ struct NativeEditorView: View {
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { topChromeHeight = $0 }
 
-            NativeVideoPreview(session: session)
+            NativeVideoPreview(session: session, onEmptyTap: enterFullscreen)
                 .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
                 .clipped()
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { previewGlobalFrame = $0 }
                 .accessibilityIdentifier("native-editor-preview")
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
@@ -224,8 +239,11 @@ struct NativeEditorView: View {
                     }
                 }
 
-            timelineResizeHandle(range: resizeRange)
-            connectedEditorArea(viewport: viewport, showsContext: showsContext, resizeRange: resizeRange)
+            timelineResizeHandle(metrics: metrics)
+            connectedEditorArea(viewport: viewport, showsContext: showsContext, metrics: metrics, previewHeight: previewHeight)
+                // The panel may rise over the preview; paint and hit-test it
+                // above the preview and the timeline handle.
+                .zIndex(1)
         }
         .environment(\.nativeEditorConnectedPanel, true)
         .environment(\.nativeEditorPanelLifecycle, panelLifecycle)
@@ -233,11 +251,77 @@ struct NativeEditorView: View {
 
     private var panelIsOpen: Bool { panel != nil }
 
+    private var fullscreenSpring: Animation {
+        shouldReduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.36, dampingFraction: 0.88)
+    }
+
+    /// Empty preview taps and the VoiceOver "Expand preview" action land here.
+    /// The grow animation starts first; playback (which synchronously
+    /// activates the audio session) waits until it settles so it can't stall
+    /// the animation. Playback is restored on exit. At the end of the timeline
+    /// `togglePlayback()` restarts from 0.
+    private func enterFullscreen() {
+        guard !previewFullscreen, !keyboardVisible, session.pendingText == nil,
+              session.canDisplayCurrentPlayer else { return }
+        wasPlayingBeforeFullscreen = session.isPlaying
+        fullscreenExpanded = false
+        previewFullscreen = true
+        DispatchQueue.main.async {
+            withAnimation(fullscreenSpring) { fullscreenExpanded = true }
+        }
+        if !wasPlayingBeforeFullscreen {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                if previewFullscreen, fullscreenExpanded, !session.isPlaying { session.togglePlayback() }
+            }
+        }
+    }
+
+    private func exitFullscreen() {
+        guard previewFullscreen else { return }
+        if !wasPlayingBeforeFullscreen { session.pausePlayback() }
+        withAnimation(fullscreenSpring) { fullscreenExpanded = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (shouldReduceMotion ? 0.16 : 0.34)) {
+            if !fullscreenExpanded { previewFullscreen = false }
+        }
+    }
+
+    private func fullscreenOverlay(viewport: GeometryProxy) -> some View {
+        let screen = CGSize(
+            width: viewport.size.width,
+            height: viewport.size.height + viewport.safeAreaInsets.top + viewport.safeAreaInsets.bottom
+        )
+        let size = NativeEditorLayoutMetrics.fullscreenSize(screen: screen, aspect: session.previewAspectRatio)
+        let collapsedScale = size.width > 0 ? max(0.05, previewGlobalFrame.width / size.width) : 1
+        let collapsedOffset = CGSize(
+            width: previewGlobalFrame.midX - screen.width / 2,
+            height: previewGlobalFrame.midY - screen.height / 2
+        )
+        return ZStack {
+            Color.black.opacity(fullscreenExpanded ? 0.8 : 0)
+            NativeEditorFullscreenPreview(
+                session: session,
+                size: size,
+                reduceMotion: shouldReduceMotion,
+                expanded: fullscreenExpanded,
+                collapsedScale: collapsedScale,
+                collapsedOffset: collapsedOffset
+            )
+        }
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture(perform: exitFullscreen)
+        .accessibilityAddTraits(.isModal)
+        .accessibilityAction(.escape, exitFullscreen)
+        .accessibilityAction(named: "Close fullscreen", exitFullscreen)
+    }
+
     private var panelTransition: AnyTransition {
         shouldReduceMotion ? .opacity.animation(.easeOut(duration: 0.15)) : .opacity
     }
 
-    private func connectedEditorArea(viewport: GeometryProxy, showsContext: Bool, resizeRange: CGFloat) -> some View {
+    private func connectedEditorArea(
+        viewport: GeometryProxy, showsContext: Bool, metrics: NativeEditorLayoutMetrics, previewHeight: CGFloat
+    ) -> some View {
         let bottomInset = viewport.safeAreaInsets.bottom
         let clearance = NativeEditorIslandMetrics.bottomClearance(showsContext: showsContext, safeAreaBottom: bottomInset)
         return GeometryReader { area in
@@ -261,8 +345,11 @@ struct NativeEditorView: View {
                 .allowsHitTesting(false)
 
                 if panelIsOpen && !keyboardVisible {
+                    // Stays pinned to the top of the area; a tall panel rises
+                    // over it rather than dragging it along. Fixed to the
+                    // area's height so the taller ZStack can't stretch it.
                     NativeEditorTransport(session: session)
-                        .frame(maxHeight: .infinity, alignment: .top)
+                        .frame(height: area.size.height, alignment: .top)
                         .transition(.opacity)
                 }
 
@@ -292,11 +379,13 @@ struct NativeEditorView: View {
                                     .padding(.top, 18)
                                     .overlay(alignment: .top) {
                                         NativeEditorPanelResizeGrabber(
-                                            expansion: $timelineExpansion,
-                                            range: resizeRange,
+                                            expansion: $panelExpansion,
+                                            range: metrics.panelRange(areaHeight: area.size.height, previewHeight: previewHeight),
                                             reduceMotion: shouldReduceMotion,
                                             accessibilityIdentifier: "native-editor-panel-resize",
-                                            topAligned: true
+                                            topAligned: true,
+                                            accessibilityTitle: "Editor panel size",
+                                            accessibilityHint: "Swipe up or down to resize the editor panel"
                                         )
                                     }
                                     .transition(panelTransition)
@@ -306,7 +395,9 @@ struct NativeEditorView: View {
                             }
                         }
                         .frame(width: panelIsOpen ? max(0, area.size.width - 24) : min(328, max(0, area.size.width - 24)))
-                        .frame(height: panelIsOpen ? panelHeight(available: area.size.height) : NativeEditorIslandMetrics.islandHeight)
+                        .frame(height: panelIsOpen
+                            ? metrics.panelHeight(areaHeight: area.size.height, previewHeight: previewHeight, expansion: panelExpansion)
+                            : NativeEditorIslandMetrics.islandHeight)
                         .nativeEditorIslandSurface(cornerRadius: panelIsOpen ? 32 : 999)
                         // The marker must remain a plain leaf: glass ancestors
                         // corrupt AX frames on iOS 26 (see island surface).
@@ -325,12 +416,6 @@ struct NativeEditorView: View {
         }
         .frame(maxHeight: .infinity)
         .layoutPriority(1)
-    }
-
-    private func panelHeight(available: CGFloat) -> CGFloat {
-        let budget = max(0, available - NativeEditorIslandMetrics.bottomPadding - (keyboardVisible ? 0 : 54))
-        if keyboardVisible || dynamicTypeSize.isAccessibilitySize { return budget }
-        return min(budget, 284 + timelineExpansion * 240)
     }
 
     @ViewBuilder private var panelContent: some View {
@@ -435,12 +520,22 @@ struct NativeEditorView: View {
         if selection.kind != .clip { inspector = .selection(selection) }
     }
 
-    private func timelineResizeHandle(range: CGFloat) -> some View {
+    /// Drag up shrinks the preview, drag down grows it (KRI-170). Values are
+    /// points, so the finger tracks the preview edge 1:1.
+    private func timelineResizeHandle(metrics: NativeEditorLayoutMetrics) -> some View {
         NativeEditorPanelResizeGrabber(
-            expansion: $timelineExpansion,
-            range: range,
+            expansion: $previewResize,
+            range: 1,
             reduceMotion: shouldReduceMotion,
-            accessibilityIdentifier: "native-editor-timeline-resize"
+            accessibilityIdentifier: "native-editor-timeline-resize",
+            bounds: -metrics.growRange...metrics.shrinkRange,
+            accessibilityTitle: "Preview size",
+            accessibilityHint: "Swipe up to shrink or down to enlarge the video preview",
+            describe: { value, bounds in
+                let span = max(0.0001, bounds.upperBound - bounds.lowerBound)
+                return "\(Int(((bounds.upperBound - value) / span) * 100)) percent of maximum size"
+            },
+            incrementFraction: -0.25
         )
     }
 

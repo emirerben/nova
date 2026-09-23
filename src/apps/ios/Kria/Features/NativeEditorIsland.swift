@@ -39,6 +39,117 @@ enum NativeEditorIslandMetrics {
     }
 }
 
+/// KRI-170: preview and panel sizing for the connected editor, extracted from
+/// `NativeEditorView` so it can be unit tested. The two are independent: the
+/// timeline handle resizes only the preview (`previewResize`, in points,
+/// positive = shrink, negative = grow) and the panel handle resizes only the
+/// panel (`panelExpansion`, 0…1), which may rise over the transport and preview.
+struct NativeEditorLayoutMetrics: Equatable {
+    /// Project header: 44pt title row + 44pt tab row + 6pt bottom padding.
+    static let headerHeight: CGFloat = 94
+    static let previewVerticalPadding: CGFloat = 10
+    static let resizeHandleHeight: CGFloat = 44
+    static let transportHeight: CGFloat = 54
+    static let minPreviewHeight: CGFloat = 80
+    static let defaultPanelCap: CGFloat = 284
+    /// A strip of timeline that must stay visible however far the preview grows.
+    static let minTimelineStrip: CGFloat = 96
+    static let maxPreviewScreenFraction: CGFloat = 0.6
+    static let fullscreenScreenFraction: CGFloat = 0.9
+
+    var viewportSize: CGSize
+    var safeAreaTop: CGFloat
+    var safeAreaBottom: CGFloat
+    var topChromeHeight: CGFloat
+    var previewAspectRatio: CGFloat
+    var keyboardVisible: Bool
+    var isAccessibilitySize: Bool
+
+    private var referenceHeight: CGFloat {
+        keyboardVisible ? viewportSize.height : viewportSize.height + safeAreaTop + safeAreaBottom
+    }
+
+    /// The size the preview has always started at (unchanged by KRI-170).
+    var defaultPreviewHeight: CGFloat {
+        let portrait = isAccessibilitySize ? 150 : min(284, max(150, referenceHeight * 0.34))
+        // Banners and the posting-song bar share this fixed-height column;
+        // their measured height comes out of the preview so the timeline and
+        // tool rail stay on screen.
+        let budget = max(Self.minPreviewHeight, portrait - topChromeHeight)
+        let preferred = previewAspectRatio > 1 ? min(124, budget) : budget
+        // With the keyboard up, reserve room for the header, divider and usable
+        // text controls rather than letting their minimum heights overflow.
+        return keyboardVisible
+            ? min(preferred, max(Self.minPreviewHeight, viewportSize.height - 320 - topChromeHeight))
+            : preferred
+    }
+
+    /// Largest preview the user can drag out to. Never below the default, and
+    /// never while the keyboard is up.
+    var maxPreviewHeight: CGFloat {
+        let base = defaultPreviewHeight
+        guard !keyboardVisible else { return base }
+        let minBelow = NativeEditorIslandMetrics.bottomClearance(showsContext: false, safeAreaBottom: 0)
+            + Self.minTimelineStrip
+        let spaceBound = viewportSize.height - Self.headerHeight - topChromeHeight
+            - Self.previewVerticalPadding - Self.resizeHandleHeight - minBelow
+        let widthBound = (viewportSize.width - 32) / max(0.01, previewAspectRatio)
+        return max(base, min(referenceHeight * Self.maxPreviewScreenFraction, widthBound, spaceBound))
+    }
+
+    /// Points the preview can shrink below its default.
+    var shrinkRange: CGFloat { max(0, defaultPreviewHeight - Self.minPreviewHeight) }
+    /// Points the preview can grow beyond its default.
+    var growRange: CGFloat { max(0, maxPreviewHeight - defaultPreviewHeight) }
+
+    /// `previewResize` is stored raw and clamped here, so a banner appearing or
+    /// the keyboard rising can never leave the preview out of range.
+    func previewHeight(resize: CGFloat) -> CGFloat {
+        min(maxPreviewHeight, max(Self.minPreviewHeight, defaultPreviewHeight - resize))
+    }
+
+    /// Room for the panel below the transport and above the island's bottom padding.
+    func panelBudget(areaHeight: CGFloat) -> CGFloat {
+        max(0, areaHeight - NativeEditorIslandMetrics.bottomPadding
+            - (keyboardVisible ? 0 : Self.transportHeight))
+    }
+
+    func panelDefaultHeight(areaHeight: CGFloat) -> CGFloat {
+        let budget = panelBudget(areaHeight: areaHeight)
+        return keyboardVisible || isAccessibilitySize ? budget : min(budget, Self.defaultPanelCap)
+    }
+
+    /// The panel may rise over the transport and the preview, up to the
+    /// header/top chrome. The transport stays where it is and is simply covered.
+    func panelMaxHeight(areaHeight: CGFloat, previewHeight: CGFloat) -> CGFloat {
+        let budget = panelBudget(areaHeight: areaHeight)
+        guard !keyboardVisible, !isAccessibilitySize else { return budget }
+        return budget + Self.transportHeight + previewHeight
+            + Self.previewVerticalPadding + Self.resizeHandleHeight
+    }
+
+    func panelHeight(areaHeight: CGFloat, previewHeight: CGFloat, expansion: CGFloat) -> CGFloat {
+        let floor = panelDefaultHeight(areaHeight: areaHeight)
+        let ceiling = panelMaxHeight(areaHeight: areaHeight, previewHeight: previewHeight)
+        return floor + min(1, max(0, expansion)) * max(0, ceiling - floor)
+    }
+
+    /// Points the panel handle moves through between default and max.
+    func panelRange(areaHeight: CGFloat, previewHeight: CGFloat) -> CGFloat {
+        max(0, panelMaxHeight(areaHeight: areaHeight, previewHeight: previewHeight)
+            - panelDefaultHeight(areaHeight: areaHeight))
+    }
+
+    /// Aspect-fit box for the fullscreen preview inside 90% of the screen.
+    static func fullscreenSize(screen: CGSize, aspect: CGFloat) -> CGSize {
+        let box = CGSize(width: screen.width * fullscreenScreenFraction,
+                         height: screen.height * fullscreenScreenFraction)
+        let a = max(0.01, aspect)
+        let width = min(box.width, box.height * a)
+        return CGSize(width: width, height: width / a)
+    }
+}
+
 /// Applies the island's glass/material surface to a capsule-shaped view.
 /// Three branches, checked in order:
 /// 1. Reduce Transparency: solid paper + a hairline stroke, no blur.

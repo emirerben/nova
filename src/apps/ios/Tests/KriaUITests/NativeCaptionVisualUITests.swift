@@ -110,8 +110,11 @@ final class NativeCaptionVisualUITests: XCTestCase {
         let visual = app.descendants(matching: .any)["native-editor-timeline-visual_block-paper-media"].firstMatch
         XCTAssertTrue(visual.waitForExistence(timeout: 20))
         visual.tap()
-        let handle = app.descendants(matching: .any)["native-editor-timeline-resize"].firstMatch
-        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        // KRI-170: only the panel handle grows the panel now (the timeline
+        // handle resizes just the preview).
+        let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 5))
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 10))
         start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -180)))
         for name in ["Zoom", "Rotation"] {
             let slider = app.sliders[name]
@@ -128,7 +131,12 @@ final class NativeCaptionVisualUITests: XCTestCase {
         let previousSpeed = speed.value as? String
         speed.adjust(toNormalizedSliderPosition: 0.8)
         XCTAssertNotEqual(speed.value as? String, previousSpeed)
+        // The tall panel now covers the transport (KRI-170); collapse it back
+        // before checking playback is still available.
+        let raised = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 10))
+        raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: 400)))
         let play = app.buttons["native-editor-play-pause"]
+        XCTAssertTrue(play.waitForExistence(timeout: 5))
         XCTAssertTrue(play.isHittable)
         let time = app.descendants(matching: .any)["native-editor-current-time"].firstMatch
         let beforeTime = time.value as? String

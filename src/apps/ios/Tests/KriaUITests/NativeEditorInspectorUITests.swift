@@ -93,7 +93,14 @@ final class NativeEditorInspectorUITests: XCTestCase {
             start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -160)))
             XCTAssertGreaterThan(panel.frame.height, initialPanel.height + 80, tool)
             XCTAssertLessThan(panel.frame.minY, initialPanel.minY - 80, tool)
-            XCTAssertLessThan(preview.frame.height, initialPreview.height - 40, tool)
+            // KRI-170: the panel handle no longer shrinks the preview; the panel
+            // rises over it, and its handle stays reachable.
+            XCTAssertEqual(preview.frame.height, initialPreview.height, accuracy: 2, tool)
+            XCTAssertLessThan(panel.frame.minY, preview.frame.maxY, tool)
+            XCTAssertTrue(handle.isHittable, tool)
+            // The transport stays put (it's covered, not dragged along) and the
+            // panel never reaches the header.
+            XCTAssertGreaterThanOrEqual(panel.frame.minY, app.buttons["native-editor-back"].frame.maxY, tool)
             XCTAssertEqual(rail.frame.maxY, railBottom, accuracy: 2, tool)
             XCTAssertEqual(app.buttons["native-editor-back"].frame.minY, headerY, accuracy: 2, tool)
             let capture = XCTAttachment(screenshot: app.screenshot())
@@ -501,9 +508,53 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertLessThan(preview.frame.height, originalHeight - 80)
         XCTAssertLessThan(handle.frame.midY, originalHandleY - 80)
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch.isHittable)
+        // Dragging down past the default now grows the preview (KRI-170), so
+        // restore by exactly the amount it shrank.
+        let shrunkBy = originalHeight - preview.frame.height
         let raised = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: 300)))
-        XCTAssertEqual(preview.frame.height, originalHeight, accuracy: 2)
+        raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: shrunkBy)))
+        XCTAssertEqual(preview.frame.height, originalHeight, accuracy: 3)
+    }
+
+    func testTimelineResizeGrowsPreviewBeyondDefault() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]
+        app.launch()
+        let handle = app.descendants(matching: .any)["native-editor-timeline-resize"].firstMatch
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let strip = app.descendants(matching: .any)["native-editor-mini-strip"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 8))
+        let originalHeight = preview.frame.height
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 200)))
+        XCTAssertGreaterThan(preview.frame.height, originalHeight + 60, "dragging down must grow the preview past its default")
+        XCTAssertTrue(strip.exists, "a strip of timeline must survive")
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch.isHittable)
+        let back = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        back.press(forDuration: 0.1, thenDragTo: back.withOffset(CGVector(dx: 0, dy: -400)))
+        XCTAssertLessThan(preview.frame.height, originalHeight - 40, "dragging up still shrinks it")
+    }
+
+    func testPanelExpansionResetsWhenPanelCloses() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let captions = app.buttons["native-editor-tool-captions"]
+        XCTAssertTrue(captions.waitForExistence(timeout: 20))
+        captions.tap()
+        let panel = app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch
+        let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 5))
+        let initial = panel.frame.height
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 10))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -160)))
+        XCTAssertGreaterThan(panel.frame.height, initial + 80)
+        captions.tap() // close the panel
+        XCTAssertFalse(panel.waitForExistence(timeout: 2))
+        captions.tap() // reopen
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        XCTAssertEqual(panel.frame.height, initial, accuracy: 2, "a reopened panel starts at its default height")
     }
 
     func testPreviewResizeIsAvailableAcrossEditorPanels() {
@@ -540,11 +591,14 @@ final class NativeEditorInspectorUITests: XCTestCase {
             start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -100)))
             XCTAssertLessThan(preview.frame.height, originalHeight - 40, tool)
             XCTAssertEqual(header.frame.minY, originalHeaderY, accuracy: 2, tool)
-            XCTAssertGreaterThan(panel.frame.height, originalPanelHeight + 40, tool)
+            // KRI-170: the panel is independent of the preview — it never
+            // shrinks, and its bottom edge stays put.
+            XCTAssertGreaterThanOrEqual(panel.frame.height, originalPanelHeight - 1, tool)
             XCTAssertEqual(panel.frame.maxY, originalBottom, accuracy: 2, tool)
+            let shrunkBy = originalHeight - preview.frame.height
             let raised = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: 300)))
-            XCTAssertEqual(preview.frame.height, originalHeight, accuracy: 2, tool)
+            raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: shrunkBy)))
+            XCTAssertEqual(preview.frame.height, originalHeight, accuracy: 3, tool)
             XCTAssertEqual(header.frame.minY, originalHeaderY, accuracy: 2, tool)
             app.terminate()
         }

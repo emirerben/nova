@@ -72,6 +72,13 @@ func nativePersistedTimelineItems(for session: NativeEditorSession) -> [NativeEd
 struct NativeVideoPreview: View {
     @ObservedObject var session: NativeEditorSession
     @ObservedObject private var clock: NativeEditorPlaybackClock
+    /// KRI-170: called for a tap that lands on no object (and not on a selected
+    /// object's rotate/scale corner) so the editor can open the fullscreen preview.
+    private let onEmptyTap: (() -> Void)?
+    /// Last time a drag or pinch changed on the canvas. A drag that also
+    /// resolves as a tap (its tap location is where the finger went down) must
+    /// never count as an empty tap. Reference type: writing it must not re-render.
+    @State private var dragClock = NativeEditorPreviewDragClock()
     @State private var cachedObjects: [NativeEditorPreviewObject] = []
     @State private var didCacheObjects = false
     @State private var lastTapIDs: [EditorSelection] = []
@@ -101,8 +108,9 @@ struct NativeVideoPreview: View {
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
 
-    init(session: NativeEditorSession) {
+    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil) {
         self.session = session
+        self.onEmptyTap = onEmptyTap
         _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
@@ -302,6 +310,10 @@ struct NativeVideoPreview: View {
         guard !candidates.isEmpty else {
             lastTapIDs = []
             lastTapPoint = nil
+            // A near-miss on the selected object's rotate/scale corner (its 22pt
+            // zone extends outside the frame) must not open fullscreen.
+            if !isNearSelectedCorner(point, in: size),
+               Date().timeIntervalSince(dragClock.lastChange) > 0.4 { onEmptyTap?() }
             return
         }
         let ordered = candidates.map(\.selection)
@@ -315,6 +327,20 @@ struct NativeVideoPreview: View {
         lastTapIDs = ordered
         lastTapPoint = point
         session.select(next, seekToStart: false)
+    }
+
+    /// Same corner and 22pt radius the direct-manipulation gesture uses to
+    /// start a rotate/scale, so the two can never disagree about a tap.
+    private func isNearSelectedCorner(_ point: CGPoint, in size: CGSize) -> Bool {
+        guard let selection = session.selection,
+              let selected = objects.first(where: { $0.item.selection == selection }) else { return false }
+        let bounds = frame(for: selected, in: size)
+        let radians = CGFloat(selected.rotation) * .pi / 180
+        let dx = bounds.width / 2
+        let dy = bounds.height / 2
+        let corner = CGPoint(x: bounds.midX + dx * cos(radians) - dy * sin(radians),
+                             y: bounds.midY + dx * sin(radians) + dy * cos(radians))
+        return hypot(point.x - corner.x, point.y - corner.y) <= 22
     }
 
     private func directMoveCandidate(at point: CGPoint, in size: CGSize) -> NativeEditorPreviewObject? {
@@ -333,6 +359,7 @@ struct NativeVideoPreview: View {
         DragGesture(minimumDistance: 4, coordinateSpace: .local)
             .updating($directMoveGestureActive) { _, active, _ in active = true }
             .onChanged { (value: DragGesture.Value) in
+                dragClock.lastChange = Date()
                 handleDirectMoveChanged(value, in: size)
             }
             .onEnded { (_: DragGesture.Value) in
@@ -480,6 +507,7 @@ struct NativeVideoPreview: View {
         MagnificationGesture()
             .updating($directResizeGestureActive) { _, active, _ in active = true }
             .onChanged { value in
+                dragClock.lastChange = Date()
                 if directResizeObjectID == nil {
                     guard let selection = session.selection,
                           let object = objects.first(where: { $0.item.selection == selection }),
@@ -571,6 +599,7 @@ struct NativeVideoPreview: View {
                         .aspectRatio(session.previewAspectRatio, contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityLabel("Video preview")
+                        .accessibilityAction(named: "Expand preview") { onEmptyTap?() }
                     if let frame = session.scrubPreviewFrame {
                         Image(uiImage: frame)
                             .resizable()
@@ -727,6 +756,58 @@ struct NativeVideoPreview: View {
     }
 }
 
+final class NativeEditorPreviewDragClock {
+    var lastChange = Date.distantPast
+}
+
+/// KRI-170: the fullscreen watch surface. A second `AVPlayerLayer` on the
+/// session's player, mounted over the (still mounted) in-layout preview so
+/// neither entering nor leaving ever tears a layer down. The box grows out of
+/// (and shrinks back into) the preview's own frame; its layer fades in over the
+/// first frames so a not-yet-ready layer never shows as a black box.
+struct NativeEditorFullscreenPreview: View {
+    @ObservedObject var session: NativeEditorSession
+    let size: CGSize
+    let reduceMotion: Bool
+    let expanded: Bool
+    /// Where the box starts/ends: uniform scale and center offset (from the
+    /// screen's center) that make it coincide with the in-layout preview.
+    let collapsedScale: CGFloat
+    let collapsedOffset: CGSize
+    @State private var ready = false
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let player = session.player {
+                NativeEditorPlayerSurface(player: player, onReadyForDisplay: { ready = true })
+                    .aspectRatio(session.previewAspectRatio, contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let frame = session.scrubPreviewFrame {
+                    Image(uiImage: frame)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .scaleEffect(reduceMotion || expanded ? 1 : collapsedScale)
+        .offset(reduceMotion || expanded ? .zero : collapsedOffset)
+        .opacity(ready && (expanded || !reduceMotion) ? 1 : 0)
+        .animation(.easeOut(duration: 0.12), value: ready)
+        .task {
+            try? await Task.sleep(for: .milliseconds(250))
+            ready = true
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Video preview, fullscreen")
+        .accessibilityIdentifier("native-editor-preview-fullscreen")
+    }
+}
+
 /// The editor preview is only a video surface: the canvas above it owns every
 /// gesture and the editor draws its own transport. SwiftUI's `VideoPlayer`
 /// wrapped a full `AVPlayerViewController`, which still built hidden iOS 26
@@ -736,10 +817,13 @@ struct NativeVideoPreview: View {
 /// action once the keyboard animated in (KRI-168).
 private struct NativeEditorPlayerSurface: UIViewRepresentable {
     let player: AVPlayer
+    /// Fires once the layer has a frame to show (immediately if it already does).
+    var onReadyForDisplay: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> Surface {
         let view = Surface()
         view.playerLayer.player = player
+        view.observeReadiness(onReadyForDisplay)
         return view
     }
 
@@ -750,6 +834,15 @@ private struct NativeEditorPlayerSurface: UIViewRepresentable {
     final class Surface: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        private var readiness: NSKeyValueObservation?
+
+        func observeReadiness(_ onReady: (() -> Void)?) {
+            guard let onReady else { return }
+            readiness = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { layer, _ in
+                guard layer.isReadyForDisplay else { return }
+                DispatchQueue.main.async(execute: onReady)
+            }
+        }
 
         override init(frame: CGRect) {
             super.init(frame: frame)

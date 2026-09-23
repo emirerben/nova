@@ -234,6 +234,67 @@ final class EditorUITests: XCTestCase {
         }
     }
 
+    /// KRI-170: an empty tap on the preview opens a dimmed ~90% fullscreen
+    /// watch surface that plays; tapping it returns to the editor unchanged.
+    func testPreviewEmptyTapTogglesFullscreen() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let clock = app.staticTexts["native-editor-current-time"]
+        let fullscreen = app.descendants(matching: .any)["native-editor-preview-fullscreen"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 20))
+        XCTAssertFalse(fullscreen.exists)
+        let originalFrame = preview.frame
+        let startTime = clock.value as? String
+
+        // Top-leading corner: away from the bottom-trailing conversation button.
+        preview.coordinate(withNormalizedOffset: CGVector(dx: 0.06, dy: 0.06)).tap()
+        XCTAssertTrue(fullscreen.waitForExistence(timeout: 5))
+        // `.isModal` wraps the video in an alert container; the video box is its child.
+        let box = fullscreen.descendants(matching: .any).firstMatch
+        XCTAssertTrue(box.exists)
+        // The box grows out of the preview; wait for the animation to settle.
+        let settled = NSPredicate { _, _ in abs(box.frame.width - app.frame.width * 0.9) < 4 }
+        expectation(for: settled, evaluatedWith: nil)
+        waitForExpectations(timeout: 5)
+        XCTAssertEqual(box.frame.width, app.frame.width * 0.9, accuracy: 4)
+        XCTAssertGreaterThan(box.frame.height, originalFrame.height * 1.5)
+        XCTAssertEqual(box.frame.midY, app.frame.midY, accuracy: 4, "centered on the full screen")
+        // Entering plays (through the re-hosted layer).
+        expectation(for: NSPredicate(format: "value != %@", startTime ?? ""), evaluatedWith: clock)
+        waitForExpectations(timeout: 6)
+
+        fullscreen.tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: fullscreen)
+        waitForExpectations(timeout: 5)
+        XCTAssertEqual(preview.frame.height, originalFrame.height, accuracy: 2)
+        // It was paused before entering, so leaving pauses again.
+        XCTAssertEqual(app.buttons["native-editor-play-pause"].label, "Play preview")
+    }
+
+    /// KRI-170: taps on objects still select them; only empty taps go fullscreen.
+    func testPreviewObjectTapStillSelectsNotFullscreen() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-two-text", "-ui-testing-editor-source-text"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+
+        let text = app.descendants(matching: .any)["native-editor-preview-text-00000000-0000-4000-8000-000000000100"].firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 20))
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.40)).tap()
+        XCTAssertFalse(
+            app.descendants(matching: .any)["native-editor-preview-fullscreen"].firstMatch.waitForExistence(timeout: 1.5),
+            "tapping a text object must select it, not open fullscreen"
+        )
+        XCTAssertTrue(
+            app.descendants(matching: .any)["native-editor-text-context"].firstMatch.waitForExistence(timeout: 5),
+            "the text object should be selected"
+        )
+    }
+
     private static func clipDuration(_ clip: XCUIElement) -> Double {
         Double(clip.value as? String ?? "") ?? 0
     }
