@@ -1467,6 +1467,16 @@ struct NativeMiniStrip: View {
                 closeAddMenu()
                 isPresentingAddClip = true
             }
+            if !canAddClip, let reason = session.addClipUnavailableReason {
+                Text(reason)
+                    .font(KriaFont.body(11))
+                    .foregroundStyle(KriaColor.mutedInk)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 168, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 6)
+                    .accessibilityIdentifier("native-editor-add-menu-video-unavailable")
+            }
             quickAddRow("Visual", icon: "photo.on.rectangle", enabled: true) {
                 closeAddMenu()
                 onSelectVisual()

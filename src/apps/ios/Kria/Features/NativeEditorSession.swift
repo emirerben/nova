@@ -2587,6 +2587,15 @@ struct NativeEditorTemporaryVideo {
     var canAddTimelineMedia: Bool {
         canEditTimeline && draft.clips.count < 20 && (!rendersOnDevice || canRegisterPhoneSources)
     }
+    /// KRI-166: why `canAddTimelineMedia` is false, for the quick-add menu's
+    /// Video row (which otherwise just greys out). Mirrors the three
+    /// conditions above; nil when adding is allowed.
+    var addClipUnavailableReason: String? {
+        if rendersOnDevice && !canRegisterPhoneSources { return "Adding media isn’t available for this edit on this iPhone." }
+        if !canEditTimeline { return "This edit’s timeline can’t be changed." }
+        if draft.clips.count >= 20 { return "An edit can have up to 20 clips." }
+        return nil
+    }
 
     private func editorSourceTarget(kind: EditorSourceRegistrationTarget.SourceKind) -> EditorSourceRegistrationTarget? {
         guard let itemID, let variantKey, let guidedRevisionNumber else { return nil }

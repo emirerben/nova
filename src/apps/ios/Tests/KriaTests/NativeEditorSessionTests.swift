@@ -272,6 +272,16 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(cloud.addClipUnavailableMessage)
     }
 
+    // KRI-166: the quick-add menu's Video row explains why it's disabled, and
+    // the reason agrees with canAddTimelineMedia in both directions.
+    func testAddClipUnavailableReasonAgreesWithCanAddTimelineMedia() async throws {
+        let (device, _) = await Self.footageSession(destination: "device", operationsEditable: false)
+        XCTAssertFalse(device.canAddTimelineMedia)
+        XCTAssertNotNil(device.addClipUnavailableReason)
+        let (cloud, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
+        XCTAssertEqual(cloud.canAddTimelineMedia, cloud.addClipUnavailableReason == nil)
+    }
+
     func testCloudVariantKeepsCropSpeedAndLookEditable() async throws {
         let (session, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
         XCTAssertFalse(session.rendersOnDevice)
