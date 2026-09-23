@@ -389,20 +389,25 @@ def build_preflight_public_outcome(
         return None
 
     bounded_results = [value for value in (results or ()) if isinstance(value, dict)]
+    # Only a variant that failed AS a cleanup failure speaks for cleanup. The
+    # variant error handlers copy any exception's ``reason`` attribute (e.g. a
+    # single-hero/day-vlog policy error) into speech_cleanup_failure_reason, so
+    # that field alone is not proof; the public error_class is.
+    cleanup_failures = [
+        value
+        for value in bounded_results
+        if value.get("ok") is not True and value.get("error_class") == "speech_cleanup_failed"
+    ]
     result_failure_reason = next(
         (
             str(value.get("speech_cleanup_failure_reason"))
-            for value in bounded_results
+            for value in cleanup_failures
             if value.get("speech_cleanup_failure_reason")
         ),
         None,
     )
     effective_failure = failure_reason or result_failure_reason
-    if (
-        effective_failure
-        or not bounded_results
-        or any(value.get("ok") is not True for value in bounded_results)
-    ):
+    if effective_failure or cleanup_failures:
         code = "snapshot_mismatch" if effective_failure == "snapshot_mismatch" else "internal_error"
         return {
             "job_id": str(job_id),
@@ -413,6 +418,14 @@ def build_preflight_public_outcome(
             "error": {"code": code, "retryable": code != "snapshot_mismatch"},
         }
 
+    # Only a genuine cleanup failure (above) is a failed cleanup receipt. A
+    # render that failed for any other reason (phone compile, OOM, timeout,
+    # ffmpeg) proves nothing about cleanup: its own failure_reason is the
+    # truth, so it publishes no receipt instead of steering the creator into
+    # cleanup recovery the chat route would refuse (prod job 76db6913).
+    bounded_results = [value for value in bounded_results if value.get("ok") is True]
+    if not bounded_results:
+        return None
     contexts = [value.get("_speech_cleanup_outcome_context") for value in bounded_results]
     if all(isinstance(context, dict) for context in contexts):
         removal_count = max(

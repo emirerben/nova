@@ -27546,11 +27546,25 @@ def _fail_job(
                         patch["speech_cleanup_failure_reason"] = speech_cleanup_failure_reason
                     job.assembly_plan = {**ap, **patch} if patch else ap
 
+                    # Publish a failed cleanup receipt only for a genuine
+                    # cleanup failure. Any other Job failure (phone compile,
+                    # OOM, timeout, render error) keeps its own failure_reason
+                    # and no receipt, so the chat card offers "Retry
+                    # generation" instead of cleanup recovery the route would
+                    # refuse (prod job 76db6913). Before this, every required
+                    # Job failure fell back to an "internal_error" receipt.
                     public_plan = job.assembly_plan
                     public_outcome = _build_preflight_public_outcome(
                         public_plan,
                         job_id=job_id,
-                        failure_reason=speech_cleanup_failure_reason or "internal_error",
+                        failure_reason=(
+                            speech_cleanup_failure_reason
+                            or (
+                                "internal_error"
+                                if failure_reason == "speech_cleanup_failed"
+                                else None
+                            )
+                        ),
                     )
                     if public_outcome is not None:
                         job.assembly_plan = {

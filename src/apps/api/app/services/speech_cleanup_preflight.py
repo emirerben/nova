@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, Job, Persona, PlanItem, SpeechCleanupAnalysis
 from app.services.active_narration_source import ActiveNarrationResolution, ActiveNarrationSource
+from app.services.job_status import PLAN_ITEM_JOB_FAILED
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
 
 SPEECH_CLEANUP_ENGINE_VERSION = "preflight-v1-2026-09-05"
@@ -1118,6 +1119,29 @@ def _outcome_matches_analysis(job: Job, row: SpeechCleanupAnalysis | None) -> bo
     return str(private.get("outcome_analysis_id") or "") == str(row.id)
 
 
+def _misattributed_failed_receipt(job: Job) -> bool:
+    """A failed Job whose "failed" cleanup receipt is not a cleanup failure.
+
+    Before non-cleanup failures stopped publishing a receipt, ``_fail_job`` and
+    the cloud finalizer wrote ``failed``/``internal_error`` for ANY failure of
+    a required Job (prod job 76db6913: a phone compile refusal). Recognized by
+    the same predicate as the chat route's cleanup-recovery branch. A READY
+    Job's failed receipt (no bounded apply evidence) stays truthful and is
+    not matched here.
+    """
+    if getattr(job, "status", None) not in PLAN_ITEM_JOB_FAILED:
+        return False
+    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    variants = plan.get("variants")
+    return not (
+        getattr(job, "failure_reason", None) == "speech_cleanup_failed"
+        or any(
+            isinstance(value, dict) and value.get("error_class") == "speech_cleanup_failed"
+            for value in (variants if isinstance(variants, list) else [])
+        )
+    )
+
+
 def _public_outcome(
     job: Job | None,
     row: SpeechCleanupAnalysis | None,
@@ -1149,6 +1173,11 @@ def _public_outcome(
         "failed",
     }
     if value.get("status") not in allowed_statuses:
+        return None
+    if value.get("status") == "failed" and _misattributed_failed_receipt(job):
+        # Read-side fence for rows already written by the old failure paths:
+        # offer cleanup recovery only when the chat route would accept it. The
+        # card then offers "Retry generation" for the Job's real failure.
         return None
     projected = {
         "job_id": str(job.id),
@@ -1206,11 +1235,15 @@ def public_projection(
             "error": error,
         }
         decision = row.decision
+        # Only a choice made on the checked findings answers them. An unchecked
+        # bypass ("create_without_cleanup" while the check was still queued,
+        # running or failed) that later finishes with findings must ask again:
+        # confirmation re-sends only clean/keep_original as recorded consent.
         requires_choice = bool(
             video_present
             and row.status == "ready"
             and int(row.candidate_count or 0) > 0
-            and row.decision is None
+            and row.decision not in {"clean", "keep_original"}
         )
     return {
         "applicable": applicable,

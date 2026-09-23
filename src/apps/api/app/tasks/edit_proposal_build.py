@@ -1210,13 +1210,32 @@ def _settle_creator_dispatch_failure(
         current = parse_edit_proposal(item.edit_proposal)
         if (
             locked_owner_id != owner_id
-            or getattr(item, "current_job_id", None) is not None
             or current is None
             or current.generation_attempt_id != attempt_id
             or current.status != "approved"
             or current.design_fallback != MAIN_CREATOR_FAIL_CLOSED
         ):
             return False
+        current_job_id = getattr(item, "current_job_id", None)
+        if current_job_id is not None:
+            # A terminal Job left by an EARLIER attempt (prod item 26bf79fe:
+            # the failed phone render 76db6913) must not strand this refused
+            # attempt in executing until the ~27 min receipt lease. Only a Job
+            # this attempt minted (publish_failed: reconciled through its own
+            # Job) or a still-active render blocks settlement. Lock order stays
+            # Plan -> Persona -> PlanItem -> Job -> Session.
+            from app.services.creator_sessions import (  # noqa: PLC0415
+                _job_matches_guided_attempt,
+            )
+            from app.services.job_status import PLAN_ITEM_JOB_TERMINAL  # noqa: PLC0415
+
+            current_job = db.get(Job, current_job_id, with_for_update=True, populate_existing=True)
+            if (
+                current_job is None
+                or current_job.status not in PLAN_ITEM_JOB_TERMINAL
+                or _job_matches_guided_attempt(current_job, attempt_id)
+            ):
+                return False
         sessions = list(
             db.execute(
                 select(CreatorAgentSession)
