@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.181.0] - 2026-09-23
+
+### Changed
+- feat(admin): hand-author phone subtitled media lanes on a plan item (KRI-174 Phase 1.5) (#1199) <!-- release-pr: 1199 -->
+
 ## [0.76.180.0] - 2026-09-23
 
 ### Changed
