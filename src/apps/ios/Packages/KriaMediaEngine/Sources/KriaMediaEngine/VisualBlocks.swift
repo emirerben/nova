@@ -150,12 +150,46 @@ extension VisualCanvasFill {
     }
 }
 
+/// Length of the fade a source-audio clip gets at each edge. AVAudioMix applies
+/// ramps per render buffer, so the audible fade runs roughly 10 ms longer than
+/// requested (measured with the PCM tests); 25 ms lands a hard cut at ~zero on
+/// both sides and is still inaudible as a fade.
+let audioEdgeFade: TimeInterval = 0.025
+
+/// Complete gain envelope for one clip's audio track (KRI-184).
+///
+/// AVAudioMix renders a track at unity until its first set point, and applies
+/// volume per render buffer, so a clip whose first point sits exactly on its cut
+/// leaks the first few milliseconds at full level even when muted. Seeding the
+/// timeline origin with 0 closes that; the edge ramps stop hard cuts clicking.
+/// Ramps never overlap a `setVolume` point: mute-window edges inside an edge
+/// zone are ignored (at most 25 ms of a window edge).
 func applyAudioGain(_ parameter: AVMutableAudioMixInputParameters, clip: TimelineClip, gain: Double, windows: [AudioMuteWindow]) {
+    func cm(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 60_000) }
+    let start = clip.timelineStart
+    // Audio stops with the moving segment; a held video tail carries no sound.
+    let audioEnd = start + clip.sourceDuration / clip.rate
+    let edge = max(0, min(audioEdgeFade, (audioEnd - start) / 4))
     let affected = windows.filter { $0.clipIDs.contains(clip.id) && $0.start < clip.timelineStart + clip.duration && $0.end > clip.timelineStart }
-    let times = Set([clip.timelineStart] + affected.flatMap { [max(clip.timelineStart, $0.start), min(clip.timelineStart + clip.duration, $0.end)] }).sorted()
-    for time in times {
-        let muted = affected.contains { $0.start <= time && $0.end > time }
-        parameter.setVolume(muted ? 0 : Float(gain * clip.volume), at: CMTime(seconds: time, preferredTimescale: 60_000))
+    let boundaries = Set([start] + affected.flatMap { [max(clip.timelineStart, $0.start), min(clip.timelineStart + clip.duration, $0.end)] }).sorted()
+    func level(at time: Double) -> Float {
+        affected.contains { $0.start <= time && $0.end > time } ? 0 : Float(gain * clip.volume)
+    }
+    // Nothing plays before the clip: keep the implicit unity default away from it.
+    if start > 0 { parameter.setVolume(0, at: .zero) }
+    let initial = level(at: start)
+    if initial > 0, edge > 0 {
+        parameter.setVolumeRamp(fromStartVolume: 0, toEndVolume: initial, timeRange: CMTimeRange(start: cm(start), duration: cm(edge)))
+    } else {
+        parameter.setVolume(initial, at: cm(start))
+    }
+    let steadyEnd = audioEnd - edge
+    for time in boundaries where time >= start + edge && time < steadyEnd {
+        parameter.setVolume(level(at: time), at: cm(time))
+    }
+    let last = level(at: max(start, min(steadyEnd, boundaries.last(where: { $0 < steadyEnd }) ?? start)))
+    if last > 0, edge > 0 {
+        parameter.setVolumeRamp(fromStartVolume: last, toEndVolume: 0, timeRange: CMTimeRange(start: cm(steadyEnd), duration: cm(edge)))
     }
 }
 #endif

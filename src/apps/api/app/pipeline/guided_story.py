@@ -11,6 +11,7 @@ import math
 import os
 import shutil
 import subprocess
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Literal
@@ -54,6 +55,7 @@ SCHEDULED_COMPILER_VERSION = 8
 VARIANT_ID = "guided_story"
 _FRAME_S = 1.0 / 30.0
 _ALLOCATION_EPSILON_S = 0.0005
+_SOURCE_AUDIO_EDGE_FADE_S = 0.010
 _FRAME_FLOOR_EPSILON_S = 1e-9
 _DURATION_MATCH_TOLERANCE_S = 0.001
 # Shortest window beat copy is trimmed to when it would otherwise overlap the
@@ -689,6 +691,27 @@ def _music_payload(track: dict[str, Any] | None, *, duration_s: float) -> dict[s
     return payload
 
 
+def plan_preserves_source_audio(plan: Mapping[str, Any] | GuidedStoryExecutionPlan) -> bool:
+    """Whether the render keeps the clips' own sound.
+
+    An explicit ``montage_audio`` choice always wins. With no choice, a v6+
+    plan keeps source audio unless a recorded narration replaces it: the
+    matched song is reference-only (never mixed in), so muting the footage too
+    would leave a silent video (KRI-184). Pre-v6 plans mix their song instead.
+    """
+    if isinstance(plan, Mapping):
+        montage_audio = plan.get("montage_audio")
+        narration = plan.get("narration")
+        version = plan.get("compiler_version", 0)
+    else:
+        montage_audio = plan.montage_audio
+        narration = plan.narration
+        version = plan.compiler_version
+    if montage_audio is not None:
+        return bool(montage_audio.get("preserve_source_audio"))
+    return version >= 6 and narration is None
+
+
 def song_reference_variant_fields(plan: dict[str, Any]) -> dict[str, Any]:
     """Public metadata for new plans; legacy soundtrack contracts stay untouched."""
     if plan.get("compiler_version", 0) < 6:
@@ -697,9 +720,7 @@ def song_reference_variant_fields(plan: dict[str, Any]) -> dict[str, Any]:
         "music_playback_mode": "reference_only",
         "song_reference": plan.get("song_reference"),
         "music_track_id": None,
-        "source_audio_preserved": bool(
-            (plan.get("montage_audio") or {}).get("preserve_source_audio")
-        ),
+        "source_audio_preserved": plan_preserves_source_audio(plan),
     }
 
 
@@ -3621,7 +3642,7 @@ def _render_moments(
                 look_preset=moment.get("look_preset", "none"),
                 look_adjustments=moment.get("look_adjustments"),
                 exact_duration=exact_mixed_duration,
-                preserve_audio=bool((plan.get("montage_audio") or {}).get("preserve_source_audio")),
+                preserve_audio=plan_preserves_source_audio(plan),
                 source_crop=moment.get("source_crop"),
                 playback_rate=float(moment.get("playback_rate") or 1.0),
             )
@@ -3669,7 +3690,7 @@ def _mux_guided_source_audio(
     output: str,
 ) -> str:
     """Restore approved source audio after cloud's video-only transition join."""
-    if not bool((plan.get("montage_audio") or {}).get("preserve_source_audio")):
+    if not plan_preserves_source_audio(plan):
         return assembled
     inputs: list[str] = []
     branches: list[str] = []
@@ -3718,6 +3739,13 @@ def _mux_guided_source_audio(
             from app.pipeline.reframe import _atempo_filter  # noqa: PLC0415
 
             filters.append(_atempo_filter(rate))
+        # A 10 ms edge fade per clip so hard cuts never step from/to full level
+        # (audible click). Clamped so very short clips still fade in and out.
+        branch_s = max(0.0, (end - start) / rate)
+        fade_s = round(min(_SOURCE_AUDIO_EDGE_FADE_S, branch_s / 4), 4)
+        if fade_s > 0:
+            filters.append(f"afade=t=in:d={fade_s}")
+            filters.append(f"afade=t=out:st={round(branch_s - fade_s, 4)}:d={fade_s}")
         delay = max(0, round(float(moment.get("output_start_s") or 0.0) * 1000))
         filters.append(f"adelay={delay}:all=1")
         branches.append(",".join(filters) + f"[sa{index}]")
@@ -3899,9 +3927,7 @@ def _verify_receipt(
         "text_stages": text_receipts,
         "source_audio_options": list(plan.get("source_audio_options") or []),
         "source_audio_preserved": (
-            bool((plan.get("montage_audio") or {}).get("preserve_source_audio"))
-            if plan.get("compiler_version", 0) >= 6
-            else None
+            plan_preserves_source_audio(plan) if plan.get("compiler_version", 0) >= 6 else None
         ),
     }
     if plan.get("editor_revision_number") is not None:
@@ -4183,8 +4209,7 @@ def validate_ready_result(
         )
         and (
             typed_plan.compiler_version < 6
-            or receipt.source_audio_preserved
-            == bool((typed_plan.montage_audio or {}).get("preserve_source_audio"))
+            or receipt.source_audio_preserved == plan_preserves_source_audio(typed_plan)
         )
         and (typed_plan.compiler_version < 6 or receipt.music_applied is False)
         and staged_media == expected_media_stages

@@ -920,7 +920,7 @@ def test_guided_text_reburn_pins_base_and_refreshes_output_receipt(monkeypatch) 
         "actual_duration_s": 15,
         "music_applied": False,
         "music": None,
-        "source_audio_preserved": False,
+        "source_audio_preserved": guided_story.plan_preserves_source_audio(plan),
         "output": {
             "width": 1080,
             "height": 1920,

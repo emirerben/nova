@@ -167,4 +167,5 @@ def test_initial_phone_variant_carries_reference_metadata(monkeypatch):
     assert variant["music_playback_mode"] == "reference_only"
     assert variant["music_track_id"] is None
     assert variant["song_reference"]["track_id"] == "song-1"
-    assert variant["source_audio_preserved"] is False
+    # KRI-184: a reference-only plan with no explicit choice keeps the clips' own sound.
+    assert variant["source_audio_preserved"] is True

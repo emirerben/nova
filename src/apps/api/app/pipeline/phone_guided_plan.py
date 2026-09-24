@@ -20,7 +20,12 @@ from app.kria.recipes import (
 )
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest, VoiceoverRenderAsset
-from app.pipeline.guided_story import _FRAME_S, GuidedStoryExecutionPlan, _story_canvas
+from app.pipeline.guided_story import (
+    _FRAME_S,
+    GuidedStoryExecutionPlan,
+    _story_canvas,
+    plan_preserves_source_audio,
+)
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 from app.schemas.guided_edit_revision import GUIDED_EDITOR_FPS
 from app.services.phone_sources import (
@@ -174,7 +179,7 @@ def compile_phone_guided_plan(
         for moment in plan.story_timeline[:-1]
     ]
     has_transitions = any(value not in {"none", "cut"} for value in boundaries)
-    preserve_audio = bool((plan.montage_audio or {}).get("preserve_source_audio"))
+    preserve_audio = plan_preserves_source_audio(plan)
     # V6 reconstructs cloud source audio at the same overlapping source
     # windows as the native mixer. Legacy transition renders discarded audio.
     if has_transitions and preserve_audio and plan.compiler_version < 6:

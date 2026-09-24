@@ -147,7 +147,8 @@ def test_compiles_three_clips_with_crossfades_intro_and_music_bed():
     music_track = next(t for t in recipe.tracks if t.kind == "audio")
     assert music_track.clips[0].source_asset_id == "music-track1"
     assert music_track.clips[0].source_start == pytest.approx(30.5)
-    assert recipe.audio.original_volume == 0
+    # KRI-184: the clips' own sound keeps playing under the music bed.
+    assert recipe.audio.original_volume == 1
     assert recipe.audio.music_volume == 1
 
     assert len(recipe.text_layers) == 2  # reveal + hold
