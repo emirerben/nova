@@ -60,6 +60,7 @@ from app.models import (
     MusicTrack,
     PlanItem,
     PlanItemAsset,
+    SoundEffect,
     TemporaryMediaUpload,
     User,
 )
@@ -1840,6 +1841,36 @@ def _guided_text_state_for_response(
     return rows, labels, receipt
 
 
+def _augment_variant_with_phone_subtitled_editor_sections(job: Job, v: dict) -> dict:
+    """Lazily backfill `sound_effects`/`media_overlays` for a subtitled device variant.
+
+    KRI-182 step 1: a phone-compiled `subtitled` variant carries its overlay
+    cards and sound effects only in the pinned device recipe until the creator
+    Saves once through the editor (which persists them onto the variant as
+    `PHONE_SUBTITLED_EDITOR_LANES_FIELD` / the generic sections). Until then,
+    project them on read from `job.assembly_plan` so the native editor and the
+    timeline's source pool see the same lanes the phone already renders.
+
+    Never overwrites a key that's already present (a Save's persisted lanes —
+    including an explicit `None`/`[]` meaning "cleared" — always win over a
+    fresh derivation) and never mutates `job.assembly_plan`; `v` is always
+    already a shallow copy by the time callers reach this helper.
+    """
+    if "sound_effects" in v and "media_overlays" in v:
+        return v
+    if not _phone_subtitled_editor_lanes_available(job, v):
+        return v
+    projected = project_phone_subtitled_editor_sections(job.assembly_plan or {}, v)
+    if not projected:
+        return v
+    patch = {}
+    if "sound_effects" not in v and projected.get("sound_effects") is not None:
+        patch["sound_effects"] = projected["sound_effects"]
+    if "media_overlays" not in v and projected.get("media_overlays") is not None:
+        patch["media_overlays"] = projected["media_overlays"]
+    return {**v, **patch} if patch else v
+
+
 def _variants_for_response(job: Job) -> list[dict]:
     """Variants with `output_url` (and `base_video_url`) re-signed fresh on read.
 
@@ -2028,6 +2059,11 @@ def _variants_for_response(job: Job) -> list[dict]:
                     pre_overlay_poster_path=pre_overlay_poster_path,
                     exc_info=True,
                 )
+        # KRI-182 step 1: backfill sound_effects/media_overlays for a subtitled
+        # device variant from the pinned recipe before either section below
+        # signs/normalizes it — a variant that never Saved through the editor
+        # yet has neither key persisted.
+        v = _augment_variant_with_phone_subtitled_editor_sections(job, v)
         # Media-overlay cards: sign each card's src_gcs_path into a preview_url so
         # the browser can show existing applied cards as a live CSS overlay without
         # re-uploading them. Signing failure skips the key on that card (graceful).
@@ -6132,9 +6168,73 @@ _PHONE_UNSUPPORTED_LANES = ("sfx", "overlays", "visual_blocks", "motion_scenes")
 _PHONE_UNSUPPORTED_TOP_LEVEL = (*_PHONE_UNSUPPORTED_LANES, "camera_effects")
 
 
-def _clamp_phone_editor_capabilities(capabilities: dict, *, media_enabled: bool = False) -> dict:
+def is_phone_subtitled_editor_variant(variant: dict) -> bool:
+    """Re-export of `app.services.phone_subtitled_editor.is_phone_subtitled_editor_variant`.
+
+    Bound at module scope (not imported inline at every call site) so tests can
+    monkeypatch `generative_jobs.is_phone_subtitled_editor_variant` directly, and
+    so callers here always go through this module's own binding. Lazy import
+    like every other phone service this module reaches for.
+    """
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        is_phone_subtitled_editor_variant as _impl,
+    )
+
+    return _impl(variant)
+
+
+def phone_subtitled_editor_lanes_supported() -> bool:
+    """Re-export of `app.services.phone_rollout.phone_subtitled_editor_lanes_supported`.
+
+    Same lazy-import + module-scope-binding rationale as
+    `is_phone_subtitled_editor_variant` above — tests monkeypatch
+    `generative_jobs.phone_subtitled_editor_lanes_supported` directly.
+    """
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_subtitled_editor_lanes_supported as _impl,
+    )
+
+    return _impl()
+
+
+def project_phone_subtitled_editor_sections(assembly_plan: dict, variant: dict) -> dict | None:
+    """Re-export of `app.services.phone_subtitled_editor.project_phone_subtitled_editor_sections`.
+
+    Same lazy-import + module-scope-binding rationale as
+    `is_phone_subtitled_editor_variant` above — tests monkeypatch
+    `generative_jobs.project_phone_subtitled_editor_sections` directly.
+    """
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        project_phone_subtitled_editor_sections as _impl,
+    )
+
+    return _impl(assembly_plan, variant)
+
+
+def _phone_subtitled_editor_lanes_available(job: Job, variant: dict) -> bool:
+    """True when `sfx`/`overlays` may stay open in the phone capability clamp.
+
+    Gated on BOTH the variant shape (a `subtitled` device render) and the
+    rollout flag (`phone_subtitled_editor_lanes_supported`, which itself folds
+    in `PHONE_SUBTITLED_EDITOR_LANES_ENABLED` + the KRI-174 media-lanes flag +
+    verified-feature coverage). Flag off ⇒ False ⇒ the phone clamp stays
+    byte-identical to today for every subtitled device variant.
+    """
+    return is_phone_subtitled_editor_variant(variant) and phone_subtitled_editor_lanes_supported()
+
+
+def _clamp_phone_editor_capabilities(
+    capabilities: dict, *, media_enabled: bool = False, subtitled_lanes: bool = False
+) -> dict:
     """Close every control a device-rendered variant cannot save, shape-preserving."""
     clamped = dict(capabilities)
+    # KRI-182 step 1: a subtitled device variant with the editor-lanes rollout
+    # on keeps `sfx`/`overlays` exactly as `_base_editor_capabilities` computed
+    # them (compiled from the pinned recipe / staged commit, see
+    # `phone_subtitled_editor.py`) — everything else (visual_blocks,
+    # motion_scenes, camera_effects, clip add/looks/source_crop/playback_rate)
+    # stays closed; the phone subtitled compiler has no lane for those.
+    subtitled_carve_out = {"sfx", "overlays"} if subtitled_lanes else set()
     for group, names in (
         ("clips", _PHONE_UNSUPPORTED_CLIP_OPERATIONS),
         ("lanes", _PHONE_UNSUPPORTED_LANES),
@@ -6151,12 +6251,15 @@ def _clamp_phone_editor_capabilities(capabilities: dict, *, media_enabled: bool 
                         media_enabled
                         and (group, name) in {("clips", "add"), ("lanes", "visual_blocks")}
                     )
+                    and not (group == "lanes" and name in subtitled_carve_out)
                     else value
                 )
                 for name, value in operations.items()
             }
     for lane in _PHONE_UNSUPPORTED_TOP_LEVEL:
         if media_enabled and lane == "visual_blocks":
+            continue
+        if lane in subtitled_carve_out:
             continue
         # Legacy top-level booleans carry their reason in a `<lane>_reason`
         # sibling — when the archetype's map has one. Device and cloud maps must
@@ -6165,6 +6268,14 @@ def _clamp_phone_editor_capabilities(capabilities: dict, *, media_enabled: bool 
             clamped[lane] = False
             if f"{lane}_reason" in clamped:
                 clamped[f"{lane}_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
+    if subtitled_lanes and "text_elements" in clamped:
+        # The subtitled phone compiler has no editor text lane (captions are a
+        # separate `caption_cues` section) — advertising it open only buys a
+        # 422 `unsupported_phone_edit` at Save. Same key-preservation rule as
+        # the loop above: only touch the `*_reason` sibling if one exists.
+        clamped["text_elements"] = False
+        if "text_elements_reason" in clamped:
+            clamped["text_elements_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
     if "visual_editor_style" in clamped:
         clamped["visual_editor_style"] = False
     if media_enabled:
@@ -6182,7 +6293,9 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     capabilities = _base_editor_capabilities(job, variant)
     if variant.get("render_destination") == "device":
         return _clamp_phone_editor_capabilities(
-            capabilities, media_enabled=_phone_editor_media_available(job, variant)
+            capabilities,
+            media_enabled=_phone_editor_media_available(job, variant),
+            subtitled_lanes=_phone_subtitled_editor_lanes_available(job, variant),
         )
     return capabilities
 
@@ -6746,9 +6859,19 @@ def _native_timeline_source(
 
 
 def _native_editor_assets(
-    job: Job, variant_id: str, *, sign_url: Callable[[str, int], str] | None = None
+    job: Job,
+    variant_id: str,
+    *,
+    sign_url: Callable[[str, int], str] | None = None,
+    sfx_paths: dict[str, str] | None = None,
 ) -> list[dict]:
-    """Resolve only source assets already attached to the owned public variant."""
+    """Resolve only source assets already attached to the owned public variant.
+
+    ``sfx_paths`` maps a sound-effect catalog id to its real
+    ``audio_gcs_path`` for phone-lane rows derived from a pinned recipe
+    (recipes carry no storage paths, so the projection can only synthesise a
+    prefix-valid placeholder) -- see `_phone_subtitled_sfx_paths`.
+    """
     sign_url = sign_url or _timeline_url_signer()
     import hashlib  # noqa: PLC0415
 
@@ -6765,6 +6888,10 @@ def _native_editor_assets(
         ),
         {},
     )
+    # KRI-182 step 1: same lazy backfill as `_variants_for_response` — a
+    # subtitled device variant that never Saved through the editor yet has no
+    # persisted `sound_effects`/`media_overlays`, only the pinned recipe.
+    variant = _augment_variant_with_phone_subtitled_editor_sections(job, variant)
 
     def rows(value: object) -> list:
         return value if isinstance(value, list) else []
@@ -6774,6 +6901,8 @@ def _native_editor_assets(
         if not isinstance(effect, dict):
             continue
         path = effect.get("src_gcs_path")
+        if effect.get("source") == "phone_lane" and sfx_paths:
+            path = sfx_paths.get(str(effect.get("sound_effect_id"))) or path
         effect_id = effect.get("id")
         if not isinstance(path, str) or not isinstance(effect_id, str) or not effect_id:
             continue
@@ -6810,8 +6939,14 @@ def _native_editor_assets(
                 "kind": "media_overlay",
                 "media_id": "overlay-" + hashlib.sha256(path.encode()).hexdigest(),
                 "source_url": url,
-                "preserve_alpha": settings.media_overlay_alpha_enabled
-                and card.get("kind") == "image",
+                # A phone-lane card (derived from the pinned subtitled recipe,
+                # or persisted from a phone Save) keeps alpha the way the
+                # native compositor already renders it — no server flatten
+                # step is involved, so this doesn't need the cloud-only
+                # `media_overlay_alpha_enabled` flag (that flag guards the
+                # CLOUD renderer's PNG-normalize + rgba composite path).
+                "preserve_alpha": card.get("kind") == "image"
+                and (card.get("source") == "phone_lane" or settings.media_overlay_alpha_enabled),
             }
         )
     for scene in rows(variant.get("motion_scenes")):
@@ -11314,8 +11449,38 @@ async def get_variant_timeline(
         job, variant_id, image_preview_paths=image_preview_paths, sign_url=sign_url
     )
     timeline["base_generation"] = variant_render_baseline(variant or {})
-    timeline["native_assets"] = _native_editor_assets(job, variant_id, sign_url=sign_url)
+    timeline["native_assets"] = _native_editor_assets(
+        job,
+        variant_id,
+        sign_url=sign_url,
+        sfx_paths=await _phone_subtitled_sfx_paths(db, job, variant or {}),
+    )
     return TimelineResponse(**timeline)
+
+
+async def _phone_subtitled_sfx_paths(db: AsyncSession, job: Job, variant: dict) -> dict[str, str]:
+    """Catalog ``audio_gcs_path`` by sound-effect id for a phone Talking
+    variant whose sound lane is only derivable from the pinned recipe (no
+    editor Save yet, so no persisted ``sound_effects`` with real paths).
+    Empty for every other variant, and byte-identical with the gate off."""
+    if not _phone_subtitled_editor_lanes_available(job, variant):
+        return {}
+    if isinstance(variant.get("sound_effects"), list):
+        return {}
+    derived = project_phone_subtitled_editor_sections(job.assembly_plan or {}, variant)
+    ids = {
+        str(row.get("sound_effect_id"))
+        for row in (derived or {}).get("sound_effects") or []
+        if isinstance(row, dict) and row.get("sound_effect_id")
+    }
+    if not ids:
+        return {}
+    result = await db.execute(select(SoundEffect).where(SoundEffect.id.in_(sorted(ids))))
+    return {
+        str(effect.id): str(effect.audio_gcs_path)
+        for effect in result.scalars().all()
+        if effect.audio_gcs_path
+    }
 
 
 @router.get("/{job_id}/variants/{variant_id}/lyric-seeds", response_model=LyricSeedsResponse)

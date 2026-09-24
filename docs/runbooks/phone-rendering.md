@@ -482,6 +482,25 @@ three extra lanes on top of the unchanged speaker clip + captions:
   publish/ready/path-prefix contract, `sound-effects/{id}/` prefix). Only
   m4a/wav/mp3/aac play on the device (`PLAYABLE_SFX_EXTENSIONS`); any other
   format is rejected at resolve time. Clips are clamped to the timeline end.
+  **Speech duck** (`PHONE_SFX_SPEECH_DUCK_ENABLED`, default `false`): an
+  effect whose window overlaps a spoken word plays at
+  `SFX_SPEECH_DUCK_GAIN` (0.35, about -9 dB) × its requested volume; effects
+  in pauses keep full volume. The phone path has no loudnorm, and catalog
+  effects are mastered to -14 LUFS against roughly -23 dBFS phone speech, so
+  an un-ducked beat lands about 9 dB over the speaker. Speech windows come
+  from the caption cues' word timings (cue span when a corrected line lost
+  its words; gaps under 0.25 s are bridged). The speaker clip is never
+  lowered. Only existing clip `volume` values change, so there is no new
+  recipe field or capability and every installed app build honours it.
+  Ducked effects are listed on the variant's `phone_sfx_duck_receipt`
+  (request id to pre-duck volume); the KRI-182 phone editor restores those
+  volumes when it derives lanes from the pinned recipe, and re-ducks on
+  Save, so an effect is never ducked twice.
+  Level proof: `SfxSpeechDuckLevelTests.swift` in KriaMediaEngine; the gain
+  is pinned across languages by
+  `test_ios_level_test_pins_the_server_duck_gain`. Device check: enable the
+  flag on the local API, render a Talking edit whose SFX lands on a word and
+  one in a pause, and listen on the iPhone dev build.
 - **ending_clip** — a Visuals-pool VIDEO appended as a second clip on the
   main video track with per-clip `volume=0` (muted), which sidesteps the five
   "exactly one clip" gates (capabilities `max_clips`, upload/register routes,
@@ -775,10 +794,82 @@ KRI-176/178 (`tests/tasks/test_phone_subtitled_narrated_dispatch.py`,
 `tests/services/test_creator_capabilities.py`, `tests/pipeline/
 test_phone_subtitled_plan.py` pins). Rollback: `fly secrets set
 PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED=false --app nova-video` + `fly machine
-restart <id>` (api + worker); no Vercel twin. Not in this phase: moving or
-removing a card in the phone editor after the render
-(`prepare_phone_editor_commit` is guided-only today -- KRI-174 Phase 3, its
-own PR) and a device E2E for subtitled cards.
+restart <id>` (api + worker); no Vercel twin. A video card survives an
+editor Save (Phase 3 above): the projection reports it as `kind: "video"` and
+the Save path rebuilds `kind`/`source_start_s` from the pinned visual. Not in
+this phase: a device E2E for subtitled cards.
+
+#### Phase 3: editing a Talking edit on the phone (KRI-182 step 1)
+
+**Gate:** `PHONE_SUBTITLED_EDITOR_LANES_ENABLED`
+(`settings.phone_subtitled_editor_lanes_enabled`, default `false`, Fly only --
+the server compiles, so there is no `NEXT_PUBLIC` twin) AND
+`phone_subtitled_media_lanes_enabled` AND every feature in
+`PHONE_SUBTITLED_EDITOR_FEATURES` (`stillImages`, `visualBlocks`,
+`alphaOverlay`, `audioMix`, `soundEffects`) in
+`phone_render_verified_features` --
+`app.services.phone_rollout.phone_subtitled_editor_lanes_supported()` is the
+single source of truth for both the capability map and the Save path. Off ⇒
+every response, capability map and Save is byte-identical to before (a Save
+on a phone Talking edit still 422s `unsupported_phone_edit`, as it always
+did). **Rollback:** `fly secrets set PHONE_SUBTITLED_EDITOR_LANES_ENABLED=false
+--app nova-video` + `fly machine restart <id>` (api + worker).
+
+**What opens.** For a device-rendered `subtitled` variant only,
+`_clamp_phone_editor_capabilities` (`routes/generative_jobs.py`) stops
+closing `sfx` and `overlays`; `visual_blocks`, `motion_scenes`,
+`camera_effects`, clip adds/looks/crop/rate stay closed, and `text_elements`
+is now closed too (it was advertised open while every text Save 422'd).
+Guided phone variants keep today's clamp.
+
+**What the editor sees.** The lanes the worker compiled are projected onto
+the generic editor sections (`app/services/phone_subtitled_editor.py`,
+`project_phone_subtitled_editor_sections`): overlay cards become
+`media_overlays` items (`kind: "image"`, or `"video"` with
+`clip_trim_start_s` for a KRI-183 video card; `x_frac`/`y_frac`/`scale`/`start_s`/
+`end_s`/`z`; `entrance_token`/`exit_token` are always `"none"` -- `MediaOverlay`
+has no fade token, so a card's fade is carried across a Save by card id) and
+sound effects become `sound_effects` items (`sound_effect_id` = catalog id,
+`at_s`, `gain`, `duration_s`, `label`, optional `trim_start_s`/`trim_end_s`).
+The projection is DERIVED from the pinned device recipe (lazy backfill --
+older variants need no migration and `_run_phone_subtitled_job` is
+untouched); after a Save the compiled lanes are persisted on the variant as
+`_phone_subtitled_editor_lanes_v1` and preferred over derivation. The
+timeline route's `native_assets` carries the matching `sound_effect` /
+`media_overlay` rows so the native preview resolves them; a sound effect
+added from the iOS Sounds → Effects tab (backed by `GET /sound-effects`)
+previews from the catalog's `preview_audio_url` until the next snapshot.
+
+**Save.** `prepare_phone_editor_commit` (`app/services/phone_editor.py`)
+gains a Talking branch: the committed `sound_effects` / `media_overlays` /
+`caption_cues` sections (sections absent from the payload keep their current
+lane) are turned back into `PhoneSubtitledLanes`
+(`lanes_from_editor_sections`) and recompiled through
+`compile_phone_subtitled_plan` + `validate_phone_pilot_recipe`, then pinned
+as `recipe_revision + 1` inside the same request -- no cloud task, no
+download, no re-hash: visual pins come from `_phone_visuals_v1`, sound-effect
+pins are reused from the previous recipe's manifest, and only a NEWLY added
+catalog id is metadata-probed with `inspect_library_asset` after the same
+playability + `sound-effects/{id}/` prefix checks `_resolve_phone_sound_effect`
+applies. The ending clip is carried over unchanged (not editable yet).
+Fail-closed, named: any lane the creator edited that cannot compile, a photo
+that is not pinned for this edit (adding NEW photos to a Talking edit is not
+supported yet), a pinned video used as a NEW card while the KRI-183 video
+gate is off (an existing video card still Saves), a non-overlay
+`display_mode`, or any other section
+(`text_elements`, timeline, mix, music, orientation) returns
+`422 unsupported_phone_edit` with a `reason` -- a Save never silently drops a
+lane (unlike generation, where a failing lane is dropped and receipted).
+A card keeps the fade the worker gave it; a card the creator adds is static
+(pop-in is unqualified on the phone). `SubtitledSoundEffect.trim_start_s`/`trim_end_s` are honoured by
+`_compile_sfx_track` (defaults `None` ⇒ byte-identical).
+
+**Guards:** `tests/services/test_phone_subtitled_editor.py`,
+`tests/routes/test_phone_subtitled_editor_commit.py`,
+`tests/routes/test_phone_subtitled_editor_capabilities.py`, trim cases in
+`tests/pipeline/test_phone_subtitled_plan.py`; iOS
+`NativeSfxBrowseTests`, `NativeEditorInspectorTests` (add/move/remove on the
+`phoneSubtitledLanes` fixture), `NativeEditorRenderCompilerTests`.
 
 ## Implemented foundations
 

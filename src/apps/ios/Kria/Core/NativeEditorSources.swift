@@ -466,6 +466,29 @@ extension KriaAPI {
     }
 }
 
+/// `GET /sound-effects` (`SoundEffectSummary`, no query params -- search and
+/// category grouping happen client-side, see `NativeSfxBrowse`).
+struct NativeEditorSoundEffect: Decodable, Sendable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let durationS: Double?
+    let previewAudioURL: URL?
+    let roleTags: [String]
+    let category: String?
+    let searchTerms: [String]
+    enum CodingKeys: String, CodingKey {
+        case id, name, durationS = "duration_s", previewAudioURL = "preview_audio_url"
+        case roleTags = "role_tags", category, searchTerms = "search_terms"
+    }
+}
+
+extension KriaAPI {
+    func editorSoundEffects() async throws -> [NativeEditorSoundEffect] {
+        struct Envelope: Decodable { let effects: [NativeEditorSoundEffect] }
+        return try await request(path: "sound-effects", method: "GET", bodyData: nil, decode: Envelope.self).effects
+    }
+}
+
 /// Bounded device diagnostics; no URLs, tokens, content, or raw errors.
 enum NativePreviewDiagnostics {
     private static let lock = NSLock()

@@ -248,6 +248,124 @@ final class NativeEditorInspectorTests: XCTestCase {
         XCTAssertEqual(session.document.captionCues.count, 1)
         XCTAssertNotNil(session.document.music)
     }
+
+    // MARK: - KRI-182 step 1: phone Talking (subtitled) editable sfx/overlay lanes
+
+    private func phoneSfxEffect(id: String = "catalog-whoosh", name: String = "Whoosh", durationS: Double? = 0.8) -> NativeEditorSoundEffect {
+        NativeEditorSoundEffect(id: id, name: name, durationS: durationS, previewAudioURL: nil, roleTags: [], category: "transition", searchTerms: [name.lowercased()])
+    }
+
+    func testAddSoundEffectPlacesAPointEffectAtTheClampedPlayheadWithTheWebWireShape() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.phoneSubtitledLanes)
+        session.currentTime = 1.5
+
+        session.addSoundEffect(phoneSfxEffect())
+
+        XCTAssertEqual(session.document.soundEffects.count, 2, "the fixture's existing effect plus the newly placed one")
+        let placed = try! XCTUnwrap(session.document.soundEffects.last)
+        XCTAssertEqual(placed.pointS, 1.5)
+        XCTAssertEqual(placed.startS, 1.5)
+        XCTAssertEqual(placed.kind, "sfx")
+        XCTAssertEqual(placed.raw["sound_effect_id"], .string("catalog-whoosh"))
+        XCTAssertEqual(placed.raw["src_gcs_path"], .string(""))
+        XCTAssertEqual(placed.raw["source"], .string("user"))
+        XCTAssertEqual(placed.raw["gain"], .number(1))
+        XCTAssertEqual(placed.raw["duration_s"], .number(0.8))
+        XCTAssertEqual(placed.raw["label"], .string("Whoosh"))
+        XCTAssertEqual(session.selection, .init(kind: .soundEffect, id: placed.id))
+    }
+
+    func testAddSoundEffectClampsToTheLastEditableClipEndNotDuration() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.phoneSubtitledLanes)
+        // The fixture's single clip runs 0...4; the playhead sits past it,
+        // as it would once a device composition's `duration` includes the
+        // baked Kria outro tail (KRI-169's trap -- see addSoundEffect's doc).
+        session.currentTime = 40
+
+        session.addSoundEffect(phoneSfxEffect())
+
+        let placed = try! XCTUnwrap(session.document.soundEffects.last)
+        let pointS = try! XCTUnwrap(placed.pointS)
+        XCTAssertEqual(pointS, 3.9, accuracy: 0.0001, "clamped to the last editable clip's end (4), not the raw playhead")
+    }
+
+    func testAddSoundEffectIsRefusedWhenTheSfxCapabilityIsClosed() {
+        var draft = NativeEditorUITestFixtures.phoneSubtitledLanes
+        draft.serverSnapshot["editor_capabilities"] = .object([
+            "sfx": .object(["editable": .bool(false), "reason": .string("sfx_disabled")]),
+            "sound_effects": .object(["editable": .bool(false)]),
+            "overlays": .object(["editable": .bool(true)]),
+        ])
+        let session = NativeEditorSession(draft: draft)
+        let before = session.document.soundEffects.count
+
+        session.addSoundEffect(phoneSfxEffect())
+
+        XCTAssertEqual(session.document.soundEffects.count, before, "a closed capability must not append")
+    }
+
+    func testAddSoundEffectCoalescesIntoOneUndoSnapshot() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.phoneSubtitledLanes)
+        let before = session.document.soundEffects.count
+
+        session.addSoundEffect(phoneSfxEffect())
+
+        XCTAssertEqual(session.document.soundEffects.count, before + 1)
+        XCTAssertTrue(session.canUndo)
+        session.undo()
+        XCTAssertEqual(session.document.soundEffects.count, before)
+        XCTAssertFalse(session.canUndo, "one call must create exactly one undo snapshot")
+    }
+
+    func testMovingThePhoneOverlayWritesXFracAndYFrac() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.phoneSubtitledLanes)
+
+        session.setMediaOverlayPosition(id: "phone-overlay-1", x: 0.2, y: 0.85)
+
+        let overlay = try! XCTUnwrap(session.document.mediaOverlays.first)
+        XCTAssertEqual(overlay.raw["x_frac"], .number(0.2))
+        XCTAssertEqual(overlay.raw["y_frac"], .number(0.85))
+    }
+
+    func testRemovingThePhoneSfxLeavesTheOverlayUntouched() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.phoneSubtitledLanes)
+
+        session.removeSoundEffect(id: "phone-sfx-1")
+
+        XCTAssertTrue(session.document.soundEffects.isEmpty)
+        XCTAssertEqual(session.document.mediaOverlays.count, 1)
+        XCTAssertEqual(session.document.mediaOverlays.first?.id, "phone-overlay-1")
+    }
+
+    func testPhoneSubtitledSfxAndOverlayEditsBothReachTheEncodedCommitRequest() async {
+        let threadID = UUID()
+        let draft = NativeEditorUITestFixtures.phoneSubtitledLanes
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e",
+                baseJobID: UUID().uuidString, baseGenerationID: "fixture-generation", snapshot: draft.serverSnapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("subtitled"),
+                "editor_capabilities": .object([
+                    "sfx": .object(["editable": .bool(true)]),
+                    "sound_effects": .object(["editable": .bool(true)]),
+                    "overlays": .object(["editable": .bool(true)]),
+                    "media_overlays": .object(["editable": .bool(true)]),
+                    "text_elements": .object(["editable": .bool(false)]),
+                ]),
+            ]
+        )
+        let session = NativeEditorSession(draft: draft)
+        await session.load(api: fake, threadID: threadID)
+
+        session.addSoundEffect(phoneSfxEffect())
+        session.setMediaOverlayPosition(id: "phone-overlay-1", x: 0.3, y: 0.4)
+        await session.save()
+
+        XCTAssertEqual(fake.commitCount, 1)
+        XCTAssertEqual(fake.lastRequest?.soundEffects?.count, 2, "the fixture's existing effect plus the newly added one")
+        XCTAssertEqual(fake.lastRequest?.mediaOverlays?.count, 1)
+    }
 }
 
 private func nativeTestObject(_ value: JSONValue?) -> [String: JSONValue]? {

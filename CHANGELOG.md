@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.193.0] - 2026-09-24
+
+### Changed
+- feat(phone): duck Talking-edit sound effects that land on speech (KRI-181 follow-up) (#1212) <!-- release-pr: 1212 -->
+
+## [0.76.192.0] - 2026-09-24
+
+### Changed
+- feat(phone): editable Talking edits on the iPhone — stickers, photo cards and sound effects (KRI-182 step 1) (#1211) <!-- release-pr: 1211 -->
+
 ## [0.76.191.0] - 2026-09-24
 
 ### Changed

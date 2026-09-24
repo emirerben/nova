@@ -148,6 +148,38 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_REACTION_BEATS_ENABLED=false --app nova-video` + `fly
     # machine restart <id>` (api + worker).
     phone_subtitled_reaction_beats_enabled: bool = False
+    # KRI-181 follow-up: on a phone-rendered Talking edit, a sound effect whose
+    # window overlaps a spoken word plays at
+    # `phone_subtitled_plan.SFX_SPEECH_DUCK_GAIN` of its requested volume so
+    # the beat never masks the speaker; effects in pauses keep full volume.
+    # Server-only: it changes existing `TimelineClip.volume` values, so any
+    # installed app build honours it with no new capability. False (default):
+    # byte-identical recipes. Read at compile time, so a flip affects the next
+    # render. Apply: `fly secrets set PHONE_SFX_SPEECH_DUCK_ENABLED=true
+    # --app nova-video` + `fly machine restart <id>` (worker).
+    phone_sfx_speech_duck_enabled: bool = False
+    # KRI-182 step 1 (editable phone Talking edits): the native editor's
+    # generic `sound_effects`/`media_overlays` editor-commit sections apply
+    # to a phone-rendered `subtitled` (Talking to camera) variant --
+    # `prepare_phone_editor_commit` (`app.services.phone_editor`) recompiles
+    # `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan` from
+    # the committed sections instead of unconditionally 422ing
+    # `unsupported_phone_edit` (subtitled variants carry no guided-story
+    # execution plan to fall back to). Requires
+    # `phone_subtitled_media_lanes_enabled` (the underlying KRI-174 lane
+    # compiler must already be live) AND every feature in
+    # `app.services.phone_rollout.PHONE_SUBTITLED_EDITOR_FEATURES`
+    # (`stillImages`, `visualBlocks`, `alphaOverlay`, `audioMix`,
+    # `soundEffects`) verified in `phone_render_verified_features` -- see
+    # `phone_rollout.phone_subtitled_editor_lanes_supported()`, the single
+    # source of truth. False (default): byte-identical to before this flag
+    # existed -- every subtitled device-variant Save still 422s
+    # `unsupported_phone_edit`, and `_clamp_phone_editor_capabilities`
+    # continues to close `sfx`/`overlays` for every device variant regardless
+    # of archetype. Rollback: `fly secrets set
+    # PHONE_SUBTITLED_EDITOR_LANES_ENABLED=false --app nova-video` + `fly
+    # machine restart <id>` (api + worker).
+    phone_subtitled_editor_lanes_enabled: bool = False
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.
