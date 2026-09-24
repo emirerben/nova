@@ -51,6 +51,7 @@ from app.services.device_render import (
     mark_device_failed,
     retry_device_render,
 )
+from app.services.kria_trace import find_thread_link
 from app.services.public_assembly_plan import (
     project_admin_debug_candidates,
     project_public_assembly_plan,
@@ -238,6 +239,10 @@ class JobDebugResponse(BaseModel):
     speech_cleanup_preflight: dict[str, Any] | None = None
     # Scalar-only correlation for lazy loading from /admin/kria/trace.
     kria_turn_id: str | None = None
+    # Additive correlation to the creation thread that owns this job (chat
+    # flows only), so a job traces to its thread without parsing storage paths.
+    thread_id: str | None = None
+    runtime_version: int | None = None
 
 
 class CancelJobResponse(BaseModel):
@@ -728,6 +733,12 @@ async def get_job_debug(
         else None
     )
 
+    thread_link = None
+    if getattr(job, "content_plan_item_id", None) is not None:
+        thread_link = await find_thread_link(
+            db, plan_item_id=job.content_plan_item_id, job_id=job.id
+        )
+
     return JobDebugResponse(
         job=job_payload,
         job_clips=[
@@ -763,6 +774,8 @@ async def get_job_debug(
         render_summary=build_render_summary(job, runs),
         speech_cleanup_preflight=project_admin_speech_cleanup_trace(job.assembly_plan),
         kria_turn_id=kria_turn_id,
+        thread_id=thread_link[0] if thread_link else None,
+        runtime_version=thread_link[1] if thread_link else None,
         render_timing=_render_timing_breakdown(job, runs),
     )
 
