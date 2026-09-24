@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.206.0] - 2026-09-24
+
+### Changed
+- feat(clip-facts): capture time, place and best-guess landmark per clip, with provenance (KRI-189) (#1225) <!-- release-pr: 1225 -->
+
 ## [0.76.205.0] - 2026-09-24
 
 ### Changed
