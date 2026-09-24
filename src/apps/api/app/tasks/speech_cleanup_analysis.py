@@ -26,10 +26,12 @@ from typing import Any
 
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
 from app.database import sync_session
-from app.models import SpeechCleanupAnalysis
+from app.models import PlanItem, SpeechCleanupAnalysis
+from app.pipeline.caption_language import crosscheck_detected_language
 from app.pipeline.speech_cleanup_analysis import (
     SpeechCleanupAnalysisInput,
     SpeechCleanupAnalysisResult,
@@ -53,6 +55,7 @@ from app.services.speech_cleanup_preflight import (
     finalize_analysis_failure,
     finalize_analysis_success,
     mark_dispatch_failed,
+    reference_transcript_for_source,
 )
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.storage import signed_get_url_for_generation
@@ -96,10 +99,31 @@ class _ClaimedWork:
     detector_version: str
     source_kind: str = "unknown"
     queued_at: Any | None = None
+    # Gemini's transcript of the same clip bytes, when its analysis had landed
+    # at claim time (see `_reference_transcript`).
+    reference_transcript: str | None = None
 
     @property
     def duration_s(self) -> float:
         return self.window_end_s - self.window_start_s
+
+
+def _reference_transcript(db: Any, row: SpeechCleanupAnalysis) -> str | None:
+    """Gemini's transcript of the analyzed clip, read from its plan item.
+
+    Only a clip's own audio has one; a recorded voiceover is never Gemini-analyzed.
+    """
+
+    if row.source_kind != "embedded_spine":
+        return None
+    item = db.get(PlanItem, row.plan_item_id)
+    if item is None:
+        return None
+    return reference_transcript_for_source(
+        item,
+        storage_path=row.source_storage_path,
+        generation=row.source_generation,
+    )
 
 
 def _claim_work(analysis_id: str) -> _ClaimedWork | None:
@@ -125,6 +149,7 @@ def _claim_work(analysis_id: str) -> _ClaimedWork | None:
                 detector_version=row.detector_version,
                 source_kind=str(getattr(row, "source_kind", "unknown") or "unknown"),
                 queued_at=getattr(row, "created_at", None),
+                reference_transcript=_reference_transcript(db, row),
             )
         else:
             work = _ClaimedWork(
@@ -137,6 +162,7 @@ def _claim_work(analysis_id: str) -> _ClaimedWork | None:
                 detector_version=row.detector_version,
                 source_kind=str(getattr(row, "source_kind", "unknown") or "unknown"),
                 queued_at=getattr(row, "created_at", None),
+                reference_transcript=_reference_transcript(db, row),
             )
         db.commit()
         return work
@@ -319,7 +345,49 @@ def _engine_diagnostic_receipt(result: SpeechCleanupAnalysisResult) -> dict[str,
     }
 
 
+def _late_reference_transcript(work: _ClaimedWork) -> str | None:
+    """Re-read Gemini's transcript after a run that started without one.
+
+    The clip's Gemini analysis usually lands after preflight is claimed; a write
+    that lands WHILE the engine runs sees a running row and cannot reschedule it
+    (`_redo_for_misheard_language` only resets settled rows), so the worker
+    checks once more before persisting.
+    """
+
+    try:
+        with sync_session() as db:
+            row = db.get(SpeechCleanupAnalysis, work.claim.analysis_id)
+            reference = _reference_transcript(db, row) if row is not None else None
+            db.rollback()
+    except SQLAlchemyError as exc:
+        # A best-effort refinement: the first result stays publishable.
+        log.warning(
+            "speech_cleanup_analysis.late_reference_unavailable",
+            analysis_id=str(work.claim.analysis_id),
+            error_class=type(exc).__name__,
+        )
+        return None
+    return reference
+
+
 def _run_engine(work: _ClaimedWork, local_audio_path: Path) -> SpeechCleanupAnalysisResult:
+    result = _run_engine_once(
+        work, local_audio_path, reference_transcript=work.reference_transcript
+    )
+    if work.reference_transcript is not None or work.source_kind != "embedded_spine":
+        return result
+    reference = _late_reference_transcript(work)
+    if crosscheck_detected_language(result.language, reference_text=reference) is None:
+        return result
+    return _run_engine_once(work, local_audio_path, reference_transcript=reference)
+
+
+def _run_engine_once(
+    work: _ClaimedWork,
+    local_audio_path: Path,
+    *,
+    reference_transcript: str | None,
+) -> SpeechCleanupAnalysisResult:
     analysis_input = SpeechCleanupAnalysisInput(
         source_fingerprint=work.claim.source_policy_fingerprint,
         local_media_path=str(local_audio_path),
@@ -331,6 +399,7 @@ def _run_engine(work: _ClaimedWork, local_audio_path: Path) -> SpeechCleanupAnal
         include_silence_and_fillers=True,
         over_budget_policy=SPEECH_CLEANUP_OVER_BUDGET_POLICY,
         max_removal_frac_required=settings.speech_cleanup_max_removal_frac_required,
+        reference_transcript=reference_transcript,
     )
     try:
         return run_speech_cleanup_engine(analysis_input)

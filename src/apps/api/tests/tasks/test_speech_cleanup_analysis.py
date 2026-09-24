@@ -627,3 +627,101 @@ def test_validate_work_fails_closed_on_a_detector_label_the_engine_will_not_prod
     assert raised.value.code == "snapshot_mismatch"
     assert raised.value.private_detail == "detector_version"
     assert raised.value.retryable is False
+
+
+# ── Gemini reference transcript (language cross-check) ──────────────────────
+# The engine behavior itself is pinned in
+# tests/services/test_speech_cleanup_language_crosscheck.py.
+
+_GEMINI_EN = "So today we built the thing, and here is how it went for everyone."
+
+
+def _misheard_result(language: str) -> SpeechCleanupAnalysisResult:
+    return _result(candidate_count=0).model_copy(update={"language": language})
+
+
+def test_reference_transcript_is_read_for_clip_audio_only(monkeypatch) -> None:
+    row = _queued_row(DETECTOR_VERSION)
+    item = object()
+    db = Mock()
+    db.get.return_value = item
+    lookup = Mock(return_value=_GEMINI_EN)
+    monkeypatch.setattr(task_module, "reference_transcript_for_source", lookup)
+
+    assert task_module._reference_transcript(db, row) is None  # a voiceover row
+    db.get.assert_not_called()
+
+    row.source_kind = "embedded_spine"
+    assert task_module._reference_transcript(db, row) == _GEMINI_EN
+    lookup.assert_called_once_with(
+        item, storage_path=row.source_storage_path, generation=row.source_generation
+    )
+
+
+def test_engine_receives_the_reference_read_at_claim(monkeypatch) -> None:
+    captured: list[SpeechCleanupAnalysisInput] = []
+    monkeypatch.setattr(
+        task_module,
+        "run_speech_cleanup_engine",
+        lambda analysis_input: captured.append(analysis_input) or _misheard_result("tr"),
+    )
+    late = Mock()
+    monkeypatch.setattr(task_module, "_late_reference_transcript", late)
+
+    work = _work(source_kind="embedded_spine", reference_transcript=_GEMINI_EN)
+    task_module._run_engine(work, Path("narration.wav"))
+
+    assert [value.reference_transcript for value in captured] == [_GEMINI_EN]
+    late.assert_not_called()  # the engine already had its reference
+
+
+def test_a_reference_that_lands_mid_run_reruns_a_misheard_analysis(monkeypatch) -> None:
+    captured: list[SpeechCleanupAnalysisInput] = []
+    rerun = _misheard_result("en")
+
+    def run_engine(analysis_input):
+        captured.append(analysis_input)
+        return rerun if analysis_input.reference_transcript else _misheard_result("tr")
+
+    monkeypatch.setattr(task_module, "run_speech_cleanup_engine", run_engine)
+    monkeypatch.setattr(task_module, "_late_reference_transcript", lambda _work: _GEMINI_EN)
+
+    result = task_module._run_engine(_work(source_kind="embedded_spine"), Path("narration.wav"))
+
+    assert [value.reference_transcript for value in captured] == [None, _GEMINI_EN]
+    assert result is rerun
+
+
+@pytest.mark.parametrize(
+    ("source_kind", "late_reference"),
+    [
+        ("embedded_spine", None),  # Gemini has still not landed
+        ("embedded_spine", "Bu videoyu çok güzel çektim bugün, hadi bakalım"),  # agrees
+        ("voiceover", _GEMINI_EN),  # a voiceover never has one: not even read
+    ],
+)
+def test_first_result_stands_without_a_contradicting_late_reference(
+    monkeypatch, source_kind: str, late_reference: str | None
+) -> None:
+    first = _misheard_result("tr")
+    engine = Mock(return_value=first)
+    monkeypatch.setattr(task_module, "run_speech_cleanup_engine", engine)
+    late = Mock(return_value=late_reference)
+    monkeypatch.setattr(task_module, "_late_reference_transcript", late)
+
+    result = task_module._run_engine(_work(source_kind=source_kind), Path("narration.wav"))
+
+    assert result is first
+    assert engine.call_count == 1
+    assert late.call_count == (0 if source_kind == "voiceover" else 1)
+
+
+def test_late_reference_read_fails_open_on_a_database_error(monkeypatch) -> None:
+    from sqlalchemy.exc import OperationalError
+
+    def broken_session():
+        raise OperationalError("SELECT 1", {}, Exception("db down"))
+
+    monkeypatch.setattr(task_module, "sync_session", broken_session)
+
+    assert task_module._late_reference_transcript(_work(source_kind="embedded_spine")) is None

@@ -20,6 +20,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.pipeline.caption_language import crosscheck_detected_language, infer_language_from_text
 from app.pipeline.silence_cut import (
     SILENCE_CUT_VERBATIM_PROMPT,
     CutPlan,
@@ -213,6 +214,10 @@ class SpeechCleanupAnalysisInput(_FrozenModel):
     max_removal_frac_required: float = Field(default=1.0, gt=0, le=1, allow_inf_nan=False)
     retake_spans: tuple[tuple[int, int], ...] = ()
     forced_removals: tuple[SpeechCleanupRemovalInput, ...] = ()
+    # Gemini's transcript of the same clip (its clip_metadata analysis), when it
+    # has landed. An independent listener for whisper's language detection — see
+    # `_crosschecked_transcript`. Never cut evidence itself.
+    reference_transcript: str | None = None
 
     @model_validator(mode="after")
     def validate_window_and_spans(self) -> SpeechCleanupAnalysisInput:
@@ -554,6 +559,45 @@ def _public_receipt(
     )
 
 
+def _crosschecked_transcript(
+    transcript: Any,
+    analysis_input: SpeechCleanupAnalysisInput,
+    transcribe: _TranscriptFn,
+) -> tuple[Any, dict[str, Any] | None]:
+    """Re-transcribe when whisper's detected language contradicts Gemini's.
+
+    whisper-1 detects the language from the audio alone and misreads accented
+    speech (Turkish-accented English -> "tr"), then TRANSLATES instead of
+    transcribing. Filler and pause decisions made on a translation cut the wrong
+    audio, so on a clear EN/TR disagreement with ``reference_transcript`` the
+    clip is transcribed again in the language Gemini heard; an empty second pass
+    keeps the first. Returns the transcript to analyze plus a receipt, recorded
+    whenever a reference was available (it tells a later reschedule that this
+    run already had one, see ``speech_cleanup_preflight``); None without one.
+    """
+
+    reference = (analysis_input.reference_transcript or "").strip()
+    if not reference:
+        return transcript, None
+    whisper_language = str(_value(transcript, "language") or "")[:32]
+    heard_language = crosscheck_detected_language(whisper_language, reference_text=reference)
+    receipt: dict[str, Any] = {
+        "whisper_language": whisper_language,
+        "reference_language": infer_language_from_text(reference),
+        "applied": False,
+    }
+    if heard_language is None:
+        return transcript, receipt
+    retranscribed = transcribe(
+        analysis_input.local_media_path,
+        language=heard_language,
+        verbatim_prompt=SILENCE_CUT_VERBATIM_PROMPT,
+    )
+    if not _timed_words(retranscribed):
+        return transcript, receipt
+    return retranscribed, {**receipt, "applied": True}
+
+
 def analyze_speech_cleanup(
     analysis_input: SpeechCleanupAnalysisInput,
     *,
@@ -573,6 +617,9 @@ def analyze_speech_cleanup(
         analysis_input.local_media_path,
         language=None,
         verbatim_prompt=SILENCE_CUT_VERBATIM_PROMPT,
+    )
+    transcript, language_crosscheck = _crosschecked_transcript(
+        transcript, analysis_input, transcribe
     )
     words = _timed_words(transcript)
     silence_result = detect_silences(
@@ -652,6 +699,9 @@ def analyze_speech_cleanup(
         else analysis_input.source_window_start_s + analysis_input.duration_s
     )
     language = str(_value(transcript, "language") or "")[:32]
+    diagnostics = _diagnostics(diagnostic_plan, candidate_error_class=candidate_error_class)
+    if language_crosscheck is not None:
+        diagnostics["language_crosscheck"] = language_crosscheck
     return SpeechCleanupAnalysisResult(
         source_fingerprint=analysis_input.source_fingerprint,
         detector_version=analysis_input.detector_version,
@@ -669,7 +719,7 @@ def analyze_speech_cleanup(
             bailout_reason=plan.bailout_reason,
             clamped=bool(plan.clamped),
         ),
-        diagnostics=_diagnostics(diagnostic_plan, candidate_error_class=candidate_error_class),
+        diagnostics=diagnostics,
         public_receipt=_public_receipt(
             findings,
             time_saved_s=plan.time_saved_s,
