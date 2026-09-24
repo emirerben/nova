@@ -245,6 +245,10 @@ struct NativeEditorTimeline: View {
     @ObservedObject var uploads: BackgroundUploadCoordinator
     var bottomClearance: CGFloat = 0
     var isCovered = false
+    /// KRI-166: the "+" chooser's Visual/Text selections route to the same
+    /// tool the bottom rail already opens for them.
+    var onSelectVisual: () -> Void = {}
+    var onSelectText: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 6) {
@@ -261,8 +265,23 @@ struct NativeEditorTimeline: View {
                     Button("Remove", role: .destructive) { Task { await session.dismissPendingEditorImport(pending) } }.font(KriaFont.body(12)).frame(minHeight: 44)
                 }
                 .accessibilityIdentifier("native-editor-pending-timeline-import")
+                // Watchdog: a visible "Preparing…" row means this editor is on
+                // screen, so make sure a live waiter exists. The waiter can die
+                // silently (app suspended/relaunched mid-import); without this
+                // the row would stay until the editor is reopened.
+                .task(id: "\(pending.id.uuidString)-\(pending.status)") {
+                    guard pending.status == "preparing" else { return }
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(4))
+                        if Task.isCancelled { break }
+                        await session.resumeEditorImports()
+                    }
+                }
             }
-            NativeMiniStrip(session: session, bottomClearance: bottomClearance, isCovered: isCovered)
+            NativeMiniStrip(
+                session: session, bottomClearance: bottomClearance, isCovered: isCovered,
+                onSelectVisual: onSelectVisual, onSelectText: onSelectText
+            )
                 .frame(maxHeight: .infinity)
                 .accessibilityIdentifier("native-editor-mini-strip")
         }

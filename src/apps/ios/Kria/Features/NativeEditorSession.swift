@@ -94,7 +94,7 @@ struct NativeEditorTemporaryVideo {
     /// The visible source composition includes the outro after the editable
     /// content. Transport and scrubbing must reach that tail as well.
     var playbackDuration: TimeInterval {
-        if let sourcePreview, player?.currentItem === sourcePreview.preview.playerItem {
+        if isPlayingBrandedSourcePreview, let sourcePreview {
             return sourcePreview.preview.description.duration
         }
         return duration
@@ -112,6 +112,15 @@ struct NativeEditorTemporaryVideo {
         (sourcePreviewUpdateDeferred || sourcePreviewSequence != sourcePreviewSettledSequence)
             ? max(playbackDuration, timelineProjection.totalDuration)
             : playbackDuration
+    }
+    /// KRI-166: true while the player shows the branded source preview
+    /// (always built with `branding: .standard`, see `scheduleSourcePreviewUpdate`)
+    /// rather than a rendered MP4. The outro placeholder trusts a much smaller
+    /// gap after the last clip in this mode, since the outro is guaranteed to
+    /// be there; a rendered asset's `duration` may already bake the tail in.
+    var isPlayingBrandedSourcePreview: Bool {
+        guard let sourcePreview else { return false }
+        return player?.currentItem === sourcePreview.preview.playerItem
     }
     @Published var isPlaying = false
     @Published var isSaving = false
@@ -446,6 +455,10 @@ struct NativeEditorTemporaryVideo {
     /// nearest beat; no-grid variants snap it to the nearest half second — the
     /// same server-side resolution every other slot edit already goes through.
     private static let addedClipDurationS: Double = 3.0
+    /// Most clips one edit can hold. Matches the server's add-clip pool cap
+    /// (`_MAX_POOL_CLIPS`) and the creation cap (`_MAX_CLIPS_PER_ITEM`), both 50 —
+    /// a lower number here made edits created with 21+ clips unable to add more.
+    static let maxTimelineClips = 50
     private var authoredVisualSources: [String: ResolvedEditorSource] = [:]
     private var variantKey: String?
     private var jobID: UUID?
@@ -2240,7 +2253,7 @@ struct NativeEditorTemporaryVideo {
             addClipError = "The timeline can’t be edited right now. Try adding it again in a moment."
             return
         }
-        guard draft.clips.count < 20 else {
+        guard draft.clips.count < Self.maxTimelineClips else {
             addClipError = "This edit already has the maximum number of clips."
             return
         }
@@ -2576,7 +2589,16 @@ struct NativeEditorTemporaryVideo {
     }
 
     var canAddTimelineMedia: Bool {
-        canEditTimeline && draft.clips.count < 20 && (!rendersOnDevice || canRegisterPhoneSources)
+        canEditTimeline && draft.clips.count < Self.maxTimelineClips && (!rendersOnDevice || canRegisterPhoneSources)
+    }
+    /// KRI-166: why `canAddTimelineMedia` is false, for the quick-add menu's
+    /// Video row (which otherwise just greys out). Mirrors the three
+    /// conditions above; nil when adding is allowed.
+    var addClipUnavailableReason: String? {
+        if rendersOnDevice && !canRegisterPhoneSources { return "Adding media isn’t available for this edit on this iPhone." }
+        if !canEditTimeline { return "This edit’s timeline can’t be changed." }
+        if draft.clips.count >= Self.maxTimelineClips { return "An edit can have up to \(Self.maxTimelineClips) clips." }
+        return nil
     }
 
     private func editorSourceTarget(kind: EditorSourceRegistrationTarget.SourceKind) -> EditorSourceRegistrationTarget? {

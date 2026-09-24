@@ -128,6 +128,13 @@ log = structlog.get_logger()
 router = APIRouter()
 
 _MAX_CLIPS = 20
+# Cap on the footage POOL an existing job can grow to via POST /{id}/clips.
+# Creation (creation_threads/plan items) already lets an item start with up
+# to `_MAX_CLIPS_PER_ITEM` (50) clips, so the editor's add-clip cap must not be
+# lower than that or any edit created with 21+ clips can never take another one
+# (pinned equal by test_add_clip_pool_cap_matches_creation_cap). `_MAX_CLIPS`
+# above stays the legacy bare-job creation request limit.
+_MAX_POOL_CLIPS = 50
 _DIRECT_UPLOAD_MAX_BYTES = 200 * 1024 * 1024
 _DIRECT_UPLOAD_MAX_TOTAL_BYTES = 1024 * 1024 * 1024
 _IMAGE_CLIP_EXTENSIONS = frozenset({".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"})
@@ -11463,10 +11470,10 @@ async def add_clip(
         )
 
     clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
-    if len(clip_paths) >= _MAX_CLIPS:
+    if len(clip_paths) >= _MAX_POOL_CLIPS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Maximum {_MAX_CLIPS} clips allowed",
+            detail=f"Maximum {_MAX_POOL_CLIPS} clips allowed",
         )
     clip_index = len(clip_paths)
     clip_paths.append(path)
