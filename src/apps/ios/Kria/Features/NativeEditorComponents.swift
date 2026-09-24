@@ -31,7 +31,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .text: "Add or edit text overlays"
         case .captions: "Turn captions on or off and choose a style"
         case .visuals: "Browse visual lanes and adjust supported effects"
-        case .sounds: "Adjust the music volume"
+        case .sounds: "Adjust music and add sound effects"
         }
     }
 }

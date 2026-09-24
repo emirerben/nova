@@ -482,6 +482,104 @@ def test_sfx_starting_after_timeline_end_is_skipped():
     assert "soundEffects" not in recipe.required_capabilities
 
 
+# --- Sound-effect trim (KRI-182 step 1) --------------------------------------
+
+
+def test_sfx_with_no_trim_is_byte_identical_to_before_trim_existed():
+    bindings = (_binding(duration_s=10.0),)
+    resolved = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=1.0), duration_s=2.0
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], lanes=PhoneSubtitledLanes(sound_effects=[resolved])
+    )
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    clip = sfx_track.clips[0]
+    assert clip.source_start == pytest.approx(0.0)
+    assert clip.source_duration == pytest.approx(2.0)
+
+
+def test_sfx_trim_start_shifts_the_source_start_and_shortens_duration():
+    bindings = (_binding(duration_s=10.0),)
+    resolved = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=1.0, trim_start_s=0.5),
+        duration_s=2.0,
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], lanes=PhoneSubtitledLanes(sound_effects=[resolved])
+    )
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    clip = sfx_track.clips[0]
+    assert clip.source_start == pytest.approx(0.5)
+    assert clip.source_duration == pytest.approx(1.5)
+
+
+def test_sfx_trim_end_shortens_the_playable_duration():
+    bindings = (_binding(duration_s=10.0),)
+    resolved = _resolved_sfx(
+        request=SubtitledSoundEffect(
+            id="sfx-1", catalog_id="pop", at_s=1.0, trim_start_s=0.2, trim_end_s=0.8
+        ),
+        duration_s=2.0,
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], lanes=PhoneSubtitledLanes(sound_effects=[resolved])
+    )
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    clip = sfx_track.clips[0]
+    assert clip.source_start == pytest.approx(0.2)
+    assert clip.source_duration == pytest.approx(0.6)
+
+
+def test_sfx_trim_end_past_resolved_duration_is_ignored():
+    bindings = (_binding(duration_s=10.0),)
+    resolved = _resolved_sfx(
+        request=SubtitledSoundEffect(
+            id="sfx-1", catalog_id="pop", at_s=1.0, trim_start_s=0.0, trim_end_s=50.0
+        ),
+        duration_s=2.0,
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], lanes=PhoneSubtitledLanes(sound_effects=[resolved])
+    )
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    clip = sfx_track.clips[0]
+    assert clip.source_duration == pytest.approx(2.0)
+
+
+def test_sfx_trim_still_clamps_to_the_timeline_end():
+    bindings = (_binding(duration_s=10.0),)
+    resolved = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=9.5, trim_start_s=0.0),
+        duration_s=3.0,
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], lanes=PhoneSubtitledLanes(sound_effects=[resolved])
+    )
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    assert sfx_track.clips[0].source_duration == pytest.approx(0.5)
+
+
+def test_sfx_trim_start_at_or_past_duration_raises_named_lane_error():
+    bindings = (_binding(duration_s=10.0),)
+    resolved = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=1.0, trim_start_s=2.0),
+        duration_s=2.0,
+    )
+    with pytest.raises(SubtitledLaneError) as error:
+        compile_phone_subtitled_plan(
+            bindings, caption_cues=[], lanes=PhoneSubtitledLanes(sound_effects=[resolved])
+        )
+    assert error.value.lane == "sound_effects"
+
+
+def test_sfx_trim_window_validator_rejects_end_before_start():
+    with pytest.raises(Exception):
+        SubtitledSoundEffect(
+            id="sfx-1", catalog_id="pop", at_s=1.0, trim_start_s=1.0, trim_end_s=0.5
+        )
+
+
 def test_shared_catalog_id_reuses_one_manifest_entry():
     bindings = (_binding(duration_s=10.0),)
     asset = _sfx_asset("pop")

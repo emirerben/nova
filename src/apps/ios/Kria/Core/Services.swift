@@ -124,6 +124,7 @@ protocol KriaAPIClient: Sendable {
     func writeDraft(threadID: UUID, snapshot: [String: JSONValue], expectedRevision: Int, etag: String) async throws -> DraftSnapshot
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse
     func editorMusicTracks() async throws -> [NativeEditorMusicTrack]
+    func editorSoundEffects() async throws -> [NativeEditorSoundEffect]
     func editorSourcePool(jobID: UUID, variantID: String) async throws -> NativeEditorSourcePool
     func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse
     func editorSource(itemID: String, variantID: String, importID: UUID) async throws -> EditorSourceRegistrationResponse
@@ -195,6 +196,7 @@ extension KriaAPIClient {
     }
 
     func editorMusicTracks() async throws -> [NativeEditorMusicTrack] { throw APIError.unsupported }
+    func editorSoundEffects() async throws -> [NativeEditorSoundEffect] { throw APIError.unsupported }
     func editorSourcePool(jobID: UUID, variantID: String) async throws -> NativeEditorSourcePool { throw APIError.unsupported }
     func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse { throw APIError.unsupported }
     func editorSource(itemID: String, variantID: String, importID: UUID) async throws -> EditorSourceRegistrationResponse { throw APIError.unsupported }

@@ -139,6 +139,10 @@ def compile_phone_subtitled_plan(
         catalog sound effects, clamped to the full timeline (speaker clip
         plus the ending clip, if any -- an effect may play under the ending
         clip). Two effects sharing a catalog id share one manifest entry.
+        Each effect may optionally trim to a sub-range of its own resolved
+        source audio (``request.trim_start_s``/``trim_end_s``, KRI-182 step
+        1); a trim start at or past the resolved duration is rejected
+        (``SubtitledLaneError``) rather than silently emitting nothing.
       - ``lanes.ending_clip``: an optional MUTED (``volume=0``) Visuals-pool
         video appended to the SAME main video track right after the speaker
         clip, extending the recipe's own duration.
@@ -451,7 +455,20 @@ def _compile_sfx_track(
         if request.at_s >= timeline_end:
             # Starts at/after the end of the timeline -- nothing to play.
             continue
-        clamped_duration = min(resolved.duration_s, timeline_end - request.at_s)
+        source_start = request.trim_start_s or 0.0
+        if source_start >= resolved.duration_s:
+            raise _lane_error(
+                "sound_effects",
+                "trim start exceeds the sound effect's duration",
+                capability="soundEffects",
+            )
+        trim_end = request.trim_end_s
+        playable_duration = (
+            trim_end
+            if trim_end is not None and trim_end <= resolved.duration_s
+            else resolved.duration_s
+        ) - source_start
+        clamped_duration = min(playable_duration, timeline_end - request.at_s)
         if clamped_duration < _MIN_SFX_DURATION_S:
             continue
         existing = asset_by_catalog_id.get(resolved.asset.catalog_id)
@@ -484,7 +501,7 @@ def _compile_sfx_track(
             TimelineClip(
                 id=f"sfx-{request.id}",
                 source_asset_id=asset.id,
-                source_start=0.0,
+                source_start=source_start,
                 source_duration=clamped_duration,
                 timeline_start=request.at_s,
                 rate=1,

@@ -436,6 +436,12 @@ struct NativeEditorTemporaryVideo {
     @Published private(set) var visualLibrary: [CreationVisual] = []
     @Published private(set) var visualLibraryLimit = 20
     @Published private(set) var visualLibraryLoading = false
+    /// `GET /sound-effects` catalog for the Effects tab's browse list.
+    /// Shared with `preparePreviewAudio`'s sfx fallback below, which needs
+    /// the same lookup for a just-placed effect that isn't in the timeline's
+    /// precomputed source pool yet.
+    @Published private(set) var soundEffectCatalog: [NativeEditorSoundEffect] = []
+    @Published private(set) var soundEffectCatalogLoading = false
     /// Automatic reanalysis budget for transient analysis failures. It lives
     /// on the session, not the panel, so reopening Visuals doesn't reset it.
     @Published private(set) var visualAutoRetry = VisualAutoRetryScheduler()
@@ -1544,11 +1550,24 @@ struct NativeEditorTemporaryVideo {
         for effect in document.soundEffects {
             let key = "sfx:" + effect.id
             guard resolvedAudio[key] == nil else { continue }
-            guard let asset = sourcePool?.nativeAssets.first(where: { $0.kind == "sound_effect" && $0.id == effect.id }) else {
-                throw MediaEngineError.missingAsset(key)
-            }
             sourcePreviewState = .preparing
-            let resolved = try await resolver.resolveAudio(id: asset.mediaID, url: asset.sourceURL, generation: document.revision.baseGeneration)
+            var previewID = effect.id
+            var previewURL: URL?
+            if let asset = sourcePool?.nativeAssets.first(where: { $0.kind == "sound_effect" && $0.id == effect.id }) {
+                previewID = asset.mediaID
+                previewURL = asset.sourceURL
+            } else if let catalogID = effect.raw["sound_effect_id"]?.stringValue {
+                // A newly-placed effect (from the Effects tab's catalog) isn't
+                // in the timeline's precomputed source pool yet -- fall back
+                // to the same catalog the tab browsed, exactly like music's
+                // fallback above.
+                let catalog = await loadSoundEffectCatalog()
+                let match = catalog.first(where: { $0.id == catalogID })
+                previewID = match?.id ?? catalogID
+                previewURL = match?.previewAudioURL
+            }
+            guard let previewURL else { throw MediaEngineError.missingAsset(key) }
+            let resolved = try await resolver.resolveAudio(id: previewID, url: previewURL, generation: document.revision.baseGeneration)
             guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
             resolvedAudio[key] = resolved
         }
@@ -2930,6 +2949,48 @@ struct NativeEditorTemporaryVideo {
             raw: ["token": .string(CameraEmphasis.token), "intensity": .number(min(CameraEmphasis.maxIntensity, max(0.01, strength))), "easing": .string(resolved), "source": .string("user")])
         transactDocument(section: .cameraEffects) { $0.cameraEffects.append(effect) }
         select(.init(kind: .cameraEffect, id: effect.id))
+    }
+
+    /// Places a catalog sound effect at the playhead as a point `sfx` lane
+    /// item. The `raw` shape matches the web editor's `addSfxFromGlossary`
+    /// exactly (`id`/`sound_effect_id`/`src_gcs_path`/`source`/`at_s`/`gain`/
+    /// `duration_s`/`label`) so `resolve_editor_sound_effect_placements`
+    /// resolves the catalog id server-side on Save.
+    func addSoundEffect(_ effect: NativeEditorSoundEffect) {
+        guard canEditOperation(["lanes.sfx.add", "sfx.add", "sound_effects.add", "lanes.sfx"], section: .soundEffects) else { return }
+        // KRI-169: the editable end is the LAST EDITABLE CLIP's end, not
+        // `duration` -- a device-rendered composition's `duration` can
+        // already include the baked Kria outro tail (the same boundary the
+        // "+" lane-end appends use, see NativeEditorMediaViews.lastClipEnd).
+        // Fall back to `duration` when no clips are known yet.
+        let editableEnd = timelineClips.map(\.end).max() ?? duration
+        let at = min(max(0, currentTime), max(0, editableEnd - 0.1))
+        let durationS = effect.durationS
+        let item = EditorTimedEffect(id: UUID().uuidString, startS: at, endS: at + max(0.1, durationS ?? 0.1), pointS: at, kind: "sfx",
+            raw: ["sound_effect_id": .string(effect.id), "src_gcs_path": .string(""), "source": .string("user"),
+                  "gain": .number(1), "duration_s": durationS.map(JSONValue.number) ?? .null, "label": .string(effect.name)])
+        transactDocument(section: .soundEffects) { $0.soundEffects.append(item) }
+        select(.init(kind: .soundEffect, id: item.id))
+    }
+
+    /// Loads (and caches for the session) the `GET /sound-effects` catalog
+    /// the Effects tab browses. A cached, non-empty result returns
+    /// immediately; call sites that need a hard refresh are not expected
+    /// today (the catalog rarely changes mid-session).
+    @discardableResult
+    func loadSoundEffectCatalog() async -> [NativeEditorSoundEffect] {
+        guard let api else { return soundEffectCatalog }
+        guard soundEffectCatalog.isEmpty, !soundEffectCatalogLoading else { return soundEffectCatalog }
+        soundEffectCatalogLoading = true
+        defer { soundEffectCatalogLoading = false }
+        do {
+            soundEffectCatalog = try await api.editorSoundEffects()
+        } catch {
+            #if DEBUG
+            NativePreviewDiagnostics.failure("sound-effect-catalog-failed", error: error)
+            #endif
+        }
+        return soundEffectCatalog
     }
 
     /// Easing of one effect, for callers that clamp timing against its bounds.

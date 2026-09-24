@@ -221,6 +221,40 @@ enum NativeEditorUITestFixtures {
         )
     }()
 
+    /// KRI-182 step 1: a phone-rendered `subtitled` variant with its editable
+    /// sfx + overlay lanes (one catalog-resolved sound effect, one "fade"
+    /// image media overlay), `text_elements` closed. Mirrors the server's
+    /// `project_phone_subtitled_editor_sections` projection shape.
+    static let phoneSubtitledLanes: EditorDraft = {
+        let clips = [clip(800, start: 0, duration: 4)]
+        return draft(clips: clips, text: [], captions: true, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "sound_effects": .array([.object([
+                "id": .string("phone-sfx-1"), "sound_effect_id": .string("catalog-buzzer"),
+                "src_gcs_path": .string("sound-effects/buzzer.wav"), "at_s": .number(1),
+                "gain": .number(1), "duration_s": .number(0.6), "label": .string("Buzzer"),
+                "source": .string("phone_lane"),
+            ])]),
+            "media_overlays": .array([.object([
+                "id": .string("phone-overlay-1"), "kind": .string("image"),
+                "src_gcs_path": .string("users/fixture/plan/fixture/overlays/overlay.png"),
+                "display_mode": .string("pip"), "x_frac": .number(0.5), "y_frac": .number(0.72),
+                "scale": .number(0.32), "start_s": .number(0.5), "end_s": .number(3), "z": .number(1),
+                "entrance_token": .string("fade"), "exit_token": .string("fade"), "source": .string("phone_lane"),
+            ])]),
+        ], rootExtras: [
+            "render_destination": .string("device"),
+            "resolved_archetype": .string("subtitled"),
+            "editor_capabilities": .object([
+                "sfx": .object(["editable": .bool(true)]),
+                "sound_effects": .object(["editable": .bool(true)]),
+                "overlays": .object(["editable": .bool(true)]),
+                "media_overlays": .object(["editable": .bool(true)]),
+                "text_elements": .object(["editable": .bool(false), "reason": .string("Text isn’t editable for this edit on this iPhone.")]),
+            ]),
+        ])
+    }()
+
     static let stress: EditorDraft = {
         let clips = (0..<71).map { index in clip(index, start: Double(index) * 0.1, duration: 0.1) }
         let textLayers = (0..<8).map { index in text(400 + index, content: "Text \(index + 1)", x: 0.5, y: 0.18 + Double(index % 4) * 0.2) }
