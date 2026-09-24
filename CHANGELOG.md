@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.201.0] - 2026-09-24
+
+### Changed
+- feat(kria): Creative Brief ledger, scope router and receipts (KRI-188) (#1221) <!-- release-pr: 1221 -->
+
 ## [0.76.200.0] - 2026-09-24
 
 ### Changed
