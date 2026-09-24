@@ -2343,7 +2343,7 @@ async def test_upload_urls_rate_limit_is_scoped_per_real_client_not_shared_machi
                 "method": "POST",
                 "path": "/",
                 "headers": [(b"fly-client-ip", fly_client_ip.encode())],
-                "client": ("172.16.4.74", 0),
+                "client": ("10.0.0.1", 0),
             }
         )
 

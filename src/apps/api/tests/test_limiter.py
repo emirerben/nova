@@ -14,7 +14,7 @@ from starlette.requests import Request
 from app.limiter import get_real_ip, limiter
 
 
-def _request(headers: list[tuple[bytes, bytes]], client_host: str = "172.16.4.74") -> Request:
+def _request(headers: list[tuple[bytes, bytes]], client_host: str = "10.0.0.1") -> Request:
     return Request(
         {
             "type": "http",
