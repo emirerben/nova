@@ -38,6 +38,7 @@ def _asset(
     filename: str | None = "photo.jpg",
     subject: str = "",
     aspect: float | None = 1.0,
+    duration_s: float | None = None,
 ) -> dict:
     return {
         "id": id_,
@@ -45,7 +46,7 @@ def _asset(
         "gcs_generation": generation,
         "kind": kind,
         "source_filename": filename,
-        "duration_s": 5.0 if kind == "video" else None,
+        "duration_s": duration_s if duration_s is not None else (5.0 if kind == "video" else None),
         "aspect": aspect,
         "user_context": "",
         "analysis": {"subject": subject} if subject else {},
@@ -117,10 +118,16 @@ def test_agent_path_places_card_with_default_geometry(monkeypatch):
     assert card.gcs_path == asset["gcs_path"]
     assert card.generation == "7"
     assert card.start_s == 3.0
-    assert card.x_frac == 0.74
-    assert card.y_frac == 0.22
-    assert card.scale == 0.36
+    # KRI-183: clip_path=None means face sampling never ran even though there
+    # is a card to place (face_sampling == "skipped") -- the conservative
+    # fallback face box is protected instead of trusting the default corner,
+    # so the card is shrunk into the opposite upper corner rather than
+    # sitting at the untouched default spot.
+    assert card.x_frac == 0.8
+    assert card.y_frac == 0.14
+    assert card.scale == 0.198
     assert card.fade is True
+    assert card.kind == "image"
 
     receipt = result.receipt
     assert receipt["version"] == 1
@@ -172,8 +179,118 @@ def test_video_visual_reported_unsupported(monkeypatch):
 
     assert result.cards == []
     assert result.receipt["unplaced"] == [
-        {"media_id": "v1", "label": "clip.mp4", "reason": "video_not_supported"}
+        {"media_id": "v1", "label": "clip.mp4", "reason": "video_not_supported", "kind": "video"}
     ]
+
+
+def test_video_supported_matched_video_becomes_card_capped_by_freeze_rule(monkeypatch):
+    """KRI-183: `video_supported=True` widens the candidate pool to videos --
+    a matched video joins the pipeline like an image, and its card's window
+    is capped by `build_suggestions`' own freeze-allowance rule (footage
+    duration + 1.0s), not just the generic pacing cap."""
+    video = _asset("v1", kind="video", filename="clip.mp4", duration_s=2.0)
+    _patch_assets(monkeypatch, [video])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", None, raising=False)
+    monkeypatch.setattr(
+        pg,
+        "heuristic_match",
+        lambda *a, **k: [_placement("v1", start_s=3.0, end_s=8.0, tier="confident")],
+    )
+
+    result = pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=WORDS,
+        duration_s=15.0,
+        clip_path=None,
+        video_supported=True,
+    )
+
+    assert len(result.cards) == 1
+    card = result.cards[0]
+    assert card.media_id == "v1"
+    assert card.kind == "video"
+    assert card.source_start_s == 0.0
+    # Freeze allowance: window <= asset duration (2.0s) + 1.0s, tighter here
+    # than the generic 4s pacing cap for this duration_s.
+    assert card.end_s - card.start_s == 3.0
+
+    assert result.receipt["unplaced"] == []
+    placed = result.receipt["placed"][0]
+    assert placed["media_id"] == "v1"
+    assert placed["kind"] == "video"
+
+
+def test_video_supported_unmatched_video_reported_no_spoken_match(monkeypatch):
+    video = _asset("v1", kind="video", filename="clip.mp4")
+    _patch_assets(monkeypatch, [video])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", None, raising=False)
+    monkeypatch.setattr(pg, "heuristic_match", lambda *a, **k: [])
+
+    result = pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=WORDS,
+        duration_s=15.0,
+        clip_path=None,
+        video_supported=True,
+    )
+
+    assert result.cards == []
+    assert result.receipt["unplaced"] == [
+        {"media_id": "v1", "label": "clip.mp4", "reason": "no_spoken_match", "kind": "video"}
+    ]
+
+
+def test_video_supported_missing_generation_still_defensive(monkeypatch):
+    video = _asset("v1", kind="video", filename="clip.mp4", generation=None)
+    _patch_assets(monkeypatch, [video])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", None, raising=False)
+    monkeypatch.setattr(pg, "heuristic_match", lambda *a, **k: [])
+
+    result = pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=WORDS,
+        duration_s=15.0,
+        clip_path=None,
+        video_supported=True,
+    )
+
+    assert result.cards == []
+    assert result.receipt["unplaced"] == [
+        {"media_id": "v1", "label": "clip.mp4", "reason": "missing_generation", "kind": "video"}
+    ]
+
+
+def test_agent_path_passes_video_kind_to_placement_asset(monkeypatch):
+    """The agent path must tell `PlacementAsset` a Visual is a video -- the
+    same field `app.tasks.autoplace.match_overlay_suggestions` has always
+    sent for the cloud placement agent."""
+    video = _asset("v1", kind="video", filename="clip.mp4", subject="dog running")
+    _patch_assets(monkeypatch, [video])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", "fake-key", raising=False)
+
+    captured: dict = {}
+
+    def _fake_run(self, input, ctx=None):  # noqa: A002, ARG001
+        captured["assets"] = list(input.assets)
+        return OverlayPlacementOutput(placements=[], wishlist=[])
+
+    monkeypatch.setattr(OverlayPlacementAgent, "run", _fake_run)
+
+    pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=WORDS,
+        duration_s=15.0,
+        clip_path=None,
+        video_supported=True,
+    )
+
+    assert len(captured["assets"]) == 1
+    assert captured["assets"][0].asset_id == "v1"
+    assert captured["assets"][0].kind == "video"
 
 
 def test_unmatched_asset_reported_no_spoken_match(monkeypatch):
@@ -216,7 +333,7 @@ def test_hook_window_drop_reason_surfaces(monkeypatch):
 
     assert result.cards == []
     assert result.receipt["unplaced"] == [
-        {"media_id": "a1", "label": "photo.jpg", "reason": "hook_window"}
+        {"media_id": "a1", "label": "photo.jpg", "reason": "hook_window", "kind": "image"}
     ]
 
 
@@ -277,7 +394,11 @@ def test_face_collision_moves_card(monkeypatch):
     assert result.receipt["face_sampling"] == "ok"
 
 
-def test_face_sampling_failure_is_fail_open(monkeypatch):
+def test_face_sampling_failure_is_fail_safe_not_fail_open(monkeypatch):
+    """KRI-183: a broken sampler must not fall back to the risky default
+    corner ("never assume there's no face") -- the conservative
+    `_FALLBACK_FACE_BOX` is protected instead, and the card still gets
+    placed (shrunk/moved), never omitted."""
     asset = _asset("a1", subject="screenshot")
     _patch_assets(monkeypatch, [asset])
     monkeypatch.setattr(pg.settings, "gemini_api_key", None, raising=False)
@@ -300,9 +421,77 @@ def test_face_sampling_failure_is_fail_open(monkeypatch):
 
     assert result.receipt["face_sampling"] == "failed"
     assert len(result.cards) == 1
-    # No face regions were applied -- the card keeps the untouched default spot.
+    card = result.cards[0]
+    box = _box_for_overlay(
+        {"position": "custom", "x_frac": card.x_frac, "y_frac": card.y_frac, "scale": card.scale},
+        footprint=MediaFootprint(aspect_ratio=1.0),
+    )
+    assert box.iou(pg._FALLBACK_FACE_BOX) <= pg._MAX_ARBITRATION_IOU
+    # Moved/shrunk clear of the fallback face box, not sitting on the
+    # untouched default spot (which does collide with it).
+    assert (card.x_frac, card.y_frac) != (pg._DEFAULT_CARD_X_FRAC, pg._DEFAULT_CARD_Y_FRAC)
+
+
+def test_face_sampling_ok_with_zero_faces_keeps_default_geometry(monkeypatch):
+    """The "ok" path (OpenCV ran and found nothing) is untouched by KRI-183
+    -- a confirmed-clear frame keeps the exact default corner, unlike the
+    "failed"/"skipped" fallback above."""
+    asset = _asset("a1", subject="screenshot")
+    _patch_assets(monkeypatch, [asset])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", None, raising=False)
+    monkeypatch.setattr(
+        pg, "heuristic_match", lambda *a, **k: [_placement("a1", start_s=3.0, end_s=5.0)]
+    )
+
+    def _fake_sample_face_regions(*a, **k):
+        return [], {"attempted": 3, "detected": 0}
+
+    monkeypatch.setattr(pg, "sample_face_regions", _fake_sample_face_regions)
+
+    result = pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=WORDS,
+        duration_s=15.0,
+        clip_path="/tmp/clip.mp4",
+    )
+
+    assert result.receipt["face_sampling"] == "ok"
+    assert len(result.cards) == 1
     assert result.cards[0].x_frac == pg._DEFAULT_CARD_X_FRAC
     assert result.cards[0].y_frac == pg._DEFAULT_CARD_Y_FRAC
+
+
+def test_two_time_overlapping_cards_get_distinct_geometry(monkeypatch):
+    """Arbitration must not stack two cards whose windows overlap in time --
+    `arbitrate_media_overlays`' own `occupied` collision list (not a
+    KRI-183 change, just pinned here since both KRI-176 grounding cards
+    always start from the SAME default spot)."""
+    a1 = _asset("a1", subject="one")
+    a2 = _asset("a2", subject="two")
+    _patch_assets(monkeypatch, [a1, a2])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", None, raising=False)
+    monkeypatch.setattr(
+        pg,
+        "heuristic_match",
+        lambda *a, **k: [
+            _placement("a1", start_s=0.9, end_s=2.9, tier="confident"),
+            _placement("a2", start_s=1.0, end_s=3.0, tier="confident"),
+        ],
+    )
+
+    result = pg.ground_phone_subtitled_overlays(
+        _open_session, job_id=str(uuid.uuid4()), words=WORDS, duration_s=15.0, clip_path=None
+    )
+
+    assert len(result.cards) == 2
+    # Confirm the windows genuinely overlap in time (hook-burst staggering
+    # keeps them concurrent rather than sequential) -- otherwise distinct
+    # geometry would be trivially true.
+    first, second = result.cards
+    assert first.start_s < second.end_s and second.start_s < first.end_s
+    positions = {(c.x_frac, c.y_frac, c.scale) for c in result.cards}
+    assert len(positions) == 2
 
 
 # --- receipt safety / coverage invariants ------------------------------------
@@ -419,7 +608,7 @@ def test_no_words_reports_every_image_as_no_spoken_match(monkeypatch):
     assert result.cards == []
     assert result.receipt["matcher"] == "none"
     assert result.receipt["unplaced"] == [
-        {"media_id": "a1", "label": "photo.jpg", "reason": "no_spoken_match"}
+        {"media_id": "a1", "label": "photo.jpg", "reason": "no_spoken_match", "kind": "image"}
     ]
 
 

@@ -1,7 +1,8 @@
 """Project the single-clip "Talking to camera" (subtitled) edit format into a
-native device render program (KRI-132), optionally carrying overlay sticker
-cards, a sound-effects track, and a muted ending clip (KRI-174 Phase 1 --
-see `app.pipeline.phone_subtitled_lanes`).
+native device render program (KRI-132), optionally carrying overlay
+sticker/photo/video cards, a sound-effects track, and a muted ending clip
+(KRI-174 Phase 1 -- see `app.pipeline.phone_subtitled_lanes`; video overlay
+cards are KRI-183).
 
 Companion to `app.pipeline.phone_montage_plan.compile_phone_montage_plan` and
 `app.pipeline.phone_guided_plan.compile_phone_guided_plan` -- see those
@@ -111,13 +112,18 @@ def compile_phone_subtitled_plan(
     ``lanes`` carries neither.
 
     ``lanes`` (KRI-174 Phase 1, optional) layers on:
-      - ``lanes.overlays``: sticker/photo cards over the speaker clip, as a
-        silent overlay track (mirrors
+      - ``lanes.overlays``: sticker/photo/video cards over the speaker clip,
+        as a silent overlay track (mirrors
         `app.pipeline.phone_editor_visuals.compile_editor_media_track`'s clip
         shape). Each card's window is clamped to the speaker clip's own
         duration; a card that ends up fully outside that window is dropped.
         A card's ``y_frac`` is clamped so a sticker never sits inside the
-        caption band (`CAPTION_BAND_TOP_FRAC`).
+        caption band (`CAPTION_BAND_TOP_FRAC`). A ``kind="video"`` card
+        (KRI-183) plays muted starting at ``source_start_s``; if the source
+        footage runs out before the card's spoken window does, the on-screen
+        window is SHORTENED to match the footage (the device never holds the
+        last frame) and ``visualVideos`` is added to
+        ``required_capabilities``.
       - ``lanes.sound_effects``: one shared ``sfx`` audio track of resolved
         catalog sound effects, clamped to the full timeline (speaker clip
         plus the ending clip, if any -- an effect may play under the ending
@@ -243,7 +249,7 @@ def compile_phone_subtitled_plan(
 
     if lanes is not None and lanes.overlays:
         try:
-            overlay_track = _compile_overlay_track(
+            overlay_track, overlay_has_video = _compile_overlay_track(
                 lanes.overlays,
                 visuals=visuals,
                 speaker_end=speaker_end,
@@ -257,6 +263,10 @@ def compile_phone_subtitled_plan(
         if overlay_track.clips:
             tracks.append(overlay_track)
             required_capabilities |= {"visualBlocks", "alphaOverlay", "audioMix"}
+            if overlay_has_video:
+                # KRI-183: a video overlay card composites through the same
+                # `visualVideos` path the ending clip already uses.
+                required_capabilities |= {"visualVideos"}
 
     if lanes is not None and lanes.sound_effects:
         try:
@@ -354,9 +364,18 @@ def _compile_overlay_track(
     speaker_end: float,
     assets: dict[str, MediaAsset],
     manifest: dict[str, object],
-) -> TimelineTrack:
+) -> tuple[TimelineTrack, bool]:
+    """Compile ``cards`` onto the silent ``subtitled-overlays`` track.
+
+    Returns the track plus whether any compiled card was a video overlay
+    (KRI-183) -- the caller folds that into ``required_capabilities`` instead
+    of this function reaching for settings itself (the compiler stays
+    settings-free; the worker gates via `phone_rollout.
+    phone_subtitled_video_overlays_supported`).
+    """
     ordered = sorted(cards, key=lambda card: (card.z, card.start_s, card.id))
     clips: list[TimelineClip] = []
+    has_video = False
     for order, card in enumerate(ordered, start=1):
         window_start = max(card.start_s, 0.0)
         window_end = min(card.end_s, speaker_end)
@@ -369,6 +388,26 @@ def _compile_overlay_track(
             )
         except ValueError as exc:
             raise _lane_error("overlays", str(exc), capability="visualBlocks") from exc
+        if card.kind == "video":
+            if visual.kind != "video":
+                raise _lane_error(
+                    "overlays",
+                    "video overlay card requires a video visual",
+                    capability="visualVideos",
+                )
+            has_video = True
+            clips.append(
+                _compile_video_overlay_clip(
+                    card,
+                    visual=visual,
+                    window_start=window_start,
+                    window_end=window_end,
+                    order=order,
+                    assets=assets,
+                    manifest=manifest,
+                )
+            )
+            continue
         if visual.kind != "image":
             raise _lane_error(
                 "overlays", "overlay card requires an image visual", capability="visualBlocks"
@@ -402,7 +441,73 @@ def _compile_overlay_track(
                 ),
             )
         )
-    return TimelineTrack(id="subtitled-overlays", kind="overlay", clips=clips)
+    return TimelineTrack(id="subtitled-overlays", kind="overlay", clips=clips), has_video
+
+
+def _compile_video_overlay_clip(
+    card: SubtitledOverlayCard,
+    *,
+    visual: PhoneVisualBinding,
+    window_start: float,
+    window_end: float,
+    order: int,
+    assets: dict[str, MediaAsset],
+    manifest: dict[str, object],
+) -> TimelineClip:
+    """One video overlay card (KRI-183) -- muted, like `_compile_ending_clip`.
+
+    ``window_start``/``window_end`` are already clamped to the speaker
+    clip's own duration (same as an image card's window). The card's
+    on-screen window is further SHORTENED to the footage (rather than
+    holding the last frame, which the device engine does not do) whenever
+    the source video is shorter than that spoken window.
+    """
+    source_start = card.source_start_s
+    visual_duration = visual.duration_s or 0.0
+    available = visual_duration - source_start
+    if available <= 0:
+        raise _lane_error(
+            "overlays",
+            "video overlay card's source_start_s is past the source video's duration",
+            capability="visualVideos",
+        )
+    requested_window = window_end - window_start
+    source_duration = min(requested_window, available)
+    window_end = window_start + source_duration
+    asset = visual.render_asset()
+    manifest[asset.id] = asset
+    assets[asset.id] = MediaAsset(
+        id=asset.id,
+        relative_path=asset.id,
+        fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
+        duration=(
+            visual.duration_s
+            if visual.duration_s is not None and visual.duration_s <= 1800
+            else None
+        ),
+        natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
+        orientation_degrees=visual.orientation_degrees,
+    )
+    y_frac = min(card.y_frac, CAPTION_BAND_TOP_FRAC)
+    return TimelineClip(
+        id=f"subtitled-overlay-{card.id}",
+        source_asset_id=asset.id,
+        source_start=source_start,
+        source_duration=source_duration,
+        timeline_start=window_start,
+        rate=1,
+        volume=0,
+        visual_placement=VisualMediaPlacement(
+            order=order,
+            width_fraction=card.scale,
+            x_fraction=card.x_frac,
+            y_fraction=y_frac,
+            window_start=window_start,
+            window_end=window_end,
+            fade_in=card.fade,
+            fade_out=card.fade,
+        ),
+    )
 
 
 def _compile_sfx_track(

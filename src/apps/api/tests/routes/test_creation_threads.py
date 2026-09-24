@@ -4307,6 +4307,70 @@ def test_job_projection_render_notes_absent_and_present() -> None:
     ]
 
 
+def test_job_projection_render_notes_beat_and_overlay_receipts_combine() -> None:
+    """KRI-183: `render_notes` is `render_notes_from_beat_receipt`'s lines
+    followed by `render_notes_from_overlay_receipt`'s -- both read off the
+    SAME primary variant. A variant with only an overlay receipt yields only
+    overlay lines (no beat lines to prepend)."""
+    beat_receipt = {
+        "version": 1,
+        "matcher": "phrase",
+        "face_sampling": "ok",
+        "placed": [{"beat_id": "beat-0", "trigger": "goal", "at_s": 1.0, "end_s": 2.0}],
+        "unplaced": [{"beat_id": "beat-1", "trigger": "when he scores", "reason": "never_heard"}],
+        "closing": {"status": "none", "badge": "none"},
+    }
+    overlay_receipt = {
+        "version": 1,
+        "matcher": "agent",
+        "face_sampling": "ok",
+        "placed": [{"media_id": "m0", "label": "kept.mp4", "start_s": 0.0, "end_s": 1.0}],
+        "unplaced": [{"media_id": "m1", "label": "a clip", "reason": "video_not_supported"}],
+    }
+    both_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="variants_ready",
+        current_phase=None,
+        failure_reason=None,
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "render_status": "ready",
+                    "phone_beat_receipt": beat_receipt,
+                    "phone_overlay_receipt": overlay_receipt,
+                }
+            ]
+        },
+    )
+    assert _job_projection(both_job)["render_notes"] == [
+        "Placed 1 of 2 moments you named",
+        'I never heard "when he scores", so its photo or sound wasn\'t shown',
+        "Showed 1 of 2 Visuals as cards",
+        '"a clip" is a video, which can\'t be a card on your iPhone yet',
+    ]
+
+    overlay_only_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="variants_ready",
+        current_phase=None,
+        failure_reason=None,
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "render_status": "ready",
+                    "phone_overlay_receipt": overlay_receipt,
+                }
+            ]
+        },
+    )
+    assert _job_projection(overlay_only_job)["render_notes"] == [
+        "Showed 1 of 2 Visuals as cards",
+        '"a clip" is a video, which can\'t be a card on your iPhone yet',
+    ]
+
+
 @pytest.mark.asyncio
 async def test_action_idempotency_rejects_changed_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     user = SimpleNamespace(id=uuid.uuid4())

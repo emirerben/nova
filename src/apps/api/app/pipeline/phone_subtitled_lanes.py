@@ -7,7 +7,10 @@ The subtitled phone recipe is one speaker clip + Whisper captions today
   - ``overlays``: sticker/photo cards drawn from the creator's Visuals pool,
     composited as a silent overlay track (mirrors
     `app.pipeline.phone_editor_visuals.compile_editor_media_track`'s clip
-    shape).
+    shape). A card can also bind a VIDEO Visual (`kind="video"`, KRI-183):
+    it plays muted, starting at ``source_start_s``, and its on-screen window
+    shortens to match the footage when the source runs out before the
+    card's spoken window does.
   - ``sound_effects``: one shared audio track of catalog sound effects.
   - ``ending_clip``: an optional MUTED video clip from the Visuals pool
     appended after the speaker clip on the same main video track.
@@ -29,7 +32,16 @@ dropped via ``drop_lane`` -- see `lane_names`/`drop_lane` below.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from typing import Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from app.kria.render_assets import LibraryRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
@@ -57,7 +69,7 @@ class _LaneModel(BaseModel):
 
 
 class SubtitledOverlayCard(_LaneModel):
-    """One sticker/photo card requested over the speaker clip."""
+    """One sticker/photo/video card requested over the speaker clip."""
 
     id: str = Field(min_length=1, max_length=80, pattern=_ID_PATTERN)
     media_id: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
@@ -74,12 +86,30 @@ class SubtitledOverlayCard(_LaneModel):
     scale: float = Field(default=0.35, ge=0.05, le=1)
     fade: bool = False
     z: int = Field(default=0, ge=0)
+    # KRI-183: a card may bind a VIDEO Visual instead of a photo. "video"
+    # plays muted starting at `source_start_s`; the compiler shortens the
+    # card's on-screen window to match the footage when the source runs out
+    # before the spoken window does (the device never holds the last frame).
+    kind: Literal["image", "video"] = "image"
+    source_start_s: float = Field(default=0.0, ge=0)
 
     @model_validator(mode="after")
     def _window(self) -> SubtitledOverlayCard:
         if self.end_s <= self.start_s:
             raise ValueError("overlay card must have a positive-duration window")
         return self
+
+    @model_serializer(mode="wrap")
+    def _image_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
+        # A photo card keeps the pre-KRI-183 persisted shape (mirrors
+        # `PhoneVisualBinding._photo_shape` in app/services/phone_sources.py):
+        # `kind`/`source_start_s` only appear once a card actually opts into
+        # video, so a photo card's dump/DB row is byte-identical to before.
+        payload = handler(self)
+        if self.kind == "image":
+            payload.pop("kind", None)
+            payload.pop("source_start_s", None)
+        return payload
 
 
 class SubtitledSoundEffect(_LaneModel):

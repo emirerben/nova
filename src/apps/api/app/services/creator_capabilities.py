@@ -55,6 +55,7 @@ from app.services.phone_rollout import (
     phone_render_supported_formats,
     phone_subtitled_overlays_supported,
     phone_subtitled_reaction_beats_supported,
+    phone_subtitled_video_overlays_supported,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -67,6 +68,13 @@ CAPABILITY_AUTOMATIC_CUT = "automatic_cut"
 # KRI-178: name/word-triggered photo/sticker + sound reaction beats on a
 # phone-rendered `subtitled` (Talking) edit.
 CAPABILITY_REACTION_BEATS = "reaction_beats"
+# KRI-183: VIDEO Visuals eligible as (muted, trimmed) picture-in-picture
+# cards on a phone-rendered `subtitled` (Talking) edit -- a sibling signal
+# to `media_overlays` (KRI-176), which covers photo cards only. Only ever
+# set on the manifest when true; see the KRI-183 comment at its call site
+# in `resolve_creator_manifest` for why it is omitted, not `_unavailable`,
+# otherwise.
+CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS = "media_overlays:video_cards"
 
 
 class CreatorSfxUnavailableError(CreatorStrategyError):
@@ -483,6 +491,25 @@ def resolve_creator_manifest(
             and phone_subtitled_overlays_supported()
         ):
             capabilities["media_overlays"] = _available()
+        # `media_overlays:video_cards` (KRI-183): once this phone
+        # `subtitled` manifest already advertises `media_overlays` (photo
+        # picture-in-picture cards, KRI-176 immediately above), VIDEO
+        # Visuals may ALSO become (muted, trimmed) cards once
+        # `phone_rollout.phone_subtitled_video_overlays_supported()` agrees
+        # -- mirrors its exact rule (KRI-183 lane flag riding the same
+        # overlay gates as photos, plus the device's verified
+        # `visualVideos` feature) so the manifest never advertises a video
+        # card the compiler/worker would then reject
+        # (`_run_phone_subtitled_job` consults the same helper). A brand
+        # new capability key -- never `media_overlays` itself -- so an
+        # unavailable/absent case adds nothing: omitted entirely (not set
+        # `_unavailable`) when the gate is False, so a flag-off manifest's
+        # `capabilities` dict, and therefore its `context_hash`/
+        # `manifest_hash`, stay byte-identical to a pre-KRI-183 manifest --
+        # the same "omit, don't mark unavailable" pattern `phone_still_
+        # images`/`phone_visual_videos` use above.
+        if capabilities["media_overlays"].available and phone_subtitled_video_overlays_supported():
+            capabilities[CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS] = _available()
         if not phone.available:
             for capability_name in (
                 CAPABILITY_DRAFT_GUIDED_PROPOSAL,

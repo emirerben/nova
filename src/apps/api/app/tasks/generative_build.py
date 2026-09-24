@@ -4477,6 +4477,7 @@ def _run_phone_subtitled_job(
     from app.services.phone_rollout import (  # noqa: PLC0415
         phone_subtitled_overlays_supported,
         phone_subtitled_reaction_beats_supported,
+        phone_subtitled_video_overlays_supported,
         validate_phone_pilot_recipe,
     )
     from app.services.phone_sources import (  # noqa: PLC0415
@@ -4503,6 +4504,15 @@ def _run_phone_subtitled_job(
     # itself requires `phone_subtitled_overlays_supported()` -- so every branch
     # below that checks `beats_enabled` may assume the overlay lane is usable.
     beats_enabled = media_lanes_enabled and phone_subtitled_reaction_beats_supported()
+    # KRI-183: whether transcript grounding may ALSO offer VIDEO Visuals to
+    # the matcher and bind them as muted, trimmed `kind="video"` cards. Always
+    # implies `overlay_grounding_enabled` (the helper requires
+    # `phone_subtitled_overlays_supported()`); with it off, a video Visual is
+    # reported on the receipt as `video_not_supported`, byte-identical to
+    # KRI-176.
+    video_overlays_enabled = (
+        overlay_grounding_enabled and phone_subtitled_video_overlays_supported()
+    )
     # KRI-174 imports for the lane compiler contract -- gated behind the flag
     # so a worker with the flag off never depends on this module existing.
     if media_lanes_enabled:
@@ -4830,9 +4840,10 @@ def _run_phone_subtitled_job(
                 # approved strategy, NOT the lane request) before the KRI-176
                 # generic grounding runs -- an explicit "when I say X show Y"
                 # beat is a stronger signal than heuristic transcript-meaning
-                # matching, so when beats produce anything the generic pass
-                # is skipped entirely (see `beats_active` below). A
-                # hand-authored lane request still wins over beats too, same
+                # matching, so beats claim their Visuals and time windows
+                # FIRST and the generic pass (KRI-183) only fills what beats
+                # left untouched (see `beat_media_ids`/`beat_windows` below).
+                # A hand-authored lane request still wins over beats too, same
                 # as it wins over KRI-176 grounding.
                 strategy = all_candidates.get("creator_strategy")
                 strategy = strategy if isinstance(strategy, dict) else {}
@@ -4890,14 +4901,21 @@ def _run_phone_subtitled_job(
                             beat_media_ids = frozenset(card.media_id for card in beat_cards)
                             beat_receipt = grounded_beats.receipt
 
-                # The creator's explicit beats direction wins outright: when a
-                # beat produced a card, or a closing shot actually placed, the
-                # KRI-176 heuristic pass is skipped entirely rather than
-                # fighting the beats for screen space/timing.
-                beats_active = bool(beat_cards) or (
-                    isinstance(beat_receipt, dict)
-                    and (beat_receipt.get("closing") or {}).get("status") == "placed"
-                )
+                # KRI-183: the creator's explicit beats direction still wins
+                # its Visuals and its time windows, but no longer silences the
+                # generic pass -- in one prompt that asks for both ("pop up
+                # each player's photo when I say their name" + "show my other
+                # Visuals when I mention them") the KRI-176 grounding runs for
+                # the REST of the pool: every beat card's media id (photos,
+                # stickers, the closing shot and badge) is excluded from the
+                # candidate set, and every beat card's window is handed over
+                # as `occupied` so `build_suggestions` never lets a PiP card
+                # overlap a beat card in time (and therefore never on screen).
+                # Together this is the "never the same Visual twice, never
+                # overlapping" invariant of KRI-183.
+                beat_windows: list[tuple[float, float]] = [
+                    (float(card.start_s), float(card.end_s)) for card in beat_cards
+                ]
 
                 # KRI-176: ground overlay cards from the transcript when nobody
                 # authored a lane request with overlays of their own -- a
@@ -4908,16 +4926,7 @@ def _run_phone_subtitled_job(
                 grounded_cards: list = []
                 grounded_media_ids: frozenset[str] = frozenset()
                 if overlay_grounding_enabled:
-                    if beats_active:
-                        overlay_receipt = {
-                            "version": 1,
-                            "matcher": "beats",
-                            "face_sampling": "skipped",
-                            "placed": [],
-                            "unplaced": [],
-                            "wishlist": [],
-                        }
-                    elif manual_overlays:
+                    if manual_overlays:
                         overlay_receipt = {
                             "version": 1,
                             "matcher": "manual",
@@ -4941,11 +4950,14 @@ def _run_phone_subtitled_job(
                                 occupied=[
                                     (card.start_s, card.end_s)
                                     for card in (lane_request.overlays if lane_request else [])
-                                ],
+                                ]
+                                + beat_windows,
                                 used_media_ids=frozenset(
                                     card.media_id
                                     for card in (lane_request.overlays if lane_request else [])
-                                ),
+                                )
+                                | beat_media_ids,
+                                video_supported=video_overlays_enabled,
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -4985,6 +4997,34 @@ def _run_phone_subtitled_job(
                     ending_clip = lane_request.ending_clip if lane_request is not None else None
                     overlay_visuals: tuple = ()
                     ending_visuals: tuple = ()
+                    # KRI-183: video cards ride the same overlay lane as photo
+                    # cards but need their own device feature (`visualVideos`)
+                    # AND the video-PiP gate. Only the video cards drop when
+                    # either is missing -- the photo cards keep rendering.
+                    # Defense in depth: grounding already never emits a
+                    # `kind="video"` card unless `video_overlays_enabled`
+                    # (a flag flipped mid-flight, or a hand-authored lane
+                    # request, must still fail closed here).
+                    video_cards = [
+                        card for card in overlay_cards if getattr(card, "kind", "image") == "video"
+                    ]
+                    if video_cards and (not video_overlays_enabled or "video" not in visual_kinds):
+                        lane_drops.append(
+                            {
+                                "lane": "overlays",
+                                "reason": "visualVideos not verified on the phone",
+                            }
+                        )
+                        video_media_ids = frozenset(card.media_id for card in video_cards)
+                        overlay_cards = [
+                            card for card in overlay_cards if card.media_id not in video_media_ids
+                        ]
+                        if grounded_media_ids & video_media_ids and overlay_receipt is not None:
+                            overlay_receipt = _demote_grounded_receipt(
+                                overlay_receipt,
+                                grounded_media_ids & video_media_ids,
+                                "video_not_supported",
+                            )
                     if overlay_cards and "image" not in visual_kinds:
                         lane_drops.append(
                             {"lane": "overlays", "reason": "stillImages not verified on the phone"}
@@ -5000,7 +5040,11 @@ def _run_phone_subtitled_job(
                         ending_clip = None
                     if overlay_cards:
                         pins = {
-                            card.media_id: ("image", card.gcs_path, card.generation)
+                            card.media_id: (
+                                getattr(card, "kind", "image"),
+                                card.gcs_path,
+                                card.generation,
+                            )
                             for card in overlay_cards
                         }
                         try:

@@ -37,6 +37,7 @@ from app.services.nova_steps import (
     beat_miss_sentence,
     project_nova_steps,
     render_notes_from_beat_receipt,
+    render_notes_from_overlay_receipt,
 )
 
 # ---------------------------------------------------------------------------
@@ -718,6 +719,199 @@ def test_render_notes_from_beat_receipt_failed_matcher_yields_empty() -> None:
         "error": "boom",
     }
     assert render_notes_from_beat_receipt(receipt) == []
+
+
+def test_render_notes_from_overlay_receipt_none_manual_and_empty() -> None:
+    assert render_notes_from_overlay_receipt(None) == []
+    assert render_notes_from_overlay_receipt("not a dict") == []  # type: ignore[arg-type]
+    assert render_notes_from_overlay_receipt({}) == []
+    assert render_notes_from_overlay_receipt({"matcher": "manual"}) == []
+    assert (
+        render_notes_from_overlay_receipt({"matcher": "agent", "placed": [], "unplaced": []}) == []
+    )
+
+
+def test_render_notes_from_overlay_receipt_failed_matcher_yields_one_line() -> None:
+    receipt = {
+        "version": 1,
+        "matcher": "failed",
+        "face_sampling": "failed",
+        "placed": [],
+        "unplaced": [],
+        "wishlist": [],
+        "error": "boom",
+    }
+    assert render_notes_from_overlay_receipt(receipt) == [
+        "Couldn't check your Visuals for card moments this time"
+    ]
+
+
+def test_render_notes_from_overlay_receipt_all_placed_summary_singular_and_plural() -> None:
+    one_placed = {
+        "version": 1,
+        "matcher": "agent",
+        "face_sampling": "ok",
+        "placed": [{"media_id": "m1", "label": "goal.mp4", "start_s": 1.0, "end_s": 2.0}],
+        "unplaced": [],
+    }
+    assert render_notes_from_overlay_receipt(one_placed) == ["1 Visual shown as a card"]
+
+    three_placed = {
+        "version": 1,
+        "matcher": "agent",
+        "face_sampling": "ok",
+        "placed": [
+            {"media_id": f"m{i}", "label": f"clip{i}.mp4", "start_s": 0.0, "end_s": 1.0}
+            for i in range(3)
+        ],
+        "unplaced": [],
+    }
+    assert render_notes_from_overlay_receipt(three_placed) == ["3 Visuals shown as cards"]
+
+
+def test_render_notes_from_overlay_receipt_no_spoken_match_and_no_room_buckets() -> None:
+    """The "no spoken match" bucket (`no_spoken_match`, `hook_window`, and
+    any unrecognized/empty reason) and the "no room" bucket (`no_safe_spot`,
+    `duplicate`, `overlap`, `too_short`, `density_cap`,
+    `hook_burst_concurrency`, `hook_burst_stagger`) each map to their one
+    fixed sentence -- exactly 8 entries, so nothing here exercises the cap
+    (see the dedicated cap test below)."""
+    receipt = {
+        "version": 1,
+        "matcher": "heuristic",
+        "face_sampling": "ok",
+        "placed": [{"media_id": "m0", "label": "kept.mp4", "start_s": 0.0, "end_s": 1.0}],
+        "unplaced": [
+            {"media_id": "m1", "label": "no match", "reason": "no_spoken_match"},
+            {"media_id": "m2", "label": "hook one", "reason": "hook_window"},
+            {"media_id": "m3", "label": "unknown reason", "reason": "totally_unrecognized"},
+            {"media_id": "m4", "label": "empty reason", "reason": ""},
+            {"media_id": "m5", "label": "no safe spot", "reason": "no_safe_spot"},
+            {"media_id": "m6", "label": "dup", "reason": "duplicate"},
+            {"media_id": "m7", "label": "overlaps", "reason": "overlap"},
+            {"media_id": "m8", "label": "short one", "reason": "too_short"},
+        ],
+    }
+    assert render_notes_from_overlay_receipt(receipt) == [
+        "Showed 1 of 9 Visuals as cards",
+        'Couldn\'t find a spoken moment for "no match"',
+        'Couldn\'t find a spoken moment for "hook one"',
+        'Couldn\'t find a spoken moment for "unknown reason"',
+        'Couldn\'t find a spoken moment for "empty reason"',
+        'No room to show "no safe spot" without covering your face or the captions',
+        'No room to show "dup" without covering your face or the captions',
+        'No room to show "overlaps" without covering your face or the captions',
+        'No room to show "short one" without covering your face or the captions',
+    ]
+
+
+def test_render_notes_from_overlay_receipt_more_no_room_reasons_and_cap() -> None:
+    """`density_cap`, `hook_burst_concurrency`, and `hook_burst_stagger` are
+    also "no room" reasons; a 9th unplaced entry is dropped by the
+    `_MAX_MISSED_DETAIL_LINES` cap (the summary line doesn't count toward
+    it)."""
+    receipt = {
+        "version": 1,
+        "matcher": "agent",
+        "placed": [],
+        "unplaced": [
+            {"media_id": "m1", "label": "over budget", "reason": "density_cap"},
+            {"media_id": "m2", "label": "burst concurrency", "reason": "hook_burst_concurrency"},
+            {"media_id": "m3", "label": "burst stagger", "reason": "hook_burst_stagger"},
+            {"media_id": "m4", "label": "four", "reason": "no_safe_spot"},
+            {"media_id": "m5", "label": "five", "reason": "no_safe_spot"},
+            {"media_id": "m6", "label": "six", "reason": "no_safe_spot"},
+            {"media_id": "m7", "label": "seven", "reason": "no_safe_spot"},
+            {"media_id": "m8", "label": "eight", "reason": "no_safe_spot"},
+            {"media_id": "m9", "label": "dropped by the cap", "reason": "no_safe_spot"},
+        ],
+    }
+    notes = render_notes_from_overlay_receipt(receipt)
+    assert notes[0] == "Showed 0 of 9 Visuals as cards"
+    assert len(notes) == 1 + 8
+    assert "dropped by the cap" not in " ".join(notes)
+
+
+def test_render_notes_from_overlay_receipt_video_and_pipeline_error_sentences() -> None:
+    receipt = {
+        "version": 1,
+        "matcher": "agent",
+        "face_sampling": "ok",
+        "placed": [],
+        "unplaced": [
+            {"media_id": "m1", "label": "a clip", "reason": "video_not_supported"},
+            {"media_id": "m2", "label": "gen missing", "reason": "missing_generation"},
+            {"media_id": "m3", "label": "bind broke", "reason": "bind_failed"},
+            {"media_id": "m4", "label": "compile dropped it", "reason": "compile_dropped"},
+            {"media_id": "m5", "label": "boomed", "reason": "error: disk full"},
+        ],
+    }
+    assert render_notes_from_overlay_receipt(receipt) == [
+        "Showed 0 of 5 Visuals as cards",
+        '"a clip" is a video, which can\'t be a card on your iPhone yet',
+        'Couldn\'t add "gen missing" to the phone render',
+        'Couldn\'t add "bind broke" to the phone render',
+        'Couldn\'t add "compile dropped it" to the phone render',
+        'Couldn\'t add "boomed" to the phone render',
+    ]
+
+
+def test_render_notes_from_overlay_receipt_empty_label_skipped_but_counted() -> None:
+    receipt = {
+        "version": 1,
+        "matcher": "agent",
+        "face_sampling": "ok",
+        "placed": [],
+        "unplaced": [
+            {"media_id": "m1", "label": "", "reason": "no_spoken_match"},
+            {"media_id": "m2", "label": "has a name", "reason": "no_spoken_match"},
+        ],
+    }
+    assert render_notes_from_overlay_receipt(receipt) == [
+        "Showed 0 of 2 Visuals as cards",
+        'Couldn\'t find a spoken moment for "has a name"',
+    ]
+
+
+def test_render_notes_from_overlay_receipt_label_truncated_to_60_chars() -> None:
+    long_label = "x" * 90
+    receipt = {
+        "version": 1,
+        "matcher": "agent",
+        "placed": [],
+        "unplaced": [{"media_id": "m1", "label": long_label, "reason": "no_spoken_match"}],
+    }
+    notes = render_notes_from_overlay_receipt(receipt)
+    assert notes[1] == f'Couldn\'t find a spoken moment for "{"x" * 60}"'
+
+
+def test_render_notes_from_overlay_receipt_never_leaks_internal_fields() -> None:
+    receipt = {
+        "version": 1,
+        "matcher": "agent",
+        "face_sampling": "ok",
+        "placed": [
+            {
+                "media_id": "gs://bucket/user/secret-path.mp4",
+                "label": "kept.mp4",
+                "start_s": 0.0,
+                "end_s": 1.0,
+            }
+        ],
+        "unplaced": [
+            {
+                "media_id": "gs://bucket/user/other-secret.mp4",
+                "label": "dropped.mp4",
+                "reason": "bind_failed",
+            }
+        ],
+    }
+    notes = render_notes_from_overlay_receipt(receipt)
+    blob = " ".join(notes)
+    assert "media_id" not in blob
+    assert "gs://" not in blob
+    assert "matcher" not in blob
+    assert "face_sampling" not in blob
 
 
 def test_unknown_event_within_allowlisted_stage_is_dropped() -> None:

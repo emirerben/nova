@@ -262,12 +262,18 @@ def test_scenario_greenwood_photo_and_reject_after_pre_existing_no(monkeypatch):
 
     photo = cards["beat-greenwood-photo-1"]
     assert (photo.media_id, photo.start_s, photo.end_s) == ("v-greenwood", 1.2, 2.2)
-    assert (photo.x_frac, photo.y_frac, photo.scale, photo.z) == (0.74, 0.22, 0.36, 0)
+    # KRI-183: `_run_scenario` calls with clip_path=None -- face sampling
+    # never ran even though there are cards to place (`face_sampling ==
+    # "skipped"`), so the conservative fallback face box is protected and
+    # both default slots (photo top-right, sticker top-left) shrink/move
+    # into the opposite corner instead of sitting at their untouched
+    # defaults.
+    assert (photo.x_frac, photo.y_frac, photo.scale, photo.z) == (0.8, 0.14, 0.198, 0)
 
     reject = cards["beat-greenwood-reject-1"]
     # The FIRST "no" AFTER greenwood (2.0s) -- not the pre-existing "no" at 0.0s.
     assert (reject.media_id, reject.start_s, reject.end_s) == ("v-x", 2.0, 2.6)
-    assert (reject.x_frac, reject.y_frac, reject.z) == (0.26, 0.24, 1)
+    assert (reject.x_frac, reject.y_frac, reject.z) == (0.2, 0.14, 1)
 
 
 def test_scenario_leao_photo_and_approve(monkeypatch):
