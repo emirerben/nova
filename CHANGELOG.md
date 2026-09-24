@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.203.0] - 2026-09-24
+
+### Changed
+- fix(captions): cloud Talking captions re-transcribe when Gemini heard another language (#1224) <!-- release-pr: 1224 -->
+
 ## [0.76.202.0] - 2026-09-24
 
 ### Changed
