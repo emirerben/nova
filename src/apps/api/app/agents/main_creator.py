@@ -41,7 +41,24 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # plus a held closing shot) on a phone `subtitled` (Talking) edit (v36).
 # KRI-188: Creative Brief requirement extraction (`brief_updates`, taught only
 # when the brief is on for the creator) -- v37.
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v37"
+# KRI-189: when/where clip facts with provenance (v38).
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v38"
+
+# Appended to the OWNED FOOTAGE SUMMARIES header line ONLY when CLIP_FACTS is on
+# for the account ("" otherwise, so the flag-off prompt is byte-identical). The
+# `facts` list sits beside `analysis_only_not_copy`, not inside it, because
+# capture time and place are recorded by the phone, not detected by AI.
+_CLIP_FACTS_NOTE = (
+    "\nEach item may also carry `facts`: when and where the clip was filmed, each"
+    " `{kind, value, provenance}`: `capture_time` (ISO UTC), `place` (a place name) and"
+    " `landmark` (a landmark name). `provenance` says how we know: `exif` and `geocode` are"
+    " recorded by the phone, `inferred` is a best guess a model made from the frames and"
+    " place, `creator` is the creator's own statement. Use them to answer questions about"
+    ' when or where clips were filmed and to understand requests such as "in the order I'
+    ' filmed them" or "label each place". Say plainly when a name is a guess (`inferred`)'
+    " and invite correction; never present it as certain. Facts are context, not copy: like"
+    " `analysis_only_not_copy` they are never on-screen text unless the creator asked for them."
+)
 
 # Visual instructions are substituted only when the resolver flag is enabled;
 # the base prompt independently describes deferred transcript label intents.
@@ -261,6 +278,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             creator_direction=input.creator_direction or "(none)",
             item_context=input.item_context or "(not available)",
             media_context=json.dumps(input.media_context, ensure_ascii=False),
+            # Rendered only when a clip carries facts (the flag gates their
+            # presence in media_context), so a flag-off prompt is unchanged.
+            clip_facts_note=(
+                _CLIP_FACTS_NOTE if any(row.get("facts") for row in input.media_context) else ""
+            ),
             capability_manifest=prompt_manifest,
             conversation=json.dumps(input.conversation, ensure_ascii=False),
             creator_request=input.creator_request or input.user_message,

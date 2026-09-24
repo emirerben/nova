@@ -61,6 +61,7 @@ _EXPECTED = {
     "nova.plan.clip_intent_planner",
     "nova.plan.clip_request_resolver",
     "nova.video.clip_question",
+    "nova.video.landmark_guess",
 }
 
 

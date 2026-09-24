@@ -514,7 +514,8 @@ def test_prompt_is_unchanged_when_brief_is_off_and_taught_when_on() -> None:
 
 
 def test_prompt_version_was_bumped_for_the_brief_section() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-09-24-v37"
+    # v37 added the brief section; later prompt bumps (KRI-189: v38) keep it.
+    assert int(MAIN_CREATOR_PROMPT_VERSION.rsplit("-v", 1)[1]) >= 37
 
 
 def test_parse_reads_brief_updates_only_when_enabled_and_never_fails_on_bad_ones() -> None:

@@ -575,6 +575,8 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
             if main_creator_module._story_shapes_available(agent_input.capability_manifest)
             else ""
         ),
+        # KRI-189: no clip carries facts, so the slot renders empty.
+        clip_facts_note="",
     )
     assert actual == expected
 

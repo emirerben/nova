@@ -200,7 +200,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `KRIA_RUNTIME_V2_PHONE_ENABLED` / `_USER_IDS` — default `false` / `[]` (KRI-187): offers phone-pilot accounts runtime v2; off ⇒ `[1]`. Runbook: `docs/runbooks/phone-rendering.md`.
 - `COPILOT_HONEST_REPLIES_ENABLED` — default `true` (KRI-186 kill switch); `false` ⇒ legacy chat-edit reply + stateless copilot. Guard: `test_flag_off_is_byte_identical_to_legacy`. Apply: fly secret + restart.
 - `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
-- `CLIP_INTENTS_ENABLED` — off; rollout: `docs/pipelines/clip-understanding.md`.
+- `CLIP_INTENTS_ENABLED` / `CLIP_FACTS_ENABLED` — off; rollout: `docs/pipelines/clip-understanding.md`.
 - `EDIT_PROPOSAL_SEMANTIC_ENABLED` — `false`; requires 0107 + v8 on API/workers. See `docs/pipelines/guided-edit.md`.
 - `ORIENTATION_NORMALIZE_ENABLED` — defaults to `true`. Set to `false` and restart workers to make `normalize_orientation` a no-op (safety valve for orientation regressions).
 - `LYRIC_DYNAMIC_CROSSFADE_ENABLED` — defaults `true`. **WARNING: `false` re-introduces the stacked-text bug — emergency rollback ONLY**, full narrative + apply command in agents/DECISIONS.md "Kill-switch incidents". Guard: `tests/pipeline/test_lyric_injector_no_stacking.py::test_kill_switch_disabled_reproduces_pre_fix_output`.

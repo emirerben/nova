@@ -384,6 +384,9 @@ struct AccountView: View {
                 if auth.profileState == .failed {
                     profileFailureRow
                 }
+                AccountSection(title: "Privacy") {
+                    AccountCaptureContextRow()
+                }
                 AccountSection(title: "About") {
                     AccountLinkRow(title: "Privacy Policy", url: KriaLegal.privacyURL)
                         .accessibilityIdentifier("kria-privacy-link")
@@ -503,6 +506,28 @@ private struct AccountSection<Content: View>: View {
                 .padding(.bottom, 4)
             content()
         }
+    }
+}
+
+/// KRI-189: the one switch for reading when and where a clip was filmed (Photos date and coarse location,
+/// place name looked up on this phone). ON by default; off sends none of it and reads none of it.
+private struct AccountCaptureContextRow: View {
+    @AppStorage(ClipCaptureSetting.defaultsKey) private var shareCaptureContext = true
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle(isOn: $shareCaptureContext) {
+                Text("Use when and where clips were filmed")
+                    .font(KriaFont.body(15)).foregroundStyle(KriaColor.ink)
+            }
+            .tint(KriaColor.sky)
+            .accessibilityIdentifier("account-capture-context-toggle")
+            .onChange(of: shareCaptureContext) { _, enabled in ClipCaptureSetting.settingChanged(to: enabled) }
+            Text("Kria reads each chosen clip's date and rough location (about 1 km) from Photos, and looks up the place name on your phone. It uses them to put your clips in the order you filmed them and to name places. Turn this off to send neither.")
+                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(minHeight: 44)
+        .padding(.vertical, 6)
     }
 }
 

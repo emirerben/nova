@@ -19,7 +19,14 @@ from typing import Annotated, Any, Literal, NoReturn
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +49,9 @@ from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.media_sources import (
     PROXY_MEDIA_PREFIX,
     AnalysisProxyDescriptor,
+    ClipCapture,
+    ClipPlace,
+    CoarseLocation,
     MediaUploadContract,
     is_analysis_proxy_path,
 )
@@ -448,11 +458,41 @@ class MediaInput(StrictBody):
     kind: Literal["video", "image", "audio"]
     filename: str | None = Field(default=None, max_length=240)
     content_type: str | None = Field(default=None, max_length=100)
+    # KRI-189: filming context read from the Photos asset on the phone. All
+    # optional and additive; a value that fails validation is dropped rather
+    # than rejecting the attach (the clip must never fail to register over a
+    # missing timestamp). Location is re-rounded to ~1 km by `CoarseLocation`.
+    capture_time: datetime | None = None
+    coarse_location: CoarseLocation | None = None
+    place: ClipPlace | None = None
+
+    @field_validator("capture_time", "coarse_location", "place", mode="wrap")
+    @classmethod
+    def _lenient_capture_field(cls, value: object, handler: Any) -> Any:
+        try:
+            return handler(value)
+        except ValidationError:
+            return None
 
     @field_validator("media_id")
     @classmethod
     def validate_media_id(cls, value: str) -> str:
         return _client_id(value)
+
+    def capture(self) -> ClipCapture | None:
+        """The (possibly partial) filming context, or None when nothing usable came."""
+        if self.kind != "video":
+            return None
+        capture = ClipCapture(
+            capture_time=self.capture_time,
+            coarse_location=self.coarse_location,
+            place=self.place,
+        )
+        return None if capture.is_empty() else capture
+
+
+# Server-only keys of a verified attach row; never echoed in thread state or events.
+_ATTACH_PRIVATE_KEYS = frozenset({"_path", "_capture", "generation", "has_audio"})
 
 
 class AttachBody(StrictBody):
@@ -5604,6 +5644,15 @@ async def attach_media(
                 "duration_s": duration_s,
                 "has_audio": has_audio,
                 "_path": expected_path,
+                **(
+                    {"_capture": capture.model_dump(mode="json", exclude_none=True)}
+                    if (capture := media.capture()) is not None
+                    else {}
+                ),
+                # The capture lives ONLY on the assignment (`capture` below), never inside the
+                # stored proxy receipt: `OriginalMediaDescriptor` is extra="forbid", so a
+                # capture copy in there would make older code (a rollback, or a worker still
+                # on the previous image) reject the whole receipt and fail phone-job admission.
                 **({"upload_contract": contract.model_dump(mode="json")} if contract else {}),
             }
         )
@@ -5625,6 +5674,9 @@ async def attach_media(
                     "duration_s": source["duration_s"],
                     "has_audio": source["has_audio"],
                     "manifest_identity": source["media_id"],
+                    # KRI-189: authoritative filming context (source of truth for
+                    # the fact layer); coarse by construction.
+                    **({"capture": source["_capture"]} if "_capture" in source else {}),
                     **(
                         {"upload_contract": source["upload_contract"]}
                         if "upload_contract" in source
@@ -5633,11 +5685,7 @@ async def attach_media(
                 }
             )
         existing_media.append(
-            {
-                key: value
-                for key, value in source.items()
-                if key not in {"_path", "generation", "has_audio"}
-            }
+            {key: value for key, value in source.items() if key not in _ATTACH_PRIVATE_KEYS}
         )
     from app.services.plan_item_media import (  # noqa: PLC0415
         current_detector_policy,
@@ -5681,11 +5729,7 @@ async def attach_media(
             state = dict(thread.state or {})
             thread.state = state
     public_media = [
-        {
-            key: value
-            for key, value in source.items()
-            if key not in {"_path", "generation", "has_audio"}
-        }
+        {key: value for key, value in source.items() if key not in _ATTACH_PRIVATE_KEYS}
         for source in verified
     ]
     await _append(

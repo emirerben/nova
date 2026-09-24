@@ -1498,6 +1498,11 @@ class EditProposal(BaseModel):
     planner_fallback: ProposalPlannerFallback | None = None
     # Private pre-render diagnostics, separate from the immutable approval.
     planning_diagnostics: dict | None = Field(default=None, exclude_if=lambda value: value is None)
+    # KRI-189: how the draft's clip order was decided when capture time was used or
+    # unavailable: {"ordering_basis": "capture_time"|"attachment",
+    # "ordering_fallback_clip_ids": [media ids ordered by upload position]}. Plan
+    # receipts read it; absent unless CLIP_FACTS ordering ran.
+    ordering: dict | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class MediaRefResponse(MediaRef):
