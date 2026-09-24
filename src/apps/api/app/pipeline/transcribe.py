@@ -236,7 +236,8 @@ def transcribe_whisper_cached(
     lang_key = re.sub(r"[^a-z]", "", (language or "auto").lower())[:8] or "auto"
     # verbatim_prompt biases the whisper output, so it is part of the cache
     # identity: two different prompts on the SAME clip bytes must not collide on
-    # one entry (today's sole caller passes None → the stable "noprompt" slot).
+    # one entry (None → the stable "noprompt" slot; the phone Talking render
+    # passes the creator's reaction-beat trigger phrases).
     prompt_key = "noprompt"
     if verbatim_prompt:
         prompt_key = hashlib.sha256(verbatim_prompt.encode()).hexdigest()[:12]

@@ -1017,3 +1017,76 @@ async def test_status_route_steps_populated_when_flag_on(monkeypatch: pytest.Mon
     assert resp.steps is not None
     assert len(resp.steps) == 1
     assert resp.steps[0].kind == "phase"
+
+
+def test_render_notes_from_overlay_receipt_drops_the_iphone_upload_uuid_prefix() -> None:
+    """Job 385e3b13: iPhone Visuals are stored as "<random UUID>-<name>", and the
+    chat quoted that UUID back to the creator."""
+    receipt = {
+        "version": 1,
+        "matcher": "agent",
+        "face_sampling": "ok",
+        "placed": [],
+        "unplaced": [
+            {
+                "media_id": "m1",
+                "label": "8987BC83-F287-424E-90CC-7793317B9112-12_nope_stamp.png",
+                "reason": "overlap",
+            },
+            {
+                "media_id": "m2",
+                "label": "c5f73829-0fc0-45da-b526-6dd122a944bc-14_thinking_q.png",
+                "reason": "no_spoken_match",
+            },
+            {"media_id": "m3", "label": "my-photo-2024.png", "reason": "no_spoken_match"},
+        ],
+    }
+    assert render_notes_from_overlay_receipt(receipt) == [
+        "Showed 0 of 3 Visuals as cards",
+        'No room to show "12_nope_stamp.png" without covering your face or the captions',
+        'Couldn\'t find a spoken moment for "14_thinking_q.png"',
+        'Couldn\'t find a spoken moment for "my-photo-2024.png"',
+    ]
+
+
+def test_render_notes_from_beat_receipt_reads_each_miss_once() -> None:
+    """Job 385e3b13: a player's photo and check mark share one trigger, so the
+    chat said 'I never heard "Rafael Leão"' twice and the 8-line cap hid the
+    rank-badge misses."""
+    triggers = [
+        "Mason Greenwood",
+        "no",
+        "Rafael Leão",
+        "Rafael Leão",
+        "Vlahović",
+        "no",
+        "Leandro Trossard",
+        "Leandro Trossard",
+        "number three",
+        "number two",
+        "number one",
+    ]
+    receipt = {
+        "version": 1,
+        "matcher": "phrase",
+        "placed": [{"beat_id": "salah_photo"}, {"beat_id": "salah_goat"}],
+        "unplaced": [
+            {"beat_id": f"b{i}", "trigger": t, "reason": "never_heard"}
+            for i, t in enumerate(triggers)
+        ],
+        "closing": {"status": "placed"},
+    }
+    notes = render_notes_from_beat_receipt(receipt)
+    assert notes[1:] == [
+        beat_miss_sentence(t, "never_heard")
+        for t in [
+            "Mason Greenwood",
+            "no",
+            "Rafael Leão",
+            "Vlahović",
+            "Leandro Trossard",
+            "number three",
+            "number two",
+            "number one",
+        ]
+    ]

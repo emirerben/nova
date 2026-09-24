@@ -187,6 +187,43 @@ def fold_tokens(text: object) -> list[str]:
     return _drop_number_fillers(_raw_fold(text))
 
 
+# whisper-1's `prompt` is capped at 224 tokens; a creator's trigger phrases fit
+# easily, and the cap keeps a pathological plan bounded.
+_VOCABULARY_PROMPT_MAX_CHARS = 600
+
+
+def trigger_vocabulary_prompt(beats: list, closing: dict | None) -> str | None:
+    """The creator's trigger phrases, spelled as they typed them, as a whisper
+    bias prompt -- None when there are none.
+
+    Matching is exact after folding, and whisper misspells names it has no
+    context for ("Mason Grumet", "Bileovic", "Trossart"), so every misspelled
+    name is a missed beat. Job 385e3b13's audio heard 5/13 triggers without
+    this prompt and 13/13 with it.
+    """
+    candidates: list[object] = []
+    for beat in beats or []:
+        if isinstance(beat, dict):
+            candidates.extend((beat.get("trigger"), beat.get("after")))
+    if isinstance(closing, dict):
+        candidates.append(closing.get("from_trigger"))
+
+    phrases: list[str] = []
+    seen: set[tuple[str, ...]] = set()
+    length = 0
+    for candidate in candidates:
+        phrase = str(candidate or "").strip()
+        key = tuple(fold_tokens(phrase))
+        if not key or key in seen:
+            continue
+        if length + len(phrase) + 2 > _VOCABULARY_PROMPT_MAX_CHARS:
+            break
+        seen.add(key)
+        phrases.append(phrase)
+        length += len(phrase) + 2
+    return ", ".join(phrases) + "." if phrases else None
+
+
 # --- transcript token stream + trigger matching ------------------------------
 
 

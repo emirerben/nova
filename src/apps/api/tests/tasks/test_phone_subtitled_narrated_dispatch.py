@@ -1810,3 +1810,59 @@ def test_subtitled_sfx_speech_duck_follows_the_setting(monkeypatch, duck_enabled
         assert variant[subtitled_plan_mod.SFX_DUCK_RECEIPT_FIELD]["volumes"] == {"on-word": 1.0}
     else:
         assert subtitled_plan_mod.SFX_DUCK_RECEIPT_FIELD not in variant
+
+
+def _capture_transcribe(monkeypatch) -> Mock:
+    mock = Mock(
+        return_value=Transcript(
+            words=_words(("Mason", 0.0, 0.4), ("Greenwood", 0.4, 0.9)), language="en"
+        )
+    )
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", mock)
+    return mock
+
+
+def test_subtitled_beats_seed_whisper_with_the_creator_trigger_phrases(monkeypatch):
+    """Job 385e3b13: beats match the creator's trigger phrases exactly, and
+    whisper misspelled every player name it had no context for ("Mason
+    Grumet", "Bileovic"). The phrases, spelled as typed, go to whisper as
+    its bias prompt."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    _enable_beats(monkeypatch)
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind([]))
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod,
+        "ground_phone_reaction_beats",
+        _beat_grounding_mock([], [], _basic_beat_receipt()),
+    )
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", _grounding_mock([])
+    )
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [
+            _beat_dict("greenwood_photo", "Mason Greenwood", visual_id="p1"),
+            _beat_dict("greenwood_no", "no", after="Mason Greenwood", visual_id="x"),
+            _beat_dict("vlahovic_photo", "Vlahović", visual_id="p2"),
+            _beat_dict("rank_3", "number three", visual_id="r3"),
+        ],
+        "closing_media": _closing_dict("p3", from_trigger="Salah"),
+    }
+    transcribe = _capture_transcribe(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    assert transcribe.call_args.kwargs["verbatim_prompt"] == (
+        "Mason Greenwood, no, Vlahović, number three, Salah."
+    )
+
+
+def test_subtitled_beats_flag_off_sends_no_whisper_prompt(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [_beat_dict("b0", "Mason Greenwood", visual_id="p1")]
+    }
+    transcribe = _capture_transcribe(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    assert transcribe.call_args.kwargs["verbatim_prompt"] is None
