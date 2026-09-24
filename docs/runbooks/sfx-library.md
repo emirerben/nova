@@ -15,7 +15,8 @@ the iPhone renderer and in the iOS editor.
 | Mastering + iPhone QA contract | `scripts/sfx_library/master.py` |
 | Build / upload / rollback CLI | `scripts/seed_sfx_library.py` |
 | Selection used by the AI placers | `app/services/sfx_catalog.py` |
-| Guards | `tests/scripts/test_sfx_library.py`, `tests/services/test_sfx_catalog.py`, `tests/test_overlay_sfx_intent.py` |
+| Web editor picker: search + category grouping | `src/apps/web/src/lib/sfx-browse.ts` (rules), `src/apps/web/src/app/plan/_components/SfxPicker.tsx` (UI) |
+| Guards | `tests/scripts/test_sfx_library.py`, `tests/services/test_sfx_catalog.py`, `tests/test_overlay_sfx_intent.py`, `tests/services/test_sfx_catalog_web_parity.py` (web mirror of categories + filler words) |
 
 Audio never enters git. `build` fetches the pinned sources into
 `~/.cache/nova-sfx-library` (override with `NOVA_SFX_CACHE`) and writes to the
@@ -83,8 +84,13 @@ their audio remain.
 ## Adding or changing an effect
 
 1. Add an `Effect(...)` to `catalog.LIBRARY`. Choose a unique, plain name; a
-   category; and search terms with the primary keyword first. Set
-   `contains_voice=True` for speech, singing, laughter or crowds.
+   category; and search terms with the primary keyword first. Creators search
+   the name and these terms in the web editor, so include the words people
+   type. Set `contains_voice=True` for speech, singing, laughter or crowds.
+   A brand-new category (`SFX_CATEGORIES` in `app/services/sfx_catalog.py`)
+   also goes into `SFX_CATEGORY_ORDER` and `SFX_CATEGORY_LABELS` in
+   `sfx-browse.ts`, or the web pickers file its effects under "Other";
+   `test_sfx_catalog_web_parity.py` fails until you do.
 2. The source is one of:
    - a new `@recipe` in `synth.py`;
    - a Kenney pack member;
@@ -125,3 +131,20 @@ issue waived KRI-143's CC0-only fence, but CC0 was available for every sound we 
 - **Not covered yet** (KRI-143 P2): a sound effect the model proposes on its
   own, without the creator asking for one, is still dropped. The web edit
   copilot still sends only the first 20 effects of `GET /sound-effects`.
+
+## How creators browse it in the web editor
+
+The editor's Sounds drawer (`ToolDrawer`: a pick adds the effect at the
+playhead) and the legacy timeline's SFX lane (`SfxLane` popover: pick, then
+"+ Add") share `SfxPicker`. The rules live in `sfx-browse.ts`:
+
+- **Search** is whole-word over the name and `search_terms`, ignoring case and
+  accents. It reuses the chat resolver's plural fold and filler words (`_stem`,
+  `_FILLER`) and also folds `-es` plurals ("punches" finds "Punch hit"). So "buzzer
+  sounds" finds "Wrong buzzer", and "tap" never finds "Tape rewind".
+- A half-typed last word matches word starts only when nothing matches whole,
+  so "whoo" finds "Whoosh fast".
+- **Groups** come in a fixed order: transition, impact, comedy, approval,
+  rejection, suspense, money, sports, ui (shown as "Text & UI"), then "Other" for
+  legacy effects without a category. Names sort A to Z inside a group. A
+  library with no categories at all shows one flat list.

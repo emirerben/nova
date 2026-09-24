@@ -68,6 +68,7 @@ import {
   type MotionPresetInstance,
 } from "@nova/motion-runtime";
 import { CreatorBlockCatalogPreview } from "./MotionCanvasLayer";
+import SfxPicker from "@/app/plan/_components/SfxPicker";
 
 const CATEGORY_LABEL: Record<TextPresetCategory, string> = {
   favorite: "Favorite",
@@ -1947,27 +1948,7 @@ function SoundsDrawer({
           Loading effects...
         </div>
       ) : (
-        <div className="space-y-2">
-          {effects.map((effect) => (
-            <Button
-              key={effect.id}
-              type="button"
-              variant="outline"
-              onClick={() => onAddSfx?.(effect)}
-              className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left text-[13px] font-normal text-[#0c0c0e]"
-            >
-              <span className="truncate">{effect.name}</span>
-              <span className="ml-2 shrink-0 text-[11px] text-[#71717a]">
-                {effect.duration_s != null ? `${effect.duration_s.toFixed(1)}s` : "SFX"}
-              </span>
-            </Button>
-          ))}
-          {effects.length === 0 && (
-            <div className="rounded-lg border border-dashed border-zinc-300 px-3 py-3 text-[12px] text-[#71717a]">
-              No published sound effects found.
-            </div>
-          )}
-        </div>
+        <SfxPicker effects={effects} onPick={(effect) => onAddSfx?.(effect)} stickySearch />
       )}
     </div>
   );

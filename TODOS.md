@@ -8,6 +8,36 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## SFX picker search — deferred follow-ups (2026-09-24)
+
+The web editor's Sounds drawer and legacy SFX lane gained search + category
+grouping (`SfxPicker.tsx`, `lib/sfx-browse.ts`). These review findings were
+scoped out of that PR.
+
+### Rank whole-word hits first instead of hiding word-start hits
+**Priority:** P3
+**What:** `groupSfxEffects` falls back to word-start matching only when no
+effect matches the query whole. On the KRI-173 library, "ta" shows only
+"Tada fanfare" (its "ta da" term is a whole-word "ta") and hides "Tap".
+**Acceptance:** Show whole-word hits first and word-start hits after them
+(still grouped), keeping "tap" from ranking "Tape rewind" above "Tap".
+
+### Picker keyboard semantics: roving tabindex + listbox roles
+**Priority:** P3
+**What:** Every row is a Tab stop, so Tab walks ~120 rows (and Radix
+Popover's focus loop wraps back to search). Rows in the lane popover expose
+`aria-pressed` toggle semantics for what is a single choice.
+**Acceptance:** Roving tabindex (search → list → out) and `aria-current` or
+listbox/option semantics on the selected row; keep the arrow-key tests green.
+
+### Long sessions play silent SFX previews (pre-existing)
+**Priority:** P3
+**What:** `preview_audio_url` is signed for 60 minutes, but EditorShell loads
+the effect list once per session, so an effect picked after an hour previews
+silently (the download bake is unaffected).
+**Acceptance:** Refetch GET /sound-effects (or re-sign) when the list is older
+than ~50 minutes or when a preview `<audio>` errors.
+
 ## KRI-167 clip transitions — deferred follow-ups (2026-09-23)
 
 The Visuals tab now has a whole-video transition default, and selecting a

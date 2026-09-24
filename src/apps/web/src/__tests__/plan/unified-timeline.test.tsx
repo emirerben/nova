@@ -13,12 +13,13 @@
 // crypto.randomUUID polyfill lives in jest.setup.ts (global for all tests).
 
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import type { SoundEffectPlacement } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
+import { resolveSfxPreviewUrls, sfxUrlKey } from "@/lib/sfx-preview-urls";
 import type { MediaOverlay } from "@/lib/plan-api";
 
 class PointerEventPolyfill extends MouseEvent {
@@ -132,26 +133,197 @@ describe("UnifiedTimeline — SFX bars render", () => {
   });
 });
 
-/**
- * Drive Radix Select through its keyboard contract. This preserves the real
- * component behavior without JSDOM's throttled synthetic pointer pipeline.
- */
+/** Open the SFX picker popover (Radix Popover toggles on click). */
+async function openGlossaryPicker() {
+  fireEvent.click(screen.getByRole("button", { name: /Pick a sound effect|·/i }));
+  return screen.findByRole("dialog", { name: "Sound effects" });
+}
+
 async function pickGlossaryEffect(name: string) {
-  fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
-  fireEvent.click(await screen.findByRole("option", { name: new RegExp(name, "i") }));
+  const picker = await openGlossaryPicker();
+  fireEvent.click(within(picker).getByRole("button", { name: new RegExp(name, "i") }));
 }
 
 describe("UnifiedTimeline — glossary picker", () => {
-  it("renders glossary effects in the select", async () => {
+  it("renders glossary effects in the picker", async () => {
     const effects = [makeGlossaryEffect({ id: "g1", name: "Boom" })];
     render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: effects })} />);
-    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
-    expect(await screen.findByRole("option", { name: /Boom/i })).toBeInTheDocument();
+    const picker = await openGlossaryPicker();
+    expect(within(picker).getByRole("button", { name: /Boom/i })).toBeInTheDocument();
+  });
+
+  it("searches whole words and groups results by category", async () => {
+    const effects = [
+      makeGlossaryEffect({ id: "g1", name: "Wrong buzzer", category: "rejection", search_terms: ["fail"] }),
+      makeGlossaryEffect({ id: "g2", name: "Tape rewind", category: "transition", search_terms: ["rewind"] }),
+      makeGlossaryEffect({ id: "g3", name: "Soft tap", category: "ui", search_terms: ["tap"] }),
+      makeGlossaryEffect({ id: "g4", name: "Airhorn", category: null }),
+    ];
+    render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: effects })} />);
+    const picker = await openGlossaryPicker();
+
+    expect(
+      within(picker).getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
+    ).toEqual(["Transitions, 1", "Rejection, 1", "Text & UI, 1", "Other, 1"]);
+
+    const search = within(picker).getByRole("searchbox", { name: "Search sound effects" });
+    expect(search).toHaveFocus();
+    fireEvent.change(search, { target: { value: "tap" } });
+    expect(within(picker).getByRole("button", { name: /Soft tap/ })).toBeInTheDocument();
+    expect(within(picker).queryByRole("button", { name: /Tape rewind/ })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "FAIL" } });
+    expect(within(picker).getByRole("button", { name: /Wrong buzzer/ })).toBeInTheDocument();
+    expect(within(picker).getAllByRole("heading", { level: 3 })).toHaveLength(1);
+  });
+
+  it("picking closes the picker, shows the choice, and Add keeps the preview URL resolvable", async () => {
+    const effect = makeGlossaryEffect({
+      id: "g-buzz",
+      name: "Wrong buzzer",
+      duration_s: 0.8,
+      category: "rejection",
+      preview_audio_url: "https://cdn.example.com/buzz.m4a",
+    });
+    const onSfxChange = jest.fn();
+    render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: [effect], onSfxChange })} />);
+
+    await pickGlossaryEffect("Wrong buzzer");
+    expect(screen.queryByRole("dialog", { name: "Sound effects" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Wrong buzzer · 0.8s" })).toBeInTheDocument();
+
+    // Reopening marks the current choice.
+    const picker = await openGlossaryPicker();
+    expect(within(picker).getByRole("button", { name: /Wrong buzzer/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.keyDown(picker, { key: "Escape" });
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /\+ Add/i })); });
+    const [placements] = onSfxChange.mock.calls[0];
+    expect(placements[0]).toMatchObject({ sound_effect_id: "g-buzz", label: "Wrong buzzer" });
+    // The item page feeds useSfxPreview through this resolver.
+    expect(resolveSfxPreviewUrls(placements, [effect], {}).glossaryUrls).toEqual({
+      [sfxUrlKey(placements[0])]: "https://cdn.example.com/buzz.m4a",
+    });
+  });
+
+  it("shows the effect name alone on the trigger when it has no duration", async () => {
+    const effect = makeGlossaryEffect({ id: "g-pop", name: "Pop", duration_s: null });
+    render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: [effect] })} />);
+
+    await pickGlossaryEffect("Pop");
+    expect(screen.getByRole("button", { name: "Pop" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /\+ Add/i })).toBeEnabled();
+  });
+
+  it("resets the trigger after Add so the next effect can be picked and added", async () => {
+    const effects = [
+      makeGlossaryEffect({ id: "g1", name: "Whoosh", duration_s: 1.5 }),
+      makeGlossaryEffect({ id: "g2", name: "Boom", duration_s: 2 }),
+    ];
+    const onSfxChange = jest.fn();
+    render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: effects, onSfxChange })} />);
+
+    await pickGlossaryEffect("Whoosh");
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /\+ Add/i })); });
+    expect(
+      screen.getByRole("button", { name: "Pick a sound effect (placed at playhead)…" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /\+ Add/i })).toBeDisabled();
+
+    // No choice is pending after an Add, so rows drop their toggle state.
+    const picker = await openGlossaryPicker();
+    expect(within(picker).getByRole("button", { name: /Whoosh/ })).not.toHaveAttribute(
+      "aria-pressed",
+    );
+    fireEvent.click(within(picker).getByRole("button", { name: /Boom/ }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /\+ Add/i })); });
+    expect(onSfxChange).toHaveBeenCalledTimes(2);
+    expect(onSfxChange.mock.calls[1][0].map((p) => p.sound_effect_id)).toEqual(["g1", "g2"]);
+  });
+
+  it("Escape dismisses the picker without changing the choice, and reopening clears the search", async () => {
+    const effects = [
+      makeGlossaryEffect({ id: "g1", name: "Whoosh", duration_s: 1.5 }),
+      makeGlossaryEffect({ id: "g2", name: "Boom", duration_s: 2 }),
+    ];
+    render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: effects })} />);
+    await pickGlossaryEffect("Whoosh");
+
+    let picker = await openGlossaryPicker();
+    fireEvent.change(within(picker).getByRole("searchbox"), { target: { value: "boom" } });
+    fireEvent.keyDown(picker, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Sound effects" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Whoosh · 1.5s" })).toBeInTheDocument();
+
+    picker = await openGlossaryPicker();
+    expect(within(picker).getByRole("searchbox")).toHaveValue("");
+    expect(within(picker).getAllByRole("button", { pressed: false })).toHaveLength(1);
+  });
+
+  it("Escape in a non-empty search clears it first, then closes the picker", async () => {
+    const effects = [makeGlossaryEffect({ id: "g1", name: "Whoosh" })];
+    render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: effects })} />);
+    const picker = await openGlossaryPicker();
+    const search = within(picker).getByRole("searchbox");
+
+    fireEvent.change(search, { target: { value: "boom" } });
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Sound effects" })).toBeInTheDocument();
+    expect(search).toHaveValue("");
+
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Sound effects" })).toBeNull();
+  });
+
+  it("ArrowDown from the popover search moves focus onto the first effect", async () => {
+    const effects = [
+      makeGlossaryEffect({ id: "g1", name: "Whoosh", category: "transition" }),
+      makeGlossaryEffect({ id: "g2", name: "Boom", category: "impact" }),
+    ];
+    render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: effects })} />);
+    const picker = await openGlossaryPicker();
+
+    const search = within(picker).getByRole("searchbox", { name: "Search sound effects" });
+    expect(search).toHaveFocus();
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    // Transitions sort ahead of Impacts.
+    expect(within(picker).getByRole("button", { name: /Whoosh/ })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    expect(within(picker).getByRole("button", { name: /Boom/ })).toHaveFocus();
+  });
+
+  it("opens an empty-library message when no effects are published", async () => {
+    render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: [] })} />);
+    const picker = await openGlossaryPicker();
+    expect(within(picker).getByText("No published sound effects found.")).toBeInTheDocument();
+    expect(within(picker).queryByRole("searchbox")).toBeNull();
+  });
+
+  it("never adds a picked effect that disappeared from the glossary", async () => {
+    const effect = makeGlossaryEffect({ id: "g1", name: "Whoosh" });
+    const onSfxChange = jest.fn();
+    const props = makeProps({ sfxGlossaryEffects: [effect], onSfxChange });
+    const { rerender } = render(<UnifiedTimeline {...props} />);
+    await pickGlossaryEffect("Whoosh");
+
+    rerender(<UnifiedTimeline {...props} sfxGlossaryEffects={[]} />);
+    expect(
+      screen.getByRole("button", { name: "Pick a sound effect (placed at playhead)…" }),
+    ).toBeInTheDocument();
+    // The trigger and "+ Add" agree: no live pick, nothing to add.
+    const add = screen.getByRole("button", { name: /\+ Add/i });
+    expect(add).toBeDisabled();
+    await act(async () => { fireEvent.click(add); });
+    expect(onSfxChange).not.toHaveBeenCalled();
   });
 
   it("shows loading placeholder when sfxGlossaryLoading is true", () => {
     render(<UnifiedTimeline {...makeProps({ sfxGlossaryLoading: true })} />);
     expect(screen.getByText(/Loading effects/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Loading effects/i })).toBeDisabled();
   });
 
   it("calls onSfxChange with the new placement when Add is clicked", async () => {
@@ -523,6 +695,7 @@ describe("UnifiedTimeline — disabled state", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /\+ Add/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Pick a sound effect/i })).toBeDisabled();
   });
 });
 
