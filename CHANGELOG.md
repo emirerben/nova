@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.189.0] - 2026-09-24
+
+### Changed
+- feat(web): search and category groups in the editor's sound-effect pickers (#1205) <!-- release-pr: 1205 -->
+
 ## [0.76.188.0] - 2026-09-24
 
 ### Changed
