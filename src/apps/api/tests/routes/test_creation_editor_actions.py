@@ -497,6 +497,38 @@ async def test_copilot_edit_applies_ops_and_stages_render(copilot_edit_context, 
 
 
 @pytest.mark.asyncio
+async def test_copilot_edit_passes_phone_catalog_sfx_paths_to_the_commit(
+    copilot_edit_context, monkeypatch
+):
+    """A chat edit that leaves a phone Talking edit's sound lane alone still
+    persists its effects' real catalog paths (same read as the iOS Save)."""
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[{"op": "remove_text", "bar_index": 1}], outcome="proposed", reply="ignored"
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+    payload = actions.EditorCommitRequest(base_generation="g1", text_elements=[])
+    monkeypatch.setattr(
+        actions,
+        "compile_editor_ops",
+        Mock(return_value=SimpleNamespace(payload=payload, changes=["Remove text"])),
+    )
+    ctx.db.execute.return_value = Mock()
+    ctx.db.execute.return_value.scalars.return_value.all.return_value = []
+    catalog = AsyncMock(return_value={"pop": "sound-effects/pop/audio.m4a"})
+    monkeypatch.setattr(actions, "_phone_subtitled_sfx_paths", catalog)
+    stage = Mock(return_value={"generation": "g2", "sections": {"text_elements": True}})
+    monkeypatch.setattr(actions, "prepare_editor_commit", stage)
+
+    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    catalog.assert_awaited_once_with(ctx.db, ctx.job, ctx.variant)
+    assert stage.call_args.kwargs["phone_sfx_catalog_paths"] == {
+        "pop": "sound-effects/pop/audio.m4a"
+    }
+
+
+@pytest.mark.asyncio
 async def test_copilot_edit_baseline_conflict_propagates_as_409(copilot_edit_context, monkeypatch):
     ctx = copilot_edit_context
     response = SimpleNamespace(

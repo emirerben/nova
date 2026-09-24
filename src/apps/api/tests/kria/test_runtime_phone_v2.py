@@ -491,6 +491,65 @@ def test_claim_pins_the_device_recipe_revision_the_edit_created() -> None:
     assert execution.result["editor_prep"]["device_recipe_revision"] == 2
 
 
+def test_claim_passes_phone_catalog_sfx_paths_to_the_editor_commit(monkeypatch) -> None:
+    """A chat edit that leaves a phone Talking edit's sound lane alone still
+    persists its effects' real catalog paths (same read as the iOS Save)."""
+    job = _device_job(status="variants_ready")
+    _publish(job)
+    reads: list = []
+
+    def catalog(db, current_job, variant):  # noqa: ANN001, ANN202
+        reads.append((current_job, variant))
+        return {"pop": "sound-effects/pop/audio.m4a"}
+
+    monkeypatch.setattr(kria_runtime, "phone_subtitled_sfx_paths_sync", catalog)
+    seen: dict = {}
+
+    def prepare(current_job, variant_id, *_args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        seen.update(kwargs)
+        pin_device_request(
+            current_job,
+            make_device_request(
+                job_id=current_job.id, variant_id=variant_id, revision=2, recipe=_RECIPE
+            ),
+            base_generation="edit-gen-2",
+        )
+        return {
+            "generation": "edit-gen-2",
+            "has_render_section": True,
+            "render_destination": "device",
+            "sections": {},
+        }
+
+    claim, _, _, _ = _claim(job, prepare)
+    assert claim is not None
+    assert seen["phone_sfx_catalog_paths"] == {"pop": "sound-effects/pop/audio.m4a"}
+    [(read_job, read_variant)] = reads
+    assert read_job is job
+    assert read_variant["variant_id"] == VARIANT
+
+
+def test_claim_refuses_when_the_pinned_recipe_cannot_derive_sfx_paths(monkeypatch) -> None:
+    """Deriving the catalog paths re-validates the pinned device recipe; a
+    recipe that fails there is the same terminal refusal, not a crash loop."""
+    job = _device_job(status="variants_ready")
+    _publish(job)
+
+    def broken(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise ValueError("pinned recipe no longer validates")
+
+    monkeypatch.setattr(kria_runtime, "phone_subtitled_sfx_paths_sync", broken)
+
+    def prepare(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("the commit must not run after the lane read failed")
+
+    claim, approval, execution, events = _claim(job, prepare)
+    assert claim is None
+    assert approval.status == "cancelled"
+    assert execution.status == "failed"
+    assert events[0]["event_type"] == "assistant_error"
+
+
 def test_claim_still_raises_for_a_cloud_variant_validation_error() -> None:
     job = _device_job()
     job.assembly_plan["variants"][0]["render_destination"] = "cloud"
