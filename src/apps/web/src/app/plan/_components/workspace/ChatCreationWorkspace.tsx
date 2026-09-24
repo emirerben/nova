@@ -210,6 +210,8 @@ interface AutomaticMemoryReceipt {
   undone: boolean;
 }
 
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
 function automaticMemoryReceipt(event: CreationThreadEvent | undefined): AutomaticMemoryReceipt | null {
   if (!event || !["memory_updated", "creator_memory_receipt"].includes(event.event_type) || !event.payload) return null;
   const operationId = event.payload.operation_id;
@@ -225,9 +227,6 @@ function automaticMemoryReceipt(event: CreationThreadEvent | undefined): Automat
   ) return null;
   return { operationId, memoryRevision, undoExpiresAt, undone: event.payload.undone === true };
 }
-
-// setTimeout fires after ~1 ms when its delay exceeds 2^31 - 1 ms (~24.8 days).
-const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
 function AutomaticMemoryReceiptCard({
   receipt,
@@ -247,10 +246,17 @@ function AutomaticMemoryReceiptCard({
 
   useEffect(() => {
     if (expired || !Number.isFinite(expiresAt)) return undefined;
-    const remaining = Math.max(0, expiresAt - Date.now());
-    // An overflowing delay would expire the receipt at once and hide Undo.
-    if (remaining > MAX_TIMER_DELAY_MS) return undefined;
-    const timer = window.setTimeout(() => setExpired(true), remaining);
+    let timer: number | undefined;
+    const schedule = () => {
+      const remainingMs = expiresAt - Date.now();
+      // Delays above the 32-bit timer limit fire after ~1 ms in browsers and
+      // Node, so a far-future expiry re-arms in capped chunks instead.
+      timer = window.setTimeout(
+        remainingMs > MAX_TIMER_DELAY_MS ? schedule : () => setExpired(true),
+        Math.max(0, Math.min(remainingMs, MAX_TIMER_DELAY_MS)),
+      );
+    };
+    schedule();
     return () => window.clearTimeout(timer);
   }, [expired, expiresAt]);
 
