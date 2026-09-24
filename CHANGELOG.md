@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.208.0] - 2026-09-24
+
+### Changed
+- docs: free CLAUDE.md budget for KRI-185 waves 2-3 (36,198/38,000) (#1231) <!-- release-pr: 1231 -->
+
 ## [0.76.207.0] - 2026-09-24
 
 ### Changed
