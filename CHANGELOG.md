@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.199.0] - 2026-09-24
+
+### Changed
+- fix(copilot): chat-edit replies say what was and wasn't done (KRI-186) (#1217) <!-- release-pr: 1217 -->
+
 ## [0.76.198.0] - 2026-09-24
 
 ### Changed
