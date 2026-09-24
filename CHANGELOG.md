@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.191.0] - 2026-09-24
+
+### Changed
+- feat(phone): re-land one-pass reaction beats on Talking edits + KRI-181 robustness (KRI-178, KRI-181) (#1210) <!-- release-pr: 1210 -->
+
 ## [0.76.190.0] - 2026-09-24
 
 ### Changed
