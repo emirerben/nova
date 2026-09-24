@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.210.0] - 2026-09-24
+
+### Changed
+- fix(phone): Talking editor keeps real SFX paths and rolls back to the MP4 (#1234) <!-- release-pr: 1234 -->
+
 ## [0.76.209.0] - 2026-09-24
 
 ### Changed

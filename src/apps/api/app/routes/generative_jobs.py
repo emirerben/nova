@@ -27,7 +27,7 @@ import os
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
@@ -1855,10 +1855,22 @@ def _augment_variant_with_phone_subtitled_editor_sections(job: Job, v: dict) -> 
     including an explicit `None`/`[]` meaning "cleared" — always win over a
     fresh derivation) and never mutates `job.assembly_plan`; `v` is always
     already a shallow copy by the time callers reach this helper.
+
+    While neither lane is open (`_phone_subtitled_editor_lanes_open` — the
+    rollout flag or both SFX/overlay kill switches off), lanes a Save persisted
+    are DROPPED from this response copy instead: iOS hydrates the Talking
+    source clip only while a lane is editable, so a non-empty overlay track
+    with no source clip rendered a black canvas instead of the MP4 fallback.
     """
-    if "sound_effects" in v and "media_overlays" in v:
+    if not is_phone_subtitled_editor_variant(v):
         return v
-    if not _phone_subtitled_editor_lanes_available(job, v):
+    if not _phone_subtitled_editor_lanes_open(job, v):
+        if not any(lane in v for lane in _PHONE_SUBTITLED_EDITOR_LANE_KEYS):
+            return v
+        return {
+            key: value for key, value in v.items() if key not in _PHONE_SUBTITLED_EDITOR_LANE_KEYS
+        }
+    if "sound_effects" in v and "media_overlays" in v:
         return v
     projected = project_phone_subtitled_editor_sections(job.assembly_plan or {}, v)
     if not projected:
@@ -6223,6 +6235,25 @@ def _phone_subtitled_editor_lanes_available(job: Job, variant: dict) -> bool:
     return is_phone_subtitled_editor_variant(variant) and phone_subtitled_editor_lanes_supported()
 
 
+# The editor sections a phone Talking Save persists onto the variant.
+_PHONE_SUBTITLED_EDITOR_LANE_KEYS = ("sound_effects", "media_overlays")
+
+
+def _phone_subtitled_editor_lanes_open(job: Job, variant: dict) -> bool:
+    """True when the native editor opens a phone Talking variant's lanes.
+
+    Mirrors the iOS rule that hydrates the locked Talking source clip only
+    while the `overlays` or `sfx` capability is editable: the rollout gate
+    (`_phone_subtitled_editor_lanes_available`) AND at least one lane left
+    open by the clamped capability map (`SOUND_EFFECTS_ENABLED` /
+    `MEDIA_OVERLAYS_ENABLED`, a rendered video).
+    """
+    if not _phone_subtitled_editor_lanes_available(job, variant):
+        return False
+    capabilities = _editor_capabilities(job, variant)
+    return capabilities.get("sfx") is True or capabilities.get("overlays") is True
+
+
 def _clamp_phone_editor_capabilities(
     capabilities: dict, *, media_enabled: bool = False, subtitled_lanes: bool = False
 ) -> dict:
@@ -9143,8 +9174,14 @@ def prepare_editor_commit(
     plan_item_id: str | None = None,
     visual_assets: dict[str, dict] | None = None,
     speech_cut_owner: tuple[str, str] | None = None,
+    phone_sfx_catalog_paths: dict[str, str] | None = None,
 ) -> dict:
-    """Stage native saves through the same validators, then pin a complete recipe."""
+    """Stage native saves through the same validators, then pin a complete recipe.
+
+    ``phone_sfx_catalog_paths`` is the caller's `_phone_subtitled_sfx_paths`
+    read for a phone Talking variant (the sync Save cannot query the catalog):
+    the real audio object of every effect the Save carries over unchanged.
+    """
     arguments = dict(
         user_id=user_id,
         music_track=music_track,
@@ -9179,6 +9216,7 @@ def prepare_editor_commit(
             job,
             variant_id,
             prepare=lambda staged: _prepare_editor_commit(staged, variant_id, payload, **arguments),
+            sfx_catalog_paths=phone_sfx_catalog_paths,
         )
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
 
@@ -11458,29 +11496,58 @@ async def get_variant_timeline(
     return TimelineResponse(**timeline)
 
 
-async def _phone_subtitled_sfx_paths(db: AsyncSession, job: Job, variant: dict) -> dict[str, str]:
-    """Catalog ``audio_gcs_path`` by sound-effect id for a phone Talking
-    variant whose sound lane is only derivable from the pinned recipe (no
-    editor Save yet, so no persisted ``sound_effects`` with real paths).
+def _phone_subtitled_sfx_ids_missing_paths(job: Job, variant: dict) -> set[str]:
+    """Catalog ids of a phone Talking variant's sound effects with no real
+    catalog audio object: rows derived from the pinned recipe (no editor Save
+    yet), and persisted rows a Save wrote with the `sound-effects/{id}/{id}`
+    placeholder because it carried the lane over without its path (Saves now
+    fill the real path; rows persisted before that heal here, no re-Save).
     Empty for every other variant, and byte-identical with the gate off."""
+    from app.services.phone_subtitled_editor import is_catalog_sfx_path  # noqa: PLC0415
+
     if not _phone_subtitled_editor_lanes_available(job, variant):
-        return {}
-    if isinstance(variant.get("sound_effects"), list):
-        return {}
-    derived = project_phone_subtitled_editor_sections(job.assembly_plan or {}, variant)
-    ids = {
-        str(row.get("sound_effect_id"))
-        for row in (derived or {}).get("sound_effects") or []
-        if isinstance(row, dict) and row.get("sound_effect_id")
+        return set()
+    rows = variant.get("sound_effects")
+    if not isinstance(rows, list):
+        derived = project_phone_subtitled_editor_sections(job.assembly_plan or {}, variant)
+        rows = (derived or {}).get("sound_effects") or []
+    return {
+        str(row["sound_effect_id"])
+        for row in rows
+        if isinstance(row, dict)
+        and row.get("sound_effect_id")
+        and row.get("source") == "phone_lane"
+        and not is_catalog_sfx_path(str(row["sound_effect_id"]), row.get("src_gcs_path"))
     }
+
+
+def _catalog_sfx_paths(effects: Iterable[SoundEffect]) -> dict[str, str]:
+    return {
+        str(effect.id): str(effect.audio_gcs_path) for effect in effects if effect.audio_gcs_path
+    }
+
+
+async def _phone_subtitled_sfx_paths(db: AsyncSession, job: Job, variant: dict) -> dict[str, str]:
+    """Catalog ``audio_gcs_path`` by sound-effect id for every effect in
+    `_phone_subtitled_sfx_ids_missing_paths`: the /timeline native assets
+    sign it in place of the placeholder, and an editor Save persists it
+    (`prepare_editor_commit(phone_sfx_catalog_paths=...)`). No query when
+    nothing is missing."""
+    ids = _phone_subtitled_sfx_ids_missing_paths(job, variant)
     if not ids:
         return {}
     result = await db.execute(select(SoundEffect).where(SoundEffect.id.in_(sorted(ids))))
-    return {
-        str(effect.id): str(effect.audio_gcs_path)
-        for effect in result.scalars().all()
-        if effect.audio_gcs_path
-    }
+    return _catalog_sfx_paths(result.scalars().all())
+
+
+def phone_subtitled_sfx_paths_sync(db: Any, job: Job, variant: dict) -> dict[str, str]:
+    """`_phone_subtitled_sfx_paths` for a sync session (the Kria runtime
+    worker's editor approvals)."""
+    ids = _phone_subtitled_sfx_ids_missing_paths(job, variant)
+    if not ids:
+        return {}
+    result = db.execute(select(SoundEffect).where(SoundEffect.id.in_(sorted(ids))))
+    return _catalog_sfx_paths(result.scalars().all())
 
 
 @router.get("/{job_id}/variants/{variant_id}/lyric-seeds", response_model=LyricSeedsResponse)

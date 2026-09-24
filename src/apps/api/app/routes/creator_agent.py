@@ -84,6 +84,8 @@ from app.models import (
     SoundEffect,
 )
 from app.routes.generative_jobs import (
+    _find_variant,
+    _phone_subtitled_sfx_paths,
     enqueue_editor_commit_render,
     prepare_editor_commit,
     validate_sound_effects_for_user,
@@ -5712,6 +5714,9 @@ async def _execute_creator_craft(
                         (speech_operation_id, speech_generation)
                         if speech_operation_id and speech_generation
                         else None
+                    ),
+                    phone_sfx_catalog_paths=await _phone_subtitled_sfx_paths(
+                        db, job, _find_variant(job, body.expected_variant_id) or {}
                     ),
                 )
                 if speech_operation_id:

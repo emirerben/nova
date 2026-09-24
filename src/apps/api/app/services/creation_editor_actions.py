@@ -16,6 +16,7 @@ from app.models import CreationThreadEvent, Job, PlanItem, PlanItemAsset
 from app.routes._copilot import CopilotTurnBody, run_copilot_turn
 from app.routes.generative_jobs import (
     EditorCommitRequest,
+    _phone_subtitled_sfx_paths,
     enqueue_editor_commit_render,
     prepare_editor_commit,
     variant_render_baseline,
@@ -676,6 +677,7 @@ async def execute_copilot_edit(
             user_id=str(user.id),
             plan_item_id=str(thread.active_plan_item_id),
             visual_assets=visual_assets,
+            phone_sfx_catalog_paths=await _phone_subtitled_sfx_paths(db, job, variant),
         )
         if not any((prep["sections"] or {}).values()):
             raise ValueError("This change has no effect on the saved edit.")

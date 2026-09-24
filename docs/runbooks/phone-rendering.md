@@ -813,7 +813,12 @@ single source of truth for both the capability map and the Save path. Off ⇒
 every response, capability map and Save is byte-identical to before (a Save
 on a phone Talking edit still 422s `unsupported_phone_edit`, as it always
 did). **Rollback:** `fly secrets set PHONE_SUBTITLED_EDITOR_LANES_ENABLED=false
---app nova-video` + `fly machine restart <id>` (api + worker).
+--app nova-video` + `fly machine restart <id>` (api + worker). Variants Saved
+while it was on keep their persisted `media_overlays`/`sound_effects`, but the
+status response and the timeline's `native_assets` drop both lanes whenever
+neither `sfx` nor `overlays` is editable (flag off, or `SOUND_EFFECTS_ENABLED`
+and `MEDIA_OVERLAYS_ENABLED` both off), so the native editor falls back to the
+MP4 instead of a black canvas; turning the flag back on restores them.
 
 **What opens.** For a device-rendered `subtitled` variant only,
 `_clamp_phone_editor_capabilities` (`routes/generative_jobs.py`) stops
@@ -836,7 +841,12 @@ older variants need no migration and `_run_phone_subtitled_job` is
 untouched); after a Save the compiled lanes are persisted on the variant as
 `_phone_subtitled_editor_lanes_v1` and preferred over derivation. The
 timeline route's `native_assets` carries the matching `sound_effect` /
-`media_overlay` rows so the native preview resolves them; a sound effect
+`media_overlay` rows so the native preview resolves them. Recipes carry no
+storage paths, so a sound effect's real audio object comes from
+`SoundEffect.audio_gcs_path`: resolved on read (`_phone_subtitled_sfx_paths`)
+for derived rows and for rows persisted with the `sound-effects/{id}/{id}`
+placeholder, and persisted by every Save, including one that leaves the sound
+lane untouched (iOS commits only changed sections); a sound effect
 added from the iOS Sounds → Effects tab (backed by `GET /sound-effects`)
 previews from the catalog's `preview_audio_url` until the next snapshot.
 
@@ -866,7 +876,9 @@ A card keeps the fade the worker gave it; a card the creator adds is static
 
 **Guards:** `tests/services/test_phone_subtitled_editor.py`,
 `tests/routes/test_phone_subtitled_editor_commit.py`,
-`tests/routes/test_phone_subtitled_editor_capabilities.py`, trim cases in
+`tests/routes/test_phone_subtitled_editor_capabilities.py`,
+`tests/routes/test_phone_subtitled_editor_sfx_paths.py`,
+`tests/routes/test_phone_subtitled_editor_rollback.py`, trim cases in
 `tests/pipeline/test_phone_subtitled_plan.py`; iOS
 `NativeSfxBrowseTests`, `NativeEditorInspectorTests` (add/move/remove on the
 `phoneSubtitledLanes` fixture), `NativeEditorRenderCompilerTests`.
