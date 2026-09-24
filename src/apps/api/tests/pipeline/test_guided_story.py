@@ -33,6 +33,7 @@ from app.pipeline.guided_story import (
     _verify_receipt,
     compile_execution_plan,
     compile_guided_runtime_plan,
+    plan_preserves_source_audio,
     song_reference_variant_fields,
     validate_execution_plan,
     validate_proposal_timing,
@@ -3470,9 +3471,7 @@ def _verified_receipt(plan: dict) -> dict:
         "music": None,
         "song_reference": plan.get("song_reference"),
         "source_audio_preserved": (
-            bool((plan.get("montage_audio") or {}).get("preserve_source_audio"))
-            if plan.get("compiler_version", 0) >= 6
-            else None
+            plan_preserves_source_audio(plan) if plan.get("compiler_version", 0) >= 6 else None
         ),
         "output": {
             "width": 1080,
@@ -3874,6 +3873,8 @@ def test_first_guided_render_applies_materialized_sfx_after_text(monkeypatch, tm
 
     monkeypatch.setattr("app.tasks.template_orchestrate._concat_demuxer", fake_concat)
     monkeypatch.setattr(guided_story, "_audio_codec", lambda _path: "aac")
+    # Source audio is on by default now (KRI-184); this test is about the SFX lane.
+    monkeypatch.setattr(guided_story, "_mux_guided_source_audio", lambda assembled, *_a: assembled)
     monkeypatch.setattr(
         generative_overlays, "build_overlays_from_text_elements", lambda *_args, **_kwargs: []
     )

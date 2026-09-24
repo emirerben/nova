@@ -132,4 +132,5 @@ def test_phone_revision_replaces_reference_timing_with_new_recipe(monkeypatch):
     assert variant["song_reference"]["end_s"] == 12
     assert variant["music_playback_mode"] == "reference_only"
     assert variant["music_track_id"] is None
-    assert variant["source_audio_preserved"] is False
+    # KRI-184: no explicit choice on a reference-only plan keeps the clips' own sound.
+    assert variant["source_audio_preserved"] is True

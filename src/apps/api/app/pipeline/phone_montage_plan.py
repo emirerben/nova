@@ -344,7 +344,11 @@ def compile_phone_montage_plan(
                 ],
             )
         )
-        audio = AudioMixRecipe(music_volume=music_gain, original_volume=0.0)
+        # KRI-184: the clips' own sound always plays. Deliberately NOT the cloud
+        # `_mix_template_audio` behaviour (song replaces footage audio); the app
+        # keeps original sound by default and a recorded voiceover is the only
+        # thing that ducks it (handled below).
+        audio = AudioMixRecipe(music_volume=music_gain)
 
     if has_voiceover and narration is not None:
         # `narration is not None` always holds here (the earlier check
