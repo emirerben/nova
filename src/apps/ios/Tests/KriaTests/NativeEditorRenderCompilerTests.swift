@@ -657,6 +657,22 @@ import KriaMediaEngine
         XCTAssertNil(entranceOnly.overlayFadeOut)
         XCTAssertEqual(entranceOnly.overlayFadeAlpha(at: 2.99), 1)
 
+        // The mirror image of entranceOnly: only the exit token is "fade".
+        let exitOnly = try compiled(entrance: "none", exit: "fade")
+        XCTAssertNil(exitOnly.overlayFadeIn)
+        XCTAssertEqual(exitOnly.overlayFadeOut, true)
+        XCTAssertEqual(exitOnly.overlayFadeAlpha(at: 1.01), 1)
+        XCTAssertEqual(exitOnly.overlayFadeAlpha(at: 2.925), 0.5, accuracy: 1e-9)
+        XCTAssertNil(exitOnly.visualPlacement)
+
+        // The entrance and exit guards are independent, so a card can author
+        // "fade" in and "dissolve-out" out on the same clip -- the compiler
+        // must set both fields rather than one silently winning.
+        let fadeInDissolveOut = try compiled(entrance: "fade", exit: "dissolve-out")
+        XCTAssertEqual(fadeInDissolveOut.overlayFadeIn, true)
+        XCTAssertNil(fadeInDissolveOut.overlayFadeOut)
+        XCTAssertNotNil(fadeInDissolveOut.overlayDissolveSeed)
+
         // A styled card already sits on the placement path; it fades there,
         // with no second fade on the clip.
         let styled = try compiled(entrance: "fade", exit: "fade", styled: true)
