@@ -689,12 +689,20 @@ async def _plan_with_live_agent(
                 await asyncio.wait_for(stop.wait(), timeout=_LEASE_HEARTBEAT_SECONDS)
                 return
             except TimeoutError:
-                alive = await asyncio.to_thread(
-                    _renew_turn_lease,
-                    turn_id,
-                    lease_owner=lease_owner,
-                    lease_epoch=lease_epoch,
-                )
+                try:
+                    alive = await asyncio.to_thread(
+                        _renew_turn_lease,
+                        turn_id,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                    )
+                except Exception:  # noqa: BLE001 - the lease outlasts a missed renewal
+                    # Ending the heartbeat here would let the lease lapse mid-plan
+                    # and, re-raised in `finally`, replace a finished plan.
+                    log.warning(
+                        "kria_turn_lease_renewal_failed", turn_id=str(turn_id), exc_info=True
+                    )
+                    continue
                 if not alive:
                     return
 

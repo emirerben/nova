@@ -1335,27 +1335,68 @@ async def test_live_planner_starts_no_heartbeat_when_its_engine_cannot_be_built(
 
 
 @pytest.mark.asyncio
-async def test_live_planner_disposes_its_engine_when_lease_renewal_raises(
+async def test_live_planner_keeps_renewing_after_a_failed_lease_renewal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A lease-renewal error surfaces from the heartbeat after planning, and the
-    per-call engine is still disposed on the loop that created it."""
+    """One failed renewal (a database blip) is retried on the next tick: the
+    lease must not lapse mid-plan, and the error must not replace the plan."""
     events: list[str] = []
     engines, _sessionmakers = _record_planning_engines(monkeypatch, events)
+    renewals: list[uuid.UUID] = []
+    planned = _question_turn()
 
     async def _plan(_db, **_kwargs):  # noqa: ANN001, ANN003, ANN202
-        events.append("planning")
-        await asyncio.sleep(0.035)
-        return _question_turn()
+        await asyncio.sleep(0.05)
+        return planned
 
-    def _renew(*_args, **_kwargs) -> bool:  # noqa: ANN002, ANN003
-        raise RuntimeError("lease store unavailable")
+    def _renew(turn_id: uuid.UUID, **_kwargs) -> bool:  # noqa: ANN003
+        renewals.append(turn_id)
+        if len(renewals) == 1:
+            raise RuntimeError("lease store unavailable")
+        return True
 
     monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _plan)
     monkeypatch.setattr("app.tasks.kria_runtime._renew_turn_lease", _renew)
     monkeypatch.setattr("app.tasks.kria_runtime._LEASE_HEARTBEAT_SECONDS", 0.01)
 
-    with pytest.raises(RuntimeError, match="lease store unavailable"):
+    result = await _plan_with_live_agent(
+        {"thread_id": uuid.uuid4(), "item_id": uuid.uuid4(), "creator_id": uuid.uuid4()},
+        "Make it faster",
+        turn_id=uuid.uuid4(),
+        lease_owner="worker-1",
+        lease_epoch=2,
+    )
+
+    assert result == planned
+    assert len(renewals) >= 2
+    [(engine, _url, _kwargs)] = engines
+    assert engine.disposals == 1
+
+
+@pytest.mark.asyncio
+async def test_live_planner_disposes_its_engine_when_the_heartbeat_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`asyncio.run` cancels every task at shutdown (a Celery soft time limit
+    lands there), so awaiting the heartbeat can raise: the engine is still
+    disposed on the loop that created it."""
+    events: list[str] = []
+    engines, _sessionmakers = _record_planning_engines(monkeypatch, events)
+    _record_lease_renewals(monkeypatch)
+
+    async def _plan(_db, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+        [heartbeat] = [
+            task
+            for task in asyncio.all_tasks()
+            if getattr(task.get_coro(), "__name__", "") == "_heartbeat"
+        ]
+        heartbeat.cancel()
+        await asyncio.sleep(0.02)
+        return _question_turn()
+
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _plan)
+
+    with pytest.raises(asyncio.CancelledError):
         await _plan_with_live_agent(
             {"thread_id": uuid.uuid4(), "item_id": uuid.uuid4(), "creator_id": uuid.uuid4()},
             "Make it faster",
