@@ -138,6 +138,7 @@ def test_debug_caps_context_runs_and_omits_heavy_io(client: TestClient) -> None:
                     _rows_result([job_run]),
                     _rows_result(template_runs),
                     _rows_result(track_runs),
+                    MagicMock(first=MagicMock(return_value=None)),
                 ]
             )
             yield db
@@ -238,7 +239,7 @@ def test_null_template_and_track_ids_skip_context_queries(client: TestClient) ->
     assert body["template_agent_runs_has_more"] is False
     assert body["track_agent_runs"] == []
     assert body["track_agent_runs_has_more"] is False
-    assert len(executed) == 3
+    assert len(executed) == 4  # incl. the thread-link lookup
     assert all("template_id IS NULL" not in stmt for stmt in executed)
     assert all("music_track_id IS NULL" not in stmt for stmt in executed)
 

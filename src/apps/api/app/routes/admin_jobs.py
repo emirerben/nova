@@ -733,11 +733,9 @@ async def get_job_debug(
         else None
     )
 
-    thread_link = None
-    if getattr(job, "content_plan_item_id", None) is not None:
-        thread_link = await find_thread_link(
-            db, plan_item_id=job.content_plan_item_id, job_id=job.id
-        )
+    thread_link = await find_thread_link(
+        db, plan_item_id=getattr(job, "content_plan_item_id", None), job_id=job.id
+    )
 
     return JobDebugResponse(
         job=job_payload,

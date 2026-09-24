@@ -216,7 +216,14 @@ EVENTS_MAX_LIMIT = 500
 TURNS_DEFAULT_LIMIT = 50
 TURNS_MAX_LIMIT = 200
 
-_SIGNED_URL_MARKERS = ("X-Goog-Signature", "X-Amz-Signature", "Signature=")
+_SIGNED_URL_MARKERS = (
+    "X-Goog-Signature",
+    "X-Amz-Signature",
+    "X-Goog-Credential",
+    "X-Amz-Credential",
+    "Signature=",
+)
+_MAX_SEQUENCE_CURSOR = 2**31 - 1  # sequence is a 32-bit Integer column
 _REDACTED_URL = "[redacted-signed-url]"
 
 
@@ -285,11 +292,10 @@ async def creation_thread_events(
     identifier = _parse_thread_id(thread_id)
     after_sequence = -1
     if cursor:
-        try:
-            after_sequence = int(cursor)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="invalid_cursor") from exc
-        if after_sequence < 0:
+        if not (cursor.isascii() and cursor.isdigit()):
+            raise HTTPException(status_code=422, detail="invalid_cursor")
+        after_sequence = int(cursor)
+        if after_sequence > _MAX_SEQUENCE_CURSOR:
             raise HTTPException(status_code=422, detail="invalid_cursor")
     thread = await _require_thread(db, identifier)
 

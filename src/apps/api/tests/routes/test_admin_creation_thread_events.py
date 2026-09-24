@@ -247,7 +247,7 @@ def test_events_limit_bounds(client: TestClient) -> None:
         assert res.status_code == 422
 
 
-@pytest.mark.parametrize("cursor", ["abc", "-1"])
+@pytest.mark.parametrize("cursor", ["abc", "-1", "99999999999", "\u0663"])
 def test_events_rejects_bad_cursor(client: TestClient, cursor: str) -> None:
     thread = _thread()
     res = _get(

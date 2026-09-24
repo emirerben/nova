@@ -103,9 +103,15 @@ operator read what the creator actually said and what the runtime did, without g
   `GET /admin/jobs/{id}/debug` (null when no thread owns the item/job), so a job traces to
   its thread directly (`services/kria_trace.find_thread_link`).
 
+Known limits: `thread_id` is resolved from the thread's *current* `active_plan_item_id` /
+`active_job_id`, so an older job whose thread has since moved to a newer render can return
+`null`. A turn's `job_ids` come only from its tool executions, so plan-item render dispatches
+that mint a job without an execution row do not appear on a turn. `/turns` limit/cursor and
+the events `cursor` (a non-negative ASCII integer <= 2^31-1) are additive extras.
+
 Same admin auth as `/integrity`. These routes return creator text, so treat output as
 sensitive; signed storage URLs inside payloads/receipts are replaced by
-`[redacted-signed-url]`. Examples:
+`[redacted-signed-url]` (substring heuristic on signature/credential markers; event `content` is not scrubbed). Examples:
 
 ```bash
 python scripts/admin.py --prod GET creation-threads/<thread_id>/events

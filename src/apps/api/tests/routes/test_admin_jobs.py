@@ -339,8 +339,17 @@ class TestJobDebug:
                 runs_res.scalars.return_value.all.return_value = []
                 track_runs_res = MagicMock()
                 track_runs_res.scalars.return_value.all.return_value = []
+                no_thread_res = MagicMock()
+                no_thread_res.first.return_value = None
                 db.execute = AsyncMock(
-                    side_effect=[job_res, clips_res, mt_res, runs_res, track_runs_res]
+                    side_effect=[
+                        job_res,
+                        clips_res,
+                        mt_res,
+                        runs_res,
+                        track_runs_res,
+                        no_thread_res,
+                    ]
                 )
                 yield db
 
@@ -463,8 +472,17 @@ class TestJobDebug:
                 runs_res.scalars.return_value.all.return_value = []
                 track_runs_res = MagicMock()
                 track_runs_res.scalars.return_value.all.return_value = []
+                no_thread_res = MagicMock()
+                no_thread_res.first.return_value = None
                 db.execute = AsyncMock(
-                    side_effect=[job_res, clips_res, mt_res, runs_res, track_runs_res]
+                    side_effect=[
+                        job_res,
+                        clips_res,
+                        mt_res,
+                        runs_res,
+                        track_runs_res,
+                        no_thread_res,
+                    ]
                 )
                 yield db
 
@@ -535,8 +553,17 @@ class TestJobDebug:
                 runs_res.scalars.return_value.all.return_value = []
                 track_runs_res = MagicMock()
                 track_runs_res.scalars.return_value.all.return_value = []
+                no_thread_res = MagicMock()
+                no_thread_res.first.return_value = None
                 db.execute = AsyncMock(
-                    side_effect=[job_res, clips_res, mt_res, runs_res, track_runs_res]
+                    side_effect=[
+                        job_res,
+                        clips_res,
+                        mt_res,
+                        runs_res,
+                        track_runs_res,
+                        no_thread_res,
+                    ]
                 )
                 yield db
 
@@ -646,6 +673,7 @@ class TestJobDebug:
                         runs_res,
                         tpl_runs_res,
                         track_runs_res,
+                        MagicMock(first=MagicMock(return_value=None)),
                     ]
                 )
                 yield db
