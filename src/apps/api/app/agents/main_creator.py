@@ -23,6 +23,7 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents._schemas.creator_policy import CAPABILITY_DRAFT_GUIDED_PROPOSAL
 from app.config import settings
+from app.kria.brief import BriefUpdate, parse_brief_updates
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     MontageCadenceConstraint,
@@ -38,7 +39,9 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # Named sound effects are model-read with verbatim licensed_sfx evidence (v35).
 # KRI-178: reaction beats (name/word-triggered photo/sticker + sound pop-ins,
 # plus a held closing shot) on a phone `subtitled` (Talking) edit (v36).
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v36"
+# KRI-188: Creative Brief requirement extraction (`brief_updates`, taught only
+# when the brief is on for the creator) -- v37.
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v37"
 
 # Visual instructions are substituted only when the resolver flag is enabled;
 # the base prompt independently describes deferred transcript label intents.
@@ -162,6 +165,33 @@ named are added on iPhone. This edit always stays `edit_format: "subtitled"` wit
 """.strip("\n")
 
 
+# KRI-188: Creative Brief extraction. Rendered into the `$brief_section` slot
+# (appended to the clip-intents line, so "" adds no bytes) ONLY when
+# `MainCreatorInput.brief_enabled` is true; flag off is byte-identical.
+_BRIEF_PROMPT_SECTION = """
+CREATIVE BRIEF
+The FULL CREATOR REQUEST CONTRACT lists every requirement the creator has stated so far. In
+ADDITION to `action`, return a top-level `brief_updates` list (at most 8 objects, in the same
+JSON object as `action`) holding ONLY the requirements the CURRENT USER MESSAGE newly states or
+changes -- never re-list a requirement that is already in the contract and unchanged. Each
+object: {"kind": "text|order|select|timing|audio|style", "scope":
+"title|per_clip|clip:<media_id>|global", "literal": "the creator's exact words to print, or
+null", "description": "what is wanted in the creator's own framing, or null", "facts": {}}.
+`literal` is ONLY text the creator wrote out; described text ("the landmark on each clip") goes
+in `description` with `literal` null. Put structured details in `facts` (for order: {"key":
+"capture_time"}; for timing: {"duration_s": 20}; for a route or distance: {"distance_km": 20,
+"start": "...", "end": "..."}). Keep the creator's language and spelling (Turkish stays
+Turkish). One requirement per (kind, scope): a new one replaces the older one. A message that
+only asks to redo the edit ("do it again based on my prompt") adds no requirements -- propose a
+full strategy that honours EVERY requirement in the contract. Example: "Title it 20K Koşu, put
+the landmark name on each clip and order them by the time I filmed them" => brief_updates:
+[{"kind": "text", "scope": "title", "literal": "20K Koşu", "description": null, "facts": {}},
+{"kind": "text", "scope": "per_clip", "literal": null, "description": "the landmark shown in
+each clip", "facts": {}}, {"kind": "order", "scope": "global", "literal": null, "description":
+"chronological by filming time", "facts": {"key": "capture_time"}}].
+""".strip("\n")
+
+
 class MainCreatorInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -173,12 +203,18 @@ class MainCreatorInput(BaseModel):
     media_context: list[dict] = Field(default_factory=list, max_length=50)
     conversation: list[dict] = Field(default_factory=list, max_length=20)
     capability_manifest: ResolvedCreatorManifest
+    # KRI-188: True only when the Creative Brief is on for this creator. Off =>
+    # the prompt is byte-identical and no `brief_updates` are read from output.
+    brief_enabled: bool = False
 
 
 class MainCreatorOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: CreatorAgentOutput
+    # KRI-188: requirements newly stated/changed by the current message. Empty
+    # (and omitted from dumps) unless the brief is enabled for this creator.
+    brief_updates: list[BriefUpdate] = Field(default_factory=list, exclude_if=lambda v: not v)
 
 
 class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
@@ -261,6 +297,8 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 if _reaction_beats_available(input.capability_manifest)
                 else ""
             ),
+            # KRI-188: "" (flag off) adds no bytes; same line-suffix trick.
+            brief_section=("\n" + _BRIEF_PROMPT_SECTION if input.brief_enabled else ""),
         )
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002
@@ -364,7 +402,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         )
                     }
                 )
-            return MainCreatorOutput(action=action)
+            return MainCreatorOutput(
+                action=action,
+                brief_updates=(
+                    parse_brief_updates(data.get("brief_updates")) if input.brief_enabled else []
+                ),
+            )
         except ValidationError as exc:
             # Tell the retry which contract fields failed, without echoing
             # private field values or the model's full response into logs.

@@ -987,6 +987,96 @@
         "title": "CreationVoiceoverCapabilitiesOut",
         "type": "object"
       },
+      "CreativeBriefOut": {
+        "additionalProperties": false,
+        "properties": {
+          "requirement_receipts": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementReceipt"
+            },
+            "title": "Requirement Receipts",
+            "type": "array"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/CreativeBriefRequirementOut"
+            },
+            "title": "Requirements",
+            "type": "array"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "thread_id",
+          "version"
+        ],
+        "title": "CreativeBriefOut",
+        "type": "object"
+      },
+      "CreativeBriefRequirementOut": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": null,
+            "nullable": true,
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "text",
+              "order",
+              "select",
+              "timing",
+              "audio",
+              "style"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "literal": {
+            "default": null,
+            "nullable": true,
+            "title": "Literal",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "met",
+              "partial",
+              "not_possible",
+              "superseded"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "scope",
+          "status"
+        ],
+        "title": "CreativeBriefRequirementOut",
+        "type": "object"
+      },
       "Crop": {
         "properties": {
           "scale": {
@@ -5329,6 +5419,48 @@
         "title": "RenderFingerprint",
         "type": "object"
       },
+      "RequirementReceipt": {
+        "additionalProperties": false,
+        "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one.",
+        "properties": {
+          "inferred": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 24,
+            "title": "Inferred",
+            "type": "array"
+          },
+          "reason": {
+            "default": null,
+            "maxLength": 300,
+            "nullable": true,
+            "title": "Reason",
+            "type": "string"
+          },
+          "requirement_id": {
+            "maxLength": 24,
+            "minLength": 1,
+            "title": "Requirement Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "met",
+              "partial",
+              "not_possible"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requirement_id",
+          "status"
+        ],
+        "title": "RequirementReceipt",
+        "type": "object"
+      },
       "ResolvedTextMotion": {
         "additionalProperties": false,
         "properties": {
@@ -8374,6 +8506,48 @@
           }
         ]
       }
+    },
+    "/creation-threads/{thread_id}/brief": {
+      "get": {
+        "operationId": "getCreationBrief",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreativeBriefOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
     },
     "/creation-threads/{thread_id}/delta": {
       "get": {

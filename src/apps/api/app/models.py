@@ -1631,6 +1631,43 @@ class CreatorAgentTurn(Base):
     )
 
 
+class CreativeBriefVersion(Base):
+    """Append-only version of a thread's Creative Brief requirement ledger (KRI-188).
+
+    Rows are only ever inserted. A later requirement of the same kind and scope
+    marks the earlier one ``superseded`` inside the NEW version's snapshot; the
+    older row is never mutated. ``source_turn_id`` makes persistence idempotent
+    per turn (a requeued turn never writes a second version).
+    """
+
+    __tablename__ = "creative_brief_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    requirements: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    source_turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_turns.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("version >= 1", name="ck_creative_brief_versions_version"),
+        UniqueConstraint("thread_id", "version", name="uq_creative_brief_versions_thread_version"),
+        Index(
+            "uq_creative_brief_versions_turn",
+            "thread_id",
+            "source_turn_id",
+            unique=True,
+            postgresql_where=text("source_turn_id IS NOT NULL"),
+        ),
+    )
+
+
 class CreatorEditDraft(Base):
     """Immutable-versioned server edit snapshot for runtime-v2."""
 

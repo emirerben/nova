@@ -27,6 +27,7 @@ from app.kria.api_schemas import (
     TurnCancelBody,
     TurnCancelled,
 )
+from app.kria.contracts import CreativeBriefOut
 from app.kria.drafts import read_or_bootstrap_draft, undo_draft, write_draft
 from app.kria.http import KriaRuntimeRoute, problem_response
 from app.kria.runtime import (
@@ -34,6 +35,7 @@ from app.kria.runtime import (
     cancel_turn,
     decide_approval,
     read_approval,
+    read_creative_brief,
     read_delta,
     submit_turn,
 )
@@ -288,6 +290,32 @@ async def get_runtime_approval(
                 thread_id, code="thread_not_found", message="Creation thread not found"
             ),
             approval_id=_uuid(approval_id, code="approval_not_found", message="Approval not found"),
+            creator_id=user.id,
+        )
+    except RuntimeFailure as failure:
+        await db.rollback()
+        return _problem(request, failure)
+
+
+@router.get(
+    "/{thread_id}/brief",
+    response_model=CreativeBriefOut,
+    responses={404: {"model": KriaProblemOut}, 409: {"model": KriaProblemOut}},
+)
+async def get_creative_brief(
+    request: Request,
+    thread_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreativeBriefOut | JSONResponse:
+    """KRI-188: the creator's current requirements and how each was handled."""
+    try:
+        _runtime_enabled(user)
+        return await read_creative_brief(
+            db,
+            thread_id=_uuid(
+                thread_id, code="thread_not_found", message="Creation thread not found"
+            ),
             creator_id=user.id,
         )
     except RuntimeFailure as failure:
