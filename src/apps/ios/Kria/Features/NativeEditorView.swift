@@ -854,14 +854,17 @@ private struct NativeSoundsInspector: View {
 }
 
 private struct NativeSoundsPanel: View {
-    enum Tab: String { case music = "Music" }
+    enum Tab: String { case music = "Music", effects = "Effects" }
     @ObservedObject var session: NativeEditorSession
     @ObservedObject var panelDrafts: NativeEditorPanelDrafts
     let onDone: () -> Void
     @State private var tab: Tab = .music
     var body: some View {
-        NativeEditorLanePanel(title: "Sounds", tabs: [Tab.music], tab: $tab, onDone: onDone) {
-            NativeSoundsControls(session: session, panelDrafts: panelDrafts)
+        NativeEditorLanePanel(title: "Sounds", tabs: [Tab.music, Tab.effects], tab: $tab, onDone: onDone) {
+            switch tab {
+            case .music: NativeSoundsControls(session: session, panelDrafts: panelDrafts)
+            case .effects: NativeSoundEffectsControls(session: session, panelDrafts: panelDrafts)
+            }
         }
         .onDisappear { session.endTransaction() }
     }
@@ -915,6 +918,72 @@ private struct NativeSoundsControls: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+private struct NativeSoundEffectsControls: View {
+    @ObservedObject var session: NativeEditorSession
+    @ObservedObject var panelDrafts: NativeEditorPanelDrafts
+
+    private var canAdd: Bool {
+        session.canEditOperation(["lanes.sfx.add", "sfx.add", "sound_effects.add", "lanes.sfx"], section: .soundEffects)
+    }
+    private var groups: [NativeSfxBrowse.Group] {
+        NativeSfxBrowse.groupEffects(session.soundEffectCatalog, query: panelDrafts.sfxQuery)
+    }
+    private var showsCategoryLabels: Bool { NativeSfxBrowse.hasCategories(session.soundEffectCatalog) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Sound effects").font(KriaFont.body(15).weight(.semibold))
+            TextField("Search sound effects", text: $panelDrafts.sfxQuery)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                .padding(.horizontal, 12).frame(minHeight: 44)
+                .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityIdentifier("native-editor-sfx-search")
+            if session.soundEffectCatalogLoading && session.soundEffectCatalog.isEmpty {
+                ProgressView("Loading sounds…").frame(minHeight: 44)
+            } else if session.soundEffectCatalog.isEmpty {
+                Text("Sound effects aren’t available right now.")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            } else if groups.isEmpty {
+                Text("No sound effects match “\(panelDrafts.sfxQuery)”.")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            } else {
+                ForEach(groups, id: \.key) { group in
+                    VStack(alignment: .leading, spacing: 6) {
+                        if showsCategoryLabels {
+                            Text("\(group.label) (\(group.effects.count))")
+                                .font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.zinc)
+                        }
+                        ForEach(group.effects) { effect in
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(effect.name).font(KriaFont.body(14))
+                                    if let duration = effect.durationS {
+                                        Text(String(format: "%.1fs", duration))
+                                            .font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk)
+                                    }
+                                }
+                                Spacer(minLength: 8)
+                                Button("Add") { session.addSoundEffect(effect) }
+                                    .buttonStyle(KriaSecondaryButtonStyle())
+                                    .disabled(!canAdd)
+                                    .accessibilityIdentifier("native-editor-sfx-add-\(effect.id)")
+                            }
+                            .padding(.horizontal, 12).frame(minHeight: 44)
+                            .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+                }
+            }
+            if !canAdd {
+                Label("Sound effects aren’t available for this edit.", systemImage: "lock")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .task { await session.loadSoundEffectCatalog() }
     }
 }
 

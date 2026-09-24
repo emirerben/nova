@@ -99,6 +99,28 @@ final class NativeEditorSourcesTests: XCTestCase {
         XCTAssertNil(NativeDownloadedMedia.fileExtension(sourceURL: remote, response: response))
     }
 
+    func testEditorSoundEffectsDecodesTheCatalogEnvelope() async throws {
+        defer { NativeEditorURLProtocol.handler = nil }
+        NativeEditorURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/sound-effects")
+            XCTAssertEqual(request.httpMethod, "GET")
+            return (200, Data(#"{"effects":[{"id":"catalog-buzzer","name":"Wrong buzzer","duration_s":0.6,"preview_audio_url":"https://storage.googleapis.com/bucket/buzzer.mp3","role_tags":["negative"],"category":"rejection","search_terms":["buzzer","wrong"]},{"id":"catalog-legacy","name":"Legacy upload","duration_s":null,"role_tags":[],"category":null,"search_terms":[]}]}"#.utf8))
+        }
+        let api: any KriaAPIClient = NativeEditorTestSupport.api()
+        let effects = try await api.editorSoundEffects()
+        XCTAssertEqual(effects.count, 2)
+        XCTAssertEqual(effects[0].id, "catalog-buzzer")
+        XCTAssertEqual(effects[0].name, "Wrong buzzer")
+        XCTAssertEqual(effects[0].durationS, 0.6)
+        XCTAssertEqual(effects[0].previewAudioURL?.absoluteString, "https://storage.googleapis.com/bucket/buzzer.mp3")
+        XCTAssertEqual(effects[0].roleTags, ["negative"])
+        XCTAssertEqual(effects[0].category, "rejection")
+        XCTAssertEqual(effects[0].searchTerms, ["buzzer", "wrong"])
+        XCTAssertNil(effects[1].durationS)
+        XCTAssertNil(effects[1].previewAudioURL)
+        XCTAssertNil(effects[1].category)
+    }
+
     func testSourcePoolUsesConcreteTransportThroughProtocol() async throws {
         defer { NativeEditorURLProtocol.handler = nil }
         let job = UUID()

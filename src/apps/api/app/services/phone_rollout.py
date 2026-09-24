@@ -357,6 +357,57 @@ def phone_subtitled_reaction_beats_supported() -> bool:
     )
 
 
+# Device features an editable phone `subtitled` Save needs (KRI-182 step 1):
+# a superset of `PHONE_SUBTITLED_OVERLAY_FEATURES` plus `soundEffects` --
+# Save can recompile both the overlay lane and the sfx lane from the
+# committed editor sections in one commit, so both device-parity gates must
+# hold before either section is advertised as editable. Kept as one tuple so
+# the manifest gate and `prepare_phone_editor_commit` can never disagree.
+PHONE_SUBTITLED_EDITOR_FEATURES: tuple[str, ...] = (
+    "stillImages",
+    "visualBlocks",
+    "alphaOverlay",
+    "audioMix",
+    "soundEffects",
+)
+
+
+def phone_subtitled_editor_lanes_supported() -> bool:
+    """Single source of truth for "can a phone-rendered `subtitled` (Talking
+    to camera) variant's `sound_effects`/`media_overlays` editor sections be
+    Saved right now" (KRI-182 step 1).
+
+    Consulted by `app.services.phone_editor.prepare_phone_editor_commit`
+    (whether the subtitled branch recompiles
+    `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan` from the
+    committed editor sections, or 422s `unsupported_phone_edit`) and by
+    `app.routes.generative_jobs._clamp_phone_editor_capabilities` (whether
+    `sfx`/`overlays` stay open instead of closed for a subtitled device
+    variant). A manifest that advertises the lanes while Save still 422s --
+    or vice versa -- is exactly the drift this helper exists to prevent.
+
+    True iff ALL of:
+      - `phone_subtitled_editor_lanes_enabled` (this feature's own rollout
+        flag; independently reversible from the two below).
+      - `phone_subtitled_media_lanes_enabled` (the underlying KRI-174 lane
+        compiler must already be live -- an editor Save that recompiles a
+        lanes request is pointless if the worker itself never honours one).
+      - every feature in `PHONE_SUBTITLED_EDITOR_FEATURES` is in
+        `phone_render_verified_features` (device-parity gate; a rollout flag
+        alone never skips it).
+
+    Deliberately says nothing about the edit format or clip count -- callers
+    combine it with their own `subtitled` shape check.
+    """
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_subtitled_editor_lanes_enabled
+        and settings.phone_subtitled_media_lanes_enabled
+        and all(feature in verified for feature in PHONE_SUBTITLED_EDITOR_FEATURES)
+    )
+
+
 def phone_render_supported_formats() -> frozenset[str]:
     """The single source of truth for "which edit formats can render on the
     phone for THIS deployment, right now" -- settings-aware, unlike the

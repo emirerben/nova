@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class NativeEditorPanelDrafts: ObservableObject {
     @Published var musicTrackID = ""
+    @Published var sfxQuery = ""
 
     @Published var visualTab: NativeVisualPanel.Tab = .edit
     @Published var visualCategory: NativeVisualPanel.Category = .media
