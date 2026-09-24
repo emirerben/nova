@@ -117,13 +117,18 @@ def test_reconciler_selects_only_recoverable_turns_and_publishes_stable_task_ids
     now = datetime.now(UTC)
     turns = [
         SimpleNamespace(
-            id=uuid.uuid4(), status="pending", lease_owner="old", lease_expires_at=None
+            id=uuid.uuid4(),
+            status="pending",
+            lease_owner="old",
+            lease_expires_at=None,
+            abandoned_claims=0,
         ),
         SimpleNamespace(
             id=uuid.uuid4(),
             status="planning",
             lease_owner="stale-worker",
             lease_expires_at=now - timedelta(seconds=1),
+            abandoned_claims=1,
         ),
     ]
     db = MagicMock()
@@ -156,6 +161,9 @@ def test_reconciler_selects_only_recoverable_turns_and_publishes_stable_task_ids
     assert all(turn.status == "pending" for turn in turns)
     assert all(turn.lease_owner is None for turn in turns)
     assert all(turn.lease_expires_at == now + timedelta(minutes=1) for turn in turns)
+    # Only the lapsed planning lease was an abandoned run; the pending row
+    # was merely waiting for delivery.
+    assert [turn.abandoned_claims for turn in turns] == [0, 2]
     db.commit.assert_called_once_with()
 
 
@@ -382,6 +390,7 @@ def test_claim_owns_pending_turn_with_database_time_and_returns_trusted_snapshot
         cancel_requested_at=None,
         lease_owner=None,
         lease_epoch=0,
+        abandoned_claims=0,
         completed_at=None,
         thread_id=uuid.uuid4(),
         source_event_id=uuid.uuid4(),

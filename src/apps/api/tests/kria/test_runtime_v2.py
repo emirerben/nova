@@ -28,6 +28,7 @@ from app.kria.runtime import (
     submit_turn,
 )
 from app.tasks.kria_runtime import (
+    _ClaimsExhausted,
     _complete_read_turn,
     _Completion,
     _owns_turn_lease,
@@ -1592,6 +1593,26 @@ def test_live_planner_failure_is_projected_as_a_retryable_turn_failure(
     complete_response.assert_not_called()
     complete_draft.assert_not_called()
     publish.assert_not_called()
+
+
+@pytest.mark.parametrize("successor", [None, "5c3f7d1e-3b1a-4f7e-9d2c-8a6b4e2f1c0d"])
+def test_turn_out_of_claims_is_not_planned_and_publishes_its_successor(
+    successor: str | None,
+) -> None:
+    turn_id = str(uuid.uuid4())
+    with (
+        patch("app.tasks.kria_runtime._claim", return_value=_ClaimsExhausted(successor)),
+        patch("app.tasks.kria_runtime._plan_with_live_agent") as plan,
+        patch.object(run_kria_turn, "apply_async") as publish,
+    ):
+        result = run_kria_turn.run(turn_id)
+
+    assert result == {"turn_id": turn_id, "status": "failed"}
+    plan.assert_not_called()
+    if successor is None:
+        publish.assert_not_called()
+    else:
+        publish.assert_called_once_with(args=[successor], task_id=successor, queue="agent-control")
 
 
 @pytest.mark.asyncio
