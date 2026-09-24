@@ -8,16 +8,30 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
+from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
 from app.db_locks import CONTENT_PLAN_LOCK
+from app.kria.brief import (
+    BriefUpdate,
+    CreativeBrief,
+    load_latest_brief_sync,
+    persist_brief_version_sync,
+    render_brief_request,
+)
+from app.kria.brief_checks import (
+    build_receipts,
+    plan_facts_from_editor_payload,
+    plan_facts_from_strategy,
+    reply_from_receipts,
+)
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.language import is_paraphrase_only
@@ -42,6 +56,7 @@ from app.routes.generative_jobs import (
     enqueue_editor_commit_render,
     prepare_editor_commit,
 )
+from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
     compile_editor_ops,
     merge_editor_draft,
@@ -112,6 +127,7 @@ def _complete_response_turn(
     lease_epoch: int,
     claimed_thread_revision: int,
     plan: KriaTurnPlan,
+    brief_updates: tuple[BriefUpdate, ...] = (),
 ) -> _Completion:
     with sync_session() as db:
         turn = db.execute(
@@ -134,6 +150,13 @@ def _complete_response_turn(
             turn.lease_expires_at = None
             db.commit()
             return _Completion(committed=False, requeue_turn_id=str(turn.id))
+        if brief_updates:
+            # KRI-188: a question/recovery turn still records what the creator
+            # stated. Written under the thread lock, after the revision fence,
+            # so a requeued turn never persists a version.
+            persist_brief_version_sync(
+                db, thread_id=thread.id, turn_id=turn.id, updates=brief_updates
+            )
         event = _append_sync_event(
             db,
             thread,
@@ -171,13 +194,20 @@ def _strategy_changes(arguments: Any) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))[:3]
 
 
-def _validate_draft_plan(plan: KriaTurnPlan) -> None:
-    """Allow one atomic draft, optionally followed by its exact render approval."""
+def _validate_draft_plan(plan: KriaTurnPlan, *, required_route: str | None = None) -> None:
+    """Allow one atomic draft, optionally followed by its exact render approval.
+
+    ``required_route`` is the Creative Brief router's verdict (KRI-188). When it
+    says ``replan``, an editor-ops-only plan is rejected: the new requirements
+    need a fresh strategy, and a lossy editor op would silently drop them.
+    """
     if plan.mode != "act" or len(plan.intents) not in {1, 2}:
         raise RuntimeError("Kria produced an unsupported tool group")
     apply_intent = plan.intents[0]
     if apply_intent.tool_name not in {"draft.apply_strategy", "draft.apply_editor_ops"}:
         raise RuntimeError("Kria produced an unsupported draft tool")
+    if required_route == "replan" and apply_intent.tool_name != "draft.apply_strategy":
+        raise RuntimeError("The brief needs a new plan, not editor operations")
     if apply_intent.depends_on:
         raise RuntimeError("The draft tool cannot depend on an unexecuted intent")
     apply_tool = KRIA_TOOLS.get(apply_intent.tool_name, apply_intent.tool_version)
@@ -211,7 +241,7 @@ def _useful_plan(planned: PlannedKriaTurn, *, user_message: str) -> PlannedKriaT
                 ),
             }
         )
-        return PlannedKriaTurn(replacement, planned.manifest_hash, planned.context_hash)
+        return replace(planned, plan=replacement)
 
     intents = []
     changed = False
@@ -237,11 +267,7 @@ def _useful_plan(planned: PlannedKriaTurn, *, user_message: str) -> PlannedKriaT
         intents.append(intent.model_copy(update={"arguments": arguments}))
     if not changed:
         return planned
-    return PlannedKriaTurn(
-        plan.model_copy(update={"intents": intents}),
-        planned.manifest_hash,
-        planned.context_hash,
-    )
+    return replace(planned, plan=plan.model_copy(update={"intents": intents}))
 
 
 def _complete_draft_turn(
@@ -253,7 +279,7 @@ def _complete_draft_turn(
     planned: PlannedKriaTurn,
 ) -> _Completion:
     plan = planned.plan
-    _validate_draft_plan(plan)
+    _validate_draft_plan(plan, required_route=planned.brief_route)
     apply_intent = plan.intents[0]
     render_intent = plan.intents[1] if len(plan.intents) == 2 else None
     apply_tool = KRIA_TOOLS.get(apply_intent.tool_name, apply_intent.tool_version)
@@ -396,6 +422,37 @@ def _complete_draft_turn(
             snapshot, snapshot_hash = canonical_snapshot(document)
         if document is None:
             raise RuntimeError("Kria produced an unsupported draft tool")
+        reply_text = arguments.summary
+        requirement_receipts: list[dict[str, Any]] = []
+        if planned.brief_route is not None:
+            # KRI-188: persist this turn's requirements (idempotent per turn),
+            # then check each one deterministically against what was drafted.
+            brief = persist_brief_version_sync(
+                db,
+                thread_id=thread.id,
+                turn_id=turn.id,
+                updates=planned.brief_updates,
+            )
+            if brief is not None:
+                if apply_intent.tool_name == "draft.apply_strategy":
+                    facts = plan_facts_from_strategy(
+                        document.strategy,
+                        clip_ids=planned.brief_clip_ids,
+                    )
+                    checked = brief.live()
+                else:
+                    # Editor operations verify only the requirements stated in
+                    # this very turn, against literal text in the editor payload.
+                    facts = plan_facts_from_editor_payload(document.editor_payload)
+                    checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
+                if checked:
+                    receipts = build_receipts(checked, facts)
+                    requirement_receipts = [r.model_dump(mode="json") for r in receipts]
+                    reply_text = reply_from_receipts(
+                        CreativeBrief(version=brief.version, requirements=checked),
+                        receipts,
+                        summary=arguments.summary,
+                    )
         next_revision = (
             int(
                 db.execute(
@@ -459,7 +516,7 @@ def _complete_draft_turn(
                 thread,
                 role="assistant",
                 event_type="draft_applied",
-                content=arguments.summary,
+                content=reply_text,
                 payload={
                     "turn_id": str(turn.id),
                     "draft_id": str(draft.id),
@@ -469,6 +526,11 @@ def _complete_draft_turn(
                     "can_undo": head is not None,
                     "receipt_ids": [str(draft_execution.id)],
                     "render_requested": False,
+                    **(
+                        {"requirement_receipts": requirement_receipts}
+                        if requirement_receipts
+                        else {}
+                    ),
                 },
             )
             turn.plan_json = plan.model_dump(mode="json")
@@ -548,7 +610,7 @@ def _complete_draft_turn(
             thread,
             role="assistant",
             event_type="draft_applied",
-            content=arguments.summary,
+            content=reply_text,
             payload={
                 "turn_id": str(turn.id),
                 "draft_id": str(draft.id),
@@ -557,6 +619,7 @@ def _complete_draft_turn(
                 "changes": changes,
                 "can_undo": head is not None,
                 "receipt_ids": [str(draft_execution.id)],
+                **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
             },
         )
         _append_sync_event(
@@ -966,6 +1029,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     lease_epoch=lease_epoch,
                     claimed_thread_revision=claimed_thread_revision,
                     plan=planned.plan,
+                    brief_updates=planned.brief_updates,
                 )
             else:
                 completion = _complete_draft_turn(
@@ -1386,15 +1450,76 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     if editor_payload.music_track_id
                     else None
                 )
-                editor_prep = prepare_editor_commit(
-                    current_job,
-                    approval.target_variant_id,
-                    editor_payload,
-                    user_id=str(thread.creator_id),
-                    music_track=music_track,
-                    plan_item_id=str(item.id),
-                )
+                device_variant = _is_device_variant(current_job, approval.target_variant_id)
+                try:
+                    editor_prep = prepare_editor_commit(
+                        current_job,
+                        approval.target_variant_id,
+                        editor_payload,
+                        user_id=str(thread.creator_id),
+                        music_track=music_track,
+                        plan_item_id=str(item.id),
+                    )
+                except (HTTPException, ValueError, KeyError) as exc:
+                    if not device_variant:
+                        raise
+                    # A device variant re-compiles its phone recipe here
+                    # (`prepare_phone_editor_commit`), and refusing an edit the
+                    # phone cannot draw is an expected outcome, not a crash.
+                    # Uncaught, this task would fail before any state moved and
+                    # the reconciler would republish the same approval forever.
+                    # Nothing was staged (validation runs on a copy).
+                    code = _device_refusal_code(exc)
+                    log.warning(
+                        "kria_device_edit_refused",
+                        approval_id=str(approval.id),
+                        code=code,
+                        error_type=type(exc).__name__,
+                        error=str(getattr(exc, "detail", None) or exc),
+                    )
+                    approval.status = "cancelled"
+                    execution.status = "failed"
+                    execution.error = {"code": code, "retryable": False, "recovery": "revise"}
+                    execution.completed_at = now
+                    turn.status = "failed"
+                    turn.completed_at = now
+                    turn.error = execution.error
+                    session.status = "awaiting_feedback"
+                    _append_sync_event(
+                        db,
+                        thread,
+                        role="assistant",
+                        event_type="assistant_error",
+                        content=_DEVICE_EDIT_REFUSALS.get(code, _DEVICE_EDIT_REFUSAL_FALLBACK),
+                        payload={
+                            "turn_id": str(turn.id),
+                            "approval_id": str(approval.id),
+                            "code": code,
+                            "recovery": "revise",
+                        },
+                    )
+                    db.commit()
+                    return None
                 target_generation_id = str(editor_prep["generation"])
+                if device_variant and editor_prep.get("render_destination") == "device":
+                    # The phone publishes under its own upload-attempt id, so the
+                    # observer matches this Save by the recipe revision it pinned.
+                    try:
+                        revision = device_status(
+                            current_job, approval.target_variant_id
+                        ).request.identity.recipe_revision
+                    except (KeyError, ValueError, TypeError):
+                        revision = None
+                    if revision is not None and editor_prep.get("has_render_section"):
+                        editor_prep = {**editor_prep, "device_recipe_revision": int(revision)}
+
+        dispatch_request = document.intent
+        if document.kind == "strategy" and settings.creative_brief_for(thread.creator_id):
+            # KRI-188: the strategy's creator request is rendered from the
+            # Creative Brief, never from the draft summary or chip text.
+            brief = load_latest_brief_sync(db, thread.id)
+            if brief is not None and brief.live():
+                dispatch_request = render_brief_request(brief)
 
         approval.status = "consumed"
         approval.consumed_at = approval.consumed_at or now
@@ -1421,9 +1546,103 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             target_job_id=current_job.id if current_job is not None else None,
             target_variant_id=target_variant_id,
             target_generation_id=target_generation_id,
-            creator_request=document.intent,
+            creator_request=dispatch_request,
             preflight_analysis_id=preflight_analysis_id,
         )
+
+
+_DEVICE_EDIT_REFUSALS = {
+    "baseline_conflict": (
+        "The video changed on your iPhone after I drafted that edit, so I left it as it was. "
+        "Ask me again and I'll redo the change on the current version."
+    ),
+    "unsupported_phone_edit": (
+        "That change can't be rendered on your iPhone yet, so I left the video as it was."
+    ),
+    "phone_editor_media_unavailable": (
+        "Adding that media isn't available for on-device edits yet, so I left the video as it was."
+    ),
+    "phone_rendering_unavailable": (
+        "On-device rendering isn't available for this account right now, "
+        "so I left the video as it was."
+    ),
+}
+_DEVICE_EDIT_REFUSAL_FALLBACK = (
+    "I couldn't apply that change on your iPhone, so I left the video as it was."
+)
+
+
+def _is_device_variant(job: Job | None, variant_id: str | None) -> bool:
+    """Whether ``variant_id`` on ``job`` renders on the creator's iPhone (KRI-187)."""
+
+    if job is None or not variant_id:
+        return False
+    return any(
+        isinstance(row, dict)
+        and row.get("variant_id") == variant_id
+        and row.get("render_destination") == "device"
+        for row in (job.assembly_plan or {}).get("variants") or []
+    )
+
+
+def _device_refusal_code(exc: Exception) -> str:
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, dict) and isinstance(detail.get("code"), str):
+        return detail["code"]
+    return "unsupported_phone_edit" if isinstance(exc, ValueError) else "device_edit_rejected"
+
+
+def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | None:
+    """Settle an execution whose Job renders on the iPhone: pending/ready/failed.
+
+    ``None`` means "not a device job" and leaves the cloud observer untouched.
+    A device job sits in ``awaiting_device`` (a non-terminal Job status) until
+    the phone publishes or the client/reaper marks the record
+    ``needs_attention`` -- which does NOT move ``Job.status``, so failure has
+    to be read off the pinned device record. The published variant carries the
+    phone's upload attempt id as its ``render_generation_id`` (never the id the
+    editor Save minted), so an editor execution is matched by recipe revision:
+    a record older than the one this approval pinned is still pending.
+    """
+
+    records = (job.assembly_plan or {}).get(DEVICE_RENDER_FIELD)
+    if not isinstance(records, dict) or not records:
+        return None
+    variant_id = str(execution.target_variant_id or "") or None
+    prep = (execution.result or {}).get("editor_prep")
+    if isinstance(prep, dict) and "device_recipe_revision" not in prep:
+        # An editor edit with no render section pinned no recipe revision: it
+        # changed nothing the phone draws, so the device record (possibly an
+        # older failure or publish) says nothing about it. Let the cloud
+        # observer settle it as before.
+        return None
+    minimum = prep.get("device_recipe_revision") if isinstance(prep, dict) else None
+    states: list[str] = []
+    for record_variant in [variant_id] if variant_id else list(records):
+        try:
+            status = device_status(job, record_variant)
+        except (KeyError, ValueError, TypeError):
+            states.append("pending")
+            continue
+        if isinstance(minimum, int) and status.request.identity.recipe_revision < minimum:
+            states.append("pending")
+        elif status.phase == "published":
+            states.append("ready")
+        elif status.phase == "needs_attention":
+            states.append("failed")
+        else:
+            states.append("pending")
+    if "pending" in states:
+        return "pending"
+    return "failed" if "failed" in states else "ready"
+
+
+def _phone_gate_refusal_copy(reason: str) -> str:
+    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
+
+    message = PHONE_GATE_MESSAGES.get(reason, (None, None))[1]
+    lead = message or "That kind of edit isn't available for iPhone renders yet."
+    return f"{lead} Tell me what you'd like to change and I'll try a different approach."
 
 
 def _finish_approval_dispatch(
@@ -1431,6 +1650,7 @@ def _finish_approval_dispatch(
     *,
     outcome: str,
     job_id: str | None,
+    reason: str | None = None,
 ) -> tuple[str, str | None]:
     successful = outcome in {"dispatched", "already_active"} and job_id is not None
     successor_id: str | None = None
@@ -1543,8 +1763,11 @@ def _finish_approval_dispatch(
         execution.error = {
             "code": "render_dispatch_failed",
             "outcome": outcome,
-            "retryable": outcome == "publish_failed",
-            "recovery": "retry",
+            "retryable": outcome == "publish_failed" and not reason,
+            # A phone-gate refusal (`reason`) refuses identically every time,
+            # so it must not send the creator into a retry loop.
+            "recovery": "ask_user" if reason else "retry",
+            **({"reason": reason} if reason else {}),
         }
         execution.completed_at = now
         turn.status = "failed"
@@ -1558,8 +1781,12 @@ def _finish_approval_dispatch(
             role="assistant",
             event_type="assistant_render_failed",
             content=(
-                "I couldn't start the render. Your draft is still saved, "
-                "so you can retry without repeating the edit."
+                _phone_gate_refusal_copy(reason)
+                if reason
+                else (
+                    "I couldn't start the render. Your draft is still saved, "
+                    "so you can retry without repeating the edit."
+                )
             ),
             payload={
                 "turn_id": str(turn.id),
@@ -1569,7 +1796,7 @@ def _finish_approval_dispatch(
                 "status": "failed",
                 "code": "render_dispatch_failed",
                 "dispatch_outcome": outcome,
-                "recovery": "retry",
+                "recovery": "ask_user" if reason else "retry",
             },
         )
         db.commit()
@@ -1598,6 +1825,7 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
 
         publish_preflight_after_commit(preflight_analysis_id)
 
+    dispatch_reason: str | None = None
     if getattr(claim, "draft_kind", "strategy") == "editor":
         if (
             claim.target_job_id is None
@@ -1606,7 +1834,14 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
         ):
             return {"approval_id": approval_id, "status": "ignored", "job_id": None}
         try:
-            if claim.editor_prep.get("speech_cut") is True:
+            if claim.editor_prep.get("render_destination") == "device":
+                # KRI-187: `prepare_phone_editor_commit` (inside the claim's
+                # `prepare_editor_commit`) already pinned revision N+1 and set
+                # the variant `awaiting_device`. There is no cloud task to
+                # enqueue: the phone picks the recipe up by polling, and the
+                # observer settles this execution from the device record.
+                pass
+            elif claim.editor_prep.get("speech_cut") is True:
                 from app.tasks.generative_build import rerender_speech_timing  # noqa: PLC0415
 
                 operation_id = str((claim.editor_prep.get("request") or {}).get("operation_id"))
@@ -1638,15 +1873,21 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
             str(claim.item_id),
             claim.ownership_epoch,
             bypass_guided_edit_gate=True,
+            # KRI-187: a phone account has no approved guided proposal on this
+            # path; the flag inside dispatch decides whether it may proceed to
+            # the device montage compiler. Non-phone accounts ignore it.
+            allow_phone_unapproved_montage=True,
             creator_strategy=claim.strategy,
             creator_request=claim.creator_request,
         )
         outcome = result.outcome
         result_job_id = result.job_id
+        dispatch_reason = getattr(result, "reason", None)
     status, successor_id = _finish_approval_dispatch(
         claim,
         outcome=outcome,
         job_id=result_job_id,
+        **({"reason": dispatch_reason} if dispatch_reason else {}),
     )
     if successor_id is not None:
         run_kria_turn.apply_async(
@@ -1756,11 +1997,20 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             and int(job.content_plan_ownership_epoch or 0) == int(session.ownership_epoch)
         )
         terminal = job.status in PLAN_ITEM_JOB_READY or job.status in PLAN_ITEM_JOB_FAILED
+        # A device render is `awaiting_device` (never terminal) until the phone
+        # publishes; its failure lives on the device record, not on Job.status.
+        device_state = _device_render_state(job, execution)
+        if device_state == "pending":
+            return "pending", None
+        if device_state == "failed":
+            terminal = True
         if not terminal:
             return "pending", None
 
         now = datetime.now(UTC)
-        variant_failure_code: str | None = None
+        variant_failure_code: str | None = (
+            "device_render_failed" if device_state == "failed" else None
+        )
         if exact_target and job.status in PLAN_ITEM_JOB_READY:
             pinned_variant_id = str(execution.target_variant_id or "") or None
             pinned_generation_id = str(execution.target_generation_id or "") or None
@@ -1788,7 +2038,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             variant = _ready_variant(
                 job,
                 variant_id=pinned_variant_id,
-                generation_id=pinned_generation_id,
+                # The phone publishes under its own upload-attempt id, so a
+                # published device render is matched by revision (above).
+                generation_id=None if device_state == "ready" else pinned_generation_id,
             )
             if variant is not None:
                 variant_id = str(variant["variant_id"])
@@ -1873,10 +2125,14 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         execution.status = "failed"
         execution.completed_at = now
         execution.observed_at = now
+        device_failed = device_state == "failed"
+        # Chat retry cannot recover a device render (the Job is still
+        # `awaiting_device`); the creator retries from the phone's render panel.
+        recovery = "manual" if device_failed else "retry"
         execution.error = {
             "code": failure_code,
-            "retryable": True,
-            "recovery": "retry",
+            "retryable": not device_failed,
+            "recovery": recovery,
         }
         turn.status = "failed"
         turn.completed_at = now
@@ -1889,7 +2145,10 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             role="assistant",
             event_type="assistant_render_failed",
             content=(
-                "That render didn't finish. Your approved draft is still saved, "
+                "Your iPhone couldn't finish the render. Your approved edit is still saved: "
+                "open the project on your iPhone and tap Retry."
+                if device_failed
+                else "That render didn't finish. Your approved draft is still saved, "
                 "so you can retry without rebuilding the edit."
             ),
             payload={
@@ -1898,7 +2157,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "job_id": str(job.id),
                 "status": "failed",
                 "code": failure_code,
-                "recovery": "retry",
+                "recovery": recovery,
                 "receipt_ids": [str(execution.id)],
             },
         )

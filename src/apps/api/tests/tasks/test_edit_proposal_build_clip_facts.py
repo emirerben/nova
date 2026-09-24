@@ -199,3 +199,63 @@ def test_day_vlog_draft_is_attachment_order_with_no_ordering_record_when_disable
 
     assert order == ["late", "early", "mid"]
     assert proposal.ordering is None
+
+
+def test_a_filming_order_request_the_planner_did_not_apply_is_recorded_as_not_applied(
+    monkeypatch,
+) -> None:
+    """Semantic/snapshot planners never read facts; the receipt must not read as honored."""
+    from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
+
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+    item.clip_assignments[0]["capture"] = dict(_CAPTURE)
+    intent = ResolvedClipIntent(
+        intent_id="i-order",
+        op="order",
+        attribute="the order I filmed them",
+        order_by="capture_time",
+        assignments=[ClipAssignment(media_id=_MEDIA_ID, confidence=1.0)],
+    )
+    item.edit_proposal = {
+        **item.edit_proposal,
+        "brief": {
+            **item.edit_proposal["brief"],
+            "clip_intents": [intent.model_dump(mode="json")],
+        },
+    }
+
+    def _run(agent, agent_input, ctx=None):  # noqa: ANN001, ARG001
+        output = agent.parse(
+            json.dumps(
+                {
+                    "title": "T",
+                    "duration_s": 6,
+                    "story_beats": [
+                        {
+                            "topic": "Topic",
+                            "thought": "A visible detail worth noting.",
+                            "media_ids": [_MEDIA_ID],
+                            "duration_s": 6,
+                        }
+                    ],
+                }
+            ),
+            agent_input,
+        )
+        output.ordering = None  # a planner path that never ran the capture-time ordering
+        return output
+
+    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run)
+    monkeypatch.setattr(app_settings, "clip_facts_enabled", True)
+    monkeypatch.setattr(app_settings, "clip_facts_user_ids", [])
+    monkeypatch.setattr(app_settings, "clip_intents_enabled", True)
+    monkeypatch.setattr(cf, "_guess_landmark", lambda *a, **k: None)
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=False
+    )
+    proposal = parse_edit_proposal(item.edit_proposal)
+    assert proposal.ordering == {
+        "ordering_basis": "not_applied",
+        "ordering_fallback_clip_ids": [],
+        "reason": "planner_path",
+    }

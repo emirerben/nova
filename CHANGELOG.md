@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.200.0] - 2026-09-24
+
+### Changed
+- feat(kria): phone-rendering accounts on runtime v2 behind a flag (KRI-187) (#1218) <!-- release-pr: 1218 -->
+
+## [0.76.199.0] - 2026-09-24
+
+### Changed
+- fix(copilot): chat-edit replies say what was and wasn't done (KRI-186) (#1217) <!-- release-pr: 1217 -->
+
+## [0.76.198.0] - 2026-09-24
+
+### Changed
+- fix(deploy): raise api min_machines_running to match live scale count (KRI-193) (#1219) <!-- release-pr: 1219 -->
+
+## [0.76.197.0] - 2026-09-24
+
+### Changed
+- fix(ios): "fade" media-overlay tokens actually fade the card (KRI-182, re-land of #1214) (#1216) <!-- release-pr: 1216 -->
+
 ## [0.76.196.0] - 2026-09-24
 
 ### Changed

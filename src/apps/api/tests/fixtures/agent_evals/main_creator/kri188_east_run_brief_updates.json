@@ -1,0 +1,130 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-09-24-v37",
+  "input": {
+    "user_message": "Her klibin üstüne o klipteki yerin adını yaz ve klipleri çektiğim sıraya koy. Bu sefer başlık 20K Koşu · Arnavutköy → Eminönü olsun.",
+    "creator_request": "Creative brief (everything the creator has asked for, still in force):\n- [timing/global] 20 seconds long\nLatest message: Her klibin üstüne o klipteki yerin adını yaz ve klipleri çektiğim sıraya koy. Bu sefer başlık 20K Koşu · Arnavutköy → Eminönü olsun.",
+    "creator_context": "Runner who posts long-run diaries in Turkish.",
+    "item_context": "A 20K run from Arnavutköy to Eminönü, filmed across five clips.",
+    "media_context": [
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-3",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-4",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-5",
+        "kind": "video",
+        "creator_note": null
+      }
+    ],
+    "conversation": [
+      {
+        "role": "user",
+        "content": "20 saniyelik bir koşu videosu yap."
+      },
+      {
+        "role": "assistant",
+        "content": "Kısa bir koşu kurgusu hazırladım."
+      }
+    ],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-east-run",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "clip-3",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "clip-4",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "clip-5",
+          "kind": "video",
+          "label": null
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Licensed warm acoustic"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "edit_format:montage": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "manifest_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"guided_story\", \"edit_format\": \"montage\", \"archetype\": \"day_vlog\", \"audio_strategy\": \"licensed_music\", \"render_program\": \"guided\", \"story_structure\": [\"Start line\", \"Along the Bosphorus\", \"Finish at Eminönü\"], \"caption_style\": \"auto\", \"opening_title\": \"20K Koşu · Arnavutköy → Eminönü\", \"target_duration_s\": 20, \"clip_intents\": [{\"intent_id\": \"landmark\", \"op\": \"label\", \"attribute\": \"the landmark or place shown in the clip\", \"creator_text\": null}], \"rationale\": \"A chronological run cut to the requested 20 seconds.\"}, \"summary\": \"A 20-second run in the order you filmed it, with each place named on its clip.\", \"render_intent_evidence\": {\"opening_title\": \"başlık 20K Koşu · Arnavutköy → Eminönü olsun\", \"font_family\": null, \"text_color\": null, \"opening_title_duration_s\": null, \"shot_labels\": null, \"closing_title\": null, \"licensed_sfx\": null}}, \"brief_updates\": [{\"kind\": \"text\", \"scope\": \"title\", \"literal\": \"20K Koşu · Arnavutköy → Eminönü\", \"description\": null, \"facts\": {}}, {\"kind\": \"text\", \"scope\": \"per_clip\", \"literal\": null, \"description\": \"the place shown in each clip\", \"facts\": {}}, {\"kind\": \"order\", \"scope\": \"global\", \"literal\": null, \"description\": \"in the order the creator filmed them\", \"facts\": {\"key\": \"capture_time\"}}]}",
+  "output": {},
+  "meta": {
+    "source": "kri188-p2",
+    "brief_updates": {
+      "kinds": [
+        [
+          "text",
+          "title"
+        ],
+        [
+          "text",
+          "per_clip"
+        ],
+        [
+          "order",
+          "global"
+        ]
+      ],
+      "contract": "with the Creative Brief on, one message that states a title, a per-clip described label and an ordering yields one brief_updates entry per requirement, Turkish text kept verbatim, literal only for creator-written text"
+    }
+  }
+}

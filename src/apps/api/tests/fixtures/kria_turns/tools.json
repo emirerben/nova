@@ -151,6 +151,158 @@
       "title": "ApprovalSnapshotOut",
       "type": "object"
     },
+    "CreativeBriefOut": {
+      "$defs": {
+        "CreativeBriefRequirementOut": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "text",
+                "order",
+                "select",
+                "timing",
+                "audio",
+                "style"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "literal": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Literal"
+            },
+            "scope": {
+              "title": "Scope",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "open",
+                "met",
+                "partial",
+                "not_possible",
+                "superseded"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "scope",
+            "status"
+          ],
+          "title": "CreativeBriefRequirementOut",
+          "type": "object"
+        },
+        "RequirementReceipt": {
+          "additionalProperties": false,
+          "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one.",
+          "properties": {
+            "inferred": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 24,
+              "title": "Inferred",
+              "type": "array"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reason"
+            },
+            "requirement_id": {
+              "maxLength": 24,
+              "minLength": 1,
+              "title": "Requirement Id",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "met",
+                "partial",
+                "not_possible"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "requirement_id",
+            "status"
+          ],
+          "title": "RequirementReceipt",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "requirement_receipts": {
+          "items": {
+            "$ref": "#/$defs/RequirementReceipt"
+          },
+          "title": "Requirement Receipts",
+          "type": "array"
+        },
+        "requirements": {
+          "items": {
+            "$ref": "#/$defs/CreativeBriefRequirementOut"
+          },
+          "title": "Requirements",
+          "type": "array"
+        },
+        "thread_id": {
+          "title": "Thread Id",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 0,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "thread_id",
+        "version"
+      ],
+      "title": "CreativeBriefOut",
+      "type": "object"
+    },
     "DraftSnapshotOut": {
       "properties": {
         "base_generation_id": {

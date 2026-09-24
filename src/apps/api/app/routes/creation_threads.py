@@ -3222,10 +3222,16 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
             if value in supported_now or value == "slides"
         }
     return {
-        # Runtime v2 cannot create a guided phone job at all, so a pilot account
-        # offered v2 would never get its render on the iPhone.
+        # A pilot account is offered v2 only once `KRIA_RUNTIME_V2_PHONE_ENABLED`
+        # covers it (KRI-187): a v2 approval then reaches a device job via
+        # `dispatch_item_render_for` / `prepare_phone_editor_commit`. Off, it
+        # stays on [1]. `runtime_version` is fixed at thread creation, so
+        # existing v1 threads are unaffected either way (rollback = [1] again).
         "runtime_versions": (
-            [1, 2] if settings.kria_runtime_v2_enabled and not phone_enabled else [1]
+            [1, 2]
+            if settings.kria_runtime_v2_enabled
+            and (not phone_enabled or settings.kria_runtime_v2_phone_for(user.id))
+            else [1]
         ),
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,

@@ -4244,12 +4244,13 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # edit bundles and preserved two-thousand-character creator requests, then
     # (2026-09-19-v44) for explicit placement rules and rotation_deg as a
     # style field, then (2026-09-19-v45) correcting x_frac to the alignment
-    # anchor (left edge / right edge / centre) so "top left" lands top left —
+    # anchor (left edge / right edge / centre) so "top left" lands top left, then
+    # (2026-09-24-v46) for itemized unmet_requests and the original request —
     # update this pin whenever
     # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-19-v45"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-24-v46"
 
 
 def _motion_snapshot() -> dict:
@@ -4826,3 +4827,95 @@ def test_copilot_rotation_is_a_style_field_and_is_clamped() -> None:
     assert out.ops[0]["patch"] == {"rotation_deg": 360.0}
     out = _parse([{"op": "patch_text_style", "bar_index": 0, "patch": {"rotation_deg": "tilted"}}])
     assert out.ops == []
+
+
+# ── KRI-186: unmet_requests + original request ───────────────────────────────
+
+
+def _parse_raw(payload: dict):
+    return _agent().parse(
+        json.dumps(payload),
+        EditCopilotInput(utterance="x", prior_turns=[], variant_snapshot=_snapshot()),
+    )
+
+
+def test_copilot_parse_threads_unmet_requests() -> None:
+    """Parse-threading trap: a new output field silently defaults unless parse() reads it."""
+    out = _parse_raw(
+        {
+            "intent": "reject",
+            "ops": [],
+            "confidence": 0.9,
+            "reply": "no",
+            "unmet_requests": [
+                {"request": "label each clip", "reason": "no place data"},
+                {"request": "  ", "reason": "dropped, empty request"},
+                "not a dict",
+                {"request": "order by time", "reason": ""},
+            ],
+        }
+    )
+    assert out.unmet_requests == [
+        {"request": "label each clip", "reason": "no place data"},
+        {"request": "order by time", "reason": ""},
+    ]
+
+
+def test_copilot_parse_unmet_requests_absent_or_malformed_is_empty() -> None:
+    base = {"intent": "edit", "ops": [], "confidence": 0.9, "reply": "ok"}
+    assert _parse_raw(base).unmet_requests == []
+    assert _parse_raw({**base, "unmet_requests": "nope"}).unmet_requests == []
+    many = [{"request": f"r{i}", "reason": "x"} for i in range(20)]
+    assert len(_parse_raw({**base, "unmet_requests": many}).unmet_requests) == 6
+
+
+def test_copilot_prompt_carries_original_request_only_when_present() -> None:
+    agent = _agent()
+    without = agent.render_prompt(EditCopilotInput(utterance="x", variant_snapshot=_snapshot()))
+    assert "Original creator request" not in without
+    with_brief = agent.render_prompt(
+        EditCopilotInput(
+            utterance="x",
+            original_request="20K run, label every clip",
+            variant_snapshot=_snapshot(),
+        )
+    )
+    assert "## Original creator request" in with_brief
+    assert "20K run, label every clip" in with_brief
+    assert "unmet_requests" in with_brief
+
+
+@pytest.mark.asyncio
+async def test_run_copilot_turn_threads_memory_and_unmet_requests(monkeypatch) -> None:
+    from app.routes import _copilot
+
+    seen: dict = {}
+
+    class _FakeAgent:
+        def __init__(self, *_a, **_k) -> None:
+            pass
+
+        def run(self, agent_input, *, ctx=None):
+            seen["input"] = agent_input
+            return EditCopilotOutput(
+                intent="reject",
+                reply="no",
+                unmet_requests=[{"request": "label each clip", "reason": "no place data"}],
+            )
+
+    monkeypatch.setattr(_copilot, "EditCopilotAgent", _FakeAgent)
+    monkeypatch.setattr(_copilot, "default_client", lambda: None)
+    response = await _copilot.run_copilot_turn(
+        _copilot.CopilotTurnBody(
+            message="label each clip",
+            turns=[{"role": "user", "content": "hi"}],
+            original_request="20K run",
+            snapshot=_snapshot(),
+            client_request_id="r1",
+        ),
+        job_id=uuid.uuid4(),
+    )
+
+    assert seen["input"].original_request == "20K run"
+    assert seen["input"].prior_turns == [{"role": "user", "content": "hi"}]
+    assert response.unmet_requests == [{"request": "label each clip", "reason": "no place data"}]

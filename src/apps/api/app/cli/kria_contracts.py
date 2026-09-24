@@ -23,7 +23,7 @@ from app.kria.api_schemas import (
     TurnCancelBody,
     TurnCancelled,
 )
-from app.kria.contracts import KRIA_SCHEMA_VERSION
+from app.kria.contracts import KRIA_SCHEMA_VERSION, CreativeBriefOut
 from app.kria.device_render import (
     DeviceAssetDownloadBody,
     DeviceAssetDownloadOut,
@@ -116,6 +116,7 @@ API_MODELS = (
     DraftSnapshotOut,
     DraftWriteBody,
     DraftUndoBody,
+    CreativeBriefOut,
     ThreadDeltaOut,
     KriaProblemOut,
 )
@@ -701,6 +702,14 @@ def mobile_openapi_json() -> str:
                     ],
                     "requestBody": _json_request(DraftWriteBody),
                     "responses": _json_responses(DraftSnapshotOut),
+                },
+            },
+            "/creation-threads/{thread_id}/brief": {
+                "parameters": [thread_id],
+                "get": {
+                    "operationId": "getCreationBrief",
+                    "security": bearer,
+                    "responses": _json_responses(CreativeBriefOut),
                 },
             },
             "/creation-threads/{thread_id}/draft/undo": {

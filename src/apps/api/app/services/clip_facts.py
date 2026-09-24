@@ -20,9 +20,9 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Iterable, Mapping
-from contextlib import suppress
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path

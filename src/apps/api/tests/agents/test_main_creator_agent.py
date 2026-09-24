@@ -545,7 +545,11 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
     assert "REACTION BEATS" not in actual
     assert "reaction_beats_section" not in actual
 
-    raw_without_slot = _get_raw("main_creator").replace("$reaction_beats_section", "")
+    raw_without_slot = (
+        _get_raw("main_creator")
+        .replace("$reaction_beats_section", "")
+        .replace("$brief_section", "")
+    )
     prompt_manifest = agent_input.capability_manifest.model_dump_json(
         exclude_none=True, exclude={"narration": True}
     )

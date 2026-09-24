@@ -402,7 +402,10 @@ def copilot_edit_context(monkeypatch):
     body = SimpleNamespace(
         message="remove the caption that isn't the title", client_event_id="edit-test"
     )
-    db = SimpleNamespace(get=AsyncMock(return_value=job), execute=AsyncMock())
+    empty = Mock()
+    empty.scalars.return_value.all.return_value = []
+    empty.scalars.return_value.first.return_value = None
+    db = SimpleNamespace(get=AsyncMock(return_value=job), execute=AsyncMock(return_value=empty))
     monkeypatch.setattr(
         actions, "build_editor_snapshot", lambda *_: {"allowed_op_families": ["text", "title"]}
     )
@@ -625,3 +628,436 @@ async def test_copilot_edit_internal_rejections_stay_generic(copilot_edit_contex
     kwargs = routes._append.await_args.kwargs
     assert kwargs["content"] == "I couldn't safely apply that change. Nothing was changed."
     assert kwargs["payload"]["rejection"] == "Text changed before this edit could be drafted"
+
+
+# ── KRI-186: honest chat-edit replies ────────────────────────────────────────
+
+_EAST_RUN_MODEL_CLAIM = "Updating your story direction to a 15-second fast-paced montage."
+
+
+def _stage_commit(monkeypatch, changes):
+    payload = actions.EditorCommitRequest(base_generation="g1", text_elements=[])
+    monkeypatch.setattr(
+        actions,
+        "compile_editor_ops",
+        Mock(return_value=SimpleNamespace(payload=payload, changes=changes)),
+    )
+    monkeypatch.setattr(
+        actions,
+        "prepare_editor_commit",
+        Mock(return_value={"generation": "g2", "sections": {"text_elements": True}}),
+    )
+
+
+def _reply_and_payload():
+    kwargs = routes._append.await_args.kwargs
+    return kwargs["content"], kwargs["payload"]
+
+
+@pytest.mark.asyncio
+async def test_partial_apply_names_what_was_not_done(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[{"op": "patch_text_style", "bar_index": 0}],
+        outcome="proposed",
+        reply=_EAST_RUN_MODEL_CLAIM,
+        rejection_reasons=[
+            {"op": "set_edit_direction", "reason": "capability_unavailable", "detail": "x"}
+        ],
+        unmet_requests=[
+            {
+                "request": "label each clip with its place",
+                "reason": "I can't see where it was filmed",
+            },
+            {
+                "request": "put clips in chronological order",
+                "reason": "I don't know when they were filmed",
+            },
+        ],
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+    _stage_commit(monkeypatch, ["Made the title bigger"])
+
+    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    reply, payload = _reply_and_payload()
+    assert reply.startswith("Made the title bigger.")
+    assert (
+        "Not done: change the edit direction (that isn't something I can change in this edit yet)."
+        in reply
+    )
+    assert "Not done: label each clip with its place (I can't see where it was filmed)." in reply
+    assert "Not done: put clips in chronological order" in reply
+    assert "Everything else is unchanged" not in reply
+    assert _EAST_RUN_MODEL_CLAIM not in reply
+    assert payload["outcome"] == "saved"
+    assert payload["applied"] == ["Made the title bigger"]
+    assert len(payload["not_done"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_clean_apply_still_says_everything_else_unchanged(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[{"op": "remove_text", "bar_index": 1}],
+        outcome="proposed",
+        reply="ignored",
+        rejection_reasons=[],
+        unmet_requests=[],
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+    _stage_commit(monkeypatch, ["Remove text"])
+
+    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    reply, payload = _reply_and_payload()
+    assert reply == "Remove text. Everything else is unchanged."
+    assert "not_done" not in payload
+
+
+@pytest.mark.asyncio
+async def test_rejected_only_gets_deterministic_reply(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[],
+        outcome="failed",
+        reply="I couldn't build a valid draft change for that request. Try again.",
+        rejection_reasons=[{"op": "set_text_size", "reason": "invalid_value", "detail": "size"}],
+        unmet_requests=[{"request": "order clips by time filmed", "reason": "no capture times"}],
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    assert result == {"thread": ctx.thread}
+    reply, payload = _reply_and_payload()
+    assert reply == (
+        "Nothing was changed. Not done: the value wasn't one I can apply. "
+        "Not done: order clips by time filmed (no capture times)."
+    )
+    assert payload["outcome"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_reply_never_claims_rejected_op(copilot_edit_context, monkeypatch):
+    """East Run turn 3: a rejected op must never be described as done."""
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[],
+        outcome="no_effect",
+        reply=_EAST_RUN_MODEL_CLAIM,
+        rejection_reasons=[{"op": "set_edit_direction", "reason": "some_new_code", "detail": ""}],
+        unmet_requests=[],
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+
+    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    reply, _ = _reply_and_payload()
+    assert "Updating" not in reply and "montage" not in reply
+    assert reply.startswith("Nothing was changed.")
+    assert "Not done: change the edit direction (I couldn't apply it)." in reply
+
+
+@pytest.mark.asyncio
+async def test_commit_rejection_still_lists_unmet_parts(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[{"op": "remove_text", "bar_index": 9}],
+        outcome="proposed",
+        reply="ignored",
+        rejection_reasons=[],
+        unmet_requests=[{"request": "label each clip", "reason": "no place data"}],
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+    monkeypatch.setattr(
+        actions, "compile_editor_ops", Mock(side_effect=ValueError("internal detail"))
+    )
+
+    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    reply, _ = _reply_and_payload()
+    assert reply == (
+        "I couldn't safely apply that change. Nothing was changed. "
+        "Not done: label each clip (no place data)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_flag_off_is_byte_identical_to_legacy(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    monkeypatch.setattr(actions.settings, "copilot_honest_replies_enabled", False)
+    run = AsyncMock(
+        return_value=SimpleNamespace(
+            ops=[{"op": "patch_text_style", "bar_index": 0}],
+            outcome="proposed",
+            reply=_EAST_RUN_MODEL_CLAIM,
+            rejection_reasons=[
+                {"op": "set_edit_direction", "reason": "capability_unavailable", "detail": ""}
+            ],
+            unmet_requests=[{"request": "label each clip", "reason": "r"}],
+        )
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", run)
+    _stage_commit(monkeypatch, ["Made the title bigger"])
+
+    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    reply, payload = _reply_and_payload()
+    assert reply == "Made the title bigger. Everything else is unchanged."
+    assert set(payload) == {"job_id", "variant_id", "outcome", "generation", "sections"}
+    body = run.await_args.args[0]
+    assert body.turns == [] and body.original_request is None
+
+
+@pytest.mark.asyncio
+async def test_flag_off_no_op_reply_is_the_models_own(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    monkeypatch.setattr(actions.settings, "copilot_honest_replies_enabled", False)
+    response = SimpleNamespace(
+        ops=[],
+        outcome="failed",
+        reply="legacy reply",
+        rejection_reasons=[{"op": "x", "reason": "invalid_value", "detail": ""}],
+        unmet_requests=[],
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+
+    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    reply, payload = _reply_and_payload()
+    assert reply == "legacy reply"
+    assert "not_done" not in payload
+
+
+@pytest.mark.asyncio
+async def test_copilot_turn_receives_prior_turns_and_original_request(
+    copilot_edit_context, monkeypatch
+):
+    ctx = copilot_edit_context
+
+    def event(role, content, payload=None):
+        return SimpleNamespace(role=role, content=content, payload=payload)
+
+    # Newest first, as the query orders them; the newest user message is the
+    # current one (already appended by the route) and must be dropped.
+    newest_first = [
+        event("user", ctx.body.message),
+        event(
+            "assistant",
+            "Made the title bigger. Not done: label each clip (no place data).",
+            {"applied": ["Made the title bigger"], "not_done": ["Not done: label each clip"]},
+        ),
+        event("user", "make the title bigger and label each clip"),
+    ] + [event("user", f"older {i}") for i in range(10)]
+    turns_result = Mock()
+    turns_result.scalars.return_value.all.return_value = newest_first[:8]
+    first_result = Mock()
+    first_result.scalars.return_value.first.return_value = "20K run, label every clip"
+    ctx.db.execute = AsyncMock(side_effect=[turns_result, first_result])
+    run = AsyncMock(
+        return_value=SimpleNamespace(
+            ops=[], outcome="clarification", reply="Which clip?", rejection_reasons=[]
+        )
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", run)
+
+    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    body = run.await_args.args[0]
+    assert body.original_request == "20K run, label every clip"
+    assert len(body.turns) == 6
+    assert body.turns[-1]["role"] == "assistant"
+    assert body.turns[-1]["applied"] == ["Made the title bigger"]
+    assert body.turns[-1]["rejected"] == ["Not done: label each clip"]
+    assert ctx.body.message not in [t["content"] for t in body.turns]
+
+
+# ── KRI-186 review round: unsupported outcomes, memory, copy ─────────────────
+
+
+def _unsupported_response(*, rejections=(), unmet=(), intent="reject"):
+    return SimpleNamespace(
+        ops=[],
+        intent=intent,
+        outcome="unsupported",
+        reply=_EAST_RUN_MODEL_CLAIM,
+        rejection_reasons=list(rejections),
+        unmet_requests=list(unmet),
+    )
+
+
+@pytest.mark.asyncio
+async def test_unsupported_capability_rejection_gets_deterministic_reply(
+    copilot_edit_context, monkeypatch
+):
+    """East Run turn 3 shape: capability_unavailable maps to `unsupported`."""
+    ctx = copilot_edit_context
+    response = _unsupported_response(
+        rejections=[{"op": "set_edit_direction", "reason": "capability_unavailable", "detail": "x"}]
+    )
+    run = AsyncMock(return_value=response)
+    monkeypatch.setattr(actions, "run_copilot_turn", run)
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    assert result == {"thread": ctx.thread}
+    reply, payload = _reply_and_payload()
+    assert reply.startswith("Nothing was changed.")
+    assert "Not done: change the edit direction" in reply
+    assert "Updating" not in reply and "montage" not in reply
+    assert payload["outcome"] == "unsupported"
+    assert payload["not_done"]
+
+
+@pytest.mark.asyncio
+async def test_unsupported_with_unmet_requests_names_them(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    response = _unsupported_response(
+        unmet=[
+            {"request": "label each clip with its place", "reason": "I can't see where"},
+            {"request": "put clips in chronological order", "reason": "no capture times"},
+        ]
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    assert result == {"thread": ctx.thread}
+    reply, _ = _reply_and_payload()
+    assert "Not done: label each clip with its place (I can't see where)." in reply
+    assert "Not done: put clips in chronological order (no capture times)." in reply
+    assert _EAST_RUN_MODEL_CLAIM not in reply
+
+
+@pytest.mark.asyncio
+async def test_east_run_turn3_golden_replayed_through_execute_copilot_edit(
+    copilot_edit_context, monkeypatch
+):
+    import json
+    from pathlib import Path
+
+    from app.agents.edit_copilot import EditCopilotOutput
+    from app.routes._copilot import _honest_outcome
+
+    golden = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "fixtures/agent_evals/edit_copilot/golden"
+            / "east_run_turn3_unmet_labels_and_order.json"
+        ).read_text()
+    )
+    output = EditCopilotOutput(**golden["output"])
+    outcome, _ = _honest_outcome(output, [])
+    assert outcome == "unsupported"
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[],
+        intent=output.intent,
+        outcome=outcome,
+        reply=output.reply,
+        rejection_reasons=output.rejection_reasons,
+        unmet_requests=output.unmet_requests,
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    assert result == {"thread": ctx.thread}  # Main Creator is not invoked
+    reply, _ = _reply_and_payload()
+    assert "label each clip with where it was filmed" in reply
+    assert "put the clips in chronological order" in reply
+    assert output.reply not in reply
+
+
+@pytest.mark.asyncio
+async def test_stale_rejection_keeps_refresh_instruction(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[],
+        intent="edit",
+        outcome="stale",
+        reply="stale",
+        rejection_reasons=[{"op": "remove_text", "reason": "stale_target", "detail": ""}],
+        unmet_requests=[],
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+
+    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    reply, _ = _reply_and_payload()
+    assert "the edit changed since I looked" in reply
+    assert reply.endswith("Refresh the editor and try again.")
+
+
+@pytest.mark.asyncio
+async def test_describe_turn_keeps_its_answer_despite_unmet_list(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[],
+        intent="describe",
+        outcome="no_effect",
+        reply="The title reads My Title.",
+        rejection_reasons=[],
+        unmet_requests=[{"request": "something", "reason": "r"}],
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+
+    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    reply, payload = _reply_and_payload()
+    assert reply == "The title reads My Title."
+    assert "not_done" not in payload
+
+
+def test_unmapped_op_name_never_leaks_into_reply():
+    lines = actions._not_done_lines(
+        [{"op": "apply_custom_effect_v2_internal", "reason": "capability_unavailable"}], []
+    )
+    assert lines == ["Not done: that isn't something I can change in this edit yet."]
+
+
+@pytest.mark.asyncio
+async def test_thread_memory_reads_real_event_rows_in_order():
+    from app.models import CreationThreadEvent
+
+    thread_id = uuid.uuid4()
+
+    def row(sequence, role, event_type, content, payload=None):
+        return CreationThreadEvent(
+            thread_id=thread_id,
+            sequence=sequence,
+            role=role,
+            event_type=event_type,
+            content=content,
+            payload=payload,
+            revision=0,
+        )
+
+    newest_first = [
+        row(4, "user", "user_message", "now do it again"),
+        row(3, "assistant", "assistant_response", "Done.", {"applied": ["Made title bigger"]}),
+        row(2, "user", "user_message", "make the title bigger"),
+        row(1, "assistant", "assistant_response", ""),  # empty content is skipped
+    ]
+    turns_result = Mock()
+    turns_result.scalars.return_value.all.return_value = newest_first
+    first_result = Mock()
+    first_result.scalars.return_value.first.return_value = "my first brief"
+    db = SimpleNamespace(execute=AsyncMock(side_effect=[turns_result, first_result]))
+    thread = SimpleNamespace(id=thread_id, state={})
+
+    turns, original = await actions._thread_memory(db, thread, "now do it again")
+
+    assert [t["role"] for t in turns] == ["user", "assistant"]
+    assert [t["content"] for t in turns] == ["make the title bigger", "Done."]
+    assert turns[1]["applied"] == ["Made title bigger"]
+    assert original == "my first brief"
+
+
+@pytest.mark.asyncio
+async def test_thread_memory_fails_open():
+    db = SimpleNamespace(execute=AsyncMock(side_effect=RuntimeError("db down")))
+    thread = SimpleNamespace(id=uuid.uuid4(), state={})
+
+    assert await actions._thread_memory(db, thread, "hi") == ([], None)

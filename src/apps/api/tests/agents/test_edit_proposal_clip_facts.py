@@ -173,7 +173,9 @@ def test_order_by_on_a_fast_montage_is_recorded_as_not_applied() -> None:
     )
     output = SimpleNamespace(ordering=None, story_beats=[])
     _reorder_beats_by_capture_time(
-        output, montage_input, [_order_by_intent("capture_time", ["a", "b"])]  # type: ignore[arg-type]
+        output,
+        montage_input,
+        [_order_by_intent("capture_time", ["a", "b"])],  # type: ignore[arg-type]
     )
     assert output.ordering == {
         "ordering_basis": "not_applied",

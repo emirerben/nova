@@ -1,6 +1,6 @@
 {
     "agent": "nova.creator.main",
-    "prompt_version": "2026-09-24-v37",
+    "prompt_version": "2026-09-24-v38",
     "input": {
         "user_message": "Cut my 20K run in the order I filmed them, and tell me where each clip was",
         "creator_context": "",

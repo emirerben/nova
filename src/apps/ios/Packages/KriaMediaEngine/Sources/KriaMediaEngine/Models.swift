@@ -116,8 +116,13 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 guard schemaVersion == 2, track.kind != .audio, (clip.holdDuration ?? 0).isFinite,
                       (0...1800).contains(clip.holdDuration ?? 0) else { throw RecipeError.invalidTimeline }
             }
-            for clip in track.clips where clip.overlayDissolveSeed != nil || clip.overlayAboveText != nil || clip.overlayPopIn != nil || clip.overlayPreserveAlpha != nil {
+            for clip in track.clips where clip.overlayDissolveSeed != nil || clip.overlayAboveText != nil || clip.overlayPopIn != nil || clip.overlayPreserveAlpha != nil || clip.overlayFadeIn != nil || clip.overlayFadeOut != nil {
                 guard schemaVersion == 2, track.kind == .overlay else { throw RecipeError.invalidTimeline }
+            }
+            // One fade source per clip: a placed clip fades through its placement,
+            // and a transition ramp would compound with (or wipe) the card's fade.
+            for clip in track.clips where clip.overlayFadeIn != nil || clip.overlayFadeOut != nil {
+                guard clip.visualPlacement == nil, clip.transition == nil else { throw RecipeError.invalidTimeline }
             }
         }
         for clip in clips {
@@ -186,7 +191,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if clips.contains(where: { $0.rate != 1 }) { result.insert(.variableSpeed) }
         if clips.contains(where: { $0.transition?.kind == .crossfade }) { result.insert(.crossfade) }
         if clips.contains(where: { $0.transition != nil && $0.transition?.kind != .crossfade }) { result.insert(.clipTransitions) }
-        if clips.contains(where: { $0.overlayDissolveSeed != nil || $0.overlayAboveText != nil || $0.holdDuration != nil || $0.overlayPopIn != nil || $0.overlayPreserveAlpha != nil }) { result.insert(.editorMedia) }
+        if clips.contains(where: { $0.overlayDissolveSeed != nil || $0.overlayAboveText != nil || $0.holdDuration != nil || $0.overlayPopIn != nil || $0.overlayPreserveAlpha != nil || $0.overlayFadeIn != nil || $0.overlayFadeOut != nil }) { result.insert(.editorMedia) }
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
@@ -299,6 +304,12 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     public var overlayPreserveAlpha: Bool?
     public var visualPlacement: VisualMediaPlacement?
     public var overlayDissolveSeed: UInt32?
+    /// Fade an overlay-track clip in and/or out on the shared 0.15 s curve
+    /// (`VisualMediaPlacement.fadeEnvelope`) without moving it onto the
+    /// placement path: its `transform` positioning is left exactly as is.
+    /// A clip with a `visualPlacement` fades through that placement instead.
+    public var overlayFadeIn: Bool?
+    public var overlayFadeOut: Bool?
     /// A normalized rectangle in the decoded source. It is applied before
     /// placement so preview and export crop the same pixels.
     public var sourceCrop: NormalizedSourceRect?
@@ -306,14 +317,24 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     public var stillLayout: StillLayout?
     public var volume: Double
     public var duration: TimeInterval { sourceDuration / rate + (holdDuration ?? 0) }
+    /// Opacity from `overlayFadeIn`/`overlayFadeOut` alone across this clip's
+    /// own timeline window; exactly 1 when neither is set, or when the clip is
+    /// placed (it then fades through its placement, like the renderer's
+    /// `OverlayFadeWindow`).
+    public func overlayFadeAlpha(at time: Double) -> Double {
+        guard visualPlacement == nil, overlayFadeIn == true || overlayFadeOut == true else { return 1 }
+        return VisualMediaPlacement.fadeEnvelope(at: time, windowStart: timelineStart, windowEnd: timelineStart + duration,
+                                                 fadeIn: overlayFadeIn == true, fadeOut: overlayFadeOut == true)
+    }
     // Use Swift's acronym-normalized spelling so convertToSnakeCase/convertFromSnakeCase agree.
-    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout }
+    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout, overlayFadeIn, overlayFadeOut }
     public init(id: String, sourceAssetID: String, sourceStart: TimeInterval = 0, sourceDuration: TimeInterval,
                 timelineStart: TimeInterval = 0, rate: Double = 1, transform: MediaTransform = .identity,
-                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil) {
+                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil, overlayFadeIn: Bool? = nil, overlayFadeOut: Bool? = nil) {
         self.id = id; self.sourceAssetID = sourceAssetID; self.sourceStart = sourceStart; self.sourceDuration = sourceDuration
         self.timelineStart = timelineStart; self.rate = rate; self.transform = transform; self.transition = transition; self.text = text; self.volume = volume
         self.look = look; self.holdDuration = holdDuration; self.overlayAboveText = overlayAboveText; self.overlayPopIn = overlayPopIn; self.overlayPreserveAlpha = overlayPreserveAlpha; self.visualPlacement = visualPlacement; self.overlayDissolveSeed = overlayDissolveSeed; self.sourceCrop = sourceCrop; self.stillLayout = stillLayout
+        self.overlayFadeIn = overlayFadeIn; self.overlayFadeOut = overlayFadeOut
     }
 }
 

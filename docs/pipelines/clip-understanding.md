@@ -249,24 +249,38 @@ list). Rollback: `fly secrets set CLIP_FACTS_ENABLED=false CLIP_FACTS_USER_IDS=[
 
 **Flow.**
 
-1. The phone reads `PHAsset.creationDate` / `location` and reverse-geocodes
+1. The phone reads `PHAsset.creationDate` / `location` (Photos read access is
+   requested by the library-backed picker; without it the exported file's own
+   QuickTime creation date and `com.apple.quicktime.location.ISO6709` tag fill in,
+   `ClipCaptureReader.read(assetIdentifier:fileURL:)`) and reverse-geocodes
    (`CLGeocoder`, serialized, cached by rounded coordinate). It sends
    `capture_time` (ISO8601 UTC), `coarse_location {lat, lon}` (2 decimals) and
    `place {sub_locality, locality, country}` on `POST /creation-threads/{id}/media`.
    Any failure sends nothing; the settings toggle "Use when and where clips were
-   filmed" (default ON) sends nothing when off.
+   filmed" (default ON) sends nothing when off, and turning it off also clears
+   the filming context remembered for clips that have not attached yet.
 2. `MediaInput` (`routes/creation_threads.py`) validates leniently (a bad value
    is dropped, never a failed attach) and re-rounds location server-side, so a
    precise fix can never be stored. It persists `capture` on the clip assignment
-   (existing JSON, no migration) and on the proxy receipt's
-   `OriginalMediaDescriptor.capture` (`kria/media_sources.py`, still
-   `extra=forbid`). Capture never appears in the thread projection or events.
+   only (existing JSON, no migration). `OriginalMediaDescriptor.capture`
+   (`kria/media_sources.py`, still `extra=forbid`) exists as a read fallback but is
+   NOT written: a capture copy inside the stored receipt would make older code
+   (a rollback, or a worker still on the previous image) reject the whole receipt
+   and fail phone-job admission. Capture never appears in the thread projection or
+   events. **At rest:** the attach API stores capture (rounded location, place,
+   time) for every iOS clip that sends it, whether or not `CLIP_FACTS` is on for
+   the account; only consumption is gated. The privacy manifest and App Store
+   labels declare Coarse Location accordingly.
 3. At drafting time (`edit_proposal_build._run_draft_attempt`),
    `services/clip_facts.enrich_clip_facts` copies capture-derived facts onto
    `analysis["clip_facts"]` and asks `nova.video.landmark_guess` for one
    best-guess landmark per analyzed video (frames via the Gemini File API +
-   place + coarse coordinates). Fail-open per clip; a guess, even "unknown", is
-   recorded per storage generation so a retry never pays twice.
+   place + coarse coordinates). Only clips with a place or coordinate are sent
+   (no where, no guess: covers the toggle off, no GPS, no Photos access); the
+   others are recorded as asked. Fail-open per clip, and the whole step is capped
+   at `LANDMARK_BUDGET_S` (45s): clips that have not answered are skipped and
+   retried next time. A guess, even "unknown", is recorded per storage generation
+   (`generation`, else `storage_generation`) so a retry never pays twice.
 4. `clip_record(...).facts` exposes them (`ClipFact {kind, value, provenance,
    confidence}`; kinds `capture_time|place|landmark|visible_text|creator`,
    provenance `exif|geocode|vision|creator|inferred`). Facts are stored beside,
@@ -284,12 +298,20 @@ clips without one keep their attachment-order slot (`order_by_capture_time`).
 is on), resolved deterministically over every clip in
 `clip_intent_planning.resolve_order_by_intent` (no vision call) and applied by
 `edit_proposal._reorder_beats_by_capture_time`. `by_route` equals capture-time
-order for now. The basis is recorded on `EditProposal.ordering`
-(`{ordering_basis, ordering_fallback_clip_ids}`) for P2/P4 receipts.
+order for now, so receipts must say "ordered by when you filmed" for both. The
+capture time is the Photos creation date, which for a clip saved from a messaging
+app or re-exported is the save time, not the filming time; provenance stays
+`exif` and this limitation is accepted. The basis is recorded on
+`EditProposal.ordering` (`{ordering_basis, ordering_fallback_clip_ids}`) for
+P2/P4 receipts; `ordering_basis` is `capture_time`, `attachment`, or
+`not_applied` (with a `reason`: `fast_montage`, or `planner_path` for the
+semantic/snapshot planners that never read facts). A receipt must read this
+field, never assume a resolved `order_by` intent was honored.
 
 **Not covered yet.** The semantic planner (`EDIT_PROPOSAL_SEMANTIC_ENABLED`),
 the snapshot replan/direction-replacement planners and the editor-op tool
-(KRI-191) do not read facts; fast_montage ignores `order_by`.
+(KRI-191) do not read facts; fast_montage ignores `order_by`. Both record
+`ordering_basis: not_applied`.
 
 **Guards.** `tests/services/test_clip_facts.py`,
 `tests/schemas/test_clip_understanding_facts.py` (parse threading),
@@ -298,7 +320,7 @@ the snapshot replan/direction-replacement planners and the editor-op tool
 `tests/services/test_clip_intent_order_by.py`,
 `tests/tasks/test_edit_proposal_build_clip_facts.py`,
 `tests/agents/test_landmark_guess.py`, `tests/evals/test_landmark_guess_evals.py`.
-Prompt versions bumped: `main_creator` v37, `edit_proposal` 1.18.0,
+Prompt versions bumped: `main_creator` v38, `edit_proposal` 1.18.0,
 `clip_intent_planner` 2026-09-24.1, new `landmark_guess` 2026-09-24.1. Live
 evals to run before enabling (`--eval-mode=live`, no judge):
 `test_landmark_guess_evals.py`, `test_clip_intent_planner_evals.py`,

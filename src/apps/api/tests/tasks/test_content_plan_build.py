@@ -3122,6 +3122,7 @@ def _run_phone_dispatch(
     clip_count: int = 1,
     phone_lane_request: dict | None = None,
     phone_subtitled_media_lanes_enabled: bool = False,
+    dispatch_kwargs: dict | None = None,
 ):
     from app.config import settings
 
@@ -3139,6 +3140,8 @@ def _run_phone_dispatch(
     )
     job = SimpleNamespace(id=uuid.uuid4(), assembly_plan={})
     session = MagicMock()
+    # `bypass_guided_edit_gate` re-counts pool assets under the item lock.
+    session.execute.return_value.scalar_one.return_value = 0
 
     monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
     monkeypatch.setattr(settings, "silence_cut_enabled", True)
@@ -3183,6 +3186,7 @@ def _run_phone_dispatch(
             plan,
             {"tone": "direct", "content_pillars": []},
             ownership_epoch=0,
+            **(dispatch_kwargs or {}),
         )
     return result, job, mock_build, bind_mock
 
@@ -3212,6 +3216,68 @@ def test_phone_gate_guided_unapproved_rejected(monkeypatch: pytest.MonkeyPatch) 
     assert warning_call.args[0] == "plan_item_render.invalid_clips"
     assert warning_call.kwargs["error"] == "analysis proxies require an approved phone edit plan"
     assert warning_call.kwargs["phone_gate"] == "unapproved_guided"
+
+
+_V2_PHONE_DISPATCH = {"bypass_guided_edit_gate": True, "allow_phone_unapproved_montage": True}
+
+
+@pytest.mark.parametrize("edit_format", ["montage", "day_vlog", "single_hero"])
+def test_v2_phone_montage_dispatches_without_an_approved_proposal(
+    monkeypatch: pytest.MonkeyPatch, edit_format: str
+) -> None:
+    """KRI-187: a runtime-v2 approval (no guided proposal) reaches a device job
+    once the v2-phone flag covers the account -- the worker then runs
+    `_run_phone_montage_job`, and the Job carries no `guided_edit` snapshot."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_enabled", True)
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_user_ids", [])
+    result, job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch, edit_format=edit_format, approved=False, dispatch_kwargs=_V2_PHONE_DISPATCH
+    )
+
+    assert result.outcome == "dispatched"
+    bind_mock.assert_called_once()
+    assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
+    assert "guided_edit" not in job.assembly_plan
+
+
+@pytest.mark.parametrize(
+    ("flag", "dispatch_kwargs"),
+    [
+        (False, _V2_PHONE_DISPATCH),  # flag off: byte-identical refusal
+        (True, {"bypass_guided_edit_gate": True}),  # caller did not opt in
+        (True, {"allow_phone_unapproved_montage": True}),  # no explicit bypass
+        (True, {}),  # every existing caller
+    ],
+)
+def test_v2_phone_montage_still_refused_unless_flag_and_caller_opt_in(
+    monkeypatch: pytest.MonkeyPatch, flag: bool, dispatch_kwargs: dict
+) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_enabled", flag)
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_user_ids", [])
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch, edit_format="montage", approved=False, dispatch_kwargs=dispatch_kwargs
+    )
+
+    assert result.outcome == "invalid_clips"
+    assert result.reason == "unapproved_guided"
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
+
+
+def test_v2_phone_montage_respects_the_account_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_enabled", True)
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_user_ids", [uuid.uuid4()])
+    result, *_ = _run_phone_dispatch(
+        monkeypatch, edit_format="montage", approved=False, dispatch_kwargs=_V2_PHONE_DISPATCH
+    )
+    assert result.outcome == "invalid_clips"
+    assert result.reason == "unapproved_guided"
 
 
 def test_phone_gate_unsupported_format_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
