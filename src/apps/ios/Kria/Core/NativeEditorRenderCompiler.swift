@@ -10,6 +10,9 @@ enum NativeEditorRenderError: Error, Equatable {
     case unsupportedLane(String)
     case missingFont(String)
     case missingSource(Int)
+    /// No clip reached the video track, so nothing would play under the
+    /// document's cards and text.
+    case missingVideoTrack
 }
 
 /// Compiles the public editor document. Internal backend assembly state never
@@ -132,6 +135,12 @@ enum NativeEditorRenderError: Error, Equatable {
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
                 sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
         }
+        // The video track is the composition's clock. Without it text and
+        // captions clip to nothing, yet an unclamped media overlay still makes
+        // the recipe valid, and the editor would play that card over a black
+        // canvas instead of falling back to the finished MP4.
+        // No editor document legitimately previews without a video clip.
+        guard !video.isEmpty else { throw NativeEditorRenderError.missingVideoTrack }
         var audioTracks: [TimelineTrack] = []
         let total = video.map { $0.timelineStart + $0.duration }.max() ?? 0
         func addAudio(id: String, lane: String, start: Double, length: Double, gain: Double, timelineStart: Double = 0, catalog: RenderAssetCatalog = .music) throws {
