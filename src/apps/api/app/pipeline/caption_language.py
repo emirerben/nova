@@ -5,14 +5,17 @@ may change that is the creator explicitly asking for captions in another languag
 ("captions in English", "altyazılar Türkçe olsun"). Nothing else — the job's
 UI/content language, a hard-coded "en", a previous item — may silently win.
 
-Three pure helpers:
+Four pure helpers:
 
 - ``parse_caption_language_request`` — grounded, deterministic extraction of an
   explicit caption-language request from the creator's own words. Requires a
   caption/subtitle keyword AND a language name in the same clause, so a prompt
   merely *written* in Turkish never changes the caption language.
 - ``infer_language_from_text`` — a conservative EN/TR guess from transcript text,
-  used only when whisper reports no language.
+  used when whisper reports no language, and to cross-check the one it reports.
+- ``crosscheck_detected_language`` — whisper's detection vs an independent
+  transcript of the same clip (Gemini's); returns the language to re-transcribe
+  in when the two clearly disagree.
 - ``resolve_spoken_caption_language`` — detected → transcript text → deliberate,
   recorded fallback. Returns the source so callers can trace the decision.
 """
@@ -117,6 +120,22 @@ def infer_language_from_text(text: str | None) -> str:
     if en_score >= 2 and en_score >= 2 * max(tr_score, 1):
         return "en"
     return ""
+
+
+def crosscheck_detected_language(detected: str | None, *, reference_text: str | None) -> str | None:
+    """The language an independent transcript of the SAME clip clearly speaks,
+    when it contradicts whisper's detection; None when they agree or either is unknown.
+
+    whisper-1 detects the language from the audio alone and misreads accented
+    speech (Turkish-accented English → "tr"), then TRANSLATES into that language
+    instead of transcribing. ``reference_text`` is Gemini's clip transcript, which
+    every ingested clip already has, so a clear EN/TR disagreement costs no extra call.
+    """
+    lang = (detected or "").strip().lower()
+    reference = infer_language_from_text(reference_text)
+    if lang and reference and reference != lang:
+        return reference
+    return None
 
 
 def resolve_spoken_caption_language(

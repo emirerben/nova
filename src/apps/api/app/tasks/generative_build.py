@@ -4463,6 +4463,7 @@ def _run_phone_subtitled_job(
     from app.pipeline.caption_language import (  # noqa: PLC0415
         SOURCE_DETECTED,
         SUPPORTED_CAPTION_LANGUAGES,
+        crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
     from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
@@ -4766,7 +4767,53 @@ def _run_phone_subtitled_job(
             # explicitly asked for a specific caption language (already parsed +
             # validated into `caption_language_req` above) — never the plan/job
             # `language`, which is the UI/content language, not what the clip says.
-            transcript = transcribe_whisper_cached(clip_path, language=caption_language_req)
+            #
+            # KRI-178 beats match the creator's trigger phrases exactly, so seed
+            # whisper with them or it misspells the names ("Mason Grumet"). Off
+            # with the beats flag, the request stays byte-identical (no prompt).
+            vocabulary_prompt: str | None = None
+            if beats_enabled:
+                from app.services.phone_reaction_grounding import (  # noqa: PLC0415
+                    trigger_vocabulary_prompt,
+                )
+
+                _strategy = all_candidates.get("creator_strategy")
+                _strategy = _strategy if isinstance(_strategy, dict) else {}
+                _beats = _strategy.get("reaction_beats")
+                _closing = _strategy.get("closing_media")
+                vocabulary_prompt = trigger_vocabulary_prompt(
+                    _beats if isinstance(_beats, list) else [],
+                    _closing if isinstance(_closing, dict) else None,
+                )
+            transcript = transcribe_whisper_cached(
+                clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
+            )
+            if caption_language_req is None:
+                # whisper-1 misdetects accented speech (Turkish-accented English
+                # -> "tr") and then writes a translation, so the captions and every
+                # spoken trigger go wrong. Gemini's transcript of the same clip is
+                # an independent listener: on a clear disagreement, transcribe
+                # again in the language Gemini actually heard.
+                clip_meta = next((m for m in clip_metas if str(m.clip_id) == str(clip_id)), None)
+                heard_lang = crosscheck_detected_language(
+                    transcript.language, reference_text=getattr(clip_meta, "transcript", None)
+                )
+                if heard_lang is not None:
+                    retranscribed = transcribe_whisper_cached(
+                        clip_path, language=heard_lang, verbatim_prompt=vocabulary_prompt
+                    )
+                    record_pipeline_event(
+                        "captions",
+                        "caption_language_crosscheck",
+                        {
+                            "variant_id": "subtitled",
+                            "whisper_language": transcript.language,
+                            "reference_language": heard_lang,
+                            "applied": bool(retranscribed.words),
+                        },
+                    )
+                    if retranscribed.words:
+                        transcript = retranscribed
             _spoken_lang, _lang_source = resolve_spoken_caption_language(
                 transcript.language,
                 transcript_text=getattr(transcript, "full_text", None),

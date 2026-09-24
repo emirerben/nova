@@ -993,3 +993,40 @@ def test_beat_error_is_fail_open(monkeypatch):
     reasons = {u["beat_id"]: u["reason"] for u in result.receipt["unplaced"]}
     assert reasons["beat-0"].startswith("error")
     assert any(p["beat_id"] == "b2" for p in result.receipt["placed"])
+
+
+# --- trigger_vocabulary_prompt (whisper bias prompt) --------------------------
+
+
+def test_trigger_vocabulary_prompt_keeps_the_creators_spelling_once_each() -> None:
+    """Job 385e3b13's own beats: triggers + `after` + closing `from_trigger`,
+    deduped on the folded form so "Rafael Leão" appears once."""
+    beats = [
+        {"beat_id": "greenwood_photo", "trigger": "Mason Greenwood"},
+        {"beat_id": "greenwood_no", "trigger": "no", "after": "Mason Greenwood"},
+        {"beat_id": "leao_photo", "trigger": "Rafael Leão"},
+        {"beat_id": "leao_check", "trigger": "rafael leao"},
+        {"beat_id": "vlahovic_photo", "trigger": "Vlahović"},
+        {"beat_id": "rank_3", "trigger": "number three"},
+        {"beat_id": "rank_3_digit", "trigger": "#3"},
+    ]
+    closing = {"visual_id": "salah", "from_trigger": "Salah"}
+    assert rg.trigger_vocabulary_prompt(beats, closing) == (
+        "Mason Greenwood, no, Rafael Leão, Vlahović, number three, Salah."
+    )
+
+
+def test_trigger_vocabulary_prompt_none_without_phrases() -> None:
+    assert rg.trigger_vocabulary_prompt([], None) is None
+    assert (
+        rg.trigger_vocabulary_prompt(["not a dict", {"trigger": "  "}], {"from_trigger": ""})
+        is None
+    )
+
+
+def test_trigger_vocabulary_prompt_is_bounded() -> None:
+    beats = [{"trigger": f"player{i} surname{i}"} for i in range(200)]
+    prompt = rg.trigger_vocabulary_prompt(beats, None)
+    assert prompt is not None
+    assert len(prompt) <= rg._VOCABULARY_PROMPT_MAX_CHARS
+    assert prompt.startswith("player0 surname0, player1 surname1")
