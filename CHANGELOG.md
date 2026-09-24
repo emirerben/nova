@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.197.0] - 2026-09-24
+
+### Changed
+- fix(ios): "fade" media-overlay tokens actually fade the card (KRI-182, re-land of #1214) (#1216) <!-- release-pr: 1216 -->
+
 ## [0.76.196.0] - 2026-09-24
 
 ### Changed
