@@ -39,6 +39,7 @@ from app.models import (
     SoundEffect,
 )
 from app.schemas.edit_proposal import parse_edit_proposal
+from app.services.clip_facts import assignment_facts, facts_for_prompt
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_understanding import clip_record
 from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS, resolve_creator_manifest
@@ -161,6 +162,7 @@ def _positive_duration_s(value: object) -> float | None:
 # one MainCreatorAgent call (35s timeout), so every free-text field is capped.
 CHAT_EVIDENCE_TRANSCRIPT_CHARS = 160
 CHAT_EVIDENCE_MAX_MOMENTS = 2
+CHAT_EVIDENCE_MAX_FACTS = 6
 CHAT_EVIDENCE_FIELD_CHARS = {
     "subject": 120,
     "summary": 200,
@@ -172,7 +174,7 @@ CHAT_EVIDENCE_MOMENT_CHARS = 80
 CHAT_EVIDENCE_PEOPLE_NOTE_CHARS = 80
 
 
-def _chat_evidence(analysis: object, *, kind: str) -> dict[str, Any]:
+def _chat_evidence(analysis: object, *, kind: str, include_facts: bool = False) -> dict[str, Any]:
     """Compact per-clip AI evidence for the chat agent (KRI-127).
 
     Routes through the same ``clip_record`` projection the edit planner and
@@ -184,7 +186,9 @@ def _chat_evidence(analysis: object, *, kind: str) -> dict[str, Any]:
     decision happens here) and only the first few notable moments are kept.
     """
     record = clip_record(analysis if isinstance(analysis, dict) else None, kind=kind)
-    view = record.prompt_view(transcript_chars=CHAT_EVIDENCE_TRANSCRIPT_CHARS)
+    view = record.prompt_view(
+        transcript_chars=CHAT_EVIDENCE_TRANSCRIPT_CHARS, include_facts=include_facts
+    )
     view.pop("brands", None)
     for key, limit in CHAT_EVIDENCE_FIELD_CHARS.items():
         if key in view:
@@ -359,6 +363,9 @@ async def resolve_item_creator_context(
     )
     if phone_visuals_only:
         phone_source_media_ids = []
+    # KRI-189: when/where facts (capture time, place, best-guess landmark, each
+    # with provenance) are shown to the chat agent only when the flag is on.
+    facts_on = settings.clip_facts_for(persona.user_id)
     seen: set[str] = set()
     for index, assignment in enumerate((item.clip_assignments or [])[:MAX_CREATOR_MEDIA_REFS]):
         if not isinstance(assignment, dict):
@@ -380,22 +387,25 @@ async def resolve_item_creator_context(
                 label=user_note or None,
             )
         )
-        media_context.append(
-            {
-                "media_id": media_id,
-                "kind": clip_kind,
-                "duration_s": duration_s,
-                "creator_note": user_note or None,
-                # AI evidence is clearly segregated and must never be copied to
-                # on-screen text (also enforced in the main prompt). Populated
-                # once the guided-planning clip analysis lands on this
-                # assignment (app/tasks/edit_proposal_build.py); empty before
-                # that (the raw clip has no other analysis source).
-                "analysis_only_not_copy": _chat_evidence(
-                    assignment.get("analysis"), kind=clip_kind
-                ),
-            }
-        )
+        clip_entry: dict[str, Any] = {
+            "media_id": media_id,
+            "kind": clip_kind,
+            "duration_s": duration_s,
+            "creator_note": user_note or None,
+            # AI evidence is clearly segregated and must never be copied to
+            # on-screen text (also enforced in the main prompt). Populated
+            # once the guided-planning clip analysis lands on this
+            # assignment (app/tasks/edit_proposal_build.py); empty before
+            # that (the raw clip has no other analysis source).
+            "analysis_only_not_copy": _chat_evidence(
+                assignment.get("analysis"), kind=clip_kind, include_facts=False
+            ),
+        }
+        if facts_on:
+            facts = facts_for_prompt(assignment_facts(assignment)[:CHAT_EVIDENCE_MAX_FACTS])
+            if facts:
+                clip_entry["facts"] = facts
+        media_context.append(clip_entry)
 
     # Registered Visuals are creator-visible footage from the moment they are
     # registered; their AI analysis finishes later on the autoplace worker.

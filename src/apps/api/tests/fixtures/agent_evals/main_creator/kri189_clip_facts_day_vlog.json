@@ -1,0 +1,89 @@
+{
+    "agent": "nova.creator.main",
+    "prompt_version": "2026-09-24-v38",
+    "input": {
+        "user_message": "Cut my 20K run in the order I filmed them, and tell me where each clip was",
+        "creator_context": "",
+        "item_context": "Untitled video; montage; no recorded voiceover.",
+        "media_context": [
+            {
+                "media_id": "clip-1",
+                "kind": "video",
+                "duration_s": 7.0,
+                "analysis_only_not_copy": {
+                    "subject": "runners on a coastal road",
+                    "activity": "running"
+                },
+                "facts": [
+                    {"kind": "capture_time", "value": "2026-09-20T09:12:00Z", "provenance": "exif"},
+                    {"kind": "place", "value": "Sariyer, Istanbul, Turkiye", "provenance": "geocode"},
+                    {"kind": "landmark", "value": "Rumeli Hisari", "provenance": "inferred", "confidence": 0.82}
+                ]
+            },
+            {
+                "media_id": "clip-2",
+                "kind": "video",
+                "duration_s": 6.0,
+                "analysis_only_not_copy": {
+                    "subject": "a bridge over the water with fishermen",
+                    "activity": "running"
+                },
+                "facts": [
+                    {"kind": "capture_time", "value": "2026-09-20T07:31:00Z", "provenance": "exif"},
+                    {"kind": "place", "value": "Arnavutkoy, Istanbul, Turkiye", "provenance": "geocode"}
+                ]
+            },
+            {
+                "media_id": "clip-3",
+                "kind": "video",
+                "duration_s": 8.0,
+                "analysis_only_not_copy": {
+                    "subject": "the finish line by the ferry pier",
+                    "activity": "finishing a run"
+                },
+                "facts": [
+                    {"kind": "capture_time", "value": "2026-09-20T11:45:00Z", "provenance": "exif"},
+                    {"kind": "place", "value": "Eminonu, Istanbul, Turkiye", "provenance": "geocode"},
+                    {"kind": "landmark", "value": "Galata Bridge", "provenance": "inferred", "confidence": 0.7}
+                ]
+            }
+        ],
+        "conversation": [],
+        "capability_manifest": {
+            "schema_version": 1,
+            "item_id": "item-1",
+            "edit_format": "montage",
+            "render_program": "guided",
+            "has_voiceover": false,
+            "media": [
+                {"media_id": "clip-1", "kind": "video", "duration_s": 7.0},
+                {"media_id": "clip-2", "kind": "video", "duration_s": 6.0},
+                {"media_id": "clip-3", "kind": "video", "duration_s": 8.0}
+            ],
+            "catalog": [
+                {"catalog_id": "music-track-1", "kind": "music", "label": "Warm travel beat"}
+            ],
+            "capabilities": {
+                "dispatch_render": {"available": true},
+                "draft_guided_proposal": {"available": true},
+                "media_overlays": {"available": false, "reason_code": "disabled_by_setting"},
+                "sound_effects": {"available": false, "reason_code": "disabled_by_setting"},
+                "wide_looks": {"available": false, "reason_code": "disabled_by_setting"}
+            },
+            "limits": {
+                "max_media_refs": 50,
+                "max_catalog_refs": 50,
+                "max_commands": 4,
+                "max_output_duration_s": 120.0
+            },
+            "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+    },
+    "raw_text": "{\"action\":{\"kind\":\"propose_strategy\",\"strategy\":{\"direction\":\"fast_montage\",\"edit_format\":\"montage\",\"archetype\":\"day_vlog\",\"audio_strategy\":\"licensed_music\",\"story_structure\":[\"Early start at the first stop\",\"The run along the water\",\"The finish\"],\"caption_style\":\"clean\",\"intro_hook\":\"My 20K run, start to finish\",\"pacing\":\"balanced\",\"target_duration_s\":21,\"render_program\":\"guided\",\"selected_media_ids\":[],\"optional_treatments\":[],\"rationale\":\"The creator asked for the order they filmed the clips. The capture_time facts (recorded by the phone) put clip-2 first at 07:31, then clip-1 at 09:12, then clip-3 at 11:45.\"},\"summary\":\"I'm cutting this as a day vlog in the order you filmed it: Arnavutkoy first, then Rumeli Hisari, then the finish near Eminonu. The place names come from your phone, but I guessed the two landmark names (Rumeli Hisari and Galata Bridge) from what I could see, so tell me if either is wrong.\"}}",
+    "output": {},
+    "meta": {
+        "source": "hand-authored-kri189",
+        "contract": "KRI-189: media_context `facts` (capture_time/place/landmark with provenance) let the chat agent order by when clips were filmed and say plainly that an inferred landmark is a guess"
+    }
+}

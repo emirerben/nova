@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,8 +16,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext, TerminalError
 from app.agents._schemas.creator_agent import AskUser, ProposeStrategy, ReviewDecision
-from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCreatorOutput
 from app.config import settings
+from app.kria.brief import (
+    BriefUpdate,
+    CreativeBrief,
+    CurrentPlanShape,
+    Route,
+    apply_updates,
+    load_latest_brief,
+    new_requirements,
+    plan_shape_from_editor_snapshot,
+    render_brief_request,
+    route_requirements,
+)
 from app.kria.contracts import KriaTurnPlan
 from app.models import (
     ContentPlan,
@@ -46,6 +58,14 @@ class PlannedKriaTurn:
     plan: KriaTurnPlan
     manifest_hash: str | None
     context_hash: str | None
+    # KRI-188 (all empty/None when the Creative Brief is off for the creator):
+    # requirements this turn newly stated, the deterministic router verdict, and
+    # the footage ids the receipt checkers measure coverage against. Persisted
+    # by the turn-completion transaction, never here (a requeued turn must not
+    # write a brief version).
+    brief_updates: tuple[BriefUpdate, ...] = ()
+    brief_route: Route | None = None
+    brief_clip_ids: tuple[str, ...] = ()
 
 
 def adapt_creator_action(
@@ -179,13 +199,21 @@ def adapt_editor_action(
     )
 
 
-async def _plan_editor_revision(
+@dataclass(frozen=True)
+class _EditorTarget:
+    """Immutable projection of the current editable render (copied rows only)."""
+
+    job_id: uuid.UUID
+    snapshot: dict
+    conversation: list[dict]
+
+
+async def _load_editor_target(
     db: AsyncSession,
     *,
     thread_id: uuid.UUID,
     item: PlanItem,
-    user_message: str,
-) -> KriaTurnPlan | None:
+) -> _EditorTarget | None:
     if item.current_job_id is None:
         return None
     thread = await db.get(CreationThread, thread_id)
@@ -245,18 +273,30 @@ async def _plan_editor_revision(
     conversation = [
         {"role": row.role, "content": str(row.content)[:1000]} for row in rows if row.content
     ]
-    job_id = job.id
+    return _EditorTarget(job_id=job.id, snapshot=snapshot, conversation=conversation)
+
+
+async def _plan_editor_revision(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item: PlanItem,
+    user_message: str,
+) -> KriaTurnPlan | None:
+    target = await _load_editor_target(db, thread_id=thread_id, item=item)
+    if target is None:
+        return None
     # Release the read transaction before Copilot model I/O. The response is
     # derived only from the immutable snapshot and copied conversation rows.
     await db.rollback()
     response = await run_copilot_turn(
         CopilotTurnBody(
             message=user_message,
-            turns=conversation,
-            snapshot=snapshot,
+            turns=target.conversation,
+            snapshot=target.snapshot,
             client_contract_version=2,
         ),
-        job_id=job_id,
+        job_id=target.job_id,
     )
     if response.ops:
         return adapt_editor_action(
@@ -275,48 +315,27 @@ async def _plan_editor_revision(
     return None
 
 
-async def plan_live_turn(
+@dataclass(frozen=True)
+class _CreatorInputs:
+    agent_input: MainCreatorInput
+    intent_clips: list
+    creator_request: str | None
+
+
+async def _load_creator_inputs(
     db: AsyncSession,
     *,
     thread_id: uuid.UUID,
-    item_id: uuid.UUID,
+    item: PlanItem,
+    persona: Persona,
     creator_id: uuid.UUID,
     user_message: str,
-) -> PlannedKriaTurn:
-    item = await db.get(PlanItem, item_id)
-    if item is None:
-        raise RuntimeError("Kria target item is unavailable")
-    plan = await db.get(ContentPlan, item.content_plan_id)
-    if plan is None or plan.user_id != creator_id:
-        raise RuntimeError("Kria target item ownership changed")
-    persona = await db.get(Persona, plan.persona_id)
-    if persona is None or persona.user_id != creator_id:
-        raise RuntimeError("Kria creator context is unavailable")
-    manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
-    editor_plan = await _plan_editor_revision(
-        db,
-        thread_id=thread_id,
-        item=item,
-        user_message=user_message,
-    )
-    if editor_plan is not None:
-        return PlannedKriaTurn(
-            plan=editor_plan,
-            manifest_hash=manifest.manifest_hash,
-            context_hash=manifest.context_hash,
-        )
-    if not manifest.capabilities["dispatch_render"].available:
-        return PlannedKriaTurn(
-            plan=KriaTurnPlan(
-                mode="respond",
-                turn_value="question",
-                response=(
-                    "Add at least one clip and I can shape the edit around what is actually there."
-                ),
-            ),
-            manifest_hash=manifest.manifest_hash,
-            context_hash=manifest.context_hash,
-        )
+    manifest,  # noqa: ANN001 - resolved creator manifest
+    media_context: list[dict],
+    prior_brief: CreativeBrief | None,
+    brief_on: bool,
+) -> _CreatorInputs | PlannedKriaTurn:
+    """Read everything the Main Creator needs, then release the transaction."""
     intent_clips = []
     creator_request: str | None = None
     if settings.clip_intents_enabled:
@@ -373,6 +392,14 @@ async def plan_live_turn(
     )
     rows.reverse()
     creator_summary, item_summary = creator_context(persona, item)
+    extra: dict = {}
+    if brief_on:
+        extra["brief_enabled"] = True
+        if prior_brief is not None and prior_brief.live():
+            # The model reads the brief, never a chip-concatenated chat string.
+            extra["creator_request"] = render_brief_request(
+                prior_brief, latest_message=user_message
+            )
     agent_input = MainCreatorInput(
         user_message=user_message,
         creator_context=creator_summary,
@@ -382,14 +409,22 @@ async def plan_live_turn(
             {"role": row.role, "content": str(row.content)[:1000]} for row in rows if row.content
         ],
         capability_manifest=manifest,
+        **extra,
     )
     # Do not pin an async DB connection or block the event loop that renews the
     # durable turn lease while the synchronous model client is in flight.
     await db.rollback()
+    return _CreatorInputs(
+        agent_input=agent_input, intent_clips=intent_clips, creator_request=creator_request
+    )
 
+
+async def _call_main_creator(
+    inputs: _CreatorInputs, *, thread_id: uuid.UUID, creator_id: uuid.UUID
+) -> MainCreatorOutput:
     def _run_agent():  # noqa: ANN202 - inferred MainCreatorOutput
         return MainCreatorAgent(default_client()).run(
-            agent_input,
+            inputs.agent_input,
             ctx=RunContext(
                 request_id=str(thread_id),
                 creator_id=str(creator_id),
@@ -397,9 +432,29 @@ async def plan_live_turn(
         )
 
     try:
-        output = await asyncio.to_thread(_run_agent)
+        return await asyncio.to_thread(_run_agent)
     except TerminalError as exc:
         raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
+
+
+async def _plan_from_creator_output(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    user_message: str,
+    manifest,  # noqa: ANN001 - resolved creator manifest
+    inputs: _CreatorInputs,
+    output: MainCreatorOutput,
+    brief_request: str | None = None,
+) -> PlannedKriaTurn:
+    """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
+    intent_clips = inputs.intent_clips
+    creator_request = inputs.creator_request
+    if brief_request:
+        # KRI-188: the clip-intent planner reads the brief, not chat text.
+        creator_request = brief_request
     if settings.clip_intents_enabled and isinstance(output.action, ProposeStrategy):
         try:
             planned = await plan_and_resolve_clip_intents(
@@ -508,6 +563,164 @@ async def plan_live_turn(
         plan=adapt_creator_action(output.action),
         manifest_hash=manifest.manifest_hash,
         context_hash=manifest.context_hash,
+    )
+
+
+async def _refetch_item(db: AsyncSession, item_id: uuid.UUID) -> PlanItem:
+    item = await db.get(PlanItem, item_id)
+    if item is None:
+        raise RuntimeError("Kria target item is unavailable")
+    return item
+
+
+async def plan_live_turn(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    user_message: str,
+) -> PlannedKriaTurn:
+    item = await db.get(PlanItem, item_id)
+    if item is None:
+        raise RuntimeError("Kria target item is unavailable")
+    plan = await db.get(ContentPlan, item.content_plan_id)
+    if plan is None or plan.user_id != creator_id:
+        raise RuntimeError("Kria target item ownership changed")
+    persona = await db.get(Persona, plan.persona_id)
+    if persona is None or persona.user_id != creator_id:
+        raise RuntimeError("Kria creator context is unavailable")
+    manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
+    brief_on = settings.creative_brief_for(creator_id)
+    # KRI-188: with a render present and the brief on, the requirement router
+    # decides between the editor-op tool and a re-plan, so the Main Creator
+    # (which extracts the requirements) runs FIRST. Everything else keeps the
+    # original order: editor copilot first, planner only when no op survives.
+    extract_first = (
+        brief_on
+        and item.current_job_id is not None
+        and manifest.capabilities["dispatch_render"].available
+    )
+    if not extract_first:
+        editor_plan = await _plan_editor_revision(
+            db,
+            thread_id=thread_id,
+            item=item,
+            user_message=user_message,
+        )
+        if editor_plan is not None:
+            return PlannedKriaTurn(
+                plan=editor_plan,
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+            )
+    if not manifest.capabilities["dispatch_render"].available:
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="question",
+                response=(
+                    "Add at least one clip and I can shape the edit around what is actually there."
+                ),
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
+    prior_brief = await load_latest_brief(db, thread_id) if brief_on else None
+    inputs = await _load_creator_inputs(
+        db,
+        thread_id=thread_id,
+        item=item,
+        persona=persona,
+        creator_id=creator_id,
+        user_message=user_message,
+        manifest=manifest,
+        media_context=media_context,
+        prior_brief=prior_brief,
+        brief_on=brief_on,
+    )
+    if isinstance(inputs, PlannedKriaTurn):
+        return inputs
+    try:
+        output = await _call_main_creator(inputs, thread_id=thread_id, creator_id=creator_id)
+    except RuntimeError:
+        if not extract_first:
+            raise
+        # KRI-188: the Main Creator now runs before the copilot only to extract
+        # requirements. A failure there must not block a plain edit the copilot
+        # alone could have served: fall back to the legacy order, no brief update.
+        item = await _refetch_item(db, item_id)
+        editor_plan = await _plan_editor_revision(
+            db, thread_id=thread_id, item=item, user_message=user_message
+        )
+        if editor_plan is None:
+            raise
+        return PlannedKriaTurn(
+            plan=editor_plan,
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
+    if not brief_on:
+        return await _plan_from_creator_output(
+            db,
+            thread_id=thread_id,
+            item_id=item_id,
+            creator_id=creator_id,
+            user_message=user_message,
+            manifest=manifest,
+            inputs=inputs,
+            output=output,
+        )
+
+    updates = tuple(output.brief_updates)
+    effective = apply_updates(prior_brief, updates, source_turn_id=None)
+    fresh = new_requirements(prior_brief, effective)
+    clip_ids = tuple(str(media.media_id) for media in manifest.media)
+    shape = CurrentPlanShape(has_render=False)
+    # Every rollback above expires loaded rows; an expired attribute read on an
+    # AsyncSession raises MissingGreenlet, so re-read the item before using it.
+    item = await _refetch_item(db, item_id)
+    if item.current_job_id is not None:
+        target = await _load_editor_target(db, thread_id=thread_id, item=item)
+        shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
+        await db.rollback()
+    route = route_requirements(fresh, shape, message=user_message)
+    if route == "editor_ops":
+        item = await _refetch_item(db, item_id)
+        editor_plan = await _plan_editor_revision(
+            db, thread_id=thread_id, item=item, user_message=user_message
+        )
+        if editor_plan is not None:
+            return PlannedKriaTurn(
+                plan=editor_plan,
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+                brief_updates=updates,
+                brief_route=route,
+                brief_clip_ids=clip_ids,
+            )
+    planned = await _plan_from_creator_output(
+        db,
+        thread_id=thread_id,
+        item_id=item_id,
+        creator_id=creator_id,
+        user_message=user_message,
+        manifest=manifest,
+        inputs=inputs,
+        output=output,
+        brief_request=(
+            render_brief_request(effective, latest_message=user_message)
+            if effective.live()
+            else None
+        ),
+    )
+    return replace(
+        planned,
+        brief_updates=updates,
+        # A re-plan that ended up asking a question or failing safe is not an
+        # editor plan; only an act plan is held to the router's verdict.
+        brief_route=route,
+        brief_clip_ids=clip_ids,
     )
 
 

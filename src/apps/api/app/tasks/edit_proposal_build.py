@@ -1733,6 +1733,23 @@ def _run_draft_attempt(
                 return
         if analyzed_results is None:
             return
+        if settings.clip_facts_for(owner_id):
+            # KRI-189: when/where facts (capture copies + a best-guess landmark,
+            # each with provenance) land on every clip's analysis so all
+            # readers of the shared clip record see them. Fail-open per clip.
+            from app.services.clip_facts import enrich_clip_facts  # noqa: PLC0415
+
+            analyzed_results = enrich_clip_facts(
+                analyzed_results,
+                make_ctx=lambda media_id: RunContext(
+                    creator_id=str(owner_id),
+                    plan_item_id=item_id,
+                    request_id=f"edit-proposal:{iid}:{attempt_id}:landmark:{media_id}",
+                ),
+                on_updated=lambda entry, ref: _checkpoint_analyzed_assignment(
+                    iid, attempt_id, ownership_epoch, entry, ref
+                ),
+            )
         analyzed_assignments = [entry for entry, _ref in analyzed_results]
         clip_refs = [ref for _entry, ref in analyzed_results]
         # De-duplicate pool assets promoted into the clip lane: they remain
@@ -2032,6 +2049,8 @@ def _run_draft_attempt(
                 if preflight_analysis_id is not None:
                     publish_preflight_after_commit(preflight_analysis_id)
 
+        clip_facts_on = settings.clip_facts_for(owner_id)
+
         def _understanding_fields(ref: MediaRef) -> dict[str, object]:
             # KRI-127: subject/description/on_screen_text/best_moments above
             # stay populated from the raw analysis dict exactly as before
@@ -2040,13 +2059,17 @@ def _run_draft_attempt(
             # group clips by setting/activity/speech without a new keyword
             # list per feature request.
             record = clip_record(ref.analysis, kind=ref.kind)
-            return {
+            fields: dict[str, object] = {
                 "summary": record.summary,
                 "setting": record.setting,
                 "activity": record.activity,
                 "speaks_to_camera": record.speech.to_camera,
                 "transcript": record.speech.transcript,
             }
+            if clip_facts_on and record.facts:
+                # KRI-189: when/where facts with provenance; absent when the flag is off.
+                fields["facts"] = [fact.prompt_dict() for fact in record.facts]
+            return fields
 
         agent_media = [
             EditProposalMedia(
@@ -2098,6 +2121,7 @@ def _run_draft_attempt(
                     hero_media_id=brief.hero_media_id,
                     media=agent_media,
                     clip_intents=_resolved_clip_intents(brief),
+                    **({"clip_facts": True} if clip_facts_on else {}),
                 ),
                 ctx=RunContext(
                     creator_id=str(owner_id),
@@ -2517,9 +2541,24 @@ def _run_draft_attempt(
                     **diagnostics,
                     "schedule": drafted.draft.frame_schedule.model_dump(mode="json"),
                 }
+            ordering_record = getattr(output, "ordering", None)
+            if (
+                ordering_record is None
+                and clip_facts_on
+                and any(
+                    getattr(intent, "order_by", None) is not None
+                    for intent in (_resolved_clip_intents(brief) or [])
+                )
+            ):
+                # A resolved filming-order request that this planner path (semantic,
+                # snapshot) never applied: record that, never leave it looking honored.
+                from app.services.story_shapes import ordering_not_applied  # noqa: PLC0415
+
+                ordering_record = ordering_not_applied("planner_path")
             drafted = drafted.model_copy(
                 update={
                     "planning_diagnostics": diagnostics,
+                    "ordering": ordering_record,
                     "planner_fallback": (
                         ProposalPlannerFallback(
                             reason=fallback_reason or "unknown planner failure",

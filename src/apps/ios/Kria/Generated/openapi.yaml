@@ -644,6 +644,83 @@
         "title": "CarouselMomentEditRequest",
         "type": "object"
       },
+      "ClipCapture": {
+        "additionalProperties": false,
+        "description": "Optional filming context for one original. Every part may be absent.",
+        "properties": {
+          "capture_time": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Capture Time",
+            "type": "string"
+          },
+          "coarse_location": {
+            "$ref": "#/components/schemas/CoarseLocation",
+            "default": null,
+            "nullable": true
+          },
+          "place": {
+            "$ref": "#/components/schemas/ClipPlace",
+            "default": null,
+            "nullable": true
+          }
+        },
+        "title": "ClipCapture",
+        "type": "object"
+      },
+      "ClipPlace": {
+        "additionalProperties": false,
+        "description": "Reverse-geocoded on the phone (CLGeocoder): neighbourhood, city, country.",
+        "properties": {
+          "country": {
+            "default": null,
+            "maxLength": 80,
+            "nullable": true,
+            "title": "Country",
+            "type": "string"
+          },
+          "locality": {
+            "default": null,
+            "maxLength": 80,
+            "nullable": true,
+            "title": "Locality",
+            "type": "string"
+          },
+          "sub_locality": {
+            "default": null,
+            "maxLength": 80,
+            "nullable": true,
+            "title": "Sub Locality",
+            "type": "string"
+          }
+        },
+        "title": "ClipPlace",
+        "type": "object"
+      },
+      "CoarseLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "lat": {
+            "maximum": 90,
+            "minimum": -90,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180,
+            "minimum": -180,
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon"
+        ],
+        "title": "CoarseLocation",
+        "type": "object"
+      },
       "CreateBody": {
         "additionalProperties": false,
         "properties": {
@@ -985,6 +1062,96 @@
           "content_types"
         ],
         "title": "CreationVoiceoverCapabilitiesOut",
+        "type": "object"
+      },
+      "CreativeBriefOut": {
+        "additionalProperties": false,
+        "properties": {
+          "requirement_receipts": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementReceipt"
+            },
+            "title": "Requirement Receipts",
+            "type": "array"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/CreativeBriefRequirementOut"
+            },
+            "title": "Requirements",
+            "type": "array"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "thread_id",
+          "version"
+        ],
+        "title": "CreativeBriefOut",
+        "type": "object"
+      },
+      "CreativeBriefRequirementOut": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": null,
+            "nullable": true,
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "text",
+              "order",
+              "select",
+              "timing",
+              "audio",
+              "style"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "literal": {
+            "default": null,
+            "nullable": true,
+            "title": "Literal",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "met",
+              "partial",
+              "not_possible",
+              "superseded"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "scope",
+          "status"
+        ],
+        "title": "CreativeBriefRequirementOut",
         "type": "object"
       },
       "Crop": {
@@ -3803,6 +3970,18 @@
       "MediaInput": {
         "additionalProperties": false,
         "properties": {
+          "capture_time": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Capture Time",
+            "type": "string"
+          },
+          "coarse_location": {
+            "$ref": "#/components/schemas/CoarseLocation",
+            "default": null,
+            "nullable": true
+          },
           "content_type": {
             "default": null,
             "maxLength": 100,
@@ -3838,6 +4017,11 @@
             "minLength": 1,
             "title": "Media Id",
             "type": "string"
+          },
+          "place": {
+            "$ref": "#/components/schemas/ClipPlace",
+            "default": null,
+            "nullable": true
           }
         },
         "required": [
@@ -4368,6 +4552,11 @@
             "minimum": 0,
             "title": "Byte Count",
             "type": "integer"
+          },
+          "capture": {
+            "$ref": "#/components/schemas/ClipCapture",
+            "default": null,
+            "nullable": true
           },
           "duration_s": {
             "exclusiveMinimum": true,
@@ -5327,6 +5516,48 @@
           "byte_count"
         ],
         "title": "RenderFingerprint",
+        "type": "object"
+      },
+      "RequirementReceipt": {
+        "additionalProperties": false,
+        "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one.",
+        "properties": {
+          "inferred": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 24,
+            "title": "Inferred",
+            "type": "array"
+          },
+          "reason": {
+            "default": null,
+            "maxLength": 300,
+            "nullable": true,
+            "title": "Reason",
+            "type": "string"
+          },
+          "requirement_id": {
+            "maxLength": 24,
+            "minLength": 1,
+            "title": "Requirement Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "met",
+              "partial",
+              "not_possible"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requirement_id",
+          "status"
+        ],
+        "title": "RequirementReceipt",
         "type": "object"
       },
       "ResolvedTextMotion": {
@@ -8374,6 +8605,48 @@
           }
         ]
       }
+    },
+    "/creation-threads/{thread_id}/brief": {
+      "get": {
+        "operationId": "getCreationBrief",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreativeBriefOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
     },
     "/creation-threads/{thread_id}/delta": {
       "get": {

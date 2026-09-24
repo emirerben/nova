@@ -103,6 +103,55 @@ server fingerprint, revisions, expiry, and consequence copy before deciding.
 Framework validation, authentication, rate-limit, and unexpected failures on
 these routes use the same `KriaProblem` envelope as runtime failures.
 
+## Creative Brief, router and receipts (KRI-188)
+
+Behind `KRIA_CREATIVE_BRIEF_ENABLED` (or a `KRIA_CREATIVE_BRIEF_USER_IDS`
+allowlist entry); off is byte-identical. Code: `app/kria/brief.py` (ledger,
+router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
+
+- **Ledger.** `creative_brief_versions` (migration 0111) is append-only, one
+  version per turn (`UNIQUE(thread_id, version)`, idempotent per `source_turn_id`).
+  Requirements have a server-assigned id (`r<n>`), `kind`, `scope`, `literal`
+  (creator-written text only) or `description`, `facts`, and `status`. A later
+  requirement with the same `(kind, scope)` supersedes the earlier one. The
+  Main Creator (prompt v37) only proposes `brief_updates`; unparseable entries
+  are dropped, never fatal. Versions are written by the turn-completion
+  transaction under the thread lock, after the revision fence, so a requeued
+  turn never persists one.
+- **Router.** `route_requirements` is deterministic. `replan` when a new
+  requirement is `order`/`select`, a per-clip text requirement arrives and the
+  plan has no per-clip text lane, the kinds are mixed, there is no editable
+  render, or the message asks to redo it ("do it again based on my prompt").
+  Otherwise `editor_ops`. With a render present the Main Creator runs first (it
+  extracts the requirements) and the copilot only when the router says
+  `editor_ops`. `_validate_draft_plan` rejects an editor-ops-only plan when the
+  route is `replan`.
+- **Request.** With the flag on, the Main Creator and the clip-intent planner
+  read `render_brief_request(brief)`, and the approval dispatch passes it as
+  `creator_request` instead of the draft summary.
+- **Receipts.** Each draft turn attaches `requirement_receipts`
+  (`met | partial | not_possible`, reason, `inferred`) to its `draft_applied`
+  event payload. Checks: per-clip text coverage, order basis
+  (`ordering_basis` / `ordering_fallback_clip_ids` when present), duration
+  within +/-10%, literal text (whole-word, Turkish-aware match). `clip:<id>`
+  is checked against that clip only; editor payloads carry no per-clip
+  structure, so per-clip text on an editor edit is `partial` ("can't verify"),
+  never `not_possible`. A requirement with no checker is `partial`, and that
+  neutral "can't verify" never flips the reply to a failure: the model's
+  summary is dropped only when a requirement a checker actually judged is not
+  met. `KriaObservedTurnResponse.requirement_receipts` is reserved for the
+  observed-turn projection; today receipts ride on the `draft_applied` event
+  payload and `GET /creation-threads/{id}/brief` returns the current
+  brief with the newest receipt per requirement (empty when the flag is off).
+- **Cost.** With a render present the flag adds one Main Creator call to
+  editor-op turns (the planner extracts requirements before the router runs).
+  If that call fails, a plain edit falls back to the legacy copilot-first path
+  with no brief update, so a Main Creator outage never blocks a simple edit.
+- **Known gaps (deferred).** No retraction ("drop the title") yet; a render
+  dispatched later reads the latest brief version, not the version the approved
+  draft was checked against; requirements past the 40-live cap are dropped
+  silently; `read_creative_brief` scans only the newest 30 assistant events.
+
 ## Render consent
 
 Every initial render and rerender requires a separate, expiring approval pinned

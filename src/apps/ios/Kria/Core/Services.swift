@@ -141,6 +141,9 @@ protocol KriaAPIClient: Sendable {
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
+    /// KRI-189: the same attach, plus when/where the clip was filmed. `capture` is nil when the user turned
+    /// the setting off or nothing could be read; a client that does not implement this drops it.
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
     /// Append a newly-uploaded clip/photo to a generative job's shared footage
     /// pool (`job.all_candidates["clip_paths"]`), minting the `clip_index` the
     /// editor then references in a new timeline slot. See `reserveUpload` for
@@ -167,6 +170,9 @@ extension KriaAPIClient {
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
+        try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID)
+    }
 
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse { throw APIError.unsupported }
     func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget { throw APIError.unsupported }
@@ -920,7 +926,12 @@ struct KriaAPI: KriaAPIClient {
         return reservation
     }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
-        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: contentType.hasPrefix("audio/") ? "audio" : "video", filename: filename, contentType: contentType)
+        try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil)
+    }
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
+        let kind = contentType.hasPrefix("audio/") ? "audio" : "video"
+        // Filming context belongs to footage; a voiceover never carries it.
+        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: kind, filename: filename, contentType: contentType, capture: kind == "video" ? capture : nil)
         let body = ProjectMediaAttachmentRequest(media: [media], clientEventID: clientEventID, expectedRevision: expectedRevision)
         return try await request(path: "creation-threads/\(threadID.uuidString)/media", method: "POST", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
     }
@@ -1222,8 +1233,22 @@ private struct UploadReservationRequest: Encodable { let filename: String; let c
 private struct AddClipRequestBody: Encodable { let gcsPath: String; enum CodingKeys: String, CodingKey { case gcsPath = "gcs_path" } }
 private struct ProjectUploadReservationRequest: Encodable { let files: [ProjectUploadFileRequest] }
 private struct ProjectUploadFileRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let clientUploadID: String; var uploadContract: ProjectMediaUploadContract? = nil; enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id" } }
-private struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
-private struct ProjectMediaInput: Encodable { let mediaID: String; let gcsPath: String; let kind: String; let filename: String; let contentType: String; enum CodingKeys: String, CodingKey { case kind, filename; case mediaID = "media_id"; case gcsPath = "gcs_path"; case contentType = "content_type" } }
+struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
+/// One attached media item. The three optional filming-context fields (KRI-189) are omitted from the JSON
+/// entirely when absent, so a clip without them encodes exactly as before.
+struct ProjectMediaInput: Encodable {
+    let mediaID: String; let gcsPath: String; let kind: String; let filename: String; let contentType: String
+    var captureTime: String?; var coarseLocation: CoarseLocationWire?; var place: ClipPlaceWire?
+    init(mediaID: String, gcsPath: String, kind: String, filename: String, contentType: String, capture: ClipCaptureWire? = nil) {
+        self.mediaID = mediaID; self.gcsPath = gcsPath; self.kind = kind; self.filename = filename; self.contentType = contentType
+        captureTime = capture?.captureTime; coarseLocation = capture?.coarseLocation; place = capture?.place
+    }
+    enum CodingKeys: String, CodingKey {
+        case kind, filename, place
+        case mediaID = "media_id"; case gcsPath = "gcs_path"; case contentType = "content_type"
+        case captureTime = "capture_time"; case coarseLocation = "coarse_location"
+    }
+}
 private struct CreateThreadRequest: Encodable { let message: String?; let clientEventID: String; let runtimeVersion: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case runtimeVersion = "runtime_version" } }
 private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let snapshot: [String: JSONValue]; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case snapshot } }
 private struct DraftUndoRequest: Encodable { let expectedRevision: Int; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision" } }

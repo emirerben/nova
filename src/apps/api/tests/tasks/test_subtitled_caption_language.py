@@ -19,6 +19,8 @@ import types
 import uuid
 from unittest.mock import Mock
 
+import pytest
+
 import app.tasks.generative_build as gb
 from app.pipeline.transcribe import Transcript
 from tests.tasks.test_generative_build import _patch_subtitled_smart_render
@@ -313,6 +315,309 @@ def test_silence_cut_verbatim_request_matching_spoken_language_is_a_noop(monkeyp
 
 
 # --------------------------------------------------------------------------
+# Cloud: whisper's detection cross-checked against Gemini's clip transcript
+# --------------------------------------------------------------------------
+
+# Job 385e3b13 (2026-09-24): Turkish-accented English. whisper-1 auto-detected
+# "tr" and wrote a Turkish translation instead of transcribing; Gemini's
+# transcript of the same clip was English.
+_CLOUD_HEARD_EN = (
+    "Let's talk about the best football players in Turkish Super League this season. "
+    "Number three, Mac Ingram? No, no, no, no, no. Number three, Rafael Leao."
+)
+_CLOUD_HEARD_TR = "Bu videoyu çok güzel çektim bugün, hadi bakalım neler var"
+_CLOUD_TRANSLATED_TR = "Bu sezon Türkiye Super Ligi'de en iyi futbolcular hakkında konuşalım."
+
+
+def _cloud_clip_metas(transcript: str, clip_id: str = "clip-1") -> list:
+    """Gemini's clip_metadata for the one subtitled clip."""
+    from tests.tasks.test_generative_build import _Meta
+
+    return [_Meta(clip_id, 5.0, transcript=transcript)]
+
+
+def _cloud_whisper(monkeypatch, target: str, by_language: dict) -> Mock:
+    """Patch `transcribe.<target>` to answer per `language=` hint (None = auto-detect)."""
+    mock = Mock(side_effect=lambda *_a, language=None, **_k: by_language[language])
+    monkeypatch.setattr(f"app.pipeline.transcribe.{target}", mock)
+    return mock
+
+
+def _cloud_caption_words(monkeypatch) -> Mock:
+    """Record the words each `build_plain_cues` call captions from."""
+    mock = Mock(return_value=[{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}])
+    monkeypatch.setattr("app.pipeline.captions.build_plain_cues", mock)
+    return mock
+
+
+def _cloud_events(monkeypatch) -> Mock:
+    from app.services import pipeline_trace
+
+    events = Mock()
+    monkeypatch.setattr(pipeline_trace, "record_pipeline_event", events)
+    return events
+
+
+def _crosscheck_payloads(events: Mock) -> list[dict]:
+    return [c.args[2] for c in events.call_args_list if c.args[1] == "caption_language_crosscheck"]
+
+
+def _render_cloud(tmp_path, **kwargs) -> dict:
+    return gb._render_subtitled_variant(
+        job_id=str(uuid.uuid4()),
+        rank=1,
+        spec={"variant_id": "subtitled", "caption_style": "sentence"},
+        clip_id_to_local={"clip-1": str(tmp_path / "source.mp4")},
+        variant_dir=str(tmp_path),
+        **kwargs,
+    )
+
+
+def test_cloud_retranscribes_in_the_language_gemini_heard(monkeypatch, tmp_path):
+    _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    whisper = _cloud_whisper(
+        monkeypatch,
+        "transcribe_whisper",
+        {
+            None: Transcript(
+                words=_words(("Üçüncü?", 5.76, 6.3)), language="tr", full_text=_CLOUD_TRANSLATED_TR
+            ),
+            "en": Transcript(
+                words=_words(("Number", 5.76, 6.0), ("three.", 6.0, 6.3)),
+                language="en",
+                full_text="Number three.",
+            ),
+        },
+    )
+    caption_words = _cloud_caption_words(monkeypatch)
+    correct_mock = _mock_correct_caption_cues(monkeypatch)
+    events = _cloud_events(monkeypatch)
+
+    result = _render_cloud(
+        tmp_path, language="tr", smart_captions=None, clip_metas=_cloud_clip_metas(_CLOUD_HEARD_EN)
+    )
+
+    assert result["ok"] is True
+    assert [c.kwargs.get("language") for c in whisper.call_args_list] == [None, "en"]
+    # Both passes read the same (base) audio — only the language hint changes.
+    assert whisper.call_args_list[0].args == whisper.call_args_list[1].args
+    assert [w.text for w in caption_words.call_args.args[0]] == ["Number", "three."]
+    assert result["caption_language"] == "en"
+    assert correct_mock.call_args.args[1] == "en"
+    assert _crosscheck_payloads(events) == [
+        {
+            "variant_id": "subtitled",
+            "whisper_language": "tr",
+            "reference_language": "en",
+            "applied": True,
+        }
+    ]
+
+
+def test_cloud_keeps_whisper_when_gemini_agrees(monkeypatch, tmp_path):
+    _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    whisper = _cloud_whisper(
+        monkeypatch,
+        "transcribe_whisper",
+        {None: Transcript(words=_words(("Number", 0.0, 0.5)), language="en", full_text="Number")},
+    )
+    events = _cloud_events(monkeypatch)
+
+    result = _render_cloud(
+        tmp_path, language="tr", smart_captions=None, clip_metas=_cloud_clip_metas(_CLOUD_HEARD_EN)
+    )
+
+    assert result["ok"] is True
+    assert whisper.call_count == 1
+    assert result["caption_language"] == "en"
+    assert _crosscheck_payloads(events) == []
+
+
+def test_cloud_explicit_request_skips_the_crosscheck(monkeypatch, tmp_path):
+    _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    whisper = _cloud_whisper(
+        monkeypatch,
+        "transcribe_whisper",
+        {"tr": Transcript(words=_words(("Üçüncü", 0.0, 0.5)), language="tr", full_text="Üçüncü")},
+    )
+    events = _cloud_events(monkeypatch)
+
+    result = _render_cloud(
+        tmp_path,
+        language="en",
+        smart_captions=None,
+        caption_language_request="tr",
+        clip_metas=_cloud_clip_metas(_CLOUD_HEARD_EN),
+    )
+
+    assert result["ok"] is True
+    assert [c.kwargs.get("language") for c in whisper.call_args_list] == ["tr"]
+    assert result["caption_language"] == "tr"
+    assert _crosscheck_payloads(events) == []
+
+
+def test_cloud_keeps_first_pass_when_the_retranscribe_is_empty(monkeypatch, tmp_path):
+    _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    _cloud_whisper(
+        monkeypatch,
+        "transcribe_whisper",
+        {
+            None: Transcript(
+                words=_words(("Üçüncü?", 5.76, 6.3)), language="tr", full_text=_CLOUD_TRANSLATED_TR
+            ),
+            "en": Transcript(words=[], language="en", full_text=""),
+        },
+    )
+    caption_words = _cloud_caption_words(monkeypatch)
+    events = _cloud_events(monkeypatch)
+
+    result = _render_cloud(
+        tmp_path, language="en", smart_captions=None, clip_metas=_cloud_clip_metas(_CLOUD_HEARD_EN)
+    )
+
+    assert result["ok"] is True
+    assert result["caption_language"] == "tr"
+    assert [w.text for w in caption_words.call_args.args[0]] == ["Üçüncü?"]
+    assert [p["applied"] for p in _crosscheck_payloads(events)] == [False]
+
+
+def test_cloud_smart_v2_crosschecks_the_cached_clip_transcript(monkeypatch, tmp_path):
+    """Smart Captions v2 transcribes the ORIGINAL clip through the transcript
+    cache before the reframe; the re-transcribe goes through the same cache."""
+    _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    monkeypatch.setattr(gb, "_load_smart_caption_assets_fail_open", lambda _job_id: ([], None))
+    monkeypatch.setattr(gb, "_compile_smart_caption_render_plan", lambda **_kw: (None, {}))
+    cached = _cloud_whisper(
+        monkeypatch,
+        "transcribe_whisper_cached",
+        {
+            None: Transcript(
+                words=_words(("Üçüncü?", 5.76, 6.3)), language="tr", full_text=_CLOUD_TRANSLATED_TR
+            ),
+            "en": Transcript(
+                words=_words(("Number", 5.76, 6.0)), language="en", full_text="Number"
+            ),
+        },
+    )
+    caption_words = _cloud_caption_words(monkeypatch)
+
+    result = _render_cloud(
+        tmp_path,
+        language="tr",
+        smart_captions={"preset_id": "cigdem", "preset_version": "v2", "sound_design": "off"},
+        clip_metas=_cloud_clip_metas(_CLOUD_HEARD_EN),
+    )
+
+    assert result["ok"] is True
+    assert [c.kwargs.get("language") for c in cached.call_args_list] == [None, "en"]
+    assert {c.args[0] for c in cached.call_args_list} == {str(tmp_path / "source.mp4")}
+    assert [w.text for w in caption_words.call_args.args[0]] == ["Number"]
+    assert result["caption_language"] == "en"
+
+
+def _silence_cut_entry(language: str, words: list[dict]) -> dict:
+    from app.pipeline.silence_cut import CutPlan
+
+    return {
+        "failed": False,
+        "words": words,
+        "language": language,
+        "plan": CutPlan(keep_segments=[(0.0, 2.0)], removed=[], time_saved_s=0.0),
+        "speech_cleanup_outcome_context": None,
+        "retake_span_count": 0,
+    }
+
+
+def test_cloud_silence_cut_words_retranscribe_when_gemini_disagrees(monkeypatch, tmp_path):
+    """The verbatim silence-cut words are whisper's Turkish translation: the
+    ORIGINAL clip is re-transcribed in the language Gemini heard, and those
+    words — not the translation — are remapped onto the cut timeline."""
+    _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    sc_entry = _silence_cut_entry("tr", [{"text": "Üçüncü?", "start_s": 0.0, "end_s": 1.0}])
+    monkeypatch.setattr(gb, "_silence_cut_analysis", lambda *a, **k: sc_entry)
+    cached = _cloud_whisper(
+        monkeypatch,
+        "transcribe_whisper_cached",
+        {"en": Transcript(words=_words(("Number", 0.0, 1.0)), language="en", full_text="Number")},
+    )
+    caption_words = _cloud_caption_words(monkeypatch)
+    events = _cloud_events(monkeypatch)
+
+    result = _render_cloud(
+        tmp_path, language="tr", smart_captions=None, clip_metas=_cloud_clip_metas(_CLOUD_HEARD_EN)
+    )
+
+    assert result["ok"] is True
+    cached.assert_called_once()
+    assert cached.call_args.args[0] == str(tmp_path / "source.mp4")
+    assert cached.call_args.kwargs.get("language") == "en"
+    assert [w.text for w in caption_words.call_args.args[0]] == ["Number"]
+    assert result["caption_language"] == "en"
+    assert [p["applied"] for p in _crosscheck_payloads(events)] == [True]
+
+
+def test_cloud_silence_cut_words_are_reused_when_gemini_agrees(monkeypatch, tmp_path):
+    _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    sc_entry = _silence_cut_entry("en", [{"text": "Number", "start_s": 0.0, "end_s": 1.0}])
+    monkeypatch.setattr(gb, "_silence_cut_analysis", lambda *a, **k: sc_entry)
+    cached = Mock()
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", cached)
+
+    result = _render_cloud(
+        tmp_path, language="tr", smart_captions=None, clip_metas=_cloud_clip_metas(_CLOUD_HEARD_EN)
+    )
+
+    assert result["ok"] is True
+    cached.assert_not_called()
+    assert result["caption_language"] == "en"
+
+
+@pytest.mark.parametrize(
+    ("gemini_heard", "expected_hints", "expected_language"),
+    [
+        (_CLOUD_HEARD_EN, [], "en"),  # agrees with the preflight's "en": words reused
+        (_CLOUD_HEARD_TR, ["tr"], "tr"),  # contradicts it: re-transcribed in Turkish
+    ],
+)
+def test_cloud_checked_uncut_preflight_words_crosscheck(
+    monkeypatch, tmp_path, gemini_heard, expected_hints, expected_language
+):
+    """Keep-original (off_v1) renders caption from the checked preflight words,
+    whose language whisper auto-detected ("en") — reused unless Gemini disagrees."""
+    from tests.tasks.test_generative_build_silence_cut import _patch_pipeline, _snapshot
+
+    calls = _patch_pipeline(monkeypatch)
+    cached = _cloud_whisper(
+        monkeypatch,
+        "transcribe_whisper_cached",
+        {"tr": Transcript(words=_words(("Bugün", 0.5, 1.0)), language="tr", full_text="Bugün")},
+    )
+    (tmp_path / "variant").mkdir()
+
+    result = gb._render_subtitled_variant(
+        job_id=str(uuid.uuid4()),
+        rank=1,
+        spec={"variant_id": "subtitled", "archetype": "subtitled", "caption_style": "sentence"},
+        clip_id_to_local={"c1": str(tmp_path / "clip.mp4")},
+        variant_dir=str(tmp_path / "variant"),
+        language="en",
+        speech_cleanup_contract="off_v1",
+        speech_cleanup_snapshot=_snapshot(),
+        speech_cleanup_source_clip_id="c1",
+        clip_metas=_cloud_clip_metas(gemini_heard, clip_id="c1"),
+    )
+
+    assert result["ok"] is True
+    assert [c.kwargs.get("language") for c in cached.call_args_list] == expected_hints
+    assert result["caption_language"] == expected_language
+    if expected_hints:
+        assert [w.text for w in calls["cues"][0]] == ["Bugün"]
+    assert calls["transcribe"] == []  # never a live transcription of the base
+
+
+# --------------------------------------------------------------------------
 # Phone: _run_phone_subtitled_job (via _run_generative_job dispatch)
 # --------------------------------------------------------------------------
 
@@ -386,3 +691,125 @@ def test_phone_empty_detection_infers_from_transcript_text(monkeypatch):
     assert len(fallback_calls) == 1
     assert fallback_calls[0].args[2]["source"] == "transcript_text"
     assert fallback_calls[0].args[2]["job_language"] == "en"
+
+
+# --------------------------------------------------------------------------
+# Phone: whisper's detection cross-checked against Gemini's clip transcript
+# --------------------------------------------------------------------------
+
+# Job 385e3b13 (2026-09-24): Turkish-accented English. whisper-1 auto-detected
+# "tr" and wrote a Turkish translation ("Number three" -> "Üçüncü", "no" ->
+# "Hayır"), so every English reaction-beat trigger was "never heard".
+_GEMINI_EN = (
+    "Let's talk about the best football players in Turkish Super League this season. "
+    "Number three, Mac Ingram? No, no, no, no, no. Number three, Rafael Leao."
+)
+_WHISPER_TR_TEXT = "Bu sezon Türkiye Super Ligi'de en iyi futbolcular hakkında konuşalım. Üçüncü?"
+
+
+def _gemini_heard(monkeypatch, binding, transcript: str) -> None:
+    from tests.tasks.test_generative_build import _Meta
+
+    meta = _Meta("c0", 5.0, transcript=transcript)
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *a, **k: {
+            "clip_metas": [meta],
+            "clip_id_to_gcs": {"c0": binding.proxy_path},
+            "clip_id_to_local": {"c0": "/tmp/c0.mp4"},
+            "probe_map": {},
+            "hero": meta,
+        },
+        raising=False,
+    )
+
+
+def _whisper_by_language(monkeypatch, by_language: dict) -> Mock:
+    mock = Mock(side_effect=lambda *_a, language=None, **_k: by_language[language])
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", mock)
+    return mock
+
+
+def test_phone_retranscribes_in_the_language_gemini_heard(monkeypatch):
+    job, _snapshot, _session, binding = _setup_subtitled(monkeypatch)
+    _gemini_heard(monkeypatch, binding, _GEMINI_EN)
+    mock = _whisper_by_language(
+        monkeypatch,
+        {
+            None: Transcript(
+                words=_words(("Üçüncü?", 5.76, 6.3)), language="tr", full_text=_WHISPER_TR_TEXT
+            ),
+            "en": Transcript(
+                words=_words(("Number", 5.76, 6.0), ("three.", 6.0, 6.3)),
+                language="en",
+                full_text="Number three.",
+            ),
+        },
+    )
+    from app.services import pipeline_trace
+
+    events = Mock()
+    monkeypatch.setattr(pipeline_trace, "record_pipeline_event", events)
+
+    gb._run_generative_job(str(job.id))
+
+    assert [c.kwargs.get("language") for c in mock.call_args_list] == [None, "en"]
+    variant = job.assembly_plan["variants"][0]
+    assert variant["caption_language"] == "en"
+    crosscheck = [c for c in events.call_args_list if c.args[1] == "caption_language_crosscheck"]
+    assert [c.args[2] for c in crosscheck] == [
+        {
+            "variant_id": "subtitled",
+            "whisper_language": "tr",
+            "reference_language": "en",
+            "applied": True,
+        }
+    ]
+
+
+def test_phone_keeps_whisper_when_gemini_agrees(monkeypatch):
+    job, _snapshot, _session, binding = _setup_subtitled(monkeypatch)
+    _gemini_heard(monkeypatch, binding, _GEMINI_EN)
+    mock = _whisper_by_language(
+        monkeypatch,
+        {None: Transcript(words=_words(("Number", 0.0, 0.5)), language="en", full_text="Number")},
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert mock.call_count == 1
+    assert job.assembly_plan["variants"][0]["caption_language"] == "en"
+
+
+def test_phone_explicit_request_skips_the_crosscheck(monkeypatch):
+    job, _snapshot, _session, binding = _setup_subtitled(monkeypatch)
+    job.all_candidates["caption_language_request"] = "tr"
+    _gemini_heard(monkeypatch, binding, _GEMINI_EN)
+    mock = _whisper_by_language(
+        monkeypatch,
+        {"tr": Transcript(words=_words(("Üçüncü", 0.0, 0.5)), language="tr", full_text="Üçüncü")},
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert [c.kwargs.get("language") for c in mock.call_args_list] == ["tr"]
+    assert job.assembly_plan["variants"][0]["caption_language"] == "tr"
+
+
+def test_phone_keeps_first_pass_when_the_retranscribe_is_empty(monkeypatch):
+    job, _snapshot, _session, binding = _setup_subtitled(monkeypatch)
+    _gemini_heard(monkeypatch, binding, _GEMINI_EN)
+    _whisper_by_language(
+        monkeypatch,
+        {
+            None: Transcript(
+                words=_words(("Üçüncü?", 5.76, 6.3)), language="tr", full_text=_WHISPER_TR_TEXT
+            ),
+            "en": Transcript(words=[], language="en", full_text=""),
+        },
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.assembly_plan["variants"][0]["caption_language"] == "tr"

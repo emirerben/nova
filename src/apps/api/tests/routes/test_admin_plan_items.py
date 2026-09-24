@@ -379,6 +379,111 @@ class TestPlanItemProposalTrace:
         assert body["agent_runs"][0]["raw_text"] == '{"frames": []}'
         assert body["agent_runs"][0]["error_message"] == "required frame omitted"
 
+    @staticmethod
+    def _run_row(created_at):
+        return SimpleNamespace(
+            id=uuid.uuid4(),
+            segment_idx=None,
+            agent_name="nova.compose.semantic_edit",
+            prompt_version="v",
+            model="m",
+            outcome="success",
+            attempts=1,
+            tokens_in=1,
+            tokens_out=1,
+            cost_usd=None,
+            latency_ms=1,
+            error_message=None,
+            input_json={},
+            output_json=None,
+            raw_text=None,
+            created_at=created_at,
+        )
+
+    def _get_trace(self, client, item, runs, query=""):
+        db = AsyncMock()
+        item_result = MagicMock()
+        item_result.scalar_one_or_none.return_value = item
+        runs_result = MagicMock()
+        runs_result.scalars.return_value.all.return_value = runs
+        db.execute = AsyncMock(side_effect=[item_result, runs_result])
+
+        async def _gen():
+            yield db
+
+        with (
+            patch("app.routes.admin.settings") as settings,
+            patch("app.routes.admin_plan_items.parse_edit_proposal", return_value=None),
+        ):
+            settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _gen
+            try:
+                response = client.get(
+                    f"/admin/plan-items/{item.id}/proposal-trace{query}",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        return response, db
+
+    def test_pagination_limit_and_next_cursor(self, client):
+        from datetime import timedelta
+
+        item = _plan_item_row()
+        now = datetime.now(UTC)
+        runs = [self._run_row(now - timedelta(seconds=i)) for i in range(3)]
+
+        response, db = self._get_trace(client, item, runs, "?limit=2")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["agent_runs"]) == 2
+        assert body["agent_runs_has_more"] is True
+        # Cursor is the (created_at, id) of the last row RETURNED, not the probe row.
+        from app.routes.admin_plan_items import _decode_trace_cursor
+
+        assert _decode_trace_cursor(body["next_cursor"]) == (runs[1].created_at, runs[1].id)
+        # limit + 1 rows are requested so has_more needs no COUNT.
+        assert "LIMIT" in str(db.execute.await_args_list[1].args[0]).upper()
+
+    def test_last_page_has_no_next_cursor(self, client):
+        item = _plan_item_row()
+        runs = [self._run_row(datetime.now(UTC))]
+
+        response, _ = self._get_trace(client, item, runs, "?limit=5")
+
+        body = response.json()
+        assert body["agent_runs_has_more"] is False
+        assert body["next_cursor"] is None
+
+    def test_default_limit_is_unchanged(self, client):
+        item = _plan_item_row()
+        runs = [self._run_row(datetime.now(UTC)) for _ in range(11)]
+
+        response, _ = self._get_trace(client, item, runs)
+
+        body = response.json()
+        assert len(body["agent_runs"]) == 10
+        assert body["agent_runs_has_more"] is True
+        assert body["next_cursor"] is not None
+
+    def test_cursor_is_applied_as_keyset_filter(self, client):
+        item = _plan_item_row()
+        from app.routes.admin_plan_items import _encode_trace_cursor
+
+        cursor = _encode_trace_cursor(datetime.now(UTC), uuid.uuid4())
+
+        response, db = self._get_trace(client, item, [], f"?cursor={cursor}")
+
+        assert response.status_code == 200
+        sql = str(db.execute.await_args_list[1].args[0].compile()).lower()
+        assert "created_at" in sql and "agent_run.id" in sql and "<" in sql
+
+    @pytest.mark.parametrize("query", ["?limit=0", "?limit=101", "?cursor=garbage"])
+    def test_invalid_pagination_params_are_rejected(self, client, query):
+        response, _ = self._get_trace(client, _plan_item_row(), [], query)
+        assert response.status_code == 422
+
 
 # ── Payload shape + redaction ────────────────────────────────────────────────
 

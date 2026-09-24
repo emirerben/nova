@@ -1,0 +1,87 @@
+{
+  "fixture_id": "east-run-brief",
+  "note": "Hand-authored replay of the KRI-185 East Run thread. The canonical capture from prod belongs to KRI-192 (P6).",
+  "clip_ids": ["c1", "c2", "c3", "c4", "c5"],
+  "plan_shape": {"has_render": true, "has_per_clip_text_lane": false},
+  "turns": [
+    {
+      "user_message": "20K Koşu · Arnavutköy → Eminönü. Bu videoyu 20 saniyelik yap.",
+      "brief_updates": [
+        {
+          "kind": "text",
+          "scope": "title",
+          "literal": "20K Koşu · Arnavutköy → Eminönü",
+          "description": null,
+          "facts": {"distance_km": 20, "start": "Arnavutköy", "end": "Eminönü"}
+        },
+        {
+          "kind": "timing",
+          "scope": "global",
+          "literal": null,
+          "description": "20 seconds long",
+          "facts": {"duration_s": 20}
+        }
+      ],
+      "expected_route": "replan",
+      "expected_live_ids": ["r1", "r2"]
+    },
+    {
+      "user_message": "Her klibin üstüne o klipteki yerin adını yaz ve klipleri çektiğim sıraya koy.",
+      "brief_updates": [
+        {
+          "kind": "text",
+          "scope": "per_clip",
+          "literal": null,
+          "description": "the landmark or place shown in each clip",
+          "facts": {}
+        },
+        {
+          "kind": "order",
+          "scope": "global",
+          "literal": null,
+          "description": "in the order I filmed them",
+          "facts": {"key": "capture_time"}
+        }
+      ],
+      "expected_route": "replan",
+      "expected_live_ids": ["r1", "r2", "r3", "r4"]
+    },
+    {
+      "user_message": "Do it again based on my prompt.",
+      "brief_updates": [],
+      "expected_route": "replan",
+      "expected_live_ids": ["r1", "r2", "r3", "r4"]
+    }
+  ],
+  "replan_strategy": {
+    "edit_format": "montage",
+    "archetype": "day_vlog",
+    "ordering_basis": "capture_time",
+    "ordering_fallback_clip_ids": [],
+    "target_duration_s": 20.5,
+    "opening_title": "20K Koşu · Arnavutköy → Eminönü",
+    "resolved_clip_intents": [
+      {
+        "intent_id": "landmark",
+        "op": "label",
+        "attribute": "the landmark shown in the clip",
+        "assignments": [
+          {"media_id": "c1", "value": "Arnavutköy", "grounding": "vision_verified"},
+          {"media_id": "c2", "value": "Bebek", "grounding": "vision_verified"},
+          {"media_id": "c3", "value": "Ortaköy", "grounding": "vision_verified"},
+          {"media_id": "c4", "value": "Karaköy", "grounding": "vision_verified"},
+          {"media_id": "c5", "value": "Eminönü", "grounding": "vision_verified"}
+        ]
+      }
+    ]
+  },
+  "expected_receipts": {
+    "r1": {"status": "met", "inferred": []},
+    "r2": {"status": "met", "inferred": []},
+    "r3": {
+      "status": "met",
+      "inferred": ["Arnavutköy", "Bebek", "Ortaköy", "Karaköy", "Eminönü"]
+    },
+    "r4": {"status": "met", "inferred": []}
+  }
+}

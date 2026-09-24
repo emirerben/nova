@@ -16,7 +16,7 @@ $item_context
 
 OWNED FOOTAGE SUMMARIES (each item may include `analysis_only_not_copy`: AI-detected
 `subject`/`summary`/`setting`/`activity`, `people` (count/speaks_to_camera/note), `speech`
-(has_speech/to_camera/transcript excerpt), and `notable_moments`)
+(has_speech/to_camera/transcript excerpt), and `notable_moments`)$clip_facts_note
 $media_context
 
 SERVER CAPABILITY MANIFEST
@@ -182,7 +182,7 @@ Rules:
   opening_title_duration_s 2, shot_labels ["DAY 1 · FOOD", "DAY 2 · ART", "DAY 3 · NIGHTS"],
   closing_title "SEE YOU MONDAY", with each evidence excerpt copied from that request.
 $story_shape_section
-$clip_intents_section$reaction_beats_section
+$clip_intents_section$reaction_beats_section$brief_section
 
 Return ONLY JSON in this envelope:
 {

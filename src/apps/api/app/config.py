@@ -1,10 +1,10 @@
 import json
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 GUIDED_STORY_RENDERER_READY = True
 
@@ -221,10 +221,23 @@ class Settings(BaseSettings):
     # forever. Default: 24h.
     device_render_stale_after_s: int = 86400
 
+    def clip_facts_for(self, user_id: object) -> bool:
+        """Global flag OR per-account allowlist (KRI-189); off by default."""
+        if self.clip_facts_enabled:
+            return True
+        return user_id is not None and str(user_id) in {str(u) for u in self.clip_facts_user_ids}
+
     def phone_rendering_for(self, user_id: object) -> bool:
         """Apply the kill switch and optional account-scoped pilot cohort."""
         return self.phone_rendering_enabled and (
             not self.phone_render_user_ids or str(user_id) in map(str, self.phone_render_user_ids)
+        )
+
+    def kria_runtime_v2_phone_for(self, user_id: object) -> bool:
+        """Runtime v2 for a phone-rendering account (KRI-187 flag + allowlist)."""
+        return self.kria_runtime_v2_phone_enabled and (
+            not self.kria_runtime_v2_phone_user_ids
+            or str(user_id) in map(str, self.kria_runtime_v2_phone_user_ids)
         )
 
     # Storage
@@ -402,7 +415,67 @@ class Settings(BaseSettings):
     # runtime_version=1 project remain available when this is false; the new
     # durable turn/approval endpoints deliberately fail closed as 404.
     kria_runtime_v2_enabled: bool = False
+    # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
+    # best-guess landmark per clip, each with provenance. Gates SERVER
+    # CONSUMPTION only: the landmark agent run, exposing facts to the Main
+    # Creator / edit planner prompts, capture-time ordering, the by_capture_time
+    # / by_route order intents. The API always accepts the additive optional
+    # attach fields. False (default) with no allowlist match is byte-identical
+    # to before. `clip_facts_user_ids` (JSON list of account UUIDs) enables the
+    # feature for those accounts even while the global flag is false, so the
+    # device check can run in prod. Rollback: `fly secrets set
+    # CLIP_FACTS_ENABLED=false CLIP_FACTS_USER_IDS=[] --app nova-video` +
+    # `fly machine restart <id>` (api + worker).
+    clip_facts_enabled: bool = False
+    clip_facts_user_ids: list[UUID] = Field(default_factory=list)
+    # KRI-187: phone-rendering accounts are offered runtime v2 (`GET
+    # /creation-threads/capabilities` -> `runtime_versions: [1, 2]`) and a v2
+    # strategy approval may dispatch a device job. False (default) keeps
+    # phone accounts on [1], byte-identically. `kria_runtime_v2_phone_user_ids`
+    # narrows the flag to named accounts (empty = every phone account), the
+    # same shape as `phone_render_user_ids`, so a device check can run in prod.
+    # `runtime_version` is fixed at thread creation: existing v1 threads stay
+    # v1. Rollback: `fly secrets set KRIA_RUNTIME_V2_PHONE_ENABLED=false` +
+    # restart (api + worker); phone accounts are offered [1] again.
+    kria_runtime_v2_phone_enabled: bool = False
+    kria_runtime_v2_phone_user_ids: list[UUID] = Field(default_factory=list)
     kria_turn_lease_seconds: int = Field(default=15, ge=10, le=120)
+    # KRI-188: thread-level Creative Brief ledger + deterministic scope router +
+    # per-requirement receipts on runtime-v2 turns. False (default): the planner,
+    # router, draft validation, dispatch request and replies are byte-identical
+    # to before. `KRIA_CREATIVE_BRIEF_USER_IDS` (comma-separated or JSON list of
+    # creator user ids) turns it on for just those accounts while the global flag
+    # is still off, so a device check can run in prod. Apply:
+    # `fly secrets set KRIA_CREATIVE_BRIEF_ENABLED=true --app nova-video`
+    # + restart api + worker. Rollback: set it false + restart.
+    kria_creative_brief_enabled: bool = False
+    # NoDecode: pydantic-settings would otherwise JSON-decode the env string
+    # before the validator below runs, crashing boot on a bare id or CSV.
+    kria_creative_brief_user_ids: Annotated[list[str], NoDecode] = []
+
+    @field_validator("kria_creative_brief_user_ids", mode="before")
+    @classmethod
+    def parse_creative_brief_user_ids(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return value
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
+    def creative_brief_for(self, user_id: object) -> bool:
+        """Global flag OR the per-account allowlist (allowlist only ever adds)."""
+        if self.kria_creative_brief_enabled:
+            return True
+        return user_id is not None and str(user_id) in {
+            str(uid) for uid in self.kria_creative_brief_user_ids
+        }
+
     # GET /creation-threads/{id} degrades a thread whose render-graph edge
     # (PlanItem/CreatorAgentSession/Job ownership) has drifted incoherent,
     # instead of 404ing the whole project and its intact chat transcript.
@@ -1411,6 +1484,11 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_EDIT_COPILOT_ENABLED gates the Nova drawer. Default off until
     # localhost QA validates the local-op applier and save parity.
     edit_copilot_enabled: bool = False
+    # KRI-186: chat-edit replies are built deterministically from what was
+    # applied + what was rejected/unmet, and the copilot sees prior turns and
+    # the thread's original request. Kill switch: false restores the legacy
+    # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
+    copilot_honest_replies_enabled: bool = True
     # Owner-safe "Nova steps" activity feed projected from pipeline_trace +
     # phase_log + AgentRun (app/services/nova_steps.py) onto the generative
     # job status response. Ships OFF -- `steps` stays None (byte-identical

@@ -18,6 +18,7 @@ from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.kria.api_schemas import (
     ApprovalDecisionBody,
     ApprovalDecisionOut,
@@ -28,7 +29,13 @@ from app.kria.api_schemas import (
     TurnAccepted,
     TurnCancelled,
 )
-from app.kria.contracts import KriaTurnPlan
+from app.kria.brief import apply_receipt_statuses, load_latest_brief
+from app.kria.contracts import (
+    CreativeBriefOut,
+    CreativeBriefRequirementOut,
+    KriaTurnPlan,
+    RequirementReceipt,
+)
 from app.kria.language import is_help_question, is_status_question
 from app.models import (
     CreationThread,
@@ -816,4 +823,74 @@ async def read_approval(
         cost_summary=approval.cost_summary,
         expires_at=approval.expires_at,
         approval_fingerprint=approval_fingerprint(approval),
+    )
+
+
+async def read_creative_brief(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+) -> CreativeBriefOut:
+    """Current Creative Brief plus the newest receipt per requirement (KRI-188).
+
+    Read-only. Empty (version 0) when the brief is off for this creator or the
+    thread has none yet, so a client can call it unconditionally.
+    """
+
+    thread = await _owned_thread(
+        db,
+        thread_id=thread_id,
+        creator_id=creator_id,
+        lock=False,
+        require_active=False,
+    )
+    empty = CreativeBriefOut(thread_id=str(thread.id), version=0)
+    if not settings.creative_brief_for(creator_id):
+        return empty
+    brief = await load_latest_brief(db, thread.id)
+    if brief is None:
+        return empty
+    events = (
+        (
+            await db.execute(
+                select(CreationThreadEvent)
+                .where(
+                    CreationThreadEvent.thread_id == thread.id,
+                    CreationThreadEvent.role == "assistant",
+                    CreationThreadEvent.payload.is_not(None),
+                )
+                .order_by(CreationThreadEvent.sequence.desc())
+                .limit(30)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    newest: dict[str, RequirementReceipt] = {}
+    for event in events:
+        for raw in (event.payload or {}).get("requirement_receipts") or []:
+            try:
+                receipt = RequirementReceipt.model_validate(raw)
+            except ValueError:
+                continue
+            newest.setdefault(receipt.requirement_id, receipt)
+    live_ids = {req.id for req in brief.live()}
+    receipts = [r for r in newest.values() if r.requirement_id in live_ids]
+    shown = apply_receipt_statuses(brief, [r.model_dump(mode="json") for r in receipts])
+    return CreativeBriefOut(
+        thread_id=str(thread.id),
+        version=shown.version,
+        requirements=[
+            CreativeBriefRequirementOut(
+                id=req.id,
+                kind=req.kind,
+                scope=req.scope,
+                literal=req.literal,
+                description=req.description,
+                status=req.status,
+            )
+            for req in shown.live()
+        ],
+        requirement_receipts=receipts,
     )

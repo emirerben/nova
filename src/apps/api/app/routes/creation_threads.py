@@ -14,12 +14,19 @@ import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NoReturn
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +49,9 @@ from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.media_sources import (
     PROXY_MEDIA_PREFIX,
     AnalysisProxyDescriptor,
+    ClipCapture,
+    ClipPlace,
+    CoarseLocation,
     MediaUploadContract,
     is_analysis_proxy_path,
 )
@@ -448,11 +458,41 @@ class MediaInput(StrictBody):
     kind: Literal["video", "image", "audio"]
     filename: str | None = Field(default=None, max_length=240)
     content_type: str | None = Field(default=None, max_length=100)
+    # KRI-189: filming context read from the Photos asset on the phone. All
+    # optional and additive; a value that fails validation is dropped rather
+    # than rejecting the attach (the clip must never fail to register over a
+    # missing timestamp). Location is re-rounded to ~1 km by `CoarseLocation`.
+    capture_time: datetime | None = None
+    coarse_location: CoarseLocation | None = None
+    place: ClipPlace | None = None
+
+    @field_validator("capture_time", "coarse_location", "place", mode="wrap")
+    @classmethod
+    def _lenient_capture_field(cls, value: object, handler: Any) -> Any:
+        try:
+            return handler(value)
+        except ValidationError:
+            return None
 
     @field_validator("media_id")
     @classmethod
     def validate_media_id(cls, value: str) -> str:
         return _client_id(value)
+
+    def capture(self) -> ClipCapture | None:
+        """The (possibly partial) filming context, or None when nothing usable came."""
+        if self.kind != "video":
+            return None
+        capture = ClipCapture(
+            capture_time=self.capture_time,
+            coarse_location=self.coarse_location,
+            place=self.place,
+        )
+        return None if capture.is_empty() else capture
+
+
+# Server-only keys of a verified attach row; never echoed in thread state or events.
+_ATTACH_PRIVATE_KEYS = frozenset({"_path", "_capture", "generation", "has_audio"})
 
 
 class AttachBody(StrictBody):
@@ -815,8 +855,31 @@ async def _recorded_cleanup_consent(
     return None
 
 
+def _reject_media(
+    event: str,
+    status_code: int,
+    detail: str,
+    *,
+    cause: BaseException | None = None,
+    **fields: Any,
+) -> NoReturn:
+    """Log the rejection reason, then raise the same HTTPException.
+
+    Every upload-urls / attach_media / media-probe rejection routes through
+    here so the reason survives past the uvicorn access log (KRI-194). Never
+    pass signed URLs or filenames in ``fields``.
+    """
+
+    log.warning(event, **fields)
+    if cause is not None:
+        raise HTTPException(status_code=status_code, detail=detail) from cause
+    raise HTTPException(status_code=status_code, detail=detail)
+
+
 async def _probe_registered_media(
     *,
+    thread_id: str,
+    media_id: str,
     object_path: str,
     generation: str,
     kind: str,
@@ -835,14 +898,39 @@ async def _probe_registered_media(
         try:
             probe = await asyncio.to_thread(probe_video, signed_url)
         except ProbeError as exc:
-            raise HTTPException(status_code=422, detail="Video could not be read") from exc
+            _reject_media(
+                "creation_thread.media_probe.rejected",
+                422,
+                "Video could not be read",
+                cause=exc,
+                reason="video_could_not_be_read",
+                thread_id=str(thread_id),
+                media_id=media_id,
+                media_kind=kind,
+                probe_error=str(exc),
+            )
         if proxy is not None and (
             probe.width != proxy.width
             or probe.height != proxy.height
             or abs(probe.fps - proxy.frame_rate) > 0.01
             or probe.rotation_degrees != 0
         ):
-            raise HTTPException(422, "Uploaded proxy geometry differs from its descriptor")
+            _reject_media(
+                "creation_thread.media_probe.rejected",
+                422,
+                "Uploaded proxy geometry differs from its descriptor",
+                reason="proxy_geometry_mismatch",
+                thread_id=str(thread_id),
+                media_id=media_id,
+                media_kind=kind,
+                descriptor_width=proxy.width,
+                descriptor_height=proxy.height,
+                descriptor_frame_rate=proxy.frame_rate,
+                probed_width=probe.width,
+                probed_height=probe.height,
+                probed_frame_rate=probe.fps,
+                probed_rotation_degrees=probe.rotation_degrees,
+            )
         return float(probe.duration_s), bool(probe.has_audio)
     from app.services.audio_download import (  # noqa: PLC0415
         probe_duration,
@@ -852,7 +940,17 @@ async def _probe_registered_media(
     duration = await asyncio.to_thread(probe_duration, signed_url)
     has_audio = await asyncio.to_thread(probe_has_audio_stream, signed_url)
     if duration is None or duration <= 0 or not has_audio:
-        raise HTTPException(status_code=422, detail="Narration audio could not be read")
+        _reject_media(
+            "creation_thread.media_probe.rejected",
+            422,
+            "Narration audio could not be read",
+            reason="audio_could_not_be_read",
+            thread_id=str(thread_id),
+            media_id=media_id,
+            media_kind=kind,
+            probed_duration_s=duration,
+            probed_has_audio=has_audio,
+        )
     return float(duration), True
 
 
@@ -894,9 +992,15 @@ async def _reject_input_mutation_while_rendering(db: AsyncSession, thread: Creat
         return
     job = await db.get(Job, current_job_id, with_for_update=True)
     if job is not None and job.status not in PLAN_ITEM_JOB_TERMINAL:
-        raise HTTPException(
-            status_code=409,
-            detail="Wait for the current render before changing its source media or format",
+        _reject_media(
+            "creation_thread.media_mutation.blocked",
+            409,
+            "Wait for the current render before changing its source media or format",
+            reason="render_in_progress",
+            thread_id=str(thread.id),
+            item_id=str(item_id),
+            job_id=str(current_job_id),
+            job_status=job.status,
         )
 
 
@@ -3182,10 +3286,16 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
             if value in supported_now or value == "slides"
         }
     return {
-        # Runtime v2 cannot create a guided phone job at all, so a pilot account
-        # offered v2 would never get its render on the iPhone.
+        # A pilot account is offered v2 only once `KRIA_RUNTIME_V2_PHONE_ENABLED`
+        # covers it (KRI-187): a v2 approval then reaches a device job via
+        # `dispatch_item_render_for` / `prepare_phone_editor_commit`. Off, it
+        # stays on [1]. `runtime_version` is fixed at thread creation, so
+        # existing v1 threads are unaffected either way (rollback = [1] again).
         "runtime_versions": (
-            [1, 2] if settings.kria_runtime_v2_enabled and not phone_enabled else [1]
+            [1, 2]
+            if settings.kria_runtime_v2_enabled
+            and (not phone_enabled or settings.kria_runtime_v2_phone_for(user.id))
+            else [1]
         ),
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
@@ -4986,7 +5096,13 @@ async def upload_urls(
     _ = request
     thread = await _load(thread_id, user, db, lock=True)
     if thread.status != "active":
-        raise HTTPException(status_code=409, detail="Creation thread is archived")
+        _reject_media(
+            "creation_thread.upload_urls.rejected",
+            409,
+            "Creation thread is archived",
+            reason="thread_archived",
+            thread_id=str(thread.id),
+        )
     item = (
         await db.get(PlanItem, thread.active_plan_item_id)
         if getattr(thread, "active_plan_item_id", None)
@@ -5001,12 +5117,13 @@ async def upload_urls(
         # a creator upload straight into `clip_gcs_paths`, where slide-post
         # compose/render can never see it — the exact class of KRI-33 bug
         # ("Compose" 422s with an empty pool after uploading videos here).
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "This item is a Photo & video post — add photos and videos "
-                "from its Visuals pool above, not here."
-            ),
+        _reject_media(
+            "creation_thread.upload_urls.rejected",
+            422,
+            "This item is a Photo & video post — add photos and videos "
+            "from its Visuals pool above, not here.",
+            reason="slide_post_fence",
+            thread_id=str(thread.id),
         )
     # Keep the reservation helper usable by migration/recovery callers that
     # only have a thread shell. Normal chat threads always have a PlanItem and
@@ -5019,42 +5136,94 @@ async def upload_urls(
     )
     requested_clips = sum(1 for file in body.files if file.content_type.startswith("video/"))
     if current_clips + requested_clips > clip_limit:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"This item is capped at {clip_limit} clips. "
-                f"You currently have {current_clips}; you can add "
-                f"{max(0, clip_limit - current_clips)} more."
-            ),
+        _reject_media(
+            "creation_thread.upload_urls.rejected",
+            400,
+            f"This item is capped at {clip_limit} clips. "
+            f"You currently have {current_clips}; you can add "
+            f"{max(0, clip_limit - current_clips)} more.",
+            reason="clip_cap_exceeded",
+            thread_id=str(thread.id),
+            existing_clips=current_clips,
+            requested_clips=requested_clips,
+            clip_limit=clip_limit,
         )
     target_specs: list[tuple[str, str, int, str]] = []
     upload_contracts: dict[str, MediaUploadContract] = {}
     for file in body.files:
         content_type = file.content_type.split(";", 1)[0].lower().strip()
         if content_type not in _MEDIA_TYPES:
-            raise HTTPException(status_code=422, detail="Unsupported media type")
+            _reject_media(
+                "creation_thread.upload_urls.rejected",
+                422,
+                "Unsupported media type",
+                reason="unsupported_content_type",
+                thread_id=str(thread.id),
+                content_type=content_type,
+            )
         if content_type in _IMAGE_CONTENT_TYPES:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Images belong in this item's Visuals pool. Upload them from the Visuals tab."
-                ),
+            _reject_media(
+                "creation_thread.upload_urls.rejected",
+                422,
+                "Images belong in this item's Visuals pool. Upload them from the Visuals tab.",
+                reason="image_wrong_pool",
+                thread_id=str(thread.id),
+                content_type=content_type,
             )
         elif content_type.startswith("audio/"):
             if file.file_size_bytes > _MAX_VOICEOVER_BYTES:
-                raise HTTPException(status_code=422, detail="Audio files must be 200 MB or smaller")
+                _reject_media(
+                    "creation_thread.upload_urls.rejected",
+                    422,
+                    "Audio files must be 200 MB or smaller",
+                    reason="audio_too_large",
+                    thread_id=str(thread.id),
+                    file_size_bytes=file.file_size_bytes,
+                )
         elif file.file_size_bytes > _MAX_BYTES_PER_FILE:
-            raise HTTPException(status_code=422, detail="Video files must be 4 GB or smaller")
+            _reject_media(
+                "creation_thread.upload_urls.rejected",
+                422,
+                "Video files must be 4 GB or smaller",
+                reason="video_too_large",
+                thread_id=str(thread.id),
+                file_size_bytes=file.file_size_bytes,
+            )
         contract = file.upload_contract
         if file.client_upload_id.startswith(PROXY_MEDIA_PREFIX):
-            raise HTTPException(422, "Upload identifier uses a reserved prefix")
+            _reject_media(
+                "creation_thread.upload_urls.rejected",
+                422,
+                "Upload identifier uses a reserved prefix",
+                reason="reserved_prefix",
+                thread_id=str(thread.id),
+            )
         if contract.purpose == "analysis_proxy":
             if not settings.phone_rendering_for(user.id):
-                raise HTTPException(404, "Phone rendering is unavailable")
+                _reject_media(
+                    "creation_thread.upload_urls.rejected",
+                    404,
+                    "Phone rendering is unavailable",
+                    reason="phone_rendering_unavailable",
+                    thread_id=str(thread.id),
+                )
             if len(file.client_upload_id) > 160 - len(PROXY_MEDIA_PREFIX):
-                raise HTTPException(422, "Proxy upload identifier is too long")
+                _reject_media(
+                    "creation_thread.upload_urls.rejected",
+                    422,
+                    "Proxy upload identifier is too long",
+                    reason="proxy_id_too_long",
+                    thread_id=str(thread.id),
+                )
             if content_type != "video/mp4":
-                raise HTTPException(422, "Analysis proxies must be MP4 videos")
+                _reject_media(
+                    "creation_thread.upload_urls.rejected",
+                    422,
+                    "Analysis proxies must be MP4 videos",
+                    reason="proxy_not_mp4",
+                    thread_id=str(thread.id),
+                    content_type=content_type,
+                )
         client_id = (
             PROXY_MEDIA_PREFIX + file.client_upload_id
             if contract.purpose == "analysis_proxy"
@@ -5098,13 +5267,27 @@ async def upload_urls(
                 )
             )
         elif reservation.creator_id != user.id or reservation.object_path != path:
-            raise HTTPException(status_code=404, detail="Creation thread not found")
+            _reject_media(
+                "creation_thread.upload_urls.rejected",
+                404,
+                "Creation thread not found",
+                reason="reservation_owner_mismatch",
+                thread_id=str(thread.id),
+                media_id=media_id,
+            )
         else:
             previous_contract = MediaUploadContract.model_validate(
                 getattr(reservation, "upload_contract", None) or {}
             )
             if previous_contract != upload_contracts[media_id]:
-                raise HTTPException(409, "Upload identity reused for different source media")
+                _reject_media(
+                    "creation_thread.upload_urls.rejected",
+                    409,
+                    "Upload identity reused for different source media",
+                    reason="reservation_identity_reused",
+                    thread_id=str(thread.id),
+                    media_id=media_id,
+                )
             reservation.expires_at = expires_at
     # Commit the reservation before minting any URL. A later DELETE can now
     # reject the live PUT window or manifest the exact key after it expires.
@@ -5120,7 +5303,16 @@ async def upload_urls(
                 file_size_bytes,
             )
         except Exception as exc:  # signer failures are retryable
-            raise HTTPException(status_code=503, detail="Upload service unavailable") from exc
+            _reject_media(
+                "creation_thread.upload_urls.rejected",
+                503,
+                "Upload service unavailable",
+                cause=exc,
+                reason="signer_unavailable",
+                thread_id=str(thread.id),
+                media_id=media_id,
+                error=str(exc),
+            )
         targets.append(
             UploadTarget(
                 media_id=media_id,
@@ -5145,7 +5337,13 @@ async def attach_media(
     _ = request
     thread = await _load(thread_id, user, db, lock=True)
     if thread.status != "active":
-        raise HTTPException(status_code=409, detail="Creation thread is archived")
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            409,
+            "Creation thread is archived",
+            reason="thread_archived",
+            thread_id=str(thread.id),
+        )
     duplicate = await _duplicate(db, thread.id, _client_id(body.client_event_id))
     if duplicate:
         previous_ids = {
@@ -5155,17 +5353,32 @@ async def attach_media(
         }
         requested_ids = {media.media_id for media in body.media}
         if previous_ids != requested_ids:
-            raise HTTPException(status_code=409, detail="Idempotency key reused")
+            _reject_media(
+                "creation_thread.attach_media.rejected",
+                409,
+                "Idempotency key reused",
+                reason="idempotency_key_reused",
+                thread_id=str(thread.id),
+            )
         # rollback() expires every instance in the request session, ``user`` too.
         owner_id = user.id
         await db.rollback()
         return await _response(db, await _load(thread_id, user, db, creator_id=owner_id))
     if not matches_conversation_revision(thread, body.expected_revision):
-        raise HTTPException(status_code=409, detail="Creation thread changed")
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            409,
+            "Creation thread changed",
+            reason="revision_mismatch",
+            thread_id=str(thread.id),
+        )
     if any(media.kind == "image" for media in body.media):
-        raise HTTPException(
-            status_code=422,
-            detail=("Images belong in this item's Visuals pool. Upload them from the Visuals tab."),
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            422,
+            "Images belong in this item's Visuals pool. Upload them from the Visuals tab.",
+            reason="image_wrong_pool",
+            thread_id=str(thread.id),
         )
     # Validate the reservation capability before touching the database or
     # storage. A caller-supplied path is never authoritative.
@@ -5173,30 +5386,57 @@ async def attach_media(
         try:
             expected_path = _media_path(user.id, thread.id, media.media_id)
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail="Invalid media identifier") from exc
+            _reject_media(
+                "creation_thread.attach_media.rejected",
+                422,
+                "Invalid media identifier",
+                cause=exc,
+                reason="invalid_media_id",
+                thread_id=str(thread.id),
+            )
         if media.gcs_path is not None and media.gcs_path != expected_path:
-            raise HTTPException(status_code=422, detail="Media path does not match reservation")
+            _reject_media(
+                "creation_thread.attach_media.rejected",
+                422,
+                "Media path does not match reservation",
+                reason="path_mismatch",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+            )
     await _reject_input_mutation_while_rendering(db, thread)
     item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
     if item is None:
-        raise HTTPException(status_code=409, detail="Creation project is missing its draft")
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            409,
+            "Creation project is missing its draft",
+            reason="draft_missing",
+            thread_id=str(thread.id),
+        )
     if getattr(item, "edit_format", None) == "slides":
         # Same fence as `upload_urls` above — a slide post's media lives only
         # in the PlanItemAsset pool, never `clip_gcs_paths`/voiceover, so this
         # legacy clip/voiceover attach path must never register media for one
         # (plans/024, KRI-33).
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "This item is a Photo & video post — add photos and videos "
-                "from its Visuals pool above, not here."
-            ),
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            422,
+            "This item is a Photo & video post — add photos and videos "
+            "from its Visuals pool above, not here.",
+            reason="slide_post_fence",
+            thread_id=str(thread.id),
         )
     existing_state = dict(getattr(thread, "state", None) or {})
     existing_media = [entry for entry in existing_state.get("media", []) if isinstance(entry, dict)]
     existing_media_ids = {str(entry.get("media_id")) for entry in existing_media}
     if any(media.media_id in existing_media_ids for media in body.media):
-        raise HTTPException(status_code=409, detail="That media is already attached")
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            409,
+            "That media is already attached",
+            reason="already_attached",
+            thread_id=str(thread.id),
+        )
     # Reject capacity conflicts before signing or probing any uploaded bytes.
     # The storage verification below is intentionally the expensive part of
     # registration and should only run for a request that can still succeed.
@@ -5204,13 +5444,25 @@ async def attach_media(
     requested_clips = sum(1 for source in body.media if source.kind == "video")
     clip_limit = _format_clip_limit(getattr(item, "edit_format", None))
     if len(existing_paths) + requested_clips > clip_limit:
-        raise HTTPException(
-            status_code=409,
-            detail=f"This item is capped at {clip_limit} clips",
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            409,
+            f"This item is capped at {clip_limit} clips",
+            reason="clip_cap_exceeded",
+            thread_id=str(thread.id),
+            existing_clips=len(existing_paths),
+            requested_clips=requested_clips,
+            clip_limit=clip_limit,
         )
     requested_voiceovers = sum(1 for source in body.media if source.kind == "audio")
     if item.voiceover_gcs_path and requested_voiceovers:
-        raise HTTPException(status_code=409, detail="This item already has a voiceover")
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            409,
+            "This item already has a voiceover",
+            reason="voiceover_exists",
+            thread_id=str(thread.id),
+        )
     proxy_contracts: dict[str, MediaUploadContract] = {}
     proxy_ids = [media.media_id for media in body.media if is_analysis_proxy_path(media.media_id)]
     if proxy_ids:
@@ -5234,19 +5486,52 @@ async def attach_media(
             if contract.purpose != "analysis_proxy" or reservation.object_path != _media_path(
                 user.id, thread.id, reservation.media_id
             ):
-                raise HTTPException(409, "Proxy reservation does not match its source")
+                _reject_media(
+                    "creation_thread.attach_media.rejected",
+                    409,
+                    "Proxy reservation does not match its source",
+                    reason="proxy_reservation_mismatch",
+                    thread_id=str(thread.id),
+                    media_id=reservation.media_id,
+                )
             proxy_contracts[reservation.media_id] = contract
         if set(proxy_contracts) != set(proxy_ids):
-            raise HTTPException(409, "Proxy reservation is missing; upload again")
+            _reject_media(
+                "creation_thread.attach_media.rejected",
+                409,
+                "Proxy reservation is missing; upload again",
+                reason="proxy_reservation_missing",
+                thread_id=str(thread.id),
+                missing_media_ids=sorted(set(proxy_ids) - set(proxy_contracts)),
+            )
     verified: list[dict[str, Any]] = []
     for media in body.media:
         expected_path = _media_path(user.id, thread.id, media.media_id)
         try:
             metadata = await asyncio.to_thread(storage.object_metadata, expected_path)
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=409, detail="Upload has not finished") from exc
+            _reject_media(
+                "creation_thread.attach_media.rejected",
+                409,
+                "Upload has not finished",
+                cause=exc,
+                reason="upload_not_finished",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+            )
         except Exception as exc:
-            raise HTTPException(status_code=503, detail="Upload verification unavailable") from exc
+            _reject_media(
+                "creation_thread.attach_media.rejected",
+                503,
+                "Upload verification unavailable",
+                cause=exc,
+                reason="upload_verification_error",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+                error=str(exc),
+            )
         content_type = (
             str(metadata.content_type or media.content_type or "").split(";", 1)[0].lower()
         )
@@ -5255,27 +5540,63 @@ async def attach_media(
         )
         kind_limit = _MAX_BYTES_PER_FILE if media.kind == "video" else _MAX_VOICEOVER_BYTES
         if metadata.size <= 0 or metadata.size > kind_limit or not kind_allowed:
-            raise HTTPException(status_code=422, detail="Media kind does not match upload")
+            _reject_media(
+                "creation_thread.attach_media.rejected",
+                422,
+                "Media kind does not match upload",
+                reason="kind_mismatch",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+                content_type=content_type,
+                size_bytes=int(metadata.size),
+            )
         generation = str(getattr(metadata, "generation", "") or "").strip()
         if not generation:
-            raise HTTPException(status_code=503, detail="Upload identity is unavailable")
+            _reject_media(
+                "creation_thread.attach_media.rejected",
+                503,
+                "Upload identity is unavailable",
+                reason="identity_unavailable",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+            )
         contract = proxy_contracts.get(media.media_id)
         try:
             duration_s, has_audio = await _probe_registered_media(
+                thread_id=str(thread.id),
+                media_id=media.media_id,
                 object_path=expected_path,
                 generation=generation,
                 kind=media.kind,
                 **({"proxy": contract.proxy} if contract else {}),
             )
         except FileNotFoundError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail="Upload changed during registration",
-            ) from exc
+            _reject_media(
+                "creation_thread.attach_media.rejected",
+                409,
+                "Upload changed during registration",
+                cause=exc,
+                reason="registration_changed",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+            )
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=503, detail="Media verification unavailable") from exc
+            _reject_media(
+                "creation_thread.attach_media.rejected",
+                503,
+                "Media verification unavailable",
+                cause=exc,
+                reason="media_verification_error",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+                error=str(exc),
+            )
         contract = proxy_contracts.get(media.media_id)
         if contract is not None:
             # `media.kind` (this attachment request) and `contract.proxy.original.kind`
@@ -5284,11 +5605,34 @@ async def attach_media(
             # while claiming to attach as video. verify_registered alone doesn't catch
             # this — it only compares duration/audio presence, not kind.
             if contract.proxy.original.kind != media.kind:
-                raise HTTPException(422, "Media kind does not match its reserved proxy")
+                _reject_media(
+                    "creation_thread.attach_media.rejected",
+                    422,
+                    "Media kind does not match its reserved proxy",
+                    reason="proxy_kind_mismatch",
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    media_kind=media.kind,
+                    proxy_kind=contract.proxy.original.kind,
+                )
             try:
                 contract.proxy.verify_registered(duration_s, has_audio)
             except ValueError as exc:
-                raise HTTPException(422, str(exc)) from exc
+                _reject_media(
+                    "creation_thread.attach_media.rejected",
+                    422,
+                    str(exc),
+                    cause=exc,
+                    reason="proxy_verification_failed",
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    media_kind=media.kind,
+                    error=str(exc),
+                    descriptor_duration_s=contract.proxy.duration_s,
+                    probed_duration_s=duration_s,
+                    descriptor_has_audio=contract.proxy.original.has_audio,
+                    probed_has_audio=has_audio,
+                )
         verified.append(
             {
                 "media_id": _client_id(media.media_id),
@@ -5300,6 +5644,15 @@ async def attach_media(
                 "duration_s": duration_s,
                 "has_audio": has_audio,
                 "_path": expected_path,
+                **(
+                    {"_capture": capture.model_dump(mode="json", exclude_none=True)}
+                    if (capture := media.capture()) is not None
+                    else {}
+                ),
+                # The capture lives ONLY on the assignment (`capture` below), never inside the
+                # stored proxy receipt: `OriginalMediaDescriptor` is extra="forbid", so a
+                # capture copy in there would make older code (a rollback, or a worker still
+                # on the previous image) reject the whole receipt and fail phone-job admission.
                 **({"upload_contract": contract.model_dump(mode="json")} if contract else {}),
             }
         )
@@ -5321,6 +5674,9 @@ async def attach_media(
                     "duration_s": source["duration_s"],
                     "has_audio": source["has_audio"],
                     "manifest_identity": source["media_id"],
+                    # KRI-189: authoritative filming context (source of truth for
+                    # the fact layer); coarse by construction.
+                    **({"capture": source["_capture"]} if "_capture" in source else {}),
                     **(
                         {"upload_contract": source["upload_contract"]}
                         if "upload_contract" in source
@@ -5329,11 +5685,7 @@ async def attach_media(
                 }
             )
         existing_media.append(
-            {
-                key: value
-                for key, value in source.items()
-                if key not in {"_path", "generation", "has_audio"}
-            }
+            {key: value for key, value in source.items() if key not in _ATTACH_PRIVATE_KEYS}
         )
     from app.services.plan_item_media import (  # noqa: PLC0415
         current_detector_policy,
@@ -5377,11 +5729,7 @@ async def attach_media(
             state = dict(thread.state or {})
             thread.state = state
     public_media = [
-        {
-            key: value
-            for key, value in source.items()
-            if key not in {"_path", "generation", "has_audio"}
-        }
+        {key: value for key, value in source.items() if key not in _ATTACH_PRIVATE_KEYS}
         for source in verified
     ]
     await _append(

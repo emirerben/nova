@@ -618,6 +618,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 guard let url = loaded else { throw CancellationError() }
                 // Un-chosen while Photos was still handing the file over: don't start anything.
                 try Task.checkCancellation()
+                // KRI-189: remember when/where this clip was filmed (Photos metadata) until it attaches.
+                // Best effort and clips only; nothing is read when the setting is off.
+                if request.role == .clip, let capture = await ClipCaptureReader.read(assetIdentifier: request.assetIdentifier, fileURL: url) {
+                    ClipCaptureStore.shared.set(capture, for: recordID)
+                }
                 let accepted = await self.enqueue(fileURL: url, projectID: request.projectID, source: .photos, consentGiven: true, purpose: request.purpose, role: request.role, itemID: request.itemID, limit: request.limit, recordID: recordID, failureKey: key)
                 loaded = nil   // `enqueue` owns the file from here (it renames or links it)
                 if !accepted { self.releaseSelection(recordID: recordID, projectID: request.projectID) }
@@ -1152,7 +1157,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         } else if UploadRecoveryPolicy().action(retryCount: record.retryCount, statusCode: status, fileExists: true) == .retry {
             await retry(record)
         } else {
-            lastError = error?.localizedDescription ?? "The upload could not be completed."
+            let message = error?.localizedDescription ?? "The upload could not be completed."
+            lastError = message
+            // KRI-194: this was `lastError`-only, so a PUT failure for one clip could sit
+            // hidden behind another clip's still-showing failure line.
+            reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message)
         }
     }
 
@@ -1266,7 +1275,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 remove(record.id, deleteLocalFile: true)
             } catch {
                 lastError = error.localizedDescription
-                if record.editorSourceTarget != nil { failEditorPlacement(record.id, error: "This import couldn’t be prepared. Try again.") }
+                if record.editorSourceTarget != nil {
+                    failEditorPlacement(record.id, error: "This import couldn’t be prepared. Try again.")
+                } else {
+                    // KRI-194: this was `lastError`-only, so an attach failure for one visual
+                    // could sit hidden behind another clip's still-showing failure line.
+                    reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: error.localizedDescription)
+                }
             }
             return
         }
@@ -1275,7 +1290,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             let gcsPath = record.gcsPath,
             let contentType = record.contentType
         else {
-            lastError = "This upload was created by an older build. Choose the file again."
+            let message = "This upload was created by an older build. Choose the file again."
+            lastError = message
+            reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message)
             return
         }
         if let target = record.editorSourceTarget {
@@ -1290,6 +1307,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             return
         }
         var lastAttachmentError: (any Error)?
+        // KRI-189: when/where the clip was filmed. Resolved once, outside the retry loop; nil (and never
+        // an error) when the setting is off or nothing could be read.
+        let capture = record.role == .clip ? await ClipCaptureWire.forAttach(recordID: record.id) : nil
         for _ in 0..<2 {
             do {
                 let current = try await api.project(threadID: record.projectID)
@@ -1300,7 +1320,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                     filename: record.filename,
                     contentType: contentType,
                     expectedRevision: current.revision,
-                    clientEventID: "ios-attach-\(record.id.uuidString)"
+                    clientEventID: "ios-attach-\(record.id.uuidString)",
+                    capture: capture
                 )
                 // Publish the authoritative media_count before removing the
                 // pending record so clip capacity never briefly reopens.
@@ -1314,13 +1335,18 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 // Hand the asset's identity from the (about to be deleted) record to the ledger, so
                 // the clip still shows as chosen the next time the picker opens.
                 bindSelection(recordID: record.id, projectID: record.projectID, mediaID: mediaID)
+                ClipCaptureStore.shared.remove(record.id)
                 remove(record.id, deleteLocalFile: true)
                 return
             } catch {
                 lastAttachmentError = error
             }
         }
-        lastError = lastAttachmentError?.localizedDescription ?? "The uploaded footage could not be attached to this project."
+        let message = lastAttachmentError?.localizedDescription ?? "The uploaded footage could not be attached to this project."
+        lastError = message
+        // KRI-194: this was `lastError`-only, so an attach failure for one clip could sit
+        // hidden behind another clip's still-showing failure line.
+        reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message)
     }
 
     /// Posts (or idempotently re-posts) admission and waits briefly for the
@@ -1433,6 +1459,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         guard let record = records.first(where: { $0.id == id }) else { return }
         records.removeAll { $0.id == id }
         progress[id] = nil
+        // An attach/PUT failure keyed to this record's own id (KRI-194) must not outlive the
+        // record: otherwise a successful retry, or an explicit Remove, leaves a stale failure
+        // line for a clip the picker no longer shows.
+        failures.removeAll { $0.id == id }
         persist()
         if deleteLocalFile { try? FileManager.default.removeItem(atPath: record.localFilePath) }
     }

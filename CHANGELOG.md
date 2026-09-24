@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.206.0] - 2026-09-24
+
+### Changed
+- feat(clip-facts): capture time, place and best-guess landmark per clip, with provenance (KRI-189) (#1225) <!-- release-pr: 1225 -->
+
+## [0.76.205.0] - 2026-09-24
+
+### Changed
+- fix(api): proxy-aware rate-limit key by default behind Fly (KRI-195) (#1227) <!-- release-pr: 1227 -->
+
+## [0.76.204.0] - 2026-09-24
+
+### Changed
+- fix(uploads): log rejection reasons and surface attach/PUT failures per clip (KRI-194) (#1223) <!-- release-pr: 1223 -->
+
+## [0.76.203.0] - 2026-09-24
+
+### Changed
+- fix(captions): cloud Talking captions re-transcribe when Gemini heard another language (#1224) <!-- release-pr: 1224 -->
+
+## [0.76.202.0] - 2026-09-24
+
+### Changed
+- fix(phone): Talking-edit beats hear the right language and the names as typed (#1222) <!-- release-pr: 1222 -->
+
+## [0.76.201.0] - 2026-09-24
+
+### Changed
+- feat(kria): Creative Brief ledger, scope router and receipts (KRI-188) (#1221) <!-- release-pr: 1221 -->
+
+## [0.76.200.0] - 2026-09-24
+
+### Changed
+- feat(kria): phone-rendering accounts on runtime v2 behind a flag (KRI-187) (#1218) <!-- release-pr: 1218 -->
+
+## [0.76.199.0] - 2026-09-24
+
+### Changed
+- fix(copilot): chat-edit replies say what was and wasn't done (KRI-186) (#1217) <!-- release-pr: 1217 -->
+
+## [0.76.198.0] - 2026-09-24
+
+### Changed
+- fix(deploy): raise api min_machines_running to match live scale count (KRI-193) (#1219) <!-- release-pr: 1219 -->
+
+## [0.76.197.0] - 2026-09-24
+
+### Changed
+- fix(ios): "fade" media-overlay tokens actually fade the card (KRI-182, re-land of #1214) (#1216) <!-- release-pr: 1216 -->
+
 ## [0.76.196.0] - 2026-09-24
 
 ### Changed

@@ -46,6 +46,12 @@ from app.schemas.clip_understanding import ClipUnderstanding
 
 ClipIntentOp = Literal["label", "group", "order", "include", "caption"]
 ClipOrderPosition = Literal["first", "last"]
+# KRI-189: a fact-based ORDER over EVERY clip (not a first/last placement of a
+# described subset): "in the order I filmed them" -> capture_time, "along my
+# route" -> route. `route` uses capture-time order for now (the order a creator
+# walked a route is the order they filmed it in); the distinction is kept so a
+# later geographic ordering needs no schema change.
+ClipOrderBy = Literal["capture_time", "route"]
 GroundingSource = Literal["creator_text", "record_span", "vision_verified"]
 ResolutionStatus = Literal["resolved", "needs_creator"]
 
@@ -104,6 +110,8 @@ class ClipIntent(BaseModel):
                 raise ValueError("transcript label copy comes only from the narration materializer")
         elif self.transcript_kind is not None:
             raise ValueError("transcript_kind requires label_source=transcript")
+        if self.order_by is not None and (self.op != "order" or self.position is not None):
+            raise ValueError("order_by requires op=order and no position")
         return self
 
     # Exact creator-written copy for this intent ("post match pub"), if any.
@@ -114,6 +122,8 @@ class ClipIntent(BaseModel):
     caption_attribute: str | None = Field(default=None, max_length=160)
     # Only for op="order".
     position: ClipOrderPosition | None = None
+    # Only for op="order", and never together with `position`.
+    order_by: ClipOrderBy | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("attribute", mode="before")
     @classmethod

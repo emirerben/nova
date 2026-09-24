@@ -107,12 +107,47 @@ class KriaToolReceipt(_KriaModel):
         return self
 
 
+class RequirementReceipt(_KriaModel):
+    """One deterministic outcome per Creative Brief requirement (KRI-188).
+
+    ``inferred`` lists values the server guessed rather than read from the
+    creator or the footage (for example a landmark name), so the client can show
+    them and let the creator correct one.
+    """
+
+    requirement_id: str = Field(min_length=1, max_length=24)
+    status: Literal["met", "partial", "not_possible"]
+    reason: str | None = Field(default=None, max_length=300)
+    inferred: list[str] = Field(default_factory=list, max_length=24)
+
+
+class CreativeBriefRequirementOut(_KriaModel):
+    id: str
+    kind: Literal["text", "order", "select", "timing", "audio", "style"]
+    scope: str
+    literal: str | None = None
+    description: str | None = None
+    status: Literal["open", "met", "partial", "not_possible", "superseded"]
+
+
+class CreativeBriefOut(_KriaModel):
+    thread_id: str
+    version: int = Field(ge=0)
+    requirements: list[CreativeBriefRequirementOut] = Field(default_factory=list)
+    requirement_receipts: list[RequirementReceipt] = Field(default_factory=list)
+
+
 class KriaObservedTurnResponse(_KriaModel):
     schema_version: Literal[2] = KRIA_SCHEMA_VERSION
     turn_value: Literal["decision", "question", "action", "progress", "review", "recovery"]
     message: str = Field(min_length=1, max_length=1200)
     receipt_ids: list[str] = Field(default_factory=list)
     next_actions: list[str] = Field(default_factory=list, max_length=3)
+    # One status per Creative Brief requirement; empty (and omitted from the
+    # dump) unless KRIA_CREATIVE_BRIEF_ENABLED produced receipts for this turn.
+    requirement_receipts: list[RequirementReceipt] = Field(
+        default_factory=list, exclude_if=lambda value: not value
+    )
 
 
 class KriaProblem(_KriaModel):

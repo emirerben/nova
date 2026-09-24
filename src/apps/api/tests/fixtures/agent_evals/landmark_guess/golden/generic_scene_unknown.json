@@ -1,0 +1,23 @@
+{
+  "agent": "nova.video.landmark_guess",
+  "prompt_version": "2026-09-24.1",
+  "input": {
+    "file_uri": "clips/devtest-1778504452/clip_02.mp4",
+    "file_mime": "video/mp4",
+    "place": "Arnavutköy, İstanbul, Türkiye",
+    "lat": 41.19,
+    "lon": 28.74
+  },
+  "raw_text": "{\"name\": \"unknown\", \"confidence\": 0.3, \"evidence\": \"\"}",
+  "output": {
+    "name": "",
+    "confidence": 0.0,
+    "evidence": ""
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_empty": true,
+    "case": "The clip only shows a generic road/field scene, so the model answers unknown and parse() normalizes it to an empty name with zero confidence (no fact is stored).",
+    "live_note": "Bucket-relative dev clip; live mode uploads it via the fixture uploader. Replay uses raw_text; live is structural only (the dev clip's real content differs from the recorded answer)."
+  }
+}

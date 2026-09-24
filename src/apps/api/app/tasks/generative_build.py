@@ -38,7 +38,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -3229,6 +3229,7 @@ def _run_generative_job_impl(
                         speech_cleanup_source_clip_id=speech_cleanup_source_clip_id,
                         speech_cleanup_uses_preflight=speech_cleanup_snapshot_contract,
                         caption_language_request=all_candidates.get("caption_language_request"),
+                        clip_metas=clip_metas,
                     )
                 elif spec.get("archetype") == "day_vlog":
                     result = _render_generative_variant(
@@ -4463,6 +4464,7 @@ def _run_phone_subtitled_job(
     from app.pipeline.caption_language import (  # noqa: PLC0415
         SOURCE_DETECTED,
         SUPPORTED_CAPTION_LANGUAGES,
+        crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
     from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
@@ -4766,7 +4768,53 @@ def _run_phone_subtitled_job(
             # explicitly asked for a specific caption language (already parsed +
             # validated into `caption_language_req` above) — never the plan/job
             # `language`, which is the UI/content language, not what the clip says.
-            transcript = transcribe_whisper_cached(clip_path, language=caption_language_req)
+            #
+            # KRI-178 beats match the creator's trigger phrases exactly, so seed
+            # whisper with them or it misspells the names ("Mason Grumet"). Off
+            # with the beats flag, the request stays byte-identical (no prompt).
+            vocabulary_prompt: str | None = None
+            if beats_enabled:
+                from app.services.phone_reaction_grounding import (  # noqa: PLC0415
+                    trigger_vocabulary_prompt,
+                )
+
+                _strategy = all_candidates.get("creator_strategy")
+                _strategy = _strategy if isinstance(_strategy, dict) else {}
+                _beats = _strategy.get("reaction_beats")
+                _closing = _strategy.get("closing_media")
+                vocabulary_prompt = trigger_vocabulary_prompt(
+                    _beats if isinstance(_beats, list) else [],
+                    _closing if isinstance(_closing, dict) else None,
+                )
+            transcript = transcribe_whisper_cached(
+                clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
+            )
+            if caption_language_req is None:
+                # whisper-1 misdetects accented speech (Turkish-accented English
+                # -> "tr") and then writes a translation, so the captions and every
+                # spoken trigger go wrong. Gemini's transcript of the same clip is
+                # an independent listener: on a clear disagreement, transcribe
+                # again in the language Gemini actually heard.
+                clip_meta = next((m for m in clip_metas if str(m.clip_id) == str(clip_id)), None)
+                heard_lang = crosscheck_detected_language(
+                    transcript.language, reference_text=getattr(clip_meta, "transcript", None)
+                )
+                if heard_lang is not None:
+                    retranscribed = transcribe_whisper_cached(
+                        clip_path, language=heard_lang, verbatim_prompt=vocabulary_prompt
+                    )
+                    record_pipeline_event(
+                        "captions",
+                        "caption_language_crosscheck",
+                        {
+                            "variant_id": "subtitled",
+                            "whisper_language": transcript.language,
+                            "reference_language": heard_lang,
+                            "applied": bool(retranscribed.words),
+                        },
+                    )
+                    if retranscribed.words:
+                        transcript = retranscribed
             _spoken_lang, _lang_source = resolve_spoken_caption_language(
                 transcript.language,
                 transcript_text=getattr(transcript, "full_text", None),
@@ -21803,13 +21851,16 @@ def _render_subtitled_variant(
     speech_cleanup_source_clip_id: str | None = None,
     speech_cleanup_uses_preflight: bool | None = None,
     caption_language_request: str | None = None,
+    clip_metas: list | None = None,
 ) -> dict[str, Any]:
     """Render the subtitled single-clip variant.
 
     Lean path (NOT the narrated assembler — no voiceover, no reflow): reframe the ONE
     uploaded clip to 9:16 keeping its OWN audio (LUFS-normalized), transcribe that
     audio (whisper-1, auto-detecting the SPOKEN language unless the creator explicitly
-    asked for a different caption language — see `caption_language_request`), and burn
+    asked for a different caption language — see `caption_language_request`; the
+    detection is cross-checked against Gemini's transcript of the clip in
+    `clip_metas`), and burn
     editable sentence-block captions at the platform-safe MarginV over a cached
     caption-free base. The clip renders 1:1 (no trim/speed) so word/cue times need no
     clip→assembled rebasing. Never raises for a per-variant failure (matches the other
@@ -21831,6 +21882,7 @@ def _render_subtitled_variant(
     from app.pipeline.caption_language import (  # noqa: PLC0415
         SOURCE_DETECTED,
         SUPPORTED_CAPTION_LANGUAGES,
+        crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
     from app.pipeline.captions import (  # noqa: PLC0415
@@ -21976,18 +22028,60 @@ def _render_subtitled_variant(
             _record_caption_language_fallback(source, resolved)
         return resolved
 
+    def _retranscribe_in_heard_language(
+        whisper_lang: str | None, retranscribe: Callable[[str], Any]
+    ) -> Any | None:
+        """whisper-1 misdetects accented speech (Turkish-accented English -> "tr")
+        and then writes a TRANSLATION, so the captions come out in the wrong
+        language. Gemini's transcript of the same clip (``ClipMeta.transcript``) is
+        an independent listener: when the creator did not ask for a caption language
+        and the two clearly disagree, transcribe again in the language Gemini heard.
+
+        Returns that transcript, or None when there is nothing to fix or the
+        re-transcribe found no words (the first pass then stands).
+        """
+        if caption_language_req is not None:
+            return None
+        clip_meta = next(
+            (m for m in clip_metas or () if str(m.clip_id) == str(selected_clip_id)), None
+        )
+        heard_lang = crosscheck_detected_language(
+            whisper_lang, reference_text=getattr(clip_meta, "transcript", None)
+        )
+        if heard_lang is None:
+            return None
+        retranscribed = retranscribe(heard_lang)
+        record_pipeline_event(
+            "captions",
+            "caption_language_crosscheck",
+            {
+                "variant_id": variant_id,
+                "whisper_language": whisper_lang,
+                "reference_language": heard_lang,
+                "applied": bool(retranscribed.words),
+            },
+        )
+        return retranscribed if retranscribed.words else None
+
     def _resolve_verbatim_caption_language(detected: str, *, words: list) -> tuple[str, list]:
         """Resolve the caption language for an already-extracted verbatim word list
         (silence-cut / checked-uncut), honoring an explicit creator override.
 
         Returns ``(final_lang, words)`` — ``words`` is the input list untouched when
-        no override applies, or a fresh original-clip transcript (same shape: a
-        ``Word`` list on the ORIGINAL clip timeline) when the creator asked for a
-        different caption language than the one actually spoken. Callers apply the
-        SAME downstream transform (``_cut_caption_words`` remap, or none for the
-        uncut path) to whichever list comes back, since both are original-clip-
-        timeline verbatim words.
+        no override applies and whisper's detection agrees with Gemini's transcript,
+        or a fresh original-clip transcript (same shape: a ``Word`` list on the
+        ORIGINAL clip timeline) when the creator asked for a different caption
+        language than the one actually spoken, or when Gemini heard a different
+        language (see ``_retranscribe_in_heard_language``). Callers apply the SAME
+        downstream transform (``_cut_caption_words`` remap, or none for the uncut
+        path) to whichever list comes back, since both are original-clip-timeline
+        verbatim words.
         """
+        retranscribed = _retranscribe_in_heard_language(
+            detected, lambda lang: transcribe_whisper_cached(clip_path, language=lang)
+        )
+        if retranscribed is not None:
+            detected, words = retranscribed.language, retranscribed.words
         spoken_lang = _resolve_spoken_lang(detected, transcript_text=_words_text(words))
         if caption_language_req is None or caption_language_req == spoken_lang:
             return spoken_lang, words
@@ -22021,17 +22115,27 @@ def _render_subtitled_variant(
         )
         return caption_language_req, override_transcript.words
 
-    def _resolve_live_transcript_language(transcript: Any) -> str:
+    def _resolve_live_transcript_language(
+        transcript: Any, *, retranscribe: Callable[[str], Any]
+    ) -> tuple[str, Any]:
         """Resolve the caption language for a branch that transcribes live (the
         transcription call itself already honored `caption_language_req` as the
         whisper hint — see call sites below). Still runs the fallback chain so an
         empty `transcript.language` (e.g. a silent clip, or a hinted pass that found
-        no speech) is a recorded, deliberate choice rather than a silent "en"."""
+        no speech) is a recorded, deliberate choice rather than a silent "en".
+
+        Returns ``(final_lang, transcript)`` — the input transcript, or its
+        re-transcription (via ``retranscribe``, the same call in another language)
+        when Gemini heard a different language (``_retranscribe_in_heard_language``).
+        """
+        retranscribed = _retranscribe_in_heard_language(transcript.language, retranscribe)
+        if retranscribed is not None:
+            transcript = retranscribed
         spoken_lang = _resolve_spoken_lang(
             transcript.language, transcript_text=getattr(transcript, "full_text", None)
         )
         if caption_language_req is None:
-            return spoken_lang
+            return spoken_lang, transcript
         record_pipeline_event(
             "captions",
             "caption_language_requested",
@@ -22041,7 +22145,7 @@ def _render_subtitled_variant(
                 "spoken": spoken_lang,
             },
         )
-        return caption_language_req
+        return caption_language_req, transcript
 
     # Caption style: "word" → word-by-word lime pop (line visible, active word popped);
     # anything else → sentence blocks (the safe default). Reuses the narrated key.
@@ -22427,6 +22531,10 @@ def _render_subtitled_variant(
                 # passed as the whisper hint — auto-detect (None) otherwise.
                 transcript_t0 = time.monotonic()
                 transcript = transcribe_whisper_cached(clip_path, language=caption_language_req)
+                detected_lang, transcript = _resolve_live_transcript_language(
+                    transcript,
+                    retranscribe=lambda lang: transcribe_whisper_cached(clip_path, language=lang),
+                )
                 _record_stage(
                     "transcription",
                     elapsed_ms=int((time.monotonic() - transcript_t0) * 1000),
@@ -22436,7 +22544,6 @@ def _render_subtitled_variant(
                     },
                     counts={"word_count": len(transcript.words)},
                 )
-                detected_lang = _resolve_live_transcript_language(transcript)
                 cues = build_plain_cues(transcript.words, attach_words=True)
             with _stage_timer("caption_correction", counts={"cue_count": len(cues)}):
                 cues = correct_caption_cues(
@@ -22611,7 +22718,10 @@ def _render_subtitled_variant(
             # as omitted; all non-camera Smart lanes can still ship.
             with _stage_timer("transcription", cache={"name": "transcript", "status": "live"}):
                 transcript = transcribe_whisper(base_path, language=caption_language_req)
-            detected_lang = _resolve_live_transcript_language(transcript)
+                detected_lang, transcript = _resolve_live_transcript_language(
+                    transcript,
+                    retranscribe=lambda lang: transcribe_whisper(base_path, language=lang),
+                )
             cues = build_plain_cues(transcript.words, attach_words=True)
             cues = correct_caption_cues(
                 cues,
@@ -22677,9 +22787,9 @@ def _render_subtitled_variant(
             # filler token. Caption hygiene (15A): fillers never reach captions
             # even when they were NOT cut from the video (e.g. blocked by the
             # segment-signal guard or below MIN_CUT_S). An explicit creator
-            # language request that differs from what was actually spoken DOES
-            # trigger a second, hinted transcription — see
-            # `_resolve_verbatim_caption_language`.
+            # language request that differs from what was actually spoken, or a
+            # detected language Gemini's transcript contradicts, DOES trigger a
+            # second, hinted transcription — see `_resolve_verbatim_caption_language`.
             detected_lang, resolved_sc_words = _resolve_verbatim_caption_language(
                 sc_language, words=sc_words
             )
@@ -22702,7 +22812,10 @@ def _render_subtitled_variant(
             # (re-transcribe). Persist the detected language so the chip shows it.
             with _stage_timer("transcription", cache={"name": "transcript", "status": "live"}):
                 transcript = transcribe_whisper(base_path, language=caption_language_req)
-            detected_lang = _resolve_live_transcript_language(transcript)
+                detected_lang, transcript = _resolve_live_transcript_language(
+                    transcript,
+                    retranscribe=lambda lang: transcribe_whisper(base_path, language=lang),
+                )
             # Word mode attaches each cue's real per-word timings so the highlight
             # (and any reburn of an UNedited cue) stays locked to the audio.
             # Always attach real word timings (both styles): the sentence re-split
