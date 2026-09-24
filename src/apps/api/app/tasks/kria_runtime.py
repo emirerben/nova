@@ -52,8 +52,10 @@ from app.models import (
 )
 from app.routes.generative_jobs import (
     EditorCommitRequest,
+    _find_variant,
     dispatch_apply_speech_cut_candidate,
     enqueue_editor_commit_render,
+    phone_subtitled_sfx_paths_sync,
     prepare_editor_commit,
 )
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
@@ -1451,6 +1453,9 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     else None
                 )
                 device_variant = _is_device_variant(current_job, approval.target_variant_id)
+                phone_sfx_catalog_paths = phone_subtitled_sfx_paths_sync(
+                    db, current_job, _find_variant(current_job, approval.target_variant_id) or {}
+                )
                 try:
                     editor_prep = prepare_editor_commit(
                         current_job,
@@ -1459,6 +1464,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         user_id=str(thread.creator_id),
                         music_track=music_track,
                         plan_item_id=str(item.id),
+                        phone_sfx_catalog_paths=phone_sfx_catalog_paths,
                     )
                 except (HTTPException, ValueError, KeyError) as exc:
                     if not device_variant:
