@@ -1152,7 +1152,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         } else if UploadRecoveryPolicy().action(retryCount: record.retryCount, statusCode: status, fileExists: true) == .retry {
             await retry(record)
         } else {
-            lastError = error?.localizedDescription ?? "The upload could not be completed."
+            let message = error?.localizedDescription ?? "The upload could not be completed."
+            lastError = message
+            // KRI-194: this was `lastError`-only, so a PUT failure for one clip could sit
+            // hidden behind another clip's still-showing failure line.
+            reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message)
         }
     }
 
@@ -1266,7 +1270,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 remove(record.id, deleteLocalFile: true)
             } catch {
                 lastError = error.localizedDescription
-                if record.editorSourceTarget != nil { failEditorPlacement(record.id, error: "This import couldn’t be prepared. Try again.") }
+                if record.editorSourceTarget != nil {
+                    failEditorPlacement(record.id, error: "This import couldn’t be prepared. Try again.")
+                } else {
+                    // KRI-194: this was `lastError`-only, so an attach failure for one visual
+                    // could sit hidden behind another clip's still-showing failure line.
+                    reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: error.localizedDescription)
+                }
             }
             return
         }
@@ -1275,7 +1285,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             let gcsPath = record.gcsPath,
             let contentType = record.contentType
         else {
-            lastError = "This upload was created by an older build. Choose the file again."
+            let message = "This upload was created by an older build. Choose the file again."
+            lastError = message
+            reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message)
             return
         }
         if let target = record.editorSourceTarget {
@@ -1320,7 +1332,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 lastAttachmentError = error
             }
         }
-        lastError = lastAttachmentError?.localizedDescription ?? "The uploaded footage could not be attached to this project."
+        let message = lastAttachmentError?.localizedDescription ?? "The uploaded footage could not be attached to this project."
+        lastError = message
+        // KRI-194: this was `lastError`-only, so an attach failure for one clip could sit
+        // hidden behind another clip's still-showing failure line.
+        reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message)
     }
 
     /// Posts (or idempotently re-posts) admission and waits briefly for the
@@ -1433,6 +1449,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         guard let record = records.first(where: { $0.id == id }) else { return }
         records.removeAll { $0.id == id }
         progress[id] = nil
+        // An attach/PUT failure keyed to this record's own id (KRI-194) must not outlive the
+        // record: otherwise a successful retry, or an explicit Remove, leaves a stale failure
+        // line for a clip the picker no longer shows.
+        failures.removeAll { $0.id == id }
         persist()
         if deleteLocalFile { try? FileManager.default.removeItem(atPath: record.localFilePath) }
     }

@@ -2386,6 +2386,60 @@ async def test_upload_urls_rejects_media_for_slide_post_item(
 
 
 @pytest.mark.asyncio
+async def test_upload_urls_rejection_logs_reason_and_thread_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-194: upload-urls rejected a file without leaving any trace beyond
+    the uvicorn access-log status code. Every reject must now log the reason,
+    thread id, and media kind so it survives past that access log."""
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        active_plan_item_id=uuid.uuid4(),
+    )
+    item = SimpleNamespace(edit_format="slides", clip_gcs_paths=[])
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+
+    recorded: list[tuple[str, dict]] = []
+
+    class _Recorder:
+        def warning(self, event: str, **kwargs: object) -> None:
+            recorded.append((event, kwargs))
+
+    monkeypatch.setattr(routes, "log", _Recorder())
+
+    with pytest.raises(HTTPException, match="Visuals pool"):
+        await upload_urls(
+            _request(),
+            str(thread.id),
+            UploadBody(
+                files=[
+                    UploadFile(
+                        filename="clip-1.mp4",
+                        content_type="video/mp4",
+                        file_size_bytes=10,
+                        client_upload_id="clip-1",
+                    )
+                ]
+            ),
+            user,
+            db,
+        )
+
+    assert len(recorded) == 1
+    event, fields = recorded[0]
+    assert event == "creation_thread.upload_urls.rejected"
+    assert fields["reason"] == "slide_post_fence"
+    assert fields["thread_id"] == str(thread.id)
+
+
+@pytest.mark.asyncio
 async def test_attach_rejects_tampered_reserved_path(monkeypatch: pytest.MonkeyPatch) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
     thread = SimpleNamespace(id=uuid.uuid4(), creator_id=user.id, status="active", revision=0)
@@ -2583,6 +2637,108 @@ async def test_attach_rejects_a_proxy_contract_whose_kind_does_not_match_the_med
 
 
 @pytest.mark.asyncio
+async def test_attach_proxy_duration_mismatch_logs_descriptor_vs_probed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-194: 'uploaded proxy duration differs from its descriptor' gave no
+    way to tell how far off the upload was. The rejection log must carry both
+    the reserved descriptor's duration and what was actually probed."""
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_job_id=None,
+        active_creator_agent_session_id=None,
+        active_plan_item_id=uuid.uuid4(),
+        state={"media": [], "media_count": 0},
+    )
+    item = SimpleNamespace(
+        id=thread.active_plan_item_id,
+        clip_gcs_paths=[],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+        audio_mode="kria",
+        edit_proposal=None,
+    )
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda path: SimpleNamespace(size=100, content_type="video/mp4", generation="1"),
+    )
+    # The reserved descriptor says 10s; the route's own probe of the uploaded
+    # bytes disagrees, which is exactly the "upload doesn't match what was
+    # reserved" case this ticket is about.
+    monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(4.0, True)))
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    media_id = "analysis-proxy-clip-1.mp4"
+    contract = {
+        "purpose": "analysis_proxy",
+        "proxy": {
+            "original": {
+                "sha256": "a" * 64,
+                "byte_count": 4000,
+                "duration_s": 10,
+                "width": 1080,
+                "height": 1920,
+                "has_audio": True,
+            },
+            "duration_s": 10,
+            "width": 360,
+            "height": 640,
+            "frame_rate": 30,
+        },
+    }
+    reservation = SimpleNamespace(
+        media_id=media_id,
+        upload_contract=contract,
+        object_path=_media_path(user.id, thread.id, media_id),
+    )
+    result = Mock()
+    result.scalars.return_value.all.return_value = [reservation]
+    db.execute = AsyncMock(return_value=result)
+    media = [MediaInput(media_id=f" {media_id} ", kind="video", filename="clip.mp4")]
+
+    recorded: list[tuple[str, dict]] = []
+
+    class _Recorder:
+        def warning(self, event: str, **kwargs: object) -> None:
+            recorded.append((event, kwargs))
+
+    monkeypatch.setattr(routes, "log", _Recorder())
+
+    with pytest.raises(HTTPException, match="duration differs") as exc:
+        await attach_media(
+            _request(),
+            str(thread.id),
+            AttachBody(
+                media=media, client_event_id="attach-duration-mismatch", expected_revision=0
+            ),
+            user,
+            db,
+        )
+    assert exc.value.status_code == 422
+
+    assert len(recorded) == 1
+    event, fields = recorded[0]
+    assert event == "creation_thread.attach_media.rejected"
+    assert fields["reason"] == "proxy_verification_failed"
+    assert fields["thread_id"] == str(thread.id)
+    assert fields["descriptor_duration_s"] == 10
+    assert fields["probed_duration_s"] == 4.0
+
+
+@pytest.mark.asyncio
 async def test_attach_consumes_the_matching_upload_reservation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2739,6 +2895,60 @@ async def test_attach_rejects_media_already_present_in_thread(
         )
     assert exc.value.status_code == 409
     metadata.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_attach_rejection_logs_reason_and_thread_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-194: attach_media rejected a file without leaving any trace beyond
+    the uvicorn access-log status code. Every reject must now log the reason,
+    thread id, and media kind so it survives past that access log."""
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_plan_item_id=uuid.uuid4(),
+        state={"media": [{"media_id": "clip-1.mp4", "kind": "video"}], "media_count": 1},
+    )
+    item = SimpleNamespace(current_job_id=None)
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    metadata = Mock()
+    monkeypatch.setattr(routes.storage, "object_metadata", metadata)
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+
+    recorded: list[tuple[str, dict]] = []
+
+    class _Recorder:
+        def warning(self, event: str, **kwargs: object) -> None:
+            recorded.append((event, kwargs))
+
+    monkeypatch.setattr(routes, "log", _Recorder())
+
+    with pytest.raises(HTTPException, match="already attached"):
+        await attach_media(
+            _request(),
+            str(thread.id),
+            AttachBody(
+                media=[MediaInput(media_id="clip-1.mp4", kind="video")],
+                client_event_id="attach-again",
+                expected_revision=0,
+            ),
+            user,
+            db,
+        )
+
+    assert len(recorded) == 1
+    event, fields = recorded[0]
+    assert event == "creation_thread.attach_media.rejected"
+    assert fields["reason"] == "already_attached"
+    assert fields["thread_id"] == str(thread.id)
 
 
 @pytest.mark.asyncio
