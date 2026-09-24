@@ -2758,6 +2758,9 @@ describe("ChatCreationWorkspace", () => {
     render(<ChatCreationWorkspace />);
 
     expect(await screen.findByText("Preference updated")).toBeInTheDocument();
+    // A far-future expiry must not overflow setTimeout (which then fires after
+    // ~1 ms) and expire the receipt: give such a timer time to fire first.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
     fireEvent.click(screen.getByRole("button", { name: "Undo (10 minutes)" }));
     await waitFor(() =>
       expect(undoCreatorMemoryOperation).toHaveBeenCalledWith("operation-1", 1),

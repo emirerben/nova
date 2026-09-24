@@ -226,6 +226,9 @@ function automaticMemoryReceipt(event: CreationThreadEvent | undefined): Automat
   return { operationId, memoryRevision, undoExpiresAt, undone: event.payload.undone === true };
 }
 
+// setTimeout fires after ~1 ms when its delay exceeds 2^31 - 1 ms (~24.8 days).
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
 function AutomaticMemoryReceiptCard({
   receipt,
   busy,
@@ -244,7 +247,10 @@ function AutomaticMemoryReceiptCard({
 
   useEffect(() => {
     if (expired || !Number.isFinite(expiresAt)) return undefined;
-    const timer = window.setTimeout(() => setExpired(true), Math.max(0, expiresAt - Date.now()));
+    const remaining = Math.max(0, expiresAt - Date.now());
+    // An overflowing delay would expire the receipt at once and hide Undo.
+    if (remaining > MAX_TIMER_DELAY_MS) return undefined;
+    const timer = window.setTimeout(() => setExpired(true), remaining);
     return () => window.clearTimeout(timer);
   }, [expired, expiresAt]);
 
