@@ -36,6 +36,16 @@ enum NativeEditorSaveState: Equatable, Sendable {
     case refreshFailed(String)
     case previewFailed(String)
     case failed(String)
+
+    /// Whether the editor shows a status banner for this state. Successful and
+    /// in-flight saves (including a render still catching up in the
+    /// background) stay silent; only states that need action surface (KRI-196).
+    var showsBanner: Bool {
+        switch self {
+        case .idle, .saving, .saved, .previewPending: false
+        default: true
+        }
+    }
 }
 
 enum NativeEditorLoadState: Equatable, Sendable {

@@ -6,6 +6,18 @@ import XCTest
 
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
+    /// KRI-196: a saved edit whose preview is still rendering must not put a
+    /// status block over the preview; only states that need action do.
+    func testPreviewPendingSaveStateShowsNoBanner() {
+        let silent: [NativeEditorSaveState] = [.idle, .saving, .saved, .previewPending]
+        let actionable: [NativeEditorSaveState] = [
+            .conflict, .failed("x"), .renderRetryNeeded("x"), .deviceRenderRetryNeeded("x"),
+            .previewFailed("x"), .refreshFailed("x"), .loadFailed("x"),
+        ]
+        for state in silent { XCTAssertFalse(state.showsBanner, "\(state) should be silent") }
+        for state in actionable { XCTAssertTrue(state.showsBanner, "\(state) should show a banner") }
+    }
+
     func testDeviceNarrationRequestUsesPublishedGenerationAndExactTarget() throws {
         let jobID = UUID()
         let base = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
