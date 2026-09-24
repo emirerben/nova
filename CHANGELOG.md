@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.196.0] - 2026-09-24
+
+### Changed
+- fix(audio): montages keep original sound by default; no leak or click at cuts (KRI-184) (#1215) <!-- release-pr: 1215 -->
+
 ## [0.76.195.0] - 2026-09-24
 
 ### Changed
