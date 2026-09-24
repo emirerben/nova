@@ -427,6 +427,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.clip_question import ClipQuestionAgent
 
         return ClipQuestionAgent
+    if agent_name == "nova.video.landmark_guess":
+        from app.agents.landmark_guess import LandmarkGuessAgent
+
+        return LandmarkGuessAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

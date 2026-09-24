@@ -1,0 +1,51 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-09-24.1",
+  "input": {
+    "creator_request": "Cut my 20K run in the order I filmed them, from the first stop to the last, and label each landmark.",
+    "latest_user_message": null,
+    "candidate_intents": null,
+    "clip_facts": true
+  },
+  "raw_text": "{\"intents\":[{\"intent_id\":\"i1\",\"op\":\"order\",\"attribute\":\"the order I filmed them, first stop to last\",\"creator_text\":null,\"caption_attribute\":null,\"position\":null,\"order_by\":\"capture_time\",\"source_quote\":\"in the order I filmed them\"},{\"intent_id\":\"i2\",\"op\":\"label\",\"attribute\":\"each landmark\",\"creator_text\":null,\"caption_attribute\":null,\"position\":null,\"source_quote\":\"label each landmark\"}],\"question\":null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i1",
+        "op": "order",
+        "attribute": "the order I filmed them, first stop to last",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "order_by": "capture_time",
+        "source_quote": "in the order I filmed them"
+      },
+      {
+        "intent_id": "i2",
+        "op": "label",
+        "attribute": "each landmark",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "label each landmark"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-189: a request to arrange ALL clips by when they were filmed is an order intent with order_by=capture_time (no position); the landmark label stays a separate label intent.",
+    "expect_intents": [
+      {
+        "op": "order",
+        "source_quote_keywords": ["order", "filmed"],
+        "order_by": "capture_time"
+      },
+      {
+        "op": "label",
+        "source_quote_keywords": ["label", "landmark"]
+      }
+    ],
+    "expect_any": true
+  }
+}

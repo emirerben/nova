@@ -348,6 +348,18 @@ def _clip_intent_alias_ids(intent: ResolvedClipIntent, id_to_alias: dict[str, st
     return [media_id for media_id in intent.media_ids() if media_id in id_to_alias]
 
 
+# KRI-189: appended to the AVAILABLE MEDIA header ONLY when CLIP_FACTS is on ("" otherwise,
+# so the flag-off prompt is byte-identical).
+_CLIP_FACTS_PROMPT_NOTE = (
+    "\nA row may also carry `facts`: when and where that clip was filmed, each"
+    " {kind, value, provenance}. `capture_time` is an ISO UTC time, `place` a place name,"
+    " `landmark` a landmark name. `provenance` says how we know: `exif`/`geocode` were recorded"
+    " by the phone, `inferred` is a model's best guess. Facts are context that can inform"
+    " sequencing and chapter topics; they are not the creator's words and never on-screen text"
+    " on their own."
+)
+
+
 def _clip_intents_prompt_note(
     input: EditProposalAgentInput,  # noqa: A002
 ) -> str:
@@ -386,6 +398,12 @@ def _clip_intents_prompt_note(
                 f'GROUP ("{topic}"): {aliases} belong together in ONE beat. If there are '
                 "more than 4 of them, spread them across CONSECUTIVE beats that all share "
                 f"this same topic -- never place an unrelated beat between them.{verbatim}"
+            )
+        elif intent.op == "order" and intent.order_by is not None:
+            clauses.append(
+                f"ORDER ({intent.order_by}): arrange the beats in the order the clips were "
+                "filmed, earliest first, using each row's `capture_time` fact. A clip with no "
+                "`capture_time` keeps its upload position; the server repairs the final order."
             )
         elif intent.op == "order" and intent.position == "first":
             clauses.append(
@@ -541,6 +559,44 @@ def _reorder_beats_for_clip_intent_order(
     output.story_beats = [beats[index] for index in new_order]
 
 
+def _reorder_beats_by_capture_time(
+    output: EditProposalAgentOutput,
+    input: EditProposalAgentInput,  # noqa: A002
+    resolved: list[ResolvedClipIntent],
+) -> None:
+    """KRI-189: honor a ``by_capture_time`` / ``by_route`` ORDER intent deterministically.
+
+    The model is told to (see `_clip_intents_prompt_note`), but the order is a
+    render contract, never left to the model (KRI-129). Only the beat SEQUENCE
+    changes; server title holds keep their place. Clips with no capture time
+    keep their attachment-order slot, and the basis is recorded on
+    ``output.ordering`` so the plan receipt can say which order was used.
+    """
+
+    if not any(intent.op == "order" and intent.order_by is not None for intent in resolved):
+        return
+    ordering = story_shapes.capture_ordering(input)
+    if ordering is None or input.direction == "fast_montage":
+        return
+    output.ordering = ordering.diagnostics()
+    if ordering.basis != "capture_time":
+        return
+    beats = output.story_beats
+    lead, trail = _clip_intents_lead_trail_exempt(input, len(beats))
+    if len(beats) - lead - trail < 2:
+        return
+    order = {media_id: index for index, media_id in enumerate(ordering.ordered_ids)}
+    fallback_index = len(order)
+    core = beats[lead : len(beats) - trail]
+    core.sort(
+        key=lambda beat: min(
+            (order.get(media_id, fallback_index) for media_id in beat.media_ids),
+            default=fallback_index,
+        )
+    )
+    output.story_beats = [*beats[:lead], *core, *beats[len(beats) - trail :]]
+
+
 def _repair_missing_clip_intent_includes(
     output: EditProposalAgentOutput,
     input: EditProposalAgentInput,  # noqa: A002
@@ -604,6 +660,8 @@ def _validate_clip_intents(
     if not resolved:
         return
     _prompt, _alias_to_id, id_to_alias = _prompt_media(input)
+    # Capture-time order first: an explicit first/last placement then refines it.
+    _reorder_beats_by_capture_time(output, input, resolved)
     _reorder_beats_for_clip_intent_order(output, input, resolved, id_to_alias)
     _repair_missing_clip_intent_includes(output, input, resolved, id_to_alias)
     units = _clip_intent_units(output, input)
@@ -814,6 +872,10 @@ class EditProposalMedia(BaseModel):
     activity: str = ""
     speaks_to_camera: bool = False
     transcript: str = ""
+    # KRI-189: when/where facts with provenance (capture_time / place / landmark),
+    # each {kind, value, provenance[, confidence]}. Filled only when CLIP_FACTS is
+    # on; omitted from every dump when empty so the flag-off input is unchanged.
+    facts: list[dict] = Field(default_factory=list, exclude_if=lambda value: not value)
 
 
 class EditProposalAgentInput(BaseModel):
@@ -848,6 +910,9 @@ class EditProposalAgentInput(BaseModel):
     # KRI-118 lane L3: chat-picked story shape, threaded from ProposalBrief.
     story_shape: StoryShape | None = None
     hero_media_id: str | None = Field(default=None, max_length=100)
+    # KRI-189: CLIP_FACTS is on for this creator, so media rows may carry `facts` and
+    # capture-time ordering records its basis (`EditProposalAgentOutput.ordering`).
+    clip_facts: bool = Field(default=False, exclude_if=lambda value: not value)
     media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
     @model_validator(mode="before")
@@ -1312,6 +1377,11 @@ class EditProposalAgentOutput(BaseModel):
     semantic_plan: dict | None = Field(default=None, exclude=True)
     planning_diagnostics: dict | None = Field(default=None, exclude=True)
     scheduled_story_beats: list[StoryBeat] | None = Field(default=None, exclude=True)
+    # KRI-189: how the clip order was decided when capture time was used or could
+    # not be ({"ordering_basis": "capture_time"|"attachment",
+    # "ordering_fallback_clip_ids": [...]}). Server-only; persisted on the proposal
+    # so plan receipts can say "I ordered by when you filmed" / "by upload order".
+    ordering: dict | None = Field(default=None, exclude=True)
 
 
 def _clamp_fast_cut_windows(
@@ -2144,7 +2214,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.17.1",
+        prompt_version="1.18.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -2449,8 +2519,10 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "their request even when it means more chapters, or more media in a beat, than a "
                 "simple edit would use."
             )
+        clip_facts_note = _CLIP_FACTS_PROMPT_NOTE if input.clip_facts else ""
         return load_prompt(
             "edit_proposal",
+            clip_facts_note=clip_facts_note,
             idea=input.idea[:500],
             theme=input.theme[:500],
             direction=input.direction,

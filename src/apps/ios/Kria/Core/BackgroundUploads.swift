@@ -618,6 +618,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 guard let url = loaded else { throw CancellationError() }
                 // Un-chosen while Photos was still handing the file over: don't start anything.
                 try Task.checkCancellation()
+                // KRI-189: remember when/where this clip was filmed (Photos metadata) until it attaches.
+                // Best effort and clips only; nothing is read when the setting is off.
+                if request.role == .clip, let capture = ClipCaptureReader.read(assetIdentifier: request.assetIdentifier) {
+                    ClipCaptureStore.shared.set(capture, for: recordID)
+                }
                 let accepted = await self.enqueue(fileURL: url, projectID: request.projectID, source: .photos, consentGiven: true, purpose: request.purpose, role: request.role, itemID: request.itemID, limit: request.limit, recordID: recordID, failureKey: key)
                 loaded = nil   // `enqueue` owns the file from here (it renames or links it)
                 if !accepted { self.releaseSelection(recordID: recordID, projectID: request.projectID) }
@@ -1290,6 +1295,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             return
         }
         var lastAttachmentError: (any Error)?
+        // KRI-189: when/where the clip was filmed. Resolved once, outside the retry loop; nil (and never
+        // an error) when the setting is off or nothing could be read.
+        let capture = record.role == .clip ? await ClipCaptureWire.forAttach(recordID: record.id) : nil
         for _ in 0..<2 {
             do {
                 let current = try await api.project(threadID: record.projectID)
@@ -1300,7 +1308,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                     filename: record.filename,
                     contentType: contentType,
                     expectedRevision: current.revision,
-                    clientEventID: "ios-attach-\(record.id.uuidString)"
+                    clientEventID: "ios-attach-\(record.id.uuidString)",
+                    capture: capture
                 )
                 // Publish the authoritative media_count before removing the
                 // pending record so clip capacity never briefly reopens.
@@ -1314,6 +1323,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 // Hand the asset's identity from the (about to be deleted) record to the ledger, so
                 // the clip still shows as chosen the next time the picker opens.
                 bindSelection(recordID: record.id, projectID: record.projectID, mediaID: mediaID)
+                ClipCaptureStore.shared.remove(record.id)
                 remove(record.id, deleteLocalFile: true)
                 return
             } catch {

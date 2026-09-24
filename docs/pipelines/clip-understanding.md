@@ -236,6 +236,74 @@ the live evals: `tests/evals/test_clip_request_resolver_evals.py`,
 `test_clip_question_evals.py`, `test_main_creator_evals.py`,
 `test_edit_proposal_evals.py` (`--eval-mode=live`, no judge).
 
+## Clip facts: when and where a clip was filmed (`CLIP_FACTS_ENABLED`, KRI-189)
+
+`CLIP_FACTS_ENABLED` (default `false`) and `CLIP_FACTS_USER_IDS` (JSON list of
+account UUIDs enabled while the global flag is off; `settings.clip_facts_for`)
+gate SERVER CONSUMPTION only: the landmark agent, facts in the Main Creator and
+edit-planner prompts, capture-time ordering and the `by_capture_time` /
+`by_route` order intents. The attach API always accepts the new optional fields.
+Flag off, everything below is byte-identical (pinned by tests, see the last
+list). Rollback: `fly secrets set CLIP_FACTS_ENABLED=false CLIP_FACTS_USER_IDS=[]
+--app nova-video` + restart api and worker.
+
+**Flow.**
+
+1. The phone reads `PHAsset.creationDate` / `location` and reverse-geocodes
+   (`CLGeocoder`, serialized, cached by rounded coordinate). It sends
+   `capture_time` (ISO8601 UTC), `coarse_location {lat, lon}` (2 decimals) and
+   `place {sub_locality, locality, country}` on `POST /creation-threads/{id}/media`.
+   Any failure sends nothing; the settings toggle "Use when and where clips were
+   filmed" (default ON) sends nothing when off.
+2. `MediaInput` (`routes/creation_threads.py`) validates leniently (a bad value
+   is dropped, never a failed attach) and re-rounds location server-side, so a
+   precise fix can never be stored. It persists `capture` on the clip assignment
+   (existing JSON, no migration) and on the proxy receipt's
+   `OriginalMediaDescriptor.capture` (`kria/media_sources.py`, still
+   `extra=forbid`). Capture never appears in the thread projection or events.
+3. At drafting time (`edit_proposal_build._run_draft_attempt`),
+   `services/clip_facts.enrich_clip_facts` copies capture-derived facts onto
+   `analysis["clip_facts"]` and asks `nova.video.landmark_guess` for one
+   best-guess landmark per analyzed video (frames via the Gemini File API +
+   place + coarse coordinates). Fail-open per clip; a guess, even "unknown", is
+   recorded per storage generation so a retry never pays twice.
+4. `clip_record(...).facts` exposes them (`ClipFact {kind, value, provenance,
+   confidence}`; kinds `capture_time|place|landmark|visible_text|creator`,
+   provenance `exif|geocode|vision|creator|inferred`). Facts are stored beside,
+   not inside, the `understanding` block so legacy analyses keep their legacy
+   projection. `prompt_view(include_facts=True)` is opt-in per caller.
+
+**Provenance rule (D4).** An `inferred` landmark is used directly, no
+confidence gate. Every consumer must be able to surface it for correction; the
+Main Creator prompt tells the model to say plainly when a name is a guess.
+
+**Ordering.** `story_shapes.repair_day_vlog` sorts by capture time where known;
+clips without one keep their attachment-order slot (`order_by_capture_time`).
+`ClipIntent.order_by` (`capture_time` | `route`, op=order only, never with
+`position`) is extracted by `clip_intent_planner` (teaches it only when the flag
+is on), resolved deterministically over every clip in
+`clip_intent_planning.resolve_order_by_intent` (no vision call) and applied by
+`edit_proposal._reorder_beats_by_capture_time`. `by_route` equals capture-time
+order for now. The basis is recorded on `EditProposal.ordering`
+(`{ordering_basis, ordering_fallback_clip_ids}`) for P2/P4 receipts.
+
+**Not covered yet.** The semantic planner (`EDIT_PROPOSAL_SEMANTIC_ENABLED`),
+the snapshot replan/direction-replacement planners and the editor-op tool
+(KRI-191) do not read facts; fast_montage ignores `order_by`.
+
+**Guards.** `tests/services/test_clip_facts.py`,
+`tests/schemas/test_clip_understanding_facts.py` (parse threading),
+`tests/routes/test_attach_clip_capture.py`,
+`tests/agents/test_edit_proposal_clip_facts.py`,
+`tests/services/test_clip_intent_order_by.py`,
+`tests/tasks/test_edit_proposal_build_clip_facts.py`,
+`tests/agents/test_landmark_guess.py`, `tests/evals/test_landmark_guess_evals.py`.
+Prompt versions bumped: `main_creator` v37, `edit_proposal` 1.18.0,
+`clip_intent_planner` 2026-09-24.1, new `landmark_guess` 2026-09-24.1. Live
+evals to run before enabling (`--eval-mode=live`, no judge):
+`test_landmark_guess_evals.py`, `test_clip_intent_planner_evals.py`,
+`test_main_creator_evals.py`, `test_edit_proposal_evals.py`.
+
 ## Known gaps
 
 - Vision re-query remains video-only. Images need an inline media input path.

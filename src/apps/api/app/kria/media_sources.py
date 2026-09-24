@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import unicodedata
+from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PROXY_MEDIA_PREFIX = "analysis-proxy-"
 
@@ -25,6 +27,85 @@ MediaSourceKind = Literal["video", "audio"]
 PROXY_ORIGINAL_DURATION_TOLERANCE_S = 0.1
 
 
+# KRI-189: when/where a clip was filmed, as the phone read it from the Photos
+# asset. Location is COARSE by contract (two decimal places, about 1 km): the
+# server re-rounds whatever a client sends, so a precise fix can never be stored.
+COARSE_LOCATION_DECIMALS = 2
+_MIN_CAPTURE_YEAR = 1990
+_PLACE_PART_LIMIT = 80
+
+
+class CoarseLocation(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+
+    @field_validator("lat", "lon", mode="after")
+    @classmethod
+    def _round(cls, value: float) -> float:
+        return round(value, COARSE_LOCATION_DECIMALS)
+
+
+class ClipPlace(BaseModel):
+    """Reverse-geocoded on the phone (CLGeocoder): neighbourhood, city, country."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sub_locality: str | None = Field(default=None, max_length=_PLACE_PART_LIMIT)
+    locality: str | None = Field(default=None, max_length=_PLACE_PART_LIMIT)
+    country: str | None = Field(default=None, max_length=_PLACE_PART_LIMIT)
+
+    @field_validator("sub_locality", "locality", "country", mode="before")
+    @classmethod
+    def _clean(cls, value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        cleaned = " ".join(unicodedata.normalize("NFC", value).split())[:_PLACE_PART_LIMIT]
+        return cleaned or None
+
+    def is_empty(self) -> bool:
+        return not (self.sub_locality or self.locality or self.country)
+
+    def label(self) -> str:
+        parts: list[str] = []
+        for part in (self.sub_locality, self.locality, self.country):
+            if part and part not in parts:
+                parts.append(part)
+        return ", ".join(parts)
+
+
+class ClipCapture(BaseModel):
+    """Optional filming context for one original. Every part may be absent."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    capture_time: datetime | None = None
+    coarse_location: CoarseLocation | None = None
+    place: ClipPlace | None = None
+
+    @field_validator("capture_time", mode="after")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            # A naive timestamp cannot be ordered against an aware one.
+            return None
+        value = value.astimezone(UTC)
+        if not (_MIN_CAPTURE_YEAR <= value.year <= datetime.now(UTC).year + 1):
+            return None
+        return value
+
+    @field_validator("place", mode="after")
+    @classmethod
+    def _place(cls, value: ClipPlace | None) -> ClipPlace | None:
+        return None if value is None or value.is_empty() else value
+
+    def is_empty(self) -> bool:
+        return self.capture_time is None and self.coarse_location is None and self.place is None
+
+
 class OriginalMediaDescriptor(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
@@ -38,6 +119,9 @@ class OriginalMediaDescriptor(BaseModel):
     height: int | None = Field(default=None, gt=0, le=32768)
     orientation_degrees: Literal[0, 90, 180, 270] = 0
     has_audio: bool
+    # KRI-189: filled at attach time from the phone's Photos metadata. Omitted
+    # from every dump when absent, so existing receipts stay byte-identical.
+    capture: ClipCapture | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def validate_kind_shape(self) -> OriginalMediaDescriptor:

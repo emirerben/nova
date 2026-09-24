@@ -17,11 +17,16 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 UNDERSTANDING_KEY = "understanding"
+# KRI-189: when/where facts live beside (not inside) the understanding block so a
+# legacy analysis that has no block keeps its legacy projection.
+FACTS_KEY = "clip_facts"
 
 _TEXT_LIMIT = 400
 _SHORT_TEXT_LIMIT = 200
 _TRANSCRIPT_LIMIT = 1200
 _MAX_MOMENTS = 8
+_MAX_FACTS = 12
+_FACT_VALUE_LIMIT = 200
 
 
 # Transcripts and descriptions are third-party text that ends up in agent
@@ -74,6 +79,36 @@ class ClipSpeech(BaseModel):
         return _clean_text(v, _TRANSCRIPT_LIMIT)
 
 
+# KRI-189: a fact is one thing we know (or guess) about WHEN/WHERE a clip was
+# filmed. Provenance is mandatory so every consumer can tell a device-recorded
+# value (exif/geocode) from a model's guess (vision/inferred) and a creator's
+# own statement (creator); an `inferred` name must be surfaced for correction.
+ClipFactKind = Literal["capture_time", "place", "landmark", "visible_text", "creator"]
+ClipFactProvenance = Literal["exif", "geocode", "vision", "creator", "inferred"]
+
+
+class ClipFact(BaseModel):
+    kind: ClipFactKind
+    value: str = Field(min_length=1, max_length=_FACT_VALUE_LIMIT)
+    provenance: ClipFactProvenance
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, v: object) -> str:
+        return _clean_text(v, _FACT_VALUE_LIMIT)
+
+    def prompt_dict(self) -> dict[str, Any]:
+        row: dict[str, Any] = {
+            "kind": self.kind,
+            "value": self.value,
+            "provenance": self.provenance,
+        }
+        if self.confidence is not None:
+            row["confidence"] = round(self.confidence, 2)
+        return row
+
+
 class ClipMomentNote(BaseModel):
     start_s: float = 0.0
     end_s: float = 0.0
@@ -100,6 +135,28 @@ class ClipUnderstanding(BaseModel):
     content_type: str = ""
     audio_type: str = ""
     notable_moments: list[ClipMomentNote] = Field(default_factory=list)
+    # KRI-189: when/where facts with provenance. Empty unless CLIP_FACTS is on,
+    # so a stored record and every prompt view stay byte-identical otherwise.
+    facts: list[ClipFact] = Field(default_factory=list, exclude_if=lambda value: not value)
+
+    @field_validator("facts", mode="before")
+    @classmethod
+    def _facts(cls, v: object) -> list[ClipFact]:
+        """Lenient: a malformed fact is dropped, never a reason to lose the record."""
+        if not isinstance(v, list):
+            return []
+        facts: list[ClipFact] = []
+        for row in v:
+            if isinstance(row, ClipFact):
+                facts.append(row)
+                continue
+            if not isinstance(row, dict):
+                continue
+            try:
+                facts.append(ClipFact.model_validate(row))
+            except ValueError:
+                continue
+        return facts[:_MAX_FACTS]
 
     @field_validator("subject", "content_type", "audio_type", mode="before")
     @classmethod
@@ -138,8 +195,14 @@ class ClipUnderstanding(BaseModel):
             )
         )
 
-    def prompt_view(self, *, transcript_chars: int = 400) -> dict[str, Any]:
-        """Compact dict for an LLM prompt: empty fields dropped, transcript capped."""
+    def prompt_view(
+        self, *, transcript_chars: int = 400, include_facts: bool = False
+    ) -> dict[str, Any]:
+        """Compact dict for an LLM prompt: empty fields dropped, transcript capped.
+
+        ``facts`` (KRI-189) appear only when the caller opts in, so the CLIP_FACTS
+        kill switch also silences facts already stored on older analyses.
+        """
         view: dict[str, Any] = {}
         for key in ("subject", "summary", "setting", "activity", "on_screen_text"):
             value = getattr(self, key)
@@ -173,4 +236,6 @@ class ClipUnderstanding(BaseModel):
         ]
         if moments:
             view["notable_moments"] = moments
+        if include_facts and self.facts:
+            view["facts"] = [fact.prompt_dict() for fact in self.facts]
         return view

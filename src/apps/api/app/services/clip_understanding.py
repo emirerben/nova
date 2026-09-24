@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.schemas.clip_understanding import (
+    FACTS_KEY,
     UNDERSTANDING_KEY,
     ClipMomentNote,
     ClipPeople,
@@ -83,6 +84,8 @@ def clip_record(analysis: dict[str, Any] | None, *, kind: str = "video") -> Clip
     block = analysis.get(UNDERSTANDING_KEY)
     if isinstance(block, dict) and block:
         merged = {**block, "kind": media_kind}
+        if analysis.get(FACTS_KEY):
+            merged["facts"] = analysis[FACTS_KEY]
         if not merged.get("subject"):
             merged["subject"] = analysis.get("subject") or ""
         if not merged.get("summary"):
@@ -107,4 +110,5 @@ def clip_record(analysis: dict[str, Any] | None, *, kind: str = "video") -> Clip
         on_screen_text="" if is_video_analysis else (analysis.get("on_screen_text") or ""),
         brands=analysis.get("brands") or [],
         notable_moments=_moment_notes(analysis.get("best_moments")),
+        facts=analysis.get(FACTS_KEY) or [],
     )

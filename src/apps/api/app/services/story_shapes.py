@@ -20,6 +20,11 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from app.schemas.edit_proposal import GUIDED_STORY_MIN_MOMENT_S, MediaRef
+from app.services.clip_facts import (
+    CaptureOrdering,
+    capture_time_from_facts,
+    order_by_capture_time,
+)
 
 if TYPE_CHECKING:
     from app.agents.edit_proposal import (
@@ -77,12 +82,45 @@ def _media_attachment_order(input: EditProposalAgentInput) -> dict[str, int]:  #
 def _has_explicit_pinned_order(input: EditProposalAgentInput) -> bool:  # noqa: A002
     """True when a resolved ORDER clip intent already pins an explicit
     sequence (KRI-127/KRI-129: the creator's own explicit order always wins,
-    day_vlog's chronological reorder must never override it)."""
+    day_vlog's chronological reorder must never override it).
+
+    A ``by_capture_time`` / ``by_route`` order intent (KRI-189) is not a pinned
+    sequence: it asks for the very chronological order day_vlog already uses.
+    """
 
     if not input.clip_intents:
         return False
     return any(
-        intent.status == "resolved" and intent.op == "order" for intent in input.clip_intents
+        intent.status == "resolved"
+        and intent.op == "order"
+        and getattr(intent, "order_by", None) is None
+        for intent in input.clip_intents
+    )
+
+
+def capture_ordering(input: EditProposalAgentInput) -> CaptureOrdering | None:  # noqa: A002
+    """Clip order by capture time, or None when CLIP_FACTS is off for this plan.
+
+    Clips without a capture time keep their attachment-order slot and are listed
+    in ``fallback_ids`` so the plan receipt can say so (KRI-189).
+    """
+
+    if not getattr(input, "clip_facts", False):
+        return None
+    capture_times = {}
+    for media in input.media:
+        captured = capture_time_from_facts(getattr(media, "facts", None) or [])
+        if captured is not None:
+            capture_times[media.media_id] = captured
+    return order_by_capture_time([media.media_id for media in input.media], capture_times)
+
+
+def _beat_rank(beat, order: dict[str, int], fallback_index: int) -> int:  # noqa: ANN001
+    """A beat's position: the earliest rank of any media it holds."""
+
+    return min(
+        (order.get(media_id, fallback_index) for media_id in beat.media_ids),
+        default=fallback_index,
     )
 
 
@@ -107,15 +145,19 @@ def repair_day_vlog(
 
     repairs: list[str] = []
     if not _has_explicit_pinned_order(input):
-        order = _media_attachment_order(input)
+        # KRI-189: chronological means when it was FILMED where we know it; clips
+        # with no capture time keep their attachment-order slot.
+        ordering = capture_ordering(input)
+        if ordering is not None and ordering.basis == "capture_time":
+            order = {media_id: index for index, media_id in enumerate(ordering.ordered_ids)}
+            repairs.append("day_vlog_reordered_by_capture_time")
+        else:
+            order = _media_attachment_order(input)
+            repairs.append("day_vlog_reordered_by_attachment")
+        if ordering is not None:
+            output.ordering = ordering.diagnostics()
         fallback_index = len(order)
-        beats.sort(
-            key=lambda beat: min(
-                (order.get(media_id, fallback_index) for media_id in beat.media_ids),
-                default=fallback_index,
-            )
-        )
-        repairs.append("day_vlog_reordered_by_attachment")
+        beats.sort(key=lambda beat: _beat_rank(beat, order, fallback_index))
     for beat in beats:
         transition_s = getattr(beat, "transition_duration_s", None)
         if transition_s is not None and transition_s > DAY_VLOG_TRANSITION_CAP_S:

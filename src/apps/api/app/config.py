@@ -221,6 +221,12 @@ class Settings(BaseSettings):
     # forever. Default: 24h.
     device_render_stale_after_s: int = 86400
 
+    def clip_facts_for(self, user_id: object) -> bool:
+        """Global flag OR per-account allowlist (KRI-189); off by default."""
+        if self.clip_facts_enabled:
+            return True
+        return user_id is not None and str(user_id) in {str(u) for u in self.clip_facts_user_ids}
+
     def phone_rendering_for(self, user_id: object) -> bool:
         """Apply the kill switch and optional account-scoped pilot cohort."""
         return self.phone_rendering_enabled and (
@@ -402,6 +408,19 @@ class Settings(BaseSettings):
     # runtime_version=1 project remain available when this is false; the new
     # durable turn/approval endpoints deliberately fail closed as 404.
     kria_runtime_v2_enabled: bool = False
+    # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
+    # best-guess landmark per clip, each with provenance. Gates SERVER
+    # CONSUMPTION only: the landmark agent run, exposing facts to the Main
+    # Creator / edit planner prompts, capture-time ordering, the by_capture_time
+    # / by_route order intents. The API always accepts the additive optional
+    # attach fields. False (default) with no allowlist match is byte-identical
+    # to before. `clip_facts_user_ids` (JSON list of account UUIDs) enables the
+    # feature for those accounts even while the global flag is false, so the
+    # device check can run in prod. Rollback: `fly secrets set
+    # CLIP_FACTS_ENABLED=false CLIP_FACTS_USER_IDS=[] --app nova-video` +
+    # `fly machine restart <id>` (api + worker).
+    clip_facts_enabled: bool = False
+    clip_facts_user_ids: list[UUID] = Field(default_factory=list)
     kria_turn_lease_seconds: int = Field(default=15, ge=10, le=120)
     # GET /creation-threads/{id} degrades a thread whose render-graph edge
     # (PlanItem/CreatorAgentSession/Job ownership) has drifted incoherent,
