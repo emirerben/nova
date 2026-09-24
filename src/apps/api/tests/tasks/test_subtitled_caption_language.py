@@ -386,3 +386,125 @@ def test_phone_empty_detection_infers_from_transcript_text(monkeypatch):
     assert len(fallback_calls) == 1
     assert fallback_calls[0].args[2]["source"] == "transcript_text"
     assert fallback_calls[0].args[2]["job_language"] == "en"
+
+
+# --------------------------------------------------------------------------
+# Phone: whisper's detection cross-checked against Gemini's clip transcript
+# --------------------------------------------------------------------------
+
+# Job 385e3b13 (2026-09-24): Turkish-accented English. whisper-1 auto-detected
+# "tr" and wrote a Turkish translation ("Number three" -> "Üçüncü", "no" ->
+# "Hayır"), so every English reaction-beat trigger was "never heard".
+_GEMINI_EN = (
+    "Let's talk about the best football players in Turkish Super League this season. "
+    "Number three, Mac Ingram? No, no, no, no, no. Number three, Rafael Leao."
+)
+_WHISPER_TR_TEXT = "Bu sezon Türkiye Super Ligi'de en iyi futbolcular hakkında konuşalım. Üçüncü?"
+
+
+def _gemini_heard(monkeypatch, binding, transcript: str) -> None:
+    from tests.tasks.test_generative_build import _Meta
+
+    meta = _Meta("c0", 5.0, transcript=transcript)
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *a, **k: {
+            "clip_metas": [meta],
+            "clip_id_to_gcs": {"c0": binding.proxy_path},
+            "clip_id_to_local": {"c0": "/tmp/c0.mp4"},
+            "probe_map": {},
+            "hero": meta,
+        },
+        raising=False,
+    )
+
+
+def _whisper_by_language(monkeypatch, by_language: dict) -> Mock:
+    mock = Mock(side_effect=lambda *_a, language=None, **_k: by_language[language])
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", mock)
+    return mock
+
+
+def test_phone_retranscribes_in_the_language_gemini_heard(monkeypatch):
+    job, _snapshot, _session, binding = _setup_subtitled(monkeypatch)
+    _gemini_heard(monkeypatch, binding, _GEMINI_EN)
+    mock = _whisper_by_language(
+        monkeypatch,
+        {
+            None: Transcript(
+                words=_words(("Üçüncü?", 5.76, 6.3)), language="tr", full_text=_WHISPER_TR_TEXT
+            ),
+            "en": Transcript(
+                words=_words(("Number", 5.76, 6.0), ("three.", 6.0, 6.3)),
+                language="en",
+                full_text="Number three.",
+            ),
+        },
+    )
+    from app.services import pipeline_trace
+
+    events = Mock()
+    monkeypatch.setattr(pipeline_trace, "record_pipeline_event", events)
+
+    gb._run_generative_job(str(job.id))
+
+    assert [c.kwargs.get("language") for c in mock.call_args_list] == [None, "en"]
+    variant = job.assembly_plan["variants"][0]
+    assert variant["caption_language"] == "en"
+    crosscheck = [c for c in events.call_args_list if c.args[1] == "caption_language_crosscheck"]
+    assert [c.args[2] for c in crosscheck] == [
+        {
+            "variant_id": "subtitled",
+            "whisper_language": "tr",
+            "reference_language": "en",
+            "applied": True,
+        }
+    ]
+
+
+def test_phone_keeps_whisper_when_gemini_agrees(monkeypatch):
+    job, _snapshot, _session, binding = _setup_subtitled(monkeypatch)
+    _gemini_heard(monkeypatch, binding, _GEMINI_EN)
+    mock = _whisper_by_language(
+        monkeypatch,
+        {None: Transcript(words=_words(("Number", 0.0, 0.5)), language="en", full_text="Number")},
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert mock.call_count == 1
+    assert job.assembly_plan["variants"][0]["caption_language"] == "en"
+
+
+def test_phone_explicit_request_skips_the_crosscheck(monkeypatch):
+    job, _snapshot, _session, binding = _setup_subtitled(monkeypatch)
+    job.all_candidates["caption_language_request"] = "tr"
+    _gemini_heard(monkeypatch, binding, _GEMINI_EN)
+    mock = _whisper_by_language(
+        monkeypatch,
+        {"tr": Transcript(words=_words(("Üçüncü", 0.0, 0.5)), language="tr", full_text="Üçüncü")},
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert [c.kwargs.get("language") for c in mock.call_args_list] == ["tr"]
+    assert job.assembly_plan["variants"][0]["caption_language"] == "tr"
+
+
+def test_phone_keeps_first_pass_when_the_retranscribe_is_empty(monkeypatch):
+    job, _snapshot, _session, binding = _setup_subtitled(monkeypatch)
+    _gemini_heard(monkeypatch, binding, _GEMINI_EN)
+    _whisper_by_language(
+        monkeypatch,
+        {
+            None: Transcript(
+                words=_words(("Üçüncü?", 5.76, 6.3)), language="tr", full_text=_WHISPER_TR_TEXT
+            ),
+            "en": Transcript(words=[], language="en", full_text=""),
+        },
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.assembly_plan["variants"][0]["caption_language"] == "tr"

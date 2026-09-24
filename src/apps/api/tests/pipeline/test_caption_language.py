@@ -11,6 +11,7 @@ Guards:
   2. infer_language_from_text — conservative EN/TR guess from transcript text.
   3. resolve_spoken_caption_language — detected -> transcript text -> fallback,
      with the source always reported.
+  4. crosscheck_detected_language — whisper's detection vs Gemini's transcript.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from app.pipeline.caption_language import (
+    crosscheck_detected_language,
     infer_language_from_text,
     parse_caption_language_request,
     resolve_spoken_caption_language,
@@ -93,3 +95,40 @@ def test_resolve_falls_back_to_deliberate_fallback_when_undecidable() -> None:
 def test_resolve_fallback_defaults_to_english_when_none_given() -> None:
     lang, source = resolve_spoken_caption_language(None, transcript_text=None, fallback=None)
     assert (lang, source) == ("en", "fallback")
+
+
+# ── 4. crosscheck_detected_language ─────────────────────────────────────────
+
+# Job 385e3b13 (2026-09-24): whisper-1 auto-detected "tr" on Turkish-accented
+# English and wrote a Turkish translation; Gemini's transcript of the same clip
+# was English.
+_GEMINI_EN = (
+    "Let's talk about the best football players in Turkish Super League this season. "
+    "Number three, Mac Ingram? No, no, no, no, no. Number three, Rafael Leao. Number two. "
+    "No, no, no, no, no. Leandro Trossard from Beşiktaş. Number one. Ya Allah, Bismillah. "
+    "Mohammed Salah from Trabzonspor."
+)
+
+
+def test_crosscheck_flags_accented_english_misdetected_as_turkish() -> None:
+    assert crosscheck_detected_language("tr", reference_text=_GEMINI_EN) == "en"
+
+
+def test_crosscheck_flags_turkish_misdetected_as_english() -> None:
+    assert (
+        crosscheck_detected_language("en", reference_text="Bu videoyu çok güzel çektim bugün")
+        == "tr"
+    )
+
+
+@pytest.mark.parametrize(
+    ("detected", "reference"),
+    [
+        ("en", _GEMINI_EN),  # agreement
+        ("tr", "ok"),  # reference too short to classify
+        ("tr", ""),  # no Gemini transcript
+        ("", _GEMINI_EN),  # nothing detected — resolve_spoken_caption_language owns that
+    ],
+)
+def test_crosscheck_is_silent_without_a_clear_disagreement(detected: str, reference: str) -> None:
+    assert crosscheck_detected_language(detected, reference_text=reference) is None

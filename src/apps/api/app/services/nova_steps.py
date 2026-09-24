@@ -32,6 +32,7 @@ wires it into a response.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any, Literal
@@ -371,6 +372,12 @@ _OVERLAY_MISS_REASON_NO_ROOM: frozenset[str] = frozenset(
     }
 )
 _OVERLAY_MISS_REASON_VIDEO_UNSUPPORTED: frozenset[str] = frozenset({"video_not_supported"})
+# The iPhone uploads a Visual from a temp copy named "<random UUID>-<name>"
+# (UploadViews.swift / BackgroundUploads.swift), so that is its stored
+# filename; the creator only knows "<name>".
+_UPLOAD_UUID_PREFIX_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(?=.)", re.IGNORECASE
+)
 _OVERLAY_MISS_REASON_PIPELINE_ERROR: frozenset[str] = frozenset(
     {"missing_generation", "bind_failed", "compile_dropped"}
 )
@@ -440,16 +447,26 @@ def _humanize_subtitled_reaction_beats(data: dict[str, Any]) -> tuple[str, list[
     summary = _placed_summary_line(placed_n, unplaced_n)
     if summary:
         detail.append(summary)
-    for index, trigger in enumerate(missed_triggers[:_MAX_MISSED_DETAIL_LINES]):
+    misses: list[str] = []
+    for index, trigger in enumerate(missed_triggers):
         reason = missed_reasons_list[index] if index < len(missed_reasons_list) else None
         reason = reason if isinstance(reason, str) and reason else None
-        detail.append(beat_miss_sentence(trigger, reason))
+        _append_distinct(misses, beat_miss_sentence(trigger, reason))
+    detail.extend(misses)
     if closing == "unplaced":
         detail.append("Couldn't place the closing photo")
 
     if placed_n == 0 and unplaced_n > 0:
         return "Kria listened for the moments you named", detail or None
     return "Kria timed your photos and sounds to your words", detail or None
+
+
+def _append_distinct(lines: list[str], sentence: str) -> None:
+    """Two beats can share a trigger (a player's photo AND their check mark on
+    "Rafael Leão"); the creator should read each miss once. Capped at
+    `_MAX_MISSED_DETAIL_LINES` distinct lines."""
+    if sentence not in lines and len(lines) < _MAX_MISSED_DETAIL_LINES:
+        lines.append(sentence)
 
 
 def render_notes_from_beat_receipt(receipt: dict[str, Any] | None) -> list[str]:
@@ -480,12 +497,14 @@ def render_notes_from_beat_receipt(receipt: dict[str, Any] | None) -> list[str]:
     summary = _placed_summary_line(placed_n, len(unplaced_entries))
     if summary:
         notes.append(summary)
-    for entry in unplaced_entries[:_MAX_MISSED_DETAIL_LINES]:
+    misses: list[str] = []
+    for entry in unplaced_entries:
         trigger = entry.get("trigger") if isinstance(entry, dict) else None
         if isinstance(trigger, str) and trigger:
             reason = entry.get("reason") if isinstance(entry, dict) else None
             reason = reason if isinstance(reason, str) and reason else None
-            notes.append(beat_miss_sentence(trigger, reason))
+            _append_distinct(misses, beat_miss_sentence(trigger, reason))
+    notes.extend(misses)
     if closing.get("status") == "unplaced":
         notes.append(_closing_miss_sentence(closing.get("reason")))
     return notes
@@ -567,6 +586,7 @@ def render_notes_from_overlay_receipt(receipt: dict[str, Any] | None) -> list[st
         if isinstance(label, str) and label:
             reason = entry.get("reason") if isinstance(entry, dict) else None
             reason = reason if isinstance(reason, str) and reason else None
+            label = _UPLOAD_UUID_PREFIX_RE.sub("", label)
             notes.append(_overlay_miss_sentence(label[:60], reason))
     return notes
 
