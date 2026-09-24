@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.214.0] - 2026-09-24
+
+### Changed
+- perf(ios-ci): shard editor-touching PR UI runs across two legs (KRI-168) (#1237) <!-- release-pr: 1237 -->
+
 ## [0.76.213.0] - 2026-09-24
 
 ### Changed
