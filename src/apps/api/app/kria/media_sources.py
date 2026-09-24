@@ -61,7 +61,10 @@ class ClipPlace(BaseModel):
     def _clean(cls, value: object) -> str | None:
         if not isinstance(value, str):
             return None
-        cleaned = " ".join(unicodedata.normalize("NFC", value).split())[:_PLACE_PART_LIMIT]
+        text = unicodedata.normalize("NFC", value)
+        # Control/format characters carry no place name; treat them as separators.
+        text = "".join(" " if unicodedata.category(ch)[0] == "C" else ch for ch in text)
+        cleaned = " ".join(text.split())[:_PLACE_PART_LIMIT]
         return cleaned or None
 
     def is_empty(self) -> bool:

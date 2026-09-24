@@ -521,6 +521,7 @@ private struct AccountCaptureContextRow: View {
             }
             .tint(KriaColor.sky)
             .accessibilityIdentifier("account-capture-context-toggle")
+            .onChange(of: shareCaptureContext) { _, enabled in ClipCaptureSetting.settingChanged(to: enabled) }
             Text("Kria reads each chosen clip's date and rough location (about 1 km) from Photos, and looks up the place name on your phone. It uses them to put your clips in the order you filmed them and to name places. Turn this off to send neither.")
                 .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 .fixedSize(horizontal: false, vertical: true)

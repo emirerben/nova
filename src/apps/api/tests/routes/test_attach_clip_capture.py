@@ -178,9 +178,10 @@ async def test_attach_persists_capture_on_the_assignment(
     assert "_capture" not in str(append.await_args.kwargs["payload"])
 
     if proxy:
-        original = assignment["upload_contract"]["proxy"]["original"]
-        assert original["capture"]["capture_time"] == "2026-09-20T07:31:02Z"
-        # The receipt still validates as the strict contract it always was.
+        # The capture never enters the stored receipt (older code validates it with
+        # extra="forbid"), and the receipt still validates as it always did.
+        assert "capture" not in assignment["upload_contract"]["proxy"]["original"]
+        assert "capture" not in str(thread.state["media"][0].get("upload_contract"))
         MediaUploadContract.model_validate(assignment["upload_contract"])
         assert capture_from_assignment(assignment) is not None
 

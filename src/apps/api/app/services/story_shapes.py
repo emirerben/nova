@@ -115,6 +115,17 @@ def capture_ordering(input: EditProposalAgentInput) -> CaptureOrdering | None:  
     return order_by_capture_time([media.media_id for media in input.media], capture_times)
 
 
+def ordering_not_applied(reason: str) -> dict[str, object]:
+    """The record for "the creator asked for filming order and this path did not apply it".
+
+    Same shape as ``CaptureOrdering.diagnostics()`` so a receipt reads one field; the
+    basis says nothing was reordered, and ``reason`` says why. ``by_route`` is capture-time
+    order too, so receipts should say "ordered by when you filmed" for both basis values.
+    """
+
+    return {"ordering_basis": "not_applied", "ordering_fallback_clip_ids": [], "reason": reason}
+
+
 def _beat_rank(beat, order: dict[str, int], fallback_index: int) -> int:  # noqa: ANN001
     """A beat's position: the earliest rank of any media it holds."""
 

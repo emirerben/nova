@@ -7,12 +7,14 @@ renders the same prompt, dumps the same media rows and records no ordering.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from app.agents.edit_proposal import (
     EditProposalAgent,
     EditProposalAgentInput,
     EditProposalMedia,
     _media_prompt_dict,
+    _reorder_beats_by_capture_time,
 )
 from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
 
@@ -159,6 +161,25 @@ def test_order_by_capture_time_intent_reorders_a_plain_guided_story() -> None:
 
     assert _order(output) == ["b", "c", "a"]
     assert output.ordering == {"ordering_basis": "capture_time", "ordering_fallback_clip_ids": []}
+
+
+def test_order_by_on_a_fast_montage_is_recorded_as_not_applied() -> None:
+    """A montage keeps its cuts; the receipt must never read as "ordered by capture time"."""
+    media = [_media("a", _time(11)), _media("b", _time(7))]
+    montage_input = SimpleNamespace(
+        clip_facts=True,
+        direction="fast_montage",
+        media=media,
+    )
+    output = SimpleNamespace(ordering=None, story_beats=[])
+    _reorder_beats_by_capture_time(
+        output, montage_input, [_order_by_intent("capture_time", ["a", "b"])]  # type: ignore[arg-type]
+    )
+    assert output.ordering == {
+        "ordering_basis": "not_applied",
+        "ordering_fallback_clip_ids": [],
+        "reason": "fast_montage",
+    }
 
 
 def test_order_by_route_uses_capture_order_for_now() -> None:

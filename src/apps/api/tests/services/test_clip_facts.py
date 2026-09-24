@@ -222,7 +222,10 @@ def test_enrich_is_fail_open_per_clip(monkeypatch) -> None:
         return ClipFact(kind="landmark", value="Galata Bridge", provenance="inferred")
 
     monkeypatch.setattr(cf, "_guess_landmark", guess)
-    out = cf.enrich_clip_facts([_result("bad"), _result("ok")], make_ctx=lambda m: object())
+    out = cf.enrich_clip_facts(
+        [_result("bad", capture=_CAPTURE), _result("ok", capture=_CAPTURE)],
+        make_ctx=lambda m: object(),
+    )
     by_id = {entry["media_id"]: entry for entry, _ in out}
     assert cf.landmark_fact_for_assignment(by_id["ok"]).value == "Galata Bridge"
     # A failed guess is NOT recorded as attempted, so the next attempt retries it.
@@ -238,10 +241,63 @@ def test_enrich_never_asks_twice_for_the_same_generation(monkeypatch) -> None:
         return None  # "unknown" is a real answer
 
     monkeypatch.setattr(cf, "_guess_landmark", guess)
-    first = cf.enrich_clip_facts([_result("a")], make_ctx=lambda m: object())
+    first = cf.enrich_clip_facts([_result("a", capture=_CAPTURE)], make_ctx=lambda m: object())
     assert cf._landmark_attempted(first[0][0])
     cf.enrich_clip_facts(first, make_ctx=lambda m: object())
     assert calls == ["a"]
+
+
+def test_enrich_never_calls_the_landmark_agent_without_a_place_or_coordinate(monkeypatch) -> None:
+    """Toggle off / no GPS / no Photos access: no where means no landmark guess (and no upload)."""
+    monkeypatch.setattr(
+        cf, "_guess_landmark", lambda *a, **k: pytest.fail("landmark agent ran with no place")
+    )
+    time_only = {"capture_time": "2026-09-20T07:31:02Z"}
+    out = cf.enrich_clip_facts(
+        [_result("none"), _result("time", capture=time_only)], make_ctx=lambda m: object()
+    )
+    for entry, _ref in out:
+        assert cf.landmark_fact_for_assignment(entry) is None
+        # Recorded as asked, so a retry or re-plan never re-evaluates it.
+        assert cf._landmark_attempted(entry)
+
+
+def test_enrich_stops_waiting_when_the_landmark_budget_is_spent(monkeypatch) -> None:
+    import time
+
+    def guess(assignment, *, ctx):
+        if assignment["media_id"] == "slow":
+            time.sleep(1.0)
+        return ClipFact(kind="landmark", value="Galata Bridge", provenance="inferred")
+
+    monkeypatch.setattr(cf, "_guess_landmark", guess)
+    started = time.monotonic()
+    out = cf.enrich_clip_facts(
+        [_result("fast", capture=_CAPTURE), _result("slow", capture=_CAPTURE)],
+        make_ctx=lambda m: object(),
+        budget_s=0.2,
+    )
+    assert time.monotonic() - started < 0.9, "must not wait on the slow provider"
+    by_id = {entry["media_id"]: entry for entry, _ in out}
+    assert cf.landmark_fact_for_assignment(by_id["fast"]) is not None
+    assert cf.landmark_fact_for_assignment(by_id["slow"]) is None
+    assert not cf._landmark_attempted(by_id["slow"]), "a skipped clip is retried next time"
+
+
+def test_landmark_attempt_is_keyed_on_storage_generation_too() -> None:
+    entry = {"media_id": "a", "storage_generation": "7", "capture": _CAPTURE}
+    recorded = cf.with_landmark_fact(entry, None)
+    assert recorded["analysis"][cf.LANDMARK_GENERATION_KEY] == "7"
+    assert cf._landmark_attempted(recorded)
+    assert not cf._landmark_attempted({**recorded, "storage_generation": "8"})
+
+
+def test_a_place_that_cleans_to_nothing_never_breaks_capture_facts() -> None:
+    capture = cf.capture_from_assignment(
+        {"capture": {"place": {"locality": "\x01\x02"}, "capture_time": "2026-09-20T07:31:02Z"}}
+    )
+    facts = cf.capture_facts(capture)
+    assert [f.kind for f in facts] == ["capture_time"]
 
 
 def test_enrich_skips_images(monkeypatch) -> None:

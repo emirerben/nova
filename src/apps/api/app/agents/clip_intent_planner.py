@@ -157,10 +157,10 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                     f"has caption_attribute for {intent.op}"
                 )
             if intent.order_by is not None and not input.clip_facts:
-                raise SchemaError(
-                    f"clip_intent_planner: intent {intent.intent_id!r} has order_by "
-                    "but clip facts are not available"
-                )
+                # The flag-off prompt never teaches `order_by`, so a stray one behaves as if the
+                # field did not exist: the intent is dropped rather than failing the whole
+                # output (which would retry the model for nothing).
+                continue
             if intent.op != "order" and intent.position is not None:
                 raise SchemaError(
                     f"clip_intent_planner: intent {intent.intent_id!r} has position for {intent.op}"

@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 import Photos
+import AVFoundation
 
 // KRI-189: when and where a clip was filmed.
 //
@@ -27,6 +28,12 @@ enum ClipCaptureSetting {
 
     static func setEnabled(_ enabled: Bool, defaults: UserDefaults = .standard) {
         defaults.set(enabled, forKey: defaultsKey)
+    }
+
+    /// The Account switch changed. Turning it off also forgets any filming context already remembered for
+    /// clips that have not attached yet, so "off" means nothing is kept, not just nothing is sent.
+    static func settingChanged(to enabled: Bool, store: ClipCaptureStore = .shared) {
+        if !enabled { store.removeAll() }
     }
 }
 
@@ -81,6 +88,60 @@ enum ClipCaptureReader {
         return capture(creationDate: asset.creationDate, coordinate: asset.location?.coordinate)
     }
 
+    /// `read`, plus a fallback for what Photos could not tell us. `PHAsset.fetchAssets` returns nothing
+    /// without Photos read access (the picker only asks for it on the library-backed path), so any part
+    /// still missing is filled from the exported file's own QuickTime metadata (creation date and the
+    /// `com.apple.quicktime.location.ISO6709` tag iPhone video carries). Photos wins where both exist.
+    static func read(assetIdentifier: String, fileURL: URL, defaults: UserDefaults = .standard) async -> ClipCaptureRaw? {
+        guard ClipCaptureSetting.isEnabled(defaults) else { return nil }
+        let photos = read(assetIdentifier: assetIdentifier, defaults: defaults)
+        if let photos, photos.captureTime != nil, photos.hasLocation { return photos }
+        let file = await readFile(fileURL)
+        return merged(photos: photos, file: file)
+    }
+
+    /// Photos parts win; the file fills only what Photos left empty.
+    static func merged(photos: ClipCaptureRaw?, file: ClipCaptureRaw?, now: Date = Date()) -> ClipCaptureRaw? {
+        let raw = ClipCaptureRaw(
+            captureTime: photos?.captureTime ?? file?.captureTime,
+            latitude: photos?.hasLocation == true ? photos?.latitude : file?.latitude,
+            longitude: photos?.hasLocation == true ? photos?.longitude : file?.longitude,
+            savedAt: now
+        )
+        return raw.isEmpty ? nil : raw
+    }
+
+    /// The exported file's embedded creation date and location. Never throws; nil when it has neither.
+    static func readFile(_ url: URL) async -> ClipCaptureRaw? {
+        let asset = AVURLAsset(url: url)
+        var date: Date?
+        if let item = try? await asset.load(.creationDate) { date = try? await item.load(.dateValue) }
+        var coordinate: CLLocationCoordinate2D?
+        if let items = try? await asset.load(.metadata) {
+            for item in items where item.identifier == .quickTimeMetadataLocationISO6709 {
+                if let text = try? await item.load(.stringValue), let parsed = parseISO6709(text) { coordinate = parsed; break }
+            }
+        }
+        return capture(creationDate: date, coordinate: coordinate)
+    }
+
+    /// ISO 6709 as QuickTime writes it, e.g. `+41.0082+028.9784+012.000/`. Nil when malformed.
+    static func parseISO6709(_ text: String) -> CLLocationCoordinate2D? {
+        let body = text.trimmingCharacters(in: CharacterSet(charactersIn: "/ \n"))
+        var numbers: [Double] = []
+        var current = ""
+        for ch in body {
+            if (ch == "+" || ch == "-"), !current.isEmpty {
+                guard let value = Double(current) else { return nil }
+                numbers.append(value); current = ""
+            }
+            current.append(ch)
+        }
+        if !current.isEmpty { guard let value = Double(current) else { return nil }; numbers.append(value) }
+        guard numbers.count >= 2, CoarseCoordinate.isValid(latitude: numbers[0], longitude: numbers[1]) else { return nil }
+        return CLLocationCoordinate2D(latitude: numbers[0], longitude: numbers[1])
+    }
+
     /// Pure core of `read`, separated so it is testable without a Photos library.
     static func capture(creationDate: Date?, coordinate: CLLocationCoordinate2D?, now: Date = Date()) -> ClipCaptureRaw? {
         let raw = ClipCaptureRaw(
@@ -129,6 +190,14 @@ final class ClipCaptureStore: @unchecked Sendable {
     func remove(_ recordID: UUID) {
         lock.lock(); defer { lock.unlock() }
         guard entries.removeValue(forKey: recordID.uuidString) != nil else { return }
+        persistLocked()
+    }
+
+    /// Forget everything: what the setting being turned off means for what is already remembered.
+    func removeAll() {
+        lock.lock(); defer { lock.unlock() }
+        guard !entries.isEmpty else { return }
+        entries = [:]
         persistLocked()
     }
 

@@ -2541,10 +2541,24 @@ def _run_draft_attempt(
                     **diagnostics,
                     "schedule": drafted.draft.frame_schedule.model_dump(mode="json"),
                 }
+            ordering_record = getattr(output, "ordering", None)
+            if (
+                ordering_record is None
+                and clip_facts_on
+                and any(
+                    getattr(intent, "order_by", None) is not None
+                    for intent in (_resolved_clip_intents(brief) or [])
+                )
+            ):
+                # A resolved filming-order request that this planner path (semantic,
+                # snapshot) never applied: record that, never leave it looking honored.
+                from app.services.story_shapes import ordering_not_applied  # noqa: PLC0415
+
+                ordering_record = ordering_not_applied("planner_path")
             drafted = drafted.model_copy(
                 update={
                     "planning_diagnostics": diagnostics,
-                    "ordering": getattr(output, "ordering", None),
+                    "ordering": ordering_record,
                     "planner_fallback": (
                         ProposalPlannerFallback(
                             reason=fallback_reason or "unknown planner failure",

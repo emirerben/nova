@@ -576,7 +576,12 @@ def _reorder_beats_by_capture_time(
     if not any(intent.op == "order" and intent.order_by is not None for intent in resolved):
         return
     ordering = story_shapes.capture_ordering(input)
-    if ordering is None or input.direction == "fast_montage":
+    if ordering is None:
+        return
+    if input.direction == "fast_montage":
+        # A montage's cuts carry exact source windows, so the order is not rearranged.
+        # Say so, so a receipt never reports the requested order as honored.
+        output.ordering = story_shapes.ordering_not_applied("fast_montage")
         return
     output.ordering = ordering.diagnostics()
     if ordering.basis != "capture_time":

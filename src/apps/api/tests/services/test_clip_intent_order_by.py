@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError
 
-from app.agents._runtime import RunContext, SchemaError
+from app.agents._runtime import RunContext
 from app.agents.clip_intent_planner import (
     ClipIntentPlannerAgent,
     ClipIntentPlannerInput,
@@ -89,10 +89,11 @@ def test_parse_accepts_order_by_when_clip_facts_are_on() -> None:
     ]
 
 
-def test_parse_rejects_order_by_when_clip_facts_are_off() -> None:
+def test_parse_drops_a_stray_order_by_intent_when_clip_facts_are_off() -> None:
+    """Flag off behaves as if the field did not exist: no SchemaError, no retry."""
     agent_input = ClipIntentPlannerInput(creator_request=_REQUEST)
-    with pytest.raises(SchemaError, match="order_by"):
-        _agent().parse(_raw(order_by="capture_time"), agent_input)
+    out = _agent().parse(_raw(order_by="capture_time"), agent_input)
+    assert [(i.op, i.order_by) for i in out.intents] == [("label", None)]
 
 
 def test_prompt_teaches_order_by_only_when_clip_facts_are_on() -> None:

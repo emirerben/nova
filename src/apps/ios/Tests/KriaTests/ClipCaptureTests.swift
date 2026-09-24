@@ -78,6 +78,39 @@ final class ClipCaptureTests: XCTestCase {
         XCTAssertNil(ClipCaptureReader.read(assetIdentifier: "any-asset", defaults: defaults))
     }
 
+    func testISO6709ParsesQuickTimeLocationTags() {
+        let istanbul = ClipCaptureReader.parseISO6709("+41.0082+028.9784+012.000/")
+        XCTAssertEqual(istanbul?.latitude ?? 0, 41.0082, accuracy: 0.0001)
+        XCTAssertEqual(istanbul?.longitude ?? 0, 28.9784, accuracy: 0.0001)
+        let south = ClipCaptureReader.parseISO6709("-33.8688+151.2093/")
+        XCTAssertEqual(south?.latitude ?? 0, -33.8688, accuracy: 0.0001)
+        XCTAssertNil(ClipCaptureReader.parseISO6709("garbage"))
+        XCTAssertNil(ClipCaptureReader.parseISO6709("+95.0+028.0/"), "out-of-range latitude is dropped")
+    }
+
+    func testFileMetadataFillsOnlyWhatPhotosLeftEmpty() {
+        let coordinate = CLLocationCoordinate2D(latitude: arnavutkoy.lat, longitude: arnavutkoy.lon)
+        let file = ClipCaptureReader.capture(creationDate: shot, coordinate: coordinate)
+        XCTAssertEqual(ClipCaptureReader.merged(photos: nil, file: file)?.captureTime, shot, "no Photos access: the file answers")
+        XCTAssertEqual(ClipCaptureReader.merged(photos: nil, file: file)?.latitude, 41.19)
+        let photosDateOnly = ClipCaptureReader.capture(creationDate: shot.addingTimeInterval(-60), coordinate: nil)
+        let both = ClipCaptureReader.merged(photos: photosDateOnly, file: file)
+        XCTAssertEqual(both?.captureTime, shot.addingTimeInterval(-60), "Photos wins where it has a value")
+        XCTAssertEqual(both?.latitude, 41.19, "the file fills the missing location")
+        XCTAssertNil(ClipCaptureReader.merged(photos: nil, file: nil))
+    }
+
+    func testTurningTheSettingOffForgetsRememberedCapture() {
+        let store = ClipCaptureStore(defaults: defaults, key: "test-store")
+        let id = UUID()
+        store.set(ClipCaptureRaw(captureTime: shot, latitude: 41.19, longitude: 28.74), for: id)
+        ClipCaptureSetting.settingChanged(to: true, store: store)
+        XCTAssertNotNil(store.capture(for: id), "turning it on keeps everything")
+        ClipCaptureSetting.settingChanged(to: false, store: store)
+        XCTAssertNil(store.capture(for: id))
+        XCTAssertNil(ClipCaptureStore(defaults: defaults, key: "test-store").capture(for: id), "and it is gone after relaunch")
+    }
+
     // MARK: store
 
     func testStoreRoundTripsAcrossInstancesAndForgets() {

@@ -80,3 +80,12 @@ def test_parse_rejects_non_object_json(raw: str) -> None:
 def test_normalize_handles_non_strings() -> None:
     assert normalize_landmark_name(None) == ""
     assert normalize_landmark_name("  N/A. ") == ""
+
+
+@pytest.mark.parametrize(
+    "answer", ["Bilinmiyor", "BİLİNMİYOR.", "bilinmeyen", "Tanımlanamadı", "belirsiz"]
+)
+def test_turkish_unknown_answers_fold_to_no_landmark(answer: str) -> None:
+    assert normalize_landmark_name(answer) == ""
+    out = _agent().parse(json.dumps({"name": answer, "confidence": 0.7}), _input())
+    assert out.is_unknown()

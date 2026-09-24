@@ -495,16 +495,6 @@ class MediaInput(StrictBody):
 _ATTACH_PRIVATE_KEYS = frozenset({"_path", "_capture", "generation", "has_audio"})
 
 
-def _contract_with_capture(
-    contract: MediaUploadContract, capture: ClipCapture | None
-) -> dict[str, Any]:
-    """The stored proxy receipt, with the attach-time capture bound to its original."""
-    dumped = contract.model_dump(mode="json")
-    if capture is not None and dumped.get("proxy"):
-        dumped["proxy"]["original"]["capture"] = capture.model_dump(mode="json", exclude_none=True)
-    return dumped
-
-
 class AttachBody(StrictBody):
     media: list[MediaInput] = Field(min_length=1, max_length=_MAX_MEDIA)
     client_event_id: str = Field(min_length=1, max_length=160)
@@ -5355,11 +5345,11 @@ async def attach_media(
                     if (capture := media.capture()) is not None
                     else {}
                 ),
-                **(
-                    {"upload_contract": _contract_with_capture(contract, capture)}
-                    if contract
-                    else {}
-                ),
+                # The capture lives ONLY on the assignment (`capture` below), never inside the
+                # stored proxy receipt: `OriginalMediaDescriptor` is extra="forbid", so a
+                # capture copy in there would make older code (a rollback, or a worker still
+                # on the previous image) reject the whole receipt and fail phone-job admission.
+                **({"upload_contract": contract.model_dump(mode="json")} if contract else {}),
             }
         )
     # Paths live only on the authoritative PlanItem.  The thread projection

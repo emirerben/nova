@@ -20,7 +20,9 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Iterable, Mapping
+from contextlib import suppress
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,6 +55,10 @@ LANDMARK_GENERATION_KEY = "clip_facts_landmark_generation"
 
 # Landmark guessing is best-effort context, never a reason to fail a plan.
 _LANDMARK_CONCURRENCY = 3
+# Wall-clock cap for the whole enrichment step. It sits inline on the draft's critical
+# path, so a slow provider must cost bounded time: whatever has not answered by the
+# deadline is skipped (and not recorded as attempted) and the plan continues.
+LANDMARK_BUDGET_S = 45.0
 
 
 def capture_from_assignment(assignment: Mapping[str, Any]) -> ClipCapture | None:
@@ -91,13 +97,18 @@ def capture_facts(capture: ClipCapture | None) -> list[ClipFact]:
         return []
     facts: list[ClipFact] = []
     if capture.capture_time is not None:
-        facts.append(
-            ClipFact(kind="capture_time", value=_iso_utc(capture.capture_time), provenance="exif")
-        )
+        with suppress(ValidationError):
+            facts.append(
+                ClipFact(
+                    kind="capture_time", value=_iso_utc(capture.capture_time), provenance="exif"
+                )
+            )
     if capture.place is not None:
         label = capture.place.label()
         if label:
-            facts.append(ClipFact(kind="place", value=label, provenance="geocode"))
+            # A label made only of characters the fact cleaner strips is "no place".
+            with suppress(ValidationError):
+                facts.append(ClipFact(kind="place", value=label, provenance="geocode"))
     return facts
 
 
@@ -205,12 +216,17 @@ def landmark_fact_for_assignment(assignment: Mapping[str, Any]) -> ClipFact | No
     return None
 
 
+def _generation(assignment: Mapping[str, Any]) -> str:
+    """The pinned storage generation. Attach stores it as ``storage_generation``."""
+    return str(assignment.get("generation") or assignment.get("storage_generation") or "")
+
+
 def _landmark_attempted(assignment: Mapping[str, Any]) -> bool:
     """True once a guess (even an empty one) was recorded for this generation."""
     analysis = assignment.get("analysis")
     if not isinstance(analysis, dict):
         return False
-    return analysis.get(LANDMARK_GENERATION_KEY) == str(assignment.get("generation") or "")
+    return analysis.get(LANDMARK_GENERATION_KEY) == _generation(assignment)
 
 
 def _landmark_prompt_place(assignment: Mapping[str, Any]) -> tuple[str, float | None, float | None]:
@@ -222,6 +238,17 @@ def _landmark_prompt_place(assignment: Mapping[str, Any]) -> tuple[str, float | 
     return place, (loc.lat if loc else None), (loc.lon if loc else None)
 
 
+def _has_landmark_context(assignment: Mapping[str, Any]) -> bool:
+    """A place name or coordinate to narrow the guess.
+
+    Without one the model would name a landmark from pixels and world knowledge alone,
+    and a wrong `inferred` name flows straight into the planner. It also covers a creator
+    who turned "use when and where clips were filmed" off: no where, no landmark call.
+    """
+    place, lat, lon = _landmark_prompt_place(assignment)
+    return bool(place) or (lat is not None and lon is not None)
+
+
 def _guess_landmark(assignment: dict[str, Any], *, ctx: Any) -> ClipFact | None:
     """Download the pinned clip, upload it once, ask the landmark agent."""
     from app.agents._model_client import default_client  # noqa: PLC0415
@@ -229,7 +256,7 @@ def _guess_landmark(assignment: dict[str, Any], *, ctx: Any) -> ClipFact | None:
     from app.storage import download_generation_to_file  # noqa: PLC0415
 
     path = str(assignment.get("gcs_path") or "")
-    generation = str(assignment.get("generation") or assignment.get("storage_generation") or "")
+    generation = _generation(assignment)
     if not path or not generation:
         return None
     place, lat, lon = _landmark_prompt_place(assignment)
@@ -299,7 +326,7 @@ def with_landmark_fact(assignment: dict[str, Any], fact: ClipFact | None) -> dic
     analysis[FACTS_KEY] = _merge_stored_facts(
         analysis, [fact] if fact is not None else [], replace_kind="landmark"
     )
-    analysis[LANDMARK_GENERATION_KEY] = str(entry.get("generation") or "")
+    analysis[LANDMARK_GENERATION_KEY] = _generation(entry)
     entry["analysis"] = analysis
     return entry
 
@@ -314,14 +341,17 @@ def enrich_clip_facts(
     *,
     make_ctx: Any,
     on_updated: Any = None,
+    budget_s: float = LANDMARK_BUDGET_S,
 ) -> list[tuple[dict[str, Any], Any]]:
     """Store every clip's facts on its analysis: capture copies, then a landmark guess.
 
     * Capture-derived facts (exif/geocode) are copied from the assignment's
       ``capture`` onto ``analysis["clip_facts"]``: cheap, deterministic.
-    * Every analyzed VIDEO clip without a recorded landmark attempt gets one
-      best-guess landmark (provenance ``inferred``). Fail-open per clip: a
-      provider error leaves the clip without one and the plan proceeds.
+    * Every analyzed VIDEO clip that has a place or coordinate and no recorded
+      landmark attempt gets one best-guess landmark (provenance ``inferred``). A clip
+      with neither is never sent to the model. Fail-open per clip: a provider error
+      leaves the clip without one and the plan proceeds, and the whole step is capped
+      at ``budget_s`` seconds.
 
     ``on_updated(entry, ref)`` lets the caller checkpoint each enriched
     assignment so a Celery retry does not pay for the guess twice.
@@ -340,13 +370,30 @@ def enrich_clip_facts(
                     log.warning("clip_facts.checkpoint_failed", error=str(exc)[:240])
         updated.append((new_entry, ref))
 
-    todo = [
-        index
-        for index, (entry, ref) in enumerate(updated)
-        if getattr(ref, "kind", "video") == "video" and not _landmark_attempted(entry)
-    ]
+    final = list(updated)
+
+    def _record(index: int, fact: ClipFact | None) -> None:
+        entry, ref = updated[index]
+        new_entry = with_landmark_fact(entry, fact)
+        ref = _ref_with_analysis(ref, new_entry["analysis"])
+        final[index] = (new_entry, ref)
+        if on_updated is not None:
+            try:
+                on_updated(new_entry, ref)
+            except Exception as exc:  # noqa: BLE001 — checkpointing must not fail the plan
+                log.warning("clip_facts.checkpoint_failed", error=str(exc)[:240])
+
+    todo: list[int] = []
+    for index, (entry, ref) in enumerate(updated):
+        if getattr(ref, "kind", "video") != "video" or _landmark_attempted(entry):
+            continue
+        if not _has_landmark_context(entry):
+            # Nothing to narrow a guess with: record "asked, no answer" and never call.
+            _record(index, None)
+            continue
+        todo.append(index)
     if not todo:
-        return updated
+        return final
 
     def run(index: int) -> ClipFact | None:
         entry, _ref = updated[index]
@@ -360,24 +407,25 @@ def enrich_clip_facts(
             )
             raise
 
-    final = list(updated)
-    with ThreadPoolExecutor(
+    pool = ThreadPoolExecutor(
         max_workers=min(_LANDMARK_CONCURRENCY, len(todo)), thread_name_prefix="clip-landmark"
-    ) as pool:
+    )
+    try:
         futures = {pool.submit(run, index): index for index in todo}
-        for future in as_completed(futures):
-            index = futures[future]
-            try:
-                fact = future.result()
-            except Exception:  # noqa: BLE001 — already logged; leave the clip unenriched
-                continue
-            entry, ref = updated[index]
-            new_entry = with_landmark_fact(entry, fact)
-            ref = _ref_with_analysis(ref, new_entry["analysis"])
-            final[index] = (new_entry, ref)
-            if on_updated is not None:
+        try:
+            for future in as_completed(futures, timeout=budget_s):
                 try:
-                    on_updated(new_entry, ref)
-                except Exception as exc:  # noqa: BLE001 — checkpointing must not fail the plan
-                    log.warning("clip_facts.checkpoint_failed", error=str(exc)[:240])
+                    fact = future.result()
+                except Exception:  # noqa: BLE001 — already logged; leave the clip unenriched
+                    continue
+                _record(futures[future], fact)
+        except FutureTimeoutError:
+            log.warning(
+                "clip_facts.landmark_budget_exceeded",
+                budget_s=budget_s,
+                skipped=sum(1 for f in futures if not f.done()),
+            )
+    finally:
+        # Never wait on a slow provider: anything still pending is abandoned.
+        pool.shutdown(wait=False, cancel_futures=True)
     return final

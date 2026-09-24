@@ -26,7 +26,30 @@ from app.pipeline.prompt_loader import load_prompt
 
 _NAME_MAX_WORDS = 6
 _NAME_MAX_CHARS = 60
-_UNKNOWN_VALUES = frozenset({"unknown", "n/a", "none", "unclear", "not sure", "not visible"})
+_UNKNOWN_VALUES = frozenset(
+    {
+        "unknown",
+        "n/a",
+        "none",
+        "unclear",
+        "not sure",
+        "not visible",
+        # Turkish: the East Run clips are filmed in Turkey and the model may answer in kind.
+        "bilinmiyor",
+        "bilinmeyen",
+        "belirsiz",
+        "belli değil",
+        "tanımlanamadı",
+    }
+)
+
+
+def _fold(value: str) -> str:
+    """casefold with Turkish dotted/dotless I folded to plain i ("İ".casefold() is "i̇")."""
+    return value.replace("İ", "i").replace("ı", "i").casefold()
+
+
+_FOLDED_UNKNOWN = frozenset(_fold(value) for value in _UNKNOWN_VALUES)
 
 
 def normalize_landmark_name(value: object) -> str:
@@ -34,7 +57,7 @@ def normalize_landmark_name(value: object) -> str:
     if not isinstance(value, str):
         return ""
     text = " ".join(value.split())
-    if not text or text.strip(".!? ").casefold() in _UNKNOWN_VALUES:
+    if not text or _fold(text.strip(".!? ")) in _FOLDED_UNKNOWN:
         return ""
     return " ".join(text.split()[:_NAME_MAX_WORDS])[:_NAME_MAX_CHARS]
 

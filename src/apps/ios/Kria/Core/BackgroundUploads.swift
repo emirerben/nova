@@ -620,7 +620,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 try Task.checkCancellation()
                 // KRI-189: remember when/where this clip was filmed (Photos metadata) until it attaches.
                 // Best effort and clips only; nothing is read when the setting is off.
-                if request.role == .clip, let capture = ClipCaptureReader.read(assetIdentifier: request.assetIdentifier) {
+                if request.role == .clip, let capture = await ClipCaptureReader.read(assetIdentifier: request.assetIdentifier, fileURL: url) {
                     ClipCaptureStore.shared.set(capture, for: recordID)
                 }
                 let accepted = await self.enqueue(fileURL: url, projectID: request.projectID, source: .photos, consentGiven: true, purpose: request.purpose, role: request.role, itemID: request.itemID, limit: request.limit, recordID: recordID, failureKey: key)
