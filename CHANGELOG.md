@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.186.0] - 2026-09-24
+
+### Changed
+- fix(e2e): make the motion-preview doubled-workload check reliable on CI (interleave + 0.7 ceiling) (#1200) <!-- release-pr: 1200 -->
+
 ## [0.76.185.0] - 2026-09-24
 
 ### Added
