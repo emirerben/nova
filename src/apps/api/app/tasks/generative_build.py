@@ -3228,6 +3228,7 @@ def _run_generative_job_impl(
                         speech_cleanup_snapshot=speech_cleanup_snapshot,
                         speech_cleanup_source_clip_id=speech_cleanup_source_clip_id,
                         speech_cleanup_uses_preflight=speech_cleanup_snapshot_contract,
+                        caption_language_request=all_candidates.get("caption_language_request"),
                     )
                 elif spec.get("archetype") == "day_vlog":
                     result = _render_generative_variant(
@@ -4459,6 +4460,11 @@ def _run_phone_subtitled_job(
     """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
+    from app.pipeline.caption_language import (  # noqa: PLC0415
+        SOURCE_DETECTED,
+        SUPPORTED_CAPTION_LANGUAGES,
+        resolve_spoken_caption_language,
+    )
     from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan  # noqa: PLC0415
@@ -4477,7 +4483,10 @@ def _run_phone_subtitled_job(
         PHONE_VISUALS_FIELD,
         PhoneSourceBinding,
     )
-    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+    from app.services.pipeline_trace import (  # noqa: PLC0415
+        pipeline_trace_for,
+        record_pipeline_event,
+    )
 
     media_lanes_enabled = settings.phone_subtitled_media_lanes_enabled
     # KRI-176: whether a phone `subtitled` render may carry PiP overlay cards
@@ -4544,6 +4553,16 @@ def _run_phone_subtitled_job(
     _phone_speech_cleanup_contract_guard(snapshot)
 
     language: str = all_candidates.get("language") or "en"
+    # KRI-177: same explicit override contract as the cloud subtitled render —
+    # re-validated here since a stray/legacy value must never silently win.
+    _raw_caption_language_request = all_candidates.get("caption_language_request")
+    caption_language_req: str | None = (
+        _raw_caption_language_request.strip().lower()
+        if isinstance(_raw_caption_language_request, str)
+        else None
+    )
+    if caption_language_req not in SUPPORTED_CAPTION_LANGUAGES:
+        caption_language_req = None
     caption_style = (
         "word" if all_candidates.get("voiceover_caption_style") == "word" else "sentence"
     )
@@ -4628,8 +4647,48 @@ def _run_phone_subtitled_job(
                     "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
                 )
 
-            transcript = transcribe_whisper_cached(clip_path, language=None)
-            detected_lang = transcript.language or language
+            # KRI-177: auto-detect the SPOKEN language unless the creator
+            # explicitly asked for a specific caption language (already parsed +
+            # validated into `caption_language_req` above) — never the plan/job
+            # `language`, which is the UI/content language, not what the clip says.
+            transcript = transcribe_whisper_cached(clip_path, language=caption_language_req)
+            _spoken_lang, _lang_source = resolve_spoken_caption_language(
+                transcript.language,
+                transcript_text=getattr(transcript, "full_text", None),
+                fallback=language,
+            )
+            if _lang_source != SOURCE_DETECTED:
+                record_pipeline_event(
+                    "captions",
+                    "caption_language_fallback",
+                    {
+                        "variant_id": "subtitled",
+                        "source": _lang_source,
+                        "language": _spoken_lang,
+                        "job_language": language,
+                    },
+                )
+                log.warning(
+                    "caption_language_fallback",
+                    job_id=job_id,
+                    variant_id="subtitled",
+                    source=_lang_source,
+                    language=_spoken_lang,
+                    job_language=language,
+                )
+            if caption_language_req is not None:
+                record_pipeline_event(
+                    "captions",
+                    "caption_language_requested",
+                    {
+                        "variant_id": "subtitled",
+                        "requested": caption_language_req,
+                        "spoken": _spoken_lang,
+                    },
+                )
+                detected_lang = caption_language_req
+            else:
+                detected_lang = _spoken_lang
             if media_lanes_enabled:
                 # Captured before caption correction touches the cues built
                 # from these same words -- the persisted receipt is exactly
@@ -4997,6 +5056,10 @@ def _run_phone_narrated_job(
     """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
+    from app.pipeline.caption_language import (  # noqa: PLC0415
+        SOURCE_DETECTED,
+        resolve_spoken_caption_language,
+    )
     from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
     from app.pipeline.narrated_alignment import (  # noqa: PLC0415
         align_script_to_voiceover,  # noqa: PLC0415
@@ -5015,7 +5078,10 @@ def _run_phone_narrated_job(
     )
     from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
     from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
-    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+    from app.services.pipeline_trace import (  # noqa: PLC0415
+        pipeline_trace_for,
+        record_pipeline_event,
+    )
     from app.storage import download_to_file  # noqa: PLC0415
     from app.tasks.template_orchestrate import _probe_duration  # noqa: PLC0415
 
@@ -5194,7 +5260,36 @@ def _run_phone_narrated_job(
             cues: list[dict] | None = None
             detected_lang = language
             if transcript.words:
-                detected_lang = transcript.language or language
+                # KRI-177: this transcribes the creator's OWN recorded voiceover
+                # (not the clip audio) — still auto-detect its spoken language
+                # rather than silently defaulting to the plan/job `language` when
+                # whisper reports none. No explicit caption-language override
+                # wiring here: the D5 chip already lets the creator correct a
+                # wrong auto-detect after the fact.
+                detected_lang, _lang_source = resolve_spoken_caption_language(
+                    transcript.language,
+                    transcript_text=getattr(transcript, "full_text", None),
+                    fallback=language,
+                )
+                if _lang_source != SOURCE_DETECTED:
+                    record_pipeline_event(
+                        "captions",
+                        "caption_language_fallback",
+                        {
+                            "variant_id": "narrated",
+                            "source": _lang_source,
+                            "language": detected_lang,
+                            "job_language": language,
+                        },
+                    )
+                    log.warning(
+                        "caption_language_fallback",
+                        job_id=job_id,
+                        variant_id="narrated",
+                        source=_lang_source,
+                        language=detected_lang,
+                        job_language=language,
+                    )
                 cues = build_plain_cues(transcript.words, attach_words=True)
                 cues = correct_caption_cues(
                     cues,
@@ -21395,17 +21490,19 @@ def _render_subtitled_variant(
     speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None,
     speech_cleanup_source_clip_id: str | None = None,
     speech_cleanup_uses_preflight: bool | None = None,
+    caption_language_request: str | None = None,
 ) -> dict[str, Any]:
     """Render the subtitled single-clip variant.
 
     Lean path (NOT the narrated assembler — no voiceover, no reflow): reframe the ONE
     uploaded clip to 9:16 keeping its OWN audio (LUFS-normalized), transcribe that
-    audio (whisper-1 + `language` hint → reliable Turkish + English), and burn editable
-    sentence-block captions at the platform-safe MarginV over a cached caption-free
-    base. The clip renders 1:1 (no trim/speed) so word/cue times need no clip→assembled
-    rebasing. Never raises for a per-variant failure (matches the other render fns) —
-    a corrupt clip / empty transcript becomes a failure record, and a no-speech clip
-    still ships the clean video (the UI shows the empty-caption state).
+    audio (whisper-1, auto-detecting the SPOKEN language unless the creator explicitly
+    asked for a different caption language — see `caption_language_request`), and burn
+    editable sentence-block captions at the platform-safe MarginV over a cached
+    caption-free base. The clip renders 1:1 (no trim/speed) so word/cue times need no
+    clip→assembled rebasing. Never raises for a per-variant failure (matches the other
+    render fns) — a corrupt clip / empty transcript becomes a failure record, and a
+    no-speech clip still ships the clean video (the UI shows the empty-caption state).
 
     Reuses the narrated caption keys (`voiceover_caption_style` / `voiceover_caption_font`)
     so the finalize whitelist, the on-video CaptionEditor, and the reburn all work
@@ -21419,6 +21516,11 @@ def _render_subtitled_variant(
     carries checked preflight words, captions may reuse them without applying cuts.
     """
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
+    from app.pipeline.caption_language import (  # noqa: PLC0415
+        SOURCE_DETECTED,
+        SUPPORTED_CAPTION_LANGUAGES,
+        resolve_spoken_caption_language,
+    )
     from app.pipeline.captions import (  # noqa: PLC0415
         build_plain_cues,
         generate_ass_from_cues,
@@ -21446,6 +21548,17 @@ def _render_subtitled_variant(
 
     variant_id = spec["variant_id"]
     storage_generation = spec.get("storage_generation")
+    # KRI-177: the creator's explicit "captions in <language>" request, already
+    # parsed + validated by the dispatcher (`parse_caption_language_request`).
+    # Re-validated here too — a stray/legacy value must never silently become
+    # a caption-language override.
+    caption_language_req: str | None = (
+        caption_language_request.strip().lower()
+        if isinstance(caption_language_request, str)
+        else None
+    )
+    if caption_language_req not in SUPPORTED_CAPTION_LANGUAGES:
+        caption_language_req = None
     cleanup_required = speech_cleanup_contract == "required_v1"
     cleanup_off = speech_cleanup_contract == "off_v1"
     if speech_cleanup_uses_preflight is None:
@@ -21506,6 +21619,117 @@ def _render_subtitled_variant(
             for word in remap_words(words, plan)
             if not is_filler_token(word["text"])
         ]
+
+    def _words_text(words: list | None) -> str:
+        """Join a verbatim word list's text — the only transcript-text signal
+        available for the empty-detection language guess in the silence-cut /
+        checked-uncut branches (they never hold a `Transcript.full_text`)."""
+        parts = []
+        for word in words or []:
+            text = word["text"] if isinstance(word, dict) else getattr(word, "text", "")
+            if text:
+                parts.append(str(text))
+        return " ".join(parts)
+
+    def _record_caption_language_fallback(source: str, resolved_lang: str) -> None:
+        record_pipeline_event(
+            "captions",
+            "caption_language_fallback",
+            {
+                "variant_id": variant_id,
+                "source": source,
+                "language": resolved_lang,
+                "job_language": language,
+            },
+        )
+        log.warning(
+            "caption_language_fallback",
+            job_id=job_id,
+            variant_id=variant_id,
+            source=source,
+            language=resolved_lang,
+            job_language=language,
+        )
+
+    def _resolve_spoken_lang(detected: str | None, *, transcript_text: str | None) -> str:
+        """Whisper's detected language → a text guess → the job language, in that
+        order (KRI-177): captions default to the SPOKEN language of the clip, never
+        silently to the plan's UI/content language. A non-``detected`` source is
+        always recorded — it is a deliberate, traceable fallback, never a silent win.
+        """
+        resolved, source = resolve_spoken_caption_language(
+            detected, transcript_text=transcript_text, fallback=language
+        )
+        if source != SOURCE_DETECTED:
+            _record_caption_language_fallback(source, resolved)
+        return resolved
+
+    def _resolve_verbatim_caption_language(detected: str, *, words: list) -> tuple[str, list]:
+        """Resolve the caption language for an already-extracted verbatim word list
+        (silence-cut / checked-uncut), honoring an explicit creator override.
+
+        Returns ``(final_lang, words)`` — ``words`` is the input list untouched when
+        no override applies, or a fresh original-clip transcript (same shape: a
+        ``Word`` list on the ORIGINAL clip timeline) when the creator asked for a
+        different caption language than the one actually spoken. Callers apply the
+        SAME downstream transform (``_cut_caption_words`` remap, or none for the
+        uncut path) to whichever list comes back, since both are original-clip-
+        timeline verbatim words.
+        """
+        spoken_lang = _resolve_spoken_lang(detected, transcript_text=_words_text(words))
+        if caption_language_req is None or caption_language_req == spoken_lang:
+            return spoken_lang, words
+        override_transcript = transcribe_whisper_cached(clip_path, language=caption_language_req)
+        if not override_transcript.words:
+            record_pipeline_event(
+                "captions",
+                "caption_language_request_empty",
+                {
+                    "variant_id": variant_id,
+                    "requested": caption_language_req,
+                    "spoken": spoken_lang,
+                },
+            )
+            log.warning(
+                "caption_language_request_empty",
+                job_id=job_id,
+                variant_id=variant_id,
+                requested=caption_language_req,
+                spoken=spoken_lang,
+            )
+            return spoken_lang, words
+        record_pipeline_event(
+            "captions",
+            "caption_language_requested",
+            {
+                "variant_id": variant_id,
+                "requested": caption_language_req,
+                "spoken": spoken_lang,
+            },
+        )
+        return caption_language_req, override_transcript.words
+
+    def _resolve_live_transcript_language(transcript: Any) -> str:
+        """Resolve the caption language for a branch that transcribes live (the
+        transcription call itself already honored `caption_language_req` as the
+        whisper hint — see call sites below). Still runs the fallback chain so an
+        empty `transcript.language` (e.g. a silent clip, or a hinted pass that found
+        no speech) is a recorded, deliberate choice rather than a silent "en"."""
+        spoken_lang = _resolve_spoken_lang(
+            transcript.language, transcript_text=getattr(transcript, "full_text", None)
+        )
+        if caption_language_req is None:
+            return spoken_lang
+        record_pipeline_event(
+            "captions",
+            "caption_language_requested",
+            {
+                "variant_id": variant_id,
+                "requested": caption_language_req,
+                "spoken": spoken_lang,
+            },
+        )
+        return caption_language_req
 
     # Caption style: "word" → word-by-word lime pop (line visible, active word popped);
     # anything else → sentence blocks (the safe default). Reuses the narrated key.
@@ -21590,7 +21814,10 @@ def _render_subtitled_variant(
         "caption_font_user_edited": spec.get("caption_font_user_edited"),
         "caption_position_user_edited": spec.get("caption_position_user_edited"),
         # Language the captions were transcribed in (ISO "en"/"tr"). Shown as the editor
-        # chip; the re-transcribe override reads + rewrites it.
+        # chip; the re-transcribe override reads + rewrites it. Placeholder only —
+        # every return path below overwrites this with the resolved `detected_lang`
+        # (KRI-177: the SPOKEN language, or the creator's explicit override; never
+        # silently the plan/job language `language` used here).
         "caption_language": (language or "en"),
         "ai_timeline": None,
         "resolved_archetype": "subtitled",
@@ -21870,18 +22097,24 @@ def _render_subtitled_variant(
         smart_compiled = None
         if smart_v2:
             if sc_words is not None:
-                caption_words = _cut_caption_words(sc_words, sc_plan)
-                detected_lang = sc_language or detected_lang
+                detected_lang, resolved_sc_words = _resolve_verbatim_caption_language(
+                    sc_language, words=sc_words
+                )
+                caption_words = _cut_caption_words(resolved_sc_words, sc_plan)
                 cues = build_plain_cues(caption_words, attach_words=True)
             elif checked_uncut_words is not None:
-                detected_lang = checked_uncut_language or detected_lang
-                cues = build_plain_cues(checked_uncut_words, attach_words=True)
+                detected_lang, resolved_uncut_words = _resolve_verbatim_caption_language(
+                    checked_uncut_language, words=checked_uncut_words
+                )
+                cues = build_plain_cues(resolved_uncut_words, attach_words=True)
             else:
                 # Content-addressed cache: re-renders of the same clip reuse the
                 # identical transcript (plan 012 P1-4), so captions stop drifting
                 # run-to-run. Fail-open to a live transcribe on any cache error.
+                # `caption_language_req` (an explicit creator override, if any) is
+                # passed as the whisper hint — auto-detect (None) otherwise.
                 transcript_t0 = time.monotonic()
-                transcript = transcribe_whisper_cached(clip_path, language=None)
+                transcript = transcribe_whisper_cached(clip_path, language=caption_language_req)
                 _record_stage(
                     "transcription",
                     elapsed_ms=int((time.monotonic() - transcript_t0) * 1000),
@@ -21891,7 +22124,7 @@ def _render_subtitled_variant(
                     },
                     counts={"word_count": len(transcript.words)},
                 )
-                detected_lang = transcript.language or detected_lang
+                detected_lang = _resolve_live_transcript_language(transcript)
                 cues = build_plain_cues(transcript.words, attach_words=True)
             with _stage_timer("caption_correction", counts={"cue_count": len(cues)}):
                 cues = correct_caption_cues(
@@ -22065,8 +22298,8 @@ def _render_subtitled_variant(
             # cannot be folded into the already-complete reframe and are recorded
             # as omitted; all non-camera Smart lanes can still ship.
             with _stage_timer("transcription", cache={"name": "transcript", "status": "live"}):
-                transcript = transcribe_whisper(base_path, language=None)
-            detected_lang = transcript.language or (language or "en")
+                transcript = transcribe_whisper(base_path, language=caption_language_req)
+            detected_lang = _resolve_live_transcript_language(transcript)
             cues = build_plain_cues(transcript.words, attach_words=True)
             cues = correct_caption_cues(
                 cues,
@@ -22131,25 +22364,33 @@ def _render_subtitled_variant(
             # arithmetic — see silence_cut.remap_words), MINUS every lexicon
             # filler token. Caption hygiene (15A): fillers never reach captions
             # even when they were NOT cut from the video (e.g. blocked by the
-            # segment-signal guard or below MIN_CUT_S).
-            caption_words = _cut_caption_words(sc_words, sc_plan)
-            detected_lang = sc_language or (language or "en")
+            # segment-signal guard or below MIN_CUT_S). An explicit creator
+            # language request that differs from what was actually spoken DOES
+            # trigger a second, hinted transcription — see
+            # `_resolve_verbatim_caption_language`.
+            detected_lang, resolved_sc_words = _resolve_verbatim_caption_language(
+                sc_language, words=sc_words
+            )
+            caption_words = _cut_caption_words(resolved_sc_words, sc_plan)
             cues = build_plain_cues(caption_words, attach_words=True)
         elif not smart_v2 and checked_uncut_words is not None:
             # Explicit keep-original means the exact accepted words and source
             # timing reach captions verbatim, including fillers.
-            detected_lang = checked_uncut_language or (language or "en")
-            cues = build_plain_cues(checked_uncut_words, attach_words=True)
+            detected_lang, resolved_uncut_words = _resolve_verbatim_caption_language(
+                checked_uncut_language, words=checked_uncut_words
+            )
+            cues = build_plain_cues(resolved_uncut_words, attach_words=True)
         elif not smart_v2:
             # Flag-off / gated / analysis-failed path — today's flow, unchanged.
             # Subtitled captions the SPOKEN language of the clip: auto-detect
-            # (language=None), NOT the plan's content language — a Turkish clip must
-            # get Turkish captions even in an English plan. The user can still
-            # override the detected language via the D5 chip (re-transcribe).
-            # Persist the detected language so the chip shows it.
+            # (language=None) unless the creator explicitly asked for a specific
+            # caption language, NOT the plan's content language — a Turkish clip
+            # must get Turkish captions even in an English plan. The user can
+            # still override the detected language via the D5 chip
+            # (re-transcribe). Persist the detected language so the chip shows it.
             with _stage_timer("transcription", cache={"name": "transcript", "status": "live"}):
-                transcript = transcribe_whisper(base_path, language=None)
-            detected_lang = transcript.language or (language or "en")
+                transcript = transcribe_whisper(base_path, language=caption_language_req)
+            detected_lang = _resolve_live_transcript_language(transcript)
             # Word mode attaches each cue's real per-word timings so the highlight
             # (and any reburn of an UNedited cue) stays locked to the audio.
             # Always attach real word timings (both styles): the sentence re-split

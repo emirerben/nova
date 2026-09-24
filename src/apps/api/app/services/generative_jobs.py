@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 import uuid
 
+import structlog
+
 from app.agents._schemas.edit_format import (
     DAY_VLOG_RENDERER_VERSION,
     DEFAULT_EDIT_FORMAT,
@@ -24,6 +26,7 @@ from app.agents._schemas.edit_format import (
     coerce_edit_format,
 )
 from app.models import Job
+from app.pipeline.caption_language import parse_caption_language_request
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
 from app.schemas.montage_preset import (
     DEFAULT_MONTAGE_PRESET,
@@ -31,6 +34,8 @@ from app.schemas.montage_preset import (
 )
 from app.services.generative_upload_paths import direct_clip_owner
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
+
+log = structlog.get_logger()
 
 DEFAULT_PLATFORMS = ["tiktok", "instagram", "youtube"]
 CONTENT_PLAN_PRIMARY_VARIANT_POLICY = "content_plan_primary"
@@ -509,6 +514,20 @@ def build_generative_job(
     bounded_creator_request = str(creator_request or "").strip()[:_MAX_CREATOR_REQUEST_CHARS]
     if bounded_creator_request:
         all_candidates["creator_request"] = bounded_creator_request
+        # KRI-177: the ONLY thing that may move talking-to-camera captions off the
+        # spoken language is the creator explicitly asking for another language in
+        # their own words (never a UI language setting or plan-copy). Grounded,
+        # deterministic parse — see app/pipeline/caption_language.py. Omitted
+        # entirely (not even `None`) when nothing was explicitly requested, so
+        # every pre-feature job keeps its exact all_candidates shape.
+        caption_language_request = parse_caption_language_request(bounded_creator_request)
+        if caption_language_request is not None:
+            all_candidates["caption_language_request"] = caption_language_request
+            log.info(
+                "caption_language_request_parsed",
+                requested_language=caption_language_request,
+                mode=mode,
+            )
     if creator_clip_order:
         normalized_creator_order: list[int] = []
         for value in creator_clip_order:

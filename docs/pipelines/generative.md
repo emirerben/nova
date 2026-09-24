@@ -115,6 +115,19 @@ Unsupported caption, talking-head, collage, and visual-block variants continue
 to report a non-editable orientation capability. Roll back in reverse order:
 Vercel off first, then Fly.
 
+**Caption language (KRI-177):** subtitled captions (cloud `_render_subtitled_variant`
+and phone `_run_phone_subtitled_job`) are in the clip's SPOKEN language: whisper
+auto-detects it. When whisper reports no language, `resolve_spoken_caption_language`
+(`app/pipeline/caption_language.py`) guesses EN/TR from the transcript text, and only
+then falls back to the job `language`. Both fallbacks record a
+`caption_language_fallback` pipeline event. The only override is an explicit request
+in the creator's own words ("captions in English", "altyazılar Türkçe olsun"). The
+override is parsed in `build_generative_job` into `all_candidates["caption_language_request"]`
+and passed to whisper as the language hint, the same as the D5 re-transcribe
+chip. A prompt merely *written* in a language never changes it. Known gap: Kria
+runtime-v2 dispatches with an LLM summary instead of the creator's text, so that
+path does not pick up requests yet.
+
 **Smart Captions (server-only flag):** set `SMART_CAPTIONS_ENABLED=true` on Fly
 and restart the API/workers. There is deliberately no `NEXT_PUBLIC` twin. A
 creator is eligible only when `SUBTITLED_ARCHETYPE_ENABLED=true`, the plan item
