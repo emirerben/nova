@@ -4254,6 +4254,59 @@ def test_job_projection_carries_a_human_failure_message_not_the_raw_code() -> No
     assert _job_projection(None) is None
 
 
+def test_job_projection_render_notes_absent_and_present() -> None:
+    """KRI-178: `_job_projection` gains a creator-safe `render_notes` list,
+    derived from the PRIMARY variant's `phone_beat_receipt` (the same "first
+    variant dict with a `variant_id`" rule `creator_sessions.py` uses).
+    Absent on any job that never carried reaction beats; present + humanized
+    when the primary variant's receipt has something to say."""
+    no_receipt_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="variants_ready",
+        current_phase=None,
+        failure_reason=None,
+        assembly_plan={"variants": [{"variant_id": "subtitled", "render_status": "ready"}]},
+    )
+    assert _job_projection(no_receipt_job)["render_notes"] == []
+
+    no_variants_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="processing",
+        current_phase="assemble",
+        failure_reason=None,
+        assembly_plan={"variants": []},
+    )
+    assert _job_projection(no_variants_job)["render_notes"] == []
+
+    receipt = {
+        "version": 1,
+        "matcher": "phrase",
+        "face_sampling": "ok",
+        "placed": [{"beat_id": "beat-0", "trigger": "goal", "at_s": 1.0, "end_s": 2.0}],
+        "unplaced": [{"beat_id": "beat-1", "trigger": "when he scores", "reason": "never_heard"}],
+        "closing": {"status": "none", "badge": "none"},
+    }
+    receipt_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="variants_ready",
+        current_phase=None,
+        failure_reason=None,
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "render_status": "ready",
+                    "phone_beat_receipt": receipt,
+                }
+            ]
+        },
+    )
+    assert _job_projection(receipt_job)["render_notes"] == [
+        "Placed 1 of 2 moments you named",
+        'I never heard "when he scores", so its photo or sound wasn\'t shown',
+    ]
+
+
 @pytest.mark.asyncio
 async def test_action_idempotency_rejects_changed_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     user = SimpleNamespace(id=uuid.uuid4())

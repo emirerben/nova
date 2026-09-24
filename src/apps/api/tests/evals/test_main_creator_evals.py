@@ -135,3 +135,21 @@ def test_main_creator_eval(
         # Every exact copy field must survive the verbatim-evidence boundary.
         for field, value in exact_copy.items():
             assert getattr(grounded, field) == value, field
+
+    if fixture.meta.get("reaction_beats"):
+        # KRI-178: a phone-Talking request naming specific photo/sticker and
+        # sound moments must come back with a non-empty `reaction_beats` list
+        # and a `closing_media` pin, never a `licensed_sfx` request (beats own
+        # sound placement on this manifest), and the edit format must stay
+        # the phone-Talking `subtitled` archetype.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert strategy["edit_format"] == "subtitled"
+        beats = strategy.get("reaction_beats") or []
+        assert beats, "expected at least one reaction beat"
+        for beat in beats:
+            assert beat.get("visual_id") or beat.get("sound"), beat
+        assert strategy.get("closing_media") is not None
+        assert strategy.get("licensed_sfx") is None

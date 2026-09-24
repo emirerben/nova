@@ -140,6 +140,89 @@ def _load_ready_pool_assets(
         ]
 
 
+def resolve_phone_card_geometry(
+    overlays: list[dict[str, Any]],
+    *,
+    clip_path: str | None,
+    job_id: str,
+    footprints_by_id: dict[str, MediaFootprint],
+) -> tuple[dict[str, dict[str, Any]], dict[str, str], str]:
+    """Face-aware, caption-safe geometry arbitration shared by every phone
+    card-placement grounding module (KRI-176 overlay grounding, KRI-178
+    reaction-beat grounding).
+
+    ``overlays`` are candidate cards, each already carrying ``id``,
+    ``start_s``, ``end_s`` and a STARTING ``x_frac``/``y_frac``/``scale`` --
+    the caller decides that starting geometry per card kind (e.g. the photo
+    vs. sticker default slot) before calling this. Sampling anchors are
+    derived from every card's own window, and this function fails open on a
+    face-sampling error exactly like `ground_phone_subtitled_overlays` always
+    has (no face regions, ``face_sampling == "failed"``).
+
+    Returns ``(resolved_by_id, reason_by_id, face_sampling)``:
+
+    - ``resolved_by_id``: surviving card id -> arbitration's resolved overlay
+      dict (its ``x_frac``/``y_frac``/``scale`` may have moved or shrunk).
+    - ``reason_by_id``: omitted card id -> ``"no_safe_spot"`` or ``"duplicate"``.
+    - ``face_sampling``: ``"ok"`` | ``"failed"`` | ``"skipped"``.
+    """
+
+    anchors: list[float] = []
+    for overlay in overlays:
+        start_s = float(overlay.get("start_s") or 0.0)
+        end_s = float(overlay.get("end_s") or start_s)
+        anchors.extend(_evenly_spaced_anchors(start_s, end_s, _MAX_FACE_ANCHORS_PER_CARD))
+    anchors = anchors[:_MAX_FACE_ANCHORS_TOTAL]
+
+    face_regions: list[ProtectedRegion] = []
+    face_sampling = "skipped"
+    if clip_path is not None and overlays:
+        try:
+            face_regions, _receipt = sample_face_regions(
+                clip_path,
+                anchors,
+                max_samples=max(len(anchors), 1),
+                timeout_s=(
+                    _FACE_SAMPLE_TIMEOUT_BASE_S + _FACE_SAMPLE_TIMEOUT_PER_ANCHOR_S * len(anchors)
+                ),
+                count_decoded=False,
+            )
+            face_sampling = "ok"
+        except Exception as exc:  # noqa: BLE001 - fail open: keep no face regions
+            log.warning(
+                "phone_overlay_grounding.face_sampling_failed",
+                job_id=job_id,
+                error=str(exc)[:200],
+            )
+            face_regions = []
+            face_sampling = "failed"
+
+    protected_boxes: list[ProtectedRegion] = [
+        ProtectedRegion(
+            0.0,
+            float("inf"),
+            NormalizedBox(0.0, _CAPTION_PROTECTED_TOP_FRAC, 1.0, 1.0),
+            kind="captions",
+        ),
+        *face_regions,
+    ]
+    resolved, receipts = arbitrate_media_overlays(
+        overlays,
+        protected_boxes=protected_boxes,
+        footprints_by_id=footprints_by_id,
+        max_iou=_MAX_ARBITRATION_IOU,
+    )
+    resolved_by_id: dict[str, dict[str, Any]] = {str(o.get("id")): o for o in resolved}
+    reason_by_id: dict[str, str] = {}
+    for r in receipts:
+        decision = r.get("decision")
+        if decision == "omitted_no_safe_candidate":
+            reason_by_id[str(r.get("id"))] = "no_safe_spot"
+        elif decision == "omitted_duplicate_asset":
+            reason_by_id[str(r.get("id"))] = "duplicate"
+    return resolved_by_id, reason_by_id, face_sampling
+
+
 def _match_placements(
     *,
     job_id: str,
@@ -318,7 +401,6 @@ def ground_phone_subtitled_overlays(
     suggestion_by_id: dict[str, dict] = {}
     overlays_for_arbitration: list[dict[str, Any]] = []
     footprints_by_id: dict[str, MediaFootprint] = {}
-    anchors: list[float] = []
     for suggestion in suggestions:
         overlay = suggestion["overlay"]
         oid = str(overlay["id"])
@@ -341,55 +423,13 @@ def ground_phone_subtitled_overlays(
                 "end_s": end_s,
             }
         )
-        anchors.extend(_evenly_spaced_anchors(start_s, end_s, _MAX_FACE_ANCHORS_PER_CARD))
-    anchors = anchors[:_MAX_FACE_ANCHORS_TOTAL]
 
-    face_regions: list[ProtectedRegion] = []
-    face_sampling = "skipped"
-    if clip_path is not None and overlays_for_arbitration:
-        try:
-            face_regions, _receipt = sample_face_regions(
-                clip_path,
-                anchors,
-                max_samples=max(len(anchors), 1),
-                timeout_s=(
-                    _FACE_SAMPLE_TIMEOUT_BASE_S + _FACE_SAMPLE_TIMEOUT_PER_ANCHOR_S * len(anchors)
-                ),
-                count_decoded=False,
-            )
-            face_sampling = "ok"
-        except Exception as exc:  # noqa: BLE001 - fail open: keep no face regions
-            log.warning(
-                "phone_overlay_grounding.face_sampling_failed",
-                job_id=job_id,
-                error=str(exc)[:200],
-            )
-            face_regions = []
-            face_sampling = "failed"
-
-    protected_boxes: list[ProtectedRegion] = [
-        ProtectedRegion(
-            0.0,
-            float("inf"),
-            NormalizedBox(0.0, _CAPTION_PROTECTED_TOP_FRAC, 1.0, 1.0),
-            kind="captions",
-        ),
-        *face_regions,
-    ]
-    resolved, receipts = arbitrate_media_overlays(
+    resolved_by_id, arbitration_reason_by_id, face_sampling = resolve_phone_card_geometry(
         overlays_for_arbitration,
-        protected_boxes=protected_boxes,
+        clip_path=clip_path,
+        job_id=job_id,
         footprints_by_id=footprints_by_id,
-        max_iou=_MAX_ARBITRATION_IOU,
     )
-    resolved_by_id = {str(o.get("id")): o for o in resolved}
-    arbitration_reason_by_id: dict[str, str] = {}
-    for r in receipts:
-        decision = r.get("decision")
-        if decision == "omitted_no_safe_candidate":
-            arbitration_reason_by_id[str(r.get("id"))] = "no_safe_spot"
-        elif decision == "omitted_duplicate_asset":
-            arbitration_reason_by_id[str(r.get("id"))] = "duplicate"
 
     cards: list[SubtitledOverlayCard] = []
     for oid, suggestion in suggestion_by_id.items():

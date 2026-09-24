@@ -414,6 +414,15 @@ async def resolve_item_creator_context(
             "kind": kind,
             "duration_s": _positive_duration_s(asset.duration_s),
             "creator_context": context or None,
+            # KRI-178: the uploaded filename ("02_greenwood.png") is the only
+            # signal that can distinguish otherwise-identical pool images
+            # (e.g. reaction-beat stickers/photos) when the creator names them
+            # by file. Deliberately media_context-only, never on
+            # `CreatorMediaRef.label` -- that field is part of
+            # `canonical_manifest_hash`, and folding the filename into it
+            # would flip every in-flight thread's manifest hash and trip the
+            # "Footage or capabilities changed" confirm fence for no reason.
+            "filename": _clean(getattr(asset, "source_filename", None), 160) or None,
             # AI evidence is clearly segregated and must never be copied to
             # on-screen text (also enforced in the main prompt).
             "analysis_only_not_copy": _chat_evidence(analysis, kind=kind),

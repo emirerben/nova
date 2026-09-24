@@ -54,6 +54,7 @@ from app.services.phone_rollout import (
     phone_guided_narration_supported,
     phone_render_supported_formats,
     phone_subtitled_overlays_supported,
+    phone_subtitled_reaction_beats_supported,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -63,6 +64,9 @@ CAPABILITY_DISPATCH_RENDER = "dispatch_render"
 CAPABILITY_SELECT_READY_VARIANT = "select_ready_variant"
 CAPABILITY_CAPTION_STYLE = "caption_style"
 CAPABILITY_AUTOMATIC_CUT = "automatic_cut"
+# KRI-178: name/word-triggered photo/sticker + sound reaction beats on a
+# phone-rendered `subtitled` (Talking) edit.
+CAPABILITY_REACTION_BEATS = "reaction_beats"
 
 
 class CreatorSfxUnavailableError(CreatorStrategyError):
@@ -621,6 +625,41 @@ def resolve_creator_manifest(
                         f"{candidate_format} does not render on this iPhone yet",
                     )
                 capabilities[f"phone_format:{candidate_format}"] = phone_format_capability
+    # KRI-178: `reaction_beats` is resolved on EVERY manifest (cloud and
+    # phone alike), unlike `media_overlays` above which is only touched
+    # inside the phone-only branch -- a cloud manifest, or any phone
+    # manifest that isn't a `subtitled` (Talking) edit, always advertises
+    # this capability unavailable with reason_code `phone_talking_only`
+    # (the feature is phone-Talking-only by design, not a rollout gap).
+    # A phone `subtitled` manifest instead reports `unsupported_on_phone`
+    # when the gate (media_overlays availability +
+    # `phone_rollout.phone_subtitled_reaction_beats_supported()`, the
+    # single source of truth also consulted by `_run_phone_subtitled_job`)
+    # fails, so the manifest never advertises a lane the worker would
+    # then skip.
+    is_phone_subtitled = (
+        phone_source_media_ids is not None
+        and capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO) is not None
+        and capabilities[CAPABILITY_PHONE_SOURCE_AUDIO].available
+        and normalized_format == "subtitled"
+    )
+    if is_phone_subtitled:
+        if (
+            capabilities.get("media_overlays", _unavailable("x", "x")).available
+            and phone_subtitled_reaction_beats_supported()
+        ):
+            capabilities[CAPABILITY_REACTION_BEATS] = _available()
+        else:
+            capabilities[CAPABILITY_REACTION_BEATS] = _unavailable(
+                "unsupported_on_phone",
+                "reaction beats cannot render on this iPhone deployment yet",
+            )
+    else:
+        capabilities[CAPABILITY_REACTION_BEATS] = _unavailable(
+            "phone_talking_only",
+            "reaction beats are only available on an iPhone talking-to-camera edit",
+        )
+
     if capabilities["main_creator_agent"].available and not getattr(
         settings, "main_creator_agent_rollout_percent", 0
     ):
@@ -669,6 +708,88 @@ def resolve_creator_manifest(
     return manifest.model_copy(update={"manifest_hash": canonical_manifest_hash(manifest)})
 
 
+def _repair_creator_reaction_beats(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> tuple[CreativeStrategy, list[str]]:
+    """KRI-178: repair (never reject) `reaction_beats`/`closing_media` against
+    the live manifest, the same shape `repair_creator_strategy_shape` uses for
+    a stale story shape -- an unavailable capability, an unresolved image
+    reference, or an unresolved sound description are all silently downgraded
+    with a plain-language notice instead of failing the whole strategy.
+
+    Repair (a): the capability is unavailable for this manifest -> drop both
+    fields entirely.
+    Repairs (b)/(c): resolve every `visual_id`/`badge_visual_id` against an
+    owned IMAGE media entry (drop the beat, or fall back to no closing media,
+    when it doesn't resolve) and every `sound` against the sound-effect
+    catalog (canonical id when it matches, otherwise left as the creator's own
+    words for the worker to resolve by description).
+    """
+
+    if strategy.reaction_beats is None and strategy.closing_media is None:
+        return strategy, []
+
+    notices: list[str] = []
+    reaction_beats_cap = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    if reaction_beats_cap is None or not reaction_beats_cap.available:
+        notices.append(
+            "Sound and photo pop-ins timed to your words aren't available for this "
+            "edit yet; left them out."
+        )
+        return (
+            strategy.model_copy(update={"reaction_beats": None, "closing_media": None}),
+            notices,
+        )
+
+    def _resolve_sound(sound: str | None) -> str | None:
+        if sound is None:
+            return None
+        resolved = resolve_creator_sfx_catalog_ref(manifest, sound)
+        return resolved.catalog_id if resolved is not None else sound
+
+    beats = []
+    for beat in strategy.reaction_beats or []:
+        visual_id = beat.visual_id
+        if visual_id is not None:
+            resolved_media = resolve_creator_image_media_ref(manifest, visual_id)
+            if resolved_media is None:
+                notices.append(f"Couldn't find \"{beat.trigger}\"'s photo/sticker; left it out.")
+                continue
+            visual_id = resolved_media.media_id
+        beats.append(
+            beat.model_copy(update={"visual_id": visual_id, "sound": _resolve_sound(beat.sound)})
+        )
+    resolved_beats = beats or None
+
+    closing = strategy.closing_media
+    if closing is not None:
+        resolved_closing_media = resolve_creator_image_media_ref(manifest, closing.visual_id)
+        if resolved_closing_media is None:
+            notices.append("Couldn't find the closing photo you named; kept the normal ending.")
+            closing = None
+        else:
+            resolved_badge = (
+                resolve_creator_image_media_ref(manifest, closing.badge_visual_id)
+                if closing.badge_visual_id is not None
+                else None
+            )
+            if closing.badge_visual_id is not None and resolved_badge is None:
+                notices.append("Couldn't find the closing badge you named; left it off.")
+            closing = closing.model_copy(
+                update={
+                    "visual_id": resolved_closing_media.media_id,
+                    "badge_visual_id": (
+                        resolved_badge.media_id if resolved_badge is not None else None
+                    ),
+                }
+            )
+
+    return (
+        strategy.model_copy(update={"reaction_beats": resolved_beats, "closing_media": closing}),
+        notices,
+    )
+
+
 def compile_strategy_to_plan(
     manifest: ResolvedCreatorManifest,
     strategy: CreativeStrategy,
@@ -689,6 +810,13 @@ def compile_strategy_to_plan(
         strategy,
         shapes_enabled=settings.creator_montage_shapes_enabled,
     )
+    # KRI-178 repair (a): beats/closing present but the capability is
+    # unavailable for this manifest -- strip them with a plain notice
+    # rather than rejecting the whole strategy. Repairs (b)/(c) (resolving
+    # visual_id/badge_visual_id/sound against the live manifest) happen in
+    # the same pass.
+    strategy, beat_notices = _repair_creator_reaction_beats(manifest, strategy)
+    shape_notices = [*shape_notices, *beat_notices]
     try:
         strategy = normalize_creator_strategy_media(manifest, strategy)
     except (MixedMediaTimingUnavailableError, MontageCadenceUnavailableError):
@@ -713,25 +841,43 @@ def compile_strategy_to_plan(
             "sound_effects", _unavailable("not_advertised", "sound effects are unavailable")
         )
         if not sound_effects.available:
-            raise CreatorSfxUnavailableError(
-                # No other effect would work either, so don't suggest one.
-                "Sound effects can't render on your iPhone yet. "
-                "Ask for this edit without the sound effect."
-                if sound_effects.reason_code == "unsupported_on_phone"
-                else "The requested licensed sound effect is unavailable. Choose another effect."
+            reaction_beats_cap = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+            if reaction_beats_cap is not None and reaction_beats_cap.available:
+                # KRI-178 repair (d): the beats lane places sound at the exact
+                # moments the creator named -- drop the unavailable general
+                # sound-effect treatment instead of failing the whole strategy.
+                strategy = strategy.model_copy(update={"licensed_sfx": None})
+                licensed_sfx = None
+                shape_notices.append(
+                    "Sound effects on iPhone are placed at the moments you named; the "
+                    "general sound-effect treatment was left out."
+                )
+            else:
+                raise CreatorSfxUnavailableError(
+                    # No other effect would work either, so don't suggest one.
+                    "Sound effects can't render on your iPhone yet. "
+                    "Ask for this edit without the sound effect."
+                    if sound_effects.reason_code == "unsupported_on_phone"
+                    else (
+                        "The requested licensed sound effect is unavailable. Choose another effect."
+                    )
+                )
+        if licensed_sfx is not None:
+            resolved = resolve_creator_sfx_catalog_ref(manifest, licensed_sfx.effect_id)
+            if resolved is None:
+                raise CreatorSfxUnavailableError(
+                    f"The requested licensed sound effect {licensed_sfx.effect_id!r} "
+                    "is unavailable."
+                )
+            # Persist the canonical server-owned id, including when the model or
+            # client supplied a different case or the catalog label was used.
+            strategy = strategy.model_copy(
+                update={
+                    "licensed_sfx": licensed_sfx.model_copy(
+                        update={"effect_id": resolved.catalog_id}
+                    )
+                }
             )
-        resolved = resolve_creator_sfx_catalog_ref(manifest, licensed_sfx.effect_id)
-        if resolved is None:
-            raise CreatorSfxUnavailableError(
-                f"The requested licensed sound effect {licensed_sfx.effect_id!r} is unavailable."
-            )
-        # Persist the canonical server-owned id, including when the model or
-        # client supplied a different case or the catalog label was used.
-        strategy = strategy.model_copy(
-            update={
-                "licensed_sfx": licensed_sfx.model_copy(update={"effect_id": resolved.catalog_id})
-            }
-        )
     if strategy.opening_title and strategy.edit_format == "subtitled":
         # Caption-owned subtitled edits still do not render a hero intro. Fail
         # at the plan boundary rather than silently dropping confirmed copy.
@@ -874,6 +1020,33 @@ def resolve_creator_sfx_catalog_ref(
     return matches[0]
 
 
+def resolve_creator_image_media_ref(
+    manifest: ResolvedCreatorManifest,
+    requested: str | None,
+) -> CreatorMediaRef | None:
+    """Resolve an owned IMAGE media_id or display label by exact
+    case-insensitive match (KRI-178 -- reaction-beat/closing-media
+    `visual_id`/`badge_visual_id` resolution).
+
+    Mirrors `resolve_creator_sfx_catalog_ref`'s contract exactly, scoped to
+    `manifest.media` entries of `kind == "image"` instead of the sound-effect
+    catalog: only the descriptive manifest is consulted here, never storage.
+    """
+
+    needle = " ".join(str(requested or "").split()).casefold()
+    if not needle:
+        return None
+    images = [item for item in manifest.media if item.kind == "image"]
+    matches = [
+        item
+        for item in images
+        if item.media_id.casefold() == needle or (item.label or "").strip().casefold() == needle
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
 # Readable alias for callers that build rather than resolve a manifest.
 build_creator_manifest = resolve_creator_manifest
 
@@ -885,6 +1058,7 @@ __all__ = [
     "CAPABILITY_GUIDED_VOICEOVER",
     "CAPABILITY_GUIDED_STORY",
     "CAPABILITY_NATIVE_RENDER",
+    "CAPABILITY_REACTION_BEATS",
     "CAPABILITY_SELECT_READY_VARIANT",
     "CAPABILITY_SET_ITEM_INTENT",
     "CreatorCapabilityError",
@@ -895,6 +1069,7 @@ __all__ = [
     "compile_strategy_to_plan",
     "effective_render_program",
     "normalize_creator_strategy_media",
+    "resolve_creator_image_media_ref",
     "resolve_creator_manifest",
     "resolve_creator_sfx_catalog_ref",
 ]

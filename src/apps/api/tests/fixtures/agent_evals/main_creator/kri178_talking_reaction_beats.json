@@ -1,0 +1,344 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-09-24-v35",
+  "input": {
+    "user_message": "Use my uploaded player photos and stickers: pop up each player's photo when I say their name. When I say no after Mason Greenwood or Vlahović, show the red X and play a buzzer. When I say Rafael Leão or Leandro Trossard, show the green check with a ding. Show the rank badge when I say each number, and the GOAT badge on Salah. Finish on Salah's photo with the GOAT badge, with no extra clip after it. Add fun sound effects.",
+    "creator_context": "Football fan; posts weekly ranking videos talking to camera.",
+    "item_context": "A single talking-to-camera clip ranking five strikers, ending on Salah as the pick.",
+    "media_context": [
+      {
+        "media_id": "phone-a",
+        "kind": "video",
+        "creator_note": "talking-to-camera ranking clip"
+      },
+      {
+        "media_id": "asset-f2d8e14e-1cd8-4f4d-a3a0-77f9e4916e46",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "01_rank_3.png",
+        "analysis_only_not_copy": {}
+      },
+      {
+        "media_id": "asset-a50ea241-3de3-4c14-bd96-eb6c56135969",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "02_greenwood.png",
+        "analysis_only_not_copy": {
+          "subject": "Studio headshot graphic of Mason Greenwood in a Marseille kit"
+        }
+      },
+      {
+        "media_id": "asset-badc2b4a-7bef-4fc5-922b-144a2f6450ca",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "03_reject_x.png",
+        "analysis_only_not_copy": {}
+      },
+      {
+        "media_id": "asset-f242aad8-7351-4d8c-b1d5-8db03d73ea0a",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "04_leao.png",
+        "analysis_only_not_copy": {}
+      },
+      {
+        "media_id": "asset-38f08657-f124-4f93-91a4-3cf57b29c3a0",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "05_accept_check.png",
+        "analysis_only_not_copy": {}
+      },
+      {
+        "media_id": "asset-ebe13fb7-c58d-42ae-a17a-d512816659b0",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "06_rank_2.png",
+        "analysis_only_not_copy": {}
+      },
+      {
+        "media_id": "asset-620b084a-778b-41d0-8600-2c59a8496f15",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "07_vlahovic.png",
+        "analysis_only_not_copy": {}
+      },
+      {
+        "media_id": "asset-be70dc50-cdca-41e3-90c3-6791460ebe43",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "08_trossard.png",
+        "analysis_only_not_copy": {}
+      },
+      {
+        "media_id": "asset-a5bbe972-1424-4040-b758-94e1aff44910",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "09_rank_1.png",
+        "analysis_only_not_copy": {}
+      },
+      {
+        "media_id": "asset-8d53ff80-6c2f-484a-bef7-d70c410842a8",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "10_salah.png",
+        "analysis_only_not_copy": {
+          "subject": "Studio headshot graphic of Mohamed Salah in a Liverpool kit"
+        }
+      },
+      {
+        "media_id": "asset-96168b0d-e5b2-4f32-bd71-e1715c975882",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "11_goat_badge.png",
+        "analysis_only_not_copy": {}
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-kri178",
+      "edit_format": "subtitled",
+      "render_program": "native",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "phone-a",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "asset-f2d8e14e-1cd8-4f4d-a3a0-77f9e4916e46",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-a50ea241-3de3-4c14-bd96-eb6c56135969",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-badc2b4a-7bef-4fc5-922b-144a2f6450ca",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-f242aad8-7351-4d8c-b1d5-8db03d73ea0a",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-38f08657-f124-4f93-91a4-3cf57b29c3a0",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-ebe13fb7-c58d-42ae-a17a-d512816659b0",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-620b084a-778b-41d0-8600-2c59a8496f15",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-be70dc50-cdca-41e3-90c3-6791460ebe43",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-a5bbe972-1424-4040-b758-94e1aff44910",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-8d53ff80-6c2f-484a-bef7-d70c410842a8",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-96168b0d-e5b2-4f32-bd71-e1715c975882",
+          "kind": "image",
+          "label": null
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "sfx-wrong-buzzer-1",
+          "kind": "sound_effect",
+          "label": "Wrong buzzer"
+        },
+        {
+          "catalog_id": "sfx-correct-ding-1",
+          "kind": "sound_effect",
+          "label": "Correct ding"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "media_overlays": {
+          "available": true
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "sound_effects cannot render on the iPhone yet"
+        },
+        "reaction_beats": {
+          "available": true
+        },
+        "transitions": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "transitions cannot render on the iPhone yet"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "wide_looks cannot render on the iPhone yet"
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "manifest_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "creator_request": "Use my uploaded player photos and stickers: pop up each player's photo when I say their name. When I say no after Mason Greenwood or Vlahović, show the red X and play a buzzer. When I say Rafael Leão or Leandro Trossard, show the green check with a ding. Show the rank badge when I say each number, and the GOAT badge on Salah. Finish on Salah's photo with the GOAT badge, with no extra clip after it. Add fun sound effects.",
+    "creator_direction": "Talk to camera through the ranking, then land on Salah as the pick."
+  },
+  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"fast_montage\", \"edit_format\": \"subtitled\", \"audio_strategy\": \"original_audio\", \"render_program\": \"native\", \"target_duration_s\": 45, \"selected_media_ids\": [\"phone-a\"], \"reaction_beats\": [{\"beat_id\": \"greenwood-photo\", \"trigger\": \"Mason Greenwood\", \"visual_id\": \"asset-a50ea241-3de3-4c14-bd96-eb6c56135969\", \"visual_role\": \"photo\"}, {\"beat_id\": \"greenwood-no\", \"trigger\": \"no\", \"after\": \"Mason Greenwood\", \"visual_id\": \"asset-badc2b4a-7bef-4fc5-922b-144a2f6450ca\", \"visual_role\": \"sticker\", \"sound\": \"buzzer\"}, {\"beat_id\": \"leao-photo\", \"trigger\": \"Rafael Leão\", \"visual_id\": \"asset-f242aad8-7351-4d8c-b1d5-8db03d73ea0a\", \"visual_role\": \"photo\"}, {\"beat_id\": \"leao-check\", \"trigger\": \"Rafael Leão\", \"visual_id\": \"asset-38f08657-f124-4f93-91a4-3cf57b29c3a0\", \"visual_role\": \"sticker\", \"sound\": \"ding\"}, {\"beat_id\": \"rank-three\", \"trigger\": \"number three\", \"visual_id\": \"asset-f2d8e14e-1cd8-4f4d-a3a0-77f9e4916e46\", \"visual_role\": \"sticker\"}, {\"beat_id\": \"vlahovic-photo\", \"trigger\": \"Vlahović\", \"visual_id\": \"asset-620b084a-778b-41d0-8600-2c59a8496f15\", \"visual_role\": \"photo\"}, {\"beat_id\": \"vlahovic-no\", \"trigger\": \"no\", \"after\": \"Vlahović\", \"visual_id\": \"asset-badc2b4a-7bef-4fc5-922b-144a2f6450ca\", \"visual_role\": \"sticker\", \"sound\": \"buzzer\"}, {\"beat_id\": \"rank-two\", \"trigger\": \"number two\", \"visual_id\": \"asset-ebe13fb7-c58d-42ae-a17a-d512816659b0\", \"visual_role\": \"sticker\"}, {\"beat_id\": \"trossard-photo\", \"trigger\": \"Leandro Trossard\", \"visual_id\": \"asset-be70dc50-cdca-41e3-90c3-6791460ebe43\", \"visual_role\": \"photo\"}, {\"beat_id\": \"trossard-check\", \"trigger\": \"Leandro Trossard\", \"visual_id\": \"asset-38f08657-f124-4f93-91a4-3cf57b29c3a0\", \"visual_role\": \"sticker\", \"sound\": \"ding\"}, {\"beat_id\": \"rank-one\", \"trigger\": \"number one\", \"visual_id\": \"asset-a5bbe972-1424-4040-b758-94e1aff44910\", \"visual_role\": \"sticker\"}, {\"beat_id\": \"salah-photo\", \"trigger\": \"Salah\", \"visual_id\": \"asset-8d53ff80-6c2f-484a-bef7-d70c410842a8\", \"visual_role\": \"photo\"}, {\"beat_id\": \"salah-goat\", \"trigger\": \"Salah\", \"visual_id\": \"asset-96168b0d-e5b2-4f32-bd71-e1715c975882\", \"visual_role\": \"sticker\"}], \"closing_media\": {\"visual_id\": \"asset-8d53ff80-6c2f-484a-bef7-d70c410842a8\", \"badge_visual_id\": \"asset-96168b0d-e5b2-4f32-bd71-e1715c975882\", \"from_trigger\": \"Salah\"}, \"rationale\": \"Keep the whole talking-to-camera clip and time every pop-in to the exact name or number spoken, landing on Salah with the GOAT badge.\"}, \"summary\": \"Talking-to-camera ranking with each player's photo and the right/wrong sticker timed to your words -- only the sounds tied to the moments you named are added on iPhone, ending on Salah with the GOAT badge.\"}}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "fast_montage",
+        "edit_format": "subtitled",
+        "audio_strategy": "original_audio",
+        "render_program": "native",
+        "target_duration_s": 45,
+        "selected_media_ids": [
+          "phone-a"
+        ],
+        "reaction_beats": [
+          {
+            "beat_id": "greenwood-photo",
+            "trigger": "Mason Greenwood",
+            "visual_id": "asset-a50ea241-3de3-4c14-bd96-eb6c56135969",
+            "visual_role": "photo"
+          },
+          {
+            "beat_id": "greenwood-no",
+            "trigger": "no",
+            "after": "Mason Greenwood",
+            "visual_id": "asset-badc2b4a-7bef-4fc5-922b-144a2f6450ca",
+            "visual_role": "sticker",
+            "sound": "buzzer"
+          },
+          {
+            "beat_id": "leao-photo",
+            "trigger": "Rafael Leão",
+            "visual_id": "asset-f242aad8-7351-4d8c-b1d5-8db03d73ea0a",
+            "visual_role": "photo"
+          },
+          {
+            "beat_id": "leao-check",
+            "trigger": "Rafael Leão",
+            "visual_id": "asset-38f08657-f124-4f93-91a4-3cf57b29c3a0",
+            "visual_role": "sticker",
+            "sound": "ding"
+          },
+          {
+            "beat_id": "rank-three",
+            "trigger": "number three",
+            "visual_id": "asset-f2d8e14e-1cd8-4f4d-a3a0-77f9e4916e46",
+            "visual_role": "sticker"
+          },
+          {
+            "beat_id": "vlahovic-photo",
+            "trigger": "Vlahović",
+            "visual_id": "asset-620b084a-778b-41d0-8600-2c59a8496f15",
+            "visual_role": "photo"
+          },
+          {
+            "beat_id": "vlahovic-no",
+            "trigger": "no",
+            "after": "Vlahović",
+            "visual_id": "asset-badc2b4a-7bef-4fc5-922b-144a2f6450ca",
+            "visual_role": "sticker",
+            "sound": "buzzer"
+          },
+          {
+            "beat_id": "rank-two",
+            "trigger": "number two",
+            "visual_id": "asset-ebe13fb7-c58d-42ae-a17a-d512816659b0",
+            "visual_role": "sticker"
+          },
+          {
+            "beat_id": "trossard-photo",
+            "trigger": "Leandro Trossard",
+            "visual_id": "asset-be70dc50-cdca-41e3-90c3-6791460ebe43",
+            "visual_role": "photo"
+          },
+          {
+            "beat_id": "trossard-check",
+            "trigger": "Leandro Trossard",
+            "visual_id": "asset-38f08657-f124-4f93-91a4-3cf57b29c3a0",
+            "visual_role": "sticker",
+            "sound": "ding"
+          },
+          {
+            "beat_id": "rank-one",
+            "trigger": "number one",
+            "visual_id": "asset-a5bbe972-1424-4040-b758-94e1aff44910",
+            "visual_role": "sticker"
+          },
+          {
+            "beat_id": "salah-photo",
+            "trigger": "Salah",
+            "visual_id": "asset-8d53ff80-6c2f-484a-bef7-d70c410842a8",
+            "visual_role": "photo"
+          },
+          {
+            "beat_id": "salah-goat",
+            "trigger": "Salah",
+            "visual_id": "asset-96168b0d-e5b2-4f32-bd71-e1715c975882",
+            "visual_role": "sticker"
+          }
+        ],
+        "closing_media": {
+          "visual_id": "asset-8d53ff80-6c2f-484a-bef7-d70c410842a8",
+          "badge_visual_id": "asset-96168b0d-e5b2-4f32-bd71-e1715c975882",
+          "from_trigger": "Salah"
+        },
+        "rationale": "Keep the whole talking-to-camera clip and time every pop-in to the exact name or number spoken, landing on Salah with the GOAT badge."
+      },
+      "summary": "Talking-to-camera ranking with each player's photo and the right/wrong sticker timed to your words -- only the sounds tied to the moments you named are added on iPhone, ending on Salah with the GOAT badge."
+    }
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "reaction_beats": true
+  }
+}
