@@ -1,0 +1,37 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-24-v46",
+  "input": {
+    "utterance": "label each clip with where it was filmed and put the clips in chronological order",
+    "prior_turns": [],
+    "original_request": "20K run from Arnavutkoy to Eminonu, show the distance in the title and label every clip with its place, in the order I ran it",
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline"],
+      "has_narrated_captions": false,
+      "text_bars": [{"id": "text-0", "text": "20K Run", "start_s": 0.0, "end_s": 3.0, "size_px": 64, "role": "generative_intro"}],
+      "slots": [
+        {"output_start_s": 0, "output_end_s": 3, "duration_s": 3},
+        {"output_start_s": 3, "output_end_s": 6, "duration_s": 3},
+        {"output_start_s": 6, "output_end_s": 9, "duration_s": 3}
+      ],
+      "total_duration_s": 9.0
+    }
+  },
+  "raw_text": "{\"intent\":\"reject\",\"ops\":[],\"confidence\":0.9,\"reply\":\"I can't do either of those in this edit.\",\"suggestions\":[\"Tighten the cuts\"],\"needs_clarification\":false,\"unmet_requests\":[{\"request\":\"label each clip with where it was filmed\",\"reason\":\"I can't see where each clip was filmed\"},{\"request\":\"put the clips in chronological order\",\"reason\":\"I don't know when each clip was filmed\"}]}",
+  "output": {
+    "intent": "reject",
+    "ops": [],
+    "confidence": 0.9,
+    "reply": "I can't do either of those in this edit.",
+    "suggestions": ["Tighten the cuts"],
+    "needs_clarification": false,
+    "unmet_requests": [
+      {"request": "label each clip with where it was filmed", "reason": "I can't see where each clip was filmed"},
+      {"request": "put the clips in chronological order", "reason": "I don't know when each clip was filmed"}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-185 P0 East Run turn 3 (hand-authored from the KRI-186 description; prod thread capture pending): a two-part ask where neither part maps to an op. The copilot must itemize BOTH parts in unmet_requests so the chat reply can name the missing per-clip labels and the missing chronological order instead of implying success."
+  }
+}

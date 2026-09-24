@@ -1429,6 +1429,11 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_EDIT_COPILOT_ENABLED gates the Nova drawer. Default off until
     # localhost QA validates the local-op applier and save parity.
     edit_copilot_enabled: bool = False
+    # KRI-186: chat-edit replies are built deterministically from what was
+    # applied + what was rejected/unmet, and the copilot sees prior turns and
+    # the thread's original request. Kill switch: false restores the legacy
+    # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
+    copilot_honest_replies_enabled: bool = True
     # Owner-safe "Nova steps" activity feed projected from pipeline_trace +
     # phase_log + AgentRun (app/services/nova_steps.py) onto the generative
     # job status response. Ships OFF -- `steps` stays None (byte-identical

@@ -199,12 +199,11 @@ enum NativeEditorRenderError: Error, Equatable {
                   let item = items.first(where: { $0.kind == .mediaOverlay && $0.id == overlay.id }), item.end > item.start else {
                 throw MediaEngineError.missingAsset(id)
             }
-            // Phone Talking-to-camera lanes (KRI-182 step 1) project their
-            // overlay cards with "none" tokens (a card's fade lives in the
-            // server-pinned recipe, not on the wire). "fade" is accepted as a
-            // forward-compatible token so a future projection can name it
-            // without failing compilation (preview and Save); see the
-            // `visualPlacement` comment below for why it does not yet animate.
+            // "fade" is the phone Talking-to-camera card fade (KRI-182 design:
+            // SubtitledOverlayCard.fade <=> entrance/exit "fade"; the server
+            // projection still sends "none" until MediaOverlay accepts it). It
+            // renders on the same 0.15 s curve the pinned device recipe uses
+            // for that card (`VisualMediaPlacement.fadeEnvelope`).
             guard [nil, "none", "dissolve-out", "fade"].contains(overlay.raw["exit_token"]?.stringValue) else {
                 throw NativeEditorRenderError.unsupportedLane("media dissolve")
             }
@@ -215,6 +214,8 @@ enum NativeEditorRenderError: Error, Equatable {
             references[id] = RenderAssetReference(id: id, fingerprint: try RenderFingerprint(fingerprint), source: .original(mediaID: source.mediaID))
             urls[id] = source.url
             let editorStyle = try Self.visualEditorStyle(overlay.raw["editor_style"])
+            let fadeIn = overlay.raw["entrance_token"] == .string("fade")
+            let fadeOut = overlay.raw["exit_token"] == .string("fade")
             let fullscreen = overlay.raw["display_mode"]?.stringValue == "fullscreen"
             let width = Double(canvas.width), height = Double(canvas.height)
             let coverWidth = size.width * max(width / size.width, height / size.height)
@@ -240,23 +241,20 @@ enum NativeEditorRenderError: Error, Equatable {
                 timelineStart: item.start, rate: playbackRate, transform: transform, volume: 0, holdDuration: max(0, window - moving / playbackRate),
                 overlayAboveText: true, overlayPopIn: !fullscreen && overlay.raw["entrance_token"] == .string("pop_in"),
                 overlayPreserveAlpha: !fullscreen && source.preserveAlpha,
-                // `visualPlacement` stays gated on `editorStyle`, not built
-                // unconditionally for "fade" tokens: VisualMediaPlacement's
-                // own `position(...)` sizes a pip from the RAW natural asset
-                // size (`widthFraction * naturalWidth`), while the `transform`
-                // above sizes it from a cover-fit of the canvas first. The two
-                // are not equivalent for non-square sources, so switching
-                // every overlay without an editor_style onto that path would
-                // silently change the on-screen size of every existing pip
-                // card. A "fade" token is therefore accepted (see the guards
-                // above) but currently renders static, like "none" -- true
-                // fade-in/out needs a fade path that doesn't also swap the
-                // positioning math (tracked as a follow-up, not this pass).
+                // Only an editor_style moves a card onto the placement path.
+                // That path positions media differently from `transform`
+                // (no source-crop cover correction, unrounded y), so a fade
+                // must not route a plain card there. A plain card fades
+                // through `overlayFadeIn`/`overlayFadeOut`, which scale its
+                // opacity and leave `transform` untouched; a styled card
+                // fades through its placement, one fade source per clip.
                 visualPlacement: editorStyle.map { VisualMediaPlacement(order: 0, contain: $0.fitMode == "contain", zoom: $0.zoom,
                     widthFraction: fullscreen ? nil : overlay.raw["scale"]?.numberValue ?? 0.35, xFraction: x, yFraction: y,
-                    windowStart: item.start, windowEnd: item.end, editorStyle: $0) },
+                    windowStart: item.start, windowEnd: item.end, fadeIn: fadeIn, fadeOut: fadeOut, editorStyle: $0) },
                 overlayDissolveSeed: overlay.raw["exit_token"]?.stringValue == "dissolve-out" ? UInt32(211 + (document.mediaOverlays.firstIndex(where: { $0.id == overlay.id }) ?? 0) * 53) : nil,
-                sourceCrop: try Self.sourceCrop(overlay.raw["source_crop"])))
+                sourceCrop: try Self.sourceCrop(overlay.raw["source_crop"]),
+                overlayFadeIn: editorStyle == nil && fadeIn ? true : nil,
+                overlayFadeOut: editorStyle == nil && fadeOut ? true : nil))
         }
         func registerFont(_ font: URL) throws -> String {
             let fontID = "font-\(font.lastPathComponent)"
