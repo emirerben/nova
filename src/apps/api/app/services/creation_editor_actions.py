@@ -349,9 +349,17 @@ def honest_replies_enabled() -> bool:
     return bool(settings.copilot_honest_replies_enabled)
 
 
+# Plain phrases for op names that can show up in a `Not done:` line.  An op
+# missing here is left out of the copy rather than leaking its internal name.
+_OP_PHRASES = {
+    "set_edit_direction": "change the edit direction",
+    "set_clip_label": "label the clips",
+    "apply_custom_effect": "add that effect",
+}
+
+
 def _op_label(op: object) -> str:
-    text = re.sub(r"[_\s]+", " ", str(op or "")).strip().lower()
-    return "" if text in {"", "bundle"} else text
+    return _OP_PHRASES.get(str(op or "").strip().lower(), "")
 
 
 def _sentence(text: str) -> str:
@@ -412,6 +420,15 @@ def build_honest_reply(
 
 
 async def _thread_memory(db: Any, thread: Any, message: str) -> tuple[list[dict], str | None]:
+    """Fail-open wrapper: memory is a nicety and must never abort the copilot turn."""
+    try:
+        return await _load_thread_memory(db, thread, message)
+    except Exception:
+        log.warning("creation_copilot_memory_failed", exc_info=True)
+        return [], None
+
+
+async def _load_thread_memory(db: Any, thread: Any, message: str) -> tuple[list[dict], str | None]:
     """Last few chat turns + the thread's first creator brief for the copilot.
 
     The just-appended current user message is dropped from the turns so the
@@ -557,11 +574,12 @@ async def execute_copilot_edit(
         ),
         job_id=job_id,
     )
-    if response.outcome == "unsupported":
-        return None
-
     rejections = list(getattr(response, "rejection_reasons", None) or []) if honest else []
     unmet = list(getattr(response, "unmet_requests", None) or []) if honest else []
+    if response.outcome == "unsupported" and not (rejections or unmet):
+        # Nothing concrete to report: fall through to the Main Creator (new plan).
+        return None
+
     receipt: dict[str, Any] = {
         "job_id": str(job_id),
         "variant_id": variant_id,
@@ -570,15 +588,21 @@ async def execute_copilot_edit(
     if honest and (rejections or unmet):
         receipt["not_done"] = _not_done_lines(rejections, unmet)
     if not response.ops:
-        # clarification / no_effect / failed / stale.  When the copilot refused
-        # or skipped part of the ask, the reply is built from those facts: the
-        # model's own prose can describe a rejected op as done (KRI-185 East Run).
+        # clarification / no_effect / failed / stale / unsupported-with-facts.  When
+        # the copilot refused or skipped part of the ask, the reply is built from
+        # those facts: the model's own prose can describe a rejected op as done
+        # (KRI-185 East Run).  A pure question/describe turn keeps its real answer.
         reply = response.reply
         if honest and (rejections or unmet):
+            intent = getattr(response, "intent", None)
             if response.outcome == "clarification" and not rejections:
                 reply = " ".join([response.reply, *_not_done_lines([], unmet)])
+            elif not rejections and intent in {"describe", "clarify"}:
+                receipt.pop("not_done", None)
             else:
                 reply = build_honest_reply([], rejections, unmet, nothing_applied=True)
+                if response.outcome == "stale":
+                    reply += " Refresh the editor and try again."
         await routes._append(
             db,
             thread,

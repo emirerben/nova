@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import base64
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -270,11 +270,15 @@ def _decode_trace_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
         raw_created_at, raw_id = base64.urlsafe_b64decode(padded).decode().rsplit("|", 1)
-        return datetime.fromisoformat(raw_created_at), uuid.UUID(raw_id)
+        created_at = datetime.fromisoformat(raw_created_at)
+        if created_at.tzinfo is None:
+            # AgentRun.created_at is timestamptz; a naive value would be a DB DataError.
+            created_at = created_at.replace(tzinfo=UTC)
+        return created_at, uuid.UUID(raw_id)
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid cursor"
-        )
+        ) from None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
