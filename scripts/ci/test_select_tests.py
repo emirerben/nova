@@ -149,6 +149,7 @@ class GateTests(unittest.TestCase):
                             "ios": "true",
                             "ios_ui": ui,
                             "ios_ui_groups": "full" if ui == "true" else "none",
+                            "ios_ui_shards": "1",
                         },
                     },
                     "ios-tests": {"result": "success"},
@@ -177,6 +178,7 @@ class GateTests(unittest.TestCase):
                         "ios": "true",
                         "ios_ui": "true",
                         "ios_ui_groups": groups,
+                        "ios_ui_shards": "1",
                     },
                 },
                 "ios-tests": {"result": "success"},
@@ -196,11 +198,56 @@ class GateTests(unittest.TestCase):
                         "ios": "true",
                         "ios_ui": "true",
                         "ios_ui_groups": groups,
+                        "ios_ui_shards": "1",
                     },
                 },
                 "ios-tests": {"result": "success"},
             }
             ci.gate(needs, "ios", "ios-tests")
+
+    def test_ios_gate_requires_a_valid_shard_count(self):
+        def needs(ui, shards):
+            outputs = {
+                "ios": "true",
+                "ios_ui": ui,
+                "ios_ui_groups": "smoke,editor" if ui == "true" else "none",
+            }
+            if shards is not None:
+                outputs["ios_ui_shards"] = shards
+            return {
+                "changes": {"result": "success", "outputs": outputs},
+                "ios-tests": {"result": "success"},
+            }
+
+        maximum = str(ci.ui_tests.MAX_SHARDS)
+        invalid = [("true", s) for s in (None, "", "0", "x", "1/2", str(int(maximum) + 1))]
+        # A UI-less run is one build/unit leg; extra legs would only repeat it.
+        invalid += [("false", "2"), ("false", maximum)]
+        for ui, shards in invalid:
+            with self.subTest(ui=ui, shards=shards), self.assertRaises(ValueError):
+                ci.gate(needs(ui, shards), "ios", "ios-tests")
+        for ui, shards in [("true", str(n)) for n in range(1, int(maximum) + 1)] + [
+            ("false", "1")
+        ]:
+            with self.subTest(ui=ui, shards=shards):
+                ci.gate(needs(ui, shards), "ios", "ios-tests")
+
+    def test_ui_shards_follow_the_executed_selection(self):
+        # Non-PR events run the full suite on every leg the workflow defines.
+        self.assertEqual(ci.ui_shards("push", "full"), ci.ui_tests.MAX_SHARDS)
+        self.assertEqual(ci.ui_shards("workflow_dispatch", "full"), ci.ui_tests.MAX_SHARDS)
+        # A PR that wants full coverage executes only the smoke tripwire.
+        self.assertEqual(ci.ui_shards("pull_request", "full"), 1)
+        self.assertEqual(ci.ui_shards("pull_request", "none"), 1)
+        self.assertEqual(ci.ui_shards("pull_request", "smoke,projects"), 1)
+        self.assertEqual(
+            ci.ui_shards("pull_request", "smoke,editor"),
+            ci.ui_tests.shard_count("smoke,editor"),
+        )
+        self.assertGreater(ci.ui_shards("pull_request", "smoke,editor"), 1)
+        # An unusable selection keeps one leg; its UI step fails closed.
+        with patch.object(ci.ui_tests, "shard_count", side_effect=ValueError):
+            self.assertEqual(ci.ui_shards("pull_request", "smoke,editor"), 1)
 
     def test_lint_union(self):
         for web, api in (
@@ -424,9 +471,11 @@ class GitDiffTests(unittest.TestCase):
         )
         self.assertEqual(
             output.read_text(),
-            "web=false\napi=false\nios=true\nios_ui=true\nios_ui_groups=full\n",
+            "web=false\napi=false\nios=true\nios_ui=true\nios_ui_groups=full\n"
+            "ios_ui_shards=1\n",
         )
         self.assertIn("ios: run", summary.read_text())
+        self.assertIn("iOS UI groups: full (1 native leg)", summary.read_text())
 
 
 if __name__ == "__main__":

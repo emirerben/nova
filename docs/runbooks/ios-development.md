@@ -426,7 +426,8 @@ All main pushes run full coverage. PRs run build and unit tests, and a PR with
 `ios_ui=true` also runs a bounded native UI subset before merge: the selector's
 `smoke,<group>` when exactly one feature group changed, or `smoke` alone when the
 selector reports `full` (the full suite itself stays post-merge, so PR cost is
-bounded by the largest single group). This exists because a PR that was green on
+bounded by the largest single group, which splits across two native legs; see
+"Sharded UI runs" below). This exists because a PR that was green on
 build and unit tests broke creation-to-ready for every later merge (#1088); the
 smoke group contains that scenario. `smoke` is an execution-only value: the
 selector never emits it and the gate rejects it as a selector output.
@@ -646,26 +647,52 @@ The other `VideoPlayer` screens (result, slide post, device render, diagnostics)
 are outside the editor tests. If an idle stall shows up there, check the same log
 line.
 
-#### Sharded main UI suite (KRI-168)
+#### Sharded UI runs (KRI-168)
 
-Main pushes and manual dispatches run three native legs (`shard: 1/3` … `3/3`).
-Each builds from the warm cache (`prepare-ui`) and runs one part of the full
-suite. PRs keep a single native leg with the unchanged job name.
+The `changes` job emits `ios_ui_shards`, and `ios-tests` builds its native legs
+from it. `ui_tests.shard_count` sizes the UI tests this run executes: one leg per
+15 minutes (`SHARD_TARGET_SECONDS`) of recorded time, capped at 3
+(`MAX_SHARDS`). With the September 24, 2026 durations:
+
+| Execution | Estimated UI time | Native legs |
+|---|---|---|
+| `full` (main, manual) | 39.7 min | 3 (`shard: 1/3` … `3/3`) |
+| `smoke,editor` (PR) | 26.3 min | 2 (`1/2`, `2/2`) |
+| `smoke,creation` (PR) | 9.6 min | 1 |
+| `smoke,projects` (PR) | 7.1 min | 1 |
+| `smoke` (PR tripwire) | 1.7 min | 1 |
+
+A one-leg run keeps the unsharded job name `ios-tests (native, macos-15)`.
 
 - `ui_tests.shard_tests` places tests longest-first into the least-loaded shard,
   using median CI durations from `scripts/ios/ui-test-durations.json`. Unknown
   tests weigh the median.
-- Every leg computes the same partition, so the shards are disjoint and cover
-  the whole inventory. Each leg's `verify` requires exactly its part, and the
-  `ios-tests` aggregate fails unless every leg passes.
-- Only shard 1 runs unit tests (`KRIA_IOS_UNIT_TESTS=0` elsewhere) and saves the
-  build cache. Diagnostics upload as `ios-native-test-diagnostics-shard-<job
-  index>`.
-- Refresh the durations file from recent green main runs when the suite changes
-  a lot. Stale values only unbalance the shards; they never drop coverage.
-- The repo is public, so macOS minutes cost nothing. Each main run holds 3 of
-  the account's 5 concurrent macOS runners, so PR jobs may queue briefly during
-  a main run.
+- Every leg computes the same partition from the same checkout, so the shards
+  are disjoint and cover the selection. Each leg's `verify` requires exactly its
+  part, and an empty part is an error, not a vacuous pass. The `ios-tests`
+  aggregate fails unless every leg passes. The `build-and-test` gate rejects a
+  missing or out-of-range `ios_ui_shards`, and a UI-less run with more than one
+  leg. Whatever the count, the legs `1/n` … `n/n` cover the whole selection.
+- Only shard 1 runs unit tests (`KRIA_IOS_UNIT_TESTS=0` elsewhere), saves the
+  build cache, and writes the PR summary. Diagnostics upload as
+  `ios-native-test-diagnostics-shard-<job index>`.
+- Refresh the durations with `python3 scripts/ios/refresh-ui-durations.py`. It
+  takes the median passing attempt from the native legs of the last 120 `iOS`
+  runs (about 8 minutes through `gh`). Refresh after adding or reshaping UI
+  tests. Stale values only unbalance or resize the legs; they never drop
+  coverage. `test_shard_count_splits_long_selections_only` fails if a refresh
+  stops main from using every leg, stops editor PRs from splitting, or splits
+  the smoke or projects runs.
+- Cost. A native leg spends about 7 minutes on setup and compilation before
+  UI tests (about 11 minutes on shard 1, which also runs unit tests), plus about
+  1.7 minutes of UI runner startup. For an editor PR, two legs cut the modeled
+  job from about 39 to about 26 minutes, for about 9 more runner-minutes
+  (+22%). A third leg would reach about 21 minutes for another 9 (+45% in
+  total). The repo is public, so these minutes are not billed. The binding
+  limit is the account's 5 concurrent macOS runners: main holds 3 for about 25
+  minutes per merge, and in September 2026 PR native legs already waited 12
+  minutes at p90 to start. Two PR legs plus main exactly fill the limit, which
+  is why the target is 15 minutes, not 10.
 - Parallel testing on one runner stays off: cloned simulators missed drawer
   controls in #1004.
 

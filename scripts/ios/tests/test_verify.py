@@ -259,7 +259,7 @@ class VerifyShellTests(unittest.TestCase):
         )
         self.assertIn("Verified 5 selected UI tests passed.", result.stdout)
 
-    def test_full_suite_shard_runs_and_verifies_exactly_its_part(self):
+    def test_each_shard_runs_and_verifies_exactly_its_part(self):
         import importlib.util
 
         spec = importlib.util.spec_from_file_location(
@@ -267,35 +267,46 @@ class VerifyShellTests(unittest.TestCase):
         )
         harness_ui = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(harness_ui)
-        inventory = harness_ui.discovered(self.root)
-        seen = set()
-        for shard in ("1/3", "2/3", "3/3"):
-            self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
-            result = self.run_verify(
-                suite="ui", groups="full", extra_env={"KRIA_IOS_UI_SHARD": shard}
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            call = next(c for c in self.calls if c[-1] == "test-without-building")
-            filters = {
-                a.removeprefix("-only-testing:")
-                for a in call
-                if a.startswith("-only-testing:")
-            }
-            self.assertNotIn("KriaUITests", filters)
-            self.assertEqual(filters, harness_ui.shard_tests(inventory, shard))
-            self.assertFalse(filters & seen)
-            seen |= filters
-            self.assertIn(f"UI execution (full, shard {shard})", result.stdout)
-            self.assertIn(
-                f"Verified {len(filters)} selected UI tests passed.", result.stdout
-            )
-        self.assertEqual(seen, inventory)
-        # Only the full suite can be sharded; focused PR selections cannot.
+        # Main's full suite and an editor PR's focused subset shard alike.
+        for groups, count in (("full", 3), ("smoke,editor", 2)):
+            expected = harness_ui.expected_tests(groups, self.root)
+            seen = set()
+            for shard in (f"{i}/{count}" for i in range(1, count + 1)):
+                with self.subTest(groups=groups, shard=shard):
+                    self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+                    result = self.run_verify(
+                        suite="ui", groups=groups, extra_env={"KRIA_IOS_UI_SHARD": shard}
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    call = next(
+                        c for c in self.calls if c[-1] == "test-without-building"
+                    )
+                    filters = {
+                        a.removeprefix("-only-testing:")
+                        for a in call
+                        if a.startswith("-only-testing:")
+                    }
+                    self.assertNotIn("KriaUITests", filters)
+                    self.assertEqual(filters, harness_ui.shard_tests(expected, shard))
+                    self.assertFalse(filters & seen)
+                    seen |= filters
+                    self.assertIn(
+                        f"UI execution ({groups}, shard {shard})", result.stdout
+                    )
+                    self.assertIn(
+                        f"Verified {len(filters)} selected UI tests passed.",
+                        result.stdout,
+                    )
+            self.assertEqual(seen, expected)
+        # More legs than tests would leave a part that verifies vacuously.
+        smoke = len(harness_ui.expected_tests("smoke", self.root))
         self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
-        focused = self.run_verify(
-            suite="ui", groups="smoke,creation", extra_env={"KRIA_IOS_UI_SHARD": "1/3"}
+        empty = self.run_verify(
+            suite="ui",
+            groups="smoke",
+            extra_env={"KRIA_IOS_UI_SHARD": f"{smoke + 1}/{smoke + 1}"},
         )
-        self.assertNotEqual(focused.returncode, 0)
+        self.assertNotEqual(empty.returncode, 0)
         self.assertEqual(self.actions, [])
 
     def test_extra_shards_build_everything_but_skip_the_unit_phase(self):
