@@ -148,6 +148,16 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_REACTION_BEATS_ENABLED=false --app nova-video` + `fly
     # machine restart <id>` (api + worker).
     phone_subtitled_reaction_beats_enabled: bool = False
+    # KRI-181 follow-up: on a phone-rendered Talking edit, a sound effect whose
+    # window overlaps a spoken word plays at
+    # `phone_subtitled_plan.SFX_SPEECH_DUCK_GAIN` of its requested volume so
+    # the beat never masks the speaker; effects in pauses keep full volume.
+    # Server-only: it changes existing `TimelineClip.volume` values, so any
+    # installed app build honours it with no new capability. False (default):
+    # byte-identical recipes. Read at compile time, so a flip affects the next
+    # render. Apply: `fly secrets set PHONE_SFX_SPEECH_DUCK_ENABLED=true
+    # --app nova-video` + `fly machine restart <id>` (worker).
+    phone_sfx_speech_duck_enabled: bool = False
     # KRI-182 step 1 (editable phone Talking edits): the native editor's
     # generic `sound_effects`/`media_overlays` editor-commit sections apply
     # to a phone-rendered `subtitled` (Talking to camera) variant --

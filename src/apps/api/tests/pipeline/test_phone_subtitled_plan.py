@@ -15,7 +15,12 @@ from app.pipeline.phone_subtitled_lanes import (
     SubtitledSoundEffect,
     sfx_path_is_playable,
 )
-from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+from app.pipeline.phone_subtitled_plan import (
+    SFX_SPEECH_DUCK_GAIN,
+    compile_phone_subtitled_plan,
+    sfx_duck_receipt,
+    speech_windows_from_cues,
+)
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
@@ -732,3 +737,183 @@ def test_all_three_lanes_together_pass_phone_pilot_validation(monkeypatch):
     )
     validate_phone_pilot_recipe(recipe)
     assert recipe.model_validate(recipe.model_dump(mode="json")) == recipe
+
+
+# --- SFX-under-speech duck (KRI-181 follow-up) -------------------------------
+
+# "Hello everyone" [0.0, 1.2], a 1.3 s pause, "welcome back" [2.5, 3.4].
+_WORD_CUES = [
+    {
+        "text": "Hello everyone",
+        "start_s": 0.0,
+        "end_s": 1.2,
+        "words": [
+            {"text": "Hello", "start_s": 0.0, "end_s": 0.5},
+            {"text": "everyone", "start_s": 0.6, "end_s": 1.2},
+        ],
+    },
+    {
+        "text": "welcome back",
+        "start_s": 2.5,
+        "end_s": 3.4,
+        "words": [
+            {"text": "welcome", "start_s": 2.5, "end_s": 3.0},
+            {"text": "back", "start_s": 3.1, "end_s": 3.4},
+        ],
+    },
+]
+
+
+def _sfx_volumes(effects, *, duck: bool, cues=_WORD_CUES) -> dict[str, float]:
+    recipe = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),),
+        caption_cues=cues,
+        lanes=PhoneSubtitledLanes(sound_effects=effects),
+        duck_sfx_under_speech=duck,
+    )
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    return {clip.id: clip.volume for clip in sfx_track.clips}
+
+
+def _effect(effect_id: str, at_s: float, *, volume: float = 1.0, duration_s: float = 0.5):
+    return _resolved_sfx(
+        request=SubtitledSoundEffect(id=effect_id, catalog_id="pop", at_s=at_s, volume=volume),
+        duration_s=duration_s,
+    )
+
+
+def test_speech_windows_merge_short_word_gaps_and_keep_pauses():
+    assert speech_windows_from_cues(_WORD_CUES) == ((0.0, 1.2), (2.5, 3.4))
+
+
+def test_speech_windows_fall_back_to_cue_span_and_skip_malformed_entries():
+    cues = [
+        {"text": "no words", "start_s": 4.0, "end_s": 5.0},
+        {"text": "bad", "start_s": "x", "end_s": 6.0},
+        {"text": "inverted", "start_s": 7.0, "end_s": 6.5},
+        {"text": "bool", "start_s": True, "end_s": 8.0},
+        "not-a-dict",
+        {"text": "bad word", "words": [{"start_s": None, "end_s": 1.0}, "junk"]},
+    ]
+    assert speech_windows_from_cues(cues) == ((4.0, 5.0),)
+    assert speech_windows_from_cues([]) == ()
+
+
+def test_duck_lowers_an_effect_on_speech_and_keeps_one_in_a_pause():
+    volumes = _sfx_volumes(
+        [_effect("on-word", 0.3), _effect("in-pause", 1.5), _effect("between-words", 2.95)],
+        duck=True,
+    )
+    assert volumes["sfx-on-word"] == pytest.approx(SFX_SPEECH_DUCK_GAIN)
+    assert volumes["sfx-in-pause"] == pytest.approx(1.0)
+    # A 0.1 s gap between two words is still speech.
+    assert volumes["sfx-between-words"] == pytest.approx(SFX_SPEECH_DUCK_GAIN)
+
+
+def test_duck_scales_the_requested_volume_instead_of_replacing_it():
+    volumes = _sfx_volumes(
+        [_effect("loud", 0.3, volume=2.0), _effect("soft", 3.0, volume=0.4)], duck=True
+    )
+    assert volumes["sfx-loud"] == pytest.approx(2.0 * SFX_SPEECH_DUCK_GAIN)
+    assert volumes["sfx-soft"] == pytest.approx(0.4 * SFX_SPEECH_DUCK_GAIN)
+
+
+def test_duck_ignores_a_tail_that_only_brushes_the_next_word():
+    # [1.7, 2.53] overlaps "welcome" (2.5) by 0.03 s: below the trigger.
+    volumes = _sfx_volumes([_effect("tail", 1.7, duration_s=0.83)], duck=True)
+    assert volumes["sfx-tail"] == pytest.approx(1.0)
+
+
+def test_duck_without_captions_leaves_every_effect_at_full_volume():
+    volumes = _sfx_volumes([_effect("a", 0.3)], duck=True, cues=[])
+    assert volumes["sfx-a"] == pytest.approx(1.0)
+
+
+def test_duck_off_is_byte_identical_to_the_default_call():
+    effects = [_effect("on-word", 0.3), _effect("in-pause", 1.5)]
+    lanes = PhoneSubtitledLanes(sound_effects=effects)
+    bindings = (_binding(duration_s=10.0),)
+    default = compile_phone_subtitled_plan(bindings, caption_cues=_WORD_CUES, lanes=lanes)
+    explicit_off = compile_phone_subtitled_plan(
+        bindings, caption_cues=_WORD_CUES, lanes=lanes, duck_sfx_under_speech=False
+    )
+    assert default.model_dump_json() == explicit_off.model_dump_json()
+    assert {clip.volume for t in default.tracks if t.id == "sfx" for clip in t.clips} == {1.0}
+
+
+def test_duck_changes_only_sfx_clip_volumes():
+    """The duck needs no new recipe field or capability, so every installed
+    app build renders it and the phone route decision is unchanged."""
+    effects = [_effect("on-word", 0.3), _effect("in-pause", 1.5)]
+    lanes = PhoneSubtitledLanes(sound_effects=effects)
+    bindings = (_binding(duration_s=10.0),)
+    off = compile_phone_subtitled_plan(bindings, caption_cues=_WORD_CUES, lanes=lanes)
+    on = compile_phone_subtitled_plan(
+        bindings, caption_cues=_WORD_CUES, lanes=lanes, duck_sfx_under_speech=True
+    )
+    assert on.required_capabilities == off.required_capabilities
+    assert on.audio == off.audio
+    assert [t.id for t in on.tracks] == [t.id for t in off.tracks]
+    speaker_on = next(t for t in on.tracks if t.id == "subtitled")
+    speaker_off = next(t for t in off.tracks if t.id == "subtitled")
+    assert speaker_on == speaker_off
+    off_sfx = next(t for t in off.tracks if t.id == "sfx")
+    on_sfx = next(t for t in on.tracks if t.id == "sfx")
+    assert [c.model_copy(update={"volume": 1.0}) for c in on_sfx.clips] == list(off_sfx.clips)
+
+
+def test_ducked_recipe_passes_phone_pilot_validation(monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [
+            "basicComposition",
+            "local1080Export",
+            "positionedText",
+            "animatedText",
+            "soundEffects",
+            "audioMix",
+        ],
+    )
+    recipe = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),),
+        caption_cues=_WORD_CUES,
+        lanes=PhoneSubtitledLanes(sound_effects=[_effect("on-word", 0.3)]),
+        duck_sfx_under_speech=True,
+    )
+    validate_phone_pilot_recipe(recipe)
+    EditRecipeV2.model_validate_json(recipe.model_dump_json())
+
+
+def test_ios_level_test_pins_the_server_duck_gain():
+    """`SfxSpeechDuckLevelTests.swift` exports a speech-plus-effect recipe
+    through the native exporter at this exact gain and asserts the effect no
+    longer drowns the speech band. Keep the two constants in lockstep."""
+    import re
+    from pathlib import Path
+
+    swift = (
+        Path(__file__).resolve().parents[3]
+        / "ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/SfxSpeechDuckLevelTests.swift"
+    )
+    match = re.search(r"static let serverDuckGain = ([0-9.]+)", swift.read_text())
+    assert match is not None
+    assert float(match.group(1)) == SFX_SPEECH_DUCK_GAIN
+
+
+def test_duck_receipt_records_only_the_effects_the_duck_lowered():
+    lanes = PhoneSubtitledLanes(
+        sound_effects=[_effect("on-word", 0.3, volume=0.8), _effect("in-pause", 1.5)]
+    )
+    bindings = (_binding(duration_s=10.0),)
+    on = compile_phone_subtitled_plan(
+        bindings, caption_cues=_WORD_CUES, lanes=lanes, duck_sfx_under_speech=True
+    )
+    off = compile_phone_subtitled_plan(bindings, caption_cues=_WORD_CUES, lanes=lanes)
+    assert sfx_duck_receipt(lanes, on) == {
+        "version": 1,
+        "gain": SFX_SPEECH_DUCK_GAIN,
+        "volumes": {"on-word": 0.8},
+    }
+    assert sfx_duck_receipt(lanes, off) is None
+    assert sfx_duck_receipt(None, on) is None

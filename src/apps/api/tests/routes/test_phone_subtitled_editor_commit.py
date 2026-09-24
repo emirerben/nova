@@ -6,12 +6,20 @@ from fastapi import HTTPException
 
 from app.kria.device_render import make_device_request
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
-from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+from app.pipeline.phone_subtitled_plan import (
+    SFX_DUCK_RECEIPT_FIELD,
+    SFX_SPEECH_DUCK_GAIN,
+    compile_phone_subtitled_plan,
+    sfx_duck_receipt,
+)
 from app.routes import generative_jobs as gj
 from app.services.device_render import device_status, pin_device_request
 from app.services.phone_editor import prepare_phone_editor_commit
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD
-from app.services.phone_subtitled_editor import PHONE_SUBTITLED_EDITOR_LANES_FIELD
+from app.services.phone_subtitled_editor import (
+    PHONE_SUBTITLED_EDITOR_LANES_FIELD,
+    project_phone_subtitled_editor_sections,
+)
 from tests.pipeline.test_phone_subtitled_plan import (
     _CUES,
     PHOTO_PATH,
@@ -48,19 +56,23 @@ def _enable_subtitled_editor(monkeypatch, *, editor_flag: bool = True) -> None:
     monkeypatch.setattr(gj.settings, "phone_render_verified_features", list(_VERIFIED_FEATURES))
 
 
-def phone_job(monkeypatch, *, enable=True):
+def phone_job(monkeypatch, *, enable=True, duck=False):
     """A phone-rendered `subtitled` variant with one pinned overlay card and
     one pinned sound effect, mirroring `tests.routes.test_phone_editor_commit
-    .phone_job`'s pattern for the guided_story archetype."""
+    .phone_job`'s pattern for the guided_story archetype. ``duck=True`` pins
+    the recipe the runner compiles with the SFX speech duck on (the effect
+    at 1.0 s lands on speech), plus its duck receipt."""
     _enable_subtitled_editor(monkeypatch, editor_flag=enable)
+    monkeypatch.setattr(gj.settings, "phone_sfx_speech_duck_enabled", duck)
     bindings = (_binding(duration_s=10.0),)
     photo = _photo_visual()
     card = _overlay_card(id="card-1")
     sfx = _resolved_sfx()
     lanes = PhoneSubtitledLanes(overlays=[card], sound_effects=[sfx])
     recipe = compile_phone_subtitled_plan(
-        bindings, caption_cues=_CUES, visuals=(photo,), lanes=lanes
+        bindings, caption_cues=_CUES, visuals=(photo,), lanes=lanes, duck_sfx_under_speech=duck
     )
+    duck_receipt = sfx_duck_receipt(lanes, recipe)
     job = SimpleNamespace(
         id=uuid.uuid4(),
         user_id=uuid.uuid4(),
@@ -79,6 +91,7 @@ def phone_job(monkeypatch, *, enable=True):
                     "duration_s": recipe.duration,
                     "caption_cues": _CUES,
                     "voiceover_caption_style": "sentence",
+                    **({SFX_DUCK_RECEIPT_FIELD: duck_receipt} if duck_receipt else {}),
                 }
             ],
         },
@@ -289,3 +302,52 @@ def test_unsupported_phone_edit_names_its_reason_via_synthetic_prep(monkeypatch)
     assert error.value.status_code == 422
     assert error.value.detail["code"] == "unsupported_phone_edit"
     assert error.value.detail["reason"] == "ValueError: phone Talking edits aren't editable yet"
+
+
+# --- SFX speech duck (KRI-181 follow-up) -------------------------------------
+# `_CUES` speaks over [0.0, 3.0]; the pinned effect at 1.0 s lands on speech.
+
+
+def _sfx_volumes(job) -> dict[str, float]:
+    recipe = device_status(job, "subtitled").request.recipe
+    return {c.id: c.volume for t in recipe.tracks if t.id == "sfx" for c in t.clips}
+
+
+def test_ducked_pin_projects_the_creators_volume_not_the_ducked_one(monkeypatch):
+    job = phone_job(monkeypatch, duck=True)
+    assert _sfx_volumes(job) == {"sfx-sfx-1": pytest.approx(SFX_SPEECH_DUCK_GAIN)}
+    sections = project_phone_subtitled_editor_sections(
+        job.assembly_plan, job.assembly_plan["variants"][0]
+    )
+    assert sections["sound_effects"][0]["gain"] == pytest.approx(1.0)
+
+
+def test_first_save_does_not_duck_a_carried_forward_effect_twice(monkeypatch):
+    job = phone_job(monkeypatch, duck=True)
+    # Only overlays are committed: the sound lane is derived from the ducked pin.
+    save(job, media_overlays=[_overlay_payload(x_frac=0.9)])
+    assert _sfx_volumes(job) == {"sfx-sfx-1": pytest.approx(SFX_SPEECH_DUCK_GAIN)}
+    variant = job.assembly_plan["variants"][0]
+    assert variant[SFX_DUCK_RECEIPT_FIELD]["volumes"] == {"sfx-1": 1.0}
+
+
+def test_effect_moved_into_a_pause_plays_at_full_volume_again(monkeypatch):
+    job = phone_job(monkeypatch, duck=True)
+    save(job, sound_effects=[_sfx_payload(at_s=5.0, gain=1.0)])
+    assert _sfx_volumes(job) == {"sfx-sfx-1": pytest.approx(1.0)}
+    assert SFX_DUCK_RECEIPT_FIELD not in job.assembly_plan["variants"][0]
+
+
+def test_editor_save_ducks_an_effect_moved_onto_speech(monkeypatch):
+    job = phone_job(monkeypatch, duck=True)
+    save(job, sound_effects=[_sfx_payload(at_s=2.0, gain=0.8)])
+    assert _sfx_volumes(job) == {"sfx-sfx-1": pytest.approx(0.8 * SFX_SPEECH_DUCK_GAIN)}
+    receipt = job.assembly_plan["variants"][0][SFX_DUCK_RECEIPT_FIELD]
+    assert receipt["volumes"] == {"sfx-1": 0.8}
+
+
+def test_duck_off_editor_save_writes_no_receipt(monkeypatch):
+    job = phone_job(monkeypatch, duck=False)
+    save(job, sound_effects=[_sfx_payload(at_s=1.0, gain=1.0)])
+    assert _sfx_volumes(job) == {"sfx-sfx-1": pytest.approx(1.0)}
+    assert SFX_DUCK_RECEIPT_FIELD not in job.assembly_plan["variants"][0]

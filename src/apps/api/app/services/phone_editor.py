@@ -21,7 +21,11 @@ from app.pipeline.guided_story import (
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, lane_names
-from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+from app.pipeline.phone_subtitled_plan import (
+    SFX_DUCK_RECEIPT_FIELD,
+    compile_phone_subtitled_plan,
+    sfx_duck_receipt,
+)
 from app.services.device_render import device_status, pin_device_request
 from app.services.phone_editor_sources import (
     editor_source_bindings,
@@ -242,7 +246,9 @@ def _compile_subtitled_editor_commit(
         # worker-pinned recipe so an untouched section (sound_effects when
         # only media_overlays was committed, or vice versa) carries forward
         # instead of silently vanishing.
-        previous_lanes = lanes_from_recipe(previous.recipe, visuals=visuals)
+        previous_lanes = lanes_from_recipe(
+            previous.recipe, visuals=visuals, duck_receipt=variant.get(SFX_DUCK_RECEIPT_FIELD)
+        )
 
     bindings = tuple(
         PhoneSourceBinding.model_validate(row) for row in assembly[PHONE_SOURCES_FIELD]
@@ -266,7 +272,9 @@ def _compile_subtitled_editor_commit(
         caption_style=caption_style,
         visuals=visuals,
         lanes=lanes,
+        duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
     )
+    duck_receipt = sfx_duck_receipt(lanes, recipe)
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays))
     request = make_device_request(
         job_id=previous.identity.job_id,
@@ -317,3 +325,7 @@ def _compile_subtitled_editor_commit(
         row["sound_effects"] = sections["sound_effects"] or None
         row["media_overlays"] = sections["media_overlays"] or None
         row["phone_lane_receipt"] = {"applied": list(lane_names(lanes)), "dropped": []}
+        if duck_receipt is not None:
+            row[SFX_DUCK_RECEIPT_FIELD] = duck_receipt
+        else:
+            row.pop(SFX_DUCK_RECEIPT_FIELD, None)

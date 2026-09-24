@@ -1581,3 +1581,48 @@ def test_narrated_worker_rejects_format_it_does_not_own(monkeypatch):
     job, snapshot, _session, _bindings = _setup_narrated(monkeypatch, edit_format="montage")
     with pytest.raises(ValueError, match="No phone renderer is registered"):
         gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
+@pytest.mark.parametrize("duck_enabled", [False, True])
+def test_subtitled_sfx_speech_duck_follows_the_setting(monkeypatch, duck_enabled):
+    """KRI-181 follow-up: the runner forwards `phone_sfx_speech_duck_enabled`
+    to the compiler. The fixture transcript speaks "Hello there." over
+    [0.0, 1.0], so an effect at 0.2 s lands on speech and one at 3.0 s does not."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(gb.settings, "phone_sfx_speech_duck_enabled", duck_enabled)
+    monkeypatch.setattr(
+        gb.settings, "phone_render_verified_features", _lanes_features("soundEffects")
+    )
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", _fake_resolve_sfx)
+
+    import app.pipeline.phone_subtitled_plan as subtitled_plan_mod
+
+    real_compile = subtitled_plan_mod.compile_phone_subtitled_plan
+    compiled: list = []
+
+    def _spy_compile(*args, **kwargs):
+        recipe = real_compile(*args, **kwargs)
+        compiled.append(recipe)
+        return recipe
+
+    monkeypatch.setattr(subtitled_plan_mod, "compile_phone_subtitled_plan", _spy_compile)
+
+    job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD] = _lane_request(
+        sound_effects=[
+            _sfx_request_dict("on-word", "cat1", at_s=0.2),
+            _sfx_request_dict("in-pause", "cat2", at_s=3.0),
+        ],
+    )
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    sfx_track = next(t for t in compiled[-1].tracks if t.id == "sfx")
+    volumes = {clip.id: clip.volume for clip in sfx_track.clips}
+    expected_on_word = subtitled_plan_mod.SFX_SPEECH_DUCK_GAIN if duck_enabled else 1.0
+    assert volumes == {"sfx-on-word": pytest.approx(expected_on_word), "sfx-in-pause": 1.0}
+    variant = job.assembly_plan["variants"][0]
+    if duck_enabled:
+        assert variant[subtitled_plan_mod.SFX_DUCK_RECEIPT_FIELD]["volumes"] == {"on-word": 1.0}
+    else:
+        assert subtitled_plan_mod.SFX_DUCK_RECEIPT_FIELD not in variant
