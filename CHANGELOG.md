@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.216.0] - 2026-09-24
+
+### Fixed
+- fix(kria): fail a runtime-v2 turn after three abandoned runs (re-land of #1241) (#1243) <!-- release-pr: 1243 -->
+
 ## [0.76.215.0] - 2026-09-24
 
 ### Fixed
