@@ -127,6 +127,27 @@ class Settings(BaseSettings):
     # `phone_overlay_receipt` on the variant. The same rollback command above
     # switches this lane off too (no separate flag).
     phone_subtitled_media_lanes_enabled: bool = False
+    # KRI-178 (reaction beats): when this flag AND
+    # `phone_subtitled_media_lanes_enabled` AND `sound_effects_enabled` are
+    # all true AND every feature in
+    # `app.services.phone_rollout.PHONE_SUBTITLED_SFX_FEATURES`
+    # (`soundEffects`, `audioMix`) is verified -- i.e.
+    # `phone_rollout.phone_subtitled_reaction_beats_supported()` is True --
+    # the planner advertises the `reaction_beats` capability on a phone
+    # `subtitled` manifest, the creator agent may author `reaction_beats`/
+    # `closing_media` on its strategy (name-triggered photo/sticker pop-ins
+    # and sound effects timed to the transcript, plus a held closing shot),
+    # and `_run_phone_subtitled_job` grounds those beats against the
+    # transcript instead of the generic KRI-176 overlay grounding, persisting
+    # a creator-safe `phone_beat_receipt` on the variant. False (default):
+    # byte-identical to before this flag existed -- `reaction_beats`/
+    # `closing_media` are stripped from any stored strategy with a plain
+    # notice, the manifest falls back to the existing `unsupported_on_phone`/
+    # `phone_talking_only` refusal for this capability, and the worker never
+    # grounds beats. Rollback: `fly secrets set
+    # PHONE_SUBTITLED_REACTION_BEATS_ENABLED=false --app nova-video` + `fly
+    # machine restart <id>` (api + worker).
+    phone_subtitled_reaction_beats_enabled: bool = False
     # KRI-182 step 1 (editable phone Talking edits): the native editor's
     # generic `sound_effects`/`media_overlays` editor-commit sections apply
     # to a phone-rendered `subtitled` (Talking to camera) variant --

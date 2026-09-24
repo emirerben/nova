@@ -188,6 +188,176 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         XCTAssertLessThanOrEqual(longest, allowed, "a removed pause is still audible in the export")
     }
 
+    /// KRI-181/KRI-178: a phone-rendered Talking (`subtitled`) edit carrying
+    /// two sound-effect reaction beats plus one photo overlay card -- the
+    /// shapes `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan`
+    /// emits when the server compiles KRI-178 reaction beats
+    /// (`SubtitledOverlayCard`/`SubtitledSoundEffect`, resolved through
+    /// `app.pipeline.phone_subtitled_lanes.ResolvedSoundEffect`) into the
+    /// phone recipe: `_compile_overlay_track` (phone_subtitled_plan.py
+    /// ~L350-405) adds a silent `"subtitled-overlays"` track with one
+    /// `TimelineClip.visualPlacement`, and `_compile_sfx_track` (~L408-465)
+    /// adds a shared `"sfx"` audio track -- two `TimelineClip`s at different
+    /// `timelineStart`s, sharing one manifest asset because both beats
+    /// request the same catalog id (`asset_by_catalog_id`, ~L428-441).
+    ///
+    /// No python-generated status fixture exists for this case, so the
+    /// recipe is built inline with the same model types `compile_phone_
+    /// subtitled_plan` itself produces -- mirroring how
+    /// `KriaMediaEngineTests/LiveAudioMixTests.swift` builds its own
+    /// `"sfx"`/`kind: .audio` track by hand. It still goes through the exact
+    /// production device path every other case in this file exercises
+    /// (`AuthorizedDeviceSourceResolver` grant/download/cache +
+    /// `AVFoundationLocalExporter`), reusing only files every case here
+    /// already depends on -- `video.mp4` (speaker clip), `photo.jpg`
+    /// (overlay card), and `voiceover.m4a` (sound-effect audio, an
+    /// AAC-only file `scripts/ios/phone-photo-render-e2e.py` writes
+    /// unconditionally for the narrated_story case but never gates behind
+    /// it) -- so no new binary fixtures are needed.
+    ///
+    /// Asserts: export succeeds; the take's own duration survives untouched
+    /// by the sfx beats (`TimelineMath.totalDuration` is a max over every
+    /// clip's own end, so a beat fully inside the speaker clip's [0, 10)
+    /// span can never extend it -- the server enforces the same clamp, see
+    /// `_compile_sfx_track`'s `timeline_end` clamp and
+    /// `_compile_overlay_track`'s `window_end = min(card.end_s, speaker_end)`);
+    /// the export still carries audio; and -- checked on the compiled
+    /// recipe BEFORE export, since `RecipeWriter` always mixes every
+    /// composition audio track down to the exported file's one AAC track --
+    /// the instruction set really does carry the overlay card and a
+    /// distinct `"sfx"` audio track alongside the speaker clip's own track.
+    func testSubtitledTalkingWithSoundBeatsAndPhotoRendersOnTheIPhone() async throws {
+        let input = try inputDirectory()
+        // `video.mp4`'s own duration -- scripts/ios/phone-photo-render-e2e.py's `_ffmpeg(... d=10 ...)`.
+        let speakerDuration = 10.0
+
+        // --- Project + originals store: the speaker clip is a device original, exactly like every other case's `bindsFootage: true` path.
+        let project = ProjectDirectory(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        try project.createIfNeeded()
+        let store = SourceAssetStore(project: project)
+        let speakerOriginal = project.originals.appendingPathComponent("subtitled-speaker.mp4")
+        try FileManager.default.copyItem(at: input.appendingPathComponent("video.mp4"), to: speakerOriginal)
+        let speakerFingerprint = try SHA256Fingerprinter().fingerprint(file: speakerOriginal)
+        try store.bind(
+            mediaID: "subtitled-speaker",
+            original: MediaAsset(id: "subtitled-speaker", relativePath: "originals/subtitled-speaker.mp4", fingerprint: speakerFingerprint)
+        )
+
+        // --- Recipe assets/manifest: speaker (original), overlay photo (visual), the shared sfx catalog asset (library/sound_effect).
+        let overlayFingerprint = try SHA256Fingerprinter().fingerprint(file: input.appendingPathComponent("photo.jpg"))
+        let sfxFingerprint = try SHA256Fingerprinter().fingerprint(file: input.appendingPathComponent("voiceover.m4a"))
+
+        let manifest = RenderAssetManifest(assets: [
+            RenderAssetReference(id: "subtitled-speaker", fingerprint: try RenderFingerprint(speakerFingerprint), source: .original(mediaID: "subtitled-speaker")),
+            RenderAssetReference(id: "photo-overlay", fingerprint: try RenderFingerprint(overlayFingerprint), source: .visual(visualID: "photo-overlay-visual", generation: "1", mediaKind: .image)),
+            RenderAssetReference(id: "sfx-asset-ding", fingerprint: try RenderFingerprint(sfxFingerprint), source: .library(catalog: .soundEffect, catalogID: "ding", generation: "1")),
+        ])
+
+        // --- Tracks: the speaker clip; one overlay card windowed [1, 3); two
+        // sfx beats sharing the same catalog asset (mirrors `_compile_sfx_track`'s
+        // `asset_by_catalog_id` reuse) at 2s and 6s -- both fully inside the
+        // speaker clip's own [0, 10) span.
+        let speakerClip = TimelineClip(id: "clip-0", sourceAssetID: "subtitled-speaker", sourceStart: 0, sourceDuration: speakerDuration, timelineStart: 0, rate: 1)
+        let overlayClip = TimelineClip(
+            id: "subtitled-overlay-card-1", sourceAssetID: "photo-overlay", sourceStart: 0, sourceDuration: 2, timelineStart: 1, rate: 1, volume: 0,
+            visualPlacement: VisualMediaPlacement(order: 1, widthFraction: 0.35, xFraction: 0.5, yFraction: 0.4, windowStart: 1, windowEnd: 3)
+        )
+        let sfxBeat1 = TimelineClip(id: "sfx-beat-1", sourceAssetID: "sfx-asset-ding", sourceStart: 0, sourceDuration: 1, timelineStart: 2, rate: 1, volume: 1)
+        let sfxBeat2 = TimelineClip(id: "sfx-beat-2", sourceAssetID: "sfx-asset-ding", sourceStart: 0, sourceDuration: 1, timelineStart: 6, rate: 1, volume: 1)
+
+        let recipe = EditRecipe(
+            schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 1080, height: 1920), frameRate: 30,
+            assets: [
+                MediaAsset(id: "subtitled-speaker", relativePath: "subtitled-speaker", fingerprint: speakerFingerprint, duration: speakerDuration),
+                MediaAsset(id: "photo-overlay", relativePath: "photo-overlay", fingerprint: overlayFingerprint),
+                MediaAsset(id: "sfx-asset-ding", relativePath: "sfx-asset-ding", fingerprint: sfxFingerprint),
+            ],
+            tracks: [
+                TimelineTrack(id: "subtitled", kind: .video, clips: [speakerClip]),
+                TimelineTrack(id: "subtitled-overlays", kind: .overlay, clips: [overlayClip]),
+                TimelineTrack(id: "sfx", kind: .audio, clips: [sfxBeat1, sfxBeat2]),
+            ],
+            audio: AudioMixRecipe(originalVolume: 1),
+            requiredCapabilities: [.basicComposition, .local1080Export, .visualBlocks, .alphaOverlay, .audioMix, .soundEffects],
+            assetManifest: manifest
+        )
+        try recipe.validate()
+
+        // Structural proof, BEFORE export, that the compiled instruction set
+        // carries the overlay card and a distinct sfx audio track next to the
+        // speaker clip's own video track -- see the doc comment above for why
+        // this can't be re-checked on the exported file itself.
+        let overlayTrack = try XCTUnwrap(recipe.tracks.first { $0.id == "subtitled-overlays" })
+        XCTAssertEqual(overlayTrack.kind, .overlay)
+        XCTAssertEqual(overlayTrack.clips.map(\.id), ["subtitled-overlay-card-1"])
+        XCTAssertNotNil(overlayTrack.clips.first?.visualPlacement)
+        let sfxTrack = try XCTUnwrap(recipe.tracks.first { $0.id == "sfx" })
+        XCTAssertEqual(sfxTrack.kind, .audio)
+        XCTAssertEqual(sfxTrack.clips.map(\.id), ["sfx-beat-1", "sfx-beat-2"])
+        let videoTrack = try XCTUnwrap(recipe.tracks.first { $0.kind == .video })
+        XCTAssertEqual(videoTrack.id, "subtitled")
+        XCTAssertNotEqual(sfxTrack.id, videoTrack.id)
+
+        // Route decision, same shape as every other case: local while every
+        // capability this recipe's own content requires is verified.
+        func route(_ features: [String]) -> ExportRoute {
+            DeviceRenderSessions.decision(recipe, capabilities: PhoneRenderingCapabilities(enabled: true, recipeVersions: [2], verifiedFeatures: features)).route
+        }
+        XCTAssertTrue(recipe.effectiveCapabilities.isSuperset(of: [.stillImages, .alphaOverlay, .audioMix, .soundEffects]))
+        let verified = recipe.effectiveCapabilities.map(\.rawValue)
+        let decision = DeviceRenderSessions.decision(recipe, capabilities: PhoneRenderingCapabilities(enabled: true, recipeVersions: [2], verifiedFeatures: verified))
+        XCTAssertEqual(decision.route, .local, "\(decision.reason ?? "") missing=\(decision.missingCapabilities)")
+        for capability in ["soundEffects", "alphaOverlay", "stillImages"] {
+            XCTAssertEqual(route(verified.filter { $0 != capability }), .cloud, "dropping \(capability)")
+        }
+
+        // --- Resolve through the exact production grant/download/cache path.
+        let request = DeviceRenderRequest(
+            identity: DeviceRenderIdentity(jobID: UUID(), variantID: "subtitled_reaction_beats", recipeRevision: 1, recipeDigest: "test-digest"),
+            recipe: recipe
+        )
+        let log = RequestLog()
+        let bytes: [String: Data] = [
+            "photo-overlay": try Data(contentsOf: input.appendingPathComponent("photo.jpg")),
+            "sfx-asset-ding": try Data(contentsOf: input.appendingPathComponent("voiceover.m4a")),
+        ]
+        NativeEditorURLProtocol.handler = { urlRequest in
+            log.urls.append(urlRequest.url?.absoluteString ?? "")
+            if urlRequest.url?.host == "storage.e2e.test" { return (200, bytes[urlRequest.url?.lastPathComponent ?? ""] ?? Data()) }
+            let body = try JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(urlRequest)) as? [String: Any]
+            let assetID = body?["asset_id"] as? String ?? ""
+            return (200, Data(#"{"asset_id":"\#(assetID)","download_url":"https://storage.e2e.test/\#(assetID)","expires_at":"2099-01-01T00:00:00Z"}"#.utf8))
+        }
+        let resolver = AuthorizedDeviceSourceResolver(
+            api: NativeEditorTestSupport.api(), request: request, originals: store,
+            library: RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory)),
+            downloadSession: NativeEditorTestSupport.session()
+        )
+        let urls = try await resolver.resolve(for: recipe)
+        XCTAssertEqual(
+            Set(log.urls.filter { $0.contains("storage.e2e.test") }),
+            Set(["photo-overlay", "sfx-asset-ding"].map { "https://storage.e2e.test/\($0)" }),
+            "the overlay photo and the shared sfx catalog asset must each download through the per-asset grant"
+        )
+
+        // --- Export through the exact production exporter.
+        let frames = input.appendingPathComponent("frames", isDirectory: true)
+        try FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true)
+        let movie = frames.appendingPathComponent("subtitled-reaction-beats.mp4")
+        try? FileManager.default.removeItem(at: movie)
+        let checkpoint = try await AVFoundationLocalExporter(
+            stateStore: FileExportStateStore(directory: project.root.appendingPathComponent("state")), branding: .none
+        ).export(recipe: recipe, assetURLs: urls, outputURL: movie)
+        XCTAssertEqual(checkpoint.status, .completed)
+
+        let asset = AVURLAsset(url: movie)
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertEqual(duration, speakerDuration, accuracy: 0.1, "a sound-effect beat must never extend the take")
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(audioTracks.isEmpty, "the export must still carry audio (speech plus the mixed-in sfx beats)")
+    }
+
     private func inputDirectory() throws -> URL {
         guard let path = ProcessInfo.processInfo.environment["KRIA_E2E_DIR"] else { throw XCTSkip("Set KRIA_E2E_DIR to run") }
         return URL(fileURLWithPath: path)

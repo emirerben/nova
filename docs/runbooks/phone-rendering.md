@@ -500,11 +500,13 @@ on the variant as `overlay_transcript` BEFORE caption correction (correction
 drops word timings on corrected lines), so Phase 2's phrase triggers ("no, no,
 no" → ❌ + buzzer) can be grounded against untouched timings.
 
-Phase 2 (below) grounds overlay cards from the transcript, but it does NOT
-write `_phone_subtitled_lanes_v1` -- grounded cards feed straight into
-`compile_phone_subtitled_plan` as `SubtitledOverlayCard`s alongside (or in
-place of) any hand-authored lane request, never round-tripping through the
-stored lane-request field. With the flag off, `_phone_subtitled_lanes_v1` is
+Phase 2 (KRI-176, below) grounds overlay cards from the transcript, and Phase
+2b (KRI-178, further below) grounds creator-authored reaction beats the same
+way -- neither writes `_phone_subtitled_lanes_v1`; grounded cards feed
+straight into `compile_phone_subtitled_plan` as `SubtitledOverlayCard`s
+alongside (or in place of) any hand-authored lane request, never
+round-tripping through the stored lane-request field. With the flag off,
+`_phone_subtitled_lanes_v1` is
 ignored entirely and the compiler/runner output is byte-identical to before
 (`tests/pipeline/test_phone_subtitled_plan.py` byte-identity test +
 `tests/tasks/test_phone_subtitled_narrated_dispatch.py` flag-off pins).
@@ -658,6 +660,73 @@ one + `fly machine restart <id>` (api + worker) turns grounding off; the
 worker then behaves exactly as it did before KRI-176 (no `phone_overlay_receipt`,
 no grounding call).
 
+#### Phase 2b: reaction beats from the prompt (KRI-178)
+
+**Gate:** `app.services.phone_rollout.phone_subtitled_reaction_beats_supported()`
+-- True iff `phone_subtitled_reaction_beats_enabled` AND
+`phone_subtitled_overlays_supported()` (Phase 2's own gate) AND
+`sound_effects_enabled` AND every feature in `PHONE_SUBTITLED_SFX_FEATURES`
+(`soundEffects`, `audioMix`) is verified. Same split-brain prevention as
+Phase 2: the manifest (`reaction_beats` capability) and the worker
+(`_run_phone_subtitled_job`) both call this one helper.
+
+**Strategy fields.** A creator can ask, in the plan/chat prompt, "when I say
+X show sticker/photo Y and play sound Z" plus an optional closing shot held
+to the end of the clip. The approved `CreativeStrategy` carries this as
+`reaction_beats: list[ReactionBeat]` (`beat_id`, `trigger`, optional `after`,
+`occurrence: "first" | "every"`, optional `visual_id` + `visual_role`,
+optional `sound`, optional `hold_s`) and `closing_media: ClosingMedia | None`
+(`visual_id`, optional `badge_visual_id`, optional `from_trigger`) -- stored
+on `Job.all_candidates["creator_strategy"]` as plain dicts
+(`app.agents._schemas.reaction_beats`).
+
+**Grounding module:** `app.services.phone_reaction_grounding
+.ground_phone_reaction_beats`, run by `_run_phone_subtitled_job` BEFORE
+Phase 2's own grounding, right after `lane_request` is parsed. It tokenizes
+triggers/`after` phrases and the raw Whisper words the same way, finds each
+trigger's spoken occurrence(s) (`after` restricts to AFTER that phrase;
+`"every"` places up to 8 occurrences), builds a card per occurrence with a
+`visual_id` (reusing Phase 2's face-/caption-aware `resolve_phone_card_
+geometry`) and a sound per occurrence with a `sound`, then places
+`closing_media` (merging into a surviving same-asset beat card rather than
+duplicating it). Surviving cards/sounds lane through the exact same bind /
+`_resolve_phone_sound_effect` / compile / retry path Phase 1 and Phase 2 use.
+
+**The creator's beats win outright.** When beats produce a card, or the
+closing shot actually places, Phase 2's heuristic grounding is skipped
+entirely for that variant (`phone_overlay_receipt.matcher == "beats"`,
+empty) -- an explicit "when he scores, show this" beats transcript-meaning
+matching. A generic prompt like "add fun sound effects" with no
+`reaction_beats` on the strategy places nothing extra: this phase only acts
+on the STRUCTURED beat list, never free-text vibes. **Admin lane request
+still wins over beats too** -- a hand-authored `_phone_subtitled_lanes_v1`
+request (Phase 1.5) short-circuits beat grounding the same way it
+short-circuits Phase 2 (`phone_beat_receipt.matcher == "manual"`).
+
+**Receipt + chat surfacing.** Persisted on the variant as `phone_beat_receipt`
+(`{"version", "matcher", "face_sampling", "placed", "unplaced", "closing"}`;
+see `phone_reaction_grounding.py`'s docstring for the exact shape/reasons).
+Traced as `("phone", "subtitled_reaction_beats")`
+(`{"placed", "unplaced", "missed": [...trigger strings, <=8], "closing"}`)
+and humanized by `nova_steps.py` as "Kria timed your photos and sounds to
+your words" (or "Kria listened for the moments you named"), naming each
+missed trigger IN THE CREATOR'S OWN WORDS -- safe to quote verbatim, unlike
+Phase 2's `matcher`/`face_sampling`. `creation_threads._job_projection` also
+derives `render_notes: list[str]` from the primary variant's
+`phone_beat_receipt` via `nova_steps.render_notes_from_beat_receipt`, so the
+same sentences surface on a plain job poll, not just the live activity feed.
+
+**Flag-off byte-identity.** `PHONE_SUBTITLED_REACTION_BEATS_ENABLED` false
+(the default), or a strategy with no `reaction_beats`/`closing_media`: no
+grounding call, no `phone_beat_receipt` key, Phase 2 unchanged
+(`tests/tasks/test_phone_subtitled_narrated_dispatch.py` flag-off pins).
+
+**Rollback / enable order:** `fly secrets set
+PHONE_SUBTITLED_REACTION_BEATS_ENABLED=false --app nova-video` + `fly machine
+restart <id>` (api + worker) -- no Vercel twin, render-only gate. Enabling is
+the mirror: flip the Fly secret, restart api + worker; nothing to build on
+the web side first.
+
 #### Phase 3: editing a Talking edit on the phone (KRI-182 step 1)
 
 **Gate:** `PHONE_SUBTITLED_EDITOR_LANES_ENABLED`
@@ -685,7 +754,8 @@ Guided phone variants keep today's clamp.
 the generic editor sections (`app/services/phone_subtitled_editor.py`,
 `project_phone_subtitled_editor_sections`): overlay cards become
 `media_overlays` items (`kind: "image"`, `x_frac`/`y_frac`/`scale`/`start_s`/
-`end_s`/`z`, `entrance_token`/`exit_token: "fade"` when the card fades) and
+`end_s`/`z`; `entrance_token`/`exit_token` are always `"none"` -- `MediaOverlay`
+has no fade token, so a card's fade is carried across a Save by card id) and
 sound effects become `sound_effects` items (`sound_effect_id` = catalog id,
 `at_s`, `gain`, `duration_s`, `label`, optional `trim_start_s`/`trim_end_s`).
 The projection is DERIVED from the pinned device recipe (lazy backfill --
@@ -715,8 +785,8 @@ supported yet), a non-overlay `display_mode`, or any other section
 (`text_elements`, timeline, mix, music, orientation) returns
 `422 unsupported_phone_edit` with a `reason` -- a Save never silently drops a
 lane (unlike generation, where a failing lane is dropped and receipted).
-Entrance tokens other than `fade` render static (pop-in is unqualified on
-the phone). `SubtitledSoundEffect.trim_start_s`/`trim_end_s` are honoured by
+A card keeps the fade the worker gave it; a card the creator adds is static
+(pop-in is unqualified on the phone). `SubtitledSoundEffect.trim_start_s`/`trim_end_s` are honoured by
 `_compile_sfx_track` (defaults `None` ⇒ byte-identical).
 
 **Guards:** `tests/services/test_phone_subtitled_editor.py`,
