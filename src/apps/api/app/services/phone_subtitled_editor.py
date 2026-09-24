@@ -158,9 +158,10 @@ def lanes_from_editor_sections(
     sound effect doesn't reference the catalog, its audio format/path is
     unplayable/invalid, or its trim window is empty; a committed overlay
     card's ``display_mode`` isn't the pip default (fullscreen isn't a phone
-    Talking lane); or a committed overlay card's ``src_gcs_path`` doesn't
+    Talking lane); a committed overlay card's ``src_gcs_path`` doesn't
     match any photo Kria pinned for this Talking edit (adding NEW photos from
-    the phone editor isn't supported yet).
+    the phone editor isn't supported yet); or it binds a pinned VIDEO visual
+    that isn't already a video card while the KRI-183 video-PiP gate is off.
     """
     return PhoneSubtitledLanes(
         overlays=_overlays_from_sections(media_overlays, previous=previous, visuals=visuals),
@@ -229,7 +230,11 @@ def sections_from_lanes(
         media_overlays.append(
             {
                 "id": card.id,
-                "kind": "image",
+                # KRI-183: a video card projects as `kind: "video"` with its
+                # source start on `MediaOverlay.clip_trim_start_s`, so the
+                # editor shows what actually renders and a Save round-trips it.
+                "kind": card.kind,
+                **({"clip_trim_start_s": card.source_start_s} if card.kind == "video" else {}),
                 "src_gcs_path": card.gcs_path,
                 "display_mode": "pip",
                 "position": "custom",
@@ -327,6 +332,12 @@ def lanes_from_recipe(
                         scale=placement.width_fraction,
                         fade=bool(placement.fade_in or placement.fade_out),
                         z=max(placement.order - 1, 0),
+                        # KRI-183: a video card compiled from a video visual
+                        # keeps its kind + source start; deriving it as a
+                        # photo card would make every later Save fail the
+                        # compiler's kind check.
+                        kind="video" if visual.kind == "video" else "image",
+                        source_start_s=clip.source_start if visual.kind == "video" else 0.0,
                     )
                 )
         elif track.id == "sfx":
@@ -436,8 +447,6 @@ def _overlays_from_sections(
                 "that photo isn't a photo Kria pinned for this Talking edit -- adding new "
                 "photos to a phone Talking edit isn't supported yet"
             )
-        if binding.kind != "image":
-            raise ValueError("overlay cards require a photo, not a video, visual")
         card_id = item.get("id")
         if not isinstance(card_id, str) or not card_id:
             raise ValueError("media overlay card is missing its id")
@@ -446,6 +455,35 @@ def _overlays_from_sections(
         # creator added in the editor is static.
         previous_card = previous_by_id.get(card_id)
         fade = previous_card.fade if previous_card is not None else False
+        # KRI-183: the pinned visual's kind is the truth, not the payload's.
+        # A video card is allowed when the video-PiP gate holds, or when this
+        # same card already rendered as a video card (so a later flag
+        # rollback stops NEW video cards without breaking Saves on edits
+        # that already carry one). The recompile's device validation still
+        # fails closed if `visualVideos` is no longer verified.
+        source_start_s = 0.0
+        if binding.kind == "video":
+            already_video = (
+                previous_card is not None
+                and previous_card.kind == "video"
+                and previous_card.media_id == binding.media_id
+            )
+            from app.services.phone_rollout import (  # noqa: PLC0415
+                phone_subtitled_video_overlays_supported,
+            )
+
+            if not (already_video or phone_subtitled_video_overlays_supported()):
+                raise ValueError(
+                    "video cards aren't supported on phone Talking edits yet -- "
+                    "use a photo for this card"
+                )
+            raw_start = item.get("clip_trim_start_s")
+            if isinstance(raw_start, (int, float)) and not isinstance(raw_start, bool):
+                source_start_s = max(float(raw_start), 0.0)
+            elif previous_card is not None and previous_card.kind == "video":
+                source_start_s = previous_card.source_start_s
+        elif binding.kind != "image":
+            raise ValueError("overlay cards require a photo or video visual")
         cards.append(
             SubtitledOverlayCard(
                 id=card_id,
@@ -459,6 +497,8 @@ def _overlays_from_sections(
                 scale=item.get("scale", 0.35),
                 fade=fade,
                 z=max(int(item.get("z") or 0), 0),
+                kind="video" if binding.kind == "video" else "image",
+                source_start_s=source_start_s,
             )
         )
     return cards

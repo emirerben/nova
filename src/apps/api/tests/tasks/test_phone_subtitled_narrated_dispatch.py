@@ -665,6 +665,180 @@ def test_subtitled_overlay_grounding_compiler_drop_demotes_receipt(monkeypatch):
     assert PHONE_VISUALS_FIELD not in job.assembly_plan
 
 
+def _video_card(
+    card_id: str, media_id: str, *, start_s: float, end_s: float
+) -> SubtitledOverlayCard:
+    return SubtitledOverlayCard(
+        id=card_id,
+        media_id=media_id,
+        gcs_path=f"users/u1/plan/item1/pool/{media_id}.mp4",
+        generation="1",
+        start_s=start_s,
+        end_s=end_s,
+        kind="video",
+    )
+
+
+def _photo_card(
+    card_id: str, media_id: str, *, start_s: float, end_s: float
+) -> SubtitledOverlayCard:
+    return SubtitledOverlayCard(
+        id=card_id,
+        media_id=media_id,
+        gcs_path=f"users/u1/plan/item1/pool/{media_id}.jpg",
+        generation="1",
+        start_s=start_s,
+        end_s=end_s,
+    )
+
+
+def _enable_video_overlays(monkeypatch) -> None:
+    """KRI-183 happy-path setup: the KRI-176 overlay lane fully enabled PLUS
+    the video-PiP flag and `visualVideos` verified."""
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_video_overlays_enabled", True)
+    monkeypatch.setattr(
+        gb.settings, "phone_render_verified_features", _overlay_grounding_features("visualVideos")
+    )
+
+
+def test_subtitled_video_overlay_card_binds_and_compiles_as_video(monkeypatch):
+    """KRI-183: with the video-PiP gate fully on, grounding is asked for
+    videos (`video_supported=True`), a `kind="video"` card binds through the
+    SAME lane as the photo card with a `video` pin, and the compiled recipe
+    requires `visualVideos`."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    _enable_video_overlays(monkeypatch)
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+    cards = [
+        _photo_card("pip-0", "photo1", start_s=0.0, end_s=2.0),
+        _video_card("pip-1", "clip1", start_s=3.0, end_s=6.0),
+    ]
+    grounding_mock = _grounding_mock(cards)
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", grounding_mock
+    )
+
+    import app.pipeline.phone_subtitled_plan as subtitled_plan_mod
+
+    compiled: list = []
+    real_compile = subtitled_plan_mod.compile_phone_subtitled_plan
+
+    def _spy_compile(*args, **kwargs):
+        recipe = real_compile(*args, **kwargs)
+        compiled.append(recipe)
+        return recipe
+
+    monkeypatch.setattr(subtitled_plan_mod, "compile_phone_subtitled_plan", _spy_compile)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert grounding_mock.call_args.kwargs["video_supported"] is True
+    variant = job.assembly_plan["variants"][0]
+    assert variant["phone_lane_receipt"] == {"applied": ["overlays"], "dropped": []}
+    assert {c["media_id"] for c in variant["phone_overlay_receipt"]["placed"]} == {
+        "photo1",
+        "clip1",
+    }
+    assert bind_calls == [
+        {
+            "photo1": ("image", "users/u1/plan/item1/pool/photo1.jpg", "1"),
+            "clip1": ("video", "users/u1/plan/item1/pool/clip1.mp4", "1"),
+        }
+    ]
+    recipe = compiled[-1]
+    assert "visualVideos" in recipe.required_capabilities
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    video_clip = next(c for c in overlay_track.clips if c.id == "subtitled-overlay-pip-1")
+    assert video_clip.volume == 0
+    assert video_clip.timeline_start == 3.0
+    assert video_clip.source_duration == 3.0
+    bound_kinds = {
+        row["media_id"]: row.get("kind", "image") for row in job.assembly_plan[PHONE_VISUALS_FIELD]
+    }
+    assert bound_kinds == {"photo1": "image", "clip1": "video"}
+
+
+@pytest.mark.parametrize(
+    ("flag_on", "verified_extra"),
+    [
+        (False, ("visualVideos",)),  # flag off, device verified
+        (True, ()),  # flag on, device NOT verified
+    ],
+)
+def test_subtitled_video_overlay_cards_drop_alone_when_unsupported(
+    monkeypatch, flag_on, verified_extra
+):
+    """KRI-183 fail-closed: a `kind="video"` card that reaches the bind step
+    while the gate is off (flag flipped mid-flight, or `visualVideos` not
+    verified) drops ALONE -- the photo card still binds and renders, the lane
+    receipt names the reason, and the overlay receipt demotes just the video
+    to `video_not_supported`."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_video_overlays_enabled", flag_on)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        _overlay_grounding_features(*verified_extra),
+    )
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+    cards = [
+        _photo_card("pip-0", "photo1", start_s=0.0, end_s=2.0),
+        _video_card("pip-1", "clip1", start_s=3.0, end_s=6.0),
+    ]
+    grounding_mock = _grounding_mock(cards)
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", grounding_mock
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert grounding_mock.call_args.kwargs["video_supported"] is False
+    variant = job.assembly_plan["variants"][0]
+    assert variant["phone_lane_receipt"] == {
+        "applied": ["overlays"],
+        "dropped": [{"lane": "overlays", "reason": "visualVideos not verified on the phone"}],
+    }
+    assert bind_calls == [{"photo1": ("image", "users/u1/plan/item1/pool/photo1.jpg", "1")}]
+    overlay_receipt = variant["phone_overlay_receipt"]
+    assert [c["media_id"] for c in overlay_receipt["placed"]] == ["photo1"]
+    assert overlay_receipt["unplaced"] == [
+        {"media_id": "clip1", "label": "photo.jpg", "reason": "video_not_supported"}
+    ]
+
+
+def test_subtitled_video_overlays_flag_off_keeps_grounding_call_byte_identical(monkeypatch):
+    """KRI-183 flag-off pin: the KRI-176 grounding call shape only gains
+    `video_supported=False`; a photo-only render is otherwise unchanged."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(
+        gb.settings, "phone_render_verified_features", _overlay_grounding_features("visualVideos")
+    )
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind([]))
+    grounding_mock = _grounding_mock([_photo_card("pip-0", "photo1", start_s=0.0, end_s=2.0)])
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", grounding_mock
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    kwargs = grounding_mock.call_args.kwargs
+    assert kwargs["video_supported"] is False
+    assert kwargs["occupied"] == []
+    assert kwargs["used_media_ids"] == frozenset()
+    variant = job.assembly_plan["variants"][0]
+    assert variant["phone_lane_receipt"] == {"applied": ["overlays"], "dropped": []}
+
+
 def test_subtitled_media_lanes_happy_path(monkeypatch):
     job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
     monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
@@ -858,9 +1032,11 @@ def test_subtitled_media_lanes_malformed_request_drops_and_continues(monkeypatch
 
 
 def test_subtitled_reaction_beats_happy_path(monkeypatch):
-    """KRI-178: beats + a placed closing card win outright -- KRI-176's
-    generic grounding never runs, both cards bind in one call, the beat sfx
-    resolves, and the pipeline events fire with the creator's own missed
+    """KRI-178: beats + a placed closing card claim their Visuals and time
+    windows; KRI-183: the KRI-176 generic grounding then still runs for the
+    REST of the pool -- every beat media id excluded, every beat window
+    handed over as occupied -- both beat cards bind in one call, the beat
+    sfx resolves, and the pipeline events fire with the creator's own missed
     trigger phrase."""
     job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
     _enable_beats(monkeypatch)
@@ -905,9 +1081,7 @@ def test_subtitled_reaction_beats_happy_path(monkeypatch):
     monkeypatch.setattr(
         phone_reaction_grounding_mod, "ground_phone_reaction_beats", beat_grounding_mock
     )
-    kri176_grounding_mock = Mock(
-        side_effect=AssertionError("KRI-176 grounding must not run when beats are active")
-    )
+    kri176_grounding_mock = _grounding_mock([])
     monkeypatch.setattr(
         phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", kri176_grounding_mock
     )
@@ -930,20 +1104,20 @@ def test_subtitled_reaction_beats_happy_path(monkeypatch):
     assert call_kwargs["beats"] == job.all_candidates["creator_strategy"]["reaction_beats"]
     assert call_kwargs["closing"] == job.all_candidates["creator_strategy"]["closing_media"]
     assert call_kwargs["clip_path"] == "/tmp/c0.mp4"
-    kri176_grounding_mock.assert_not_called()
+    # KRI-183: the generic pass runs AFTER beats with the beats' Visuals and
+    # windows fenced off -- never the same Visual twice, never overlapping.
+    kri176_grounding_mock.assert_called_once()
+    kri176_kwargs = kri176_grounding_mock.call_args.kwargs
+    assert kri176_kwargs["used_media_ids"] == frozenset({"celeb1", "team1"})
+    assert kri176_kwargs["occupied"] == [(1.0, 3.0), (8.0, 10.0)]
+    assert kri176_kwargs["video_supported"] is False
 
     beat_receipt = variant["phone_beat_receipt"]
     assert beat_receipt["matcher"] == "phrase"
     assert beat_receipt == receipt
     overlay_receipt = variant["phone_overlay_receipt"]
-    assert overlay_receipt == {
-        "version": 1,
-        "matcher": "beats",
-        "face_sampling": "skipped",
-        "placed": [],
-        "unplaced": [],
-        "wishlist": [],
-    }
+    assert overlay_receipt["matcher"] == "agent"
+    assert overlay_receipt["placed"] == []
     lane_receipt = variant["phone_lane_receipt"]
     assert lane_receipt["applied"] == ["overlays", "sound_effects"]
     assert lane_receipt["dropped"] == []
@@ -1051,15 +1225,14 @@ def test_subtitled_beats_requested_but_unplaced_falls_through_to_pip_grounding(m
 
 
 def test_subtitled_beats_and_pip_in_one_prompt_never_double_place(monkeypatch):
-    """KRI-181: a prompt combining reaction beats AND (heuristically) PiP-
-    worthy footage for the SAME Visual must never place two cards for it.
-    The beat grounds one card + one sound for `celeb1` -- since a beat card
-    was placed, `beats_active` is True (~L4897-4900) and the KRI-176 generic
-    pass -- which could plausibly have matched that very same `celeb1` photo
-    from the surrounding transcript sentence -- must never even run
-    (`kri176_grounding_mock` raises if called), so there is exactly one card
-    for that media id anywhere in the compiled plan and the overlay receipt
-    is the fixed `matcher: "beats"` stub (~L4911-4919)."""
+    """KRI-181/KRI-183: a prompt combining reaction beats AND PiP-worthy
+    footage must never place two cards for the SAME Visual, while still
+    letting the generic KRI-176 pass show the REST of the pool. The beat
+    grounds one card + one sound for `celeb1`; the generic pass then runs
+    with `celeb1` fenced out of its candidate set (`used_media_ids`) and the
+    beat's window handed over as `occupied`, and places a DIFFERENT Visual
+    (`photo2`) -- so there is exactly one bound visual for `celeb1`, one for
+    `photo2`, and both lanes' receipts stand side by side."""
     job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
     _enable_beats(monkeypatch)
     bind_calls: list = []
@@ -1093,20 +1266,20 @@ def test_subtitled_beats_and_pip_in_one_prompt_never_double_place(monkeypatch):
     monkeypatch.setattr(
         phone_reaction_grounding_mod, "ground_phone_reaction_beats", beat_grounding_mock
     )
-    # The strategy also carries reaction beats worth of context around the
-    # SAME `celeb1` moment a generic PiP-matching pass could plausibly have
-    # picked up too (e.g. "he scores" mentions the celebration photo again a
-    # few words later) -- if KRI-176 grounding ran here, it could ground a
-    # second, duplicate card for `celeb1`. `beats_active` must keep it from
-    # ever running at all.
-    kri176_grounding_mock = Mock(
-        side_effect=AssertionError(
-            "KRI-176 grounding must not run when beats are active -- it could "
-            "re-match the same Visual as the beat and double-place it"
-        )
-    )
+    # The generic pass is a fake that honours the fence the worker hands it:
+    # it refuses to return a card for any excluded media id, and places a
+    # different Visual outside the beat's window.
+    kri176_calls: list[dict] = []
+
+    def _fake_kri176(_open_session, **kwargs):
+        kri176_calls.append(kwargs)
+        assert "celeb1" in kwargs["used_media_ids"]
+        return _grounding_mock(
+            [_photo_card("pip-0", "photo2", start_s=5.0, end_s=7.0)]
+        ).return_value
+
     monkeypatch.setattr(
-        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", kri176_grounding_mock
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", _fake_kri176
     )
 
     job.all_candidates["creator_strategy"] = {
@@ -1117,24 +1290,25 @@ def test_subtitled_beats_and_pip_in_one_prompt_never_double_place(monkeypatch):
 
     assert job.status == "awaiting_device"
     variant = job.assembly_plan["variants"][0]
-    kri176_grounding_mock.assert_not_called()
+    assert len(kri176_calls) == 1
+    assert kri176_calls[0]["used_media_ids"] == frozenset({"celeb1"})
+    assert kri176_calls[0]["occupied"] == [(1.0, 3.0)]
 
     overlay_receipt = variant["phone_overlay_receipt"]
-    assert overlay_receipt == {
-        "version": 1,
-        "matcher": "beats",
-        "face_sampling": "skipped",
-        "placed": [],
-        "unplaced": [],
-        "wishlist": [],
-    }
+    assert [c["media_id"] for c in overlay_receipt["placed"]] == ["photo2"]
     assert variant["phone_beat_receipt"] == receipt
 
-    # Exactly one bound visual for `celeb1` -- not two -- and exactly one
-    # beat card was ever handed to the compiler for it.
+    # Exactly one bound visual per Visual -- `celeb1` from the beat, `photo2`
+    # from the generic pass -- never a second card for `celeb1`.
     assert len(bind_calls) == 1
-    assert bind_calls[0]["celeb1"] == ("image", "users/u1/plan/item1/pool/celeb1.jpg", "1")
-    assert sum(1 for c in cards if c.media_id == "celeb1") == 1
+    assert bind_calls[0] == {
+        "celeb1": ("image", "users/u1/plan/item1/pool/celeb1.jpg", "1"),
+        "photo2": ("image", "users/u1/plan/item1/pool/photo2.jpg", "1"),
+    }
+    assert variant["phone_lane_receipt"] == {
+        "applied": ["overlays", "sound_effects"],
+        "dropped": [],
+    }
 
 
 def test_subtitled_reaction_beats_grounding_failure_drops_lane_not_job(monkeypatch):
@@ -1175,6 +1349,11 @@ def test_subtitled_reaction_beats_sfx_resolve_failure_demotes_sound_only(monkeyp
     with just `sound_label` stripped, not moved to `unplaced`."""
     job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
     _enable_beats(monkeypatch)
+    # KRI-183: the generic KRI-176 pass now runs after beats -- fake it out
+    # (empty) so this test keeps exercising only the beats lane.
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", _grounding_mock([])
+    )
     bind_calls: list = []
     monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
 
@@ -1289,6 +1468,11 @@ def test_subtitled_reaction_beats_compiler_drop_demotes_receipt(monkeypatch):
     linger in the beat receipt as `placed`."""
     job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
     _enable_beats(monkeypatch)
+    # KRI-183: the generic KRI-176 pass now runs after beats -- fake it out
+    # (empty) so this test keeps exercising only the beats lane.
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", _grounding_mock([])
+    )
     monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind([]))
 
     card = SubtitledOverlayCard(

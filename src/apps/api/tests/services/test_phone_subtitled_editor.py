@@ -26,6 +26,7 @@ from tests.pipeline.test_phone_subtitled_plan import (
     _pool_video_visual,
     _resolved_sfx,
     _sfx_asset,
+    _video_overlay_card,
 )
 
 
@@ -507,3 +508,145 @@ def test_lanes_from_recipe_ignores_a_stale_or_malformed_duck_receipt(receipt):
     _lanes, recipe = _ducked_recipe()
     derived = lanes_from_recipe(recipe, visuals=(), duck_receipt=receipt)
     assert derived.sound_effects[0].request.volume == pytest.approx(0.35)
+
+
+# --- KRI-183: video PiP cards round-trip through the editor --------------------
+
+
+def _video_card_recipe(*, source_start_s: float = 1.0):
+    bindings = (_binding(duration_s=10.0),)
+    video = _pool_video_visual(duration_s=6.0)
+    card = _video_overlay_card(
+        id="vid-1", start_s=2.0, end_s=4.0, x_frac=0.8, y_frac=0.2, source_start_s=source_start_s
+    )
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], visuals=(video,), lanes=PhoneSubtitledLanes(overlays=[card])
+    )
+    return recipe, video
+
+
+def test_lanes_from_recipe_keeps_a_video_card_a_video_card():
+    """Deriving lanes from a pinned recipe must not turn a video card into a
+    photo card -- the recompile at Save would then reject the video visual,
+    so every Save of that edit (even a sound-only one) would 422."""
+    recipe, video = _video_card_recipe(source_start_s=1.0)
+
+    derived = lanes_from_recipe(recipe, visuals=(video,))
+
+    assert len(derived.overlays) == 1
+    card = derived.overlays[0]
+    assert card.kind == "video"
+    assert card.media_id == VIDEO_ID
+    assert card.source_start_s == pytest.approx(1.0)
+
+
+def test_a_sound_only_save_recompiles_an_edit_carrying_a_video_card():
+    recipe, video = _video_card_recipe()
+    previous = lanes_from_recipe(recipe, visuals=(video,))
+
+    lanes = lanes_from_editor_sections(
+        previous=previous, sound_effects=None, media_overlays=None, visuals=(video,)
+    )
+    recompiled = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),), caption_cues=[], visuals=(video,), lanes=lanes
+    )
+
+    assert "visualVideos" in recompiled.required_capabilities
+
+
+def test_projected_video_card_reports_kind_video_and_validates():
+    recipe, video = _video_card_recipe(source_start_s=1.5)
+    sections = sections_from_lanes(lanes_from_recipe(recipe, visuals=(video,)), labels={})
+
+    item = sections["media_overlays"][0]
+    assert item["kind"] == "video"
+    assert item["clip_trim_start_s"] == pytest.approx(1.5)
+    MediaOverlay.model_validate(item)
+
+
+def test_projected_photo_card_carries_no_clip_trim_field():
+    sections = sections_from_lanes(PhoneSubtitledLanes(overlays=[_overlay_card()]), labels={})
+    assert "clip_trim_start_s" not in sections["media_overlays"][0]
+    assert sections["media_overlays"][0]["kind"] == "image"
+
+
+def test_moving_an_existing_video_card_keeps_kind_and_source_start(monkeypatch):
+    """Flag off after the render: moving a card that ALREADY rendered as a
+    video card still Saves, keeping its kind and source start."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "phone_subtitled_video_overlays_enabled", False)
+    recipe, video = _video_card_recipe(source_start_s=1.0)
+    previous = lanes_from_recipe(recipe, visuals=(video,))
+    item = sections_from_lanes(previous, labels={})["media_overlays"][0]
+
+    lanes = lanes_from_editor_sections(
+        previous=previous,
+        sound_effects=None,
+        media_overlays=[{**item, "x_frac": 0.25}],
+        visuals=(video,),
+    )
+
+    assert lanes.overlays[0].kind == "video"
+    assert lanes.overlays[0].x_frac == pytest.approx(0.25)
+    assert lanes.overlays[0].source_start_s == pytest.approx(1.0)
+
+
+def test_a_new_video_card_is_rejected_while_the_video_gate_is_off(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "phone_subtitled_video_overlays_enabled", False)
+    video = _pool_video_visual()
+    new_item = {
+        "id": "new-vid",
+        "kind": "video",
+        "src_gcs_path": VIDEO_PATH,
+        "display_mode": "pip",
+        "start_s": 1.0,
+        "end_s": 3.0,
+    }
+
+    with pytest.raises(ValueError, match="video cards aren't supported"):
+        lanes_from_editor_sections(
+            previous=PhoneSubtitledLanes(),
+            sound_effects=None,
+            media_overlays=[new_item],
+            visuals=(video,),
+        )
+
+
+def test_a_new_video_card_is_accepted_while_the_video_gate_holds(monkeypatch):
+    from app.config import settings
+    from app.services.phone_rollout import (
+        PHONE_SUBTITLED_OVERLAY_FEATURES,
+        PHONE_SUBTITLED_VIDEO_OVERLAY_FEATURES,
+    )
+
+    monkeypatch.setattr(settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(settings, "phone_subtitled_video_overlays_enabled", True)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        list(PHONE_SUBTITLED_OVERLAY_FEATURES + PHONE_SUBTITLED_VIDEO_OVERLAY_FEATURES),
+    )
+    video = _pool_video_visual()
+    new_item = {
+        "id": "new-vid",
+        "kind": "image",  # the pinned visual's kind wins over the payload's
+        "src_gcs_path": VIDEO_PATH,
+        "display_mode": "pip",
+        "start_s": 1.0,
+        "end_s": 3.0,
+        "clip_trim_start_s": 0.5,
+    }
+
+    lanes = lanes_from_editor_sections(
+        previous=PhoneSubtitledLanes(),
+        sound_effects=None,
+        media_overlays=[new_item],
+        visuals=(video,),
+    )
+
+    assert lanes.overlays[0].kind == "video"
+    assert lanes.overlays[0].source_start_s == pytest.approx(0.5)

@@ -620,9 +620,40 @@ source of truth prevents.
    uses -- grounding only decides WHICH cards to propose, not how they render
    or fail.
 
-**Image Visuals only.** A video Visual matched by the placement step is
-reported `video_not_supported` (in `unplaced`, never silently dropped) --
-video-as-PiP is a follow-up, not this phase.
+**Image Visuals by default; video Visuals behind KRI-183.** With
+`PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED` off (the default) a video Visual is
+reported `video_not_supported` (in `unplaced`, never silently dropped). When
+`phone_rollout.phone_subtitled_video_overlays_supported()` holds (that flag +
+this lane's gate + `visualVideos` verified), video Visuals join the matcher's
+candidate set and bind as `kind="video"` cards: muted, starting at the
+footage's first frame, trimmed to the spoken window, and shortened to the
+footage when the source runs out first (the device never freezes a last
+frame). `compile_phone_subtitled_plan` adds `visualVideos` to
+`required_capabilities` for any video card, so `validate_phone_pilot_recipe`
+still fails closed on an unverified device. The worker splits the overlay
+lane by kind before binding: an unverified `visualVideos` drops ONLY the
+video cards (lane receipt `visualVideos not verified on the phone`, receipt
+entries demoted to `video_not_supported`), the photo cards keep rendering.
+
+**Placement when face detection can't look (KRI-183).** Every phone card
+starts upper-right (x 0.74 / y 0.22 / w 0.36) and `arbitrate_media_overlays`
+moves/shrinks it off the caption band (y >= 0.60), the sampled face boxes,
+and any card already on screen in the same window. When face sampling
+FAILS (or is skipped), `resolve_phone_card_geometry` no longer assumes the
+frame is empty: it protects a conservative talk-to-camera face box
+(`_FALLBACK_FACE_BOX` in `phone_overlay_grounding.py`) so the card lands in
+the safest corner instead of over the speaker, and the receipt records
+`face_sampling: "failed"`. A successful sample that finds no face keeps
+today's behaviour.
+
+**Chat receipt (KRI-183).** `creation_threads._job_projection` derives
+`render_notes` from BOTH the variant's `phone_beat_receipt` (KRI-178, first)
+and its `phone_overlay_receipt` (`nova_steps.render_notes_from_overlay_
+receipt`): "Showed 2 of 3 Visuals as cards", then one honest line per
+unplaced Visual by reason bucket (no spoken moment / no room without covering
+your face or the captions / is a video, which can't be a card on your iPhone
+yet / couldn't add). The iOS chat shows them under the ready job
+(`chat.job.renderNotes`, KRI-178) -- no second mechanism.
 
 **Manual override wins.** An admin-authored `phone-lanes` request (Phase 1.5,
 above) that carries `overlays` is used as-is and skips grounding entirely;
@@ -711,11 +742,15 @@ geometry`) and a sound per occurrence with a `sound`, then places
 duplicating it). Surviving cards/sounds lane through the exact same bind /
 `_resolve_phone_sound_effect` / compile / retry path Phase 1 and Phase 2 use.
 
-**The creator's beats win outright.** When beats produce a card, or the
-closing shot actually places, Phase 2's heuristic grounding is skipped
-entirely for that variant (`phone_overlay_receipt.matcher == "beats"`,
-empty) -- an explicit "when he scores, show this" beats transcript-meaning
-matching. A generic prompt like "add fun sound effects" with no
+**The creator's beats win their Visuals and windows; Phase 2 fills the
+rest (KRI-183).** Beats ground FIRST. Every beat card's media id (photos,
+stickers, closing shot, badge) is then excluded from Phase 2's candidate set
+(`used_media_ids`) and every beat card's window is handed to Phase 2 as
+`occupied`, so in one prompt that asks for both, a PiP card never shows the
+same Visual twice and never overlaps a beat card in time (hence never on
+screen). Before KRI-183 an active beat silenced Phase 2 entirely
+(`phone_overlay_receipt.matcher == "beats"`); that matcher value no longer
+occurs. A generic prompt like "add fun sound effects" with no
 `reaction_beats` on the strategy places nothing extra: this phase only acts
 on the STRUCTURED beat list, never free-text vibes. **Admin lane request
 still wins over beats too** -- a hand-authored `_phone_subtitled_lanes_v1`
@@ -746,6 +781,24 @@ restart <id>` (api + worker) -- no Vercel twin, render-only gate. Enabling is
 the mirror: flip the Fly secret, restart api + worker; nothing to build on
 the web side first.
 
+#### Phase 2c: video Visuals as PiP cards (KRI-183)
+
+Flag `PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED` (default false), gate
+`phone_rollout.phone_subtitled_video_overlays_supported()` = that flag +
+`phone_subtitled_overlays_supported()` + `visualVideos` verified. Consulted by
+`_run_phone_subtitled_job` (grounding's `video_supported`, the per-kind bind
+split) and by `creator_capabilities.resolve_creator_manifest` (whether the
+phone Talking manifest advertises video cards) -- see Phase 2 above for the
+render-side detail. Flag off ⇒ manifests and recipes byte-identical to
+KRI-176/178 (`tests/tasks/test_phone_subtitled_narrated_dispatch.py`,
+`tests/services/test_creator_capabilities.py`, `tests/pipeline/
+test_phone_subtitled_plan.py` pins). Rollback: `fly secrets set
+PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED=false --app nova-video` + `fly machine
+restart <id>` (api + worker); no Vercel twin. A video card survives an
+editor Save (Phase 3 above): the projection reports it as `kind: "video"` and
+the Save path rebuilds `kind`/`source_start_s` from the pinned visual. Not in
+this phase: a device E2E for subtitled cards.
+
 #### Phase 3: editing a Talking edit on the phone (KRI-182 step 1)
 
 **Gate:** `PHONE_SUBTITLED_EDITOR_LANES_ENABLED`
@@ -772,7 +825,8 @@ Guided phone variants keep today's clamp.
 **What the editor sees.** The lanes the worker compiled are projected onto
 the generic editor sections (`app/services/phone_subtitled_editor.py`,
 `project_phone_subtitled_editor_sections`): overlay cards become
-`media_overlays` items (`kind: "image"`, `x_frac`/`y_frac`/`scale`/`start_s`/
+`media_overlays` items (`kind: "image"`, or `"video"` with
+`clip_trim_start_s` for a KRI-183 video card; `x_frac`/`y_frac`/`scale`/`start_s`/
 `end_s`/`z`; `entrance_token`/`exit_token` are always `"none"` -- `MediaOverlay`
 has no fade token, so a card's fade is carried across a Save by card id) and
 sound effects become `sound_effects` items (`sound_effect_id` = catalog id,
@@ -800,7 +854,9 @@ playability + `sound-effects/{id}/` prefix checks `_resolve_phone_sound_effect`
 applies. The ending clip is carried over unchanged (not editable yet).
 Fail-closed, named: any lane the creator edited that cannot compile, a photo
 that is not pinned for this edit (adding NEW photos to a Talking edit is not
-supported yet), a non-overlay `display_mode`, or any other section
+supported yet), a pinned video used as a NEW card while the KRI-183 video
+gate is off (an existing video card still Saves), a non-overlay
+`display_mode`, or any other section
 (`text_elements`, timeline, mix, music, orientation) returns
 `422 unsupported_phone_edit` with a `reason` -- a Save never silently drops a
 lane (unlike generation, where a failing lane is dropped and receipted).

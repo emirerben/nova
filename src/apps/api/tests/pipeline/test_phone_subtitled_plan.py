@@ -917,3 +917,203 @@ def test_duck_receipt_records_only_the_effects_the_duck_lowered():
     }
     assert sfx_duck_receipt(lanes, off) is None
     assert sfx_duck_receipt(None, on) is None
+
+
+# --- Video overlay cards (KRI-183) --------------------------------------------
+
+
+def _video_overlay_card(**changes) -> SubtitledOverlayCard:
+    return _overlay_card(
+        **{
+            "media_id": VIDEO_ID,
+            "gcs_path": VIDEO_PATH,
+            "generation": "88",
+            "kind": "video",
+        }
+        | changes
+    )
+
+
+def test_video_overlay_card_compiles_muted_onto_the_overlay_track():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _pool_video_visual(duration_s=6.0)
+    card = _video_overlay_card(start_s=1.0, end_s=3.0, source_start_s=0.5)
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[card]),
+    )
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    assert len(overlay_track.clips) == 1
+    clip = overlay_track.clips[0]
+    assert clip.id == "subtitled-overlay-card-1"
+    assert clip.volume == 0
+    assert clip.source_start == pytest.approx(0.5)
+    # requested window (2.0s) fits inside the 5.5s available footage.
+    assert clip.source_duration == pytest.approx(2.0)
+    assert clip.timeline_start == pytest.approx(1.0)
+    placement = clip.visual_placement
+    assert placement is not None
+    assert placement.window_start == pytest.approx(1.0)
+    assert placement.window_end == pytest.approx(3.0)
+    assert "visualVideos" in recipe.required_capabilities
+    assert {"visualBlocks", "alphaOverlay", "audioMix"} <= recipe.required_capabilities
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def test_video_overlay_card_shortens_window_when_footage_runs_out():
+    bindings = (_binding(duration_s=10.0),)
+    # Only 1.5s of footage remains after the 4.5s source_start.
+    visual = _pool_video_visual(duration_s=6.0)
+    card = _video_overlay_card(start_s=1.0, end_s=4.0, source_start_s=4.5)
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[card]),
+    )
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    clip = overlay_track.clips[0]
+    # requested window is 3.0s but only 1.5s of footage is available.
+    assert clip.source_duration == pytest.approx(1.5)
+    assert clip.timeline_start == pytest.approx(1.0)
+    placement = clip.visual_placement
+    # the on-screen window is shortened to match the footage, not frozen.
+    assert placement.window_start == pytest.approx(1.0)
+    assert placement.window_end == pytest.approx(2.5)
+
+
+def test_video_overlay_source_start_past_footage_is_a_lane_error():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _pool_video_visual(duration_s=6.0)
+    card = _video_overlay_card(start_s=1.0, end_s=3.0, source_start_s=6.0)
+    with pytest.raises(SubtitledLaneError) as excinfo:
+        compile_phone_subtitled_plan(
+            bindings,
+            caption_cues=[],
+            visuals=(visual,),
+            lanes=PhoneSubtitledLanes(overlays=[card]),
+        )
+    assert excinfo.value.lane == "overlays"
+    assert excinfo.value.capability == "visualVideos"
+
+
+def test_video_kind_card_bound_to_an_image_visual_is_rejected():
+    bindings = (_binding(duration_s=10.0),)
+    photo = _photo_visual()
+    card = _overlay_card(media_id=PHOTO_ID, gcs_path=PHOTO_PATH, generation="77", kind="video")
+    with pytest.raises(SubtitledLaneError) as excinfo:
+        compile_phone_subtitled_plan(
+            bindings,
+            caption_cues=[],
+            visuals=(photo,),
+            lanes=PhoneSubtitledLanes(overlays=[card]),
+        )
+    assert excinfo.value.lane == "overlays"
+    assert excinfo.value.capability == "visualVideos"
+    assert "video overlay card requires a video visual" in str(excinfo.value)
+
+
+def test_image_card_bound_to_a_video_visual_still_rejected_as_before():
+    # Byte-identical to the pre-KRI-183 rejection: an image (default `kind`)
+    # card still cannot bind a video visual.
+    bindings = (_binding(duration_s=10.0),)
+    video_visual = _pool_video_visual()
+    card = _overlay_card(media_id=VIDEO_ID, gcs_path=VIDEO_PATH, generation="88")
+    with pytest.raises(SubtitledLaneError) as excinfo:
+        compile_phone_subtitled_plan(
+            bindings,
+            caption_cues=[],
+            visuals=(video_visual,),
+            lanes=PhoneSubtitledLanes(overlays=[card]),
+        )
+    assert excinfo.value.lane == "overlays"
+    assert excinfo.value.capability == "visualBlocks"
+    assert "overlay card requires an image visual" in str(excinfo.value)
+
+
+def test_mixed_image_and_video_cards_both_compile_in_one_lane():
+    bindings = (_binding(duration_s=10.0),)
+    photo = _photo_visual()
+    video = _pool_video_visual(duration_s=6.0)
+    photo_card = _overlay_card(id="photo-card", start_s=0.5, end_s=1.5)
+    video_card = _video_overlay_card(id="video-card", start_s=2.0, end_s=4.0)
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(photo, video),
+        lanes=PhoneSubtitledLanes(overlays=[photo_card, video_card]),
+    )
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    assert {clip.id for clip in overlay_track.clips} == {
+        "subtitled-overlay-photo-card",
+        "subtitled-overlay-video-card",
+    }
+    assert "visualVideos" in recipe.required_capabilities
+
+
+def test_image_only_lane_has_no_visual_videos_capability():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _photo_visual()
+    card = _overlay_card()
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[card]),
+    )
+    assert "visualVideos" not in recipe.required_capabilities
+
+
+def test_default_kind_card_changes_nothing_byte_identical_to_image_kind():
+    bindings = (_binding(duration_s=10.0),)
+    visual = _photo_visual()
+    default_card = _overlay_card()
+    explicit_image_card = _overlay_card(kind="image")
+    default_recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[default_card]),
+    )
+    explicit_recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[explicit_image_card]),
+    )
+    assert default_recipe.model_dump_json() == explicit_recipe.model_dump_json()
+
+
+def test_image_card_dump_drops_kind_and_source_start_fields():
+    # A photo card's persisted shape must stay byte-identical to before
+    # KRI-183 (mirrors `PhoneVisualBinding._photo_shape`).
+    card = _overlay_card()
+    dumped = card.model_dump(mode="json")
+    assert "kind" not in dumped
+    assert "source_start_s" not in dumped
+
+
+def test_video_card_dump_carries_kind_and_source_start_fields():
+    card = _video_overlay_card(source_start_s=1.5)
+    dumped = card.model_dump(mode="json")
+    assert dumped["kind"] == "video"
+    assert dumped["source_start_s"] == pytest.approx(1.5)
+
+
+def test_video_overlay_recipe_passes_phone_pilot_validation_when_verified(monkeypatch):
+    bindings = (_binding(duration_s=10.0),)
+    visual = _pool_video_visual(duration_s=6.0)
+    card = _video_overlay_card()
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(overlays=[card]),
+    )
+    monkeypatch.setattr(settings, "phone_editor_media_enabled", True)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe, allow_editor_media=True)

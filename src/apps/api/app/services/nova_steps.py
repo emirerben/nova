@@ -352,6 +352,29 @@ _MISS_REASON_NEVER_HEARD: frozenset[str] = frozenset({"never_heard", "after_not_
 _MISS_REASON_VISUAL_MISSING: frozenset[str] = frozenset({"visual_not_in_pool", "visual_is_video"})
 _MISS_REASON_NO_ROOM: frozenset[str] = frozenset({"no_safe_spot", "too_short", "overlap"})
 
+# KRI-183: `render_notes_from_overlay_receipt`'s reason buckets -- mirrors
+# `app.services.overlay_autoplace`'s `autoplace_item_dropped` reason
+# vocabulary plus the post-grounding demotion reasons the phone Talking
+# render worker adds (`missing_generation`, `bind_failed`, `compile_dropped`)
+# and a bare `f"error: {exc}"` string. Every bucket maps to a FIXED, honest
+# sentence -- the raw reason code is never quoted back to the creator.
+_OVERLAY_MISS_REASON_NO_SPOKEN_MATCH: frozenset[str] = frozenset({"no_spoken_match", "hook_window"})
+_OVERLAY_MISS_REASON_NO_ROOM: frozenset[str] = frozenset(
+    {
+        "no_safe_spot",
+        "duplicate",
+        "overlap",
+        "too_short",
+        "density_cap",
+        "hook_burst_concurrency",
+        "hook_burst_stagger",
+    }
+)
+_OVERLAY_MISS_REASON_VIDEO_UNSUPPORTED: frozenset[str] = frozenset({"video_not_supported"})
+_OVERLAY_MISS_REASON_PIPELINE_ERROR: frozenset[str] = frozenset(
+    {"missing_generation", "bind_failed", "compile_dropped"}
+)
+
 
 def beat_miss_sentence(trigger: str, reason: str | None) -> str:
     """One creator-facing sentence for why a reaction beat's card/sound
@@ -465,6 +488,86 @@ def render_notes_from_beat_receipt(receipt: dict[str, Any] | None) -> list[str]:
             notes.append(beat_miss_sentence(trigger, reason))
     if closing.get("status") == "unplaced":
         notes.append(_closing_miss_sentence(closing.get("reason")))
+    return notes
+
+
+def _overlay_miss_sentence(label: str, reason: str | None) -> str:
+    """One creator-facing sentence for why a Visual the phone matcher
+    considered for a card didn't make it onto a phone-rendered Talking edit.
+
+    `reason` is a `phone_overlay_receipt.unplaced[].reason` -- either
+    `no_spoken_match`/`hook_window` (the words never lined up), one of
+    `overlay_autoplace.py`'s own `autoplace_item_dropped` no-room reasons
+    (`no_safe_spot`/`duplicate`/`overlap`/`too_short`/`density_cap`/
+    `hook_burst_concurrency`/`hook_burst_stagger`), `video_not_supported`
+    (videos aren't phone cards yet), or a post-grounding demotion reason
+    (`missing_generation`/`bind_failed`/`compile_dropped`/`"error: ..."`) --
+    an internal render-pipeline hiccup, reported honestly but generically.
+    Anything unrecognized (including an empty reason) falls back to the
+    "no spoken moment" sentence, same as `no_spoken_match`.
+    """
+    if reason in _OVERLAY_MISS_REASON_VIDEO_UNSUPPORTED:
+        return f'"{label}" is a video, which can\'t be a card on your iPhone yet'
+    if reason in _OVERLAY_MISS_REASON_NO_ROOM:
+        return f'No room to show "{label}" without covering your face or the captions'
+    if reason in _OVERLAY_MISS_REASON_PIPELINE_ERROR or (
+        isinstance(reason, str) and reason.startswith("error")
+    ):
+        return f'Couldn\'t add "{label}" to the phone render'
+    # `_OVERLAY_MISS_REASON_NO_SPOKEN_MATCH` and any unrecognized/empty
+    # reason share this sentence -- both mean "no card, and no clue why
+    # beyond the words never lining up", so there's nothing more specific
+    # to tell the creator either way.
+    return f'Couldn\'t find a spoken moment for "{label}"'
+
+
+def render_notes_from_overlay_receipt(receipt: dict[str, Any] | None) -> list[str]:
+    """Turn a variant's persisted `phone_overlay_receipt` (KRI-183, written
+    by the phone Talking render worker's Visuals-as-cards matcher) into
+    creator-safe sentences for `app.routes.creation_threads._job_projection`'s
+    `render_notes` -- appended AFTER `render_notes_from_beat_receipt`'s
+    lines, since a variant can carry both a beat receipt (creator-named
+    reaction moments) and an overlay receipt (the agent/heuristic Visuals
+    matcher that ran independently of any named beats).
+
+    `label` is the creator's own filename or the Visual's subject -- safe to
+    quote back verbatim, unlike `matcher`/`face_sampling`, which never reach
+    the creator.
+
+    `[]` for `None`, a non-dict, a `"manual"` matcher (an admin-authored lane
+    -- nothing for Kria to explain), a missing matcher, or a receipt with
+    nothing placed and nothing unplaced. `matcher == "failed"`
+    short-circuits to a single generic line -- the phone couldn't even
+    check, so there is nothing per-Visual to report.
+    """
+    if not isinstance(receipt, dict):
+        return []
+    matcher = receipt.get("matcher")
+    if matcher in ("manual", None):
+        return []
+    if matcher == "failed":
+        return ["Couldn't check your Visuals for card moments this time"]
+
+    placed = receipt.get("placed")
+    placed_n = len(placed) if isinstance(placed, list) else 0
+    unplaced = receipt.get("unplaced")
+    unplaced_entries = unplaced if isinstance(unplaced, list) else []
+    if placed_n == 0 and not unplaced_entries:
+        return []
+
+    notes: list[str] = []
+    if unplaced_entries:
+        notes.append(f"Showed {placed_n} of {placed_n + len(unplaced_entries)} Visuals as cards")
+    elif placed_n == 1:
+        notes.append("1 Visual shown as a card")
+    else:
+        notes.append(f"{placed_n} Visuals shown as cards")
+    for entry in unplaced_entries[:_MAX_MISSED_DETAIL_LINES]:
+        label = entry.get("label") if isinstance(entry, dict) else None
+        if isinstance(label, str) and label:
+            reason = entry.get("reason") if isinstance(entry, dict) else None
+            reason = reason if isinstance(reason, str) and reason else None
+            notes.append(_overlay_miss_sentence(label[:60], reason))
     return notes
 
 

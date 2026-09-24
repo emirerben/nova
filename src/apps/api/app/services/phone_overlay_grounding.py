@@ -12,10 +12,18 @@ matching primitives the cloud `match_overlay_suggestions` task
 the result into face-aware, caption-safe picture-in-picture cards plus a
 creator-readable receipt.
 
-Every candidate image Visual ends up in exactly one of the receipt's
+Every candidate image or video Visual ends up in exactly one of the receipt's
 ``placed``/``unplaced`` lists -- a Visual is never silently dropped. The
 receipt is creator-safe: it never carries a ``gcs_path``, a generation, or
-any agent/prompt text, only labels, timings, and short plain-text reasons.
+any agent/prompt text, only labels, timings, short plain-text reasons, and
+each entry's ``kind`` (``"image"`` | ``"video"``).
+
+KRI-183 widened the candidate pool from images-only to images + videos: a
+video Visual joins the match/placement pipeline exactly like an image
+(`video_supported=True`), and its resulting card plays muted from
+``source_start_s=0.0`` (``SubtitledOverlayCard.kind == "video"``); the
+default (`video_supported=False`) keeps pre-KRI-183 behavior byte-identical,
+every video reported ``video_not_supported``.
 """
 
 from __future__ import annotations
@@ -59,6 +67,18 @@ _DEFAULT_CARD_Y_FRAC = 0.22
 _DEFAULT_CARD_SCALE = 0.36
 _MAX_ARBITRATION_IOU = 0.02
 
+# KRI-183: conservative talk-to-camera face+shoulders box, protected whenever
+# face sampling did NOT positively confirm the frame is clear (failed, or
+# skipped with cards still to place) -- "never assume there's no face."
+# Centered horizontally (44% of canvas width) and anchored top-down (2%-52%
+# of canvas height) to cover a selfie-framed speaker's head and shoulders
+# under typical portrait framing without reaching so wide it starves every
+# corner candidate. Verified against `arbitrate_media_overlays`: a single
+# default-geometry card (photo slot 0.74/0.22/0.36 OR sticker slot
+# 0.26/0.24/0.28, square footprint) still lands a shrunk, accepted spot in
+# the opposite upper corner rather than being omitted.
+_FALLBACK_FACE_BOX = NormalizedBox(0.28, 0.02, 0.72, 0.52)
+
 _MAX_FACE_ANCHORS_PER_CARD = 4
 _MAX_FACE_ANCHORS_TOTAL = 12
 _FACE_SAMPLE_TIMEOUT_BASE_S = 2.0
@@ -85,6 +105,12 @@ def _label_for_asset(asset: dict) -> str:
     if subject:
         return subject[:_MAX_LABEL_LEN]
     return f"visual {asset.get('id', '')}"[:_MAX_LABEL_LEN]
+
+
+def _kind_for_asset(asset: dict) -> str:
+    """KRI-183 receipt field: every `placed`/`unplaced` entry names its
+    Visual's real kind, not just whether it made it onto the timeline."""
+    return "video" if asset.get("kind") == "video" else "image"
 
 
 def _evenly_spaced_anchors(start_s: float, end_s: float, n: int) -> list[float]:
@@ -155,9 +181,18 @@ def resolve_phone_card_geometry(
     ``start_s``, ``end_s`` and a STARTING ``x_frac``/``y_frac``/``scale`` --
     the caller decides that starting geometry per card kind (e.g. the photo
     vs. sticker default slot) before calling this. Sampling anchors are
-    derived from every card's own window, and this function fails open on a
-    face-sampling error exactly like `ground_phone_subtitled_overlays` always
-    has (no face regions, ``face_sampling == "failed"``).
+    derived from every card's own window.
+
+    Face sampling is FAIL-SAFE, not fail-open (KRI-183): whenever it did NOT
+    positively confirm the frame is clear -- a sampler error
+    (``face_sampling == "failed"``) or nothing was even attempted
+    (``"skipped"``) while there are still cards to place -- a synthetic
+    `_FALLBACK_FACE_BOX` (a conservative centre-top talk-to-camera face box)
+    is protected in ``_FALLBACK_FACE_BOX``'s place instead of leaving zero
+    face regions and trusting the default corner. "Never assume there's no
+    face." The ``"ok"`` path (OpenCV ran and reported real regions, even
+    zero detected) is untouched -- a confirmed-clear frame keeps today's
+    default geometry exactly, same as before KRI-183.
 
     Returns ``(resolved_by_id, reason_by_id, face_sampling)``:
 
@@ -206,6 +241,14 @@ def resolve_phone_card_geometry(
         ),
         *face_regions,
     ]
+    if face_sampling != "ok" and overlays:
+        # KRI-183: sampling never positively confirmed this frame is clear --
+        # protect the conservative fallback box rather than trusting the
+        # default corner. Does not fire on "ok" (even zero faces detected)
+        # or when there is nothing to place.
+        protected_boxes.append(
+            ProtectedRegion(0.0, float("inf"), _FALLBACK_FACE_BOX, kind="face_fallback")
+        )
     resolved, receipts = arbitrate_media_overlays(
         overlays,
         protected_boxes=protected_boxes,
@@ -227,12 +270,18 @@ def _match_placements(
     *,
     job_id: str,
     words: list[dict],
-    image_assets: list[dict],
+    candidate_assets: list[dict],
     duration_s: float,
     occupied: list[tuple[float, float]],
 ) -> tuple[list, list[str], str]:
     """Agent-first, heuristic-fallback matching -- mirrors
-    `app.tasks.autoplace.match_overlay_suggestions`'s own matcher selection."""
+    `app.tasks.autoplace.match_overlay_suggestions`'s own matcher selection.
+
+    ``candidate_assets`` may carry both image and video pool rows (KRI-183);
+    each one's real ``kind`` is passed through to `PlacementAsset` so the
+    agent sees which Visuals are video (it already understands the field --
+    `app.tasks.autoplace.match_overlay_suggestions` has always sent it).
+    """
 
     if settings.gemini_api_key:
         try:
@@ -246,14 +295,14 @@ def _match_placements(
             )
             from app.tasks.autoplace import _shortlist_placement_assets  # noqa: PLC0415
 
-            agent_assets = _shortlist_placement_assets(image_assets, limit=MAX_PLACEMENT_ASSETS)
+            agent_assets = _shortlist_placement_assets(candidate_assets, limit=MAX_PLACEMENT_ASSETS)
             agent_out = OverlayPlacementAgent(default_client()).run(
                 OverlayPlacementInput(
                     words=words,
                     assets=[
                         PlacementAsset(
                             asset_id=a["id"],
-                            kind="image",
+                            kind="video" if a.get("kind") == "video" else "image",
                             user_context=str(a.get("user_context") or ""),
                             subject=str((a.get("analysis") or {}).get("subject", "")),
                             description=str((a.get("analysis") or {}).get("description", "")),
@@ -275,7 +324,7 @@ def _match_placements(
             return list(agent_out.placements), list(agent_out.wishlist), "agent"
         except Exception as exc:  # noqa: BLE001 - fall back to the heuristic matcher
             log.warning("phone_overlay_grounding.agent_failed", job_id=job_id, error=str(exc)[:200])
-    return heuristic_match(words, image_assets, duration_s=duration_s), [], "heuristic"
+    return heuristic_match(words, candidate_assets, duration_s=duration_s), [], "heuristic"
 
 
 def ground_phone_subtitled_overlays(
@@ -287,14 +336,24 @@ def ground_phone_subtitled_overlays(
     clip_path: str | None,
     occupied: Iterable[tuple[float, float]] = (),
     used_media_ids: frozenset[str] = frozenset(),
+    video_supported: bool = False,
 ) -> GroundedOverlayCards:
     """Match the speaker's transcript against the item's ready Visuals pool
     and resolve face-aware, caption-safe PiP card geometry (KRI-176).
 
+    ``video_supported`` (KRI-183, default ``False`` for byte-identical
+    pre-KRI-183 behavior) widens the candidate pool to `kind == "video"` pool
+    rows alongside images: a matched video is fed to the same matcher/
+    placement/arbitration pipeline as an image and becomes a card with
+    ``kind="video"``, ``source_start_s=0.0`` -- `build_suggestions` already
+    caps its on-screen window to the footage length plus a freeze allowance.
+    When ``False``, every video is still reported ``video_not_supported``.
+
     Fails open at every step: an LLM matcher failure falls back to the
-    deterministic heuristic, and a face-sampling failure just means no face
-    regions are protected -- this function never raises for those. A
-    candidate image is always placed or explained in
+    deterministic heuristic, and a face-sampling failure protects a
+    conservative fallback face box rather than trusting the default corner
+    (`resolve_phone_card_geometry`, KRI-183) -- this function never raises
+    for those. A candidate Visual is always placed or explained in
     ``receipt["unplaced"]``, never dropped silently. A genuine caller-level
     error (a broken DB session, an unexpected exception) still propagates --
     the runner decides how job-level failures are handled.
@@ -305,21 +364,38 @@ def ground_phone_subtitled_overlays(
 
     placed: list[dict] = []
     unplaced: list[dict] = []
-    image_assets: list[dict] = []
+    candidate_assets: list[dict] = []
     for asset in assets:
         media_id = str(asset["id"])
         if media_id in used_media_ids:
             continue
-        if asset.get("kind") == "video":
-            unplaced.append(
-                {
-                    "media_id": media_id,
-                    "label": _label_for_asset(asset),
-                    "reason": "video_not_supported",
-                }
-            )
+        kind = asset.get("kind")
+        if kind == "video":
+            if not video_supported:
+                unplaced.append(
+                    {
+                        "media_id": media_id,
+                        "label": _label_for_asset(asset),
+                        "reason": "video_not_supported",
+                        "kind": "video",
+                    }
+                )
+                continue
+            if not asset.get("gcs_generation"):
+                # Defensive: same missing-generation guard as the image path
+                # below, kept for videos now that they can bind too.
+                unplaced.append(
+                    {
+                        "media_id": media_id,
+                        "label": _label_for_asset(asset),
+                        "reason": "missing_generation",
+                        "kind": "video",
+                    }
+                )
+                continue
+            candidate_assets.append(asset)
             continue
-        if asset.get("kind") != "image" or not asset.get("gcs_generation"):
+        if kind != "image" or not asset.get("gcs_generation"):
             # Defensive: a pool row missing what binding requires is reported
             # rather than silently skipped or silently passed through to a
             # bind failure downstream.
@@ -328,19 +404,21 @@ def ground_phone_subtitled_overlays(
                     "media_id": media_id,
                     "label": _label_for_asset(asset),
                     "reason": "missing_generation",
+                    "kind": _kind_for_asset(asset),
                 }
             )
             continue
-        image_assets.append(asset)
+        candidate_assets.append(asset)
 
-    if not image_assets or not words:
+    if not candidate_assets or not words:
         if not words:
-            for asset in image_assets:
+            for asset in candidate_assets:
                 unplaced.append(
                     {
                         "media_id": str(asset["id"]),
                         "label": _label_for_asset(asset),
                         "reason": "no_spoken_match",
+                        "kind": _kind_for_asset(asset),
                     }
                 )
         return GroundedOverlayCards(
@@ -367,12 +445,12 @@ def ground_phone_subtitled_overlays(
     raw, wishlist, matcher = _match_placements(
         job_id=job_id,
         words=words_mapped,
-        image_assets=image_assets,
+        candidate_assets=candidate_assets,
         duration_s=duration_s,
         occupied=occupied_list,
     )
 
-    assets_by_id = {a["id"]: a for a in image_assets}
+    assets_by_id = {a["id"]: a for a in candidate_assets}
     drop_reasons: dict[str, str] = {}
 
     def _trace(event: str, **fields: Any) -> None:
@@ -436,6 +514,7 @@ def ground_phone_subtitled_overlays(
         asset_id = str(suggestion["asset_id"])
         asset = assets_by_id.get(asset_id)
         label = _label_for_asset(asset) if asset else asset_id
+        asset_kind = _kind_for_asset(asset) if asset else "image"
         resolved_overlay = resolved_by_id.get(oid)
         if resolved_overlay is None:
             unplaced.append(
@@ -443,6 +522,7 @@ def ground_phone_subtitled_overlays(
                     "media_id": asset_id,
                     "label": label,
                     "reason": arbitration_reason_by_id.get(oid, "no_safe_spot"),
+                    "kind": asset_kind,
                 }
             )
             continue
@@ -462,6 +542,8 @@ def ground_phone_subtitled_overlays(
             scale=float(resolved_overlay["scale"]),
             fade=True,
             z=0,
+            kind=asset_kind,
+            source_start_s=0.0,
         )
         cards.append(card)
         placed.append(
@@ -471,16 +553,24 @@ def ground_phone_subtitled_overlays(
                 "start_s": card.start_s,
                 "end_s": card.end_s,
                 "reason": str(suggestion.get("reason") or "")[:_MAX_REASON_LEN],
+                "kind": asset_kind,
             }
         )
 
     accounted_for = {p["media_id"] for p in placed} | {u["media_id"] for u in unplaced}
-    for asset in image_assets:
+    for asset in candidate_assets:
         asset_id = str(asset["id"])
         if asset_id in accounted_for:
             continue
         reason = drop_reasons.get(asset_id, "no_spoken_match")
-        unplaced.append({"media_id": asset_id, "label": _label_for_asset(asset), "reason": reason})
+        unplaced.append(
+            {
+                "media_id": asset_id,
+                "label": _label_for_asset(asset),
+                "reason": reason,
+                "kind": _kind_for_asset(asset),
+            }
+        )
         accounted_for.add(asset_id)
 
     receipt = {
