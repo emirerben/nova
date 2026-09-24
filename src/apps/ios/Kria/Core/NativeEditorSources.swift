@@ -147,10 +147,10 @@ struct NativeEditorBaseSource: Sendable {
 
 /// A phone-rendered Talking (subtitled) edit plays its one source clip whole,
 /// with its own audio, and the server keeps no timeline slots for it. Without
-/// that clip the preview has no video track: once the edit carries photo cards
-/// the recipe still validates, so the editor played a black canvas instead of
-/// falling back to the finished MP4. The source becomes the same locked
-/// composite clip a talking-head base uses.
+/// that clip the preview has no video track: photo cards once made that recipe
+/// validate as a black canvas (the compiler now rejects it, `missingVideoTrack`,
+/// so it falls back to the finished MP4). The source becomes the same locked
+/// composite clip a talking-head base uses, so the preview stays live.
 ///
 /// Only when the edit's cards and sounds are editable (`lanesEditable`): with
 /// them closed the server doesn't send those lanes, so a live preview would
