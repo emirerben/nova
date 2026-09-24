@@ -799,6 +799,173 @@ def test_empty_words_reports_every_beat_never_heard(monkeypatch):
     ]
 
 
+# --- KRI-181: beat sound resolves to real KRI-173 catalog ids, never a substring --------
+
+
+# Prod ids named in the ticket, reused verbatim for the base "buzzer"/"ding"
+# pair so a regression against the real library would trip these too.
+_WRONG_BUZZER_ID = "76516ffbeb9d45a9b00c4102f4e5ea7c"
+_WRONG_BUZZER_LONG_ID = "a1e2b3c4d5f6a7b8c9d0e1f2a3b4c5d6"
+_GAME_SHOW_BUZZER_ID = "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1"
+_CORRECT_DING_ID = "f8524cb1d3df4cb08628282692d82769"
+_ELEVATOR_DING_ID = "c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2"
+_WHOOSH_ID = "d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3"
+_BUZZING_BEES_ID = "e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4"
+
+
+def _sfx_entry(
+    id_: str,
+    name: str,
+    *,
+    search_terms: tuple[str, ...],
+    catalog_rank: int,
+    quality_tier: str = "library",
+) -> SfxEntry:
+    return SfxEntry(
+        id=id_,
+        name=name,
+        category=None,
+        search_terms=search_terms,
+        quality_tier=quality_tier,
+        catalog_rank=catalog_rank,
+    )
+
+
+# Base wins its own "long" variant AND the differently-specific "Game show
+# buzzer" by prominence (catalog_rank 0 < 1 < 2) once word-score ties; same
+# shape for the ding pair. "Buzzing bees" is a decoy: "buzz" is a substring
+# of its name but never a whole matched word.
+_LIBRARY_SFX = [
+    _sfx_entry(_WRONG_BUZZER_ID, "Wrong buzzer", search_terms=("buzzer", "wrong"), catalog_rank=0),
+    _sfx_entry(
+        _WRONG_BUZZER_LONG_ID,
+        "Wrong buzzer long",
+        search_terms=("buzzer", "wrong", "long"),
+        catalog_rank=1,
+    ),
+    _sfx_entry(
+        _GAME_SHOW_BUZZER_ID,
+        "Game show buzzer",
+        search_terms=("buzzer", "game", "show"),
+        catalog_rank=2,
+    ),
+    _sfx_entry(_CORRECT_DING_ID, "Correct ding", search_terms=("ding", "correct"), catalog_rank=0),
+    _sfx_entry(
+        _ELEVATOR_DING_ID, "Elevator ding", search_terms=("ding", "elevator"), catalog_rank=1
+    ),
+    _sfx_entry(_WHOOSH_ID, "Whoosh", search_terms=("whoosh",), catalog_rank=0),
+    _sfx_entry(
+        _BUZZING_BEES_ID,
+        "Buzzing bees",
+        search_terms=("bees", "insects"),
+        catalog_rank=0,
+        quality_tier="core",
+    ),
+]
+
+_SOUND_TRIGGER_WORDS = ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf")
+
+
+def _sound_only_words() -> list[dict]:
+    return [_word(t, i * 0.4, i * 0.4 + 0.3) for i, t in enumerate(_SOUND_TRIGGER_WORDS)]
+
+
+def _sound_beat(beat_id: str, trigger: str, sound: str) -> dict:
+    """A sound-only beat (no `visual_id`/`visual_role`) so only `_resolve_sound`
+    is exercised -- the card/visual side of grounding never enters the
+    picture."""
+
+    return {"beat_id": beat_id, "trigger": trigger, "sound": sound}
+
+
+class TestBeatSoundResolvesToLibraryIds:
+    """KRI-181: a beat's `sound` must resolve to a real KRI-173 catalog id via
+    exact-id match or whole-word description coverage -- never a substring
+    match, and never a random pick among equally-scored variants (prominence
+    must decide the tie)."""
+
+    def _run(self, monkeypatch, beats: list[dict]):
+        _patch(monkeypatch, assets=[], sfx=_LIBRARY_SFX)
+        return rg.ground_phone_reaction_beats(
+            _open_session,
+            job_id="j-kri181",
+            beats=beats,
+            closing=None,
+            words=_sound_only_words(),
+            duration_s=10.0,
+            clip_path=None,
+        )
+
+    def _catalog_ids_by_beat_card_id(self, result) -> dict[str, str]:
+        return {s.id.rsplit("-sfx", 1)[0]: s.catalog_id for s in result.sound_effects}
+
+    def test_bare_buzzer_prefers_base_over_variant_and_disambiguated_sibling(self, monkeypatch):
+        """ "a buzzer" word-covers Wrong buzzer, Wrong buzzer long, AND Game
+        show buzzer equally -- the base entry must win via the prominence
+        tie-break (lowest catalog_rank), not list order."""
+
+        result = self._run(monkeypatch, [_sound_beat("b-buzzer", "alpha", "a buzzer")])
+        assert len(result.sound_effects) == 1
+        assert result.sound_effects[0].catalog_id == _WRONG_BUZZER_ID
+
+    def test_wrong_buzzer_and_game_show_buzzer_disambiguate(self, monkeypatch):
+        beats = [
+            _sound_beat("b-wrong", "alpha", "wrong buzzer"),
+            _sound_beat("b-gameshow", "bravo", "game show buzzer"),
+        ]
+        ids = self._catalog_ids_by_beat_card_id(self._run(monkeypatch, beats))
+        assert ids["beat-b-wrong-1"] == _WRONG_BUZZER_ID
+        assert ids["beat-b-gameshow-1"] == _GAME_SHOW_BUZZER_ID
+
+    def test_bare_ding_and_elevator_ding_disambiguate(self, monkeypatch):
+        beats = [
+            _sound_beat("b-ding", "alpha", "a ding"),
+            _sound_beat("b-elevator", "bravo", "elevator ding"),
+        ]
+        ids = self._catalog_ids_by_beat_card_id(self._run(monkeypatch, beats))
+        assert ids["beat-b-ding-1"] == _CORRECT_DING_ID
+        assert ids["beat-b-elevator-1"] == _ELEVATOR_DING_ID
+
+    def test_whoosh_resolves(self, monkeypatch):
+        result = self._run(monkeypatch, [_sound_beat("b-whoosh", "alpha", "whoosh")])
+        assert result.sound_effects[0].catalog_id == _WHOOSH_ID
+
+    def test_bare_buzz_does_not_substring_match_buzzing_bees(self, monkeypatch):
+        """ "buzz" (not "buzzer") is a whole-word MISS against every fixture
+        entry, including the whole "Wrong buzzer" trio -- `_stem` never turns
+        "buzzer" into "buzz", so word-coverage matching correctly refuses to
+        guess rather than falling back to the "Buzzing bees" substring decoy.
+
+        Actual outcome exercised here: no entry covers the query, so
+        `_resolve_sound` returns None and the beat surfaces in the receipt
+        with reason "sound_not_found" -- it never resolves to "Buzzing bees".
+        """
+
+        result = self._run(monkeypatch, [_sound_beat("b-buzz", "alpha", "buzz")])
+        assert result.sound_effects == []
+        assert result.receipt["unplaced"] == [
+            {"beat_id": "b-buzz", "trigger": "alpha", "reason": "sound_not_found"}
+        ]
+
+    def test_exact_catalog_id_wins_over_what_description_matching_would_pick(self, monkeypatch):
+        """Passing the exact catalog id of the "long" variant resolves to
+        THAT entry, even though a free-text "buzzer" description would
+        instead prefer the base "Wrong buzzer" by prominence -- exact-id
+        lookup short-circuits `resolve_described_effect` entirely."""
+
+        result = self._run(monkeypatch, [_sound_beat("b-exact", "alpha", _WRONG_BUZZER_LONG_ID)])
+        assert result.sound_effects[0].catalog_id == _WRONG_BUZZER_LONG_ID
+
+    def test_unmatched_description_surfaces_sound_not_found_with_real_field_names(
+        self, monkeypatch
+    ):
+        result = self._run(monkeypatch, [_sound_beat("b-kazoo", "alpha", "a kazoo")])
+        assert result.sound_effects == []
+        assert result.receipt["unplaced"] == [
+            {"beat_id": "b-kazoo", "trigger": "alpha", "reason": "sound_not_found"}
+        ]
+
+
 def test_beat_error_is_fail_open(monkeypatch):
     """A malformed beat (not even a dict) must not sink the whole job."""
 

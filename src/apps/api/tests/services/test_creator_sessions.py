@@ -10,8 +10,14 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
+from app.agents._schemas.creator_agent import CreativeStrategy
 from app.schemas.edit_proposal import EditProposal, ProposalFailure
+from app.services import creator_capabilities as capabilities
 from app.services import creator_sessions
+from app.services.phone_rollout import (
+    PHONE_SUBTITLED_OVERLAY_FEATURES,
+    PHONE_SUBTITLED_SFX_FEATURES,
+)
 from app.tasks import edit_proposal_build
 
 
@@ -992,7 +998,6 @@ async def test_context_preserves_analyzed_clip_assignment_duration() -> None:
     ],
 )
 async def test_context_keeps_phone_provenance_and_validates_receipts(monkeypatch, case) -> None:
-    from app.agents._schemas.creator_agent import CreativeStrategy
     from app.agents._schemas.creator_policy import MixedMediaTimingUnavailableError
     from app.services.creator_capabilities import compile_strategy_to_plan
     from tests.services.test_phone_sources import receipt
@@ -1459,7 +1464,6 @@ def _rows(values: list) -> MagicMock:
 async def test_visuals_only_context_plans_for_the_phone_only_when_the_rule_holds(
     monkeypatch, case
 ) -> None:
-    from app.agents._schemas.creator_agent import CreativeStrategy
     from app.services.creator_capabilities import compile_strategy_to_plan
     from app.services.phone_destination import DEVICE_INTENT_KEY
 
@@ -1510,3 +1514,185 @@ async def test_visuals_only_context_plans_for_the_phone_only_when_the_rule_holds
         plan = compile_strategy_to_plan(manifest, CreativeStrategy(media_scope="all"))
         assert plan.strategy.render_program == "guided"
         assert plan.strategy.selected_media_ids == [f"asset-{asset.id}"]
+
+
+# --- KRI-181: generic "add sound effects" ask on phone Talking gets a notice -
+
+
+def _enable_guided(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "guided_edit_capability_enabled", True)
+    for name in capabilities._FEATURE_SETTINGS.values():
+        monkeypatch.setattr(capabilities.settings, name, True, raising=False)
+
+
+def _enable_narrated_and_subtitled_flags(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "narrated_archetype_enabled", True, raising=False)
+    monkeypatch.setattr(capabilities.settings, "narrated_self_narration_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "edit_format_talking_head_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "phone_narrated_rendering_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "phone_render_verified_features", ["narrationAudio"])
+
+
+def _enable_phone_subtitled_reaction_beats(monkeypatch) -> None:
+    """Every condition `phone_rollout.phone_subtitled_reaction_beats_supported()`
+    checks, plus the overlay lane it builds on (mirrors
+    tests/services/test_creator_capabilities.py's helper of the same name)."""
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_reaction_beats_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "sound_effects_enabled", True)
+    monkeypatch.setattr(
+        capabilities.settings,
+        "phone_render_verified_features",
+        list(set(PHONE_SUBTITLED_OVERLAY_FEATURES) | set(PHONE_SUBTITLED_SFX_FEATURES)),
+    )
+
+
+def _reaction_beats_manifest(monkeypatch, edit_format, **overrides):
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    _enable_phone_subtitled_reaction_beats(monkeypatch)
+    media = overrides.pop("media", [{"media_id": "phone-a", "kind": "video"}])
+    catalog = overrides.pop("catalog", [])
+    return capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format=edit_format,
+        media=media,
+        catalog=catalog,
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+        **overrides,
+    )
+
+
+def _base_beats_strategy(**overrides) -> CreativeStrategy:
+    values = {
+        "edit_format": "subtitled",
+        "audio_strategy": "original_audio",
+        "selected_media_ids": ["phone-a"],
+    }
+    values.update(overrides)
+    return CreativeStrategy(**values)
+
+
+def test_compile_active_plan_adds_generic_sound_notice_when_no_sound_named(monkeypatch) -> None:
+    """Generic ask + `reaction_beats` available + final strategy carries no
+    sound at all -> exactly one prompt-independent notice."""
+    manifest = _reaction_beats_manifest(monkeypatch, "subtitled")
+
+    receipt = creator_sessions.compile_active_plan(
+        SimpleNamespace(active_plan=None),
+        manifest=manifest,
+        strategy=_base_beats_strategy(),
+        summary="Talking-to-camera edit.",
+        creator_request="add fun sound effects",
+    )
+
+    notices = receipt.get("notices") or []
+    assert notices.count(creator_sessions._GENERIC_SOUND_EFFECT_NOTICE) == 1
+
+
+def test_compile_active_plan_skips_generic_sound_notice_when_beat_names_sound(
+    monkeypatch,
+) -> None:
+    """Same generic request, but the strategy already names a beat sound --
+    real sound was added, so no notice."""
+    manifest = _reaction_beats_manifest(monkeypatch, "subtitled")
+    strategy = _base_beats_strategy(
+        reaction_beats=[{"beat_id": "b1", "trigger": "no", "sound": "buzzer"}]
+    )
+
+    receipt = creator_sessions.compile_active_plan(
+        SimpleNamespace(active_plan=None),
+        manifest=manifest,
+        strategy=strategy,
+        summary="Talking-to-camera edit.",
+        creator_request="add a sound effect when I say no",
+    )
+
+    notices = receipt.get("notices") or []
+    assert creator_sessions._GENERIC_SOUND_EFFECT_NOTICE not in notices
+
+
+def test_compile_active_plan_no_generic_sound_notice_without_reaction_beats_capability(
+    monkeypatch,
+) -> None:
+    """Cloud plans (and any manifest where `reaction_beats` is unavailable)
+    stay byte-identical: no notice at all."""
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "clip-a", "kind": "video"}],
+    )
+    assert manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS].available is False
+
+    receipt = creator_sessions.compile_active_plan(
+        SimpleNamespace(active_plan=None),
+        manifest=manifest,
+        strategy=CreativeStrategy(edit_format="montage", selected_media_ids=["clip-a"]),
+        summary="A montage.",
+        creator_request="add fun sound effects",
+    )
+
+    assert "notices" not in receipt
+
+
+def test_compile_active_plan_no_generic_sound_notice_for_non_sound_request(monkeypatch) -> None:
+    """`reaction_beats` available, but the request never mentions sound at
+    all -- no notice."""
+    manifest = _reaction_beats_manifest(monkeypatch, "subtitled")
+
+    receipt = creator_sessions.compile_active_plan(
+        SimpleNamespace(active_plan=None),
+        manifest=manifest,
+        strategy=_base_beats_strategy(),
+        summary="Talking-to-camera edit.",
+        creator_request="make it punchy",
+    )
+
+    assert "notices" not in receipt
+
+
+def test_compile_active_plan_skips_generic_notice_when_repair_d_notice_already_fired(
+    monkeypatch,
+) -> None:
+    """A stray `licensed_sfx` on this manifest is dropped by repair (d) with
+    its own notice; the generic-ask notice must not stack on top of it."""
+    manifest = _reaction_beats_manifest(monkeypatch, "subtitled")
+    assert manifest.capabilities["sound_effects"].available is False
+    assert manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS].available is True
+    strategy = _base_beats_strategy(
+        licensed_sfx={"effect_id": "funny-1", "semantics": "funny_moments"}
+    )
+
+    receipt = creator_sessions.compile_active_plan(
+        SimpleNamespace(active_plan=None),
+        manifest=manifest,
+        strategy=strategy,
+        summary="Talking-to-camera edit.",
+        creator_request="add fun sound effects",
+    )
+
+    notices = receipt.get("notices") or []
+    assert notices.count(creator_sessions._REPAIR_D_SOUND_NOTICE) == 1
+    assert creator_sessions._GENERIC_SOUND_EFFECT_NOTICE not in notices
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("add fun sound effects", True),
+        ("add a sound effect", True),
+        ("add sfx", True),
+        ("sound fx please", True),
+        ("sounds good", False),
+        ("effects", False),
+    ],
+)
+def test_generic_sound_effect_request_regex(text, expected) -> None:
+    matched = bool(creator_sessions._GENERIC_SOUND_EFFECT_REQUEST_RE.search(text))
+    assert matched is expected

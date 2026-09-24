@@ -971,6 +971,172 @@ def test_subtitled_reaction_beats_happy_path(monkeypatch):
     assert len(beats_card_events) == 1
 
 
+def test_subtitled_beats_requested_but_unplaced_falls_through_to_pip_grounding(monkeypatch):
+    """KRI-181: a strategy asks for reaction beats, but grounding hears NONE
+    of them (no card placed, no closing shot placed) -- `beats_active` stays
+    False, so KRI-176's generic transcript-grounded PiP lane must still run
+    normally rather than being silently swallowed by the creator's beats
+    direction. Proves the `beats_active` computation (~L4897-4900 in
+    `generative_build.py`) and the `if beats_active: ... else: ground_phone_
+    subtitled_overlays(...)` fork (~L4911-4935) both fall through to the
+    real KRI-176 path when beats ground nothing."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    _enable_beats(monkeypatch)
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+
+    beat_receipt = _basic_beat_receipt(
+        unplaced=[{"beat_id": "b0", "trigger": "final whistle", "reason": "never_heard"}],
+    )
+    beat_grounding_mock = _beat_grounding_mock([], [], beat_receipt)
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod, "ground_phone_reaction_beats", beat_grounding_mock
+    )
+
+    # A PiP-eligible Visual the generic KRI-176 pass matches from the
+    # transcript -- real-shaped grounding result via `_grounding_mock`, same
+    # helper the KRI-176-only happy path uses.
+    pip_card = SubtitledOverlayCard(
+        id="pip-0",
+        media_id="photo1",
+        gcs_path="users/u1/plan/item1/pool/photo1.jpg",
+        generation="1",
+        start_s=4.0,
+        end_s=6.0,
+    )
+    kri176_grounding_mock = _grounding_mock([pip_card])
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", kri176_grounding_mock
+    )
+
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [_beat_dict("b0", "final whistle", visual_id="team1")],
+    }
+
+    record_mock = Mock()
+    monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", record_mock)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    beat_grounding_mock.assert_called_once()
+    kri176_grounding_mock.assert_called_once()
+
+    beat_receipt_out = variant["phone_beat_receipt"]
+    assert beat_receipt_out["placed"] == []
+    assert beat_receipt_out["unplaced"] == [
+        {"beat_id": "b0", "trigger": "final whistle", "reason": "never_heard"}
+    ]
+
+    # The KRI-176 card reached the compiled overlay lane / persisted receipt
+    # -- `_grounding_mock`'s default `matcher="agent"` is what the KRI-176
+    # path itself set on the receipt here (not hard-coded/guessed).
+    overlay_receipt = variant["phone_overlay_receipt"]
+    assert overlay_receipt["matcher"] == "agent"
+    assert {c["media_id"] for c in overlay_receipt["placed"]} == {"photo1"}
+
+    lane_receipt = variant["phone_lane_receipt"]
+    assert lane_receipt["applied"] == ["overlays"]
+    assert lane_receipt["dropped"] == []
+    assert len(bind_calls) == 1
+    assert set(bind_calls[0]) == {"photo1"}
+
+    beats_events = [
+        c for c in record_mock.call_args_list if c.args[:2] == ("phone", "subtitled_reaction_beats")
+    ]
+    assert len(beats_events) == 1
+    assert beats_events[0].args[2]["missed"] == ["final whistle"]
+    assert beats_events[0].args[2]["missed_reasons"] == ["never_heard"]
+
+
+def test_subtitled_beats_and_pip_in_one_prompt_never_double_place(monkeypatch):
+    """KRI-181: a prompt combining reaction beats AND (heuristically) PiP-
+    worthy footage for the SAME Visual must never place two cards for it.
+    The beat grounds one card + one sound for `celeb1` -- since a beat card
+    was placed, `beats_active` is True (~L4897-4900) and the KRI-176 generic
+    pass -- which could plausibly have matched that very same `celeb1` photo
+    from the surrounding transcript sentence -- must never even run
+    (`kri176_grounding_mock` raises if called), so there is exactly one card
+    for that media id anywhere in the compiled plan and the overlay receipt
+    is the fixed `matcher: "beats"` stub (~L4911-4919)."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    _enable_beats(monkeypatch)
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", _fake_resolve_sfx)
+
+    cards = [
+        SubtitledOverlayCard(
+            id="beat-b0-1",
+            media_id="celeb1",
+            gcs_path="users/u1/plan/item1/pool/celeb1.jpg",
+            generation="1",
+            start_s=1.0,
+            end_s=3.0,
+        ),
+    ]
+    sfx_reqs = [SubtitledSoundEffect(id="beat-b0-1-sfx", catalog_id="cheer", at_s=1.0)]
+    receipt = _basic_beat_receipt(
+        placed=[
+            {
+                "beat_id": "b0",
+                "trigger": "he scores",
+                "at_s": 1.0,
+                "end_s": 3.0,
+                "visual_label": "celeb1.jpg",
+                "sound_label": "Cheer",
+            }
+        ],
+    )
+    beat_grounding_mock = _beat_grounding_mock(cards, sfx_reqs, receipt)
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod, "ground_phone_reaction_beats", beat_grounding_mock
+    )
+    # The strategy also carries reaction beats worth of context around the
+    # SAME `celeb1` moment a generic PiP-matching pass could plausibly have
+    # picked up too (e.g. "he scores" mentions the celebration photo again a
+    # few words later) -- if KRI-176 grounding ran here, it could ground a
+    # second, duplicate card for `celeb1`. `beats_active` must keep it from
+    # ever running at all.
+    kri176_grounding_mock = Mock(
+        side_effect=AssertionError(
+            "KRI-176 grounding must not run when beats are active -- it could "
+            "re-match the same Visual as the beat and double-place it"
+        )
+    )
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", kri176_grounding_mock
+    )
+
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [_beat_dict("b0", "he scores", visual_id="celeb1", sound="cheer")],
+    }
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    kri176_grounding_mock.assert_not_called()
+
+    overlay_receipt = variant["phone_overlay_receipt"]
+    assert overlay_receipt == {
+        "version": 1,
+        "matcher": "beats",
+        "face_sampling": "skipped",
+        "placed": [],
+        "unplaced": [],
+        "wishlist": [],
+    }
+    assert variant["phone_beat_receipt"] == receipt
+
+    # Exactly one bound visual for `celeb1` -- not two -- and exactly one
+    # beat card was ever handed to the compiler for it.
+    assert len(bind_calls) == 1
+    assert bind_calls[0]["celeb1"] == ("image", "users/u1/plan/item1/pool/celeb1.jpg", "1")
+    assert sum(1 for c in cards if c.media_id == "celeb1") == 1
+
+
 def test_subtitled_reaction_beats_grounding_failure_drops_lane_not_job(monkeypatch):
     job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
     _enable_beats(monkeypatch)

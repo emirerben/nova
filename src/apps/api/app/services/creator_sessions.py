@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -40,7 +41,7 @@ from app.models import (
 from app.schemas.edit_proposal import parse_edit_proposal
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_understanding import clip_record
-from app.services.creator_capabilities import resolve_creator_manifest
+from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS, resolve_creator_manifest
 from app.services.edit_proposal_limits import (
     CREATOR_EXECUTION_RECEIPT_LEASE_S,
     EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
@@ -52,6 +53,34 @@ from app.services.phone_destination import item_visuals_only_on_device
 from app.services.phone_sources import bind_phone_sources
 from app.services.sfx_catalog import planner_catalog
 from app.services.tiktok_style_observations import effective_persona_style
+
+# KRI-181: a generic "add sound effects" ask on phone Talking (the
+# `reaction_beats` capability) resolves to nothing today -- the model
+# deliberately sets neither field for it (prompts/main_creator.txt:144-145,
+# app/agents/main_creator.py:157-160), and prompt changes are out of scope
+# here (a prompt edit forces a version bump + paid evals). Detect the
+# generic ask ourselves in `compile_active_plan` so the creator still gets a
+# defined outcome (a notice) instead of silence. Conservative,
+# case-insensitive, word-boundary; deliberately does not detect negation
+# ("no sound effects please") -- a notice stating what was (not) added is
+# harmless either way.
+_GENERIC_SOUND_EFFECT_REQUEST_RE = re.compile(
+    r"\b(sound\s*effects?|sound\s*fx|sfx)\b", re.IGNORECASE
+)
+# Exact text of the repair-(d) notice `compile_strategy_to_plan` already
+# appends when it drops a stray `licensed_sfx` because `reaction_beats`
+# covers sound instead (app.services.creator_capabilities.
+# _repair_creator_reaction_beats). The generic-ask notice below must never
+# stack on top of that one.
+_REPAIR_D_SOUND_NOTICE = (
+    "Sound effects on iPhone are placed at the moments you named; the "
+    "general sound-effect treatment was left out."
+)
+_GENERIC_SOUND_EFFECT_NOTICE = (
+    "Sound effects on iPhone are placed only at spoken moments you name "
+    "(for example: “when I say no, play a buzzer”). No moment was "
+    "named, so no sound was added."
+)
 
 ACTIVE_CREATOR_PHASES = frozenset(
     {
@@ -721,6 +750,37 @@ async def append_event(
     return event
 
 
+def _generic_sound_effect_notice(
+    manifest: Any, creator_request: str, edit_plan: CreatorEditPlan
+) -> str | None:
+    """KRI-181: surface a defined outcome for a generic "add sound effects"
+    ask on a manifest that advertises `reaction_beats` (phone Talking with
+    the flag on) when the FINAL, server-repaired strategy carries no sound at
+    all. Returns ``None`` on cloud plans, flag-off phone plans, a non-generic
+    request, or whenever the strategy already carries sound (an explicit
+    licensed effect, a beat's own sound, or the repair-(d) notice already
+    covers it) -- every one of those cases must stay byte-identical to
+    pre-KRI-181 behavior.
+    """
+
+    reaction_beats_cap = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    if reaction_beats_cap is None or not reaction_beats_cap.available:
+        return None
+    if not _GENERIC_SOUND_EFFECT_REQUEST_RE.search(creator_request or ""):
+        return None
+    if _REPAIR_D_SOUND_NOTICE in edit_plan.notices:
+        # Repair (d) already told the creator their general sound-effect
+        # treatment was dropped in favor of the named-moment lane; don't
+        # stack a second sentence saying the same thing.
+        return None
+    strategy = edit_plan.strategy
+    if getattr(strategy, "licensed_sfx", None) is not None:
+        return None
+    if any(getattr(beat, "sound", None) for beat in (strategy.reaction_beats or [])):
+        return None
+    return _GENERIC_SOUND_EFFECT_NOTICE
+
+
 def compile_active_plan(
     session: CreatorAgentSession,
     *,
@@ -745,7 +805,12 @@ def compile_active_plan(
 
     edit_plan: CreatorEditPlan = compile_strategy_to_plan(manifest, strategy)
     prior_version = int((session.active_plan or {}).get("version", 0))
-    notices = [*(extra_notices or []), *edit_plan.notices]
+    generic_sound_notice = _generic_sound_effect_notice(manifest, creator_request, edit_plan)
+    notices = [
+        *(extra_notices or []),
+        *edit_plan.notices,
+        *([generic_sound_notice] if generic_sound_notice else []),
+    ]
     receipt = {
         "version": prior_version + 1,
         "summary": _clean(summary, 1000) or _clean(strategy.rationale, 1000),
