@@ -445,7 +445,7 @@ import KriaMediaEngine
         ], capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "generation"))
         let items = [NativeEditorTimelineItem(selection: .init(kind: .text, id: "title"), start: 0, end: min(2, duration), zIndex: 0, sourceIndex: 0)]
         XCTAssertThrowsError(try compiler.compile(document: document, clips: [], items: items, sources: [:])) {
-            XCTAssertEqual($0 as? RecipeError, .invalidTimeline)
+            XCTAssertEqual($0 as? NativeEditorRenderError, .missingVideoTrack)
         }
         let base = try XCTUnwrap(NativeEditorBaseSource(variant: [
             "resolved_archetype": .string("talking_head"),
@@ -467,6 +467,31 @@ import KriaMediaEngine
         let changed = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source])
         _ = try preview.updateText(recipe: changed.recipe, assetURLs: changed.assetURLs)
         XCTAssertEqual(changed.recipe.textLayers.first?.runs.map(\.text).joined(separator: " "), "Changed locally")
+    }
+
+    /// Job 385e3b13 shape: a card and no video clip. The card alone made the
+    /// recipe valid, so the editor played it over a black canvas instead of
+    /// failing over to the finished MP4.
+    func testMediaOverlayWithoutVideoClipsDoesNotCompile() throws {
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let media = ResolvedEditorSource(clipIndex: -1, mediaID: "card", asset: MediaAsset(id: "card", relativePath: "card.png",
+            fingerprint: fingerprint, naturalSize: MediaSize(width: 96, height: 160)), url: URL(fileURLWithPath: "/fixture/card.png"))
+        let document = EditorDocument(editFormat: "subtitled", mediaOverlays: [.init(id: "card", startS: 0.2, endS: 1.2)])
+        let item = NativeEditorTimelineItem(selection: .init(kind: .mediaOverlay, id: "card"), start: 0.2, end: 1.2)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        XCTAssertThrowsError(try compiler.compile(document: document, clips: [], items: [item], sources: [:],
+                                                  mediaSources: ["overlay:card": media])) {
+            XCTAssertEqual($0 as? NativeEditorRenderError, .missingVideoTrack)
+        }
+        // The same card over a clip is an ordinary preview.
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: fingerprint), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 2,
+            trimIn: 0, trimOut: 2, sourceDuration: 2, slotID: "slot")
+        let recipe = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source],
+                                          mediaSources: ["overlay:card": media]).recipe
+        XCTAssertEqual(recipe.tracks.first { $0.kind == .video }?.clips.count, 1)
+        XCTAssertEqual(recipe.tracks.first { $0.kind == .overlay }?.clips.count, 1)
     }
 
     func testAuthoredMotionNormalizesServerDefaultsAndBounds() throws {

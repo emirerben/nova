@@ -122,7 +122,23 @@ final class NativeEditorSessionTests: XCTestCase {
         }
     }
 
-    private static func phoneTalkingSession(lanesEditable: Bool) async throws -> (NativeEditorSession, EditorCommitSpy) {
+    /// Lanes closed, yet the edit still carries a persisted card. The card
+    /// alone made the recipe valid, so the editor played it over a black
+    /// canvas. With no video track it keeps playing the finished MP4.
+    func testPhoneTalkingEditWithClosedLanesAndACardKeepsTheFinishedMP4() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: false, card: true)
+
+        XCTAssertEqual(session.document.mediaOverlays.map(\.id), ["card"])
+        XCTAssertTrue(session.timelineClips.isEmpty)
+        guard case .failed(let message) = session.sourcePreviewState else {
+            return XCTFail("A card over no video track must not become the live preview (state: \(session.sourcePreviewState))")
+        }
+        XCTAssertEqual(message, NativeEditorSession.sourcePreviewMessage(for: NativeEditorRenderError.missingVideoTrack))
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        XCTAssertNil(session.displayedSourcePreviewRecipe)
+    }
+
+    private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
         let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
@@ -132,8 +148,25 @@ final class NativeEditorSessionTests: XCTestCase {
         try SourceAssetStore(project: project).bind(mediaID: "source", original: asset)
         let descriptor = OriginalMediaDescriptor(sha256: try XCTUnwrap(asset.fingerprint).hex, byteCount: try XCTUnwrap(asset.fingerprint).byteCount,
             durationS: 1, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true)
+        var nativeAssets: [NativeEditorAsset] = []
+        if card {
+            // Seed the preview cache the editor's resolver reads, so the card
+            // resolves without a download.
+            let cache = NativePreviewAssetCache(project: project, jobID: jobID)
+            let remote = try XCTUnwrap(URL(string: "https://storage.example/card.png"))
+            let download = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+            try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 96, height: 160)).image { context in
+                UIColor.orange.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 96, height: 160))
+            }.pngData()).write(to: download)
+            var image = try await NativeDownloadedMedia.importAsset(from: download, sourceURL: remote,
+                response: URLResponse(url: remote, mimeType: "image/png", expectedContentLength: -1, textEncodingName: nil), project: cache.project)
+            image.naturalSize = MediaSize(width: 96, height: 160)
+            try cache.store(image, for: "media:generation-1:card-media")
+            nativeAssets = [NativeEditorAsset(id: "card", kind: "media_overlay", mediaID: "card-media", sourceURL: remote, preserveAlpha: nil)]
+        }
 
-        let variant: [String: JSONValue] = [
+        var variant: [String: JSONValue] = [
             "variant_id": .string("variant"),
             "render_generation_id": .string("generation-1"),
             "render_status": .string("ready"),
@@ -144,6 +177,10 @@ final class NativeEditorSessionTests: XCTestCase {
                 "overlays": .bool(lanesEditable), "sfx": .bool(lanesEditable)]),
             "caption_cues": .array([.object(["text": .string("Number three"), "start_s": .number(0.2), "end_s": .number(0.9)])]),
         ]
+        if card {
+            variant["media_overlays"] = .array([.object(["id": .string("card"), "kind": .string("image"), "start_s": .number(0.2),
+                "end_s": .number(0.8), "x_frac": .number(0.5), "y_frac": .number(0.3), "scale": .number(0.35), "z": .number(1)])])
+        }
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
                 snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
@@ -151,7 +188,7 @@ final class NativeEditorSessionTests: XCTestCase {
             authoritativeVariant: variant
         )
         fake.sourcePoolResult = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: .init(mediaID: "source",
-            sourceURL: nil, original: descriptor, localRequired: true))], baseGeneration: "generation-1")
+            sourceURL: nil, original: descriptor, localRequired: true))], baseGeneration: "generation-1", nativeAssets: nativeAssets)
         fake.deviceRenderResponse = DeviceRenderStatusResponse(
             phase: "published", request: deviceRenderRequest(jobID: jobID, revision: 1, digest: "a"), publishedGeneration: "generation-1"
         )
