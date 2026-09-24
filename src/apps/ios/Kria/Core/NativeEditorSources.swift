@@ -145,6 +145,41 @@ struct NativeEditorBaseSource: Sendable {
     }
 }
 
+/// A phone-rendered Talking (subtitled) edit plays its one source clip whole,
+/// with its own audio, and the server keeps no timeline slots for it. Without
+/// that clip the preview has no video track: once the edit carries photo cards
+/// the recipe still validates, so the editor played a black canvas instead of
+/// falling back to the finished MP4. The source becomes the same locked
+/// composite clip a talking-head base uses.
+///
+/// Only when the edit's cards and sounds are editable (`lanesEditable`): with
+/// them closed the server doesn't send those lanes, so a live preview would
+/// drop what the finished MP4 shows.
+enum NativePhoneTalkingSource {
+    static let slotID = "native-phone-talking-source"
+
+    static func sourceIndex(variant: [String: JSONValue], document: EditorDocument,
+                            pool: NativeEditorSourcePool, lanesEditable: Bool) -> Int? {
+        guard lanesEditable,
+              variant["resolved_archetype"] == .string("subtitled"),
+              variant["render_destination"] == .string("device"),
+              document.capabilities["timeline"]?.editable != true,
+              document.tombstones.isEmpty,
+              document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }),
+              pool.clips.count == 1 else { return nil }
+        return pool.clips[0].clipIndex
+    }
+
+    static func hydrate(_ document: EditorDocument, clipIndex: Int, duration: Double) throws -> EditorDocument {
+        guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
+        guard document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return document }
+        var result = document
+        result.clips = [.init(id: slotID, clipIndex: clipIndex, inS: 0, durationS: duration,
+            raw: ["native_composite_source": .bool(true), "source_duration_s": .number(duration)])]
+        return result
+    }
+}
+
 enum NativeNarratedSourceTiming {
     /// Mirrors narrated_assembler._fit_clip_segment: short footage slows to
     /// fill its voiceover step, with a 50 ms guard before source EOF.
