@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.217.0] - 2026-09-24
+
+### Changed
+- test(ios): smoke drawer-close check no longer times out mid-query (#1242) <!-- release-pr: 1242 -->
+
 ## [0.76.216.0] - 2026-09-24
 
 ### Fixed
