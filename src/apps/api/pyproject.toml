@@ -13,7 +13,10 @@ dependencies = [
     # policy relies on to restore late-acknowledged renders before hard stop.
     "celery[redis]>=5.5",
     "redis>=5.0",
-    "sqlalchemy>=2.0",
+    # 2.1 makes a bare postgresql:// URL load psycopg 3, which is not installed:
+    # app/database.py's sync engine then fails at import in every fresh install
+    # (CI evals and the prod image). Lift the cap together with that migration.
+    "sqlalchemy>=2.0,<2.1",
     # SQLAlchemy's async runtime needs greenlet. Without it, anything that
     # routes through AsyncSession (alembic env.py async runner, app routes,
     # workers) crashes with "the greenlet library is required to use this
