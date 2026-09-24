@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.215.0] - 2026-09-24
+
+### Fixed
+- fix(kria): fix the two causes of "I couldn't finish that step" on runtime-v2 turns (#1238) <!-- release-pr: 1238 -->
+
 ## [0.76.214.0] - 2026-09-24
 
 ### Changed
