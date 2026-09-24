@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.212.0] - 2026-09-24
+
+### Fixed
+- fix(web): keep far-future Undo receipts from expiring after 1 ms (#1240) <!-- release-pr: 1240 -->
+
 ## [0.76.211.0] - 2026-09-24
 
 ### Changed

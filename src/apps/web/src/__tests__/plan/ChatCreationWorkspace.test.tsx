@@ -113,6 +113,31 @@ function cleanupThread(
   };
 }
 
+function memoryReceiptThread(undoExpiresAt: string): CreationThread {
+  return {
+    ...baseThread,
+    revision: 1,
+    events: [
+      ...baseThread.events,
+      {
+        id: "memory-event-1",
+        sequence: 1,
+        revision: 1,
+        role: "assistant" as const,
+        event_type: "memory_updated",
+        content: "Remembered for future videos.",
+        payload: {
+          kind: "creator_memory_receipt",
+          operation_id: "operation-1",
+          memory_revision: 1,
+          undo_expires_at: undoExpiresAt,
+        },
+        created_at: "2026-01-01T00:00:01Z",
+      },
+    ],
+  };
+}
+
 describe("ChatCreationWorkspace", () => {
   it.each([
     ["queued", "Your edit is queued…"],
@@ -2730,28 +2755,7 @@ describe("ChatCreationWorkspace", () => {
   });
 
   it("shows and applies the ten-minute Undo receipt for automatic learning", async () => {
-    const learnedThread = {
-      ...baseThread,
-      revision: 1,
-      events: [
-        ...baseThread.events,
-        {
-          id: "memory-event-1",
-          sequence: 1,
-          revision: 1,
-          role: "assistant" as const,
-          event_type: "memory_updated",
-          content: "Remembered for future videos.",
-          payload: {
-            kind: "creator_memory_receipt",
-            operation_id: "operation-1",
-            memory_revision: 1,
-            undo_expires_at: "2099-01-01T00:00:00Z",
-          },
-          created_at: "2026-01-01T00:00:01Z",
-        },
-      ],
-    };
+    const learnedThread = memoryReceiptThread("2099-01-01T00:00:00Z");
     jest.mocked(listCreationThreads).mockResolvedValueOnce([learnedThread]);
     jest.mocked(refreshCreationThread).mockResolvedValue(learnedThread);
 
@@ -2763,6 +2767,65 @@ describe("ChatCreationWorkspace", () => {
       expect(undoCreatorMemoryOperation).toHaveBeenCalledWith("operation-1", 1),
     );
     expect(await screen.findByText("Automatic update undone")).toBeInTheDocument();
+  });
+
+  it("keeps a far-future Undo receipt open past the 32-bit timer overflow", async () => {
+    // A delay above 2^31-1 ms overflows to ~1 ms in Node and browsers.
+    const learnedThread = memoryReceiptThread("2099-01-01T00:00:00Z");
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([learnedThread]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(learnedThread);
+
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByRole("button", { name: "Undo (10 minutes)" })).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.getByRole("button", { name: "Undo (10 minutes)" })).toBeInTheDocument();
+    expect(screen.queryByText("The 10-minute Undo window has expired.")).not.toBeInTheDocument();
+  });
+
+  it("expires the Undo receipt when its ten-minute window ends", async () => {
+    jest.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const undoExpiresAt = "2026-01-01T00:10:00Z";
+    const learnedThread = memoryReceiptThread(undoExpiresAt);
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([learnedThread]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(learnedThread);
+
+    try {
+      render(<ChatCreationWorkspace />);
+      expect(await screen.findByRole("button", { name: "Undo (10 minutes)" })).toBeInTheDocument();
+
+      act(() => { jest.advanceTimersByTime(Date.parse(undoExpiresAt) - Date.now() - 1); });
+      expect(screen.getByRole("button", { name: "Undo (10 minutes)" })).toBeInTheDocument();
+
+      act(() => { jest.advanceTimersByTime(1); });
+      expect(screen.getByText("The 10-minute Undo window has expired.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Undo (10 minutes)" })).not.toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("re-arms the Undo expiry timer when the window exceeds the 32-bit timer limit", async () => {
+    jest.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const undoExpiresAt = "2026-01-31T00:00:00Z";
+    const learnedThread = memoryReceiptThread(undoExpiresAt);
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([learnedThread]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(learnedThread);
+
+    try {
+      render(<ChatCreationWorkspace />);
+      expect(await screen.findByRole("button", { name: "Undo (10 minutes)" })).toBeInTheDocument();
+
+      act(() => { jest.advanceTimersByTime(Date.parse(undoExpiresAt) - Date.now() - 1); });
+      expect(screen.getByRole("button", { name: "Undo (10 minutes)" })).toBeInTheDocument();
+
+      act(() => { jest.advanceTimersByTime(1); });
+      expect(screen.getByText("The 10-minute Undo window has expired.")).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it.each([
