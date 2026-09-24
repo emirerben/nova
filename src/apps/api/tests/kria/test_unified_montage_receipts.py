@@ -25,7 +25,7 @@ def _brief() -> CreativeBrief:
 
 
 def _job(receipts, **extra):
-    record = {"requirement_receipts": receipts, **extra}
+    record = {"requirement_receipts": receipts, "brief_version": 2, **extra}
     return SimpleNamespace(assembly_plan={"unified_montage": record})
 
 
@@ -110,3 +110,61 @@ def test_receipts_for_superseded_requirements_are_ignored(brief_on):
         DEFAULT,
         [],
     )
+
+
+def test_an_unverifiable_timing_never_turns_the_reply_into_a_failure_notice():
+    from app.kria.brief_checks import (
+        build_receipts,
+        plan_facts_from_unified_montage,
+        reply_from_receipts,
+    )
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(id="r1", kind="text", scope="per_clip", description="landmarks"),
+            BriefRequirement(
+                id="r2", kind="timing", scope="global", description="fast but readable"
+            ),
+            BriefRequirement(id="r3", kind="text", scope="global", literal="20k run"),
+        ],
+    )
+    record = {
+        "clip_ids": ["a", "b"],
+        "title": "20k run",
+        "labels": [
+            {"media_id": "a", "text": "Bebek", "inferred": False},
+            {"media_id": "b", "text": "Galata", "inferred": False},
+        ],
+        "duration_s": 6.0,
+        "ordering_basis": "attachment",
+    }
+    receipts = build_receipts(brief.live(), plan_facts_from_unified_montage(record))
+    assert {r.requirement_id: r.status for r in receipts}["r2"] == "partial"
+    text = reply_from_receipts(brief, receipts, summary=DEFAULT)
+    assert text.startswith(DEFAULT)
+    assert "Not everything" not in text
+
+
+def test_a_numeric_timing_that_misses_is_still_reported():
+    from app.kria.brief_checks import (
+        build_receipts,
+        plan_facts_from_unified_montage,
+        reply_from_receipts,
+    )
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(id="r1", kind="timing", scope="global", facts={"duration_s": 30}),
+        ],
+    )
+    record = {"clip_ids": ["a"], "duration_s": 9.0, "ordering_basis": "attachment"}
+    receipts = build_receipts(brief.live(), plan_facts_from_unified_montage(record))
+    assert reply_from_receipts(brief, receipts, summary=DEFAULT).startswith("Not everything")
+
+
+def test_receipts_from_an_older_brief_version_are_not_reported(brief_on):
+    receipts = [{"requirement_id": "r1", "status": "partial", "reason": "x", "inferred": []}]
+    stale = _job(receipts, brief_version=1)
+    assert kria_runtime._unified_montage_review(None, _thread(), stale, DEFAULT) == (DEFAULT, [])

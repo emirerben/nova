@@ -185,7 +185,9 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
 **Decisions the planner owns** (nothing else):
 
 - *Order*: capture time only when the brief has an `order` requirement with a
-  capture key and two clips carry a time; otherwise attachment order. The basis and
+  capture key and two clips carry a time; otherwise the creator's pinned order
+  (`all_candidates.creator_clip_order`, a revision keeps a reordered timeline,
+  basis `creator_order`), else attachment order. The basis and
   the clips that fell back are recorded (`ordering_basis`,
   `ordering_fallback_clip_ids`). A selection order is never silently overridden.
 - *Per-clip text*: only when the brief (or confirmed shot labels / verified clip
@@ -197,16 +199,24 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
 - *Reading time*: `min_display_s = clamp(0.8 + 0.06 * chars, 1.2, 3.0)`; a labelled
   cut lasts at least that long, capped by the clip itself (then the receipt says
   the label is too short to read). Unlabelled cuts are 1.2s. A requested length
-  (`brief timing.duration_s`, else `strategy.target_duration_s`) grows cuts (at most
-  3s each) or shrinks unlabelled cuts (not below 0.8s); readable text wins.
+  (`brief timing.duration_s`, else `strategy.target_duration_s`) grows cuts (up to the
+  clip's length; without a stated length, at most 3s each) or shrinks unlabelled
+  cuts (not below 0.8s); readable text wins.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
-  (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`) > the
-  clips' most common city (a phone-read fact) > `Montage`. Never a model hook.
+  (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`) >
+  `Montage`. Never a model hook, never place text nobody asked for. Creator-written
+  labels keep up to 120 characters; fact/model labels are cut at 60.
   Text stays NFC; nothing is folded to ASCII.
 - *Typography*: Fraunces has no "→" glyph and the phone lays out from exact glyph
   ids (a missing glyph fails the whole recipe), so `skia_font_covers` picks the
   first bundled font (creator font, Fraunces, DM Sans) that covers every string;
   only uncovered characters are dropped when none does.
+
+**Not covered / known gaps.** The worker plans from the thread's *latest* brief, not
+the approved version (a redelivery before the plan is pinned can pick up a newer
+one; receipts are dropped from the reply when `brief_version` differs). With the
+flag on, a phone montage renders source audio only (no matched music bed, beat-snap
+or hero intro). A single clip under 3s fails as "too short to make a montage".
 
 **Snapshot lane.** `EditProposalSnapshot.clip_labels` (omitted when `None`, so
 stored snapshots and approval hashes are byte-identical) and the

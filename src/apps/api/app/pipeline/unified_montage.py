@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import math
 import unicodedata
-import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -62,8 +61,11 @@ READING_MAX_S = 3.0
 # An unlabelled cut keeps the classic fast-montage length.
 DEFAULT_CUT_S = 1.2
 MIN_TOTAL_S = 3.0
+# Model- and fact-derived labels stay short; the creator's own words are never cut
+# (``ClipLabel`` allows 120).
 MAX_LABEL_CHARS = 60
-# Only when the creator gave nothing to title with and no clip has a place.
+MAX_CREATOR_LABEL_CHARS = 120
+# Only when the creator gave nothing to title with.
 DEFAULT_TITLE = "Montage"
 _CAPTURE_ORDER_KEYS = frozenset({"capture_time", "chronological", "route", "time", "shot_order"})
 _START_KEYS = ("start", "from", "origin")
@@ -79,6 +81,11 @@ def min_display_s(chars: int) -> float:
 
 def _nfc(value: object) -> str:
     return unicodedata.normalize("NFC", str(value or "")).strip()
+
+
+def _cap_label(text: str, provenance: str) -> str:
+    limit = MAX_CREATOR_LABEL_CHARS if provenance == "creator" else MAX_LABEL_CHARS
+    return text[:limit]
 
 
 @dataclass(frozen=True)
@@ -177,6 +184,10 @@ def _first(facts: Mapping[str, Any], keys: Iterable[str]) -> str | None:
     return None
 
 
+def _has_dotted_i(text: str) -> bool:
+    return any(ch in "iıİI" for ch in text)
+
+
 def title_from_facts(facts: Mapping[str, Any]) -> str | None:
     """A title written from brief facts, e.g. ``20K Run · Arnavutköy → Eminönü``.
 
@@ -188,10 +199,13 @@ def title_from_facts(facts: Mapping[str, Any]) -> str | None:
     if isinstance(distance, (int, float)) and not isinstance(distance, bool) and distance > 0:
         headline = f"{distance:g}K"
     elif isinstance(distance, str) and _nfc(distance):
-        headline = _nfc(distance).upper() if len(_nfc(distance)) <= 5 else _nfc(distance)
+        text = _nfc(distance)
+        # str.upper() turns Turkish "i" into an ASCII "I": leave those as written.
+        headline = text.upper() if len(text) <= 5 and not _has_dotted_i(text) else text
     activity = _first(facts, ("activity", "event", "sport"))
     if activity:
-        activity = activity[0].upper() + activity[1:]
+        if not _has_dotted_i(activity[:1]):
+            activity = activity[0].upper() + activity[1:]
         headline = f"{headline} {activity}".strip()
     start = _first(facts, _START_KEYS)
     end = _first(facts, _END_KEYS)
@@ -215,7 +229,7 @@ def _fact_label(clip: UnifiedClip) -> tuple[str, str, bool] | None:
         if kind and kind not in by_kind and _nfc(fact.get("value")):
             by_kind[kind] = fact
     if "creator" in by_kind:
-        return _nfc(by_kind["creator"]["value"])[:MAX_LABEL_CHARS], "creator", False
+        return _cap_label(_nfc(by_kind["creator"]["value"]), "creator"), "creator", False
     if "landmark" in by_kind:
         fact = by_kind["landmark"]
         return (
@@ -274,9 +288,8 @@ class UnifiedMontagePlan:
     def guided_edit(self, *, generation_attempt_id: str | None = None) -> dict[str, Any]:
         """The immutable ``assembly_plan["guided_edit"]`` payload for this plan."""
         snapshot = self.snapshot
-        return {
+        payload: dict[str, Any] = {
             "proposal_version": 1,
-            "generation_attempt_id": generation_attempt_id or uuid.uuid4().hex,
             "media_digest": canonical_media_digest(snapshot.media, snapshot.narration),
             "approved_proposal": snapshot.model_dump(mode="json"),
             "media_identities": [
@@ -290,6 +303,12 @@ class UnifiedMontagePlan:
                 for ref in snapshot.media
             ],
         }
+        # No attempt id is minted: a thread session that dispatched without a
+        # guided proposal has none, and the render projection drops a job whose
+        # attempt id differs from the session's (chat would stay "preparing").
+        if generation_attempt_id:
+            payload["generation_attempt_id"] = generation_attempt_id
+        return payload
 
 
 def ordered_ids(clips: Sequence[UnifiedClip]) -> list[str]:
@@ -387,11 +406,27 @@ def _story_beats(cuts: Sequence[FastMontageCut]) -> list[StoryBeat]:
     return beats
 
 
+def _creator_ordered(
+    clips: Sequence[UnifiedClip], creator_order: Sequence[int]
+) -> list[UnifiedClip]:
+    """The creator's pinned order (indices into ``clips``); unlisted clips follow."""
+    picked: list[int] = []
+    for index in creator_order:
+        if isinstance(index, int) and 0 <= index < len(clips) and index not in picked:
+            picked.append(index)
+    picked.extend(i for i in range(len(clips)) if i not in picked)
+    return [clips[i] for i in picked]
+
+
 def _order(
-    clips: Sequence[UnifiedClip], view: BriefView
+    clips: Sequence[UnifiedClip], view: BriefView, creator_order: Sequence[int] = ()
 ) -> tuple[list[UnifiedClip], str, list[str]]:
     attachment_ids = [clip.media_id for clip in clips]
     if not view.order_by_capture:
+        if creator_order:
+            # A creator-reordered timeline is what a revision keeps; only an
+            # explicit capture-time ask in the brief overrides it.
+            return _creator_ordered(clips, creator_order), "creator_order", []
         return list(clips), "attachment", []
     times = {clip.media_id: clip.capture_time for clip in clips if clip.capture_time is not None}
     result = order_by_capture_time(attachment_ids, times)
@@ -410,6 +445,7 @@ def plan_unified_montage(
     strategy: Mapping[str, Any] | None = None,
     clip_intents_enabled: bool = False,
     font_covers: Callable[[str, str], bool] | None = None,
+    creator_order: Sequence[int] = (),
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
@@ -417,9 +453,10 @@ def plan_unified_montage(
     approved with. Only its creator-confirmed copy is read: ``opening_title``,
     ``closing_title``, ``shot_labels``, ``font_family``, ``text_color`` and, when
     ``clip_intents_enabled``, the server-verified ``resolved_clip_intents``.
-    ``font_covers(family, text)`` says whether a bundled font has a glyph for
-    every character of ``text`` (see ``skia_font_covers``); without it the
-    default typography is used as is.
+    ``creator_order`` is the server-pinned order of the previous timeline
+    (indices into ``clips``); see ``_order``. ``font_covers(family, text)`` says
+    whether a bundled font has a glyph for every character of ``text`` (see
+    ``skia_font_covers``); without it the default typography is used as is.
     """
     view = view or BriefView()
     strategy = strategy or {}
@@ -427,7 +464,7 @@ def plan_unified_montage(
         raise ValueError("a montage needs at least one clip")
     if len({clip.media_id for clip in clips}) != len(clips):
         raise ValueError("montage clips must have unique media identities")
-    ordered, basis, fallback_ids = _order(clips, view)
+    ordered, basis, fallback_ids = _order(clips, view, creator_order)
 
     # ── labels ───────────────────────────────────────────────────────────────
     labels_requested = bool(
@@ -463,7 +500,7 @@ def plan_unified_montage(
             if labels_requested:
                 dropped.append(clip.media_id)
             continue
-        text = _nfc(chosen[0])[:MAX_LABEL_CHARS]
+        text = _cap_label(_nfc(chosen[0]), chosen[1])
         if not text:
             dropped.append(clip.media_id)
             continue
@@ -477,7 +514,7 @@ def plan_unified_montage(
         )
 
     # ── title and typography ─────────────────────────────────────────────────
-    title, title_source = _title(strategy, view, ordered)
+    title, title_source = _title(strategy, view)
     closing = _nfc(strategy.get("closing_title")) or None
     requested_font = strategy.get("font_family")
     requested_font = requested_font if isinstance(requested_font, str) and requested_font else None
@@ -508,7 +545,11 @@ def plan_unified_montage(
     floor_frames = int(math.ceil(MIN_TOTAL_S * FPS))
     target_s = view.target_duration_s or _positive_number(strategy.get("target_duration_s"))
     target_frames = max(floor_frames, int(round(target_s * FPS))) if target_s else floor_frames
-    growth_ceiling = [min(cap, int(READING_MAX_S * FPS)) for cap in capacity]
+    # A creator-stated length is honoured even when it needs cuts longer than a
+    # beat of attention (one long clip, a day vlog); a default fast montage is not.
+    growth_ceiling = (
+        list(capacity) if target_s else [min(cap, int(READING_MAX_S * FPS)) for cap in capacity]
+    )
     total = _grow(wanted, growth_ceiling, target_frames)
     if total < floor_frames:
         # Too short to be a video at all: use every frame the clips have.
@@ -695,26 +736,7 @@ def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tupl
     return rows
 
 
-def _dominant_locality(clips: Sequence[UnifiedClip]) -> str | None:
-    """The most common city among the clips' geocoded places ("İstanbul"), or None."""
-    counts: dict[str, int] = {}
-    for clip in clips:
-        for fact in clip.facts:
-            if fact.get("kind") != "place":
-                continue
-            parts = [_nfc(part) for part in str(fact.get("value") or "").split(",")]
-            parts = [part for part in parts if part]
-            city = parts[1] if len(parts) >= 3 else (parts[0] if len(parts) == 1 else None)
-            if city:
-                counts[city] = counts.get(city, 0) + 1
-    if not counts:
-        return None
-    return max(sorted(counts), key=lambda city: counts[city])[:60]
-
-
-def _title(
-    strategy: Mapping[str, Any], view: BriefView, clips: Sequence[UnifiedClip] = ()
-) -> tuple[str | None, str]:
+def _title(strategy: Mapping[str, Any], view: BriefView) -> tuple[str | None, str]:
     confirmed = _nfc(strategy.get("opening_title"))
     if confirmed:
         return confirmed[:280], "creator"
@@ -732,11 +754,8 @@ def _title(
     if generated:
         return generated, "brief"
     # A guided edit always carries one text element. With nothing the creator
-    # said to title it, name the place the clips were filmed in (a phone-read
-    # fact), and only then the neutral default. Never a model-authored hook.
-    locality = _dominant_locality(clips)
-    if locality:
-        return locality, "fact"
+    # said to title it, use the neutral default: never a model-authored hook, and
+    # never unrequested place text taken from clip facts.
     return DEFAULT_TITLE, "default"
 
 

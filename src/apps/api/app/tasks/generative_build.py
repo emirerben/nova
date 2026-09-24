@@ -4568,6 +4568,11 @@ def _run_phone_unified_montage_job(
             strategy=strategy if isinstance(strategy, dict) else {},
             clip_intents_enabled=settings.clip_intents_enabled,
             font_covers=skia_font_covers,
+            creator_order=[
+                value
+                for value in all_candidates.get("creator_clip_order") or []
+                if isinstance(value, int) and not isinstance(value, bool)
+            ],
         )
     record = plan.record()
     if brief is not None and brief.live():

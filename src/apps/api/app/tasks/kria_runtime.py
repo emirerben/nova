@@ -1942,6 +1942,10 @@ def _unified_montage_review(
     brief = load_latest_brief_sync(db, thread.id)
     if brief is None:
         return default_text, []
+    if record.get("brief_version") != brief.version:
+        # The brief changed after the plan was made: its receipts describe the
+        # old wording, so say nothing about them.
+        return default_text, []
     from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
 
     receipts = []

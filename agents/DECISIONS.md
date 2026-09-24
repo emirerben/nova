@@ -2531,6 +2531,12 @@ fast montage.
 
 Consequences. Readable text beats a requested length; an ungrounded label is dropped
 and the receipt says partial. A montage with nothing to title with is titled with the
-clips' most common city, else `Montage` (never a model-authored hook). Fraunces lacks
+`Montage` (never a model-authored hook, never unrequested place text). The unified
+`guided_edit` carries no minted `generation_attempt_id`: a v2 session that dispatched
+without a proposal has none, and the render projection drops a job whose attempt id
+differs. Deliberate deviation from the wave-2 amendment: the planner is a new
+deterministic one rather than `draft_edit_proposal` (item-locked, async Celery flow).
+Behaviour change vs the plain lane: no matched music bed, beat-snap or hero intro; the
+render keeps source audio only. Fraunces lacks
 "→", so the planner selects a font that covers every string. Old lane deletion is a
 follow-up after a device visual comparison.

@@ -222,7 +222,7 @@ def test_the_requested_length_is_honoured_where_the_clips_allow():
     assert longer.duration_s == pytest.approx(9.0)
     # Growth stops at what the clips hold when the ask is bigger.
     capped = plan_unified_montage(clips, BriefView(target_duration_s=60))
-    assert capped.duration_s == pytest.approx(12.0)
+    assert capped.duration_s == pytest.approx(24.0)
     # Only unlabelled cuts shrink; labelled ones keep their reading time.
     mixed = [clip(0, landmark="Galata Kulesi"), clip(1), clip(2), clip(3)]
     shrunk = plan_unified_montage(mixed, labels_view(target_duration_s=3.5))
@@ -273,10 +273,55 @@ def test_title_priority_and_nfc():
 def test_a_title_is_never_missing_and_never_comes_from_a_model_hook():
     bare = plan_unified_montage([clip(0), clip(1)])
     assert bare.title == "Montage" and bare.title_source == "default"
+    # Place facts label clips; they are never printed as an unrequested title.
     placed = plan_unified_montage(
         [clip(0, place="Sarıyer, İstanbul, Türkiye"), clip(1, place="Bebek, İstanbul, Türkiye")]
     )
-    assert placed.title == "İstanbul" and placed.title_source == "fact"
+    assert placed.title == "Montage" and placed.title_source == "default"
+
+
+def test_long_clips_and_a_stated_length_are_honoured_for_single_hero_and_day_vlog():
+    # One 20s clip with a 12s ask, and three 20s clips with a 45s ask, are not
+    # cut down to a 3s beat each.
+    single = plan_unified_montage([clip(0, duration=20.0)], strategy={"target_duration_s": 12})
+    assert single.duration_s == pytest.approx(12.0)
+    vlog = plan_unified_montage(
+        [clip(i, duration=20.0) for i in range(3)], strategy={"target_duration_s": 45}
+    )
+    assert vlog.duration_s == pytest.approx(45.0)
+
+
+def test_a_creator_pinned_order_is_kept_unless_the_brief_asks_for_capture_time():
+    clips = [clip(i, minutes=10 - i) for i in range(4)]
+    kept = plan_unified_montage(clips, creator_order=[2, 0, 3, 1])
+    assert kept.clip_ids == ["c2", "c0", "c3", "c1"]
+    assert kept.ordering_basis == "creator_order"
+    # Bad and partial indices never drop or duplicate a clip.
+    partial = plan_unified_montage(clips, creator_order=[3, 3, 9, -1])
+    assert partial.clip_ids == ["c3", "c0", "c1", "c2"]
+    by_time = plan_unified_montage(
+        clips, BriefView(order_by_capture=True), creator_order=[0, 1, 2, 3]
+    )
+    assert by_time.clip_ids == ["c3", "c2", "c1", "c0"]
+    assert by_time.ordering_basis != "creator_order"
+
+
+def test_creator_written_labels_are_never_cut_short_but_facts_are():
+    long_text = "Kilometre otuz beş, Bebek sahilinde son düzlüğe girerken " * 2
+    long_text = long_text[:100]
+    plan = plan_unified_montage(
+        [clip(0), clip(1, landmark="x" * 90)],
+        labels_view(clip_literals={"c0": long_text}),
+    )
+    texts = {label.media_id: label.text for label in plan.snapshot.clip_labels}
+    assert texts["c0"] == long_text
+    assert len(texts["c1"]) == 60
+
+
+def test_turkish_dotted_i_is_not_case_folded_to_ascii():
+    assert title_from_facts({"activity": "izci yürüyüşü"}) == "izci yürüyüşü"
+    assert title_from_facts({"activity": "run", "distance_km": 20}) == "20K Run"
+    assert title_from_facts({"distance": "20 km"}) == "20 KM"
 
 
 def test_the_snapshot_is_a_valid_strict_guided_proposal():
@@ -290,6 +335,8 @@ def test_the_snapshot_is_a_valid_strict_guided_proposal():
     snapshot = EditProposalSnapshot.model_validate(plan.snapshot.model_dump(mode="json"))
     validate_proposal_compiles(snapshot)
     guided = plan.guided_edit()
+    # No minted attempt id: it would never match a thread session's.
+    assert "generation_attempt_id" not in guided
     _version, _digest, parsed = validate_guided_snapshot(guided)
     assert parsed.clip_labels == snapshot.clip_labels
     compiled = compile_execution_plan(guided, track=None)

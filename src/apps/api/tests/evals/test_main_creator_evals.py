@@ -186,8 +186,8 @@ def test_main_creator_eval(
         assert result.output["action"]["kind"] == "propose_strategy"
         updates = result.output["brief_updates"]
         assert [[u["kind"], u["scope"]] for u in updates] == brief_meta["kinds"]
-        title = next((u for u in updates if u["scope"] == "title"), None)
-        if title is not None:
+        if ["text", "title"] in brief_meta["kinds"]:
+            title = next(u for u in updates if u["scope"] == "title")
             assert title["literal"] == "20K Koşu · Arnavutköy → Eminönü"
         per_clip = next(u for u in updates if u["scope"] == "per_clip")
         assert per_clip["literal"] is None and per_clip["description"]

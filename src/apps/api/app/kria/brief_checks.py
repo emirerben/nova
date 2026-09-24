@@ -311,7 +311,12 @@ def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
     if req.kind == "text":
         return bool(req.scope == "per_clip" or req.scope.startswith("clip:") or req.literal)
-    return req.kind in {"order", "timing"}
+    if req.kind == "timing":
+        # "Fast but readable" has no number to check: that is "can't verify"
+        # (neutral in the reply), not a failed requirement.
+        target = req.facts.get("duration_s")
+        return isinstance(target, (int, float)) and not isinstance(target, bool) and target > 0
+    return req.kind == "order"
 
 
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:

@@ -289,9 +289,9 @@ def test_no_brief_still_produces_a_plain_guided_montage(harness):
     assert job.status == "awaiting_device"
     record = job.assembly_plan["unified_montage"]
     assert record["labels"] == []
-    # Nothing to title with: the place the clips were filmed in, a phone-read fact.
-    assert record["title"] == "İstanbul"
-    assert record["title_source"] == "fact"
+    # Nothing to title with: the neutral default, not unrequested place text.
+    assert record["title"] == "Montage"
+    assert record["title_source"] == "default"
     assert "requirement_receipts" not in record
 
 
@@ -421,3 +421,144 @@ def test_chat_text_edit_on_the_unified_plan_succeeds(harness, monkeypatch):
     assert new.identity.recipe_revision == old.identity.recipe_revision + 1
     assert len(new.recipe.text_layers) == len(old.recipe.text_layers)
     assert new.recipe.duration == old.recipe.duration
+
+
+def test_a_creator_pinned_clip_order_survives_a_revision_render(harness):
+    job, *_ = harness(brief=None)
+    job.all_candidates["creator_clip_order"] = [3, 0, True, 99]
+    gb._run_generative_job(str(job.id))
+    record = job.assembly_plan["unified_montage"]
+    assert record["clip_ids"][:2] == ["clip-3", "clip-0"]
+    assert sorted(record["clip_ids"]) == sorted(f"clip-{i}" for i in range(CLIPS))
+    assert record["ordering_basis"] == "creator_order"
+
+
+def test_the_thread_projection_matches_a_unified_job_without_a_guided_attempt(harness):
+    """A v2 thread session that dispatched with no guided proposal has no attempt
+    id; a minted one on the unified guided_edit would make the projection drop the
+    job and leave the chat on "preparing"."""
+    from app.routes.creation_threads import _render_projection
+
+    job, *_ = harness(brief=_brief())
+    gb._run_generative_job(str(job.id))
+    assert "generation_attempt_id" not in job.assembly_plan["guided_edit"]
+
+    owner_id, item_id, plan_id, session_id = (uuid.uuid4() for _ in range(4))
+    job.user_id = owner_id
+    job.content_plan_item_id = item_id
+    job.content_plan_ownership_epoch = 3
+    thread = SimpleNamespace(
+        creator_id=owner_id, content_plan_id=plan_id, active_creator_agent_session_id=session_id
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=owner_id, ownership_epoch=3)
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job.id)
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=owner_id,
+        plan_item_id=item_id,
+        target_job_id=None,
+        ownership_epoch=3,
+        active_plan={},
+        revision=1,
+        render_attempts=0,
+        target_variant_id=None,
+        target_generation_id=None,
+    )
+    projection = _render_projection(thread, item=item, plan=plan, session=session, job=job)
+    assert projection is not None
+    assert projection["job_id"] == str(job.id)
+
+
+# ---- the real inputs loader (every test above stubs it) ----------------------
+
+
+class _Result:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+class _LoaderDb:
+    def __init__(self, job, item, thread_id):
+        self.job, self.item, self.thread_id = job, item, thread_id
+        self.statements: list[str] = []
+
+    def get(self, model, _identity):
+        return self.job if model.__name__ == "Job" else self.item
+
+    def execute(self, statement):
+        self.statements.append(
+            str(statement.compile(compile_kwargs={"literal_binds": True})).replace("-", "")
+        )
+        return _Result(self.thread_id)
+
+
+def _loader(monkeypatch, *, item, thread_id, brief_flag):
+    from app.kria import brief as brief_module
+
+    user_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        content_plan_item_id=item.id if item is not None else None,
+    )
+    db = _LoaderDb(job, item, thread_id)
+
+    @contextmanager
+    def sessions():
+        yield db
+
+    latest = _brief()
+    loaded: list[object] = []
+
+    def load(_db, thread):
+        loaded.append(thread)
+        return latest
+
+    monkeypatch.setattr(gb, "_sync_session", sessions)
+    monkeypatch.setattr(brief_module, "load_latest_brief_sync", load)
+    monkeypatch.setattr(gb.settings, "kria_creative_brief_enabled", brief_flag)
+    monkeypatch.setattr(gb.settings, "kria_creative_brief_user_ids", [])
+    return job, db, latest, loaded
+
+
+def test_loader_returns_the_items_assignments_and_the_threads_latest_brief(monkeypatch):
+    item = SimpleNamespace(id=uuid.uuid4(), clip_assignments=[{"gcs_path": "a"}, "junk"])
+    thread_id = uuid.uuid4()
+    job, db, latest, loaded = _loader(monkeypatch, item=item, thread_id=thread_id, brief_flag=True)
+
+    user_id, assignments, brief = gb._load_unified_montage_inputs(str(job.id))
+
+    assert user_id == job.user_id
+    assert assignments == [{"gcs_path": "a"}]
+    assert assignments[0] is not item.clip_assignments[0], "a copy, never the live row"
+    assert brief is latest and loaded == [thread_id]
+    # The thread lookup is scoped to this item and this creator.
+    (statement,) = db.statements
+    assert str(item.id).replace("-", "") in statement
+    assert str(job.user_id).replace("-", "") in statement
+
+
+def test_loader_has_no_brief_when_the_flag_is_off(monkeypatch):
+    item = SimpleNamespace(id=uuid.uuid4(), clip_assignments=[{"gcs_path": "a"}])
+    job, db, _latest, loaded = _loader(
+        monkeypatch, item=item, thread_id=uuid.uuid4(), brief_flag=False
+    )
+    _user, assignments, brief = gb._load_unified_montage_inputs(str(job.id))
+    assert brief is None and loaded == [] and db.statements == []
+    assert assignments == [{"gcs_path": "a"}]
+
+
+def test_loader_has_no_brief_when_the_item_has_no_thread(monkeypatch):
+    item = SimpleNamespace(id=uuid.uuid4(), clip_assignments=None)
+    job, _db, _latest, loaded = _loader(monkeypatch, item=item, thread_id=None, brief_flag=True)
+    _user, assignments, brief = gb._load_unified_montage_inputs(str(job.id))
+    assert assignments == [] and brief is None and loaded == []
+
+
+def test_loader_handles_a_job_with_no_plan_item(monkeypatch):
+    job, _db, _latest, loaded = _loader(monkeypatch, item=None, thread_id=None, brief_flag=True)
+    user_id, assignments, brief = gb._load_unified_montage_inputs(str(job.id))
+    assert user_id == job.user_id and assignments == [] and brief is None and loaded == []
