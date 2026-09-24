@@ -2456,3 +2456,38 @@ ceiling can be tightened from real CI samples"), and nobody closed that loop unt
 canary started failing. Also, check a noise hypothesis against a same-machine A/B before
 believing it: the local contention studies here were dominated by hybrid-core scheduling
 and by QoS, neither of which exists on the runner.
+
+## [2026-09-24] Rolling deploys took both api machines down at once (KRI-193, found via KRI-180)
+
+`fly.toml`'s `[[services]]` block for `api` set `min_machines_running = 1`, with a comment
+explaining that the floor made autostop a no-op for "current single-replica prod" and would
+need raising "if we ever add a second api machine." Prod WAS scaled to a second machine
+(`fly scale count api=2`, confirmed live via `fly scale show`) at some point outside of a
+commit — `git log --all --grep` on scale/api turns up nothing — and the floor was never
+bumped to match. `auto_stop_machines = "stop"` was then free to idle the second machine down
+to 0 during low traffic, same as it always had for the single-replica case the comment
+described.
+
+That silently reintroduced the exact race the floor was written to prevent, one layer up:
+`gh run view 35983295511` shows both api machines (`e78413def29018`, `843277b2423298`)
+logging "Updating machine config" within the same second at 09:48:22 UTC (release v1267,
+repeated ~10 min later at v1268). Going into that deploy only one of the two was actually
+running — the other had already autostopped — so replacing the sole running machine left
+zero healthy `api` machines for ~18s (`instance refused connection`, `machine was recently
+stopped`). Any upload reserve/attach landing in that window failed; KRI-180 was filed at
+09:58 chasing exactly that. KRI-180's "couldn't be processed" symptom is a separate
+client-side check and isn't explained by this — the outage window only explains the reserve/
+attach failures.
+
+**Fix:** `min_machines_running` raised from 1 to 2 to match the actual `fly scale count
+api=2`. This makes autostop a no-op for the current fleet size again (mirrors the original
+single-replica reasoning, just at the current count), so both api machines stay running
+between deploys and a rolling update of one always has a healthy peer. The comment now says
+to track the actual scale count rather than assume a specific replica count.
+
+**Lesson:** an invariant written as "assume N replicas, revisit if we ever add more" needs
+the "if" to actually get caught — `fly scale count` is an out-of-band operational change
+that doesn't touch git, so nothing forced fly.toml to be revisited when prod's replica count
+changed. There's no automated check tying `min_machines_running` to the live scale count;
+that drift is now findable only by reading this entry or noticing another `[[services]]`
+comment says "single-replica" while `fly scale show` says otherwise.
