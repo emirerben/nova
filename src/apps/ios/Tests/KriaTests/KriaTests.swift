@@ -334,6 +334,56 @@ final class KriaTests: XCTestCase {
         XCTAssertEqual(thread.summary.posterURL, URL(string: "https://cdn.example.test/original.jpg"))
     }
 
+    func testCreationJobDecodesRenderNotes() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let thread = try decoder.decode(CreationThread.self, from: Data(#"""
+        {
+          "id":"B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B",
+          "title":"Ready",
+          "status":"active",
+          "revision":4,
+          "runtime_version":2,
+          "active_job_id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE",
+          "job":{
+            "id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE",
+            "status":"ready",
+            "variants":[{"variant_id":"original_text","render_status":"ready"}],
+            "render_notes":["I never heard \"Leão\", so its photo wasn't shown.", "Placed 9 of 10 moments you named."]
+          },
+          "updated_at":"2026-09-07T12:00:00Z"
+        }
+        """#.utf8))
+
+        XCTAssertEqual(
+            thread.job?.renderNotes,
+            ["I never heard \"Leão\", so its photo wasn't shown.", "Placed 9 of 10 moments you named."]
+        )
+    }
+
+    func testCreationJobDefaultsRenderNotesToEmptyWhenAbsent() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let thread = try decoder.decode(CreationThread.self, from: Data(#"""
+        {
+          "id":"B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B",
+          "title":"Ready, older server",
+          "status":"active",
+          "revision":4,
+          "runtime_version":2,
+          "active_job_id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE",
+          "job":{
+            "id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE",
+            "status":"ready",
+            "variants":[{"variant_id":"original_text","render_status":"ready"}]
+          },
+          "updated_at":"2026-09-07T12:00:00Z"
+        }
+        """#.utf8))
+
+        XCTAssertEqual(thread.job?.renderNotes, [])
+    }
+
     func testProjectUploadReservationAndAttachmentUseThreadContract() async throws {
         URLProtocolStub.handler = { request in
             if request.url?.path.hasSuffix("/upload-urls") == true {

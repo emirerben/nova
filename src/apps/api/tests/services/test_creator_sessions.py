@@ -1197,7 +1197,12 @@ def _pending_visual_item() -> SimpleNamespace:
 
 
 def _visual(
-    asset_id: uuid.UUID, *, status: str, analysis: dict | None, kind: str = "image"
+    asset_id: uuid.UUID,
+    *,
+    status: str,
+    analysis: dict | None,
+    kind: str = "image",
+    source_filename: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=asset_id,
@@ -1205,6 +1210,7 @@ def _visual(
         status=status,
         duration_s=None,
         user_context=None,
+        source_filename=source_filename,
         analysis=analysis,
     )
 
@@ -1276,6 +1282,45 @@ async def test_context_keeps_visuals_in_manifest_while_their_analysis_is_pending
     assert "plan_item_assets.status IN ('uploaded', 'queued', 'analyzing', 'ready')" in compiled
     assert "plan_item_assets.status = 'ready'" not in compiled
     assert "deduplicated_to_asset_id IS NULL" in compiled
+
+
+@pytest.mark.asyncio
+async def test_context_exposes_pool_asset_filename_in_media_context_only() -> None:
+    """KRI-178: the uploaded filename is the only signal that can tell two
+    otherwise-identical pool images apart (e.g. a reaction-beat sticker vs a
+    player's own photo) when the creator names them by file. It must appear
+    on the `media_context` entry, and it must NOT touch `CreatorMediaRef.label`
+    -- that field is folded into `canonical_manifest_hash`, and a manifest-hash
+    change would trip the "Footage or capabilities changed" confirm fence for
+    every in-flight thread the moment this ships."""
+
+    item = _pending_visual_item()
+    item.clip_assignments = []
+    persona = SimpleNamespace(user_id=uuid.uuid4())
+    named_id = uuid.uuid4()
+    unnamed_id = uuid.uuid4()
+
+    manifest, media_context, _db = await _resolve_with_visuals(
+        item,
+        persona,
+        [
+            _visual(named_id, status="ready", analysis=None, source_filename="02_greenwood.png"),
+            _visual(unnamed_id, status="ready", analysis=None, source_filename=None),
+        ],
+    )
+
+    named_entry = next(m for m in media_context if m["media_id"] == f"asset-{named_id}")
+    unnamed_entry = next(m for m in media_context if m["media_id"] == f"asset-{unnamed_id}")
+    assert named_entry["filename"] == "02_greenwood.png"
+    assert unnamed_entry["filename"] is None
+
+    # The filename never reaches `CreatorMediaRef.label` (manifest-hash
+    # surface) -- both assets were registered with no `user_context`, so
+    # both media refs keep label=None regardless of filename.
+    named_ref = next(m for m in manifest.media if m.media_id == f"asset-{named_id}")
+    unnamed_ref = next(m for m in manifest.media if m.media_id == f"asset-{unnamed_id}")
+    assert named_ref.label is None
+    assert unnamed_ref.label is None
 
 
 # --- KRI-127: chat evidence reads the shared clip-understanding record -----

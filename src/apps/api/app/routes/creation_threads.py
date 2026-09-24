@@ -1812,11 +1812,25 @@ def _job_projection(job: Job | None) -> dict[str, Any] | None:
     if job is None:
         return None
     from app.routes.generative_jobs import _variants_for_response
+    from app.services.nova_steps import render_notes_from_beat_receipt
     from app.tasks.content_plan_build import humanize_job_failure_reason
 
     # Re-signing is authoritative. A storage/signing outage must be visible to
     # the client instead of returning an expired or stale playback URL.
     variants = _variants_for_response(job)
+    # KRI-178: same "primary variant" rule as `creator_sessions.py` -- the
+    # first variant dict that carries a `variant_id` at all (there is only
+    # ever one live variant on a phone job). Render notes are a creator-safe
+    # projection of that variant's `phone_beat_receipt`; `[]` when the job
+    # never carried reaction beats (flag off, no beats requested, or not a
+    # phone-subtitled job at all).
+    primary_variant = next(
+        (value for value in variants if isinstance(value, dict) and value.get("variant_id")),
+        None,
+    )
+    render_notes = render_notes_from_beat_receipt(
+        primary_variant.get("phone_beat_receipt") if primary_variant is not None else None
+    )
     return {
         "id": str(job.id),
         "status": job.status,
@@ -1827,6 +1841,7 @@ def _job_projection(job: Job | None) -> dict[str, Any] | None:
         # stays above for admin/debug consumers that still want the code.
         "failure_message": humanize_job_failure_reason(job.failure_reason),
         "variants": variants,
+        "render_notes": render_notes,
     }
 
 

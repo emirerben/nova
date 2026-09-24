@@ -15,7 +15,10 @@ from app.schemas.edit_proposal import MixedMediaTimingProfile, MontageCadenceCon
 from app.services import creator_capabilities as capabilities
 from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 from app.services.creator_sessions import compile_active_plan
-from app.services.phone_rollout import PHONE_SUBTITLED_OVERLAY_FEATURES
+from app.services.phone_rollout import (
+    PHONE_SUBTITLED_OVERLAY_FEATURES,
+    PHONE_SUBTITLED_SFX_FEATURES,
+)
 
 
 def _enable_guided(monkeypatch) -> None:
@@ -2213,3 +2216,241 @@ def test_media_overlays_available_phone_subtitled_manifest_compiles_overlays_tre
     )
     assert plan.strategy.render_program == "native"
     assert plan.strategy.optional_treatments == ["overlays"]
+
+
+# --- KRI-178: phone `subtitled` reaction beats (name-triggered photo/sticker
+# and sound-effect pop-ins, plus a held closing shot) ------------------------
+
+
+def _enable_phone_subtitled_reaction_beats(monkeypatch) -> None:
+    """Every condition `phone_rollout.phone_subtitled_reaction_beats_supported()`
+    checks, plus the overlay lane it builds on."""
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_reaction_beats_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "sound_effects_enabled", True)
+    monkeypatch.setattr(
+        capabilities.settings,
+        "phone_render_verified_features",
+        list(set(PHONE_SUBTITLED_OVERLAY_FEATURES) | set(PHONE_SUBTITLED_SFX_FEATURES)),
+    )
+
+
+def _reaction_beats_manifest(monkeypatch, edit_format, **overrides):
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    _enable_phone_subtitled_reaction_beats(monkeypatch)
+    # Visuals-pool images use the "asset-*" id convention (same as every
+    # other pool-media test in this file) -- only NON-"asset-" media counts
+    # as an attached phone source, so real pool images must not collide with
+    # the verified phone-only video-source check.
+    media = overrides.pop(
+        "media",
+        [
+            {"media_id": "phone-a", "kind": "video"},
+            {"media_id": "asset-greenwood.png", "kind": "image", "label": "Greenwood"},
+            {"media_id": "asset-reject-x.png", "kind": "image", "label": "Reject X"},
+            {"media_id": "asset-salah.png", "kind": "image", "label": "Salah"},
+            {"media_id": "asset-goat-badge.png", "kind": "image", "label": "GOAT badge"},
+        ],
+    )
+    catalog = overrides.pop(
+        "catalog", [{"catalog_id": "sfx-buzzer", "kind": "sound_effect", "label": "Wrong buzzer"}]
+    )
+    return capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format=edit_format,
+        media=media,
+        catalog=catalog,
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+        **overrides,
+    )
+
+
+@pytest.mark.parametrize("beats_flag_on", [True, False])
+@pytest.mark.parametrize("is_phone", [True, False])
+@pytest.mark.parametrize("edit_format", ["subtitled", "montage"])
+def test_reaction_beats_capability_matrix(monkeypatch, beats_flag_on, is_phone, edit_format):
+    """`reaction_beats` is available iff phone + subtitled + media_overlays
+    available + `phone_subtitled_reaction_beats_supported()`. Every other
+    cell reports unavailable, with `unsupported_on_phone` when the item IS a
+    phone subtitled edit but the gate fails, and `phone_talking_only`
+    otherwise (cloud, or phone-but-not-subtitled)."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    _enable_phone_subtitled_reaction_beats(monkeypatch)
+    monkeypatch.setattr(
+        capabilities.settings, "phone_subtitled_reaction_beats_enabled", beats_flag_on
+    )
+
+    media = [{"media_id": "phone-a" if is_phone else "clip-a", "kind": "video"}]
+    kwargs = dict(item_id="item-1", edit_format=edit_format, media=media)
+    if is_phone:
+        kwargs.update(phone_source_media_ids=["phone-a"], phone_rendering_allowed=True)
+    manifest = capabilities.resolve_creator_manifest(**kwargs)
+
+    entry = manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS]
+    should_be_available = beats_flag_on and is_phone and edit_format == "subtitled"
+    if should_be_available:
+        assert entry.available is True
+    else:
+        assert entry.available is False
+        if is_phone and edit_format == "subtitled":
+            assert entry.reason_code == "unsupported_on_phone"
+        else:
+            assert entry.reason_code == "phone_talking_only"
+
+
+def test_reaction_beats_capability_present_and_unavailable_by_default():
+    """Flag-off default settings add exactly one new entry to any manifest --
+    `reaction_beats`, unavailable -- and nothing else changes."""
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1", edit_format="montage", media=[{"media_id": "clip-a", "kind": "video"}]
+    )
+    entry = manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS]
+    assert entry.available is False
+    assert entry.reason_code == "phone_talking_only"
+
+
+def test_repair_a_strips_beats_when_capability_unavailable(monkeypatch):
+    """Repair (a): a strategy carrying reaction_beats/closing_media on a
+    manifest where the capability is unavailable is repaired (fields
+    dropped + notice), never rejected."""
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "clip-a", "kind": "video"}],
+    )
+    assert manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS].available is False
+    strategy = CreativeStrategy(
+        edit_format="montage",
+        reaction_beats=[{"beat_id": "b1", "trigger": "hello", "sound": "buzzer"}],
+        closing_media={"visual_id": "clip-a"},
+    )
+    plan = capabilities.compile_strategy_to_plan(manifest, strategy)
+    assert plan.strategy.reaction_beats is None
+    assert plan.strategy.closing_media is None
+    assert any("aren't available" in notice for notice in plan.notices)
+
+
+def test_repairs_b_and_c_resolve_visual_and_sound_refs(monkeypatch):
+    """Repairs (b)/(c): visual_id/badge_visual_id resolve to the canonical
+    manifest media_id (label or id match, case-insensitive); sound resolves
+    to a canonical catalog_id when it matches, else is left as the
+    creator's own words. Unresolved visuals drop just that beat/closing
+    with a notice."""
+    manifest = _reaction_beats_manifest(monkeypatch, "subtitled")
+    assert manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS].available is True
+
+    strategy = CreativeStrategy(
+        edit_format="subtitled",
+        audio_strategy="original_audio",
+        selected_media_ids=["phone-a"],
+        reaction_beats=[
+            {
+                "beat_id": "greenwood",
+                "trigger": "Mason Greenwood",
+                "visual_id": "greenwood",  # matches by label, case-insensitive
+                "sound": "wrong buzzer",  # matches catalog by label
+            },
+            {
+                "beat_id": "unknown",
+                "trigger": "some unknown name",
+                "visual_id": "does-not-exist",
+            },
+            {
+                "beat_id": "own-words",
+                "trigger": "ding moment",
+                "sound": "a triumphant ding",  # no catalog match -- kept verbatim
+            },
+        ],
+        closing_media={
+            "visual_id": "asset-salah.png",  # matches by exact media_id
+            "badge_visual_id": "goat badge",  # matches by label, case-insensitive
+            "from_trigger": "Salah",
+        },
+    )
+    plan = capabilities.compile_strategy_to_plan(manifest, strategy)
+    beats = {beat.beat_id: beat for beat in plan.strategy.reaction_beats}
+    assert set(beats) == {"greenwood", "own-words"}
+    assert beats["greenwood"].visual_id == "asset-greenwood.png"
+    assert beats["greenwood"].sound == "sfx-buzzer"
+    assert beats["own-words"].sound == "a triumphant ding"
+    assert any("Couldn't find" in notice for notice in plan.notices)
+
+    assert plan.strategy.closing_media.visual_id == "asset-salah.png"
+    assert plan.strategy.closing_media.badge_visual_id == "asset-goat-badge.png"
+
+
+def test_repair_b_drops_closing_media_when_visual_unresolved(monkeypatch):
+    manifest = _reaction_beats_manifest(monkeypatch, "subtitled")
+    strategy = CreativeStrategy(
+        edit_format="subtitled",
+        audio_strategy="original_audio",
+        selected_media_ids=["phone-a"],
+        closing_media={"visual_id": "no-such-photo"},
+    )
+    plan = capabilities.compile_strategy_to_plan(manifest, strategy)
+    assert plan.strategy.closing_media is None
+    assert any("closing photo" in notice for notice in plan.notices)
+
+
+def test_repair_d_drops_licensed_sfx_when_beats_available_instead_of_raising(monkeypatch):
+    """Repair (d): on a phone manifest where `sound_effects` is unavailable
+    but `reaction_beats` IS available, a `licensed_sfx` request is dropped
+    with a notice instead of raising CreatorSfxUnavailableError."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    _enable_phone_subtitled_reaction_beats(monkeypatch)
+    manifest = _reaction_beats_manifest(monkeypatch, "subtitled")
+    assert manifest.capabilities["sound_effects"].available is False
+    assert manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS].available is True
+
+    strategy = CreativeStrategy(
+        edit_format="subtitled",
+        audio_strategy="original_audio",
+        selected_media_ids=["phone-a"],
+        licensed_sfx={"effect_id": "funny-1", "semantics": "funny_moments"},
+    )
+    plan = capabilities.compile_strategy_to_plan(manifest, strategy)
+    assert plan.strategy.licensed_sfx is None
+    assert any("Sound effects on iPhone are placed" in notice for notice in plan.notices)
+
+
+def test_repair_d_still_raises_when_reaction_beats_also_unavailable(monkeypatch):
+    """Unchanged pre-KRI-178 behavior: when sound_effects is unavailable AND
+    reaction_beats is ALSO unavailable (e.g. cloud, or montage), an explicit
+    licensed_sfx request still raises rather than being silently dropped."""
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "sound_effects_enabled", False)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "clip-a", "kind": "video"}],
+    )
+    assert manifest.capabilities["sound_effects"].available is False
+    assert manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS].available is False
+    strategy = CreativeStrategy(
+        edit_format="montage",
+        licensed_sfx={"effect_id": "funny-1", "semantics": "funny_moments"},
+    )
+    with pytest.raises(capabilities.CreatorSfxUnavailableError):
+        capabilities.compile_strategy_to_plan(manifest, strategy)
+
+
+def test_resolve_creator_image_media_ref_matches_id_or_label(monkeypatch):
+    manifest = _reaction_beats_manifest(monkeypatch, "subtitled")
+    assert (
+        capabilities.resolve_creator_image_media_ref(manifest, "asset-salah.png").media_id
+        == "asset-salah.png"
+    )
+    assert (
+        capabilities.resolve_creator_image_media_ref(manifest, "SALAH").media_id
+        == "asset-salah.png"
+    )
+    assert capabilities.resolve_creator_image_media_ref(manifest, "no-such-thing") is None
+    assert capabilities.resolve_creator_image_media_ref(manifest, None) is None
+    # A video source is never resolved as an image, even by id.
+    assert capabilities.resolve_creator_image_media_ref(manifest, "phone-a") is None

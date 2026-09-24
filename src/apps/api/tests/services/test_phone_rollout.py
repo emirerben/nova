@@ -8,7 +8,9 @@ from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.pipeline.portable_text_layout import compile_text_overlay
 from app.services.phone_rollout import (
     PHONE_SUBTITLED_OVERLAY_FEATURES,
+    PHONE_SUBTITLED_SFX_FEATURES,
     phone_subtitled_overlays_supported,
+    phone_subtitled_reaction_beats_supported,
     validate_phone_pilot_recipe,
 )
 from tests.pipeline.test_phone_guided_plan import fixture
@@ -613,3 +615,62 @@ def test_phone_subtitled_overlays_requires_every_verified_feature(monkeypatch, m
 def test_phone_subtitled_overlays_defaults_to_unsupported(monkeypatch):
     """Flag-off default settings never accidentally enable the lane."""
     assert phone_subtitled_overlays_supported() is False
+
+
+def _enable_phone_subtitled_reaction_beats(monkeypatch) -> None:
+    """KRI-178 happy-path setup: the overlay lane fully enabled PLUS the
+    beats-specific flag, generic SFX gate, and the extra device feature
+    (`soundEffects`) `PHONE_SUBTITLED_SFX_FEATURES` adds on top."""
+    _enable_phone_subtitled_overlays(monkeypatch)
+    monkeypatch.setattr(settings, "phone_subtitled_reaction_beats_enabled", True)
+    monkeypatch.setattr(settings, "sound_effects_enabled", True)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        list(set(PHONE_SUBTITLED_OVERLAY_FEATURES) | set(PHONE_SUBTITLED_SFX_FEATURES)),
+    )
+
+
+def test_phone_subtitled_reaction_beats_supported_when_all_conditions_hold(monkeypatch):
+    """KRI-178: the happy path -- beats flag, the full overlay lane, the
+    generic SFX gate, and every verified device feature all hold."""
+    _enable_phone_subtitled_reaction_beats(monkeypatch)
+    assert phone_subtitled_reaction_beats_supported() is True
+
+
+def test_phone_subtitled_reaction_beats_requires_the_lane_flag(monkeypatch):
+    _enable_phone_subtitled_reaction_beats(monkeypatch)
+    monkeypatch.setattr(settings, "phone_subtitled_reaction_beats_enabled", False)
+    assert phone_subtitled_reaction_beats_supported() is False
+
+
+def test_phone_subtitled_reaction_beats_requires_the_overlay_lane(monkeypatch):
+    """Beats reuse the KRI-176 overlay lane's grounding primitives -- if the
+    overlay lane itself is unsupported (e.g. its own flag off), beats must
+    stay unsupported too, even with every beats-specific condition met."""
+    _enable_phone_subtitled_reaction_beats(monkeypatch)
+    monkeypatch.setattr(settings, "phone_subtitled_media_lanes_enabled", False)
+    assert phone_subtitled_reaction_beats_supported() is False
+
+
+def test_phone_subtitled_reaction_beats_requires_the_generic_sfx_gate(monkeypatch):
+    _enable_phone_subtitled_reaction_beats(monkeypatch)
+    monkeypatch.setattr(settings, "sound_effects_enabled", False)
+    assert phone_subtitled_reaction_beats_supported() is False
+
+
+@pytest.mark.parametrize("missing_feature", list(PHONE_SUBTITLED_SFX_FEATURES))
+def test_phone_subtitled_reaction_beats_requires_every_sfx_feature(monkeypatch, missing_feature):
+    _enable_phone_subtitled_reaction_beats(monkeypatch)
+    remaining = [
+        f
+        for f in set(PHONE_SUBTITLED_OVERLAY_FEATURES) | set(PHONE_SUBTITLED_SFX_FEATURES)
+        if f != missing_feature
+    ]
+    monkeypatch.setattr(settings, "phone_render_verified_features", remaining)
+    assert phone_subtitled_reaction_beats_supported() is False
+
+
+def test_phone_subtitled_reaction_beats_defaults_to_unsupported(monkeypatch):
+    """Flag-off default settings never accidentally enable the lane."""
+    assert phone_subtitled_reaction_beats_supported() is False

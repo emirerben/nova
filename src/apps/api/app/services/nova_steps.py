@@ -110,7 +110,13 @@ STEP_ALLOWLIST: dict[str, frozenset[str]] = {
     # grounding`, which reads counts alone). The sibling "phone" event
     # `subtitled_lane_receipt` (generative_build.py) carries the full lane
     # receipt dict and stays excluded.
-    "phone": frozenset({"subtitled_overlay_grounding"}),
+    # KRI-178: creator-authored reaction-beats outcome -- counts plus a
+    # capped list of MISSED TRIGGER STRINGS (the creator's own words, e.g.
+    # "when he scores") and the closing enum status only. `missed` is
+    # user-authored text, not free-form pipeline text, and is capped at 8
+    # entries of 80 chars each at the write site (`_run_phone_subtitled_
+    # job`) -- see `_humanize_subtitled_reaction_beats`.
+    "phone": frozenset({"subtitled_overlay_grounding", "subtitled_reaction_beats"}),
 }
 
 
@@ -130,8 +136,12 @@ _BLOCKED_KEY_SUBSTRINGS: tuple[str, ...] = ("text", "prompt", "url", "path", "no
 
 def _sanitize_event_data(data: Any) -> dict[str, Any]:
     """Strip any key that might carry user text/URLs/paths, plus any value
-    that isn't a JSON scalar. Applied to every allowlisted event's ``data``
-    before a single field is allowed to reach a label or detail line.
+    that isn't a JSON scalar (or, since KRI-178's ``missed`` field, a flat
+    list of scalars -- e.g. a capped list of the creator's OWN short
+    reaction-beat trigger phrases, already length-capped at the write site).
+    A list containing anything other than a scalar (a dict, nested list)
+    never survives. Applied to every allowlisted event's ``data`` before a
+    single field is allowed to reach a label or detail line.
     """
     if not isinstance(data, dict):
         return {}
@@ -142,6 +152,10 @@ def _sanitize_event_data(data: Any) -> dict[str, Any]:
         if any(blocked in key.lower() for blocked in _BLOCKED_KEY_SUBSTRINGS):
             continue
         if isinstance(raw, (str, int, float, bool)) or raw is None:
+            safe[key] = raw
+        elif isinstance(raw, list) and all(
+            isinstance(item, (str, int, float, bool)) or item is None for item in raw
+        ):
             safe[key] = raw
     return safe
 
@@ -326,6 +340,134 @@ def _humanize_subtitled_overlay_grounding(data: dict[str, Any]) -> tuple[str, li
     return "Nova looked for moments to show your Visuals", None
 
 
+_MAX_MISSED_DETAIL_LINES = 8
+
+# `beat_miss_sentence` reason buckets -- mirrors the reason vocabulary
+# `app.services.phone_reaction_grounding` writes into `unplaced[].reason`
+# plus the post-grounding demotion reasons `_run_phone_subtitled_job` adds
+# (`bind_failed`, `compile_dropped`) and a bare `f"error: {exc}"` string.
+# Every bucket maps to a FIXED, honest sentence -- the raw reason code is
+# never quoted back to the creator.
+_MISS_REASON_NEVER_HEARD: frozenset[str] = frozenset({"never_heard", "after_not_heard"})
+_MISS_REASON_VISUAL_MISSING: frozenset[str] = frozenset({"visual_not_in_pool", "visual_is_video"})
+_MISS_REASON_NO_ROOM: frozenset[str] = frozenset({"no_safe_spot", "too_short", "overlap"})
+
+
+def beat_miss_sentence(trigger: str, reason: str | None) -> str:
+    """One creator-facing sentence for why a reaction beat's card/sound
+    didn't make it onto the render.
+
+    `reason` is `phone_reaction_grounding`'s per-beat `unplaced[].reason` (or
+    a post-grounding demotion reason `_demote_beat_receipt` writes) --
+    `None`/`never_heard`/`after_not_heard` means the trigger genuinely never
+    played; `visual_not_in_pool`/`visual_is_video` means the photo/sticker
+    itself was the problem; `sound_not_found` means the sound was; `no_safe_
+    spot`/`too_short`/`overlap` means there was no safe window to show it;
+    anything else (`bind_failed`, `compile_dropped`, `error: ...`) is an
+    internal render-pipeline hiccup, reported honestly but generically.
+    """
+    if reason is None or reason in _MISS_REASON_NEVER_HEARD:
+        return f'I never heard "{trigger}", so its photo or sound wasn\'t shown'
+    if reason in _MISS_REASON_VISUAL_MISSING:
+        return f'Couldn\'t find the photo or sticker for "{trigger}" in your Visuals'
+    if reason == "sound_not_found":
+        return f'Couldn\'t find a sound for "{trigger}" in the library'
+    if reason in _MISS_REASON_NO_ROOM:
+        return f'No room to show "{trigger}" without covering your face or the captions'
+    return f'Couldn\'t add "{trigger}" to the phone render'
+
+
+def _closing_miss_sentence(reason: object) -> str:
+    if isinstance(reason, str) and reason in _MISS_REASON_NO_ROOM:
+        return "Couldn't place the closing photo without covering your face or the captions"
+    return "Couldn't place the closing photo"
+
+
+def _placed_summary_line(placed_n: int, unplaced_n: int) -> str | None:
+    """'Placed {n} of {n+m} moments you named' whenever anything was
+    unplaced (even 0 placed) -- otherwise the plain count, and nothing at
+    all when there is neither a placed nor an unplaced beat to report."""
+    if unplaced_n > 0:
+        return f"Placed {placed_n} of {placed_n + unplaced_n} moments you named"
+    if placed_n > 0:
+        return f"{placed_n} moment{'s' if placed_n != 1 else ''} placed"
+    return None
+
+
+def _humanize_subtitled_reaction_beats(data: dict[str, Any]) -> tuple[str, list[str] | None]:
+    """KRI-178: creator-authored reaction-beats outcome. ``missed`` carries
+    the creator's OWN trigger phrases (already capped to 8 entries of 80
+    chars at the write site, `_run_phone_subtitled_job`) -- safe to quote
+    back verbatim, unlike `matcher`/`face_sampling`, which stay internal.
+    ``missed_reasons`` pairs positionally with ``missed`` (missing/short ->
+    `None`, which `beat_miss_sentence` treats as "never heard")."""
+    placed = data.get("placed")
+    unplaced = data.get("unplaced")
+    placed_n = placed if isinstance(placed, int) and not isinstance(placed, bool) else 0
+    unplaced_n = unplaced if isinstance(unplaced, int) and not isinstance(unplaced, bool) else 0
+    missed = data.get("missed")
+    missed_triggers = (
+        [item for item in missed if isinstance(item, str)] if isinstance(missed, list) else []
+    )
+    missed_reasons = data.get("missed_reasons")
+    missed_reasons_list = missed_reasons if isinstance(missed_reasons, list) else []
+    closing = data.get("closing")
+
+    detail: list[str] = []
+    summary = _placed_summary_line(placed_n, unplaced_n)
+    if summary:
+        detail.append(summary)
+    for index, trigger in enumerate(missed_triggers[:_MAX_MISSED_DETAIL_LINES]):
+        reason = missed_reasons_list[index] if index < len(missed_reasons_list) else None
+        reason = reason if isinstance(reason, str) and reason else None
+        detail.append(beat_miss_sentence(trigger, reason))
+    if closing == "unplaced":
+        detail.append("Couldn't place the closing photo")
+
+    if placed_n == 0 and unplaced_n > 0:
+        return "Kria listened for the moments you named", detail or None
+    return "Kria timed your photos and sounds to your words", detail or None
+
+
+def render_notes_from_beat_receipt(receipt: dict[str, Any] | None) -> list[str]:
+    """Turn a variant's persisted `phone_beat_receipt` (KRI-178, written by
+    `_run_phone_subtitled_job`) into the same creator-safe sentences
+    `_humanize_subtitled_reaction_beats` derives from the live pipeline
+    event -- used by `app.routes.creation_threads._job_projection` to
+    surface `render_notes` on a job response, where there is no
+    `pipeline_trace` event to replay (e.g. the trace aged out, or the
+    variant came from a fast reburn that never re-ran grounding).
+
+    `[]` for `None`, a non-dict, a `"manual"` matcher (an admin-authored
+    lane -- nothing for Kria to explain), or a receipt with nothing placed,
+    missed, or an unplaced closing.
+    """
+    if not isinstance(receipt, dict):
+        return []
+    if receipt.get("matcher") in ("manual", None):
+        return []
+    placed = receipt.get("placed")
+    placed_n = len(placed) if isinstance(placed, list) else 0
+    unplaced = receipt.get("unplaced")
+    unplaced_entries = unplaced if isinstance(unplaced, list) else []
+    closing = receipt.get("closing")
+    closing = closing if isinstance(closing, dict) else {}
+
+    notes: list[str] = []
+    summary = _placed_summary_line(placed_n, len(unplaced_entries))
+    if summary:
+        notes.append(summary)
+    for entry in unplaced_entries[:_MAX_MISSED_DETAIL_LINES]:
+        trigger = entry.get("trigger") if isinstance(entry, dict) else None
+        if isinstance(trigger, str) and trigger:
+            reason = entry.get("reason") if isinstance(entry, dict) else None
+            reason = reason if isinstance(reason, str) and reason else None
+            notes.append(beat_miss_sentence(trigger, reason))
+    if closing.get("status") == "unplaced":
+        notes.append(_closing_miss_sentence(closing.get("reason")))
+    return notes
+
+
 _HUMANIZERS: dict[tuple[str, str], _Humanizer] = {
     ("assembly", "clip_metadata_done"): _humanize_clip_metadata_done,
     ("assembly", "song_match_done"): _humanize_song_match_done,
@@ -343,6 +485,7 @@ _HUMANIZERS: dict[tuple[str, str], _Humanizer] = {
     ("custom_effect", "burn_done"): _humanize_custom_effect_burn_done,
     ("render", "custom_effect_reapply_failed"): _humanize_custom_effect_reapply_failed,
     ("phone", "subtitled_overlay_grounding"): _humanize_subtitled_overlay_grounding,
+    ("phone", "subtitled_reaction_beats"): _humanize_subtitled_reaction_beats,
 }
 
 # render_stage's `event` is the dynamic sub-stage name passed to
