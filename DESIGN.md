@@ -541,6 +541,12 @@ changes or Reduce Motion, while panel drafts and outgoing edit cleanup stay
 shared across tool switches. See the KRI-148 section of the iOS development
 runbook for the interaction and verification contract.
 
+Native scroll surfaces never hard-cut content: where content continues past an
+edge, `kriaScrollEdgeFade` softens it (progressive blur plus a surface-color wash
+on white vertical lists; fade-only on horizontal rows and inside the glass strip;
+fade-only under Reduce Transparency). The Kria AI sheets carry no visible "Kria"
+title. See the KRI-197 section of the iOS development runbook.
+
 ### iOS wordmark asset
 
 The native app uses the approved Main Brand Assets icon artwork (Paper ETC-0): DynaPuff letterforms in `#9BCAFF` on white `#FFFFFF` for the app icon. `KriaWordmark.imageset` preserves the same lettering as a transparent vector PDF, cropped to the artwork bounds and centered within the existing header frame. Do not reconstruct this mark with independent SwiftUI text offsets. This artwork color does not change the semantic Sky selection token.

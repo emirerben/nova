@@ -215,6 +215,38 @@ pure, nonisolated function so `NativeEditorIslandMetricsTests` can cover it
 without SwiftUI. The island itself always sits `bottomPadding` (6pt) above the
 real safe-area inset, never inside `bottomClearance`'s own padding budget.
 
+### Soft scroll edges (KRI-197)
+
+Scroll views soften where content continues past an edge instead of slicing it
+with a hard cut. Apply `.kriaScrollEdgeFade(_:length:style:)`
+(`DesignSystem/ScrollEdgeFade.swift`) directly on the `ScrollView`, before any
+`.overlay`/`.background` that must stay unmasked, and pass edges of ONE axis
+(vertical wins if both are passed). The mask never changes frames or hit
+testing, and an edge at rest stays crisp (strength 0).
+
+- **Vertical lists on a white surface** (chat transcript, the slide-post Kria
+  sheet): `.blur(wash:)` or `.blurWorkspaceSurface` adds a progressive
+  `.ultraThinMaterial` band that ends in a wash of the surface color (no grey
+  stripe). `.blurWorkspaceSurface` resolves the wash from
+  `KriaColor.workspaceSurface(progress:)`, the same source `WorkspaceSurface`
+  uses, so it tracks the projects drawer without the host observing drawer
+  progress.
+- **Horizontal rows and anything inside a glass strip:** fade only (`.fade`, the
+  default); no blur.
+- **Reduce Transparency** (system setting, or `UI_TEST_REDUCE_TRANSPARENCY=1`
+  via `KriaTransparency.isReduced`): the blur band is dropped and only the mask
+  fade remains. The env override exists because `simctl ui` does not flip the
+  setting for a simulator app process; the glass island shares the same helper.
+- **Sheet titles:** the visible "Kria" heading is removed from both Kria AI
+  sheets (chat editor conversation, slide-post assistant); the slide-post sheet
+  keeps a VoiceOver "Kria" label on its container.
+
+`ScrollEdgeFadeMetrics` (hidden distance to 0...1 strength, insets, 0.5pt float
+floor, 0.05 step) is pure and covered by `ScrollEdgeFadeTests`. Open device
+checks (focused prompt field under the top band, iOS 26 nav-bar edge effect
+doubling, RTL offsets) are tracked in `TODOS.md` under "KRI-197 soft scroll
+edges".
+
 ### Connected editor panels (KRI-148)
 
 Text, Captions, Visuals, and Sounds share one bottom-connected panel shell and
