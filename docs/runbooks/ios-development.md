@@ -226,8 +226,10 @@ testing, and an edge at rest stays crisp (strength 0).
 
 - **Vertical lists on a white surface** (chat transcript, the slide-post Kria
   sheet): `.blur(wash:)` or `.blurWorkspaceSurface` adds a progressive
-  `.ultraThinMaterial` band that ends in a wash of the surface color (no grey
-  stripe). `.blurWorkspaceSurface` resolves the wash from
+  `.ultraThinMaterial` band. Content keeps ~22% opacity at the outer edge so
+  it reads as blurred content rather than a white bar; the frost tapers off at
+  the very edge and a light wash (up to 30%) blends it into the header or
+  composer, so there is no hard grey line. `.blurWorkspaceSurface` resolves the wash from
   `KriaColor.workspaceSurface(progress:)`, the same source `WorkspaceSurface`
   uses, so it tracks the projects drawer without the host observing drawer
   progress.

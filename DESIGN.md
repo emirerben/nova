@@ -542,8 +542,8 @@ shared across tool switches. See the KRI-148 section of the iOS development
 runbook for the interaction and verification contract.
 
 Native scroll surfaces never hard-cut content: where content continues past an
-edge, `kriaScrollEdgeFade` softens it (progressive blur plus a surface-color wash
-on white vertical lists; fade-only on horizontal rows and inside the glass strip;
+edge, `kriaScrollEdgeFade` softens it (a progressive blur that keeps content
+faintly visible, plus a light surface-color wash, on white vertical lists; fade-only on horizontal rows and inside the glass strip;
 fade-only under Reduce Transparency). The Kria AI sheets carry no visible "Kria"
 title. See the KRI-197 section of the iOS development runbook.
 

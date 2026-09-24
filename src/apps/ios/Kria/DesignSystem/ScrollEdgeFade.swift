@@ -51,9 +51,10 @@ struct ScrollEdgeFadeMetrics: Equatable {
 }
 
 /// `fade`: content fades to transparent at the edge. `blur`: the same fade plus
-/// a progressive frosted band (vertical edges only); `wash` is the surface color
-/// the band ends in so the material never reads as a grey stripe on a light
-/// surface.
+/// a progressive frosted band (vertical edges only). Content stays faintly
+/// visible (blurred) at the very edge instead of fading to a white curtain;
+/// `wash` is the surface color the band tints slightly toward so the frost
+/// never reads as a grey stripe against a light header/composer.
 enum KriaEdgeFadeStyle {
     case fade
     case blur(wash: Color)
@@ -85,6 +86,12 @@ private struct KriaScrollEdgeFade: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.projectsDrawerProgress) private var drawerProgress
 
+    /// With a blur band, content keeps this much opacity at the outer edge so
+    /// the blur has something to blur (a full fade reads as a white bar).
+    private static let blurContentFloor: CGFloat = 0.22
+
+    private var contentFloor: CGFloat { wash != nil ? Self.blurContentFloor : 0 }
+
     /// One axis per scroll view: vertical wins if a caller passes both.
     private var vertical: Bool { edges.contains(.top) || edges.contains(.bottom) }
 
@@ -111,9 +118,9 @@ private struct KriaScrollEdgeFade: ViewModifier {
     private var fadeMask: some View {
         if vertical {
             VStack(spacing: 0) {
-                gradient(startOpacity: 1 - (edges.contains(.top) ? metrics.top : 0), endOpacity: 1, vertical: true)
+                gradient(startOpacity: 1 - (edges.contains(.top) ? metrics.top : 0) * (1 - contentFloor), endOpacity: 1, vertical: true)
                 Rectangle().fill(.black)
-                gradient(startOpacity: 1, endOpacity: 1 - (edges.contains(.bottom) ? metrics.bottom : 0), vertical: true)
+                gradient(startOpacity: 1, endOpacity: 1 - (edges.contains(.bottom) ? metrics.bottom : 0) * (1 - contentFloor), vertical: true)
             }
         } else {
             HStack(spacing: 0) {
@@ -159,25 +166,32 @@ private struct KriaScrollEdgeFade: ViewModifier {
         }
     }
 
-    /// The band is taller than the content fade, so its inner half progressively
-    /// blurs still-crisp content while the outer half melts into the surface.
+    /// The band is taller than the content fade, so its inner part progressively
+    /// blurs crisp content. The frost tapers off at the very edge and a light
+    /// wash blends it into the header/composer, so there is neither a hard grey
+    /// line nor a white bar.
     private func band(wash: Color, atTop: Bool) -> some View {
         let toEdge: (start: UnitPoint, end: UnitPoint) = atTop ? (.bottom, .top) : (.top, .bottom)
         return ZStack {
             Rectangle()
                 .fill(.ultraThinMaterial)
-                .mask(LinearGradient(colors: [.clear, .black], startPoint: toEdge.start, endPoint: toEdge.end))
-            // Reaches the full surface color at the outer edge so the band ends
-            // seamlessly against the header/composer (no grey seam).
+                .mask(LinearGradient(
+                    stops: [
+                        .init(color: .black.opacity(0), location: 0),
+                        .init(color: .black.opacity(0.9), location: 0.5),
+                        .init(color: .black.opacity(0.35), location: 1)
+                    ],
+                    startPoint: toEdge.start, endPoint: toEdge.end
+                ))
             LinearGradient(
                 stops: [
                     .init(color: wash.opacity(0), location: 0),
-                    .init(color: wash.opacity(0.25), location: 0.5),
-                    .init(color: wash.opacity(1), location: 1)
+                    .init(color: wash.opacity(0.05), location: 0.5),
+                    .init(color: wash.opacity(0.3), location: 1)
                 ],
                 startPoint: toEdge.start, endPoint: toEdge.end
             )
         }
-        .frame(height: length * 2)
+        .frame(height: length * 2.5)
     }
 }
