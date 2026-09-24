@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.200.0] - 2026-09-24
+
+### Changed
+- feat(kria): phone-rendering accounts on runtime v2 behind a flag (KRI-187) (#1218) <!-- release-pr: 1218 -->
+
 ## [0.76.199.0] - 2026-09-24
 
 ### Changed
