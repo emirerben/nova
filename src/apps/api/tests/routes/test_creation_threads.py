@@ -395,7 +395,10 @@ async def test_runtime_v2_thread_creation_provisions_receipt_session(
     monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
     user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
     item = SimpleNamespace(id=uuid.uuid4())
-    plan = SimpleNamespace(id=uuid.uuid4())
+    # A plan past epoch 0 (an ownership change bumped it): the session must
+    # inherit it, or every approval on the thread is refused as stale (prod
+    # thread 873c0547, 2026-09-24, session 0 vs plan 1).
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=1)
     added: list[object] = []
 
     async def flush() -> None:
@@ -433,6 +436,7 @@ async def test_runtime_v2_thread_creation_provisions_receipt_session(
     session = next(row for row in added if isinstance(row, CreatorAgentSession))
     assert response.runtime_version == 2
     assert session.plan_item_id == item.id
+    assert session.ownership_epoch == 1
     assert thread.active_creator_agent_session_id == session.id
 
 
