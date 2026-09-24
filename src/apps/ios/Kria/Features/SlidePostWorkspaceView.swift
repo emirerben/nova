@@ -333,6 +333,7 @@ struct SlidePostWorkspaceView: View {
                 }
             }
         }
+        .kriaScrollEdgeFade(.horizontal)
     }
 
     private func editorTools(_ draft: SlidePostDraft) -> some View {
@@ -365,6 +366,7 @@ struct SlidePostWorkspaceView: View {
                         }
                     }
                 }
+                .kriaScrollEdgeFade(.horizontal)
             }
         }
     }
@@ -393,7 +395,7 @@ struct SlidePostWorkspaceView: View {
     }
 
     private func assetReceipts(_ assets: [SlidePostAsset]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 8) { ForEach(assets) { asset in SlidePostAssetThumbnail(asset: asset).frame(width: 76, height: 88) } } }
+        ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 8) { ForEach(assets) { asset in SlidePostAssetThumbnail(asset: asset).frame(width: 76, height: 88) } } }.kriaScrollEdgeFade(.horizontal)
     }
     private func proposalPreview(_ draft: SlidePostDraft) -> some View { thumbrail(draft).padding(12).background(KriaColor.sage.opacity(0.35), in: RoundedRectangle(cornerRadius: 14)) }
     private func status(_ message: String) -> some View { Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc).padding(12).frame(maxWidth: .infinity, alignment: .leading).background(KriaColor.sage.opacity(0.45), in: RoundedRectangle(cornerRadius: 12)) }
@@ -491,35 +493,50 @@ private struct SlidePostAssistantSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Kria").font(KriaFont.display(24))
-                TextField("Describe the post", text: $prompt, axis: .vertical)
-                    .accessibilityLabel("Describe the post")
-                    .accessibilityIdentifier("slidepost-prompt")
-                    .lineLimit(2...5).padding(12).overlay(RoundedRectangle(cornerRadius: 12).stroke(KriaColor.border))
-                Button(session.isBusy ? "Thinking…" : "Propose changes") { Task { await propose() } }
-                    .buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity)
-                    .disabled(!canRequestProposal)
-                    .accessibilityIdentifier("slidepost-ask")
-                if let uploadGuidance {
-                    Text(uploadGuidance).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        TextField("Describe the post", text: $prompt, axis: .vertical)
+                            .accessibilityLabel("Describe the post")
+                            .accessibilityIdentifier("slidepost-prompt")
+                            .lineLimit(2...5).padding(12).overlay(RoundedRectangle(cornerRadius: 12).stroke(KriaColor.border))
+                        Button(session.isBusy ? "Thinking…" : "Propose changes") { Task { await propose() } }
+                            .buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity)
+                            .disabled(!canRequestProposal)
+                            .accessibilityIdentifier("slidepost-ask")
+                        if let uploadGuidance {
+                            Text(uploadGuidance).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                        }
+                        if let proposal = session.proposal {
+                            Text(proposal.summary).font(KriaFont.body(14))
+                            Text(proposal.draft.caption)
+                                .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+                            Button("Apply proposal") { Task { await apply() } }
+                                .buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity).disabled(session.isBusy)
+                                .accessibilityIdentifier("slidepost-apply")
+                                .id("slidepost-apply")
+                        }
+                        if session.canUndo {
+                            Button("Undo applied change") { Task { await undo() } }
+                                .buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity).disabled(session.isBusy)
+                        }
+                        if let error = session.error { Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText) }
+                    }
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if let proposal = session.proposal {
-                    Text(proposal.summary).font(KriaFont.body(14))
-                    Text(proposal.draft.caption)
-                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-                    Button("Apply proposal") { Task { await apply() } }
-                        .buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity).disabled(session.isBusy)
-                        .accessibilityIdentifier("slidepost-apply")
+                .scrollDismissesKeyboard(.interactively)
+                // The medium detent can't show a proposal below the prompt field;
+                // bring Apply into view when one arrives.
+                .onChange(of: session.proposal != nil) { _, hasProposal in
+                    if hasProposal { withAnimation { proxy.scrollTo("slidepost-apply", anchor: .bottom) } }
                 }
-                if session.canUndo {
-                    Button("Undo applied change") { Task { await undo() } }
-                        .buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity).disabled(session.isBusy)
-                }
-                if let error = session.error { Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText) }
-                Spacer()
+                .kriaScrollEdgeFade(.vertical, style: .blur(wash: KriaColor.paper))
+                .background(KriaColor.paper)
+                // The visible "Kria" heading is gone; keep the sheet's VoiceOver context.
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Kria")
             }
-            .padding(20).background(KriaColor.paper)
             .onAppear { prompt = session.instruction }
             .onChange(of: prompt) { _, value in session.instruction = value }
         }

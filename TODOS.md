@@ -8,6 +8,52 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## KRI-197 soft scroll edges — deferred follow-ups (2026-09-24)
+
+iOS scroll surfaces now soften where content continues past an edge
+(`kriaScrollEdgeFade`, `DesignSystem/ScrollEdgeFade.swift`). These review
+findings were scoped out of that PR.
+
+### Focused prompt field can land under the top blur band (slide-post Kria sheet)
+**Priority:** P3
+**What:** `SlidePostAssistantSheet` is now a ScrollView at the `.medium`
+detent. When the keyboard scrolls the prompt field into view it can sit inside
+the top 24-48pt band, which is masked and washed while content is hidden above.
+**Acceptance:** Pad the scroll content by the band height (or hold the top edge
+crisp while a field is focused); verify on device with the keyboard up.
+
+### iOS 26 nav-bar scroll-edge effect doubles the custom top band
+**Priority:** P3
+**What:** That sheet's ScrollView sits under a `NavigationStack`; on iOS 26 the
+system draws its own scroll-edge effect at the top in addition to ours.
+**Acceptance:** Confirm on an iOS 26 device; if doubled, use
+`.scrollEdgeEffectStyle(.hard, for: .top)` behind `#available(iOS 26, *)` or
+drop the top edge for that sheet.
+
+### RTL: horizontal edge-fade offsets are unverified
+**Priority:** P3
+**What:** The metrics use `contentOffset.x + contentInsets.leading`, and the
+mask flips with the HStack. Whether `contentOffset.x` is physical or logical in
+RTL is unverified. The app ships EN/TR only, so this is latent.
+**Acceptance:** Add an RTL fixture before shipping an RTL locale.
+
+### Edge-to-edge shelf layout for the format carousel and media receipts
+**Priority:** P3
+**What:** Those rows sit inside the transcript's 16pt side padding, so they fade
+at x=16 rather than the screen edge. The standard iOS shelf pattern lets them
+run edge to edge with `contentMargins`.
+**Acceptance:** Design call; if adopted, drop the fade on those two rows.
+
+### `testIncomingResponseDoesNotPullReaderFromScrolledHistory` fails on `main` locally
+**Priority:** P3
+**What:** On pure `origin/main` source in a local iPhone 17 Pro / iOS 26.5
+simulator it fails 0/4 (never sees "Send clips" after tapping Montage); the
+harness's 3-attempt retry masks it as "flaky, passed after 3 attempts" when it
+does pass. Not caused by KRI-197 (reproduced without those changes).
+**Acceptance:** Find why the format tap doesn't advance under
+`KRIA_CHAT_LONG_HISTORY` (the Montage card sits at the composer's top edge),
+and make the test wait for the transcript to settle before tapping.
+
 ## SFX picker search — deferred follow-ups (2026-09-24)
 
 The web editor's Sounds drawer and legacy SFX lane gained search + category

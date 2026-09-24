@@ -345,6 +345,7 @@ struct NativeEditorContextStrip: View {
             }
             .padding(4)
         }
+        .kriaScrollEdgeFade(.horizontal)
         .frame(height: NativeEditorIslandMetrics.contextHeight)
         .nativeEditorIslandSurface()
     }

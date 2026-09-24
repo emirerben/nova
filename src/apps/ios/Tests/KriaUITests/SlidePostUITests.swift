@@ -43,6 +43,8 @@ import XCTest
         app.buttons["slidepost-openkria"].tap()
         let prompt = app.descendants(matching: .any)["slidepost-prompt"].firstMatch
         XCTAssertTrue(prompt.waitForExistence(timeout: 5))
+        // KRI-197: the sheet has no "Kria" title; its content scrolls with soft edges.
+        XCTAssertFalse(app.staticTexts["Kria"].exists)
         prompt.tap(); prompt.typeText(" End on the view.")
         app.buttons["slidepost-ask"].tap()
         let applyChange = app.buttons["slidepost-apply"]

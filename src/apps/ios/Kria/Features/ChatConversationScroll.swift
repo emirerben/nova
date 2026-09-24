@@ -51,6 +51,7 @@ struct ChatConversationScroll<Content: View>: View {
                 followsLatest = true
                 scrollToEnd(proxy)
             }
+            .kriaScrollEdgeFade(.vertical, style: .blurWorkspaceSurface)
             .overlay(alignment: .bottomTrailing) {
                 if !followsLatest {
                     Button {

@@ -21,6 +21,26 @@ enum KriaColor {
     static let failureSoft = Color(hex: 0xFFF0ED)
 }
 
+extension KriaColor {
+    /// `paper` tinted toward `menu` as the projects drawer opens. The single
+    /// source for both `WorkspaceSurface` and edge-fade washes that must match it.
+    static func workspaceSurface(progress: CGFloat) -> Color {
+        let p = Double(max(0, min(1, progress)))
+        func mix(_ paper: Double, _ menu: Double) -> Double { (paper + (menu - paper) * p) / 255 }
+        return Color(red: mix(255, 0xFA), green: mix(255, 0xF8), blue: mix(255, 0xF0))
+    }
+}
+
+enum KriaTransparency {
+    /// Neither `xcrun simctl ui` nor the `com.apple.Accessibility` defaults flip
+    /// `UIAccessibility.isReduceTransparencyEnabled` for a simulator app process,
+    /// so UI tests and screenshots force the reduced branch with this env var
+    /// (same pattern as `UI_TEST_REDUCE_MOTION`).
+    static func isReduced(_ systemValue: Bool) -> Bool {
+        systemValue || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_TRANSPARENCY"] == "1"
+    }
+}
+
 private extension Color {
     init(hex: UInt32) {
         self.init(red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255)

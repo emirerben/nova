@@ -45,7 +45,7 @@ struct WorkspaceSurface: View {
     @Environment(\.projectsDrawerProgress) private var progress
 
     var body: some View {
-        KriaColor.paper.overlay { KriaColor.menu.opacity(Double(progress)) }
+        KriaColor.workspaceSurface(progress: progress)
             .ignoresSafeArea(.container)
     }
 }
@@ -132,6 +132,7 @@ struct ProjectsDrawer: View {
                         }
                     }
                 }
+                .kriaScrollEdgeFade(.vertical, style: .blur(wash: KriaColor.paper))
             }
             Spacer(minLength: 0)
             HStack {
@@ -320,6 +321,7 @@ struct FormatStage: View {
                 }
             }
             .contentMargins(.horizontal, 0, for: .scrollContent)
+            .kriaScrollEdgeFade(.horizontal)
             .accessibilityIdentifier("format-carousel")
             .background {
                 GeometryReader { geometry in

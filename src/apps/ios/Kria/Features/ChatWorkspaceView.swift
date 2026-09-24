@@ -476,6 +476,7 @@ private struct CreationWorkspaceView: View {
                 }
             }
         }
+        .kriaScrollEdgeFade(.horizontal)
         .background {
             GeometryReader { geometry in
                 Color.clear.preference(key: DrawerGestureExclusionPreference.self, value: [geometry.frame(in: .global)])
@@ -666,8 +667,6 @@ private struct CreationWorkspaceView: View {
 
     private var editorConversation: some View {
         VStack(spacing: 0) {
-            Text("Kria").font(KriaFont.body(17).weight(.semibold)).padding(.top, 20)
-                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
             ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
                 conversationContent
             }
