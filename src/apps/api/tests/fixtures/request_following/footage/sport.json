@@ -1,0 +1,102 @@
+{
+  "footage_id": "sport",
+  "description": "An evening five-a-side match. Eight clips attached out of filming order.",
+  "clips": [
+    {
+      "clip_id": "S7",
+      "duration_s": 3.5,
+      "subject": "winning goal",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-12T20:18:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "S2",
+      "duration_s": 2.0,
+      "subject": "kickoff",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-12T19:20:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "S5",
+      "duration_s": 2.0,
+      "subject": "keeper save",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-12T19:50:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "S8",
+      "duration_s": 2.5,
+      "subject": "handshakes after the whistle",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-12T20:30:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "S1",
+      "duration_s": 2.5,
+      "subject": "team warming up",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-12T19:00:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "S4",
+      "duration_s": 2.5,
+      "subject": "goal celebration",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-12T19:33:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "S6",
+      "duration_s": 1.5,
+      "subject": "missed shot",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-12T20:05:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "S3",
+      "duration_s": 3.0,
+      "subject": "first goal",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-12T19:32:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    }
+  ]
+}

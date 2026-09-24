@@ -1,0 +1,171 @@
+{
+  "fixture_id": "vlog_restructure",
+  "provenance": "authored",
+  "footage": "vlog",
+  "description": "Two turns: a first cut, then a restructure of the rendered edit (shorter, reordered).",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Make a Saturday reset vlog. Make sure the cooking and the night walk are in.",
+      "engine": "recorded"
+    },
+    {
+      "turn_id": "t1",
+      "user_message": "Shorter please, 15 seconds. Open with the gym, then the cooking.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "cooking",
+      "kind": "select",
+      "scope": "global",
+      "request_type": "selection",
+      "checker": "select_include",
+      "params": {
+        "clip_ids": [
+          "V6",
+          "V8"
+        ]
+      },
+      "source": "Make a Saturday reset vlog. Make sure the cooking and the night walk are in.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "redo",
+      "kind": "select",
+      "scope": "global",
+      "request_type": "restructure",
+      "checker": "restructure_changed",
+      "params": {},
+      "source": "Shorter please, 15 seconds. Open with the gym, then the cooking.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "fifteen",
+      "kind": "timing",
+      "scope": "global",
+      "request_type": "duration",
+      "checker": "duration_within",
+      "params": {
+        "target_s": 15.0,
+        "tol_frac": 0.1
+      },
+      "source": "Shorter please, 15 seconds. Open with the gym, then the cooking.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "gym-then-cooking",
+      "kind": "order",
+      "scope": "global",
+      "request_type": "order_explicit",
+      "checker": "order_explicit",
+      "params": {
+        "sequence": [
+          "V5",
+          "V6"
+        ]
+      },
+      "source": "Shorter please, 15 seconds. Open with the gym, then the cooking.",
+      "introduced_in_turn": 1
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "V5",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "clip_id": "V6",
+          "start_s": 3.0,
+          "end_s": 6.0
+        },
+        {
+          "clip_id": "V8",
+          "start_s": 6.0,
+          "end_s": 9.0
+        },
+        {
+          "clip_id": "V1",
+          "start_s": 9.0,
+          "end_s": 11.0
+        },
+        {
+          "clip_id": "V2",
+          "start_s": 11.0,
+          "end_s": 14.0
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Saturday reset",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 14.0
+    },
+    "reply": "Cut it down to 15 seconds and opened with the gym, then the cooking.",
+    "plan_before": {
+      "clips": [
+        {
+          "clip_id": "V1",
+          "start_s": 0.0,
+          "end_s": 2.0
+        },
+        {
+          "clip_id": "V2",
+          "start_s": 2.0,
+          "end_s": 5.0
+        },
+        {
+          "clip_id": "V3",
+          "start_s": 5.0,
+          "end_s": 7.0
+        },
+        {
+          "clip_id": "V4",
+          "start_s": 7.0,
+          "end_s": 10.5
+        },
+        {
+          "clip_id": "V5",
+          "start_s": 10.5,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "V6",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "V7",
+          "start_s": 17.0,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "V8",
+          "start_s": 19.5,
+          "end_s": 22.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Saturday reset",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 22.5
+    }
+  }
+}
