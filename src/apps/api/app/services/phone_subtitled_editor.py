@@ -50,6 +50,7 @@ from app.pipeline.phone_subtitled_lanes import (
     SubtitledSoundEffect,
     sfx_path_is_playable,
 )
+from app.pipeline.phone_subtitled_plan import SFX_DUCK_RECEIPT_FIELD
 from app.services.device_render import DEVICE_RENDER_FIELD
 from app.services.phone_sources import PHONE_VISUALS_FIELD, PhoneVisualBinding
 from app.services.render_library import inspect_library_asset
@@ -112,7 +113,11 @@ def project_phone_subtitled_editor_sections(
     recipe = _pinned_recipe(assembly_plan, variant_id)
     if recipe is None:
         return None
-    lanes = lanes_from_recipe(recipe, visuals=_visual_bindings(assembly_plan))
+    lanes = lanes_from_recipe(
+        recipe,
+        visuals=_visual_bindings(assembly_plan),
+        duck_receipt=variant.get(SFX_DUCK_RECEIPT_FIELD),
+    )
     return sections_from_lanes(lanes, labels={})
 
 
@@ -243,7 +248,10 @@ def sections_from_lanes(
 
 
 def lanes_from_recipe(
-    recipe: EditRecipeV2, *, visuals: tuple[PhoneVisualBinding, ...]
+    recipe: EditRecipeV2,
+    *,
+    visuals: tuple[PhoneVisualBinding, ...],
+    duck_receipt: object = None,
 ) -> PhoneSubtitledLanes:
     """Reconstruct `PhoneSubtitledLanes` from an already-compiled recipe.
 
@@ -257,6 +265,12 @@ def lanes_from_recipe(
 
     A clip whose visual can't be matched against ``visuals`` (job-level
     pinned `PhoneVisualBinding` rows) is dropped rather than guessed.
+
+    ``duck_receipt`` is the variant's `SFX_DUCK_RECEIPT_FIELD`: a sound
+    effect the speech duck lowered gets its requested (pre-duck) volume back,
+    so the editor shows the creator's volume and a Save re-ducks it once
+    instead of twice. An entry is honoured only while the pinned clip still
+    carries exactly the ducked value it describes.
     """
     manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
     media_assets = {asset.id: asset for asset in recipe.assets}
@@ -326,13 +340,14 @@ def lanes_from_recipe(
                     if media_asset is not None and media_asset.duration
                     else clip.source_duration
                 )
+                request_id = clip.id.removeprefix("sfx-")
                 sound_effects.append(
                     ResolvedSoundEffect(
                         request=SubtitledSoundEffect(
-                            id=clip.id.removeprefix("sfx-"),
+                            id=request_id,
                             catalog_id=asset.catalog_id,
                             at_s=clip.timeline_start,
-                            volume=clip.volume,
+                            volume=_unducked_volume(request_id, clip.volume, duck_receipt),
                         ),
                         asset=asset,
                         duration_s=duration_s,
@@ -342,6 +357,24 @@ def lanes_from_recipe(
     return PhoneSubtitledLanes(
         overlays=overlays, sound_effects=sound_effects, ending_clip=ending_clip
     )
+
+
+def _unducked_volume(request_id: str, volume: float, duck_receipt: object) -> float:
+    if not isinstance(duck_receipt, dict):
+        return volume
+    gain, volumes = duck_receipt.get("gain"), duck_receipt.get("volumes")
+    if not isinstance(volumes, dict) or not _is_number(gain):
+        return volume
+    requested = volumes.get(request_id)
+    if not _is_number(requested):
+        return volume
+    if abs(round(float(requested) * float(gain), 4) - volume) > 1e-6:
+        return volume
+    return float(requested)
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _pinned_recipe(assembly_plan: dict, variant_id: str) -> EditRecipeV2 | None:

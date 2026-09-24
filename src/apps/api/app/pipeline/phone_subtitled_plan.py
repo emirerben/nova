@@ -91,6 +91,11 @@ _SPEECH_WORD_BRIDGE_S = 0.25
 # Overlap shorter than this (a decaying tail brushing the next word) does not
 # trigger the duck.
 _SFX_SPEECH_MIN_OVERLAP_S = 0.05
+# Per-variant receipt of the effects the duck lowered, keyed by sound-effect
+# request id -> the requested (pre-duck) volume. The pinned recipe only
+# carries the ducked volume, so the phone editor reads this to show and
+# re-save the creator's own volume instead of ducking an effect twice.
+SFX_DUCK_RECEIPT_FIELD = "phone_sfx_duck_receipt"
 
 
 def compile_phone_subtitled_plan(
@@ -514,6 +519,27 @@ def _compile_sfx_track(
             )
         )
     return TimelineTrack(id="sfx", kind="audio", clips=clips)
+
+
+def sfx_duck_receipt(lanes: PhoneSubtitledLanes | None, recipe: EditRecipeV2) -> dict | None:
+    """``{"version", "gain", "volumes": {request_id: requested_volume}}`` for
+    every effect whose compiled clip volume differs from its request (i.e. the
+    speech duck lowered it), or ``None`` when nothing was ducked -- so a
+    flag-off compile never writes the receipt."""
+    if lanes is None or not lanes.sound_effects:
+        return None
+    compiled = {
+        clip.id: clip.volume for track in recipe.tracks if track.id == "sfx" for clip in track.clips
+    }
+    volumes = {
+        resolved.request.id: resolved.request.volume
+        for resolved in lanes.sound_effects
+        if f"sfx-{resolved.request.id}" in compiled
+        and compiled[f"sfx-{resolved.request.id}"] != resolved.request.volume
+    }
+    if not volumes:
+        return None
+    return {"version": 1, "gain": SFX_SPEECH_DUCK_GAIN, "volumes": volumes}
 
 
 def speech_windows_from_cues(caption_cues: list[dict]) -> tuple[tuple[float, float], ...]:

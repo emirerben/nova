@@ -15,6 +15,7 @@ from app.services.phone_subtitled_editor import (
     sections_from_lanes,
 )
 from tests.pipeline.test_phone_subtitled_plan import (
+    _CUES,
     PHOTO_ID,
     PHOTO_PATH,
     VIDEO_ID,
@@ -464,3 +465,45 @@ def test_project_sections_uses_persisted_catalog_paths_for_sound_effects():
     del variant[PHONE_SUBTITLED_EDITOR_LANES_FIELD]["paths"]
     fallback = project_phone_subtitled_editor_sections({}, variant)
     assert fallback["sound_effects"][0]["src_gcs_path"].startswith(f"sound-effects/{catalog_id}/")
+
+
+def _ducked_recipe(volume: float = 1.0):
+    from app.pipeline.phone_subtitled_lanes import SubtitledSoundEffect
+
+    sfx = _resolved_sfx(
+        request=SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=1.0, volume=volume)
+    )
+    lanes = PhoneSubtitledLanes(sound_effects=[sfx])
+    recipe = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),), caption_cues=_CUES, lanes=lanes, duck_sfx_under_speech=True
+    )
+    return lanes, recipe
+
+
+def test_lanes_from_recipe_restores_the_pre_duck_volume_from_the_receipt():
+    from app.pipeline.phone_subtitled_plan import sfx_duck_receipt
+
+    lanes, recipe = _ducked_recipe(volume=0.8)
+    receipt = sfx_duck_receipt(lanes, recipe)
+    restored = lanes_from_recipe(recipe, visuals=(), duck_receipt=receipt)
+    assert restored.sound_effects[0].request.volume == pytest.approx(0.8)
+    # Without the receipt the ducked value is all the recipe knows.
+    bare = lanes_from_recipe(recipe, visuals=())
+    assert bare.sound_effects[0].request.volume == pytest.approx(0.28)
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        {"gain": 0.35, "volumes": {"sfx-1": 0.5}},  # stale: 0.5 * 0.35 != 0.35
+        {"gain": 0.35, "volumes": {"other": 1.0}},
+        {"gain": True, "volumes": {"sfx-1": 1.0}},
+        {"gain": 0.35, "volumes": {"sfx-1": "1.0"}},
+        {"gain": 0.35, "volumes": ["sfx-1"]},
+        "not-a-dict",
+    ],
+)
+def test_lanes_from_recipe_ignores_a_stale_or_malformed_duck_receipt(receipt):
+    _lanes, recipe = _ducked_recipe()
+    derived = lanes_from_recipe(recipe, visuals=(), duck_receipt=receipt)
+    assert derived.sound_effects[0].request.volume == pytest.approx(0.35)

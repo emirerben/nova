@@ -1621,3 +1621,8 @@ def test_subtitled_sfx_speech_duck_follows_the_setting(monkeypatch, duck_enabled
     volumes = {clip.id: clip.volume for clip in sfx_track.clips}
     expected_on_word = subtitled_plan_mod.SFX_SPEECH_DUCK_GAIN if duck_enabled else 1.0
     assert volumes == {"sfx-on-word": pytest.approx(expected_on_word), "sfx-in-pause": 1.0}
+    variant = job.assembly_plan["variants"][0]
+    if duck_enabled:
+        assert variant[subtitled_plan_mod.SFX_DUCK_RECEIPT_FIELD]["volumes"] == {"on-word": 1.0}
+    else:
+        assert subtitled_plan_mod.SFX_DUCK_RECEIPT_FIELD not in variant

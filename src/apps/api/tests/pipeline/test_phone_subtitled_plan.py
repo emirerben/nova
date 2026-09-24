@@ -18,6 +18,7 @@ from app.pipeline.phone_subtitled_lanes import (
 from app.pipeline.phone_subtitled_plan import (
     SFX_SPEECH_DUCK_GAIN,
     compile_phone_subtitled_plan,
+    sfx_duck_receipt,
     speech_windows_from_cues,
 )
 from app.services.phone_rollout import validate_phone_pilot_recipe
@@ -898,3 +899,21 @@ def test_ios_level_test_pins_the_server_duck_gain():
     match = re.search(r"static let serverDuckGain = ([0-9.]+)", swift.read_text())
     assert match is not None
     assert float(match.group(1)) == SFX_SPEECH_DUCK_GAIN
+
+
+def test_duck_receipt_records_only_the_effects_the_duck_lowered():
+    lanes = PhoneSubtitledLanes(
+        sound_effects=[_effect("on-word", 0.3, volume=0.8), _effect("in-pause", 1.5)]
+    )
+    bindings = (_binding(duration_s=10.0),)
+    on = compile_phone_subtitled_plan(
+        bindings, caption_cues=_WORD_CUES, lanes=lanes, duck_sfx_under_speech=True
+    )
+    off = compile_phone_subtitled_plan(bindings, caption_cues=_WORD_CUES, lanes=lanes)
+    assert sfx_duck_receipt(lanes, on) == {
+        "version": 1,
+        "gain": SFX_SPEECH_DUCK_GAIN,
+        "volumes": {"on-word": 0.8},
+    }
+    assert sfx_duck_receipt(lanes, off) is None
+    assert sfx_duck_receipt(None, on) is None

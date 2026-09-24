@@ -4467,7 +4467,11 @@ def _run_phone_subtitled_job(
     )
     from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
-    from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
+        SFX_DUCK_RECEIPT_FIELD,
+        compile_phone_subtitled_plan,
+        sfx_duck_receipt,
+    )
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.transcribe import transcribe_whisper_cached  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
@@ -4813,6 +4817,7 @@ def _run_phone_subtitled_job(
             )
             cues = resplit_cues_into_sentences(cues)
 
+            sfx_duck: dict | None = None
             if not media_lanes_enabled:
                 recipe = compile_phone_subtitled_plan(
                     bindings, caption_cues=cues, caption_style=caption_style
@@ -5087,6 +5092,7 @@ def _run_phone_subtitled_job(
                             lanes=lanes,
                             duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
                         )
+                        sfx_duck = sfx_duck_receipt(lanes, recipe)
                         break
                     except SubtitledLaneError as exc:
                         lane_drops.append({"lane": exc.lane, "reason": str(exc)[:300]})
@@ -5268,6 +5274,8 @@ def _run_phone_subtitled_job(
         if media_lanes_enabled:
             new_entry["overlay_transcript"] = raw_words
             new_entry["phone_lane_receipt"] = lane_receipt
+        if sfx_duck is not None:
+            new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
         if overlay_grounding_enabled:
             new_entry["phone_overlay_receipt"] = overlay_receipt
         if beats_enabled:

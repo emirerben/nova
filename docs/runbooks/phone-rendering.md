@@ -492,6 +492,10 @@ three extra lanes on top of the unchanged speaker clip + captions:
   its words; gaps under 0.25 s are bridged). The speaker clip is never
   lowered. Only existing clip `volume` values change, so there is no new
   recipe field or capability and every installed app build honours it.
+  Ducked effects are listed on the variant's `phone_sfx_duck_receipt`
+  (request id to pre-duck volume); the KRI-182 phone editor restores those
+  volumes when it derives lanes from the pinned recipe, and re-ducks on
+  Save, so an effect is never ducked twice.
   Level proof: `SfxSpeechDuckLevelTests.swift` in KriaMediaEngine; the gain
   is pinned across languages by
   `test_ios_level_test_pins_the_server_duck_gain`. Device check: enable the
