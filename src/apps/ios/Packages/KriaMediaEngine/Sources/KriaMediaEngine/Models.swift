@@ -119,9 +119,10 @@ public struct EditRecipe: Codable, Equatable, Sendable {
             for clip in track.clips where clip.overlayDissolveSeed != nil || clip.overlayAboveText != nil || clip.overlayPopIn != nil || clip.overlayPreserveAlpha != nil || clip.overlayFadeIn != nil || clip.overlayFadeOut != nil {
                 guard schemaVersion == 2, track.kind == .overlay else { throw RecipeError.invalidTimeline }
             }
-            // One fade source per clip: a placed clip fades through its placement.
+            // One fade source per clip: a placed clip fades through its placement,
+            // and a transition ramp would compound with (or wipe) the card's fade.
             for clip in track.clips where clip.overlayFadeIn != nil || clip.overlayFadeOut != nil {
-                guard clip.visualPlacement == nil else { throw RecipeError.invalidTimeline }
+                guard clip.visualPlacement == nil, clip.transition == nil else { throw RecipeError.invalidTimeline }
             }
         }
         for clip in clips {
@@ -317,9 +318,11 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     public var volume: Double
     public var duration: TimeInterval { sourceDuration / rate + (holdDuration ?? 0) }
     /// Opacity from `overlayFadeIn`/`overlayFadeOut` alone across this clip's
-    /// own timeline window; exactly 1 when neither is set.
+    /// own timeline window; exactly 1 when neither is set, or when the clip is
+    /// placed (it then fades through its placement, like the renderer's
+    /// `OverlayFadeWindow`).
     public func overlayFadeAlpha(at time: Double) -> Double {
-        guard overlayFadeIn == true || overlayFadeOut == true else { return 1 }
+        guard visualPlacement == nil, overlayFadeIn == true || overlayFadeOut == true else { return 1 }
         return VisualMediaPlacement.fadeEnvelope(at: time, windowStart: timelineStart, windowEnd: timelineStart + duration,
                                                  fadeIn: overlayFadeIn == true, fadeOut: overlayFadeOut == true)
     }

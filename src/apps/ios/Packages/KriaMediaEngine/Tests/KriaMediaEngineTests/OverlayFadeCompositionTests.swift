@@ -112,10 +112,12 @@ final class OverlayFadeCompositionTests: XCTestCase {
         let asset = MediaAsset(id: "card", relativePath: "card", fingerprint: fingerprint)
         let manifest = try RenderAssetManifest(assets: [RenderAssetReference(id: "card",
             fingerprint: try RenderFingerprint(fingerprint), source: .original(mediaID: "card"))])
-        func recipe(onOverlayTrack: Bool, placement: VisualMediaPlacement? = nil) -> EditRecipe {
+        func recipe(onOverlayTrack: Bool, placement: VisualMediaPlacement? = nil, transition: Transition? = nil,
+                    fadeIn: Bool? = true, fadeOut: Bool? = nil) -> EditRecipe {
             let base = TimelineClip(id: "base", sourceAssetID: "card", sourceDuration: 2)
             let faded = TimelineClip(id: "faded", sourceAssetID: "card", sourceDuration: 1,
-                timelineStart: onOverlayTrack ? 0.5 : 2, volume: 0, visualPlacement: placement, overlayFadeIn: true)
+                timelineStart: onOverlayTrack ? 0.5 : 2, transition: transition, volume: 0, visualPlacement: placement,
+                overlayFadeIn: fadeIn, overlayFadeOut: fadeOut)
             let tracks = onOverlayTrack
                 ? [TimelineTrack(id: "v", kind: .video, clips: [base]), TimelineTrack(id: "o", kind: .overlay, clips: [faded])]
                 : [TimelineTrack(id: "v", kind: .video, clips: [base, faded])]
@@ -127,6 +129,37 @@ final class OverlayFadeCompositionTests: XCTestCase {
         XCTAssertThrowsError(try recipe(onOverlayTrack: false).validate(), "an overlay fade on the video track")
         XCTAssertThrowsError(try recipe(onOverlayTrack: true, placement: VisualMediaPlacement(order: 0,
             windowStart: 0.5, windowEnd: 1.5, fadeIn: true)).validate(), "a placed clip fades through its placement only")
+        // The exit edge alone trips both guards too.
+        XCTAssertThrowsError(try recipe(onOverlayTrack: false, fadeIn: nil, fadeOut: true).validate(), "an exit fade on the video track")
+        XCTAssertThrowsError(try recipe(onOverlayTrack: true, placement: VisualMediaPlacement(order: 0,
+            windowStart: 0.5, windowEnd: 1.5, fadeOut: true), fadeIn: nil, fadeOut: true).validate(), "an exit fade on a placed clip")
+        // A transition ramp is a second fade source; alone it stays valid.
+        XCTAssertThrowsError(try recipe(onOverlayTrack: true, transition: Transition(duration: 0.5)).validate(),
+            "an overlay fade compounded with a transition ramp")
+        XCTAssertThrowsError(try recipe(onOverlayTrack: true, transition: Transition(kind: .wipeLeft, duration: 0.5), fadeIn: nil, fadeOut: true).validate(),
+            "an overlay fade routed through a clip-transition wipe")
+        XCTAssertNoThrow(try recipe(onOverlayTrack: true, transition: Transition(duration: 0.5), fadeIn: nil).validate())
+    }
+
+    /// The renderer fades a card across the bounds its layer actually
+    /// occupies (a video card's track can end up to a source frame off
+    /// `clip.duration`), so the fade-out lands on 0 where the layer stops
+    /// drawing instead of cutting off part-way.
+    func testOverlayFadeWindowFollowsTheLayerBoundsNotTheIdealizedDuration() throws {
+        let clip = TimelineClip(id: "card", sourceAssetID: "card", sourceDuration: 2, timelineStart: 1,
+                                overlayFadeIn: true, overlayFadeOut: true)
+        let layerEnd = 2.967 // one 30 fps frame short of the idealized 3.0
+        let window = try XCTUnwrap(OverlayFadeWindow(clip: clip, start: 1, end: layerEnd))
+        XCTAssertEqual(window.alpha(at: layerEnd), 0)
+        XCTAssertEqual(window.alpha(at: layerEnd - 0.075), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(window.alpha(at: 1.075), 0.5, accuracy: 1e-9)
+        XCTAssertGreaterThan(clip.overlayFadeAlpha(at: layerEnd), 0.2, "the idealized window would still be visible here")
+        XCTAssertNil(OverlayFadeWindow(clip: TimelineClip(id: "plain", sourceAssetID: "card", sourceDuration: 2, timelineStart: 1),
+                                       start: 1, end: layerEnd))
+        var placed = clip
+        placed.visualPlacement = VisualMediaPlacement(order: 0, windowStart: 1, windowEnd: 3, fadeIn: true, fadeOut: true)
+        XCTAssertNil(OverlayFadeWindow(clip: placed, start: 1, end: 3), "a placed clip fades through its placement")
+        XCTAssertEqual(placed.overlayFadeAlpha(at: 1), 1, "and so does the clip-level helper")
     }
 
     func testUnfadedClipEncodesWithoutFadeKeys() throws {
@@ -382,7 +415,7 @@ final class OverlayFadeCompositionTests: XCTestCase {
         XCTAssertEqual(centerGreen(faded[0]) / centerGreen(alone[0]), 0.5, accuracy: 0.08, "fade alpha must still apply on top of a pop-in card")
     }
 
-    /// `Composition.swift` wires `layers[...].overlayFade = OverlayFadeWindow(clip:)`
+    /// `Composition.swift` wires `layers[...].overlayFade = OverlayFadeWindow(clip:start:end:)`
     /// at two call sites: the still-image branch (covered above by every
     /// other test in this file, all of which use a PNG card) and the
     /// decoded-video-track branch, used by a video media-overlay card. This

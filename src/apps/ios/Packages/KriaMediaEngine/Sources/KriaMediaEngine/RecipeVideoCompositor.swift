@@ -31,17 +31,20 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var overlayFade: OverlayFadeWindow? = nil
 }
 
-/// An overlay clip's fade on its own timeline window, evaluated with the
-/// same curve as `VisualMediaPlacement` (see `fadeEnvelope`).
+/// An overlay clip's fade across the window its layer actually occupies,
+/// evaluated with the same curve as `VisualMediaPlacement` (see `fadeEnvelope`).
 struct OverlayFadeWindow: Equatable, Sendable {
     let start: Double
     let end: Double
     let fadeIn: Bool
     let fadeOut: Bool
 
-    init?(clip: TimelineClip) {
+    /// `start`/`end` are the layer's own bounds, not `clip.duration`: a video
+    /// card's track can end up to a source frame off its idealized length, and
+    /// the fade-out must reach 0 where the layer stops drawing.
+    init?(clip: TimelineClip, start: Double, end: Double) {
         guard clip.visualPlacement == nil, clip.overlayFadeIn == true || clip.overlayFadeOut == true else { return nil }
-        start = clip.timelineStart; end = clip.timelineStart + clip.duration
+        self.start = start; self.end = end
         fadeIn = clip.overlayFadeIn == true; fadeOut = clip.overlayFadeOut == true
     }
 

@@ -44,8 +44,10 @@ public struct VisualMediaPlacement: Codable, Equatable, Sendable {
     /// requested edge, and none at all on a window of 0.3 s or less. The
     /// pinned phone Talking recipe fades its overlay cards through
     /// `alpha(at:)`; editor overlays that keep their `MediaTransform`
-    /// positioning fade through `TimelineClip.overlayFadeAlpha(at:)`. Both
-    /// call this, so the editor preview and the device render share a curve.
+    /// positioning fade through the compositor's `OverlayFadeWindow` (on the
+    /// layer's actual bounds), and `TimelineClip.overlayFadeAlpha(at:)`
+    /// evaluates the same curve on the clip's own window. All of them call
+    /// this, so the editor preview and the device render share a curve.
     public static func fadeEnvelope(at time: Double, windowStart: Double, windowEnd: Double,
                                     fadeIn: Bool, fadeOut: Bool) -> Double {
         guard windowEnd - windowStart > 0.3 else { return 1 }

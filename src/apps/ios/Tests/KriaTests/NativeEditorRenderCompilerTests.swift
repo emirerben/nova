@@ -681,6 +681,13 @@ import KriaMediaEngine
         XCTAssertTrue(placement.fadeOut)
         XCTAssertNil(styled.overlayFadeIn)
         XCTAssertNil(styled.overlayFadeOut)
+        // Each edge is independent on the placement path too.
+        let styledEntranceOnly = try XCTUnwrap(compiled(entrance: "fade", exit: "none", styled: true).visualPlacement)
+        XCTAssertTrue(styledEntranceOnly.fadeIn)
+        XCTAssertFalse(styledEntranceOnly.fadeOut)
+        let styledExitOnly = try XCTUnwrap(compiled(entrance: "none", exit: "fade", styled: true).visualPlacement)
+        XCTAssertFalse(styledExitOnly.fadeIn)
+        XCTAssertTrue(styledExitOnly.fadeOut)
     }
 
     func testLongCutTimelineReusesTracksAndCrossfadesKeepTwoSources() async throws {

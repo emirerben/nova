@@ -231,7 +231,7 @@ public struct LivePreviewExportSnapshot: Sendable {
                 updated.overlayPreserveAlpha = clip.overlayPreserveAlpha
                 updated.visualPlacement = clip.visualPlacement
                 updated.sourceCrop = clip.sourceCrop
-                updated.overlayFade = OverlayFadeWindow(clip: clip)
+                updated.overlayFade = OverlayFadeWindow(clip: clip, start: layer.start, end: layer.end)
                 updated.visualOrder = overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? updated.visualOrder
                 updated.overlayCenter = CGPoint(x: current.renderSize.width / 2 + clip.transform.positionX, y: current.renderSize.height / 2 - clip.transform.positionY)
                 return updated
