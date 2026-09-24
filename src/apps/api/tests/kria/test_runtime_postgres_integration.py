@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
@@ -52,11 +52,14 @@ from app.models import (
 from app.routes.creator_agent import get_creator_session
 from app.tasks.content_plan_build import DispatchResult
 from app.tasks.kria_runtime import (
+    _claim,
     _claim_approval_dispatch,
+    _complete_response_turn,
     _observe_dispatched_execution,
     _plan_with_live_agent,
     execute_kria_approval,
     prune_kria_drafts,
+    reconcile_kria_turns,
     run_kria_turn,
 )
 
@@ -375,6 +378,185 @@ def test_live_planner_session_survives_consecutive_task_event_loops(
             )
         )
         assert planned.plan.response == "ok"
+
+
+# The reconciler sweeps the 50 oldest recoverable turns. Seeding the turn under
+# test far in the past keeps it inside that window however many rows earlier
+# tests left behind in this shared database.
+_SWEPT_FIRST = datetime(2000, 1, 1, tzinfo=UTC)
+
+
+def _seed_user_turn(
+    thread_id: uuid.UUID,
+    session_id: uuid.UUID,
+    *,
+    content: str,
+    status: str,
+    created_at: datetime | None = None,
+) -> uuid.UUID:
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id)
+        assert thread is not None
+        thread.revision = int(thread.revision) + 1
+        sequence = db.scalar(
+            select(func.max(CreationThreadEvent.sequence)).where(
+                CreationThreadEvent.thread_id == thread_id
+            )
+        )
+        event = CreationThreadEvent(
+            thread_id=thread_id,
+            sequence=int(sequence) + 1,
+            revision=thread.revision,
+            role="user",
+            event_type="user_message",
+            content=content,
+        )
+        db.add(event)
+        db.flush()
+        turn = CreatorAgentTurn(
+            thread_id=thread_id,
+            session_id=session_id,
+            source_event_id=event.id,
+            client_event_id=f"turn-{uuid.uuid4().hex}",
+            request_digest=f"digest-{uuid.uuid4().hex}",
+            status=status,
+            **({"created_at": created_at} if created_at is not None else {}),
+        )
+        db.add(turn)
+        db.commit()
+        return turn.id
+
+
+def _lapse_lease(turn_id: uuid.UUID) -> None:
+    """The run holding the lease is gone (killed at the task time limit, lost
+    worker), so its heartbeat stopped and the lease ran out."""
+    with sync_session() as db:
+        db.execute(
+            update(CreatorAgentTurn)
+            .where(CreatorAgentTurn.id == turn_id)
+            .values(lease_expires_at=func.now() - timedelta(seconds=1))
+        )
+        db.commit()
+
+
+def _record_publishes(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Capture broker publishes and keep the reconciler off other tests' rows."""
+    published: list[list[str]] = []
+    monkeypatch.setattr(run_kria_turn, "apply_async", lambda **kw: published.append(kw["args"]))
+    monkeypatch.setattr(execute_kria_approval, "apply_async", lambda **_kw: None)
+    monkeypatch.setattr(
+        "app.tasks.kria_runtime._observe_dispatched_execution",
+        lambda _execution_id: ("dispatched", None),
+    )
+    return published
+
+
+@pytest.mark.parametrize("recovered_by", ["reconciler", "redelivered_task"])
+def test_turn_abandoned_three_times_fails_and_promotes_its_successor(
+    monkeypatch: pytest.MonkeyPatch,
+    recovered_by: str,
+) -> None:
+    """A turn whose runs keep ending without a result is not planned a fourth
+    time: every run can pay for a Main Creator call, and the reconciler would
+    republish it forever while the creator's next message waits behind it."""
+    _user_id, thread_id, session_id = _seed_runtime_project()
+    stuck_id = _seed_user_turn(
+        thread_id,
+        session_id,
+        content="Top 3 players, pop up each photo",
+        status="pending",
+        created_at=_SWEPT_FIRST,
+    )
+    queued_id = _seed_user_turn(thread_id, session_id, content="Add a ding", status="queued")
+    published = _record_publishes(monkeypatch)
+
+    def _never_plan(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("a turn out of claims must not be planned again")
+
+    for attempt in range(1, 4):
+        # Claims 2 and 3 recover a lapsed lease: via the reconciler's reset, or
+        # directly when a redelivered task reaches the row first.
+        claimed = _claim(stuck_id, f"worker-{attempt}")
+        assert isinstance(claimed, tuple)
+        assert claimed[2] == attempt
+        _lapse_lease(stuck_id)
+        if recovered_by == "reconciler":
+            reconcile_kria_turns.run()
+
+    published.clear()
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _never_plan)
+    assert run_kria_turn.run(str(stuck_id)) == {"turn_id": str(stuck_id), "status": "failed"}
+
+    with sync_session() as db:
+        stuck = db.get(CreatorAgentTurn, stuck_id)
+        assert stuck is not None
+        assert stuck.status == "failed"
+        assert stuck.abandoned_claims == 3
+        assert stuck.lease_epoch == 3
+        assert stuck.lease_owner is None
+        assert stuck.lease_expires_at is None
+        assert stuck.error == {
+            "code": "runtime_turn_claims_exhausted",
+            "retryable": True,
+            "recovery": "retry",
+        }
+        event = db.get(CreationThreadEvent, stuck.observed_event_id)
+        assert event is not None
+        assert event.event_type == "assistant_error"
+        assert event.content.startswith("I couldn't finish that step")
+        assert event.payload["code"] == "runtime_turn_claims_exhausted"
+        queued = db.get(CreatorAgentTurn, queued_id)
+        assert queued is not None
+        assert queued.status == "pending"
+    assert published == [[str(queued_id)]]
+
+
+def test_turn_requeued_past_the_cap_and_stamped_while_waiting_is_still_claimed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither a requeue after a thread-revision conflict (media attached while
+    Kria planned) nor the reconciler's backoff stamp on a pending row waiting in
+    a backed-up agent-control queue is an abandoned run, although the first
+    bumps `lease_epoch` and the second sets `lease_expires_at`."""
+    _user_id, thread_id, session_id = _seed_runtime_project()
+    turn_id = _seed_user_turn(
+        thread_id, session_id, content="Plan this edit", status="pending", created_at=_SWEPT_FIRST
+    )
+    _record_publishes(monkeypatch)
+    plan = KriaTurnPlan(mode="respond", turn_value="question", response="Which moment matters?")
+
+    for attempt in range(1, 6):
+        claimed = _claim(turn_id, f"worker-{attempt}")
+        assert isinstance(claimed, tuple)
+        with sync_session() as db:
+            thread = db.get(CreationThread, thread_id)
+            assert thread is not None
+            thread.revision = int(thread.revision) + 1
+            db.commit()
+        completion = _complete_response_turn(
+            turn_id,
+            lease_owner=f"worker-{attempt}",
+            lease_epoch=claimed[2],
+            claimed_thread_revision=claimed[3],
+            plan=plan,
+        )
+        assert completion.requeue_turn_id == str(turn_id)
+        reconcile_kria_turns.run()
+        with sync_session() as db:
+            turn = db.get(CreatorAgentTurn, turn_id)
+            assert turn is not None
+            assert turn.status == "pending"
+            assert turn.lease_expires_at is not None
+
+    claimed = _claim(turn_id, "worker-6")
+
+    assert isinstance(claimed, tuple)
+    assert claimed[2] == 6
+    with sync_session() as db:
+        turn = db.get(CreatorAgentTurn, turn_id)
+        assert turn is not None
+        assert turn.status == "planning"
+        assert turn.abandoned_claims == 0
 
 
 @pytest.mark.asyncio
