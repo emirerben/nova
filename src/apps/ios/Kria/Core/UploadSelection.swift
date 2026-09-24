@@ -126,6 +126,10 @@ struct UploadFailure: Identifiable, Equatable, Sendable {
     let role: CreationMediaRole
     let filename: String
     let message: String
+    /// The picked asset this failure belongs to (`BackgroundUploadCoordinator.selectionKey`); nil for
+    /// Files and no-Photos-access failures. Keys the error to the asset, not to one attempt at it, so a
+    /// re-attempt replaces the line instead of stacking another one (KRI-180).
+    var selectionKey: String? = nil
 }
 
 /// FIFO limiter for the expensive part of preparing a clip (import + hash, and the proxy
