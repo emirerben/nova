@@ -54,6 +54,7 @@ from app.tasks.content_plan_build import DispatchResult
 from app.tasks.kria_runtime import (
     _claim_approval_dispatch,
     _observe_dispatched_execution,
+    _plan_with_live_agent,
     execute_kria_approval,
     prune_kria_drafts,
     run_kria_turn,
@@ -338,6 +339,42 @@ def test_partial_unique_index_allows_only_one_active_turn_per_thread() -> None:
             .where(CreatorAgentTurn.thread_id == thread_id, CreatorAgentTurn.status == "planning")
         )
         assert active_count == 1
+
+
+def test_live_planner_session_survives_consecutive_task_event_loops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every `run_kria_turn` plans inside its own `asyncio.run` loop, and an
+    asyncpg connection belongs to the loop that opened it. The second turn a
+    Celery child planned used to check out the first turn's pooled connection
+    and die on "attached to a different loop" (prod turn 932db9f6, 2026-09-24).
+    """
+
+    async def _planned(db, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+        assert await db.scalar(text("select 1")) == 1
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(mode="respond", turn_value="question", response="ok"),
+            manifest_hash="manifest",
+            context_hash="context",
+        )
+
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _planned)
+    snapshot = {
+        "thread_id": str(uuid.uuid4()),
+        "item_id": str(uuid.uuid4()),
+        "creator_id": str(uuid.uuid4()),
+    }
+    for _turn in range(2):
+        planned = asyncio.run(
+            _plan_with_live_agent(
+                snapshot,
+                "Plan this edit",
+                turn_id=uuid.uuid4(),
+                lease_owner="celery-child",
+                lease_epoch=1,
+            )
+        )
+        assert planned.plan.response == "ok"
 
 
 @pytest.mark.asyncio

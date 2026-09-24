@@ -8,14 +8,24 @@ per-agent model declaration reaches the SDK unchanged.
 
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from app.agents._model_client import GeminiClient
+from app.agents._runtime import (
+    ModelClient,
+    ModelInvocation,
+    ProviderOutcomeUnknownError,
+    TerminalError,
+    TerminalSchemaError,
+)
 from app.agents.music_matcher import MusicMatcherAgent
+from tests.agents.conftest import max_tokens_response
 
 
 class _CapturingModels:
@@ -81,7 +91,105 @@ def test_main_creator_uses_bounded_low_thinking_and_output_budget() -> None:
     from app.agents.main_creator import MainCreatorAgent
 
     assert MainCreatorAgent.spec.thinking_level == "low"
-    assert MainCreatorAgent.max_output_tokens == 4096
+    assert MainCreatorAgent.max_output_tokens == 8_192
+
+
+_KRI178_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures/agent_evals/main_creator/kri178_talking_reaction_beats.json"
+)
+# `nova.creator.main` latency over its 16 prod runs on 2026-09-23/24, fitted as
+# first-token time + time per generated (thinking + answer) token. The
+# first-token term includes the worst residual (+2.0 s).
+_FIRST_TOKEN_S = 6.7
+_S_PER_TOKEN = 0.00573
+
+
+class _SharedBudgetGemini(ModelClient):
+    """Gemini 3 counts thinking against `max_output_tokens`: the visible answer
+    gets only what thinking leaves, and generation time grows with both."""
+
+    def __init__(self, *, answer: str, thinking_tokens: int, answer_tokens: int) -> None:
+        self.answer = answer
+        self.thinking_tokens = thinking_tokens
+        self.answer_tokens = answer_tokens
+        self.calls: list[dict[str, Any]] = []
+
+    def invoke(
+        self,
+        *,
+        max_output_tokens: int | None = None,
+        timeout_s: float = 30.0,
+        **_: Any,
+    ) -> ModelInvocation:
+        self.calls.append({"max_output_tokens": max_output_tokens, "timeout_s": timeout_s})
+        wanted = self.thinking_tokens + self.answer_tokens
+        budget = max_output_tokens or 0
+        if _FIRST_TOKEN_S + min(wanted, budget) * _S_PER_TOKEN > timeout_s:
+            raise ProviderOutcomeUnknownError(
+                f"gemini provider outcome unknown after {timeout_s:.1f}s"
+            )
+        if wanted > budget:
+            return ModelInvocation(
+                raw_text=self.answer[: len(self.answer) // 3],
+                raw_response=max_tokens_response(),
+                tokens_out=max(0, budget - self.thinking_tokens),
+                tokens_thoughts=self.thinking_tokens,
+            )
+        return ModelInvocation(
+            raw_text=self.answer,
+            tokens_out=self.answer_tokens,
+            tokens_thoughts=self.thinking_tokens,
+        )
+
+
+def test_main_creator_fits_heavy_thinking_plus_a_full_reaction_beat_plan() -> None:
+    """Prod 2026-09-24, thread 9b6594a6: on the KRI-172 football prompt the
+    Main Creator thought for 3,047 tokens, which left 1,049 of a 4,096 budget
+    for a plan whose full answer measured 2,380 tokens (same prompt, 14:56Z run).
+    It stopped at MAX_TOKENS and the turn failed. Untruncated, the same run also
+    outlasts a 35 s provider timeout, so both limits have to cover it."""
+    from app.agents.main_creator import MainCreatorAgent
+
+    fixture = json.loads(_KRI178_FIXTURE.read_text())
+    client = _SharedBudgetGemini(
+        answer=fixture["raw_text"], thinking_tokens=3_047, answer_tokens=2_380
+    )
+
+    output = MainCreatorAgent(client).run(fixture["input"])
+
+    assert len(output.action.strategy.reaction_beats) == 13
+
+
+def test_main_creator_budget_runs_out_before_its_provider_timeout() -> None:
+    """A runaway generation must end as a retryable truncation, never as an
+    outcome-unknown timeout that fences the paid call."""
+    from app.agents.main_creator import MainCreatorAgent
+
+    runaway_s = _FIRST_TOKEN_S + MainCreatorAgent.max_output_tokens * _S_PER_TOKEN
+    assert runaway_s < MainCreatorAgent.spec.timeout_s
+
+
+def test_runaway_main_creator_call_ends_as_one_truncation_not_an_unknown_outcome() -> None:
+    """Behavioral twin of the check above: a call that would think and write
+    past its whole output budget stops at MAX_TOKENS inside the provider
+    deadline. The run fails once, as a retryable truncation -- never a second
+    ~54 s paid call, and never an outcome-unknown fence."""
+    from app.agents.main_creator import MainCreatorAgent
+
+    fixture = json.loads(_KRI178_FIXTURE.read_text())
+    client = _SharedBudgetGemini(
+        answer=fixture["raw_text"], thinking_tokens=7_000, answer_tokens=2_380
+    )
+
+    with pytest.raises(TerminalError, match="output truncated") as failure:
+        MainCreatorAgent(client).run(fixture["input"])
+
+    assert not isinstance(failure.value, (ProviderOutcomeUnknownError, TerminalSchemaError))
+    [call] = client.calls
+    # The agent's declared budget and deadline are what reach the provider.
+    assert call["max_output_tokens"] == MainCreatorAgent.max_output_tokens
+    assert call["timeout_s"] == MainCreatorAgent.spec.timeout_s
 
 
 def test_per_agent_timeout_is_enforced(capturing_client, monkeypatch):

@@ -8,6 +8,39 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Kria runtime-v2 turn failures — deferred follow-ups (2026-09-24)
+
+The "I couldn't finish that step" fix raised the Main Creator's budget to
+8,192 tokens and 60 s and gave each v2 turn its own DB engine. The ship review
+scoped these two out.
+
+### Cap re-runs of abandoned turns with a real counter
+**Priority:** P1
+**What:** `reconcile_kria_turns` republishes every expired planning turn and
+`_claim` bumps `lease_epoch` with no cap, so a turn that keeps overrunning
+`run_kria_turn`'s time limit (or losing its worker) re-plans every minute or
+two, paying for Main Creator calls, and the creator never sees an error.
+`lease_epoch` can't be the counter: requeues after thread-revision conflicts
+bump it too, and the reconciler also stamps a lease on pending turns that were
+only waiting. A first cut that infers abandonment from those fields sits on
+local branch `feat/kria-turn-claim-cap-2026-09-24`.
+**Acceptance:** A migration adds `creator_agent_turns.abandoned_claims`
+(default 0), incremented only when the reconciler resets an expired
+planning lease or a redelivered task claims one. `_claim` fails the turn
+with the retryable projection once it reaches 3 and promotes the queued
+successor. A requeued turn past any epoch is still claimed (real-Postgres
+test).
+
+### Fit `run_kria_turn`'s time limits to its agent deadlines
+**Priority:** P2
+**What:** `soft_time_limit=90`/`time_limit=120`, but one planning turn can
+chain the edit copilot (20 s), the Main Creator (60 s per attempt, up to 3)
+and the clip-intent planner (20 s). After a soft-limit hit, `asyncio.run`
+waits for the in-flight model thread, so the hard kill can land before
+`_fail_turn` projects anything.
+**Acceptance:** Limits sized from the agent specs, with a guard test that
+fails when an agent deadline grows past the task budget.
+
 ## SFX picker search — deferred follow-ups (2026-09-24)
 
 The web editor's Sounds drawer and legacy SFX lane gained search + category
