@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.188.0] - 2026-09-24
+
+### Changed
+- fix(captions): talking-to-camera captions default to the spoken language (KRI-177) (#1206) <!-- release-pr: 1206 -->
+
 ## [0.76.187.0] - 2026-09-24
 
 ### Changed
