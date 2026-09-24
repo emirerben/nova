@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.213.0] - 2026-09-24
+
+### Changed
+- fix(deps): pin SQLAlchemy below 2.1 so fresh installs keep psycopg2 (#1239) <!-- release-pr: 1239 -->
+
 ## [0.76.212.0] - 2026-09-24
 
 ### Fixed
