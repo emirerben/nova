@@ -3762,6 +3762,82 @@ async def _failed_phone_planning_turn(  # noqa: ANN202
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("grounded", [True, False])
+async def test_phone_turn_honors_a_grounded_named_effect_decline(monkeypatch, grounded) -> None:
+    """ "Skip the Fah sound effect" still names Fah via the regex; every phone render fails."""
+
+    from app.agents._schemas.creator_agent import CreatorRenderIntentEvidence
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "clip-1", "kind": "video", "duration_s": 8.0}],
+        catalog=[{"catalog_id": "sfx-fah", "kind": "sound_effect", "label": "Fah"}],
+        phone_source_media_ids=["clip-1"],
+        phone_rendering_allowed=True,
+    )
+    assert manifest.capabilities["sound_effects"].reason_code == "unsupported_on_phone"
+    message = "Skip the Fah sound effect."
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=1,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=None,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(edit_format="montage", audio_strategy="original_audio"),
+        summary="Your clip, no sound effect.",
+        render_intent_evidence=(
+            CreatorRenderIntentEvidence(licensed_sfx=message) if grounded else None
+        ),
+    )
+    append_event = AsyncMock()
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(SimpleNamespace(id=uuid.uuid4()), None, None)),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes, "resolve_item_creator_context", AsyncMock(return_value=(manifest, []))
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio, "to_thread", AsyncMock(return_value=SimpleNamespace(action=action))
+    )
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=SimpleNamespace()))
+
+    await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id="item-1",
+        user=SimpleNamespace(id=uuid.uuid4()),
+        session_id=session.id,
+        expected_revision=1,
+        user_message=message,
+    )
+
+    if grounded:
+        assert session.status == "awaiting_confirmation"
+        assert "licensed_sfx" not in session.active_plan["edit_plan"]["strategy"]
+    else:
+        # Without evidence the regex fallback still reads the decline as a request.
+        assert session.status == "failed"
+        assert session.last_error["code"] == "licensed_sfx_unavailable"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("pool_kind", "verified_features", "strategy", "limit"),
     [

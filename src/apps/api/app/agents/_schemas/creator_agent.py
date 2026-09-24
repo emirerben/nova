@@ -610,6 +610,12 @@ class CreatorRenderIntentEvidence(_CreatorModel):
     closing_title: str | None = Field(
         default=None, max_length=1200, exclude_if=lambda value: value is None
     )
+    # Grounds the named-effect decision in either direction: a request names
+    # the effect inside the excerpt, while a decline ("Don't add the Fah sound
+    # effect") pairs this excerpt with ``licensed_sfx: null``.
+    licensed_sfx: str | None = Field(
+        default=None, max_length=1200, exclude_if=lambda value: value is None
+    )
 
 
 class ProposeStrategy(_CreatorModel):

@@ -9,12 +9,18 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents._runtime import SchemaError
-from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
+from app.agents._schemas.creator_agent import (
+    CreativeStrategy,
+    CreatorRenderIntentEvidence,
+    ResolvedCreatorManifest,
+)
 from app.agents.sfx_placement import SfxPlacementAgent, SfxPlacementInput, SfxPlacementOutput
 from app.routes.creator_agent import (
     _apply_explicit_render_intent,
+    _creator_sources,
     _explicit_sfx_lookup_names,
     _explicit_sfx_name,
+    _model_sfx_lookup_name,
     _resolve_described_sfx,
     _resolve_explicit_sfx_outside_manifest,
 )
@@ -336,7 +342,7 @@ def test_effect_phrase_never_runs_into_the_next_request(creator_text: str) -> No
     ],
 )
 def test_ordinary_wording_around_a_named_effect_keeps_it(creator_text: str) -> None:
-    """licensed_sfx has no model path: a missed named effect silently disappears."""
+    """Without grounding evidence the regex decides: a missed name silently disappears."""
 
     manifest = _fah_and_rejection()
     strategy = _apply_explicit_render_intent(CreativeStrategy(), creator_text, manifest=manifest)
@@ -467,6 +473,183 @@ async def test_determiner_led_effect_name_resolves_from_live_db() -> None:
     assert plan.strategy.licensed_sfx.effect_id == "sfx-fah"
 
 
+def _model_sfx(effect_id: str | None, *, max_placements: int = 6) -> CreativeStrategy:
+    if effect_id is None:
+        return CreativeStrategy()
+    return CreativeStrategy(licensed_sfx={"effect_id": effect_id, "max_placements": max_placements})
+
+
+@pytest.mark.parametrize(
+    "creator_text,model_effect,max_placements,expected",
+    [
+        ("Don't add the Fah sound effect.", None, 6, None),
+        ("Why don't you add the Fah sound effect?", "sfx-fah", 6, "sfx-fah"),
+        ("Don't use the Fah sound effect too much.", "sfx-fah", 2, "sfx-fah"),
+        ("I don't like the Fah, use a different sound effect.", None, 6, None),
+        ("Skip the Fah sound effect.", None, 6, None),
+        ("The Fah sound effect is annoying, drop it.", None, 6, None),
+        ("No Fah sound effect this time.", None, 6, None),
+    ],
+)
+def test_grounded_model_reading_decides_a_named_effect(
+    creator_text: str, model_effect: str | None, max_placements: int, expected: str | None
+) -> None:
+    """Negation needs the whole sentence; the model's grounded reading wins over the regex."""
+
+    manifest = _fah_and_rejection()
+    strategy = _apply_explicit_render_intent(
+        _model_sfx(model_effect, max_placements=max_placements),
+        creator_text,
+        manifest=manifest,
+        render_intent_evidence=CreatorRenderIntentEvidence(licensed_sfx=creator_text),
+    )
+    plan = compile_strategy_to_plan(manifest, strategy)
+
+    if expected is None:
+        assert plan.strategy.licensed_sfx is None
+        # A decline compiles on the phone, where every named effect fails.
+        assert compile_strategy_to_plan(_phone_manifest(), strategy).strategy.licensed_sfx is None
+    else:
+        assert plan.strategy.licensed_sfx.effect_id == expected
+        assert plan.strategy.licensed_sfx.max_placements == max_placements
+
+
+@pytest.mark.parametrize(
+    "creator_text",
+    [
+        "Skip the Fah sound effect.",
+        "The Fah sound effect is annoying, drop it.",
+        "No Fah sound effect this time.",
+    ],
+)
+def test_without_evidence_the_regex_still_decides_an_indirect_decline(creator_text: str) -> None:
+    """Old or failed model responses keep the refusal grammar's known limits."""
+
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(), creator_text, manifest=_fah_and_rejection()
+    )
+    assert strategy.licensed_sfx.effect_id == "sfx-fah"
+
+
+def test_latest_turn_evidence_declines_an_earlier_named_effect() -> None:
+    latest = "Actually, drop the Fah."
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        f"Add the Fah sound effect at funny moments.\n{latest}",
+        manifest=_fah_and_rejection(),
+        latest_user_message=latest,
+        render_intent_evidence=CreatorRenderIntentEvidence(licensed_sfx=latest),
+    )
+    assert strategy.licensed_sfx is None
+
+
+@pytest.mark.parametrize("model_effect", ["Fah", "fah", "sfx-fah"])
+def test_model_may_name_the_effect_by_label_or_catalog_id(model_effect: str) -> None:
+    creator_text = "Put Fah on every punchline."
+    strategy = _apply_explicit_render_intent(
+        _model_sfx(model_effect),
+        creator_text,
+        manifest=_fah_and_rejection(),
+        render_intent_evidence=CreatorRenderIntentEvidence(licensed_sfx=creator_text),
+    )
+    assert strategy.licensed_sfx.effect_id == "sfx-fah"
+
+
+@pytest.mark.parametrize(
+    "creator_text,model_effect,excerpt",
+    [
+        # The excerpt is not the creator's words.
+        ("Don't add the Fah sound effect.", None, "The creator declined Fah."),
+        # The model picked an effect the creator never named.
+        ("Use a different sound effect.", "sfx-rejection", "Use a different sound effect."),
+        # A catalog name that is only part of a longer word is not named.
+        ("Add the Fahrenheit sound effect.", "sfx-fah", "Add the Fahrenheit sound effect."),
+        # Generic words never name an uncatalogued effect.
+        (
+            "I don't like the Fah, use a different sound effect.",
+            "different",
+            "I don't like the Fah, use a different sound effect.",
+        ),
+    ],
+)
+def test_ungrounded_model_sfx_falls_back_to_the_literal_recognizer(
+    creator_text: str, model_effect: str | None, excerpt: str
+) -> None:
+    manifest = _fah_and_rejection()
+    grounded = _apply_explicit_render_intent(
+        _model_sfx(model_effect),
+        creator_text,
+        manifest=manifest,
+        render_intent_evidence=CreatorRenderIntentEvidence(licensed_sfx=excerpt),
+    )
+    assert grounded == _apply_explicit_render_intent(
+        CreativeStrategy(), creator_text, manifest=manifest
+    )
+
+
+def test_grounded_uncatalogued_name_stays_inert_and_fails_visibly() -> None:
+    creator_text = "Put the Kazoo sound on every punchline."
+    manifest = _fah_and_rejection()
+    strategy = _apply_explicit_render_intent(
+        _model_sfx("Kazoo"),
+        creator_text,
+        manifest=manifest,
+        render_intent_evidence=CreatorRenderIntentEvidence(licensed_sfx=creator_text),
+    )
+    assert strategy.licensed_sfx.effect_id == "Kazoo"
+    with pytest.raises(CreatorSfxUnavailableError):
+        compile_strategy_to_plan(manifest, strategy)
+
+
+@pytest.mark.asyncio
+async def test_model_read_name_outside_the_prompt_catalog_resolves_from_live_db() -> None:
+    """No "sound effect" wording, so only the model's grounded name reaches the DB."""
+
+    manifest = _manifest(effects=[])
+    effect = SimpleNamespace(
+        id="sfx-fah",
+        name="Fah",
+        status="ready",
+        published_at=datetime.now(UTC),
+        archived_at=None,
+        audio_gcs_path="sound-effects/fah.mp3",
+    )
+    scalar_result = SimpleNamespace(all=lambda: [effect])
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: scalar_result))
+    )
+    creator_text = "Put Fah on every punchline."
+    model_strategy = _model_sfx("Fah")
+    evidence = CreatorRenderIntentEvidence(licensed_sfx=creator_text)
+
+    assert _explicit_sfx_lookup_names(creator_text, manifest=manifest) == []
+    requested = _model_sfx_lookup_name(
+        model_strategy, evidence, _creator_sources(creator_text, creator_text)
+    )
+    planning_manifest = await _resolve_explicit_sfx_outside_manifest(
+        db, requested, manifest=manifest
+    )
+    strategy = _apply_explicit_render_intent(
+        model_strategy,
+        creator_text,
+        manifest=planning_manifest,
+        render_intent_evidence=evidence,
+    )
+    plan = compile_strategy_to_plan(planning_manifest, strategy)
+
+    assert requested == "Fah"
+    assert plan.strategy.licensed_sfx.effect_id == "sfx-fah"
+
+
+def test_model_lookup_name_must_be_the_creators_words() -> None:
+    creator_text = "Add a funny sound effect."
+    evidence = CreatorRenderIntentEvidence(licensed_sfx=creator_text)
+    sources = _creator_sources(creator_text, creator_text)
+
+    assert _model_sfx_lookup_name(_model_sfx("Fah"), evidence, sources) is None
+    assert _model_sfx_lookup_name(_model_sfx(None), evidence, sources) is None
+
+
 @pytest.mark.parametrize("phrase", ["title saying", "title that says", "title which says"])
 def test_title_extractor_accepts_production_wording(phrase: str) -> None:
     strategy = _apply_explicit_render_intent(
@@ -557,7 +740,12 @@ _LIVE_LIBRARY = [
 ]
 
 
-async def _plan_requested_sfx(request: str):
+async def _plan_requested_sfx(
+    request: str,
+    *,
+    model: CreativeStrategy | None = None,
+    evidence: CreatorRenderIntentEvidence | None = None,
+):
     """Run the planning turn's SFX steps exactly as ``_run_planning_turn`` does."""
 
     def execute(statement):
@@ -567,16 +755,26 @@ async def _plan_requested_sfx(request: str):
 
     db = SimpleNamespace(execute=AsyncMock(side_effect=execute))
     manifest = _manifest(effects=[])
+    model = model or CreativeStrategy()
+    model_name = _model_sfx_lookup_name(model, evidence, _creator_sources(request, request))
     planning_manifest = manifest
-    for name in _explicit_sfx_lookup_names(request, manifest=manifest):
+    for name in [*_explicit_sfx_lookup_names(request, manifest=manifest), model_name]:
         planning_manifest = await _resolve_explicit_sfx_outside_manifest(
             db, name, manifest=planning_manifest
         )
     planning_manifest, described = await _resolve_described_sfx(
         db, _explicit_sfx_name(request, manifest=planning_manifest), manifest=planning_manifest
     )
+    planning_manifest, model_described = await _resolve_described_sfx(
+        db, model_name, manifest=planning_manifest
+    )
     strategy = _apply_explicit_render_intent(
-        CreativeStrategy(), request, manifest=planning_manifest, resolved_sfx=described
+        model,
+        request,
+        manifest=planning_manifest,
+        render_intent_evidence=evidence,
+        resolved_sfx=described,
+        model_resolved_sfx=model_described,
     )
     assert planning_manifest.manifest_hash == manifest.manifest_hash
     return planning_manifest, strategy
@@ -633,3 +831,32 @@ async def test_unmatched_description_still_fails_visibly(request_text: str) -> N
     assert strategy.licensed_sfx.effect_id not in {e.id for e in _LIVE_LIBRARY}
     with pytest.raises(CreatorSfxUnavailableError):
         compile_strategy_to_plan(planning_manifest, strategy)
+
+
+@pytest.mark.asyncio
+async def test_model_read_described_effect_resolves_from_the_whole_library() -> None:
+    """No "sound effect" wording, so only the model's grounded name is described."""
+
+    request = "Put a buzzer on every miss."
+    planning_manifest, strategy = await _plan_requested_sfx(
+        request,
+        model=_model_sfx("buzzer"),
+        evidence=CreatorRenderIntentEvidence(licensed_sfx=request),
+    )
+    plan = compile_strategy_to_plan(planning_manifest, strategy)
+    assert plan.strategy.licensed_sfx.effect_id == "buzz"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grounded", [True, False])
+async def test_grounded_decline_of_a_described_effect_wins(grounded: bool) -> None:
+    request = "I didn't ask you to add a buzzer sound effect."
+    _, strategy = await _plan_requested_sfx(
+        request,
+        evidence=CreatorRenderIntentEvidence(licensed_sfx=request) if grounded else None,
+    )
+    if grounded:
+        assert strategy.licensed_sfx is None
+    else:
+        # The refusal grammar can't see this decline; the model's reading can.
+        assert strategy.licensed_sfx.effect_id == "buzz"

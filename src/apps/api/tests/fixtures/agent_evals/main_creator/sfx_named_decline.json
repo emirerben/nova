@@ -1,0 +1,93 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-09-23-v35",
+  "input": {
+    "user_message": "Make a quick edit of the best sports moments. Don't add the Fah sound effect.",
+    "creator_context": "Personal sports-day footage from Ann Arbor.",
+    "item_context": "A short highlight montage from several games.",
+    "media_context": [
+      {
+        "media_id": "clip-football",
+        "kind": "video",
+        "creator_note": "football action"
+      },
+      {
+        "media_id": "clip-tennis",
+        "kind": "video",
+        "creator_note": "tennis action"
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-sports-day",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-football",
+          "kind": "video",
+          "duration_s": 12.0,
+          "label": "Football"
+        },
+        {
+          "media_id": "clip-tennis",
+          "kind": "video",
+          "duration_s": 10.0,
+          "label": "Tennis"
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "sfx-fah",
+          "kind": "sound_effect",
+          "label": "Fah"
+        },
+        {
+          "catalog_id": "sfx-rejection",
+          "kind": "sound_effect",
+          "label": "Rejection"
+        },
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Licensed sports pulse"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "edit_format:montage": {
+          "available": true
+        },
+        "sound_effects": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": null,\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"selected\",\n      \"story_structure\": [\n        \"Dynamic football highlight\",\n        \"Fast-paced tennis action\"\n      ],\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 12,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [\n        \"clip-football\",\n        \"clip-tennis\"\n      ],\n      \"optional_treatments\": [\n        \"transitions\",\n        \"looks\"\n      ],\n      \"licensed_sfx\": null,\n      \"rationale\": \"Cutting a fast-paced 12-second highlight reel of the best football and tennis moments set to a driving sports track. The pacing matches the 'quick edit' request, and the Fah sound effect has been explicitly excluded.\",\n      \"summary\": \"I'll create a quick, fast-paced montage of your best sports moments set to high-energy music, ensuring the Fah sound effect is completely excluded.\"\n    },\n    \"render_intent_evidence\": {\n      \"licensed_sfx\": \"Don't add the Fah sound effect.\"\n    }\n  }\n}",
+  "output": {},
+  "meta": {
+    "source": "live_capture",
+    "case": "sfx_named_decline",
+    "sfx_intent": {
+      "effect_id": null,
+      "grounded": true
+    },
+    "test_run_id": "main-creator-sfx-evidence-2026-09-24"
+  }
+}
