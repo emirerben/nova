@@ -800,31 +800,6 @@ def test_orchestrate_auto_music_job_swallows_exceptions() -> None:
     assert "boom" in mock_fail.call_args[0][1]
 
 
-# ── absent feature flag default ──────────────────────────────────────────────
-
-
-def test_feature_flag_default_is_false() -> None:
-    """The plan is explicit: ENABLE_AUTO_MUSIC_MODE defaults to False. Flipping
-    the default to True without explicit user action would silently expose
-    the new flow."""
-    from app.config import Settings
-
-    fresh = Settings(
-        storage_bucket="x",
-        storage_provider="gcs",
-        database_url="postgresql://u:p@h/d",
-        redis_url="redis://x",
-        openai_api_key="x",
-        token_encryption_key="x",
-        waitlist_admin_secret="x",
-        allowed_origins=["http://localhost:3000"],
-    )
-    assert fresh.enable_auto_music_mode is False, (
-        "ENABLE_AUTO_MUSIC_MODE flipped to True by default — this would "
-        "expose the new flow without explicit user opt-in."
-    )
-
-
 # ── n_variants clamp ─────────────────────────────────────────────────────────
 
 

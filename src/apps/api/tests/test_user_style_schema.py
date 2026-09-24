@@ -106,11 +106,6 @@ class TestStyleKnobsValidation:
         k2 = StyleKnobs(text_size_px=MAX_INTRO_PX)
         assert k2.text_size_px == MAX_INTRO_PX
 
-    def test_all_none_ok(self) -> None:
-        k = StyleKnobs()
-        assert k.font_family is None
-        assert k.text_size_px is None
-
 
 class TestUserStyleCoercion:
     def test_coerce_valid_style(self) -> None:

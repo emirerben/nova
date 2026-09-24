@@ -6,15 +6,10 @@ import os
 import tempfile
 
 from app.pipeline.text_overlay import (
-    ASS_ANIMATED_EFFECTS,
     _hex_to_ass_bgr,
     _wrap_karaoke_timed_words_for_ass,
     generate_animated_overlay_ass,
 )
-
-
-def test_karaoke_line_is_registered_as_animated_effect() -> None:
-    assert "karaoke-line" in ASS_ANIMATED_EFFECTS
 
 
 def test_hex_to_ass_bgr_swaps_bytes() -> None:

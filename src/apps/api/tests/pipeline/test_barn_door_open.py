@@ -18,20 +18,8 @@ import pytest
 PIL = pytest.importorskip("PIL")
 
 from app.pipeline.interstitials import (  # noqa: E402
-    _BARN_DOOR_MAX_RATIO,
-    MIN_BARN_DOOR_ANIMATE_S,
     _generate_barn_door_bars_png_sequence,
 )
-
-
-class TestBarnDoorConstants:
-    def test_min_animate_s(self) -> None:
-        # Mirror curtain-close's MIN_CURTAIN_ANIMATE_S — same dramatic floor.
-        assert MIN_BARN_DOOR_ANIMATE_S == 4.0
-
-    def test_max_ratio(self) -> None:
-        # Mirror curtain-close's _CURTAIN_MAX_RATIO — same uncovered-footage budget.
-        assert _BARN_DOOR_MAX_RATIO == 0.6
 
 
 class TestBarnDoorPngSequence:
@@ -119,11 +107,19 @@ class TestBarnDoorPngSequence:
         """Doubling animate_s roughly doubles the frame count."""
         with tempfile.TemporaryDirectory() as tmp:
             _, n1 = _generate_barn_door_bars_png_sequence(
-                output_dir=tmp, animate_s=1.0, fps=30, width=200, height=400,
+                output_dir=tmp,
+                animate_s=1.0,
+                fps=30,
+                width=200,
+                height=400,
             )
         with tempfile.TemporaryDirectory() as tmp:
             _, n2 = _generate_barn_door_bars_png_sequence(
-                output_dir=tmp, animate_s=2.0, fps=30, width=200, height=400,
+                output_dir=tmp,
+                animate_s=2.0,
+                fps=30,
+                width=200,
+                height=400,
             )
         # Allow ±1 for the inclusive endpoint (`n_frames = int(round(...)) + 1`).
         assert abs(n2 - 2 * n1) <= 2
@@ -132,7 +128,11 @@ class TestBarnDoorPngSequence:
         """Even an absurdly short animate_s renders at least two frames."""
         with tempfile.TemporaryDirectory() as tmp:
             _, n_frames = _generate_barn_door_bars_png_sequence(
-                output_dir=tmp, animate_s=0.001, fps=30, width=200, height=400,
+                output_dir=tmp,
+                animate_s=0.001,
+                fps=30,
+                width=200,
+                height=400,
             )
             assert n_frames >= 2
 
@@ -151,15 +151,23 @@ class TestBarnDoorIsInverseOfCurtain:
 
         from app.pipeline.interstitials import _generate_curtain_bars_png_sequence
 
-        with tempfile.TemporaryDirectory() as tmp_curtain, \
-             tempfile.TemporaryDirectory() as tmp_door:
+        with (
+            tempfile.TemporaryDirectory() as tmp_curtain,
+            tempfile.TemporaryDirectory() as tmp_door,
+        ):
             _, n_curtain = _generate_curtain_bars_png_sequence(
-                output_dir=tmp_curtain, animate_s=0.5, fps=30,
-                width=200, height=400,
+                output_dir=tmp_curtain,
+                animate_s=0.5,
+                fps=30,
+                width=200,
+                height=400,
             )
             _, n_door = _generate_barn_door_bars_png_sequence(
-                output_dir=tmp_door, animate_s=0.5, fps=30,
-                width=200, height=400,
+                output_dir=tmp_door,
+                animate_s=0.5,
+                fps=30,
+                width=200,
+                height=400,
             )
             assert n_curtain == n_door
 

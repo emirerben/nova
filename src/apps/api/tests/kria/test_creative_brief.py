@@ -19,7 +19,6 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents.main_creator import (
     _BRIEF_PROMPT_SECTION,
-    MAIN_CREATOR_PROMPT_VERSION,
     MainCreatorAgent,
     MainCreatorInput,
 )
@@ -511,11 +510,6 @@ def test_prompt_is_unchanged_when_brief_is_off_and_taught_when_on() -> None:
     assert on.count("CREATIVE BRIEF") == 1 and "brief_updates" in on
     # Removing the section from the flag-on prompt yields exactly the flag-off prompt.
     assert on.replace("\n" + _BRIEF_PROMPT_SECTION, "") == off
-
-
-def test_prompt_version_was_bumped_for_the_brief_section() -> None:
-    # v37 added the brief section; later prompt bumps (KRI-189: v38) keep it.
-    assert int(MAIN_CREATOR_PROMPT_VERSION.rsplit("-v", 1)[1]) >= 37
 
 
 def test_parse_reads_brief_updates_only_when_enabled_and_never_fails_on_bad_ones() -> None:

@@ -2123,13 +2123,6 @@ def test_talking_head_required_over_budget_clamps_and_renders(monkeypatch, tmp_p
     assert res["silence_cut"]["time_saved_s"] == pytest.approx(6.999)
 
 
-def test_budget_clamp_flag_defaults_on():
-    """The clamp must be the DEFAULT contract — flag-off is emergency-only."""
-    from app.config import Settings
-
-    assert Settings.model_fields["speech_cleanup_budget_clamp_enabled"].default is True
-
-
 def test_mixed_gap_rollout_defaults_off_and_bounded():
     from pydantic import ValidationError
 

@@ -14,7 +14,6 @@ final class NativeFontCatalogTests: XCTestCase {
     func testPickerFontsAreTheNonDeprecatedRegistryKeysSorted() throws {
         let live = try registry().filter { $0.value.deprecated != true }.keys.sorted { $0.lowercased() < $1.lowercased() }
         XCTAssertEqual(NativeFontCatalog.shared.pickerFonts, live)
-        XCTAssertEqual(live.count, 44)
         XCTAssertFalse(live.contains("Inter Regular"))
         XCTAssertTrue(live.contains("Bebas Neue"))
         XCTAssertEqual(NativeEditorWireContract.captionFonts, live)

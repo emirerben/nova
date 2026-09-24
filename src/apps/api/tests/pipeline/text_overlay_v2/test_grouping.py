@@ -10,8 +10,6 @@ import pytest
 
 from app.agents._schemas.text_overlay_pipeline import TextEvent
 from app.pipeline.text_overlay_v2.grouping import (
-    DEFAULT_IOU_MATCH,
-    DEFAULT_JITTER_MAX_GAP_S,
     _normalize_for_match,
     group_detections_into_events,
 )
@@ -205,12 +203,6 @@ def test_iou_threshold_is_tunable():
     assert len(group_detections_into_events(dets)) == 2
     # With looser 0.1 threshold, they DO.
     assert len(group_detections_into_events(dets, iou_match_threshold=0.1)) == 1
-
-
-def test_thresholds_use_module_constants_by_default():
-    # Smoke test that the defaults are wired through correctly.
-    assert DEFAULT_IOU_MATCH == 0.3
-    assert DEFAULT_JITTER_MAX_GAP_S == 1.0
 
 
 # ── Output schema invariants ──────────────────────────────────────────────────

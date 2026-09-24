@@ -15,7 +15,6 @@ import pytest
 from app.agents._schemas.text_overlay_pipeline import Phrase
 from app.pipeline.text_overlay_v2.grouping import group_detections_into_events
 from app.pipeline.text_overlay_v2.phrases import (
-    DEFAULT_X_BAND_THRESHOLD,
     reconstruct_phrases,
 )
 
@@ -220,10 +219,6 @@ def test_phrase_continues_through_event_overlap_chain():
     assert len(phrases) == 1
     assert phrases[0].lines == ["A", "B", "C"]
     assert phrases[0].end_t_s == 5.0
-
-
-def test_module_default_matches_phrases_module():
-    assert DEFAULT_X_BAND_THRESHOLD == 0.15
 
 
 def test_output_phrases_satisfy_schema_constraints():

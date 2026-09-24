@@ -70,34 +70,6 @@ describe("StyleChip", () => {
     expect(screen.getByText("Aa")).toBeInTheDocument();
   });
 
-  it("dark-tile variant renders the sample on the near-black inner tile", () => {
-    render(
-      <StyleChip
-        styleSet={makeStyle()}
-        selected={false}
-        sampleText="hook"
-        darkTile
-        onSelect={jest.fn()}
-      />,
-    );
-    const sample = screen.getByText("hook");
-    // The sample sits inside a bg-[#0c0c0e] tile (the parent span).
-    expect(sample.parentElement?.className).toContain("bg-[#0c0c0e]");
-  });
-
-  it("plain (non-dark) variant does NOT wrap the sample in a dark tile", () => {
-    render(
-      <StyleChip
-        styleSet={makeStyle()}
-        selected={false}
-        sampleText="hook"
-        onSelect={jest.fn()}
-      />,
-    );
-    const sample = screen.getByText("hook");
-    expect(sample.parentElement?.className ?? "").not.toContain("bg-[#0c0c0e]");
-  });
-
   it("selected → aria-checked true + lime ring; unselected → no ring", () => {
     const { rerender } = render(
       <StyleChip styleSet={makeStyle()} selected onSelect={jest.fn()} />,

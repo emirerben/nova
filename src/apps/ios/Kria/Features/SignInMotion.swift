@@ -1,8 +1,7 @@
 import SwiftUI
 
 /// Entrance stagger + ambient hero loop for `SignInView` (KRI-161). Kept as
-/// pure, testable timing/curve constants so `SignInMotionTests` can cover the
-/// values without SwiftUI.
+/// pure timing/curve constants, independent of SwiftUI.
 enum SignInMotion {
     enum Element: CaseIterable { case wordmark, hero, headline, promise, providers, footer }
 

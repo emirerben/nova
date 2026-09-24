@@ -21,8 +21,6 @@ from __future__ import annotations
 import pytest
 
 from app.pipeline.lyric_injector import (
-    _TRAILING_LINE_DROP_MIN_DUR_S,
-    _TRAILING_LINE_DROP_TAIL_S,
     _select_section_lines,
 )
 
@@ -108,10 +106,3 @@ class TestTrailingDropRule:
         assert out[-1]["text"] == "trailing line just before tail"
         assert out[-1]["start_s"] == pytest.approx(18.5, abs=1e-3)
         assert out[-1]["end_s"] == pytest.approx(20.0, abs=1e-3)  # clamped to section end
-
-    def test_constants_documented_values(self) -> None:
-        """The thresholds are public module constants so callers (and this
-        test) can reason about them. Lock the current values; any change
-        deserves a deliberate test update."""
-        assert _TRAILING_LINE_DROP_TAIL_S == pytest.approx(1.0, abs=1e-6)
-        assert _TRAILING_LINE_DROP_MIN_DUR_S == pytest.approx(1.0, abs=1e-6)

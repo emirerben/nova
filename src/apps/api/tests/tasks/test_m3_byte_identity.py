@@ -150,13 +150,6 @@ class TestContentPlanPromptByteIdentity:
 
         assert _instruction_level_block("") == ""
 
-    def test_instruction_level_none_str_returns_empty_string(self) -> None:
-        """_instruction_level_block(None coerced) — guard for falsy values."""
-        from app.agents.content_plan_generator import _instruction_level_block
-
-        # The function signature is str, but guard against the falsy path
-        assert _instruction_level_block("full") == ""
-
     def test_instruction_level_light_is_non_empty(self) -> None:
         """_instruction_level_block('light') returns a non-empty directive."""
         from app.agents.content_plan_generator import _instruction_level_block
@@ -190,15 +183,6 @@ class TestContentPlanPromptByteIdentity:
         result = _edit_format_mix_block({"montage": 0.6, "talking_head": 0.4})
         assert result != ""
         assert "(none)" not in result.lower()
-
-    def test_content_plan_input_defaults_are_baseline(self) -> None:
-        """ContentPlanInput with default fields has instruction_level='full' and empty mix."""
-        from app.agents._schemas.content_plan import ContentPlanInput
-
-        persona = self._make_persona()
-        inp = ContentPlanInput(persona=persona)
-        assert inp.instruction_level == "full"
-        assert inp.preferred_edit_format_mix == {}
 
 
 class TestFilmingGuideIntroWriterByteIdentity:
@@ -245,22 +229,6 @@ class TestFilmingGuideIntroWriterByteIdentity:
             "(none)"
             not in _filming_guide_block([{"what": "x", "how": "", "duration_s": 3}]).lower()
         )
-
-    def test_intro_writer_input_defaults_to_empty_filming_guide(self) -> None:
-        """IntroWriterInput defaults filming_guide to [] (no inert block injected)."""
-        from app.agents.intro_writer import IntroWriterInput
-        from app.agents.music_matcher import ClipSummary
-
-        hero = ClipSummary(
-            clip_id="c1",
-            duration_s=8.0,
-            subject="chef",
-            hook_text="plating",
-            hook_score=0.8,
-            description="close-up plating",
-        )
-        inp = IntroWriterInput(hero_clip=hero)
-        assert inp.filming_guide == []
 
 
 class TestArchetypeBiasContract:

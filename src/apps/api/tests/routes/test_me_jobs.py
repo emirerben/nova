@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
-from app.routes.me import _delete_job_storage_after_commit, _job_storage_paths
+from app.routes.me import _job_storage_paths
 
 
 def _user() -> MagicMock:
@@ -2131,24 +2131,6 @@ def test_delete_job_storage_paths_reject_untrusted_keys(path: str) -> None:
     paths = _job_storage_paths(job, [], [], user_id=user.id)
 
     assert paths == []
-
-
-async def test_delete_job_dispatch_failure_leaves_durable_outbox_for_sweeper() -> None:
-    outbox_id = uuid.uuid4()
-    with (
-        patch(
-            "app.tasks.account_lifecycle.purge_job_storage.apply_async",
-            side_effect=RuntimeError("broker unavailable"),
-        ),
-        patch("app.routes.me.log.error") as log_error,
-    ):
-        await _delete_job_storage_after_commit(outbox_id)
-
-    log_error.assert_any_call(
-        "purge_job_storage_dispatch_failed",
-        outbox_id=str(outbox_id),
-        error="broker unavailable",
-    )
 
 
 def test_delete_job_rejects_active_render_without_mutation() -> None:

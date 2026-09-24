@@ -733,9 +733,9 @@ covers.
   `DesignSystem/DesignTokens.swift`) is the only display type allowed in
   `SignInView.swift` and `AccountPrivacyViews.swift`; `KriaFont.display`
   (Fraunces) stays everywhere else, including the account-deletion flow, which
-  was split into its own `AccountDeletionView.swift` file specifically so this
-  rule can be source-scanned per file. Guard:
-  `Tests/KriaTests/SignInTypographyGuardTests.swift`.
+  was split into its own `AccountDeletionView.swift` file. Enforced by review
+  (no source-grep test); `SignInTypographyGuardTests.swift` only checks that
+  the bundled `Inter-Bold` face resolves.
 - **Motion:** `Features/SignInMotion.swift` defines the entrance stagger
   (`SignInMotion.Element` — wordmark → hero → headline → promise → providers →
   footer, each with its own delay) and the ambient hero loop constants
@@ -752,8 +752,7 @@ covers.
   through `SignInView(initialMessage:)`), `consent` (`AIConsentView`).
   `BrandPreviewHost` also honours `UI_TEST_DYNAMIC_TYPE_SIZE=accessibility5`
   (alongside the older `KRIA_BRAND_LARGE_TEXT=1` → `.accessibility3`).
-- Coverage: `Tests/KriaTests/SignInMotionTests.swift` (pure timing/curve
-  constants), `SignInTypographyGuardTests.swift`, and
+- Coverage: `SignInTypographyGuardTests.swift` (Inter-Bold font registered) and
   `Tests/KriaUITests/SignInUITests.swift` (provider/legal-link presence,
   email sheet, largest Dynamic Type reachability, Reduce Motion
   immediacy, error-message announcement). `scripts/ios/ui-test-groups.json`

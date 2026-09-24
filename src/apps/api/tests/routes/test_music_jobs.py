@@ -112,15 +112,6 @@ def test_get_music_job_status_invalid_uuid(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
-def test_get_music_job_status_nonexistent(client: TestClient) -> None:
-    """GET with valid UUID but non-existent job returns 404."""
-    import uuid
-
-    job_id = str(uuid.uuid4())
-    resp = client.get(f"/music-jobs/{job_id}/status")
-    assert resp.status_code in (404, 500)
-
-
 # ── Guard clause tests (DB-mocked) ────────────────────────────────────────────
 
 

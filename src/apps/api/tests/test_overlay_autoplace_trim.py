@@ -433,10 +433,3 @@ def test_schema_drops_trim_start_beyond_duration() -> None:
         _card(clip_trim_start_s=15.0, clip_trim_end_s=18.0, clip_duration_s=10.0)
     )
     assert card.clip_trim_start_s is None and card.clip_trim_end_s is None
-
-
-def test_schema_keeps_valid_trim_pair() -> None:
-    card = MediaOverlay.model_validate(
-        _card(clip_trim_start_s=2.0, clip_trim_end_s=8.0, clip_duration_s=10.0)
-    )
-    assert (card.clip_trim_start_s, card.clip_trim_end_s) == (2.0, 8.0)

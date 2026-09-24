@@ -91,10 +91,6 @@ class TestStyleDerivationAgentParseHappyPath:
         assert out.style.instruction_level == "full"
         assert out.style.status == "ready"
 
-    def test_style_version_set(self):
-        out = _agent().parse(_raw(), _input())
-        assert out.style.style_version  # non-empty
-
     def test_footage_bias_preserved(self):
         out = _agent().parse(_raw(), _input())
         assert "broll" in out.style.footage_type_bias

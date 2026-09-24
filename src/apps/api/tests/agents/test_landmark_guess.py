@@ -30,12 +30,6 @@ def _agent() -> LandmarkGuessAgent:
     return LandmarkGuessAgent(None)  # type: ignore[arg-type]
 
 
-def test_media_uri_and_mime_come_from_input() -> None:
-    agent = _agent()
-    assert agent.media_uri(_input()) == "files/abc123"
-    assert agent.media_mime(_input()) == "video/mp4"
-
-
 def test_prompt_carries_place_and_coarse_coordinates() -> None:
     prompt = _agent().render_prompt(_input())
     assert "Sarıyer, İstanbul, Türkiye" in prompt

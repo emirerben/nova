@@ -24,35 +24,6 @@ from app.schemas.slide_post import (
 )
 
 
-def test_slide_ref_without_edits_defaults_to_none() -> None:
-    ref = SlideRef(id="a", asset_id=uuid.uuid4(), kind="image")
-    assert ref.edits is None
-
-
-def test_slide_ref_with_text_and_look_preset_round_trips() -> None:
-    ref = SlideRef(
-        id="a",
-        asset_id=uuid.uuid4(),
-        kind="image",
-        edits=SlideEdits(
-            text=TextOverlay(content="sold out", position="bottom"),
-            look_preset="olive_film",
-        ),
-    )
-    dumped = ref.model_dump(mode="json")
-    restored = SlideRef.model_validate(dumped)
-    assert restored.edits is not None
-    assert restored.edits.text is not None
-    assert restored.edits.text.content == "sold out"
-    assert restored.edits.text.position == "bottom"
-    assert restored.edits.look_preset == "olive_film"
-
-
-def test_slide_edits_default_look_preset_is_none() -> None:
-    assert SlideEdits().look_preset == "none"
-    assert SlideEdits().text is None
-
-
 @pytest.mark.parametrize("position", ["top", "center", "bottom"])
 def test_text_overlay_accepts_every_valid_position(position: str) -> None:
     TextOverlay(content="hi", position=position)

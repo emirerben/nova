@@ -117,6 +117,12 @@ make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 - Kria gates: `make verify-kria`; iOS: `make ios-verify`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
 - Pre-PR gate: `bash scripts/preship-check.sh` — scoped ruff on changed files, tsc when web TS changed, drift vs origin/main, VERSION-slot check, CI `[skip-*]` marker list. Run before every PR.
 
+## Testing rules
+- **Never write unit tests after you write code** (they restate the implementation and pass by construction).
+- **Highly prefer E2E tests as the sole testing mechanism.** Use them to verify complex features work, and end with a verifiable, repeatable artifact (`make verify-overlays` `report.json` + `montage.png`, Playwright report/trace, XCUITest result bundle, `make local-render` MP4 + its command).
+- **If you must test a system in isolation, first write down all the ways it could fail, then write the code.**
+- Exempt (keep current): guard tests named in this file, cross-platform parity fixtures, `tests/evals/` fixtures (`require-eval-fixture.yml`). Prune audit: `docs/reviews/kri-198-test-prune.md`.
+
 ## Admin API access (for automation / Claude Code)
 Use `scripts/admin.py` instead of curling `/admin/*` with a raw token — the token stays in `.env`, never in commands or transcripts.
 

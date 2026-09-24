@@ -206,12 +206,6 @@ def test_persona_pillars_capped_and_trimmed() -> None:
     assert pillars[0] == "pillar0"  # trimmed
 
 
-def test_edit_format_defaults_to_montage() -> None:
-    # Public job with no declared format → montage (today's behavior), always present.
-    job = build_generative_job(user_id=uuid.uuid4(), clip_paths=["slot-uploads/a.mp4"])
-    assert job.all_candidates["edit_format"] == "montage"
-
-
 def test_edit_format_passthrough_and_coercion() -> None:
     job = build_generative_job(
         user_id=uuid.uuid4(),

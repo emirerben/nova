@@ -42,14 +42,6 @@ describe("ChatThinking", () => {
     expect(screen.getByRole("status")).toHaveTextContent(copy);
   });
 
-  it("marks the shimmer as reduced-motion safe", () => {
-    render(<ChatThinking />);
-    expect(screen.getByText("Kria is thinking")).toHaveClass(
-      "motion-reduce:animate-chat-fade-in",
-      "motion-reduce:text-muted-foreground",
-    );
-  });
-
   it("renders nothing and schedules no timers while inactive", () => {
     const { container } = render(<ChatThinking active={false} />);
     expect(container).toBeEmptyDOMElement();

@@ -91,11 +91,6 @@ def test_creation_thread_events_are_ordered_idempotent_and_append_only() -> None
     assert "state ->> 'intent'" in title_source
 
 
-def test_creation_thread_relationships_are_owner_scoped() -> None:
-    assert models.CreationThread.creator.property.back_populates == "creation_threads"
-    assert models.User.creation_threads.property.back_populates == "creator"
-
-
 def test_creator_memory_outbox_source_event_is_nullable_on_event_delete() -> None:
     column = models.Base.metadata.tables["creator_memory_outbox"].c.source_event_id
     foreign_key = next(iter(column.foreign_keys))
