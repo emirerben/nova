@@ -3417,8 +3417,15 @@ async def create_thread(
     if body.runtime_version == 2:
         # Runtime-v2 receipts are session-scoped. Provision the durable owner
         # with the thread so even the first read-only turn can persist a real
-        # execution receipt instead of reporting an in-memory intent ID.
-        session = CreatorAgentSession(creator_id=user.id, plan_item_id=item.id)
+        # execution receipt instead of reporting an in-memory intent ID. The
+        # session must carry the plan's ownership epoch: the approval fences
+        # (`_claim_approval_dispatch`) and the thread projection compare the
+        # two, and a plan past epoch 0 otherwise refuses every render as stale.
+        session = CreatorAgentSession(
+            creator_id=user.id,
+            plan_item_id=item.id,
+            ownership_epoch=int(plan.ownership_epoch or 0),
+        )
         db.add(session)
         await db.flush()
         thread.active_creator_agent_session_id = session.id
