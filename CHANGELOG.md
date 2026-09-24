@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.193.0] - 2026-09-24
+
+### Changed
+- feat(phone): duck Talking-edit sound effects that land on speech (KRI-181 follow-up) (#1212) <!-- release-pr: 1212 -->
+
 ## [0.76.192.0] - 2026-09-24
 
 ### Changed
