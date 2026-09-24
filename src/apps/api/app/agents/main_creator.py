@@ -247,7 +247,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         # `max_attempts - 1` is otherwise unreachable dead configuration.
         max_attempts=3,
         backoff_s=(2.0,),
-        timeout_s=35.0,
+        # Generation time grows with thinking + answer tokens: ~4.7 s + 5.7 ms
+        # per token in prod, up to 2 s slower (the latency model in
+        # tests/agents/test_thinking_budget.py). At that worst case a
+        # heavy-thinking reaction-beat plan takes ~38 s, and the full
+        # `max_output_tokens` budget runs out (~54 s) before this deadline, so a
+        # runaway call truncates (retryable) instead of ending outcome-unknown.
+        timeout_s=60.0,
         # Reserve output capacity for the full source manifest.
         thinking_level="low",
         sensitive_io=True,
@@ -260,7 +266,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
     Input = MainCreatorInput
     Output = MainCreatorOutput
     response_json = True
-    max_output_tokens = 4096
+    # Gemini 3 counts thinking against this budget. A reaction-beat plan alone
+    # runs ~2.4k answer tokens (KRI-172 football prompt), so 4,096 truncated any
+    # such turn that thought for more than ~1.7k tokens (prod thread 9b6594a6
+    # thought 3,047 and failed at MAX_TOKENS on 2026-09-24).
+    max_output_tokens = 8_192
 
     def required_fields(self) -> list[str]:
         return ["action"]
