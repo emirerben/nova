@@ -34,7 +34,9 @@ from app.services.nova_steps import (
     STEP_ALLOWLIST,
     NovaStep,
     _sanitize_event_data,
+    beat_miss_sentence,
     project_nova_steps,
+    render_notes_from_beat_receipt,
 )
 
 # ---------------------------------------------------------------------------
@@ -64,7 +66,7 @@ def test_allowlist_pin() -> None:
         "render_stage": frozenset({"*"}),
         "custom_effect": frozenset({"burn_start", "burn_done"}),
         "render": frozenset({"custom_effect_reapply_failed"}),
-        "phone": frozenset({"subtitled_overlay_grounding"}),
+        "phone": frozenset({"subtitled_overlay_grounding", "subtitled_reaction_beats"}),
     }
 
 
@@ -104,8 +106,14 @@ def test_sanitizer_strips_blocked_keys_directly() -> None:
 
 
 def test_sanitizer_drops_non_scalar_values() -> None:
-    safe = _sanitize_event_data({"nested": {"a": 1}, "listy": [1, 2], "ok_count": 5})
-    assert safe == {"ok_count": 5}
+    """A dict value is dropped outright. A flat list of scalars (KRI-178:
+    `missed`, a capped list of the creator's own trigger phrases) survives;
+    a list containing anything else (a nested dict) is still dropped whole,
+    same as before this extension."""
+    safe = _sanitize_event_data(
+        {"nested": {"a": 1}, "listy": [1, 2], "ok_count": 5, "bad_listy": [{"a": 1}]}
+    )
+    assert safe == {"listy": [1, 2], "ok_count": 5}
 
 
 def _job(
@@ -455,6 +463,261 @@ def test_subtitled_overlay_grounding_zero_and_zero_has_no_detail() -> None:
     assert len(steps) == 1
     assert steps[0].label == "Nova looked for moments to show your Visuals"
     assert steps[0].detail is None
+
+
+# ---------------------------------------------------------------------------
+# KRI-178: reaction beats (allowlist pass-through, humanizer, render_notes)
+# ---------------------------------------------------------------------------
+
+
+def test_subtitled_reaction_beats_placed_projects_with_kria_voiced_label() -> None:
+    """Any unplaced beat (even alongside placed ones) switches the summary
+    line to 'Placed N of M moments you named'."""
+    job = _job(
+        status="variants_ready",
+        pipeline_trace=[
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "phone",
+                "event": "subtitled_reaction_beats",
+                "data": {
+                    "placed": 2,
+                    "unplaced": 1,
+                    "missed": ["when he scores"],
+                    "missed_reasons": ["never_heard"],
+                    "closing": "placed",
+                },
+            }
+        ],
+    )
+    steps = project_nova_steps(job)
+    assert len(steps) == 1
+    assert steps[0].label == "Kria timed your photos and sounds to your words"
+    assert steps[0].detail == [
+        "Placed 2 of 3 moments you named",
+        'I never heard "when he scores", so its photo or sound wasn\'t shown',
+    ]
+
+
+def test_subtitled_reaction_beats_none_placed_projects_listened_for_label() -> None:
+    """`placed == 0` still gets a 'Placed 0 of N' summary line when there
+    are unplaced beats to report."""
+    job = _job(
+        pipeline_trace=[
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "phone",
+                "event": "subtitled_reaction_beats",
+                "data": {
+                    "placed": 0,
+                    "unplaced": 2,
+                    "missed": ["when he scores", "final whistle"],
+                    "closing": "none",
+                },
+            }
+        ],
+    )
+    steps = project_nova_steps(job)
+    assert len(steps) == 1
+    assert steps[0].label == "Kria listened for the moments you named"
+    assert steps[0].detail == [
+        "Placed 0 of 2 moments you named",
+        'I never heard "when he scores", so its photo or sound wasn\'t shown',
+        'I never heard "final whistle", so its photo or sound wasn\'t shown',
+    ]
+
+
+def test_subtitled_reaction_beats_missed_reasons_map_to_specific_sentences() -> None:
+    """Each `missed_reasons[i]` picks a DIFFERENT sentence for `missed[i]` --
+    the bug this follow-up fixes was one blanket "I never heard" sentence
+    regardless of why the beat actually missed."""
+    job = _job(
+        pipeline_trace=[
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "phone",
+                "event": "subtitled_reaction_beats",
+                "data": {
+                    "placed": 0,
+                    "unplaced": 5,
+                    "missed": ["a", "b", "c", "d", "e"],
+                    "missed_reasons": [
+                        "visual_not_in_pool",
+                        "sound_not_found",
+                        "no_safe_spot",
+                        "bind_failed",
+                        "never_heard",
+                    ],
+                    "closing": "none",
+                },
+            }
+        ],
+    )
+    steps = project_nova_steps(job)
+    assert steps[0].detail == [
+        "Placed 0 of 5 moments you named",
+        'Couldn\'t find the photo or sticker for "a" in your Visuals',
+        'Couldn\'t find a sound for "b" in the library',
+        'No room to show "c" without covering your face or the captions',
+        'Couldn\'t add "d" to the phone render',
+        'I never heard "e", so its photo or sound wasn\'t shown',
+    ]
+
+
+def test_subtitled_reaction_beats_missing_missed_reasons_defaults_to_never_heard() -> None:
+    """An event predating `missed_reasons` (or one that dropped it) still
+    projects the old, honest-for-that-case default."""
+    job = _job(
+        pipeline_trace=[
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "phone",
+                "event": "subtitled_reaction_beats",
+                "data": {"placed": 0, "unplaced": 1, "missed": ["x"], "closing": "none"},
+            }
+        ],
+    )
+    steps = project_nova_steps(job)
+    assert steps[0].detail == [
+        "Placed 0 of 1 moments you named",
+        'I never heard "x", so its photo or sound wasn\'t shown',
+    ]
+
+
+def test_subtitled_reaction_beats_unplaced_closing_adds_detail_line() -> None:
+    job = _job(
+        pipeline_trace=[
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "phone",
+                "event": "subtitled_reaction_beats",
+                "data": {"placed": 1, "unplaced": 0, "missed": [], "closing": "unplaced"},
+            }
+        ],
+    )
+    steps = project_nova_steps(job)
+    assert len(steps) == 1
+    assert steps[0].detail == ["1 moment placed", "Couldn't place the closing photo"]
+
+
+def test_beat_miss_sentence_reason_buckets() -> None:
+    """Pins every reason bucket `beat_miss_sentence` maps -- the fix for the
+    misleading blanket "I never heard" sentence."""
+    never_heard = 'I never heard "x", so its photo or sound wasn\'t shown'
+    assert beat_miss_sentence("x", None) == never_heard
+    assert beat_miss_sentence("x", "never_heard") == never_heard
+    assert beat_miss_sentence("x", "after_not_heard") == never_heard
+
+    visual_missing = 'Couldn\'t find the photo or sticker for "x" in your Visuals'
+    assert beat_miss_sentence("x", "visual_not_in_pool") == visual_missing
+    assert beat_miss_sentence("x", "visual_is_video") == visual_missing
+
+    assert (
+        beat_miss_sentence("x", "sound_not_found")
+        == 'Couldn\'t find a sound for "x" in the library'
+    )
+
+    no_room = 'No room to show "x" without covering your face or the captions'
+    assert beat_miss_sentence("x", "no_safe_spot") == no_room
+    assert beat_miss_sentence("x", "too_short") == no_room
+    assert beat_miss_sentence("x", "overlap") == no_room
+
+    generic = 'Couldn\'t add "x" to the phone render'
+    assert beat_miss_sentence("x", "bind_failed") == generic
+    assert beat_miss_sentence("x", "compile_dropped") == generic
+    assert beat_miss_sentence("x", "error: boom") == generic
+
+
+def test_subtitled_reaction_beats_zero_and_zero_has_no_detail() -> None:
+    job = _job(
+        pipeline_trace=[
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "phone",
+                "event": "subtitled_reaction_beats",
+                "data": {"placed": 0, "unplaced": 0, "missed": [], "closing": "none"},
+            }
+        ],
+    )
+    steps = project_nova_steps(job)
+    assert len(steps) == 1
+    assert steps[0].label == "Kria timed your photos and sounds to your words"
+    assert steps[0].detail is None
+
+
+def test_subtitled_reaction_beats_missed_list_survives_sanitizer() -> None:
+    """`missed` is a list, not a scalar -- confirms `_sanitize_event_data`'s
+    KRI-178 extension (a flat list of scalars) actually keeps it, while a
+    list containing a non-scalar item is still stripped entirely."""
+    assert _sanitize_event_data({"missed": ["a", "b"], "placed": 1}) == {
+        "missed": ["a", "b"],
+        "placed": 1,
+    }
+    assert _sanitize_event_data({"missed": [{"nested": True}]}) == {}
+
+
+def test_render_notes_from_beat_receipt_none_and_manual_and_empty() -> None:
+    assert render_notes_from_beat_receipt(None) == []
+    assert render_notes_from_beat_receipt({"matcher": "manual"}) == []
+    assert render_notes_from_beat_receipt({"matcher": "phrase", "placed": [], "unplaced": []}) == []
+
+
+def test_render_notes_from_beat_receipt_placed_and_missed_and_closing() -> None:
+    """An unplaced beat forces the 'Placed N of M' summary; an unplaced
+    closing whose reason is a no-room reason gets the specific sentence."""
+    receipt = {
+        "version": 1,
+        "matcher": "phrase",
+        "face_sampling": "ok",
+        "placed": [{"beat_id": "beat-0", "trigger": "goal", "at_s": 1.0, "end_s": 2.0}],
+        "unplaced": [{"beat_id": "beat-1", "trigger": "when he scores", "reason": "never_heard"}],
+        "closing": {"status": "unplaced", "reason": "no_safe_spot", "badge": "none"},
+    }
+    assert render_notes_from_beat_receipt(receipt) == [
+        "Placed 1 of 2 moments you named",
+        'I never heard "when he scores", so its photo or sound wasn\'t shown',
+        "Couldn't place the closing photo without covering your face or the captions",
+    ]
+
+
+def test_render_notes_from_beat_receipt_reason_specific_sentences() -> None:
+    """Each unplaced beat's OWN `reason` picks a different sentence -- not
+    the blanket "I never heard" the pre-fix code always used."""
+    receipt = {
+        "version": 1,
+        "matcher": "phrase",
+        "face_sampling": "ok",
+        "placed": [],
+        "unplaced": [
+            {"beat_id": "beat-0", "trigger": "goal photo", "reason": "visual_not_in_pool"},
+            {"beat_id": "beat-1", "trigger": "cheer sound", "reason": "sound_not_found"},
+            {"beat_id": "beat-2", "trigger": "final whistle", "reason": "overlap"},
+            {"beat_id": "beat-3", "trigger": "confetti", "reason": "compile_dropped"},
+        ],
+        "closing": {"status": "unplaced", "reason": "visual_not_in_pool", "badge": "none"},
+    }
+    assert render_notes_from_beat_receipt(receipt) == [
+        "Placed 0 of 4 moments you named",
+        'Couldn\'t find the photo or sticker for "goal photo" in your Visuals',
+        'Couldn\'t find a sound for "cheer sound" in the library',
+        'No room to show "final whistle" without covering your face or the captions',
+        'Couldn\'t add "confetti" to the phone render',
+        # A non-no-room closing reason keeps the generic sentence.
+        "Couldn't place the closing photo",
+    ]
+
+
+def test_render_notes_from_beat_receipt_failed_matcher_yields_empty() -> None:
+    receipt = {
+        "version": 1,
+        "matcher": "failed",
+        "face_sampling": "skipped",
+        "placed": [],
+        "unplaced": [],
+        "closing": {"status": "none", "badge": "none"},
+        "error": "boom",
+    }
+    assert render_notes_from_beat_receipt(receipt) == []
 
 
 def test_unknown_event_within_allowlisted_stage_is_dropped() -> None:

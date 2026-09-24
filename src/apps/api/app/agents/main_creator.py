@@ -33,9 +33,12 @@ from app.schemas.edit_proposal import (
     rejects_round_robin_cadence,
     resolve_video_reuse_policy,
 )
+from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 
-# Named sound effects are model-read with verbatim licensed_sfx evidence.
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-23-v35"
+# Named sound effects are model-read with verbatim licensed_sfx evidence (v35).
+# KRI-178: reaction beats (name/word-triggered photo/sticker + sound pop-ins,
+# plus a held closing shot) on a phone `subtitled` (Talking) edit (v36).
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v36"
 
 # Visual instructions are substituted only when the resolver flag is enabled;
 # the base prompt independently describes deferred transcript label intents.
@@ -116,6 +119,46 @@ say. `analysis_only_not_copy` evidence may inform which owned clips an attribute
 Not having that text is NEVER a reason to ask the creator: a described label or caption is
 complete as an intent, the server reads each clip's footage to fill in the value, and it asks
 the creator itself only when the footage cannot answer. Propose the strategy with the intent.
+""".strip("\n")
+
+# KRI-178: name/word-triggered photo/sticker + sound pop-ins on a phone
+# `subtitled` (Talking) edit, plus a held closing shot. Rendered INSIDE the
+# strategy-authoring rules (the `$reaction_beats_section` slot, right after
+# `$clip_intents_section`) ONLY when the `reaction_beats` capability is
+# available on this manifest; "" otherwise, so the rest of the prompt is
+# untouched byte-for-byte on every other manifest (including flag off).
+_REACTION_BEATS_PROMPT_SECTION = """
+REACTION BEATS (iPhone Talking only)
+When the creator wants a photo/sticker or sound effect to pop up at a specific spoken moment
+("pop up his photo when I say his name", "play a buzzer when I say no after Mason Greenwood"),
+set `reaction_beats`: up to 24 objects, each {"beat_id": "short-slug", "trigger": "the exact
+words to listen for, in the creator's own language -- a name as they say it, or 'number three'
+for a spoken number", "after": "only count `trigger` when heard after this phrase, else null"
+(e.g. "no" after "Mason Greenwood"), "occurrence": "first"|"every", "visual_id": "an owned
+image's media_id, or null", "visual_role": "photo"|"sticker", "sound": "a sound_effect
+catalog_id from the manifest's catalog if one matches, else the creator's own words such as
+\"buzzer\"/\"ding\", or null", "hold_s": seconds on screen, or null for the server default}.
+Every beat needs a `visual_id` or a `sound` (or both). Image media ids are opaque (e.g.
+"asset-3f1c2a..."), never a filename -- find `visual_id` by matching what the creator named
+against the IMAGE entries in `media_context`: its `filename` (e.g. "02_greenwood.png"), its
+`creator_context`, or its `analysis_only_not_copy` evidence, whichever one matches -- then copy
+THAT entry's exact `media_id` verbatim. Never invent, shorten, or guess an id, and never use a
+filename or label as the id itself. A player's own photo (filename e.g. "02_greenwood.png") is
+`visual_role` "photo"; a sticker such as a check/X/badge (filename e.g. "03_reject_x.png") is
+"sticker". When the creator wants to end on a specific photo ("finish on Salah's photo with
+the GOAT badge, with no extra clip after it"), set `closing_media`: {"visual_id": "...",
+"badge_visual_id": "... or null", "from_trigger": "the phrase to hold from the last time it's
+said, or null for the last few seconds"} -- resolved the same way, by matching `media_context`.
+Example -- "pop up his photo when I say Mason Greenwood; when I say no after that, show the
+red X and play a buzzer" => reaction_beats: [{"beat_id": "greenwood", "trigger": "Mason
+Greenwood", "visual_id": "<the matching media_context entry's media_id>", "visual_role":
+"photo"}, {"beat_id": "greenwood-no", "trigger": "no", "after": "Mason Greenwood", "visual_id":
+"<the X sticker entry's media_id>", "visual_role": "sticker", "sound": "buzzer"}].
+Never set `licensed_sfx` on this edit once this capability is available -- beats place sound
+at the exact moments the creator named instead. A bare "add fun sound effects" with no named
+spoken moment adds NO beats; say in `summary` that only sounds tied to the moments the creator
+named are added on iPhone. This edit always stays `edit_format: "subtitled"` with no
+`opening_title`.
 """.strip("\n")
 
 
@@ -203,6 +246,19 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             story_shape_section=(
                 _STORY_SHAPE_PROMPT_SECTION
                 if _story_shapes_available(input.capability_manifest)
+                else ""
+            ),
+            # KRI-178: only teach reaction beats when the manifest actually
+            # advertises the capability -- "" otherwise, byte-identical to
+            # before this field existed (flag off, cloud, non-subtitled, or
+            # any other reason the capability is unavailable). The template
+            # concatenates this slot directly onto `$clip_intents_section`'s
+            # line (no line of its own) so an empty value never adds a blank
+            # line; the leading "\n" here supplies the separator only when
+            # there is real content to show.
+            reaction_beats_section=(
+                "\n" + _REACTION_BEATS_PROMPT_SECTION
+                if _reaction_beats_available(input.capability_manifest)
                 else ""
             ),
         )
@@ -343,6 +399,21 @@ def _story_shapes_available(manifest: ResolvedCreatorManifest) -> bool:
         return False
     guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
     return bool(guided is not None and guided.available)
+
+
+def _reaction_beats_available(manifest: ResolvedCreatorManifest) -> bool:
+    """KRI-178: whether the REACTION BEATS prompt guidance is worth showing
+    this turn -- purely a read of the manifest's own resolved capability
+    (`app.services.creator_capabilities.resolve_creator_manifest` is the
+    single source of truth for the flag/format/device gate). This only
+    controls whether the MODEL is invited to author beats; the compiler
+    (`compile_strategy_to_plan`'s `_repair_creator_reaction_beats`) never
+    trusts the model's own choice alone and repairs an unavailable/unresolved
+    beat away regardless of whether the model saw this guidance.
+    """
+
+    capability = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    return bool(capability is not None and capability.available)
 
 
 def _repair_action_envelope(action: object) -> object:

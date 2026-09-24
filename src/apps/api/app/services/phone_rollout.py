@@ -312,6 +312,51 @@ def phone_subtitled_overlays_supported() -> bool:
     )
 
 
+# Device features the reaction-beats lane needs on top of the overlay lane:
+# `soundEffects` (SFX-track compositing) and `audioMix` (already required by
+# the overlay lane, listed again here so this tuple alone documents what the
+# beats lane specifically adds).
+PHONE_SUBTITLED_SFX_FEATURES: tuple[str, ...] = ("soundEffects", "audioMix")
+
+
+def phone_subtitled_reaction_beats_supported() -> bool:
+    """Single source of truth for "can a phone-rendered `subtitled`
+    (talk-to-camera) edit carry name-triggered reaction beats (photo/sticker
+    pop-ins + sound effects timed to the transcript, plus a held closing
+    shot) right now" (KRI-178).
+
+    Consulted by `app.services.creator_capabilities.resolve_creator_manifest`
+    (whether `reaction_beats` is advertised on a phone `subtitled` manifest
+    instead of the blanket `unsupported_on_phone`/`phone_talking_only`
+    refusal) and by `app.tasks.generative_build._run_phone_subtitled_job`
+    (whether the worker grounds reaction beats from the transcript at all).
+    A manifest that advertises the lane while the worker skips it -- or vice
+    versa -- is exactly the drift this helper exists to prevent.
+
+    True iff ALL of:
+      - `phone_subtitled_reaction_beats_enabled` (KRI-178 lane flag).
+      - `phone_subtitled_overlays_supported()` (the beats lane reuses the
+        KRI-176 overlay lane's grounding primitives -- media_overlays, and
+        every feature in `PHONE_SUBTITLED_OVERLAY_FEATURES`).
+      - `sound_effects_enabled` (the generic SFX feature gate, cloud and
+        phone alike).
+      - every feature in `PHONE_SUBTITLED_SFX_FEATURES` is in
+        `phone_render_verified_features` (device-parity gate; a rollout flag
+        alone never skips it).
+
+    Deliberately says nothing about the edit format or clip count -- callers
+    combine it with their own `subtitled` shape check.
+    """
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_subtitled_reaction_beats_enabled
+        and phone_subtitled_overlays_supported()
+        and settings.sound_effects_enabled
+        and all(feature in verified for feature in PHONE_SUBTITLED_SFX_FEATURES)
+    )
+
+
 def phone_render_supported_formats() -> frozenset[str]:
     """The single source of truth for "which edit formats can render on the
     phone for THIS deployment, right now" -- settings-aware, unlike the
