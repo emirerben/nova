@@ -192,6 +192,47 @@ pytest tests/evals/test_clip_metadata_evals.py --eval-mode=live \
 
 The estimate is intentionally pessimistic: input tokens ≈ chars/3 of (input payload + 4KB prompt overhead), output tokens fixed at 1500 per call. Replay mode skips the check entirely.
 
+## Request-following eval (`request_following/`)
+
+The agent evals above grade each agent alone. This one asks the question KRI-185 slipped
+through: **did the finished edit do what the creator asked, across several turns?** A fixture
+is one creator thread over one footage set; every requirement in it has a deterministic
+checker, and the KPI is the share of requirements `met`, reported per request type.
+
+```bash
+cd src/apps/api
+pytest tests/evals/request_following tests/kria/test_replay_thread.py -v      # CI, offline
+python -m tests.evals.request_following.report --phase P0 \
+  --out ../../../docs/reviews/kri-185/request-following-P0.md                  # KPI per phase
+```
+
+- **Fixtures** live in `tests/fixtures/request_following/`: `footage/<id>.json` (clip
+  understanding + facts as JSON, never video) and `threads/<id>.json` (turns, `requirements[]`,
+  each with kind, scope, request type and a checker id from `checkers.CHECKERS`).
+- **Scorer:** `scorer.score(requirements, final_plan, reply, footage=...)` returns `met | partial |
+  unmet` per requirement. It also flags **reply overclaims**: the reply names a requirement
+  (`claim_terms`) that was not met, with no "not done" marker.
+  State requirements are re-judged on every later edit; event requirements ("do it again") are
+  judged once, on the turn they were asked.
+- **Runner:** `runner.run_thread` replays each turn through the real path. `v1_copilot` turns run
+  the recorded model text through `EditCopilotAgent` -> `_honest_outcome` -> `compile_editor_ops`,
+  so a change to any of them moves the score; `v2_kria` turns go through
+  `app.kria.replay.replay_thread` (multi-turn, state carried); `recorded` turns use the stored
+  outcome. `mode="live"` swaps the recorded model text for a real Gemini call on `v1_copilot`
+  turns; use the same paid-run guards as the rest of this directory. **Run it live before merging
+  any planner, copilot or prompt change.**
+- **Provenance.** `east_run` is a read-only prod capture (KRI-185, regenerate with
+  `python -m tests.evals.request_following.capture_east_run`). The other twelve are authored
+  briefs (`author_fixtures.py`) with a hand-built reference edit: they prove each checker can be
+  passed and can fail, and stay out of the KPI (`awaiting recording`) until P6b records outcomes.
+- **Baseline pin.** `east_run.json` stores `baseline` statuses and `test_east_run_baseline_is_pinned`
+  fails when a code change moves one. That is the intended signal: review the movement, then
+  re-stamp with `runner.stamp_baseline`. The committed report
+  `docs/reviews/kri-185/request-following-baseline.md` is kept in sync by
+  `test_committed_baseline_report_matches_the_replay`.
+- **Wrong-landmark rate** (`scorer.wrong_landmark_rate`) is a stub: it reports `n/a` until P3
+  supplies inferred landmark facts and fixtures carry `true_landmark` ground truth.
+
 ## CI
 
 - **Default CI:** runs structural-only on every PR (~30s, no secrets).

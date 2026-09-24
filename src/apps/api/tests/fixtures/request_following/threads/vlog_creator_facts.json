@@ -1,0 +1,89 @@
+{
+  "fixture_id": "vlog_creator_facts",
+  "provenance": "authored",
+  "footage": "vlog",
+  "description": "Name and day count the creator supplied must appear on screen.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "I'm Ece and this is day 3 of my Saturday reset. Put that in the edit.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "facts",
+      "kind": "text",
+      "scope": "global",
+      "request_type": "creator_facts",
+      "checker": "text_contains",
+      "params": {
+        "terms": [
+          "Ece",
+          "day 3"
+        ],
+        "scope": "any"
+      },
+      "source": "I'm Ece and this is day 3 of my Saturday reset. Put that in the edit.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "V1",
+          "start_s": 0.0,
+          "end_s": 2.0
+        },
+        {
+          "clip_id": "V2",
+          "start_s": 2.0,
+          "end_s": 5.0
+        },
+        {
+          "clip_id": "V3",
+          "start_s": 5.0,
+          "end_s": 7.0
+        },
+        {
+          "clip_id": "V4",
+          "start_s": 7.0,
+          "end_s": 10.5
+        },
+        {
+          "clip_id": "V5",
+          "start_s": 10.5,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "V6",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "V7",
+          "start_s": 17.0,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "V8",
+          "start_s": 19.5,
+          "end_s": 22.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Ece · Day 3 of my reset",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 22.5
+    },
+    "reply": "Added \"Ece · Day 3 of my reset\" as the title."
+  }
+}
