@@ -1067,7 +1067,8 @@ before planning with its own copy, or fails the job (`phone_plan_unsupported`).
   it out of every cloud renderer. A plan approved around media the phone can't
   draw is marked stale and replanned, never rendered in the cloud.
   `GET /capabilities` returns `runtime_versions: [1]` for phone-enabled
-  accounts, because runtime v2 has no approved-plan path to a device job.
+  accounts unless `KRIA_RUNTIME_V2_PHONE_ENABLED` covers them (see
+  "Runtime v2 on the phone" below).
 - **Compile.** The worker hashes each Visual the approved timeline shows, at
   its pinned generation, into private `_phone_visuals_v1` job state
   (`services/phone_visuals.py`; 25 MiB cap for photos, 512 MiB for videos, one
@@ -1170,7 +1171,7 @@ update:
 
 1. Merge the server change with both features absent. Pool media stays out of
    phone plans. What does change for pilot accounts at merge: the manifest lane
-   clamps, editor fences, truthful refusal copy, `runtime_versions: [1]`, the
+   clamps, editor fences, truthful refusal copy, `runtime_versions: [1]` (until `KRIA_RUNTIME_V2_PHONE_ENABLED`), the
    thread stamp (inert until a kind is verified) and the crop/speed rejection.
    The black alpha matte changes every cloud guided-story render of a
    transparent photo.
@@ -1722,3 +1723,62 @@ checked alongside the request identity before the editor accepts publication.
 Deploy the API and worker first, then distribute the iOS build that decodes the
 optional status fields and presents typed save-recovery messages. Keep existing
 verified-feature and rollout settings synchronized across API and worker.
+
+## Runtime v2 on the phone (KRI-187)
+
+Phone-pilot accounts used to be pinned to runtime v1. With
+`KRIA_RUNTIME_V2_PHONE_ENABLED=true` (and `KRIA_RUNTIME_V2_ENABLED=true`) the
+capabilities gate offers them `[1, 2]`; the app follows the advertised list, so
+new phone threads are created on v2. `KRIA_RUNTIME_V2_PHONE_USER_IDS` (JSON
+list, `[]` = every phone account) narrows the flag to named accounts so a device
+check can run in prod. `runtime_version` is fixed at thread creation, so
+existing v1 threads stay v1 in both directions.
+
+**Strategy approval -> device job.** `execute_kria_approval` calls
+`dispatch_item_render_for(..., bypass_guided_edit_gate=True,
+allow_phone_unapproved_montage=True)`. A v2 approval has no approved guided
+proposal, which the phone gate normally requires (`unapproved_guided`). For a
+montage-family format on a covered account the gate lets it through and the
+worker runs `_run_phone_montage_job` (decisions-only, pins the device request,
+`Job.status = awaiting_device`). Any other caller, an uncovered account, or the
+flag off keeps the refusal byte-identically. A refused dispatch records its
+`phone_gate` reason on the execution error (`reason`). Formats that still need
+an approved proposal (narrated with voiceover, guided voiceover) are not
+reachable from v2 yet.
+
+**Editor approval on a device variant.** The claim runs `prepare_editor_commit`,
+which routes a `render_destination == "device"` variant through
+`prepare_phone_editor_commit` (revision N+1, `awaiting_device`). No cloud task is
+enqueued; the phone polls the new recipe. The claim stores the pinned
+`device_recipe_revision` on the execution's `editor_prep`. A refusal
+(`unsupported_phone_edit`, `phone_editor_media_unavailable`) cancels the
+approval and posts a plain assistant reply instead of failing the task, which
+the reconciler would republish forever. The refusal is logged
+(`kria_device_edit_refused`); a `baseline_conflict` (the video was saved on the
+phone after the draft) gets its own "video changed" reply.
+
+**Observation.** `_observe_dispatched_execution` reads the device record: a
+non-published phase is `pending` (never failed), `published` completes the
+execution (matched by recipe revision, because the phone publishes under its own
+upload-attempt id), and `needs_attention` (client report or the 24h reaper)
+fails it with `device_render_failed`. `Job.status` stays `awaiting_device` on a
+device failure, so the record is the only signal. The failure reply uses
+`recovery: "manual"` and tells the creator to tap Retry on the phone (a chat retry
+cannot recover a device render). An editor execution with no render section
+pinned no revision and is not settled from the device record. A later app-side
+retry re-pins the recipe but does not reopen an already-failed execution.
+Known limits: the reconciler observes at most 50 dispatched executions per sweep
+(oldest first), so many long-pending device renders can delay newer ones.
+
+**Rollback.** `fly secrets set KRIA_RUNTIME_V2_PHONE_ENABLED=false --app
+nova-video` + restart api and worker. Phone accounts are offered `[1]` again
+and new threads are created on v1. A phone thread already on v2 can still make
+device chat edits (editor approvals are not flag-gated), but a new *strategy*
+approval on it is refused as `unapproved_guided` until the flag is back on.
+`POST /creation-threads` with `runtime_version=2` is not refused for a phone
+account while the flag is off (only `/capabilities` is gated); a client that
+ignores the advertised list gets a v2 thread with that limitation.
+
+**Device check (human).** On a physical device with the allowlist set to your
+account: new phone thread -> brief -> approve plan -> device render -> chat edit
+-> approve -> device re-render, entirely on v2.

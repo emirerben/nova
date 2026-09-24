@@ -1290,6 +1290,7 @@ def _dispatch_item_render(
     *,
     ownership_epoch: int,
     bypass_guided_edit_gate: bool = False,
+    allow_phone_unapproved_montage: bool = False,
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
@@ -1321,6 +1322,14 @@ def _dispatch_item_render(
     draft_edit_proposal's GUIDED_AUTO_DESIGN_ENABLED fallback. These paths have
     no approved guided proposal. Zero registered pool assets is rechecked under
     the item lock; ordinary Generate callers must leave this False.
+
+    ``allow_phone_unapproved_montage`` (KRI-187): the runtime-v2 approval path
+    has no approved guided proposal to hand a phone job, so without this a
+    montage-family phone dispatch is refused as ``unapproved_guided``. True
+    (with ``bypass_guided_edit_gate`` and the account covered by
+    ``settings.kria_runtime_v2_phone_for``) lets that one shape through to the
+    worker's decisions-only ``_run_phone_montage_job``. False (default) keeps
+    every other caller's gate byte-identical.
     """
     from app.agents._schemas.edit_format import (  # noqa: PLC0415
         coerce_edit_format,
@@ -1750,8 +1759,16 @@ def _dispatch_item_render(
                 # co-requirements, not a substitute for it).
                 phone_gate = "guided_voiceover_unavailable"
                 raise ValueError("phone rendering does not yet support guided-story narration")
+            v2_phone_montage = (
+                guided_applicable
+                and approved_proposal is None
+                and allow_phone_unapproved_montage
+                and bypass_guided_edit_gate
+                and not guided_voiceover
+                and settings.kria_runtime_v2_phone_for(plan.user_id)
+            )
             if guided_applicable:
-                if approved_proposal is None:
+                if approved_proposal is None and not v2_phone_montage:
                     phone_gate = "unapproved_guided"
                     raise ValueError("analysis proxies require an approved phone edit plan")
             else:
@@ -2205,6 +2222,7 @@ def dispatch_item_render_for(
     expected_ownership_epoch: int | None = None,
     *,
     bypass_guided_edit_gate: bool = False,
+    allow_phone_unapproved_montage: bool = False,
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
@@ -2531,6 +2549,7 @@ def dispatch_item_render_for(
             persona_data,
             ownership_epoch=ownership_epoch,
             bypass_guided_edit_gate=bypass_guided_edit_gate,
+            allow_phone_unapproved_montage=allow_phone_unapproved_montage,
             creator_strategy=creator_strategy,
             creator_clip_order=creator_clip_order,
             creator_request=creator_request,

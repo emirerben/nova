@@ -42,6 +42,8 @@ class CopilotTurnBody(BaseModel):
     client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
     message: str = Field(default="", max_length=2000)
     turns: list[dict] = Field(default_factory=list, max_length=12)
+    # KRI-186: the thread's first creator brief (chat-thread callers only).
+    original_request: str | None = Field(default=None, max_length=2000)
     snapshot: dict = Field(default_factory=dict)
     # Contract v2 distinguishes a server proposal from a locally staged edit.
     # Default to v1 so an already-open pre-v2 browser remains compatible while
@@ -69,6 +71,8 @@ class CopilotTurnResponse(BaseModel):
     rejection_reasons: list[dict[str, str]] = []
     clarification_context: dict | None = None
     pending_actions: list[dict] = []
+    # KRI-186: parts of the message that did not become an op (see the agent).
+    unmet_requests: list[dict[str, str]] = []
 
 
 _SUCCESS_WORDS = re.compile(
@@ -187,6 +191,7 @@ async def run_copilot_turn(
         utterance=body.message,
         prior_turns=body.turns[:12],
         variant_snapshot=body.snapshot,
+        original_request=body.original_request,
     )
 
     try:
@@ -232,4 +237,5 @@ async def run_copilot_turn(
             output.clarification_context if outcome == "clarification" else None
         ),
         pending_actions=(output.pending_actions if outcome == "clarification" else []),
+        unmet_requests=output.unmet_requests,
     )
