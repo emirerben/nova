@@ -172,6 +172,10 @@ public protocol WaveformExtracting: Sendable { func extract(asset: URL, bucketCo
 #if canImport(AVFoundation)
 @MainActor public struct AVFoundationProxyGenerator: ProxyGenerating {
     public let preset: ProxyPreset
+    /// The frame rate every proxy is built at (`videoComposition.frameDuration`). Callers describing a
+    /// proxy should report this, not re-measure `nominalFrameRate`: that is a Float32 frames-per-duration
+    /// ratio and reads 30.0000019 for some exact-30 fps proxies (KRI-180).
+    nonisolated public static let proxyFrameRate: Int32 = 30
     public init(preset: ProxyPreset = .default) { self.preset = preset }
     public func makeProxy(for asset: URL, destination: URL, progress: (@Sendable (Double) -> Void)? = nil) async throws -> URL {
         // An already-cancelled caller must not start a full transcode: `cancelExport()` issued before
@@ -193,7 +197,7 @@ public protocol WaveformExtracting: Sendable { func extract(asset: URL, bucketCo
                 .concatenating(CGAffineTransform(translationX: (renderSize.width - orientedSize.width * scale) / 2, y: (renderSize.height - orientedSize.height * scale) / 2))
             let videoComposition = AVMutableVideoComposition()
             videoComposition.renderSize = renderSize
-            videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+            videoComposition.frameDuration = CMTime(value: 1, timescale: Self.proxyFrameRate)
             let instruction = AVMutableVideoCompositionInstruction()
             instruction.timeRange = CMTimeRange(start: .zero, duration: try await avAsset.load(.duration))
             let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: sourceTrack)

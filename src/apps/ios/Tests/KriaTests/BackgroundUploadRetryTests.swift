@@ -885,6 +885,114 @@ extension BackgroundUploadRetryTests {
         XCTAssertTrue(restored.contains("attached"), "an attached clip must still show as chosen after a relaunch")
     }
 
+    // MARK: KRI-180: a failed clip stays ticked in the picker and used to be re-attempted on every change
+
+    private struct Unreadable: Error {}
+
+    /// Chooses `identifier` with a `loadFile` that fails, counting how often Photos was asked for the file.
+    private func selectFailing(_ h: SelectionHarness, _ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil, loads: LoadCounter) {
+        h.coordinator.select(.init(assetIdentifier: identifier, projectID: h.projectID, role: role, purpose: .cloudRenderSource, itemID: itemID, limit: nil, attachedMediaIDs: []), debounce: .zero) {
+            loads.count += 1
+            throw Unreadable()
+        }
+    }
+
+    @MainActor private final class LoadCounter { var count = 0 }
+
+    /// REGRESSION: the picker re-diffs on every tap, and the failed asset (still ticked, no longer in the
+    /// ledger) read as newly chosen each time. Each pass exported the file again and stacked another error.
+    func testReSelectingAFailedAssetDoesNotRetryItOrStackAnotherError() async throws {
+        let h = harness()
+        let loads = LoadCounter()
+        selectFailing(h, "bad", loads: loads)
+        let settled = await waitUntil { h.coordinator.failures.count == 1 }
+        XCTAssertTrue(settled)
+
+        for _ in 0..<8 {
+            selectFailing(h, "bad", loads: loads)   // what each later picker change does
+            try await Task.sleep(for: .milliseconds(30))
+        }
+
+        XCTAssertEqual(h.coordinator.failures.count, 1, "one line per failed clip, not one per tap")
+        XCTAssertEqual(loads.count, 1, "the failed clip must not be exported from Photos again")
+    }
+
+    func testEachFailedAssetKeepsExactlyOneLine() async throws {
+        let h = harness()
+        let loads = LoadCounter()
+        selectFailing(h, "bad-1", loads: loads)
+        selectFailing(h, "bad-2", loads: loads)
+        let settled = await waitUntil { h.coordinator.failures.count == 2 }
+        XCTAssertTrue(settled)
+
+        for _ in 0..<5 {
+            selectFailing(h, "bad-1", loads: loads)
+            selectFailing(h, "bad-2", loads: loads)
+            try await Task.sleep(for: .milliseconds(30))
+        }
+
+        XCTAssertEqual(h.coordinator.failures.count, 2)
+        XCTAssertEqual(loads.count, 2)
+    }
+
+    /// A failure that DID get past the guard (the line was dismissed, then the asset chosen again) must
+    /// replace, not add to, whatever line the same asset already has.
+    func testAFailureForTheSameAssetReplacesItsEarlierLine() async throws {
+        let h = harness()
+        let loads = LoadCounter()
+        selectFailing(h, "bad", loads: loads)
+        let settled = await waitUntil { h.coordinator.failures.count == 1 }
+        XCTAssertTrue(settled)
+        let first = try XCTUnwrap(h.coordinator.failures.first)
+
+        h.coordinator.dismissFailure(id: first.id)
+        selectFailing(h, "bad", loads: loads)
+        let retried = await waitUntil { loads.count == 2 && h.coordinator.failures.count == 1 }
+        XCTAssertTrue(retried, "dismissing makes it a real retry")
+
+        XCTAssertNotEqual(h.coordinator.failures.first?.id, first.id, "a new attempt, a single line")
+    }
+
+    func testUnTickingAFailedAssetClearsItsErrorAndTickingItAgainRetries() async throws {
+        let h = harness()
+        let loads = LoadCounter()
+        selectFailing(h, "bad", loads: loads)
+        let settled = await waitUntil { h.coordinator.failures.count == 1 }
+        XCTAssertTrue(settled)
+
+        h.coordinator.pruneSelectionFailures(projectID: h.projectID, role: .clip, itemID: nil, chosen: [])
+        XCTAssertTrue(h.coordinator.failures.isEmpty, "un-ticked: its error goes with it")
+
+        selectFailing(h, "bad", loads: loads)
+        let retried = await waitUntil { loads.count == 2 && h.coordinator.failures.count == 1 }
+        XCTAssertTrue(retried, "ticked again: a real retry")
+    }
+
+    func testPruningKeepsTickedAssetsAndOtherRolesAndProjects() async throws {
+        let h = harness()
+        let loads = LoadCounter()
+        selectFailing(h, "still-ticked", loads: loads)
+        selectFailing(h, "as-visual", role: .visual, itemID: "item-1", loads: loads)
+        let settled = await waitUntil { h.coordinator.failures.count == 2 }
+        XCTAssertTrue(settled)
+        h.coordinator.reportFailure(projectID: UUID(), role: .clip, filename: "elsewhere.mov", message: "other project")
+        h.coordinator.reportFailure(projectID: h.projectID, role: .clip, filename: "Selected item", message: "no asset key")
+
+        h.coordinator.pruneSelectionFailures(projectID: h.projectID, role: .clip, itemID: nil, chosen: ["still-ticked"])
+
+        XCTAssertEqual(h.coordinator.failures.count, 4, "still ticked, other role, other project and keyless lines all stay")
+    }
+
+    func testFailuresWithoutAnAssetKeyStillDedupeByIDOnly() {
+        let h = harness()
+        let id = UUID()
+        h.coordinator.reportFailure(id: id, projectID: h.projectID, role: .clip, filename: "a", message: "one")
+        h.coordinator.reportFailure(id: id, projectID: h.projectID, role: .clip, filename: "a", message: "two")
+        h.coordinator.reportFailure(projectID: h.projectID, role: .clip, filename: "b", message: "three")
+
+        XCTAssertEqual(h.coordinator.failures.map(\.message), ["two", "three"])
+    }
+
     private func seedLedger(key: String, projectID: UUID, _ entries: PhotoSelectionEntry...) throws {
         var selection = ProjectPhotoSelection()
         for entry in entries {

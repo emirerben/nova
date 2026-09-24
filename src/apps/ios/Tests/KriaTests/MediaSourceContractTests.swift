@@ -39,4 +39,28 @@ final class MediaSourceContractTests: XCTestCase {
             }
         }
     }
+    // MARK: KRI-180: the proxy is built at 30 fps; a Float32 re-measure of 30.0000019 must not reject it.
+
+    func testProxyGeometryAcceptsTheFloatNoiseThatUsedToRejectExactThirtyFPSProxies() throws {
+        let portrait = CGSize(width: 360, height: 640)
+        for measured in [29.97, 30.0, 30.000001907348633, 30.07] {
+            XCTAssertEqual(try ProjectMediaUploadContract.validateProxyGeometry(size: portrait, measuredFrameRate: measured, orientation: 0), 30,
+                           "\(measured) fps: the descriptor reports the rate the proxy was built at, which is what ffprobe's r_frame_rate reads back")
+        }
+    }
+
+    func testProxyGeometryStillRejectsWhatTheAnalysisPipelineCannotTake() {
+        let ok = CGSize(width: 640, height: 360)
+        let cases: [(CGSize, Double, Int)] = [
+            (ok, 0.5, 0), (ok, 45, 0), (ok, 61, 0),                       // frame rate far from the built 30
+            (CGSize(width: 1280, height: 720), 30, 0),                    // larger than the 640 cap
+            (CGSize(width: 0, height: 360), 30, 0),                       // no width
+            (ok, 30, 45),                                                 // not a right angle
+        ]
+        for (size, fps, orientation) in cases {
+            XCTAssertThrowsError(try ProjectMediaUploadContract.validateProxyGeometry(size: size, measuredFrameRate: fps, orientation: orientation)) {
+                XCTAssertEqual($0 as? MediaSourceContractError, .unsupportedGeometry, "\(size) \(fps)fps \(orientation)°")
+            }
+        }
+    }
 }

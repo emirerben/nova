@@ -388,7 +388,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// clip's `enqueue` would erase an earlier clip's failure before anyone saw it. Callers that
     /// want a clean slate call `clearLastError()` once per batch.
     @discardableResult
-    func enqueue(fileURL: URL, projectID: UUID, source: UploadSource, consentGiven: Bool, purpose: UploadPurpose, role: CreationMediaRole = .clip, itemID: String? = nil, limit: CreationMediaLimit? = nil, editorSourceTarget: EditorSourceRegistrationTarget? = nil, recordID: UUID = UUID()) async -> Bool {
+    func enqueue(fileURL: URL, projectID: UUID, source: UploadSource, consentGiven: Bool, purpose: UploadPurpose, role: CreationMediaRole = .clip, itemID: String? = nil, limit: CreationMediaLimit? = nil, editorSourceTarget: EditorSourceRegistrationTarget? = nil, recordID: UUID = UUID(), failureKey: String? = nil) async -> Bool {
         var recoveryCopy: URL?
         var accepted = false
         var staged = false
@@ -513,7 +513,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             // tell the user something broke when they did exactly what they meant to.
             if error is CancellationError || Task.isCancelled { return false }
             lastError = error.localizedDescription
-            recordFailure(id: recordID, projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), message: error.localizedDescription)
+            recordFailure(id: recordID, projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), message: error.localizedDescription, selectionKey: failureKey)
             return false
         }
     }
@@ -546,9 +546,22 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         failures.removeAll { $0.projectID == projectID && $0.role == role }
     }
 
-    private func recordFailure(id: UUID, projectID: UUID, role: CreationMediaRole, filename: String, message: String) {
-        failures.removeAll { $0.id == id }
-        failures.append(UploadFailure(id: id, projectID: projectID, role: role, filename: filename, message: message))
+    /// One line per failed clip: a repeat of the same asset replaces its earlier line (matched by
+    /// `selectionKey`), rather than appending another for every attempt.
+    private func recordFailure(id: UUID, projectID: UUID, role: CreationMediaRole, filename: String, message: String, selectionKey: String? = nil) {
+        failures.removeAll { $0.id == id || (selectionKey != nil && $0.selectionKey == selectionKey) }
+        failures.append(UploadFailure(id: id, projectID: projectID, role: role, filename: filename, message: message, selectionKey: selectionKey))
+    }
+
+    /// Drops the failure lines of assets that are no longer ticked, so un-ticking a failed clip clears its
+    /// error and ticking it again is a real retry. Failures of other projects, roles or plan items, and
+    /// ones with no asset key, are left alone.
+    func pruneSelectionFailures(projectID: UUID, role: CreationMediaRole, itemID: String?, chosen: Set<String>) {
+        let prefix = Self.selectionKey(projectID, role, itemID, "")
+        failures.removeAll { failure in
+            guard let key = failure.selectionKey, key.hasPrefix(prefix) else { return false }
+            return !chosen.contains(String(key.dropFirst(prefix.count)))
+        }
     }
 
     /// Removes files a cancelled or failed preparation left in the project tree: the imported
@@ -582,6 +595,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     func select(_ request: PhotoSelectionRequest, debounce: Duration = .milliseconds(500), loadFile: @escaping @MainActor () async throws -> URL) {
         let key = Self.selectionKey(request.projectID, request.role, request.itemID, request.assetIdentifier)
         guard selectionTasks[key] == nil else { return }
+        // Already failed and still shown as failed: a picker re-diff must not redo the whole export,
+        // transcode and upload for it (and stack another error line). Un-ticking or Dismiss clears this.
+        guard !failures.contains(where: { $0.selectionKey == key }) else { return }
         if let existing = photoSelections[request.projectID.uuidString]?.entries[Self.ledgerKey(request.role, request.itemID, request.assetIdentifier)],
            existing.isLive(attachedMediaIDs: request.attachedMediaIDs) {
             return
@@ -602,14 +618,14 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 guard let url = loaded else { throw CancellationError() }
                 // Un-chosen while Photos was still handing the file over: don't start anything.
                 try Task.checkCancellation()
-                let accepted = await self.enqueue(fileURL: url, projectID: request.projectID, source: .photos, consentGiven: true, purpose: request.purpose, role: request.role, itemID: request.itemID, limit: request.limit, recordID: recordID)
+                let accepted = await self.enqueue(fileURL: url, projectID: request.projectID, source: .photos, consentGiven: true, purpose: request.purpose, role: request.role, itemID: request.itemID, limit: request.limit, recordID: recordID, failureKey: key)
                 loaded = nil   // `enqueue` owns the file from here (it renames or links it)
                 if !accepted { self.releaseSelection(recordID: recordID, projectID: request.projectID) }
             } catch {
                 if let loaded { try? FileManager.default.removeItem(at: loaded) }
                 self.releaseSelection(recordID: recordID, projectID: request.projectID)
                 if !(error is CancellationError) {
-                    self.recordFailure(id: recordID, projectID: request.projectID, role: request.role, filename: "Selected item", message: "This file couldn’t be read. Try Files or choose it again.")
+                    self.recordFailure(id: recordID, projectID: request.projectID, role: request.role, filename: "Selected item", message: "This file couldn’t be read. Try Files or choose it again.", selectionKey: key)
                 }
             }
         }

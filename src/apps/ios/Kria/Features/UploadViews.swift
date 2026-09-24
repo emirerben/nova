@@ -305,6 +305,8 @@ struct FootagePickerView: View {
     /// it must not touch presentation state, which fights the picker sheet that is still open.
     private func reconcile(_ items: [PhotosPickerItem]) {
         guard libraryAuthorized else { importUnidentified(items); return }
+        // A failed clip stays ticked in the picker. Its error line goes when the user un-ticks it.
+        uploads.pruneSelectionFailures(projectID: projectID, role: role, itemID: itemID, chosen: Set(items.compactMap(\.itemIdentifier)))
         // Diff against what the coordinator already knows, never against `@State`: `.id(role)`
         // resets `@State`, and a seeded selection would then read as "everything is new" and
         // upload every clip again.

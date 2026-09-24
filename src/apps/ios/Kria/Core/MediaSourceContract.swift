@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import UniformTypeIdentifiers
 import KriaMediaEngine
+import os
 
 /// Specific, user-facing reasons an uploaded clip's analysis-proxy contract can
 /// fail its client-side validation. Mirrors the one-guard-many-causes pattern
@@ -174,16 +175,29 @@ struct ProjectMediaUploadContract: Codable, Sendable, Equatable {
         guard sourceHasAudio == proxyHasAudio else {
             throw MediaSourceContractError.audioPresenceMismatch
         }
-        guard size.width > 0, size.height > 0, size.width <= 640, size.height <= 640,
-              frameRate >= 1, frameRate <= 30, [0, 90, 180, 270].contains(orientation) else {
-            throw MediaSourceContractError.unsupportedGeometry
-        }
+        let reportedFrameRate = try Self.validateProxyGeometry(size: size, measuredFrameRate: frameRate, orientation: orientation)
         return ProjectMediaUploadContract(purpose: .analysisProxy, proxy: AnalysisProxyDescriptor(
             original: OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount,
                 durationS: sourceDuration, width: Int(sourceSize.width), height: Int(sourceSize.height),
                 orientationDegrees: orientation, hasAudio: sourceHasAudio),
-            durationS: duration, width: Int(size.width), height: Int(size.height), frameRate: frameRate
+            durationS: duration, width: Int(size.width), height: Int(size.height), frameRate: reportedFrameRate
         ))
+    }
+
+    /// Checks the proxy's geometry and returns the frame rate to put in its descriptor.
+    ///
+    /// The proxy is built at exactly `AVFoundationProxyGenerator.proxyFrameRate`, so that is what the
+    /// descriptor reports, and it is what the server's ffprobe `r_frame_rate` reads back. The measured
+    /// `nominalFrameRate` is only a sanity check, with one frame of slack: it is a Float32 frames-over-duration
+    /// ratio that reads 30.0000019 for some clips, and a strict `<= 30` rejected them (KRI-180).
+    static func validateProxyGeometry(size: CGSize, measuredFrameRate: Double, orientation: Int) throws -> Double {
+        let built = Double(AVFoundationProxyGenerator.proxyFrameRate)
+        guard size.width > 0, size.height > 0, size.width <= 640, size.height <= 640,
+              measuredFrameRate >= 1, measuredFrameRate <= built + 1, [0, 90, 180, 270].contains(orientation) else {
+            Logger(subsystem: "com.kria.app", category: "uploads").error("proxy geometry rejected: size=\(Int(size.width), privacy: .public)x\(Int(size.height), privacy: .public) fps=\(measuredFrameRate, privacy: .public) orientation=\(orientation, privacy: .public)")
+            throw MediaSourceContractError.unsupportedGeometry
+        }
+        return built
     }
 
     /// Fails fast when `url`'s container isn't one the on-device proxy
