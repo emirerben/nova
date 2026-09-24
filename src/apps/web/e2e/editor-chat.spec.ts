@@ -37,7 +37,10 @@ test("main chat edits the current draft twice, persists receipts, and never rend
 test("direct links resolve the owning conversation and mobile tabs preserve the draft", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/plan/items/fixture-item/edit?variant=original_text");
-  await expect(page).toHaveURL(/\/plan\/editor-chat-fixture$/);
+  // Two client redirects (edit -> /plan?editor_item -> /plan/<thread>), each
+  // compiling its route on demand under the dev server: allow the same budget
+  // as the other cold-route waits in this file, not the 5s expect default.
+  await expect(page).toHaveURL(/\/plan\/editor-chat-fixture$/, { timeout: 20000 });
   await page.getByRole("textbox", { name: "Message Kria" }).fill("Update the opening text");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(page.getByRole("button", { name: "Undo last edit" })).toBeVisible({ timeout: 20000 });

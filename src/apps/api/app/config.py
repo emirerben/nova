@@ -113,6 +113,19 @@ class Settings(BaseSettings):
     # call, even when the snapshot carries the lanes field. Rollback:
     # `fly secrets set PHONE_SUBTITLED_MEDIA_LANES_ENABLED=false --app
     # nova-video` + `fly machine restart <id>` (api + worker).
+    #
+    # KRI-176 (PiP cards grounded from the transcript): when this flag AND
+    # `media_overlays_enabled` are both true AND all four of
+    # `app.services.phone_rollout.PHONE_SUBTITLED_OVERLAY_FEATURES`
+    # (`stillImages`, `visualBlocks`, `alphaOverlay`, `audioMix`) are verified
+    # -- i.e. `phone_rollout.phone_subtitled_overlays_supported()` is True --
+    # the planner advertises `media_overlays` on a phone `subtitled` manifest
+    # instead of the blanket `unsupported_on_phone` refusal, and
+    # `_run_phone_subtitled_job` grounds the creator's Visuals into
+    # picture-in-picture overlay cards from the transcript
+    # (`app.services.phone_overlay_grounding`), persisting a creator-safe
+    # `phone_overlay_receipt` on the variant. The same rollback command above
+    # switches this lane off too (no separate flag).
     phone_subtitled_media_lanes_enabled: bool = False
     # KRI-132 (narrated walkthrough): a `narrated`/`narrated_planned`/
     # `narrated_ready` item WITH a recorded voiceover compiles through

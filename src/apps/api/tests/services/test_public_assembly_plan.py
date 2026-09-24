@@ -56,6 +56,52 @@ def test_projection_preserves_none_scalars_and_unrelated_internal_looking_fields
     ) == {"metadata_identity": "user value", "clip_metadata": {"identity": "keep"}}
 
 
+def test_projection_preserves_phone_overlay_receipt_on_a_variant() -> None:
+    """KRI-176: `phone_overlay_receipt` (persisted by `_run_phone_subtitled_job`
+    when PiP grounding runs) is a creator-safe summary -- matcher/face_sampling
+    enum status plus placed/unplaced media_id+label+reason rows, no signed URLs
+    or storage paths -- and carries no key matched by `_is_private_key`, so it
+    must survive the public projection byte-for-byte, same as any other plain
+    variant field. This pins that behavior rather than special-casing the key."""
+    receipt = {
+        "version": 1,
+        "matcher": "agent",
+        "face_sampling": "ok",
+        "placed": [
+            {
+                "media_id": "media-1",
+                "label": "Coffee shot",
+                "start_s": 1.5,
+                "end_s": 3.0,
+                "reason": "matched",
+            }
+        ],
+        "unplaced": [{"media_id": "media-2", "label": "Sunset", "reason": "no_spoken_match"}],
+        "wishlist": ["a wide shot of the harbor"],
+    }
+    stored = {
+        "variants": [
+            {
+                "variant_id": "subtitled",
+                "phone_overlay_receipt": copy.deepcopy(receipt),
+            }
+        ],
+    }
+    snapshot = copy.deepcopy(stored)
+
+    projection = project_public_assembly_plan_with_metadata(stored)
+
+    assert projection.value == {
+        "variants": [
+            {
+                "variant_id": "subtitled",
+                "phone_overlay_receipt": receipt,
+            }
+        ],
+    }
+    assert stored == snapshot
+
+
 def test_admin_candidate_projection_exposes_only_top_level_source_vector() -> None:
     candidates = {
         "clip_paths": ["durable/a.mp4"],

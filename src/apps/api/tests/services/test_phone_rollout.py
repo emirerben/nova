@@ -6,7 +6,11 @@ from app.config import settings
 from app.pipeline.canvas import PORTRAIT
 from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.pipeline.portable_text_layout import compile_text_overlay
-from app.services.phone_rollout import validate_phone_pilot_recipe
+from app.services.phone_rollout import (
+    PHONE_SUBTITLED_OVERLAY_FEATURES,
+    phone_subtitled_overlays_supported,
+    validate_phone_pilot_recipe,
+)
 from tests.pipeline.test_phone_guided_plan import fixture
 
 
@@ -567,3 +571,45 @@ def test_narration_audio_requires_the_capability_to_be_verified(monkeypatch):
         settings, "phone_render_verified_features", list(recipe.required_capabilities)
     )
     validate_phone_pilot_recipe(recipe)
+
+
+def _enable_phone_subtitled_overlays(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(PHONE_SUBTITLED_OVERLAY_FEATURES)
+    )
+
+
+def test_phone_subtitled_overlays_supported_when_all_conditions_hold(monkeypatch):
+    """KRI-176: the happy path -- lane flag, generic gate, and every verified
+    device feature `PHONE_SUBTITLED_OVERLAY_FEATURES` lists all hold."""
+    _enable_phone_subtitled_overlays(monkeypatch)
+    assert phone_subtitled_overlays_supported() is True
+
+
+def test_phone_subtitled_overlays_requires_the_lane_flag(monkeypatch):
+    _enable_phone_subtitled_overlays(monkeypatch)
+    monkeypatch.setattr(settings, "phone_subtitled_media_lanes_enabled", False)
+    assert phone_subtitled_overlays_supported() is False
+
+
+def test_phone_subtitled_overlays_requires_the_generic_gate(monkeypatch):
+    _enable_phone_subtitled_overlays(monkeypatch)
+    monkeypatch.setattr(settings, "media_overlays_enabled", False)
+    assert phone_subtitled_overlays_supported() is False
+
+
+@pytest.mark.parametrize("missing_feature", list(PHONE_SUBTITLED_OVERLAY_FEATURES))
+def test_phone_subtitled_overlays_requires_every_verified_feature(monkeypatch, missing_feature):
+    """Each of the four device features is individually required -- dropping
+    any one of them alone flips the helper false."""
+    _enable_phone_subtitled_overlays(monkeypatch)
+    remaining = [f for f in PHONE_SUBTITLED_OVERLAY_FEATURES if f != missing_feature]
+    monkeypatch.setattr(settings, "phone_render_verified_features", remaining)
+    assert phone_subtitled_overlays_supported() is False
+
+
+def test_phone_subtitled_overlays_defaults_to_unsupported(monkeypatch):
+    """Flag-off default settings never accidentally enable the lane."""
+    assert phone_subtitled_overlays_supported() is False

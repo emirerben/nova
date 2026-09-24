@@ -53,6 +53,7 @@ from app.services.phone_destination import phone_drawable_visual_kinds
 from app.services.phone_rollout import (
     phone_guided_narration_supported,
     phone_render_supported_formats,
+    phone_subtitled_overlays_supported,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -88,6 +89,11 @@ _FEATURE_SETTINGS = {
 # motion-scene lanes outright, and an edit-wide look on any source that is not
 # exact-canvas golden_hour. A phone manifest must not advertise them, so the
 # request is refused while planning instead of failing the device render later.
+# `media_overlays` is the one exception: a `subtitled` (Talking) phone manifest
+# overrides this default back to available once
+# `phone_rollout.phone_subtitled_overlays_supported()` holds (KRI-176) --
+# every other phone recipe (guided/montage family, narrated) keeps the
+# blanket refusal below unconditionally.
 _PHONE_UNSUPPORTED_CAPABILITIES = (
     "sound_effects",
     "media_overlays",
@@ -450,6 +456,29 @@ def resolve_creator_manifest(
             capabilities["visual_blocks"] = _unavailable(
                 "unsupported_on_phone", "visual_blocks cannot render on the iPhone yet"
             )
+        # `media_overlays` (KRI-176): unlike the blanket phone refusal set by
+        # `_PHONE_UNSUPPORTED_CAPABILITIES` above, the `subtitled` (Talking,
+        # talk-to-camera) phone recipe has real native parity for
+        # picture-in-picture Visuals cards once the KRI-174 Phase 1 lane flag
+        # and every device feature agree -- mirrors
+        # `phone_rollout.phone_subtitled_overlays_supported()`'s exact rule,
+        # the single source of truth also consulted by
+        # `_run_phone_subtitled_job`, so the manifest never advertises a lane
+        # the worker would then skip. Every other phone recipe (the
+        # guided/montage family, narrated) keeps the blanket refusal above --
+        # only Talking has a compiler path for this lane today. The generic
+        # `media_overlays_enabled` gate (already applied above by the
+        # `_FEATURE_SETTINGS` loop, and re-read directly here by setting name
+        # since the `_PHONE_UNSUPPORTED_CAPABILITIES` loop just overwrote the
+        # `capabilities["media_overlays"]` entry it produced) still has to
+        # hold too.
+        if (
+            phone.available
+            and getattr(settings, "media_overlays_enabled", False)
+            and coerce_edit_format(edit_format) == "subtitled"
+            and phone_subtitled_overlays_supported()
+        ):
+            capabilities["media_overlays"] = _available()
         if not phone.available:
             for capability_name in (
                 CAPABILITY_DRAFT_GUIDED_PROPOSAL,

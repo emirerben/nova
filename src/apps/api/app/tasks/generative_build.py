@@ -4468,7 +4468,10 @@ def _run_phone_subtitled_job(
         DEVICE_RENDER_FIELD,
         pin_device_request,
     )
-    from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_subtitled_overlays_supported,
+        validate_phone_pilot_recipe,
+    )
     from app.services.phone_sources import (  # noqa: PLC0415
         PHONE_SOURCES_FIELD,
         PHONE_VISUALS_FIELD,
@@ -4477,6 +4480,12 @@ def _run_phone_subtitled_job(
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     media_lanes_enabled = settings.phone_subtitled_media_lanes_enabled
+    # KRI-176: whether a phone `subtitled` render may carry PiP overlay cards
+    # grounded from the transcript at all -- see `phone_subtitled_overlays_
+    # supported`'s docstring for the exact gate. Implies `media_lanes_enabled`
+    # (grounded cards flow through the same lane compiler contract as a
+    # hand-authored KRI-174 lane request).
+    overlay_grounding_enabled = media_lanes_enabled and phone_subtitled_overlays_supported()
     # KRI-174 imports for the lane compiler contract -- gated behind the flag
     # so a worker with the flag off never depends on this module existing.
     if media_lanes_enabled:
@@ -4546,6 +4555,32 @@ def _run_phone_subtitled_job(
     visuals: tuple = ()
     lane_drops: list[dict] = []
     raw_words: list[dict] | None = None
+    # KRI-176: creator-safe receipt for the transcript-grounded overlay lane.
+    # Persisted on the variant only when `overlay_grounding_enabled` (see the
+    # bottom of this function) -- stays `None` otherwise, byte-identical.
+    overlay_receipt: dict | None = None
+
+    def _demote_grounded_receipt(receipt: dict, media_ids: frozenset[str], reason: str) -> dict:
+        """Move ``media_ids`` from ``receipt["placed"]`` to ``unplaced`` with
+        ``reason`` -- used when a grounded card survives matching/arbitration
+        but is later dropped by binding or the compiler itself, so the
+        receipt never claims a card is on-screen that isn't."""
+        if not media_ids:
+            return receipt
+        kept: list[dict] = []
+        moved: list[dict] = []
+        for entry in receipt.get("placed") or []:
+            if entry.get("media_id") in media_ids:
+                moved.append(
+                    {
+                        "media_id": entry.get("media_id"),
+                        "label": entry.get("label", ""),
+                        "reason": reason,
+                    }
+                )
+            else:
+                kept.append(entry)
+        return {**receipt, "placed": kept, "unplaced": list(receipt.get("unplaced") or []) + moved}
 
     with pipeline_trace_for(job_id):
         with tempfile.TemporaryDirectory(
@@ -4631,10 +4666,69 @@ def _run_phone_subtitled_job(
                     except Exception as exc:  # noqa: BLE001
                         lane_drops.append({"lane": "request", "reason": str(exc)[:300]})
 
+                # KRI-176: ground overlay cards from the transcript when nobody
+                # authored a lane request with overlays of their own -- a
+                # hand-authored request WINS and grounding is skipped entirely
+                # (recorded as `matcher: "manual"` so the receipt still
+                # explains why no cards were placed/unplaced by this step).
+                manual_overlays = bool(lane_request is not None and lane_request.overlays)
+                grounded_cards: list = []
+                grounded_media_ids: frozenset[str] = frozenset()
+                if overlay_grounding_enabled:
+                    if manual_overlays:
+                        overlay_receipt = {
+                            "version": 1,
+                            "matcher": "manual",
+                            "face_sampling": "skipped",
+                            "placed": [],
+                            "unplaced": [],
+                            "wishlist": [],
+                        }
+                    else:
+                        from app.services.phone_overlay_grounding import (  # noqa: PLC0415
+                            ground_phone_subtitled_overlays,
+                        )
+
+                        try:
+                            grounded = ground_phone_subtitled_overlays(
+                                _sync_session,
+                                job_id=job_id,
+                                words=raw_words or [],
+                                duration_s=float(probe.duration_s),
+                                clip_path=clip_path,
+                                occupied=[
+                                    (card.start_s, card.end_s)
+                                    for card in (lane_request.overlays if lane_request else [])
+                                ],
+                                used_media_ids=frozenset(
+                                    card.media_id
+                                    for card in (lane_request.overlays if lane_request else [])
+                                ),
+                            )
+                        except OperationalError:
+                            raise  # transient DB -> Celery autoretry, never a lane drop
+                        except Exception as exc:  # noqa: BLE001 - grounding never fails the job
+                            lane_drops.append(
+                                {"lane": "overlays", "reason": f"grounding failed: {exc}"[:300]}
+                            )
+                            overlay_receipt = {
+                                "version": 1,
+                                "matcher": "failed",
+                                "face_sampling": "skipped",
+                                "placed": [],
+                                "unplaced": [],
+                                "wishlist": [],
+                                "error": str(exc)[:200],
+                            }
+                        else:
+                            grounded_cards = list(grounded.cards)
+                            grounded_media_ids = frozenset(card.media_id for card in grounded_cards)
+                            overlay_receipt = grounded.receipt
+
                 overlay_cards: list = []
                 ending_clip: Any = None
                 resolved_sfx: list = []
-                if lane_request is not None:
+                if lane_request is not None or grounded_cards:
                     visual_kinds = frozenset(
                         kind
                         for kind, feature in (
@@ -4643,8 +4737,9 @@ def _run_phone_subtitled_job(
                         )
                         if feature in settings.phone_render_verified_features
                     )
-                    overlay_cards = list(lane_request.overlays)
-                    ending_clip = lane_request.ending_clip
+                    overlay_cards = list(lane_request.overlays) if lane_request is not None else []
+                    overlay_cards += grounded_cards
+                    ending_clip = lane_request.ending_clip if lane_request is not None else None
                     overlay_visuals: tuple = ()
                     ending_visuals: tuple = ()
                     if overlay_cards and "image" not in visual_kinds:
@@ -4675,6 +4770,10 @@ def _run_phone_subtitled_job(
                             lane_drops.append({"lane": "overlays", "reason": str(exc)[:300]})
                             overlay_cards = []
                             overlay_visuals = ()
+                            if grounded_media_ids and overlay_receipt is not None:
+                                overlay_receipt = _demote_grounded_receipt(
+                                    overlay_receipt, grounded_media_ids, "bind_failed"
+                                )
                     if ending_clip is not None:
                         pins = {
                             ending_clip.media_id: (
@@ -4694,7 +4793,7 @@ def _run_phone_subtitled_job(
                             ending_clip = None
                             ending_visuals = ()
                     visuals = tuple(overlay_visuals) + tuple(ending_visuals)
-                    for sfx in lane_request.sound_effects:
+                    for sfx in lane_request.sound_effects if lane_request is not None else []:
                         try:
                             resolved_sfx.append(_resolve_phone_sound_effect(sfx))
                         except OperationalError:
@@ -4743,6 +4842,20 @@ def _run_phone_subtitled_job(
                     if lanes.ending_clip is not None:
                         referenced.add(lanes.ending_clip.media_id)
                     visuals = tuple(v for v in visuals if v.media_id in referenced)
+                if grounded_media_ids and overlay_receipt is not None:
+                    # A grounded card that didn't survive the compiler's own
+                    # retry loop (SubtitledLaneError dropped "overlays") must
+                    # not linger in the receipt as "placed".
+                    still_present = (
+                        frozenset(card.media_id for card in lanes.overlays)
+                        if lanes is not None
+                        else frozenset()
+                    )
+                    demoted = grounded_media_ids - still_present
+                    if demoted:
+                        overlay_receipt = _demote_grounded_receipt(
+                            overlay_receipt, demoted, "compile_dropped"
+                        )
                 lane_receipt = {
                     "applied": list(lane_names(lanes)) if lanes is not None else [],
                     "dropped": lane_drops,
@@ -4751,6 +4864,28 @@ def _run_phone_subtitled_job(
                     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
                     record_pipeline_event("phone", "subtitled_lane_receipt", lane_receipt)
+                    if (
+                        overlay_grounding_enabled
+                        and overlay_receipt is not None
+                        and overlay_receipt.get("matcher") != "manual"
+                    ):
+                        placed_count = len(overlay_receipt.get("placed") or [])
+                        if placed_count:
+                            record_pipeline_event(
+                                "media_overlay",
+                                "cards_applied",
+                                {"variant_id": "subtitled", "card_count": placed_count},
+                            )
+                        record_pipeline_event(
+                            "phone",
+                            "subtitled_overlay_grounding",
+                            {
+                                "placed": placed_count,
+                                "unplaced": len(overlay_receipt.get("unplaced") or []),
+                                "matcher": overlay_receipt.get("matcher"),
+                                "face_sampling": overlay_receipt.get("face_sampling"),
+                            },
+                        )
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -4816,6 +4951,8 @@ def _run_phone_subtitled_job(
         if media_lanes_enabled:
             new_entry["overlay_transcript"] = raw_words
             new_entry["phone_lane_receipt"] = lane_receipt
+        if overlay_grounding_enabled:
+            new_entry["phone_overlay_receipt"] = overlay_receipt
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.187.0] - 2026-09-24
+
+### Changed
+- feat(phone): ground PiP Visuals cards from the transcript on Talking edits (KRI-176) (#1204) <!-- release-pr: 1204 -->
+
+## [0.76.186.0] - 2026-09-24
+
+### Changed
+- fix(e2e): make the motion-preview doubled-workload check reliable on CI (interleave + 0.7 ceiling) (#1200) <!-- release-pr: 1200 -->
+
+## [0.76.185.0] - 2026-09-24
+
+### Added
+- feat(ios): one "+" opens a Video/Visual/Text chooser, plus a Kria outro placeholder (KRI-166) (#1184) <!-- release-pr: 1184 -->
+
 ## [0.76.184.0] - 2026-09-23
 
 ### Changed

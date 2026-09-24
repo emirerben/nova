@@ -105,6 +105,12 @@ STEP_ALLOWLIST: dict[str, frozenset[str]] = {
     # (e.g. fast_reburn_base_probe_failed/fast_reburn_base_canvas_mismatch in
     # generative_build.py) carry base_path/orientation and stay excluded.
     "render": frozenset({"custom_effect_reapply_failed"}),
+    # KRI-176: phone-subtitled PiP grounding outcome (counts + enum-like
+    # matcher/face_sampling status only -- see `_humanize_subtitled_overlay_
+    # grounding`, which reads counts alone). The sibling "phone" event
+    # `subtitled_lane_receipt` (generative_build.py) carries the full lane
+    # receipt dict and stays excluded.
+    "phone": frozenset({"subtitled_overlay_grounding"}),
 }
 
 
@@ -300,6 +306,26 @@ def _humanize_custom_effect_reapply_failed(
     return "Couldn't re-apply your custom look — kept the video without it", None
 
 
+def _humanize_subtitled_overlay_grounding(data: dict[str, Any]) -> tuple[str, list[str] | None]:
+    # `matcher`/`face_sampling` are deliberately never surfaced here -- only
+    # the two counts (`placed`/`unplaced`) are user-legible; see KRI-176.
+    placed = data.get("placed")
+    unplaced = data.get("unplaced")
+    placed_n = placed if isinstance(placed, int) and not isinstance(placed, bool) else 0
+    unplaced_n = unplaced if isinstance(unplaced, int) and not isinstance(unplaced, bool) else 0
+    if placed_n > 0:
+        detail = [f"{placed_n} card{'s' if placed_n != 1 else ''} placed"]
+        if unplaced_n > 0:
+            detail.append(f"{unplaced_n} Visual{'s' if unplaced_n != 1 else ''} couldn't be placed")
+        return "Nova popped your Visuals in as cards", detail
+    if unplaced_n > 0:
+        return (
+            "Nova looked for moments to show your Visuals",
+            [f"{unplaced_n} Visual{'s' if unplaced_n != 1 else ''} couldn't be placed"],
+        )
+    return "Nova looked for moments to show your Visuals", None
+
+
 _HUMANIZERS: dict[tuple[str, str], _Humanizer] = {
     ("assembly", "clip_metadata_done"): _humanize_clip_metadata_done,
     ("assembly", "song_match_done"): _humanize_song_match_done,
@@ -316,6 +342,7 @@ _HUMANIZERS: dict[tuple[str, str], _Humanizer] = {
     ("custom_effect", "burn_start"): _humanize_custom_effect_burn_start,
     ("custom_effect", "burn_done"): _humanize_custom_effect_burn_done,
     ("render", "custom_effect_reapply_failed"): _humanize_custom_effect_reapply_failed,
+    ("phone", "subtitled_overlay_grounding"): _humanize_subtitled_overlay_grounding,
 }
 
 # render_stage's `event` is the dynamic sub-stage name passed to

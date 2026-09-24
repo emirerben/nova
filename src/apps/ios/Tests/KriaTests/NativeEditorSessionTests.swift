@@ -171,6 +171,26 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document.clips.count, before)
     }
 
+    // KRI-166: an import left "preparing" with no live waiter (the app was
+    // suspended/relaunched mid-import) must be picked up as soon as the editor
+    // re-arms imports — the server finished long ago, only the polling died.
+    func testResumeEditorImportsRearmsAnOrphanedPreparingImportAndPlacesIt() async throws {
+        let (session, uploads, target, fake) = await Self.devicePlacementSessionWithSpy()
+        let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
+        uploads.beginEditorPlacement(placement)
+        XCTAssertEqual(uploads.editorPlacements(itemID: target.itemID, variantID: target.variantID, baseGeneration: nil).first?.status, "preparing")
+        fake.editorSourceResponse = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready",
+            sourceID: "proxy", sourceIndex: 9, source: ["duration_s": .number(2)], error: nil, reasonCode: nil, retryable: false)
+        let before = session.document.clips.count
+
+        await session.resumeEditorImports()
+        for _ in 0..<100 where session.document.clips.count == before {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        XCTAssertEqual(session.document.clips.count, before + 1)
+    }
+
     func testLeavingEditorKeepsReadyImportPendingWithoutAppendingToHiddenDocument() async throws {
         let (session, uploads, target) = await Self.devicePlacementSession()
         let placement = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: 2)
@@ -187,7 +207,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let (session, uploads, target) = await Self.devicePlacementSession()
         let response = EditorSourceRegistrationResponse(importID: target.clientImportID, status: "ready", sourceID: "proxy",
             sourceIndex: 9, source: ["duration_s": .number(1)], error: nil, reasonCode: nil, retryable: false)
-        while session.document.clips.count < 20 {
+        while session.document.clips.count < NativeEditorSession.maxTimelineClips {
             let nextTarget = EditorSourceRegistrationTarget(itemID: target.itemID, variantID: target.variantID,
                 clientImportID: UUID(), baseGeneration: target.baseGeneration, guidedRevisionNumber: 7, sourceKind: .footage)
             let placement = PendingEditorSourcePlacement(id: UUID(), target: nextTarget, lane: .timeline, visual: nil, localDurationS: 1)
@@ -198,9 +218,9 @@ final class NativeEditorSessionTests: XCTestCase {
         uploads.beginEditorPlacement(late)
         do {
             try await session.placeEditorSource(late, response: response)
-            XCTFail("A ready import must not exceed the current twenty-clip limit")
+            XCTFail("A ready import must not exceed the clip limit")
         } catch {}
-        XCTAssertEqual(session.document.clips.count, 20)
+        XCTAssertEqual(session.document.clips.count, NativeEditorSession.maxTimelineClips)
         XCTAssertTrue(uploads.containsEditorPlacement(late.id))
     }
 
@@ -270,6 +290,32 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNotNil(device.addClipUnavailableMessage)
         let (cloud, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
         XCTAssertNil(cloud.addClipUnavailableMessage)
+    }
+
+    // KRI-166: the quick-add menu's Video row explains why it's disabled, and
+    // the reason agrees with canAddTimelineMedia in both directions.
+    func testAddClipUnavailableReasonAgreesWithCanAddTimelineMedia() async throws {
+        let (device, _) = await Self.footageSession(destination: "device", operationsEditable: false)
+        XCTAssertFalse(device.canAddTimelineMedia)
+        XCTAssertNotNil(device.addClipUnavailableReason)
+        let (cloud, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
+        XCTAssertEqual(cloud.canAddTimelineMedia, cloud.addClipUnavailableReason == nil)
+    }
+
+    // KRI-166: the cap is 50 (matching server + creation), not the old 20 — an
+    // edit with 20+ clips must still be able to add another.
+    func testClipCapIsFiftyAndAddClipStaysAllowedPastTwenty() async throws {
+        XCTAssertEqual(NativeEditorSession.maxTimelineClips, 50)
+        let (cloud, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
+        XCTAssertLessThan(cloud.draft.clips.count, 20)
+        XCTAssertTrue(cloud.canAddTimelineMedia)
+        while cloud.draft.clips.count < 25 {
+            let slot = try XCTUnwrap(cloud.document.clips.first)
+            cloud.transactDocument(section: .timeline) { $0.clips.append(slot) }
+        }
+        XCTAssertGreaterThanOrEqual(cloud.draft.clips.count, 25)
+        XCTAssertTrue(cloud.canAddTimelineMedia, "25 clips is under the 50 cap")
+        XCTAssertNil(cloud.addClipUnavailableReason)
     }
 
     func testCloudVariantKeepsCropSpeedAndLookEditable() async throws {
@@ -663,6 +709,9 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.prepareFixtureSourcePreview(url: sourceURL)
 
         XCTAssertTrue(session.hasSourcePreview)
+        // KRI-166: the outro placeholder trusts a much smaller gap when this
+        // is true, since the player is showing the always-branded preview.
+        XCTAssertTrue(session.isPlayingBrandedSourcePreview)
         let item = try XCTUnwrap(session.player?.currentItem)
         let previewDuration = try await item.asset.load(.duration).seconds
         let outro = try await AVURLAsset(url: XCTUnwrap(KriaBranding.outroURL())).load(.duration).seconds
@@ -690,6 +739,11 @@ final class NativeEditorSessionTests: XCTestCase {
         session.beginTextCreation()
         XCTAssertLessThanOrEqual(try XCTUnwrap(session.pendingText).endS, session.duration)
         session.cancelTextCreation()
+    }
+
+    func testIsPlayingBrandedSourcePreviewFalseBeforeAPreviewIsReady() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        XCTAssertFalse(session.isPlayingBrandedSourcePreview)
     }
 
     func testDisplayedSourcePreviewExportsAPlayableVideo() async throws {
@@ -2733,6 +2787,11 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 
     private static func devicePlacementSession() async -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget) {
+        let (session, uploads, target, _) = await devicePlacementSessionWithSpy()
+        return (session, uploads, target)
+    }
+
+    private static func devicePlacementSessionWithSpy() async -> (NativeEditorSession, BackgroundUploadCoordinator, EditorSourceRegistrationTarget, EditorCommitSpy) {
         let threadID = UUID()
         var authoritative = variant(duration: 2, generation: "generation-1")
         authoritative["render_destination"] = .string("device")
@@ -2750,7 +2809,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let uploads = BackgroundUploadCoordinator(api: fake, defaultsKey: "placement-\(UUID().uuidString)", sessionConfiguration: .ephemeral)
         session.useMediaUploads(uploads)
         return (session, uploads, .init(itemID: "item", variantID: "variant", clientImportID: UUID(),
-            baseGeneration: "generation-1", guidedRevisionNumber: 7, sourceKind: .footage))
+            baseGeneration: "generation-1", guidedRevisionNumber: 7, sourceKind: .footage), fake)
     }
 
     /// Loads one clip slot (plus `extras`) under the server's per-clip
@@ -2826,6 +2885,8 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     private var sourcePoolContinuation: CheckedContinuation<Void, Never>?
     private var sourcePoolResumeRequested = false
     var phoneDestination = false
+    /// What `editorSource` polls return (nil ⇒ the default unsupported error).
+    var editorSourceResponse: EditorSourceRegistrationResponse?
     var deviceFetchCount = 0
     var commitCount = 0
     var lastRequest: EditorCommitRequest?
@@ -2887,6 +2948,10 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
         lastVariantID = variantID
         if let editorVariantError { throw editorVariantError }
         return authoritativeVariant ?? ["editor_revision_number": phoneDestination ? .number(7) : .null, "render_destination": .string(phoneDestination ? "device" : "cloud"), "variant_id": .string(variantID), "render_generation_id": .string("generation-1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]), "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])])]
+    }
+    func editorSource(itemID: String, variantID: String, importID: UUID) async throws -> EditorSourceRegistrationResponse {
+        guard let editorSourceResponse else { throw APIError.unsupported }
+        return editorSourceResponse
     }
     func editorSourcePool(jobID: UUID, variantID: String) async throws -> NativeEditorSourcePool {
         sourcePoolCallCount += 1

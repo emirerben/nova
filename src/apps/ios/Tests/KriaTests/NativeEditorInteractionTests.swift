@@ -278,6 +278,33 @@ final class NativeEditorInteractionTests: XCTestCase {
             transitionDurationS: transitionDuration
         )
     }
+
+    // MARK: - KRI-166: outroRange
+
+    func testOutroRangeOnBrandedPreviewAcceptsASmallGap() {
+        XCTAssertEqual(NativeEditorInteraction.outroRange(lastClipEnd: 10, playbackDuration: 11.6, isBrandedPreview: true), 10...11.6)
+    }
+
+    func testOutroRangeOnBrandedPreviewRejectsFloatResidue() {
+        // 4.4e-16-scale residue from float subtraction, not a real gap (KRI-128 learning).
+        let residue = 10.0 + 4.4e-16
+        XCTAssertNil(NativeEditorInteraction.outroRange(lastClipEnd: 10, playbackDuration: residue, isBrandedPreview: true))
+    }
+
+    func testOutroRangeOnBrandedPreviewRejectsBelowThreshold() {
+        XCTAssertNil(NativeEditorInteraction.outroRange(lastClipEnd: 10, playbackDuration: 10.03, isBrandedPreview: true))
+    }
+
+    func testOutroRangeOffBrandedPreviewRequiresAtLeastOneSecond() {
+        XCTAssertNil(NativeEditorInteraction.outroRange(lastClipEnd: 10, playbackDuration: 10.5, isBrandedPreview: false))
+        XCTAssertEqual(NativeEditorInteraction.outroRange(lastClipEnd: 10, playbackDuration: 11.6, isBrandedPreview: false), 10...11.6)
+    }
+
+    func testOutroRangeRejectsNonFiniteOrReversedInput() {
+        XCTAssertNil(NativeEditorInteraction.outroRange(lastClipEnd: .nan, playbackDuration: 11.6, isBrandedPreview: true))
+        XCTAssertNil(NativeEditorInteraction.outroRange(lastClipEnd: 10, playbackDuration: .infinity, isBrandedPreview: true))
+        XCTAssertNil(NativeEditorInteraction.outroRange(lastClipEnd: 10, playbackDuration: 8, isBrandedPreview: true))
+    }
 }
 
 @MainActor
