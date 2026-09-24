@@ -166,7 +166,7 @@ public struct LivePreviewExportSnapshot: Sendable {
         func withoutGains(_ tracks: [TimelineTrack]) -> [TimelineTrack] {
             tracks.map { track in
                 var copy = track
-                copy.clips = track.clips.map { clip in var value = clip; value.volume = 1; value.transform = .identity; value.overlayAboveText = nil; value.overlayPopIn = nil; value.overlayPreserveAlpha = nil; value.visualPlacement = nil; value.overlayDissolveSeed = nil; return value }
+                copy.clips = track.clips.map { clip in var value = clip; value.volume = 1; value.transform = .identity; value.overlayAboveText = nil; value.overlayPopIn = nil; value.overlayPreserveAlpha = nil; value.visualPlacement = nil; value.overlayDissolveSeed = nil; value.overlayFadeIn = nil; value.overlayFadeOut = nil; return value }
                 return copy
             }
         }
@@ -231,6 +231,7 @@ public struct LivePreviewExportSnapshot: Sendable {
                 updated.overlayPreserveAlpha = clip.overlayPreserveAlpha
                 updated.visualPlacement = clip.visualPlacement
                 updated.sourceCrop = clip.sourceCrop
+                updated.overlayFade = OverlayFadeWindow(clip: clip)
                 updated.visualOrder = overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? updated.visualOrder
                 updated.overlayCenter = CGPoint(x: current.renderSize.width / 2 + clip.transform.positionX, y: current.renderSize.height / 2 - clip.transform.positionY)
                 return updated

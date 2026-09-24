@@ -36,8 +36,21 @@ public struct VisualMediaPlacement: Codable, Equatable, Sendable {
     func alpha(at time: Double) -> Double {
         let authoredAlpha = editorStyle.map { (try? $0.sample(time: time - windowStart, duration: windowEnd - windowStart).alpha) ?? 0 } ?? 1
         guard windowEnd - windowStart > 0.3 else { return authoredAlpha }
-        return authoredAlpha * min(fadeIn ? min(1, max(0, (time - windowStart) / 0.15)) : 1,
-                                   fadeOut ? min(1, max(0, (windowEnd - time) / 0.15)) : 1)
+        return authoredAlpha * Self.fadeEnvelope(at: time, windowStart: windowStart, windowEnd: windowEnd,
+                                                 fadeIn: fadeIn, fadeOut: fadeOut)
+    }
+
+    /// The one fade curve for placed media: linear 0.15 s ramps at each
+    /// requested edge, and none at all on a window of 0.3 s or less. The
+    /// pinned phone Talking recipe fades its overlay cards through
+    /// `alpha(at:)`; editor overlays that keep their `MediaTransform`
+    /// positioning fade through `TimelineClip.overlayFadeAlpha(at:)`. Both
+    /// call this, so the editor preview and the device render share a curve.
+    public static func fadeEnvelope(at time: Double, windowStart: Double, windowEnd: Double,
+                                    fadeIn: Bool, fadeOut: Bool) -> Double {
+        guard windowEnd - windowStart > 0.3 else { return 1 }
+        return min(fadeIn ? min(1, max(0, (time - windowStart) / 0.15)) : 1,
+                   fadeOut ? min(1, max(0, (windowEnd - time) / 0.15)) : 1)
     }
 }
 
