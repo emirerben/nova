@@ -227,6 +227,13 @@ class Settings(BaseSettings):
             not self.phone_render_user_ids or str(user_id) in map(str, self.phone_render_user_ids)
         )
 
+    def kria_runtime_v2_phone_for(self, user_id: object) -> bool:
+        """Runtime v2 for a phone-rendering account (KRI-187 flag + allowlist)."""
+        return self.kria_runtime_v2_phone_enabled and (
+            not self.kria_runtime_v2_phone_user_ids
+            or str(user_id) in map(str, self.kria_runtime_v2_phone_user_ids)
+        )
+
     # Storage
     storage_bucket: str
     storage_provider: str = "gcs"
@@ -402,6 +409,17 @@ class Settings(BaseSettings):
     # runtime_version=1 project remain available when this is false; the new
     # durable turn/approval endpoints deliberately fail closed as 404.
     kria_runtime_v2_enabled: bool = False
+    # KRI-187: phone-rendering accounts are offered runtime v2 (`GET
+    # /creation-threads/capabilities` -> `runtime_versions: [1, 2]`) and a v2
+    # strategy approval may dispatch a device job. False (default) keeps
+    # phone accounts on [1], byte-identically. `kria_runtime_v2_phone_user_ids`
+    # narrows the flag to named accounts (empty = every phone account), the
+    # same shape as `phone_render_user_ids`, so a device check can run in prod.
+    # `runtime_version` is fixed at thread creation: existing v1 threads stay
+    # v1. Rollback: `fly secrets set KRIA_RUNTIME_V2_PHONE_ENABLED=false` +
+    # restart (api + worker); phone accounts are offered [1] again.
+    kria_runtime_v2_phone_enabled: bool = False
+    kria_runtime_v2_phone_user_ids: list[UUID] = Field(default_factory=list)
     kria_turn_lease_seconds: int = Field(default=15, ge=10, le=120)
     # GET /creation-threads/{id} degrades a thread whose render-graph edge
     # (PlanItem/CreatorAgentSession/Job ownership) has drifted incoherent,

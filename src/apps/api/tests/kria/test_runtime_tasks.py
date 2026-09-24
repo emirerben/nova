@@ -293,6 +293,7 @@ def test_execute_approval_dispatches_only_the_claimed_server_strategy() -> None:
         str(claim.item_id),
         4,
         bypass_guided_edit_gate=True,
+        allow_phone_unapproved_montage=True,
         creator_strategy=claim.strategy,
         creator_request=claim.creator_request,
     )

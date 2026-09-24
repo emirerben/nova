@@ -249,16 +249,42 @@ async def test_everyone_else_is_still_asked_for_footage(pilot, monkeypatch, nati
 @pytest.mark.asyncio
 @pytest.mark.parametrize("runtime_enabled", [False, True])
 @pytest.mark.parametrize("enrolled", [False, True])
-async def test_pilot_accounts_are_only_offered_the_runtime_that_renders_on_device(
+async def test_pilot_accounts_stay_on_v1_while_the_v2_phone_flag_is_off(
     pilot, monkeypatch, runtime_enabled, enrolled
 ):
     monkeypatch.setattr(settings, "kria_runtime_v2_enabled", runtime_enabled)
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_enabled", False)
     user = SimpleNamespace(id=USER_ID if enrolled else uuid.uuid4())
     manifest = await routes.capabilities(user)
     assert manifest["phone_rendering"]["enabled"] is enrolled
     assert manifest["runtime_versions"] == ([1, 2] if runtime_enabled and not enrolled else [1])
     # The web keeps every format, pilot or not.
     assert [entry["id"] for entry in manifest["formats"]] == list(routes._available_formats())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_enabled", [False, True])
+@pytest.mark.parametrize("allowlisted", [False, True])
+async def test_v2_phone_flag_offers_pilot_accounts_v2_only_when_covered(
+    pilot, monkeypatch, runtime_enabled, allowlisted
+):
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", runtime_enabled)
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_enabled", True)
+    monkeypatch.setattr(
+        settings, "kria_runtime_v2_phone_user_ids", [USER_ID if allowlisted else uuid.uuid4()]
+    )
+    manifest = await routes.capabilities(SimpleNamespace(id=USER_ID))
+    assert manifest["phone_rendering"]["enabled"] is True
+    assert manifest["runtime_versions"] == ([1, 2] if runtime_enabled and allowlisted else [1])
+
+
+@pytest.mark.asyncio
+async def test_v2_phone_flag_never_changes_what_a_non_pilot_account_is_offered(pilot, monkeypatch):
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
+    for flag in (False, True):
+        monkeypatch.setattr(settings, "kria_runtime_v2_phone_enabled", flag)
+        manifest = await routes.capabilities(SimpleNamespace(id=uuid.uuid4()))
+        assert manifest["runtime_versions"] == [1, 2]
 
 
 @pytest.mark.asyncio
