@@ -11,7 +11,8 @@ import structlog
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.models import Job, PlanItem, PlanItemAsset
+from app.config import settings
+from app.models import CreationThreadEvent, Job, PlanItem, PlanItemAsset
 from app.routes._copilot import CopilotTurnBody, run_copilot_turn
 from app.routes.generative_jobs import (
     EditorCommitRequest,
@@ -329,6 +330,146 @@ def _applied_summary(changes: list[str]) -> str:
     return f"{', '.join(changes[:-1])} and {changes[-1]}"
 
 
+# KRI-186: rejection code -> plain phrase shown to the creator.  Codes come from
+# `_ParseState.reject` in the copilot agent; anything unmapped gets the generic
+# phrase so an internal code never leaks into chat copy.
+_REJECTION_PHRASES = {
+    "capability_unavailable": "that isn't something I can change in this edit yet",
+    "unknown_operation": "I don't have a way to do that here",
+    "stale_target": "the edit changed since I looked, so I skipped it",
+    "missing_required": "I needed one more detail to do it",
+    "invalid_value": "the value wasn't one I can apply",
+}
+_GENERIC_REJECTION_PHRASE = "I couldn't apply it"
+_PRIOR_TURN_LIMIT = 6
+_PRIOR_TURN_EVENT_TYPES = ("user_message", "assistant_response")
+
+
+def honest_replies_enabled() -> bool:
+    return bool(settings.copilot_honest_replies_enabled)
+
+
+def _op_label(op: object) -> str:
+    text = re.sub(r"[_\s]+", " ", str(op or "")).strip().lower()
+    return "" if text in {"", "bundle"} else text
+
+
+def _sentence(text: str) -> str:
+    text = " ".join(str(text or "").split()).strip()
+    return text if not text or text[-1] in ".!?" else f"{text}."
+
+
+def _not_done_lines(rejections: list[dict], unmet: list[dict]) -> list[str]:
+    """One `Not done:` sentence per rejected op and per unmet request part."""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for item in rejections or []:
+        if not isinstance(item, dict):
+            continue
+        phrase = _REJECTION_PHRASES.get(str(item.get("reason") or ""), _GENERIC_REJECTION_PHRASE)
+        label = _op_label(item.get("op"))
+        line = f"Not done: {label} ({phrase})." if label else f"Not done: {phrase}."
+        if line not in seen:
+            seen.add(line)
+            lines.append(line)
+    for item in unmet or []:
+        if not isinstance(item, dict):
+            continue
+        request = " ".join(str(item.get("request") or "").split()).strip().rstrip(".")
+        if not request:
+            continue
+        reason = " ".join(str(item.get("reason") or "").split()).strip().rstrip(".")
+        line = f"Not done: {request} ({reason})." if reason else f"Not done: {request}."
+        if line not in seen:
+            seen.add(line)
+            lines.append(line)
+    return lines
+
+
+def build_honest_reply(
+    applied: list[str],
+    rejections: list[dict],
+    unmet: list[dict],
+    *,
+    nothing_applied: bool = False,
+) -> str:
+    """Compose a chat reply only from facts: what applied, what was refused, what was skipped.
+
+    Never uses the model's free-text reply, which can claim a rejected op.
+    "Everything else is unchanged." is stated only when nothing was refused or
+    skipped, because otherwise it would blur what the creator still has to do.
+    """
+    not_done = _not_done_lines(rejections, unmet)
+    parts: list[str] = []
+    if nothing_applied:
+        parts.append("Nothing was changed.")
+    else:
+        parts.append(_sentence(_applied_summary(applied)))
+    parts.extend(not_done)
+    if not nothing_applied and not not_done:
+        parts.append("Everything else is unchanged.")
+    return " ".join(parts)
+
+
+async def _thread_memory(db: Any, thread: Any, message: str) -> tuple[list[dict], str | None]:
+    """Last few chat turns + the thread's first creator brief for the copilot.
+
+    The just-appended current user message is dropped from the turns so the
+    model does not see it twice.
+    """
+    thread_id = getattr(thread, "id", None)
+    if thread_id is None:
+        return [], None
+    events = (
+        (
+            await db.execute(
+                select(CreationThreadEvent)
+                .where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type.in_(_PRIOR_TURN_EVENT_TYPES),
+                )
+                .order_by(CreationThreadEvent.sequence.desc())
+                .limit(_PRIOR_TURN_LIMIT + 2)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    ordered = [e for e in reversed(list(events)) if getattr(e, "content", None)]
+    if ordered and ordered[-1].role == "user" and ordered[-1].content == message:
+        ordered = ordered[:-1]
+    turns: list[dict] = []
+    for event in ordered[-_PRIOR_TURN_LIMIT:]:
+        turn: dict[str, Any] = {
+            "role": "assistant" if event.role == "assistant" else "user",
+            "content": str(event.content or ""),
+        }
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if isinstance(payload.get("applied"), list) and payload["applied"]:
+            turn["applied"] = [str(x) for x in payload["applied"]][:6]
+        if isinstance(payload.get("not_done"), list) and payload["not_done"]:
+            turn["rejected"] = [str(x) for x in payload["not_done"]][:6]
+        turns.append(turn)
+    first = (
+        (
+            await db.execute(
+                select(CreationThreadEvent.content)
+                .where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "user_message",
+                    CreationThreadEvent.role == "user",
+                )
+                .order_by(CreationThreadEvent.sequence.asc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    original = str(first or "").strip() or str((thread.state or {}).get("intent") or "").strip()
+    return turns, (original[:2000] or None)
+
+
 async def execute_copilot_edit(
     db: Any, thread: Any, body: Any, user: Any, *, job: Any
 ) -> dict[str, Any] | None:
@@ -398,9 +539,16 @@ async def execute_copilot_edit(
 
     job_id, variant_id = job.id, variant["variant_id"]
     snapshot = build_editor_snapshot(job, copy.deepcopy(variant))
+    honest = honest_replies_enabled()
+    prior_turns: list[dict] = []
+    original_request: str | None = None
+    if honest:
+        prior_turns, original_request = await _thread_memory(db, thread, body.message)
     response = await run_copilot_turn(
         CopilotTurnBody(
             message=body.message,
+            turns=prior_turns,
+            original_request=original_request,
             snapshot=snapshot,
             client_contract_version=2,
             client_request_id=hashlib.sha256(
@@ -412,20 +560,31 @@ async def execute_copilot_edit(
     if response.outcome == "unsupported":
         return None
 
+    rejections = list(getattr(response, "rejection_reasons", None) or []) if honest else []
+    unmet = list(getattr(response, "unmet_requests", None) or []) if honest else []
     receipt: dict[str, Any] = {
         "job_id": str(job_id),
         "variant_id": variant_id,
         "outcome": response.outcome,
     }
+    if honest and (rejections or unmet):
+        receipt["not_done"] = _not_done_lines(rejections, unmet)
     if not response.ops:
-        # clarification / no_effect / failed / stale -- the copilot's own
-        # honest reply already refuses to claim success it did not achieve.
+        # clarification / no_effect / failed / stale.  When the copilot refused
+        # or skipped part of the ask, the reply is built from those facts: the
+        # model's own prose can describe a rejected op as done (KRI-185 East Run).
+        reply = response.reply
+        if honest and (rejections or unmet):
+            if response.outcome == "clarification" and not rejections:
+                reply = " ".join([response.reply, *_not_done_lines([], unmet)])
+            else:
+                reply = build_honest_reply([], rejections, unmet, nothing_applied=True)
         await routes._append(
             db,
             thread,
             event_type="assistant_response",
             role="assistant",
-            content=response.reply,
+            content=reply,
             payload=receipt,
         )
         return {"thread": thread}
@@ -497,7 +656,11 @@ async def execute_copilot_edit(
         if not any((prep["sections"] or {}).values()):
             raise ValueError("This change has no effect on the saved edit.")
         receipt.update(outcome="saved", generation=prep["generation"], sections=prep["sections"])
-        reply = f"{_applied_summary(compiled.changes)}. Everything else is unchanged."
+        if honest:
+            receipt["applied"] = list(compiled.changes)[:6]
+            reply = build_honest_reply(list(compiled.changes), rejections, unmet)
+        else:
+            reply = f"{_applied_summary(compiled.changes)}. Everything else is unchanged."
     except (ValueError, HTTPException) as exc:
         # Validation stages no writes on failure. Do not convert a moved
         # baseline into a misleading assistant response.
@@ -514,6 +677,8 @@ async def execute_copilot_edit(
             detail=receipt["rejection"],
         )
         reply = _rejection_reply(exc)
+        if honest:
+            reply = " ".join([reply, *_not_done_lines(rejections, unmet)])
 
     await routes._append(
         db,

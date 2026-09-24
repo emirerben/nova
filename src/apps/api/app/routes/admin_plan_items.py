@@ -45,14 +45,15 @@ Nothing here takes effect while `PHONE_SUBTITLED_MEDIA_LANES_ENABLED` is off.
 
 from __future__ import annotations
 
+import base64
 import uuid
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -253,6 +254,27 @@ class ProposalTraceResponse(BaseModel):
     planning_diagnostics: dict[str, Any] | None = None
     agent_runs: list[AgentRunPayload]
     agent_runs_has_more: bool = False
+    # KRI-186: opaque `(created_at,id)` cursor for the next (older) page; null on
+    # the last page. Pass it back as `?cursor=`.
+    next_cursor: str | None = None
+
+
+def _encode_trace_cursor(created_at: datetime, run_id: uuid.UUID) -> str:
+    # URL-safe base64 so the value survives a query string ("+" in an ISO offset
+    # would otherwise decode as a space).
+    raw = f"{created_at.isoformat()}|{run_id}".encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_trace_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        raw_created_at, raw_id = base64.urlsafe_b64decode(padded).decode().rsplit("|", 1)
+        return datetime.fromisoformat(raw_created_at), uuid.UUID(raw_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid cursor"
+        )
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -374,15 +396,20 @@ def _proposal_trace_metadata(raw: Any) -> tuple[str | None, str | None, dict[str
 @router.get("/{item_id}/proposal-trace", response_model=ProposalTraceResponse)
 async def get_plan_item_proposal_trace(
     item_id: str,
+    limit: int = Query(default=10, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=128),
     db: AsyncSession = Depends(get_db),
     _: None = Depends(_require_admin),
 ) -> ProposalTraceResponse:
     """Return latest pre-render planner runs and scheduler diagnostics.
 
-    The cap prevents an unusual retry storm from returning unbounded raw model
-    output in one response. Rows are newest first so rejected/schema-failed
-    semantic output appears immediately to the operator.
+    The cap (``limit``, default 10, max 100) prevents an unusual retry storm from
+    returning unbounded raw model output in one response. Rows are newest first
+    so rejected/schema-failed semantic output appears immediately to the
+    operator. Older runs page through ``cursor`` (the previous response's
+    ``next_cursor``, a ``(created_at, id)`` keyset).
     """
+    cursor_key = _decode_trace_cursor(cursor) if cursor else None
     try:
         item_uuid = uuid.UUID(item_id)
     except (ValueError, TypeError):
@@ -393,21 +420,28 @@ async def get_plan_item_proposal_trace(
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
 
+    runs_query = select(AgentRun).where(AgentRun.plan_item_id == item_uuid)
+    if cursor_key is not None:
+        runs_query = runs_query.where(tuple_(AgentRun.created_at, AgentRun.id) < cursor_key)
     runs_res = await db.execute(
-        select(AgentRun)
-        .where(AgentRun.plan_item_id == item_uuid)
-        .order_by(AgentRun.created_at.desc())
-        .limit(11)
+        runs_query.order_by(AgentRun.created_at.desc(), AgentRun.id.desc()).limit(limit + 1)
     )
     fetched_runs = list(runs_res.scalars().all())
+    page_runs = fetched_runs[:limit]
+    has_more = len(fetched_runs) > limit
     direction, prompt_version, diagnostics = _proposal_trace_metadata(item.edit_proposal)
     return ProposalTraceResponse(
         item_id=str(item.id),
         direction=direction,
         prompt_version=prompt_version,
         planning_diagnostics=diagnostics,
-        agent_runs=[agent_run_to_payload(run) for run in fetched_runs[:10]],
-        agent_runs_has_more=len(fetched_runs) > 10,
+        agent_runs=[agent_run_to_payload(run) for run in page_runs],
+        agent_runs_has_more=has_more,
+        next_cursor=(
+            _encode_trace_cursor(page_runs[-1].created_at, page_runs[-1].id)
+            if has_more and page_runs
+            else None
+        ),
     )
 
 
