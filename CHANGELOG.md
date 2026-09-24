@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.205.0] - 2026-09-24
+
+### Changed
+- fix(api): proxy-aware rate-limit key by default behind Fly (KRI-195) (#1227) <!-- release-pr: 1227 -->
+
 ## [0.76.204.0] - 2026-09-24
 
 ### Changed
