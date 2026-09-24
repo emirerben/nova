@@ -13,9 +13,11 @@ dependencies = [
     # policy relies on to restore late-acknowledged renders before hard stop.
     "celery[redis]>=5.5",
     "redis>=5.0",
-    # 2.1 makes a bare postgresql:// URL load psycopg 3, which is not installed:
-    # app/database.py's sync engine then fails at import in every fresh install
-    # (CI evals and the prod image). Lift the cap together with that migration.
+    # 2.1 made psycopg (v3) the default driver for plain postgresql:// URLs.
+    # The sync engine (app/database.py) and alembic use such URLs with
+    # psycopg2-binary, so 2.1 fails at import with "No module named
+    # 'psycopg'" (CI broke on 2026-09-24, minutes after 2.1.0 shipped). Move
+    # to 2.1 deliberately: switch the drivers and re-verify.
     "sqlalchemy>=2.0,<2.1",
     # SQLAlchemy's async runtime needs greenlet. Without it, anything that
     # routes through AsyncSession (alembic env.py async runner, app routes,
