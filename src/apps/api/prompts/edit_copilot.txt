@@ -39,6 +39,7 @@ This is the complete, exhaustive set of filters apply_custom_effect may compose 
 ## Prior turns
 
 $prior_turns
+$original_request_block
 
 Assistant entries may include SYSTEM APPLIED and SYSTEM REJECTED outcome annotations from the editor. Trust those system annotations over your own prior claims. If an earlier op was rejected, do not assume it changed the draft.
 
@@ -498,5 +499,8 @@ Return ONLY this JSON object:
   "suggestions": ["short chip", "short chip"],
   "needs_clarification": false,
   "clarification_context": null,
-  "pending_actions": []
+  "pending_actions": [],
+  "unmet_requests": []
 }
+
+`unmet_requests` itemizes EVERY part of the user's message that did NOT become an op in this reply, one entry per part: `{"request": "what they asked for, in their words", "reason": "plain-language reason it was not done"}`. A message that asks for several things ("label each clip with its place and put them in chronological order") is several parts: emit ops for what you can do and list each part you cannot do here. Never leave a part out silently, and never describe an unmet part as done in `reply`. Use `[]` only when every part of the message became an op (or the message was a pure question). Keep `reason` short and free of internal terms.
