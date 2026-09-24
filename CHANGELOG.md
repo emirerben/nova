@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.207.0] - 2026-09-24
+
+### Changed
+- test(evals): request-following eval harness + East Run baseline (KRI-192) (#1229) <!-- release-pr: 1229 -->
+
 ## [0.76.206.0] - 2026-09-24
 
 ### Changed
