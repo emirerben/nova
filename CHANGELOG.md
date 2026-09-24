@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.202.0] - 2026-09-24
+
+### Changed
+- fix(phone): Talking-edit beats hear the right language and the names as typed (#1222) <!-- release-pr: 1222 -->
+
 ## [0.76.201.0] - 2026-09-24
 
 ### Changed
