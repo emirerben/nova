@@ -1453,10 +1453,14 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     else None
                 )
                 device_variant = _is_device_variant(current_job, approval.target_variant_id)
-                phone_sfx_catalog_paths = phone_subtitled_sfx_paths_sync(
-                    db, current_job, _find_variant(current_job, approval.target_variant_id) or {}
-                )
                 try:
+                    # Inside the try: deriving the lanes re-validates the pinned
+                    # recipe, and a device recipe that fails is a refusal too.
+                    phone_sfx_catalog_paths = phone_subtitled_sfx_paths_sync(
+                        db,
+                        current_job,
+                        _find_variant(current_job, approval.target_variant_id) or {},
+                    )
                     editor_prep = prepare_editor_commit(
                         current_job,
                         approval.target_variant_id,

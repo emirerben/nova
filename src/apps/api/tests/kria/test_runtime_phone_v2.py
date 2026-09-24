@@ -529,6 +529,27 @@ def test_claim_passes_phone_catalog_sfx_paths_to_the_editor_commit(monkeypatch) 
     assert read_variant["variant_id"] == VARIANT
 
 
+def test_claim_refuses_when_the_pinned_recipe_cannot_derive_sfx_paths(monkeypatch) -> None:
+    """Deriving the catalog paths re-validates the pinned device recipe; a
+    recipe that fails there is the same terminal refusal, not a crash loop."""
+    job = _device_job(status="variants_ready")
+    _publish(job)
+
+    def broken(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise ValueError("pinned recipe no longer validates")
+
+    monkeypatch.setattr(kria_runtime, "phone_subtitled_sfx_paths_sync", broken)
+
+    def prepare(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("the commit must not run after the lane read failed")
+
+    claim, approval, execution, events = _claim(job, prepare)
+    assert claim is None
+    assert approval.status == "cancelled"
+    assert execution.status == "failed"
+    assert events[0]["event_type"] == "assistant_error"
+
+
 def test_claim_still_raises_for_a_cloud_variant_validation_error() -> None:
     job = _device_job()
     job.assembly_plan["variants"][0]["render_destination"] = "cloud"
