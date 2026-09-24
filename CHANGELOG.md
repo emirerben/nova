@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.204.0] - 2026-09-24
+
+### Changed
+- fix(uploads): log rejection reasons and surface attach/PUT failures per clip (KRI-194) (#1223) <!-- release-pr: 1223 -->
+
 ## [0.76.203.0] - 2026-09-24
 
 ### Changed
