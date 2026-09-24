@@ -9,7 +9,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import ArgumentError
+from sqlalchemy.pool import NullPool
 
+from app.config import settings
 from app.kria import drafts
 from app.kria.api_schemas import ApprovalDecisionBody, SubmitTurnBody
 from app.kria.contracts import KriaTurnPlan
@@ -26,6 +29,7 @@ from app.kria.runtime import (
 )
 from app.tasks.kria_runtime import (
     _complete_read_turn,
+    _Completion,
     _owns_turn_lease,
     _plan_with_live_agent,
     _renew_turn_lease,
@@ -1147,36 +1151,41 @@ def test_lease_renewal_uses_database_time_and_exact_epoch() -> None:
     database.rollback.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_live_planner_heartbeats_while_inference_is_running(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    renewals: list[uuid.UUID] = []
-    planned = PlannedKriaTurn(
+def _question_turn() -> PlannedKriaTurn:
+    return PlannedKriaTurn(
         KriaTurnPlan(mode="respond", turn_value="question", response="Which shot should open?"),
         "manifest",
         "context",
     )
 
-    class _AsyncContext:
-        async def __aenter__(self):  # noqa: ANN204
-            return SimpleNamespace()
 
-        async def __aexit__(self, *_args):  # noqa: ANN002, ANN204
-            return None
+def _record_lease_renewals(monkeypatch: pytest.MonkeyPatch) -> list[uuid.UUID]:
+    """Renew the turn lease every 10 ms and record each renewal."""
 
-    async def _slow_plan(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-        await asyncio.sleep(0.035)
-        return planned
+    renewals: list[uuid.UUID] = []
 
     def _renew(turn_id: uuid.UUID, **_kwargs) -> bool:  # noqa: ANN003
         renewals.append(turn_id)
         return True
 
-    monkeypatch.setattr("app.tasks.kria_runtime.AsyncSessionLocal", lambda: _AsyncContext())
-    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _slow_plan)
     monkeypatch.setattr("app.tasks.kria_runtime._renew_turn_lease", _renew)
     monkeypatch.setattr("app.tasks.kria_runtime._LEASE_HEARTBEAT_SECONDS", 0.01)
+    return renewals
+
+
+@pytest.mark.asyncio
+async def test_live_planner_heartbeats_while_inference_is_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    renewals = _record_lease_renewals(monkeypatch)
+    planned = _question_turn()
+
+    async def _slow_plan(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        # Never touches the session, so the per-call engine never connects.
+        await asyncio.sleep(0.035)
+        return planned
+
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _slow_plan)
     turn_id = uuid.uuid4()
     result = await _plan_with_live_agent(
         {"thread_id": uuid.uuid4(), "item_id": uuid.uuid4(), "creator_id": uuid.uuid4()},
@@ -1189,6 +1198,175 @@ async def test_live_planner_heartbeats_while_inference_is_running(
     assert result == planned
     assert len(renewals) >= 2
     assert set(renewals) == {turn_id}
+
+
+class _PlanningEngine:
+    """Stands in for the per-call asyncpg engine and records its lifecycle."""
+
+    def __init__(self, events: list[str], name: str) -> None:
+        self.events = events
+        self.name = name
+        self.disposals = 0
+
+    async def dispose(self) -> None:
+        self.disposals += 1
+        self.events.append(f"{self.name} disposed")
+
+
+def _record_planning_engines(
+    monkeypatch: pytest.MonkeyPatch, events: list[str]
+) -> tuple[list[tuple[_PlanningEngine, str, dict]], list[dict]]:
+    """Route `_plan_with_live_agent` onto recording engines and sessions."""
+
+    engines: list[tuple[_PlanningEngine, str, dict]] = []
+    sessionmakers: list[dict] = []
+
+    def _create_engine(url: str, **kwargs) -> _PlanningEngine:  # noqa: ANN003
+        engine = _PlanningEngine(events, name=f"engine-{len(engines)}")
+        engines.append((engine, url, kwargs))
+        events.append(f"{engine.name} created")
+        return engine
+
+    def _sessionmaker(engine: _PlanningEngine, **kwargs):  # noqa: ANN003, ANN202
+        sessionmakers.append(kwargs)
+
+        class _Session:
+            async def __aenter__(self):  # noqa: ANN204
+                events.append(f"{engine.name} session opened")
+                return self
+
+            async def __aexit__(self, *_exc):  # noqa: ANN002, ANN204
+                events.append(f"{engine.name} session closed")
+                return None
+
+        return _Session
+
+    monkeypatch.setattr("app.tasks.kria_runtime.create_async_engine", _create_engine)
+    monkeypatch.setattr("app.tasks.kria_runtime.async_sessionmaker", _sessionmaker)
+    return engines, sessionmakers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("planning_fails", [False, True])
+async def test_live_planner_closes_its_session_then_disposes_its_unpooled_engine(
+    monkeypatch: pytest.MonkeyPatch,
+    planning_fails: bool,
+) -> None:
+    """Each planning call owns an unpooled engine for its own event loop (prod
+    turn 932db9f6 died reusing a pooled asyncpg connection from an earlier
+    loop). Whether the Main Creator returns or raises, the session closes before
+    the engine is disposed, and lease renewal stops with the call."""
+    events: list[str] = []
+    renewals = _record_lease_renewals(monkeypatch)
+    engines, sessionmakers = _record_planning_engines(monkeypatch, events)
+    planned = _question_turn()
+
+    async def _plan(_db, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+        events.append("planning")
+        await asyncio.sleep(0.035)
+        if planning_fails:
+            raise RuntimeError("Kria could not produce a reliable editorial plan")
+        return planned
+
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _plan)
+    pending_before = asyncio.all_tasks()
+    call = _plan_with_live_agent(
+        {"thread_id": uuid.uuid4(), "item_id": uuid.uuid4(), "creator_id": uuid.uuid4()},
+        "Make it faster",
+        turn_id=uuid.uuid4(),
+        lease_owner="worker-1",
+        lease_epoch=2,
+    )
+    if planning_fails:
+        with pytest.raises(RuntimeError, match="reliable editorial plan"):
+            await call
+    else:
+        assert await call == planned
+    renewals_at_exit = len(renewals)
+    await asyncio.sleep(0.05)
+
+    [(engine, url, engine_kwargs)] = engines
+    assert url == settings.asyncpg_database_url
+    assert engine_kwargs == {"poolclass": NullPool}
+    assert sessionmakers == [{"expire_on_commit": False}]
+    assert events == [
+        "engine-0 created",
+        "engine-0 session opened",
+        "planning",
+        "engine-0 session closed",
+        "engine-0 disposed",
+    ]
+    assert engine.disposals == 1
+    # The lease was renewed while the model ran, and renewal stopped with the call.
+    assert renewals_at_exit >= 1
+    assert len(renewals) == renewals_at_exit
+    assert asyncio.all_tasks() <= pending_before
+
+
+@pytest.mark.asyncio
+async def test_live_planner_starts_no_heartbeat_when_its_engine_cannot_be_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The engine is built before the heartbeat task starts, so a bad database
+    URL fails the turn without orphaning a task that keeps renewing its lease."""
+    renewals = _record_lease_renewals(monkeypatch)
+    plan = AsyncMock()
+
+    def _unbuildable(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise ArgumentError("Could not parse SQLAlchemy URL")
+
+    monkeypatch.setattr("app.tasks.kria_runtime.create_async_engine", _unbuildable)
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", plan)
+    pending_before = asyncio.all_tasks()
+
+    with pytest.raises(ArgumentError, match="Could not parse"):
+        await _plan_with_live_agent(
+            {"thread_id": uuid.uuid4(), "item_id": uuid.uuid4(), "creator_id": uuid.uuid4()},
+            "Make it faster",
+            turn_id=uuid.uuid4(),
+            lease_owner="worker-1",
+            lease_epoch=2,
+        )
+    await asyncio.sleep(0.05)
+
+    plan.assert_not_awaited()
+    assert renewals == []
+    assert asyncio.all_tasks() <= pending_before
+
+
+@pytest.mark.asyncio
+async def test_live_planner_disposes_its_engine_when_lease_renewal_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lease-renewal error surfaces from the heartbeat after planning, and the
+    per-call engine is still disposed on the loop that created it."""
+    events: list[str] = []
+    engines, _sessionmakers = _record_planning_engines(monkeypatch, events)
+
+    async def _plan(_db, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+        events.append("planning")
+        await asyncio.sleep(0.035)
+        return _question_turn()
+
+    def _renew(*_args, **_kwargs) -> bool:  # noqa: ANN002, ANN003
+        raise RuntimeError("lease store unavailable")
+
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _plan)
+    monkeypatch.setattr("app.tasks.kria_runtime._renew_turn_lease", _renew)
+    monkeypatch.setattr("app.tasks.kria_runtime._LEASE_HEARTBEAT_SECONDS", 0.01)
+
+    with pytest.raises(RuntimeError, match="lease store unavailable"):
+        await _plan_with_live_agent(
+            {"thread_id": uuid.uuid4(), "item_id": uuid.uuid4(), "creator_id": uuid.uuid4()},
+            "Make it faster",
+            turn_id=uuid.uuid4(),
+            lease_owner="worker-1",
+            lease_epoch=2,
+        )
+
+    [(engine, _url, _kwargs)] = engines
+    assert engine.disposals == 1
+    assert events[-2:] == ["engine-0 session closed", "engine-0 disposed"]
 
 
 def test_live_plan_guard_replaces_paraphrase_only_response_and_action_summary() -> None:
@@ -1247,6 +1425,119 @@ def test_failed_turn_publishes_its_promoted_successor() -> None:
     publish.assert_called_once_with(
         args=[successor_id], task_id=successor_id, queue="agent-control"
     )
+
+
+def _live_turn_snapshot() -> dict[str, str]:
+    return {
+        "thread_id": str(uuid.uuid4()),
+        "item_id": str(uuid.uuid4()),
+        "creator_id": str(uuid.uuid4()),
+    }
+
+
+def test_consecutive_live_turns_in_one_worker_each_plan_on_their_own_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Celery child plans every turn in a fresh `asyncio.run` loop, so no
+    engine (or connection) from one turn may survive into the next turn's loop.
+    Unit twin of the real-Postgres regression in test_runtime_postgres_integration."""
+    events: list[str] = []
+    engines, _sessionmakers = _record_planning_engines(monkeypatch, events)
+    loops: list[asyncio.AbstractEventLoop] = []
+    planned = _question_turn()
+
+    async def _plan(_db, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+        loops.append(asyncio.get_running_loop())
+        events.append("planning")
+        return planned
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _plan)
+    with (
+        patch(
+            "app.tasks.kria_runtime._claim",
+            side_effect=[
+                (_live_turn_snapshot(), "Make it faster", 1, 4),
+                (_live_turn_snapshot(), "Now open on the goal", 1, 6),
+            ],
+        ),
+        patch(
+            "app.tasks.kria_runtime._complete_response_turn",
+            return_value=_Completion(committed=True),
+        ) as complete,
+        patch.object(run_kria_turn, "apply_async") as publish,
+    ):
+        results = [run_kria_turn.run(str(uuid.uuid4())) for _ in range(2)]
+
+    assert [result["status"] for result in results] == ["completed", "completed"]
+    assert complete.call_count == 2
+    assert loops[0] is not loops[1]
+    assert [engine.disposals for engine, _url, _kwargs in engines] == [1, 1]
+    assert events == [
+        "engine-0 created",
+        "engine-0 session opened",
+        "planning",
+        "engine-0 session closed",
+        "engine-0 disposed",
+        "engine-1 created",
+        "engine-1 session opened",
+        "planning",
+        "engine-1 session closed",
+        "engine-1 disposed",
+    ]
+    publish.assert_not_called()
+
+
+def test_live_planner_failure_is_projected_as_a_retryable_turn_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the Main Creator cannot plan (truncated, timed out, invalid output),
+    the creator still gets the retryable "couldn't finish that step" projection
+    under the claimed lease, after the planning engine has been released."""
+    events: list[str] = []
+    _record_planning_engines(monkeypatch, events)
+    turn_id = str(uuid.uuid4())
+
+    async def _plan(_db, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+        events.append("planning")
+        raise RuntimeError("Kria could not produce a reliable editorial plan")
+
+    def _fail(*_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
+        events.append("turn failed")
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _plan)
+    with (
+        patch(
+            "app.tasks.kria_runtime._claim",
+            return_value=(_live_turn_snapshot(), "Make it faster", 3, 8),
+        ) as claim,
+        patch("app.tasks.kria_runtime._fail_turn", side_effect=_fail) as fail,
+        patch("app.tasks.kria_runtime._complete_response_turn") as complete_response,
+        patch("app.tasks.kria_runtime._complete_draft_turn") as complete_draft,
+        patch.object(run_kria_turn, "apply_async") as publish,
+        pytest.raises(RuntimeError, match="reliable editorial plan"),
+    ):
+        run_kria_turn.run(turn_id)
+
+    lease_owner = claim.call_args.args[1]
+    fail.assert_called_once_with(
+        uuid.UUID(turn_id),
+        code="runtime_turn_failed",
+        lease_owner=lease_owner,
+        lease_epoch=3,
+    )
+    assert events == [
+        "engine-0 created",
+        "engine-0 session opened",
+        "planning",
+        "engine-0 session closed",
+        "engine-0 disposed",
+        "turn failed",
+    ]
+    complete_response.assert_not_called()
+    complete_draft.assert_not_called()
+    publish.assert_not_called()
 
 
 @pytest.mark.asyncio

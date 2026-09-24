@@ -15,9 +15,11 @@ from typing import Any
 import structlog
 from fastapi import HTTPException
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.config import settings
-from app.database import AsyncSessionLocal, sync_session
+from app.database import sync_session
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.brief import (
     BriefUpdate,
@@ -696,9 +698,16 @@ async def _plan_with_live_agent(
                 if not alive:
                     return
 
+    # Each task run plans inside a fresh `asyncio.run` loop, and asyncpg
+    # connections cannot be shared across loops: a connection pooled by the
+    # previous turn in this Celery child fails its pre-ping with "attached to a
+    # different loop". Plan on an unpooled engine that lives for this loop only.
+    # Unpooled means the planner's rollbacks before model calls close the
+    # connection (a reconnect costs tens of ms against multi-second model calls).
+    engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
     heartbeat = asyncio.create_task(_heartbeat())
     try:
-        async with AsyncSessionLocal() as db:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
             return await plan_live_turn(
                 db,
                 thread_id=uuid.UUID(str(snapshot["thread_id"])),
@@ -708,7 +717,10 @@ async def _plan_with_live_agent(
             )
     finally:
         stop.set()
-        await heartbeat
+        try:
+            await heartbeat
+        finally:
+            await engine.dispose()
 
 
 def _append_sync_event(
