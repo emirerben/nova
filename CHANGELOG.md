@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.198.0] - 2026-09-24
+
+### Changed
+- fix(deploy): raise api min_machines_running to match live scale count (KRI-193) (#1219) <!-- release-pr: 1219 -->
+
 ## [0.76.197.0] - 2026-09-24
 
 ### Changed
