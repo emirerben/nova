@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.218.0] - 2026-09-24
+
+### Fixed
+- fix(kria): give a runtime-v2 thread's session the plan's ownership epoch (#1244) <!-- release-pr: 1244 -->
+
 ## [0.76.217.0] - 2026-09-24
 
 ### Changed
