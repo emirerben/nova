@@ -95,6 +95,43 @@ def test_creator_request_is_bounded_and_persisted_for_retries(repeat: int) -> No
     assert job.all_candidates["creator_request"] == request.strip()[:12000]
 
 
+# ── KRI-177: caption_language_request from the creator's own words ─────────
+
+
+def test_explicit_caption_language_request_lands_in_all_candidates() -> None:
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        mode="content_plan",
+        content_plan_item_id=uuid.uuid4(),
+        content_plan_ownership_epoch=0,
+        edit_format="subtitled",
+        creator_request="Türkçe konuşuyorum ama altyazılar İngilizce olsun",
+    )
+    assert job.all_candidates["caption_language_request"] == "en"
+
+
+def test_caption_language_request_omitted_when_not_explicitly_asked() -> None:
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        mode="content_plan",
+        content_plan_item_id=uuid.uuid4(),
+        content_plan_ownership_epoch=0,
+        edit_format="subtitled",
+        creator_request="Türkçe konuşuyorum, güzel bir video yap",
+    )
+    assert "caption_language_request" not in job.all_candidates
+
+
+def test_caption_language_request_omitted_when_no_creator_request() -> None:
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+    )
+    assert "caption_language_request" not in job.all_candidates
+
+
 def test_content_plan_original_audio_policy_is_persisted() -> None:
     job = build_generative_job(
         user_id=uuid.uuid4(),
