@@ -2393,3 +2393,66 @@ Guards in `tests/tasks/test_autoplace_tasks.py`:
 **Revisit if:** Gemini outages routinely outlast ~1 minute (lengthen the countdown or add
 backoff), or GCS download errors start stranding uploads (google-cloud-storage errors are not
 classified transient, so a failed download is still terminal on the first failure).
+
+---
+
+## [2026-09-24] Browser motion benchmark: interleaved samples and a ceiling recalibrated from CI (0.8 → 0.7)
+
+`e2e/motion-preview.spec.ts` › "the calibrated budget catches a doubled draw workload"
+failed 4/4 attempts on PR #1197, a diff that never touches the page. It was not new. In
+the 87 Mobile E2E runs before it, the 2x ratio read ≤ 0.8 on **33 first attempts
+(38%)**; the Playwright retry hid most of them, and 7 of 33 retries failed too. 1x read
+0.43-0.55. 2x read 0.64-1.14 (median 0.85, sd 0.098).
+
+**Root cause: the 0.8 ceiling was calibrated on arm64 and judged on x86.** The 2026-09-08
+envelope (clean 0.41-0.59, doubled 0.87-1.15) was measured on an M-series Mac. The
+Mobile E2E runners are 4-vCPU AMD EPYC (9V74 / 7763; `nproc`=4, 2 cores × SMT). There a
+clean run reads ~0.47 and a doubled workload ~0.87. So on CI the "doubled" check sat only
+~0.07 above the ceiling, and the 2x test's noise was enough to cross it. The 2x check was
+reporting something true: on CI hardware, 0.8 only caught a ~1.7x slowdown, not the
+~1.55x it was designed for.
+
+**Contributing: phased sampling widened the spread.** Playwright's 2 workers run the 1x
+and 2x pages at the same moment. Each page timed 24 calibrations, then 24 draws, per
+block, so a busy stretch could land on one side of the ratio only. A same-VM A/B on CI
+(4 runs, 1x+2x concurrent, `--repeat-each`) gave these results. Phased: 1x 0.40-0.62,
+2x 0.68-1.12 (sd 0.093), 2x ≤ 0.8 on 6/42. Interleaved, one sample per frame with the
+order alternating: 1x 0.43-0.53, 2x 0.78-1.01 (sd 0.046), 2x ≤ 0.8 on 3/47. Interleaving
+halves the spread but does not move the centre (per-VM 2x medians 0.84-0.95 phased,
+0.85-0.89 interleaved). My first
+hypothesis, that phasing *biased* 2x low, was wrong. It only widened the tails.
+
+**Not the flush.** `?benchmark=2x` repeats `drawMotionFrame` but flushes once. The CI A/B
+also ran a flush-per-repeat variant: 2x medians 0.85-0.88, no different. The flush stays
+once per sample, which is also what a real 2x regression in `drawMotionFrame` would look
+like.
+
+**Fix:** interleave the browser samples, and set the browser ceiling from the CI envelope.
+Interleaved CI samples: clean 0.393-0.584 (n=77, counting the flush variant, which runs
+identical code at 1x), doubled 0.777-1.006 (n=47). 0.7 sits in
+that gap: 1.20x above the worst clean sample and 1.11x below the lowest doubled one. The
+doubled side gets more room because its sd is larger. That catches a ~1.5x slowdown on CI.
+The worst clean sample came from a block where the runner went briefly quiet:
+calibration sped up 30% but the draw only 12%. On x86 an idle runner pushes the ratio up
+and heavy contention pushes it down, so the ceiling has to clear both tails. Locally
+(arm64) the browser reads 1x 0.49-0.55 and 2x 0.96-1.00. The spec now logs per-block
+draw/calibration costs, so the next excursion can be diagnosed from the CI log alone.
+
+**Why the Jest twin keeps phased sampling and 0.8.** The 2026-09-08 entry rejected
+interleaving on measured evidence, and it reproduces on an M-series Mac. With 36 busy
+loops (3x load), back-to-back interleaved samples in Node read 0.16-1.14 (median 0.86), so
+the 1x test would fail; phased read 0.30-0.73. The cause is the hybrid CPU. Confined to
+efficiency cores only (`taskpolicy -c background`, 2x load), interleaved reads 0.46-0.52
+and phased 0.42-0.50. Under load the thread migrates between P and E cores, which differ
+2-3x in speed. Back-to-back alternation splits each side across both, and median
+(calibration) against trimmed mean (draw) reads that split unevenly. The browser page waits
+a frame before every sample, and its renderer outranks background load. Both variants read
+0.49-0.51 / 0.96-0.98 there under the same 3x load. The Node check reads 0.46-0.54 on CI and
+up to 0.73 on a loaded Mac, and it has no doubled-workload check, so 0.8 stays.
+
+**Lesson:** a ceiling tuned where the code is developed is not the ceiling where it is
+judged. The 2026-09-08 comment said so ("the envelope above is arm64, CI is x86_64 … so the
+ceiling can be tightened from real CI samples"), and nobody closed that loop until a
+canary started failing. Also, check a noise hypothesis against a same-machine A/B before
+believing it: the local contention studies here were dominated by hybrid-core scheduling
+and by QoS, neither of which exists on the runner.

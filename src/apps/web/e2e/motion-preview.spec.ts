@@ -9,6 +9,7 @@ test("maximum-complexity Creator preview stays within the calibrated draw budget
   const ratio = Number(await state.getAttribute("data-draw-cost-ratio"));
   const ceiling = Number(await state.getAttribute("data-draw-cost-ceiling"));
   console.log({ drawCost, calibrationCost, ratio, ceiling });
+  console.log(`[motion-preview 1x] blocks draw/calibration ms: ${await state.getAttribute("data-blocks")}`);
   expect(Number.isFinite(drawCost)).toBe(true);
   expect(drawCost).toBeGreaterThan(0);
   expect(Number.isFinite(calibrationCost)).toBe(true);
@@ -25,6 +26,11 @@ test("the calibrated budget catches a doubled draw workload", async ({ page }) =
   const ratio = Number(await state.getAttribute("data-draw-cost-ratio"));
   const ceiling = Number(await state.getAttribute("data-draw-cost-ceiling"));
   console.log({ multiplier, ratio, ceiling });
+  console.log(
+    `[motion-preview 2x] draw ${await state.getAttribute("data-draw-cost-ms")}ms / calibration ` +
+      `${await state.getAttribute("data-calibration-ms")}ms; blocks draw/calibration ms: ` +
+      `${await state.getAttribute("data-blocks")}`,
+  );
   expect(multiplier).toBe(2);
   expect(ratio).toBeGreaterThan(ceiling);
 });

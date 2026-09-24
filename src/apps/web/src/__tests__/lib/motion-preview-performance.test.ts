@@ -38,6 +38,14 @@ const SAMPLE_COUNT = 24;
  * the smallest ratio) keeps the ratio centred on the same value whether the
  * machine is idle or thrashing. A genuine regression raises the draw cost in
  * every block, including the cheapest one.
+ *
+ * Within a block each side is sampled back-to-back in its own phase. The
+ * browser twin (MotionPreviewPerformanceFixture.tsx) interleaves the two sides
+ * instead, because its 1x and 2x pages share one small CI runner and phased
+ * sampling let that load land on one side of the ratio. Keep this one phased:
+ * on Apple Silicon under load, back-to-back interleaved samples split between
+ * performance and efficiency cores, which the median/trimmed-mean pair reads
+ * unevenly (0.16-1.14 at 3x load). See agents/DECISIONS.md (2026-09-24).
  */
 const MEASUREMENT_BLOCKS = 3;
 /** Samples dropped from each end before averaging, so a scheduler preemption
@@ -62,6 +70,11 @@ const TRIM = 2;
  * architecture — the envelope above is arm64, CI is x86_64, where the two
  * workloads may sit at slightly different relative costs. The observed ratio is
  * logged on every run so the ceiling can be tightened from real CI samples.
+ *
+ * The browser twin has since done that and uses 0.7: on x86 CI a doubled draw
+ * reads 0.78-1.01, too close to 0.8 (agents/DECISIONS.md, 2026-09-24). This
+ * Node check keeps 0.8. It reads 0.46-0.54 on CI and up to 0.73 on a loaded
+ * Mac, and it has no doubled-workload check that needs the tighter gap.
  */
 const MAX_DRAW_COST_RATIO = 0.8;
 
