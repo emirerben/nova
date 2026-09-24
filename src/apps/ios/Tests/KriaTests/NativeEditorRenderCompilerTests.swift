@@ -593,6 +593,103 @@ import KriaMediaEngine
         XCTAssertEqual(sfxClip.sourceDuration, 1.5, accuracy: 0.0001)
     }
 
+    /// KRI-182: a phone Talking card's "fade" tokens must actually fade it,
+    /// on the pinned device recipe's curve, without moving the card off the
+    /// transform (cover-fit) positioning every existing pip card uses.
+    func testFadeTokensFadeTheCardWithoutChangingItsPlacement() throws {
+        let videoFingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let videoSource = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
+            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: videoFingerprint, duration: 4),
+            url: URL(fileURLWithPath: "/fixture/original.mp4"))
+        // Non-square on purpose: where transform and placement sizing diverge.
+        let overlaySource = ResolvedEditorSource(preserveAlpha: true, clipIndex: -1, mediaID: "overlay-media",
+            asset: MediaAsset(id: "overlay-asset", relativePath: "overlay.png",
+                fingerprint: AssetFingerprint(hex: String(repeating: "b", count: 64), byteCount: 50),
+                naturalSize: MediaSize(width: 400, height: 200)),
+            url: URL(fileURLWithPath: "/fixture/overlay.png"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 4,
+            trimIn: 0, trimOut: 4, sourceDuration: 4, slotID: "slot")
+        let item = NativeEditorTimelineItem(selection: .init(kind: .mediaOverlay, id: "card"), start: 1, end: 3)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        func compiled(entrance: String, exit: String, styled: Bool = false) throws -> TimelineClip {
+            var raw: [String: JSONValue] = ["kind": .string("image"), "x_frac": .number(0.6), "y_frac": .number(0.7),
+                "scale": .number(0.4), "entrance_token": .string(entrance), "exit_token": .string(exit)]
+            if styled { raw["editor_style"] = .object(NativeVisualAuthoring.defaultStyle) }
+            let document = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 4)],
+                mediaOverlays: [EditorTimedEffect(id: "card", startS: 1, endS: 3, kind: "image", raw: raw)])
+            let recipe = try compiler.compile(document: document, clips: [clip], items: [item],
+                sources: [0: videoSource], mediaSources: ["overlay:card": overlaySource]).recipe
+            XCTAssertNoThrow(try recipe.validate())
+            return try XCTUnwrap(recipe.tracks.first(where: { $0.id == "overlays" })?.clips.first)
+        }
+
+        let plain = try compiled(entrance: "none", exit: "none")
+        let faded = try compiled(entrance: "fade", exit: "fade")
+        XCTAssertNil(plain.overlayFadeIn)
+        XCTAssertNil(plain.overlayFadeOut)
+        XCTAssertEqual(faded.overlayFadeIn, true)
+        XCTAssertEqual(faded.overlayFadeOut, true)
+        // Positioning is untouched: no placement, and apart from the fade
+        // fields the faded clip is the plain clip, transform included.
+        XCTAssertNil(faded.visualPlacement)
+        var unfaded = faded
+        unfaded.overlayFadeIn = nil
+        unfaded.overlayFadeOut = nil
+        XCTAssertEqual(unfaded, plain)
+
+        // A real ramp, not a static card: 0 at the edges, half after 75 ms,
+        // opaque between -- the pinned device recipe's 0.15 s curve.
+        XCTAssertEqual(faded.overlayFadeAlpha(at: 1), 0, accuracy: 1e-9)
+        XCTAssertEqual(faded.overlayFadeAlpha(at: 1.075), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(faded.overlayFadeAlpha(at: 1.15), 1, accuracy: 1e-9)
+        XCTAssertEqual(faded.overlayFadeAlpha(at: 2), 1)
+        XCTAssertEqual(faded.overlayFadeAlpha(at: 2.925), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(faded.overlayFadeAlpha(at: 3), 0, accuracy: 1e-9)
+        for time in stride(from: 1.0, through: 3.0, by: 0.05) {
+            XCTAssertEqual(faded.overlayFadeAlpha(at: time), VisualMediaPlacement.fadeEnvelope(at: time,
+                windowStart: 1, windowEnd: 3, fadeIn: true, fadeOut: true), accuracy: 1e-12)
+            XCTAssertEqual(plain.overlayFadeAlpha(at: time), 1)
+        }
+
+        // Each edge is independent.
+        let entranceOnly = try compiled(entrance: "fade", exit: "none")
+        XCTAssertEqual(entranceOnly.overlayFadeIn, true)
+        XCTAssertNil(entranceOnly.overlayFadeOut)
+        XCTAssertEqual(entranceOnly.overlayFadeAlpha(at: 2.99), 1)
+
+        // The mirror image of entranceOnly: only the exit token is "fade".
+        let exitOnly = try compiled(entrance: "none", exit: "fade")
+        XCTAssertNil(exitOnly.overlayFadeIn)
+        XCTAssertEqual(exitOnly.overlayFadeOut, true)
+        XCTAssertEqual(exitOnly.overlayFadeAlpha(at: 1.01), 1)
+        XCTAssertEqual(exitOnly.overlayFadeAlpha(at: 2.925), 0.5, accuracy: 1e-9)
+        XCTAssertNil(exitOnly.visualPlacement)
+
+        // The entrance and exit guards are independent, so a card can author
+        // "fade" in and "dissolve-out" out on the same clip -- the compiler
+        // must set both fields rather than one silently winning.
+        let fadeInDissolveOut = try compiled(entrance: "fade", exit: "dissolve-out")
+        XCTAssertEqual(fadeInDissolveOut.overlayFadeIn, true)
+        XCTAssertNil(fadeInDissolveOut.overlayFadeOut)
+        XCTAssertNotNil(fadeInDissolveOut.overlayDissolveSeed)
+
+        // A styled card already sits on the placement path; it fades there,
+        // with no second fade on the clip.
+        let styled = try compiled(entrance: "fade", exit: "fade", styled: true)
+        let placement = try XCTUnwrap(styled.visualPlacement)
+        XCTAssertTrue(placement.fadeIn)
+        XCTAssertTrue(placement.fadeOut)
+        XCTAssertNil(styled.overlayFadeIn)
+        XCTAssertNil(styled.overlayFadeOut)
+        // Each edge is independent on the placement path too.
+        let styledEntranceOnly = try XCTUnwrap(compiled(entrance: "fade", exit: "none", styled: true).visualPlacement)
+        XCTAssertTrue(styledEntranceOnly.fadeIn)
+        XCTAssertFalse(styledEntranceOnly.fadeOut)
+        let styledExitOnly = try XCTUnwrap(compiled(entrance: "none", exit: "fade", styled: true).visualPlacement)
+        XCTAssertFalse(styledExitOnly.fadeIn)
+        XCTAssertTrue(styledExitOnly.fadeOut)
+    }
+
     func testLongCutTimelineReusesTracksAndCrossfadesKeepTwoSources() async throws {
         let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         for overlap in [false, true] {

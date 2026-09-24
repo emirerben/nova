@@ -26,6 +26,31 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var visualOrder: Int = 0
     var overlayDissolve: NativeDissolveRenderer? = nil
     var sourceCrop: NormalizedSourceRect? = nil
+    /// Set only for an overlay clip with `overlayFadeIn`/`overlayFadeOut`.
+    /// It scales opacity alone; positioning keeps using `transform`.
+    var overlayFade: OverlayFadeWindow? = nil
+}
+
+/// An overlay clip's fade across the window its layer actually occupies,
+/// evaluated with the same curve as `VisualMediaPlacement` (see `fadeEnvelope`).
+struct OverlayFadeWindow: Equatable, Sendable {
+    let start: Double
+    let end: Double
+    let fadeIn: Bool
+    let fadeOut: Bool
+
+    /// `start`/`end` are the layer's own bounds, not `clip.duration`: a video
+    /// card's track can end up to a source frame off its idealized length, and
+    /// the fade-out must reach 0 where the layer stops drawing.
+    init?(clip: TimelineClip, start: Double, end: Double) {
+        guard clip.visualPlacement == nil, clip.overlayFadeIn == true || clip.overlayFadeOut == true else { return nil }
+        self.start = start; self.end = end
+        fadeIn = clip.overlayFadeIn == true; fadeOut = clip.overlayFadeOut == true
+    }
+
+    func alpha(at time: Double) -> Double {
+        VisualMediaPlacement.fadeEnvelope(at: time, windowStart: start, windowEnd: end, fadeIn: fadeIn, fadeOut: fadeOut)
+    }
 }
 
 struct RecipeTextLayer: @unchecked Sendable {
@@ -199,7 +224,8 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         } else if let image = layer.image {
             source = image
         } else { return frame }
-        let alpha = layer.visualPlacement?.alpha(at: time) ?? (layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1)
+        var alpha = layer.visualPlacement?.alpha(at: time) ?? (layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1)
+        if layer.visualPlacement == nil, let fade = layer.overlayFade { alpha *= fade.alpha(at: time) }
         var positioned = Self.positionedSource(source, layer: layer, canvas: instruction.canvas, time: time)
         if layer.overlayPopIn {
             let scale = 0.82 + 0.18 * min(1, max(0, (time - layer.start) / 0.18))
