@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.211.0] - 2026-09-24
+
+### Changed
+- fix(ios): editor preview never plays cards over an empty video track (#1235) <!-- release-pr: 1235 -->
+
 ## [0.76.210.0] - 2026-09-24
 
 ### Changed

@@ -1302,6 +1302,8 @@ struct NativeEditorTemporaryVideo {
             return "This edit contains an effect that iPhone preview does not support yet."
         case NativeEditorRenderError.missingFont:
             return "A required font is missing from this app build. Update the app and try again."
+        case NativeEditorRenderError.missingVideoTrack:
+            return "This edit’s video can’t be previewed on iPhone yet."
         case SourceAssetError.missingOriginal, SourceAssetError.changedOriginal:
             return "The original video is unavailable on this iPhone. Open the edit on the device that imported it."
         default:
