@@ -7,6 +7,11 @@ instead of the montage-family archetype/spec prework.
 KRI-174 Phase 1 extends this file with `_run_phone_subtitled_job`'s optional
 media-lanes handling (overlay sticker/photo cards, catalog sound effects, a
 muted ending clip) and the new `_resolve_phone_sound_effect` helper.
+
+KRI-176 extends it further with the transcript-grounded overlay lane
+(`ground_phone_subtitled_overlays`, `app.services.phone_overlay_grounding`):
+the worker's own wiring is exercised here with that function mocked --
+`tests/services/test_phone_overlay_grounding.py` covers its internals.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from unittest.mock import Mock
 
 import pytest
 
+import app.services.phone_overlay_grounding as phone_overlay_grounding_mod
 import app.services.phone_visuals as phone_visuals_mod
 from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
@@ -27,10 +33,12 @@ from app.pipeline.phone_subtitled_lanes import (
     PHONE_SUBTITLED_LANES_FIELD,
     ResolvedSoundEffect,
     SubtitledLaneError,
+    SubtitledOverlayCard,
     SubtitledSoundEffect,
 )
 from app.pipeline.transcribe import Transcript, Word
 from app.services.device_render import device_status
+from app.services.phone_overlay_grounding import GroundedOverlayCards
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, PhoneVisualBinding
 from app.tasks import generative_build as gb
 from tests.pipeline.test_phone_montage_plan import _binding
@@ -78,6 +86,10 @@ def _job_and_session(monkeypatch, *, assembly_plan: dict, all_candidates: dict):
     monkeypatch.setattr(gb.settings, "subtitled_caption_correction_enabled", False)
     # KRI-174: off by default, same as production. Individual tests flip it.
     monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", False)
+    # KRI-176: off by default, same as production. Individual tests flip it
+    # (together with the `PHONE_SUBTITLED_OVERLAY_FEATURES` verified-feature
+    # set) to exercise `overlay_grounding_enabled`.
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", False)
     return job, session
 
 
@@ -317,6 +329,38 @@ def _lanes_features(*extra: str) -> list[str]:
     ]
 
 
+def _overlay_grounding_features(*extra: str) -> list[str]:
+    """`PHONE_SUBTITLED_OVERLAY_FEATURES` verified, plus whatever else a test
+    needs -- `overlay_grounding_enabled` additionally requires
+    `phone_subtitled_media_lanes_enabled` and `media_overlays_enabled`."""
+    return _lanes_features("stillImages", "visualBlocks", "alphaOverlay", *extra)
+
+
+def _grounding_mock(cards: list, *, matcher: str = "agent") -> Mock:
+    return Mock(
+        return_value=GroundedOverlayCards(
+            cards=cards,
+            receipt={
+                "version": 1,
+                "matcher": matcher,
+                "face_sampling": "skipped",
+                "placed": [
+                    {
+                        "media_id": card.media_id,
+                        "label": "photo.jpg",
+                        "start_s": card.start_s,
+                        "end_s": card.end_s,
+                        "reason": "You mention it here.",
+                    }
+                    for card in cards
+                ],
+                "unplaced": [],
+                "wishlist": [],
+            },
+        )
+    )
+
+
 def test_subtitled_media_lanes_flag_off_is_byte_identical(monkeypatch):
     job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
     # Flag stays off (the `_job_and_session` default). A lanes field on the
@@ -326,6 +370,10 @@ def test_subtitled_media_lanes_flag_off_is_byte_identical(monkeypatch):
     )
     bind_mock = Mock(side_effect=AssertionError("bind must not run with the flag off"))
     monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", bind_mock)
+    grounding_mock = Mock(side_effect=AssertionError("grounding must not run with the flag off"))
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", grounding_mock
+    )
 
     import app.pipeline.phone_subtitled_plan as subtitled_plan_mod
 
@@ -338,11 +386,208 @@ def test_subtitled_media_lanes_flag_off_is_byte_identical(monkeypatch):
     variant = job.assembly_plan["variants"][0]
     assert "overlay_transcript" not in variant
     assert "phone_lane_receipt" not in variant
+    assert "phone_overlay_receipt" not in variant
     assert PHONE_VISUALS_FIELD not in job.assembly_plan
     bind_mock.assert_not_called()
+    grounding_mock.assert_not_called()
     call_kwargs = compile_spy.call_args.kwargs
     assert "visuals" not in call_kwargs
     assert "lanes" not in call_kwargs
+
+
+def test_subtitled_media_lanes_on_but_overlays_not_supported_skips_grounding(monkeypatch):
+    """`phone_subtitled_media_lanes_enabled` alone isn't the KRI-176 gate --
+    `phone_subtitled_overlays_supported()` also needs `media_overlays_enabled`
+    and every `PHONE_SUBTITLED_OVERLAY_FEATURES` feature verified. Here the
+    lanes flag is on (so a hand-authored lane request still resolves) but
+    `media_overlays_enabled` stays off, so grounding must never run."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(
+        gb.settings, "phone_render_verified_features", _overlay_grounding_features()
+    )
+    # `media_overlays_enabled` left at the `_job_and_session` default (False).
+    grounding_mock = Mock(side_effect=AssertionError("grounding must not run when unsupported"))
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", grounding_mock
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    assert "phone_overlay_receipt" not in variant
+    grounding_mock.assert_not_called()
+
+
+def test_subtitled_overlay_grounding_happy_path(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(
+        gb.settings, "phone_render_verified_features", _overlay_grounding_features()
+    )
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+
+    cards = [
+        SubtitledOverlayCard(
+            id="pip-0",
+            media_id="photo1",
+            gcs_path="users/u1/plan/item1/pool/photo1.jpg",
+            generation="1",
+            start_s=0.0,
+            end_s=2.0,
+        ),
+        SubtitledOverlayCard(
+            id="pip-1",
+            media_id="photo2",
+            gcs_path="users/u1/plan/item1/pool/photo2.jpg",
+            generation="1",
+            start_s=3.0,
+            end_s=5.0,
+        ),
+    ]
+    grounding_mock = _grounding_mock(cards)
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", grounding_mock
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    grounding_mock.assert_called_once()
+    assert grounding_mock.call_args.kwargs["job_id"] == str(job.id)
+    assert grounding_mock.call_args.kwargs["clip_path"] == "/tmp/c0.mp4"
+    receipt = variant["phone_lane_receipt"]
+    assert receipt["applied"] == ["overlays"]
+    assert receipt["dropped"] == []
+    overlay_receipt = variant["phone_overlay_receipt"]
+    assert len(overlay_receipt["placed"]) == 2
+    assert {c["media_id"] for c in overlay_receipt["placed"]} == {"photo1", "photo2"}
+    assert len(bind_calls) == 1
+    assert set(bind_calls[0]) == {"photo1", "photo2"}
+    assert job.assembly_plan[PHONE_VISUALS_FIELD]
+
+
+def test_subtitled_overlay_grounding_failure_drops_lane_not_job(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(
+        gb.settings, "phone_render_verified_features", _overlay_grounding_features()
+    )
+
+    def _broken_grounding(*args, **kwargs):
+        raise RuntimeError("pool query exploded")
+
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", _broken_grounding
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    lane_receipt = variant["phone_lane_receipt"]
+    assert lane_receipt["applied"] == []
+    assert len(lane_receipt["dropped"]) == 1
+    assert lane_receipt["dropped"][0]["lane"] == "overlays"
+    assert "grounding failed" in lane_receipt["dropped"][0]["reason"]
+    overlay_receipt = variant["phone_overlay_receipt"]
+    assert overlay_receipt["matcher"] == "failed"
+    assert overlay_receipt["placed"] == []
+    assert PHONE_VISUALS_FIELD not in job.assembly_plan
+
+
+def test_subtitled_overlay_grounding_skipped_when_admin_authored_overlays_present(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(
+        gb.settings, "phone_render_verified_features", _overlay_grounding_features()
+    )
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+    grounding_mock = Mock(side_effect=AssertionError("manual overlays must skip grounding"))
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", grounding_mock
+    )
+
+    job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD] = _lane_request(
+        overlays=[_overlay_card("card1", "photo1", start_s=0.0, end_s=2.0)],
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    grounding_mock.assert_not_called()
+    overlay_receipt = variant["phone_overlay_receipt"]
+    assert overlay_receipt == {
+        "version": 1,
+        "matcher": "manual",
+        "face_sampling": "skipped",
+        "placed": [],
+        "unplaced": [],
+        "wishlist": [],
+    }
+    assert variant["phone_lane_receipt"]["applied"] == ["overlays"]
+
+
+def test_subtitled_overlay_grounding_compiler_drop_demotes_receipt(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(
+        gb.settings, "phone_render_verified_features", _overlay_grounding_features()
+    )
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind([]))
+
+    card = SubtitledOverlayCard(
+        id="pip-0",
+        media_id="photo1",
+        gcs_path="users/u1/plan/item1/pool/photo1.jpg",
+        generation="1",
+        start_s=0.0,
+        end_s=2.0,
+    )
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod,
+        "ground_phone_subtitled_overlays",
+        _grounding_mock([card]),
+    )
+
+    import app.pipeline.phone_subtitled_plan as subtitled_plan_mod
+
+    real_compile = subtitled_plan_mod.compile_phone_subtitled_plan
+    call_count = {"n": 0}
+
+    def _flaky_compile(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise SubtitledLaneError(
+                "overlays", "overlay geometry rejected", capability="visualBlocks"
+            )
+        return real_compile(*args, **kwargs)
+
+    monkeypatch.setattr(subtitled_plan_mod, "compile_phone_subtitled_plan", _flaky_compile)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    assert call_count["n"] == 2
+    lane_receipt = variant["phone_lane_receipt"]
+    assert lane_receipt["applied"] == []
+    assert lane_receipt["dropped"] == [{"lane": "overlays", "reason": "overlay geometry rejected"}]
+    overlay_receipt = variant["phone_overlay_receipt"]
+    assert overlay_receipt["placed"] == []
+    assert overlay_receipt["unplaced"] == [
+        {"media_id": "photo1", "label": "photo.jpg", "reason": "compile_dropped"}
+    ]
+    assert PHONE_VISUALS_FIELD not in job.assembly_plan
 
 
 def test_subtitled_media_lanes_happy_path(monkeypatch):

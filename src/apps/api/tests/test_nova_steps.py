@@ -64,6 +64,7 @@ def test_allowlist_pin() -> None:
         "render_stage": frozenset({"*"}),
         "custom_effect": frozenset({"burn_start", "burn_done"}),
         "render": frozenset({"custom_effect_reapply_failed"}),
+        "phone": frozenset({"subtitled_overlay_grounding"}),
     }
 
 
@@ -391,6 +392,69 @@ def test_other_render_stage_events_stay_excluded() -> None:
         ]
     )
     assert project_nova_steps(job) == []
+
+
+def test_subtitled_overlay_grounding_placed_cards_project_with_nova_voiced_label() -> None:
+    """KRI-176: phone Talking PiP grounding, cards actually placed."""
+    job = _job(
+        status="variants_ready",
+        pipeline_trace=[
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "phone",
+                "event": "subtitled_overlay_grounding",
+                "data": {"placed": 2, "unplaced": 1, "matcher": "agent", "face_sampling": "ok"},
+            }
+        ],
+    )
+    steps = project_nova_steps(job)
+    assert len(steps) == 1
+    assert steps[0].label == "Nova popped your Visuals in as cards"
+    assert steps[0].detail == ["2 cards placed", "1 Visual couldn't be placed"]
+    # matcher/face_sampling are enum-like internal status, never surfaced.
+    assert "agent" not in steps[0].detail
+    assert "face_sampling" not in " ".join(steps[0].detail)
+
+
+def test_subtitled_overlay_grounding_no_cards_placed_projects_lookedfor_label() -> None:
+    """KRI-176: nothing placed -- softer "looked for" phrasing, no card count."""
+    job = _job(
+        pipeline_trace=[
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "phone",
+                "event": "subtitled_overlay_grounding",
+                "data": {
+                    "placed": 0,
+                    "unplaced": 3,
+                    "matcher": "heuristic",
+                    "face_sampling": "skipped",
+                },
+            }
+        ],
+    )
+    steps = project_nova_steps(job)
+    assert len(steps) == 1
+    assert steps[0].label == "Nova looked for moments to show your Visuals"
+    assert steps[0].detail == ["3 Visuals couldn't be placed"]
+
+
+def test_subtitled_overlay_grounding_zero_and_zero_has_no_detail() -> None:
+    """KRI-176: neither placed nor unplaced -- no detail line at all."""
+    job = _job(
+        pipeline_trace=[
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "stage": "phone",
+                "event": "subtitled_overlay_grounding",
+                "data": {"placed": 0, "unplaced": 0, "matcher": "none", "face_sampling": "failed"},
+            }
+        ],
+    )
+    steps = project_nova_steps(job)
+    assert len(steps) == 1
+    assert steps[0].label == "Nova looked for moments to show your Visuals"
+    assert steps[0].detail is None
 
 
 def test_unknown_event_within_allowlisted_stage_is_dropped() -> None:
