@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.187.0] - 2026-09-24
+
+### Changed
+- feat(phone): ground PiP Visuals cards from the transcript on Talking edits (KRI-176) (#1204) <!-- release-pr: 1204 -->
+
 ## [0.76.186.0] - 2026-09-24
 
 ### Changed
