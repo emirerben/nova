@@ -330,7 +330,15 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     for turn in input.conversation
                     if isinstance(turn, dict) and turn.get("role") == "user"
                 ]
-                request_contract = input.creator_request or input.user_message
+                # KRI-188: with the brief on, `creator_request` is the rendered
+                # ledger, whose model-authored descriptions ("shown in each
+                # clip") would trip the "each clip" scope recognisers. Read only
+                # creator-authored text (history + latest message) instead.
+                request_contract = (
+                    input.user_message
+                    if input.brief_enabled
+                    else input.creator_request or input.user_message
+                )
                 timing = recognize_mixed_media_timing("\n".join([*user_messages, request_contract]))
                 combined_request = "\n".join([*user_messages, request_contract])
                 latest_cut_s = recognize_round_robin_cadence(input.user_message)

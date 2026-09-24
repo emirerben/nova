@@ -1,10 +1,10 @@
 import json
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 GUIDED_STORY_RENDERER_READY = True
 
@@ -412,7 +412,9 @@ class Settings(BaseSettings):
     # `fly secrets set KRIA_CREATIVE_BRIEF_ENABLED=true --app nova-video`
     # + restart api + worker. Rollback: set it false + restart.
     kria_creative_brief_enabled: bool = False
-    kria_creative_brief_user_ids: list[str] = []
+    # NoDecode: pydantic-settings would otherwise JSON-decode the env string
+    # before the validator below runs, crashing boot on a bare id or CSV.
+    kria_creative_brief_user_ids: Annotated[list[str], NoDecode] = []
 
     @field_validator("kria_creative_brief_user_ids", mode="before")
     @classmethod

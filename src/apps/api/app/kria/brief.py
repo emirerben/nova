@@ -241,17 +241,37 @@ class CurrentPlanShape:
 
 _PER_CLIP_LANE_ROLES = {"shot_label", "clip_label", "per_clip", "label"}
 
+# Whole-edit redo phrases only. "make the title bigger again" / "cut the intro
+# again" are ordinary edits and must stay on the editor-op path, so "again" only
+# counts right after a whole-edit object or next to prompt/brief/request.
 _REDO_PATTERNS = (
-    re.compile(r"\b(do|make|create|generate|render|build|cut)\b.{0,30}\bagain\b"),
-    re.compile(r"\b(redo|re-do|start over|from scratch|from the top)\b"),
+    re.compile(
+        r"\b(do|make|create|generate|render|build|try|run)\s+"
+        r"(it|this|that|the (video|edit)|everything|all of it)(\s+all)?\s+again\b"
+    ),
+    re.compile(r"\b(try|start)\s+again\b"),
+    re.compile(r"\b(prompt|brief|request|instructions?)\b.{0,20}\bagain\b"),
+    re.compile(r"\bagain\b.{0,20}\b(prompt|brief|request|instructions?)\b"),
+    re.compile(r"\b(redo|re-do|start over|from scratch)\b"),
     re.compile(r"\bbased on (my|the) (prompt|brief|request|instructions?)\b"),
-    re.compile(r"\b(tekrar|yeniden|baştan|bastan)\b.{0,20}\b(yap|olustur|oluştur|kes|hazırla)\b"),
+    re.compile(r"\b(ba\u015ftan|bastan)\b"),
+    re.compile(r"\b(yeniden|tekrar)\s+(yap|olu\u015ftur|olustur|haz\u0131rla)\w*"),
 )
+
+
+_NEGATED_AGAIN = re.compile(r"\b(don'?t|dont|do not|never|stop)\b[^.!?]{0,20}\bagain\b")
+
+
+def _fold_for_redo(message: str) -> str:
+    # Turkish dotted/dotless I: casefold() turns "\u0130" into i + combining dot,
+    # which no pattern would match, so map both capitals first.
+    text = unicodedata.normalize("NFC", message or "").replace("\u0130", "i").replace("I", "\u0131")
+    return " ".join(text.casefold().split())
 
 
 def wants_full_replan(message: str) -> bool:
     """ "Do it again based on my prompt" is a supported re-plan, not an editor op."""
-    text = " ".join(unicodedata.normalize("NFC", message or "").casefold().split())
+    text = _NEGATED_AGAIN.sub(" ", _fold_for_redo(message))
     return any(pattern.search(text) for pattern in _REDO_PATTERNS)
 
 

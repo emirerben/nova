@@ -12,6 +12,7 @@ duration within +/-10%, and literal on-screen text.
 from __future__ import annotations
 
 import json
+import re
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -27,7 +28,20 @@ _CAPTURE_BASES = {"capture_time", "route", "capture_order"}
 
 
 def _fold(value: str) -> str:
-    return " ".join(unicodedata.normalize("NFC", value).casefold().split())
+    """NFC + Turkish-aware case fold ("KIRMIZI" == "Kırmızı"), whitespace collapsed."""
+    text = unicodedata.normalize("NFC", value)
+    text = text.replace("\u0130", "i").replace("I", "i").replace("\u0131", "i")
+    return " ".join(text.casefold().split())
+
+
+def _contains_text(haystack: str, wanted: str) -> bool:
+    """``wanted`` (already folded) appears in ``haystack`` as whole words.
+
+    Substring matching would call "Go" met by "logo" or "Google Sans".
+    """
+    if not wanted:
+        return False
+    return re.search(rf"(?<!\w){re.escape(wanted)}(?!\w)", _fold(haystack)) is not None
 
 
 @dataclass(frozen=True)
@@ -43,6 +57,9 @@ class PlanFacts:
     ordering_basis: str | None = None
     ordering_fallback_clip_ids: tuple[str, ...] = ()
     texts: tuple[str, ...] = ()
+    # True when the facts come from an editor payload, which carries literal
+    # on-screen text only (no per-clip structure, order or duration).
+    editor: bool = False
 
 
 def plan_facts_from_strategy(
@@ -81,7 +98,13 @@ def plan_facts_from_strategy(
     ]
     duration = strategy.get("target_duration_s")
     basis = strategy.get("ordering_basis")
-    if basis is None and strategy.get("archetype") == "day_vlog":
+    if (
+        basis is None
+        and strategy.get("archetype") == "day_vlog"
+        and "ordering_fallback_clip_ids" in strategy
+    ):
+        # Capture order is only assumed when the planner also recorded which
+        # clips fell back; otherwise nothing here can be verified.
         basis = "capture_order"
     return PlanFacts(
         clip_ids=tuple(str(c) for c in clip_ids),
@@ -115,7 +138,7 @@ def plan_facts_from_editor_payload(payload: Mapping[str, Any] | None) -> PlanFac
                 walk(item)
 
     walk(json.loads(json.dumps(payload, default=str)))
-    return PlanFacts(texts=tuple(strings))
+    return PlanFacts(texts=tuple(strings), editor=True)
 
 
 def _receipt(
@@ -130,15 +153,49 @@ def _receipt(
 
 
 def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    total = len(facts.clip_ids)
-    if facts.clip_ids:
-        covered = [clip for clip in facts.clip_ids if clip in facts.per_clip_text]
-        count = len(covered)
+    wanted = _fold(req.literal or "")
+    if facts.editor:
+        # An editor payload has no per-clip structure: judge the literal if the
+        # creator wrote one, otherwise say it can't be checked. Never "couldn't".
+        if wanted and any(_contains_text(t, wanted) for t in facts.texts):
+            return _receipt(req, "met", None)
+        return _receipt(req, "partial", "I can't verify per-clip text on an editor edit.")
+    ids = facts.clip_ids
+
+    def text_for(index: int, clip: str) -> str | None:
+        if clip in facts.per_clip_text:
+            return facts.per_clip_text[clip]
+        if index < len(facts.positional_labels):
+            return facts.positional_labels[index]
+        return None
+
+    if req.scope.startswith("clip:"):
+        clip = req.scope.split(":", 1)[1]
+        index = ids.index(clip) if clip in ids else len(ids)
+        value = text_for(index, clip)
+        if value is None and clip not in ids and wanted:
+            value = next((t for t in facts.texts if _contains_text(t, wanted)), None)
+        if value is None:
+            return _receipt(req, "not_possible", "That clip didn't get its own text in this draft.")
+        if wanted and not _contains_text(value, wanted):
+            return _receipt(req, "partial", "That clip's text isn't the exact text you gave.")
+        guessed = [facts.inferred_text[clip]] if clip in facts.inferred_text else []
+        return _receipt(req, "met", None, guessed)
+
+    total = len(ids)
+    if ids:
+        count = sum(1 for i, clip in enumerate(ids) if text_for(i, clip) is not None)
     else:
         count = max(len(facts.per_clip_text), len(facts.positional_labels))
     inferred = [
-        f"{facts.inferred_text[clip]}" for clip in facts.clip_ids if clip in facts.inferred_text
+        f"{facts.inferred_text[clip]}" for clip in ids if clip in facts.inferred_text
     ] or list(facts.inferred_text.values())
+    if wanted and count:
+        given = [*facts.per_clip_text.values(), *facts.positional_labels]
+        if not any(_contains_text(t, wanted) for t in given):
+            return _receipt(
+                req, "partial", "The clips don't carry the exact text you gave.", inferred
+            )
     if total and count >= total:
         return _receipt(req, "met", None, inferred)
     if count == 0:
@@ -157,13 +214,17 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
     if not facts.ordering_basis:
         return _receipt(req, "partial", "I can't confirm the order this draft uses.")
-    if key in _CAPTURE_ORDER_KEYS and facts.ordering_basis not in _CAPTURE_BASES:
-        return _receipt(
-            req,
-            "partial",
-            f"This draft is ordered by {facts.ordering_basis.replace('_', ' ')}, "
-            "not the order you asked for.",
-        )
+    basis = facts.ordering_basis
+    if key in _CAPTURE_ORDER_KEYS:
+        if basis not in _CAPTURE_BASES:
+            return _receipt(
+                req,
+                "partial",
+                f"This draft is ordered by {basis.replace('_', ' ')}, not the order you asked for.",
+            )
+    elif not key or key != basis:
+        # Nothing here can confirm an ordering this checker has no rule for.
+        return _receipt(req, "partial", "I can't verify this ordering automatically.")
     if facts.ordering_fallback_clip_ids:
         n = len(facts.ordering_fallback_clip_ids)
         return _receipt(
@@ -192,15 +253,20 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
 
 def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     wanted = _fold(req.literal or "")
-    if req.scope == "title":
-        found = bool(facts.title) and _fold(facts.title or "") == wanted
-        if not found and facts.title is None:
-            found = any(wanted and wanted in _fold(t) for t in facts.texts)
+    if req.scope == "title" and facts.title:
+        found = _fold(facts.title) == wanted
     else:
-        found = any(wanted and wanted in _fold(t) for t in facts.texts)
+        found = any(_contains_text(t, wanted) for t in facts.texts)
     if found:
         return _receipt(req, "met", None)
     return _receipt(req, "partial", "That exact text isn't in this draft.")
+
+
+def _has_checker(req: BriefRequirement) -> bool:
+    """True when ``check_requirement`` can actually verify this requirement."""
+    if req.kind == "text":
+        return bool(req.scope == "per_clip" or req.scope.startswith("clip:") or req.literal)
+    return req.kind in {"order", "timing"}
 
 
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -252,11 +318,18 @@ def reply_from_receipts(
     if guesses:
         shown = ", ".join(dict.fromkeys(guesses))
         lines.append(f"I guessed these, tell me if any is wrong: {shown}")
-    all_met = bool(receipts) and all(r.status == "met" for r in receipts)
+    checkable = {
+        r.requirement_id
+        for r in receipts
+        if (req := by_id.get(r.requirement_id)) is not None and _has_checker(req)
+    }
+    # "Can't verify" is neutral: only a requirement a checker actually judged
+    # can turn the reply into a failure notice.
+    problem = any(r.status != "met" and r.requirement_id in checkable for r in receipts)
     head = ""
-    if all_met and summary and summary.strip():
+    if not problem and summary and summary.strip():
         head = summary.strip() + "\n"
-    elif not all_met:
+    elif problem:
         head = "Not everything you asked for made it in:\n"
     text = head + "\n".join(f"- {line}" for line in lines)
     if len(text) > MAX_REPLY_CHARS:

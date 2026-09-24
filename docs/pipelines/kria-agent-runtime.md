@@ -133,12 +133,24 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   (`met | partial | not_possible`, reason, `inferred`) to its `draft_applied`
   event payload. Checks: per-clip text coverage, order basis
   (`ordering_basis` / `ordering_fallback_clip_ids` when present), duration
-  within +/-10%, literal text. A requirement with no checker is `partial`.
-  The reply is built from receipts and drops the model's summary unless every
-  requirement is met. `GET /creation-threads/{id}/brief` returns the current
+  within +/-10%, literal text (whole-word, Turkish-aware match). `clip:<id>`
+  is checked against that clip only; editor payloads carry no per-clip
+  structure, so per-clip text on an editor edit is `partial` ("can't verify"),
+  never `not_possible`. A requirement with no checker is `partial`, and that
+  neutral "can't verify" never flips the reply to a failure: the model's
+  summary is dropped only when a requirement a checker actually judged is not
+  met. `KriaObservedTurnResponse.requirement_receipts` is reserved for the
+  observed-turn projection; today receipts ride on the `draft_applied` event
+  payload and `GET /creation-threads/{id}/brief` returns the current
   brief with the newest receipt per requirement (empty when the flag is off).
 - **Cost.** With a render present the flag adds one Main Creator call to
   editor-op turns (the planner extracts requirements before the router runs).
+  If that call fails, a plain edit falls back to the legacy copilot-first path
+  with no brief update, so a Main Creator outage never blocks a simple edit.
+- **Known gaps (deferred).** No retraction ("drop the title") yet; a render
+  dispatched later reads the latest brief version, not the version the approved
+  draft was checked against; requirements past the 40-live cap are dropped
+  silently; `read_creative_brief` scans only the newest 30 assistant events.
 
 ## Render consent
 

@@ -1491,3 +1491,126 @@ async def test_brief_read_service_returns_requirements_and_newest_receipts(
         assert off.version == 0 and off.requirements == []
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_editor_ops_turn_receipts_cover_only_this_turns_requirements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-188: editor-op receipts are scoped to this turn and never say "Couldn't"
+    for a requirement the editor payload simply has no structure to verify."""
+    from app.kria.brief import BriefRequirement
+
+    user_id, thread_id, session_id = _seed_runtime_project()
+    job_id = uuid.uuid4()
+    with sync_session() as db:
+        session = db.get(CreatorAgentSession, session_id, with_for_update=True)
+        item = db.get(PlanItem, session.plan_item_id, with_for_update=True)
+        db.add(
+            Job(
+                id=job_id,
+                user_id=user_id,
+                status="variants_ready",
+                mode="generative",
+                raw_storage_path="",
+                selected_platforms=["tiktok"],
+                content_plan_item_id=item.id,
+                content_plan_ownership_epoch=0,
+                all_candidates={"clip_paths": ["users/test/matcha.mp4"]},
+                assembly_plan={
+                    "variants": [
+                        {
+                            "variant_id": "original_text",
+                            "resolved_archetype": "montage",
+                            "render_status": "ready",
+                            "render_generation_id": "generation-1",
+                            "render_finished_at": "2026-09-07T08:00:00Z",
+                            "video_path": "generative-jobs/test/output.mp4",
+                            "base_video_path": "generative-jobs/test/base.mp4",
+                            "text_elements": [
+                                {
+                                    "id": "hook",
+                                    "text": "Old matcha hook",
+                                    "start_s": 0.0,
+                                    "end_s": 2.0,
+                                    "role": "generative_intro",
+                                    "font_family": "Playfair Display",
+                                    "size_px": 72,
+                                    "color": "#FFFFFF",
+                                    "effect": "static",
+                                    "alignment": "center",
+                                    "position": "middle",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+        )
+        db.flush()
+        item.current_job_id = job_id
+        session.target_job_id = job_id
+        session.target_variant_id = "original_text"
+        session.target_generation_id = "generation-1"
+        session.manifest_hash = "a" * 64
+        # An older requirement from a previous turn: must NOT be receipted here.
+        old = BriefRequirement(
+            id="r1",
+            kind="order",
+            scope="global",
+            description="chronological",
+            facts={"key": "capture_time"},
+            source_turn_id=None,
+        )
+        db.add(
+            CreativeBriefVersion(
+                thread_id=thread_id,
+                version=1,
+                requirements=[old.model_dump(mode="json")],
+                source_turn_id=None,
+            )
+        )
+        db.commit()
+
+    editor_plan = adapt_editor_action(
+        reply="Retitled the hook.",
+        request_render=False,
+        ops=[{"op": "edit_text", "bar_index": 0, "text": "Fresh matcha, finally"}],
+    )
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=editor_plan,
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            brief_updates=(
+                BriefUpdate(kind="text", scope="title", literal="Fresh matcha, finally"),
+                BriefUpdate(kind="text", scope="per_clip", description="a label on each clip"),
+            ),
+            brief_route="editor_ops",
+            brief_clip_ids=("clip-1", "clip-2"),
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+    try:
+        accepted = await _submit(user_id, thread_id, "Change the hook to Fresh matcha, finally", 2)
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result["status"] == "completed"
+        with sync_session() as db:
+            event = db.execute(
+                select(CreationThreadEvent).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "draft_applied",
+                )
+            ).scalar_one()
+            receipts = {r["requirement_id"]: r for r in event.payload["requirement_receipts"]}
+            content = event.content
+        assert set(receipts) == {"r2", "r3"}  # r1 is from an earlier turn
+        assert receipts["r2"]["status"] == "met"
+        assert receipts["r3"]["status"] == "partial"  # can't verify is not "Couldn't"
+        assert "Couldn't" not in content
+        assert "Done:" in content and "Partly:" in content
+    finally:
+        await async_engine.dispose()

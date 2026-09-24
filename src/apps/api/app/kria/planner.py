@@ -566,6 +566,13 @@ async def _plan_from_creator_output(
     )
 
 
+async def _refetch_item(db: AsyncSession, item_id: uuid.UUID) -> PlanItem:
+    item = await db.get(PlanItem, item_id)
+    if item is None:
+        raise RuntimeError("Kria target item is unavailable")
+    return item
+
+
 async def plan_live_turn(
     db: AsyncSession,
     *,
@@ -634,7 +641,25 @@ async def plan_live_turn(
     )
     if isinstance(inputs, PlannedKriaTurn):
         return inputs
-    output = await _call_main_creator(inputs, thread_id=thread_id, creator_id=creator_id)
+    try:
+        output = await _call_main_creator(inputs, thread_id=thread_id, creator_id=creator_id)
+    except RuntimeError:
+        if not extract_first:
+            raise
+        # KRI-188: the Main Creator now runs before the copilot only to extract
+        # requirements. A failure there must not block a plain edit the copilot
+        # alone could have served: fall back to the legacy order, no brief update.
+        item = await _refetch_item(db, item_id)
+        editor_plan = await _plan_editor_revision(
+            db, thread_id=thread_id, item=item, user_message=user_message
+        )
+        if editor_plan is None:
+            raise
+        return PlannedKriaTurn(
+            plan=editor_plan,
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
     if not brief_on:
         return await _plan_from_creator_output(
             db,
@@ -652,12 +677,16 @@ async def plan_live_turn(
     fresh = new_requirements(prior_brief, effective)
     clip_ids = tuple(str(media.media_id) for media in manifest.media)
     shape = CurrentPlanShape(has_render=False)
+    # Every rollback above expires loaded rows; an expired attribute read on an
+    # AsyncSession raises MissingGreenlet, so re-read the item before using it.
+    item = await _refetch_item(db, item_id)
     if item.current_job_id is not None:
         target = await _load_editor_target(db, thread_id=thread_id, item=item)
         shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
         await db.rollback()
     route = route_requirements(fresh, shape, message=user_message)
     if route == "editor_ops":
+        item = await _refetch_item(db, item_id)
         editor_plan = await _plan_editor_revision(
             db, thread_id=thread_id, item=item, user_message=user_message
         )

@@ -56,6 +56,8 @@
   "replan_strategy": {
     "edit_format": "montage",
     "archetype": "day_vlog",
+    "ordering_basis": "capture_time",
+    "ordering_fallback_clip_ids": [],
     "target_duration_s": 20.5,
     "opening_title": "20K Koşu · Arnavutköy → Eminönü",
     "resolved_clip_intents": [
