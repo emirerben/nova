@@ -250,6 +250,7 @@ struct PreviewAudioBinding: Sendable {
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                     layers[layers.count - 1].sourceCrop = clip.sourceCrop
+                    layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip)
                     if clip.visualPlacement == nil && (recipeTrack.kind == .video || clip.overlayPreserveAlpha == nil) {
                         try await addAudio(asset: asset, clip: clip, gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1, originalGain: recipeTrack.kind == .video)
                     }
@@ -273,6 +274,7 @@ struct PreviewAudioBinding: Sendable {
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                     layers[layers.count - 1].sourceCrop = clip.sourceCrop
+                    layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip)
                 }
                 if let seed = clip.overlayDissolveSeed {
                     layers[layers.count - 1].overlayDissolve = try NativeDissolveRenderer(width: recipe.canvas.width, height: recipe.canvas.height, seed: seed, maxBitmapBytes: 64 * 1024 * 1024, preset: .media)
