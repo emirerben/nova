@@ -1173,6 +1173,17 @@ def _record_lease_renewals(monkeypatch: pytest.MonkeyPatch) -> list[uuid.UUID]:
     return renewals
 
 
+async def _wait_until(condition, timeout: float = 5.0) -> None:  # noqa: ANN001
+    """Keep "inference" running until the heartbeat has done its part: renewals
+    run on a worker thread, so a fixed sleep races a loaded CI runner."""
+
+    async def _poll() -> None:
+        while not condition():
+            await asyncio.sleep(0.005)
+
+    await asyncio.wait_for(_poll(), timeout)
+
+
 @pytest.mark.asyncio
 async def test_live_planner_heartbeats_while_inference_is_running(
     monkeypatch: pytest.MonkeyPatch,
@@ -1182,7 +1193,7 @@ async def test_live_planner_heartbeats_while_inference_is_running(
 
     async def _slow_plan(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
         # Never touches the session, so the per-call engine never connects.
-        await asyncio.sleep(0.035)
+        await _wait_until(lambda: len(renewals) >= 2)
         return planned
 
     monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _slow_plan)
@@ -1263,7 +1274,7 @@ async def test_live_planner_closes_its_session_then_disposes_its_unpooled_engine
 
     async def _plan(_db, **_kwargs):  # noqa: ANN001, ANN003, ANN202
         events.append("planning")
-        await asyncio.sleep(0.035)
+        await _wait_until(lambda: renewals)
         if planning_fails:
             raise RuntimeError("Kria could not produce a reliable editorial plan")
         return planned
@@ -1346,7 +1357,9 @@ async def test_live_planner_keeps_renewing_after_a_failed_lease_renewal(
     planned = _question_turn()
 
     async def _plan(_db, **_kwargs):  # noqa: ANN001, ANN003, ANN202
-        await asyncio.sleep(0.05)
+        # Finish only once the heartbeat has renewed again after the failure; on
+        # the old code the heartbeat died on it and this wait times out.
+        await _wait_until(lambda: len(renewals) >= 2)
         return planned
 
     def _renew(turn_id: uuid.UUID, **_kwargs) -> bool:  # noqa: ANN003
