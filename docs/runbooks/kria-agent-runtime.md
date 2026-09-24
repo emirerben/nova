@@ -80,6 +80,19 @@ out of `max_output_tokens` (8,192), which Gemini 3 thinking shares with the
 answer. A `kria_turn_lease_renewal_failed` warning is not a failure: the
 heartbeat retries on its next 5-second tick and the turn keeps planning.
 
+The same reply with `error.code = runtime_turn_claims_exhausted` means three
+runs of the turn ended without a result: each was killed at `run_kria_turn`'s
+time limit or lost its worker, so its planning lease lapsed. The reconciler (or
+a redelivered task that reaches the lapsed lease first) counts each lapse once
+in `creator_agent_turns.abandoned_claims`; a requeue after a thread-revision
+conflict and the reconciler's backoff stamp on a waiting pending turn do not
+count, so `lease_epoch` overstates it. The next claim fails the turn instead of
+planning it again, promotes the queued follow-up in the same transaction, and
+logs `kria_turn_claims_exhausted`. Look for the kills (`TimeLimitExceeded`,
+`WorkerLostError`) in the `light` worker log. Guards: the real-Postgres
+`test_turn_abandoned_three_times_fails_and_promotes_its_successor` and
+`test_turn_requeued_past_the_cap_and_stamped_while_waiting_is_still_claimed`.
+
 ## Adding a tool or recovery
 
 - Add tools through `app.kria.registry.KRIA_TOOLS`; do not add prompt-only names.
