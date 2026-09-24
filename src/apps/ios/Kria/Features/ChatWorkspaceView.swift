@@ -767,6 +767,20 @@ private struct CreationWorkspaceView: View {
                 suggest: { prompt = $0 }
             )
             .id("ready")
+            // Short creator-facing sentences about one-pass render decisions
+            // (KRI-178), e.g. "Placed 9 of 10 moments you named." Only shown
+            // once the job itself is in a ready/done state, mirroring the
+            // failureMessage precedent in CreationConfirmationStage.
+            if currentProject.status == .ready, let renderNotes = fullThread?.job?.renderNotes,
+                !renderNotes.isEmpty
+            {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(renderNotes.enumerated()), id: \.offset) { _, note in
+                        Text(note).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+                    }
+                }
+                .accessibilityIdentifier("chat.job.renderNotes")
+            }
             if let variants = fullThread?.job?.variants, variants.count > 1 {
                 ForEach(variants.compactMap { $0.variantID }, id: \.self) { variantID in
                     let variant = variants.first { $0.variantID == variantID }

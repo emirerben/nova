@@ -27,6 +27,11 @@ from pydantic import (
 from pydantic.json_schema import SkipJsonSchema
 
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
+from app.agents._schemas.reaction_beats import (
+    MAX_REACTION_BEATS,
+    ClosingMedia,
+    ReactionBeat,
+)
 from app.agents._schemas.sfx_intent import (
     CreatorSfxIntent,
     LicensedSfxIntent,
@@ -356,6 +361,25 @@ class CreativeStrategy(_CreatorModel):
     resolved_clip_intents: SkipJsonSchema[list[ResolvedClipIntent] | None] = Field(
         default=None, max_length=MAX_CLIP_INTENTS
     )
+    # KRI-178 (flag PHONE_SUBTITLED_REACTION_BEATS_ENABLED). Same rationale as
+    # clip_intents immediately above: default None keeps stored strategies and
+    # every exclude_none hash byte-identical when unused, and SkipJsonSchema
+    # keeps both OUT of every derived JSON schema (the Kria `apply_strategy`
+    # tool schema must stay byte-identical -- reaction beats are phone-only
+    # and the tool schema serves every render program). The creator prompt
+    # describes this field only when the `reaction_beats` capability is
+    # available on the manifest.
+    reaction_beats: SkipJsonSchema[list[ReactionBeat] | None] = Field(
+        default=None,
+        max_length=MAX_REACTION_BEATS,
+        description=(
+            "Name/word-triggered pop-ins over the phone-rendered subtitled clip: "
+            "a photo/sticker and/or a sound effect, fired when the creator says a "
+            "phrase they specified. Carries no resolved timestamp; the server "
+            "grounds each beat against the real transcript."
+        ),
+    )
+    closing_media: SkipJsonSchema[ClosingMedia | None] = Field(default=None)
 
     @model_validator(mode="before")
     @classmethod
@@ -374,7 +398,12 @@ class CreativeStrategy(_CreatorModel):
     def _omit_unused_clip_intents(self, handler):  # noqa: ANN001, ANN202
         # Stored strategies stay byte-identical to pre-KRI-127 when unused.
         data = handler(self)
-        for key in ("clip_intents", "resolved_clip_intents"):
+        for key in (
+            "clip_intents",
+            "resolved_clip_intents",
+            "reaction_beats",
+            "closing_media",
+        ):
             if data.get(key) is None:
                 data.pop(key, None)
         return data
@@ -1297,6 +1326,9 @@ __all__ = [
     "CREATOR_CORE_CRAFT_COMMAND_ADAPTER",
     "CREATOR_CRAFT_BUNDLE_COMMAND_ADAPTER",
     "CreatorEditSnapshot",
+    "ClosingMedia",
+    "MAX_REACTION_BEATS",
+    "ReactionBeat",
     "CreatorEditPlan",
     "CreatorLimits",
     "CreatorMediaRef",

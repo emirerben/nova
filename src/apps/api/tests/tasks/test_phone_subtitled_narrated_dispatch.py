@@ -26,6 +26,7 @@ from unittest.mock import Mock
 import pytest
 
 import app.services.phone_overlay_grounding as phone_overlay_grounding_mod
+import app.services.phone_reaction_grounding as phone_reaction_grounding_mod
 import app.services.phone_visuals as phone_visuals_mod
 from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
@@ -39,6 +40,7 @@ from app.pipeline.phone_subtitled_lanes import (
 from app.pipeline.transcribe import Transcript, Word
 from app.services.device_render import device_status
 from app.services.phone_overlay_grounding import GroundedOverlayCards
+from app.services.phone_reaction_grounding import GroundedReactionBeats
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, PhoneVisualBinding
 from app.tasks import generative_build as gb
 from tests.pipeline.test_phone_montage_plan import _binding
@@ -361,6 +363,52 @@ def _grounding_mock(cards: list, *, matcher: str = "agent") -> Mock:
     )
 
 
+# --- KRI-178: creator-authored reaction beats -------------------------------
+
+
+def _beat_dict(beat_id: str, trigger: str, **kwargs) -> dict:
+    return {"beat_id": beat_id, "trigger": trigger, **kwargs}
+
+
+def _closing_dict(visual_id: str, **kwargs) -> dict:
+    return {"visual_id": visual_id, **kwargs}
+
+
+def _beats_features(*extra: str) -> list[str]:
+    """The full verified-feature set `phone_subtitled_reaction_beats_
+    supported()` requires: `PHONE_SUBTITLED_OVERLAY_FEATURES` (via
+    `_overlay_grounding_features`) plus `soundEffects` (`audioMix` is
+    already in both)."""
+    return _overlay_grounding_features("soundEffects", *extra)
+
+
+def _enable_beats(monkeypatch, *, extra_features: tuple = ()) -> None:
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", True)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_reaction_beats_enabled", True)
+    monkeypatch.setattr(
+        gb.settings, "phone_render_verified_features", _beats_features(*extra_features)
+    )
+
+
+def _beat_grounding_mock(cards: list, sfx: list, receipt: dict) -> Mock:
+    return Mock(return_value=GroundedReactionBeats(cards=cards, sound_effects=sfx, receipt=receipt))
+
+
+def _basic_beat_receipt(
+    *, placed: list | None = None, unplaced: list | None = None, closing: dict | None = None
+) -> dict:
+    return {
+        "version": 1,
+        "matcher": "phrase",
+        "face_sampling": "ok",
+        "placed": placed or [],
+        "unplaced": unplaced or [],
+        "closing": closing or {"status": "none", "badge": "none"},
+    }
+
+
 def test_subtitled_media_lanes_flag_off_is_byte_identical(monkeypatch):
     job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
     # Flag stays off (the `_job_and_session` default). A lanes field on the
@@ -374,6 +422,17 @@ def test_subtitled_media_lanes_flag_off_is_byte_identical(monkeypatch):
     monkeypatch.setattr(
         phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", grounding_mock
     )
+    # KRI-178: a strategy carrying reaction beats must also be completely
+    # ignored with the flag off, same as the KRI-174 lane request above.
+    beat_grounding_mock = Mock(
+        side_effect=AssertionError("beat grounding must not run with the flag off")
+    )
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod, "ground_phone_reaction_beats", beat_grounding_mock
+    )
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [_beat_dict("b0", "goal", visual_id="photo1")]
+    }
 
     import app.pipeline.phone_subtitled_plan as subtitled_plan_mod
 
@@ -387,9 +446,11 @@ def test_subtitled_media_lanes_flag_off_is_byte_identical(monkeypatch):
     assert "overlay_transcript" not in variant
     assert "phone_lane_receipt" not in variant
     assert "phone_overlay_receipt" not in variant
+    assert "phone_beat_receipt" not in variant
     assert PHONE_VISUALS_FIELD not in job.assembly_plan
     bind_mock.assert_not_called()
     grounding_mock.assert_not_called()
+    beat_grounding_mock.assert_not_called()
     call_kwargs = compile_spy.call_args.kwargs
     assert "visuals" not in call_kwargs
     assert "lanes" not in call_kwargs
@@ -411,13 +472,27 @@ def test_subtitled_media_lanes_on_but_overlays_not_supported_skips_grounding(mon
     monkeypatch.setattr(
         phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", grounding_mock
     )
+    # KRI-178: `phone_subtitled_reaction_beats_supported()` requires
+    # `phone_subtitled_overlays_supported()` -- with overlays unsupported,
+    # beats must be unsupported too, even with a strategy that carries them.
+    beat_grounding_mock = Mock(
+        side_effect=AssertionError("beat grounding must not run when unsupported")
+    )
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod, "ground_phone_reaction_beats", beat_grounding_mock
+    )
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [_beat_dict("b0", "goal", visual_id="photo1")]
+    }
 
     gb._run_generative_job(str(job.id))
 
     assert job.status == "awaiting_device"
     variant = job.assembly_plan["variants"][0]
     assert "phone_overlay_receipt" not in variant
+    assert "phone_beat_receipt" not in variant
     grounding_mock.assert_not_called()
+    beat_grounding_mock.assert_not_called()
 
 
 def test_subtitled_overlay_grounding_happy_path(monkeypatch):
@@ -780,6 +855,330 @@ def test_subtitled_media_lanes_malformed_request_drops_and_continues(monkeypatch
     assert receipt["applied"] == []
     assert len(receipt["dropped"]) == 1
     assert receipt["dropped"][0]["lane"] == "request"
+
+
+def test_subtitled_reaction_beats_happy_path(monkeypatch):
+    """KRI-178: beats + a placed closing card win outright -- KRI-176's
+    generic grounding never runs, both cards bind in one call, the beat sfx
+    resolves, and the pipeline events fire with the creator's own missed
+    trigger phrase."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    _enable_beats(monkeypatch)
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", _fake_resolve_sfx)
+
+    cards = [
+        SubtitledOverlayCard(
+            id="beat-b0-1",
+            media_id="celeb1",
+            gcs_path="users/u1/plan/item1/pool/celeb1.jpg",
+            generation="1",
+            start_s=1.0,
+            end_s=3.0,
+        ),
+        SubtitledOverlayCard(
+            id="closing-photo",
+            media_id="team1",
+            gcs_path="users/u1/plan/item1/pool/team1.jpg",
+            generation="1",
+            start_s=8.0,
+            end_s=10.0,
+        ),
+    ]
+    sfx_reqs = [SubtitledSoundEffect(id="beat-b0-1-sfx", catalog_id="cheer", at_s=1.0)]
+    receipt = _basic_beat_receipt(
+        placed=[
+            {
+                "beat_id": "b0",
+                "trigger": "he scores",
+                "at_s": 1.0,
+                "end_s": 3.0,
+                "visual_label": "celeb1.jpg",
+                "sound_label": "Cheer",
+            }
+        ],
+        unplaced=[{"beat_id": "b1", "trigger": "final whistle", "reason": "never_heard"}],
+        closing={"status": "placed", "from_s": 8.0, "visual_label": "team1.jpg", "badge": "none"},
+    )
+    beat_grounding_mock = _beat_grounding_mock(cards, sfx_reqs, receipt)
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod, "ground_phone_reaction_beats", beat_grounding_mock
+    )
+    kri176_grounding_mock = Mock(
+        side_effect=AssertionError("KRI-176 grounding must not run when beats are active")
+    )
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", kri176_grounding_mock
+    )
+
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [_beat_dict("b0", "he scores", visual_id="celeb1", sound="cheer")],
+        "closing_media": _closing_dict("team1"),
+    }
+
+    record_mock = Mock()
+    monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", record_mock)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    beat_grounding_mock.assert_called_once()
+    call_kwargs = beat_grounding_mock.call_args.kwargs
+    assert call_kwargs["job_id"] == str(job.id)
+    assert call_kwargs["beats"] == job.all_candidates["creator_strategy"]["reaction_beats"]
+    assert call_kwargs["closing"] == job.all_candidates["creator_strategy"]["closing_media"]
+    assert call_kwargs["clip_path"] == "/tmp/c0.mp4"
+    kri176_grounding_mock.assert_not_called()
+
+    beat_receipt = variant["phone_beat_receipt"]
+    assert beat_receipt["matcher"] == "phrase"
+    assert beat_receipt == receipt
+    overlay_receipt = variant["phone_overlay_receipt"]
+    assert overlay_receipt == {
+        "version": 1,
+        "matcher": "beats",
+        "face_sampling": "skipped",
+        "placed": [],
+        "unplaced": [],
+        "wishlist": [],
+    }
+    lane_receipt = variant["phone_lane_receipt"]
+    assert lane_receipt["applied"] == ["overlays", "sound_effects"]
+    assert lane_receipt["dropped"] == []
+    assert len(bind_calls) == 1
+    assert set(bind_calls[0]) == {"celeb1", "team1"}
+    assert job.assembly_plan[PHONE_VISUALS_FIELD]
+
+    beats_events = [
+        c for c in record_mock.call_args_list if c.args[:2] == ("phone", "subtitled_reaction_beats")
+    ]
+    assert len(beats_events) == 1
+    beats_event_data = beats_events[0].args[2]
+    assert beats_event_data == {
+        "placed": 1,
+        "unplaced": 1,
+        "missed": ["final whistle"],
+        "missed_reasons": ["never_heard"],
+        "closing": "placed",
+    }
+    beats_card_events = [
+        c
+        for c in record_mock.call_args_list
+        if c.args[:2] == ("media_overlay", "cards_applied") and c.args[2].get("card_count") == 1
+    ]
+    assert len(beats_card_events) == 1
+
+
+def test_subtitled_reaction_beats_grounding_failure_drops_lane_not_job(monkeypatch):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    _enable_beats(monkeypatch)
+    # Keep KRI-176 grounding trivially successful so this test isolates the
+    # beats-grounding failure path.
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", _grounding_mock([])
+    )
+
+    def _broken_grounding(*args, **kwargs):
+        raise RuntimeError("beat pool query exploded")
+
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod, "ground_phone_reaction_beats", _broken_grounding
+    )
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [_beat_dict("b0", "he scores", visual_id="celeb1")],
+    }
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    beat_receipt = variant["phone_beat_receipt"]
+    assert beat_receipt["matcher"] == "failed"
+    assert beat_receipt["placed"] == []
+    assert "error" in beat_receipt
+    lane_receipt = variant["phone_lane_receipt"]
+    dropped_reasons = [d["reason"] for d in lane_receipt["dropped"] if d["lane"] == "overlays"]
+    assert any("beat grounding failed" in reason for reason in dropped_reasons)
+
+
+def test_subtitled_reaction_beats_sfx_resolve_failure_demotes_sound_only(monkeypatch):
+    """A beat sfx that fails `_resolve_phone_sound_effect` is dropped from
+    the lane; the beat's CARD still placed, so the receipt entry survives
+    with just `sound_label` stripped, not moved to `unplaced`."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    _enable_beats(monkeypatch)
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+
+    def _broken_resolver(sfx: SubtitledSoundEffect):
+        raise UnsupportedPhonePlan(
+            "sound effect is no longer available for phone rendering",
+            capability="soundEffects",
+        )
+
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", _broken_resolver)
+
+    cards = [
+        SubtitledOverlayCard(
+            id="beat-b0-1",
+            media_id="celeb1",
+            gcs_path="users/u1/plan/item1/pool/celeb1.jpg",
+            generation="1",
+            start_s=1.0,
+            end_s=3.0,
+        )
+    ]
+    sfx_reqs = [SubtitledSoundEffect(id="beat-b0-1-sfx", catalog_id="cheer", at_s=1.0)]
+    receipt = _basic_beat_receipt(
+        placed=[
+            {
+                "beat_id": "b0",
+                "trigger": "he scores",
+                "at_s": 1.0,
+                "end_s": 3.0,
+                "visual_label": "celeb1.jpg",
+                "sound_label": "Cheer",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod,
+        "ground_phone_reaction_beats",
+        _beat_grounding_mock(cards, sfx_reqs, receipt),
+    )
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [_beat_dict("b0", "he scores", visual_id="celeb1", sound="cheer")],
+    }
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    beat_receipt = variant["phone_beat_receipt"]
+    assert beat_receipt["placed"] == [
+        {
+            "beat_id": "b0",
+            "trigger": "he scores",
+            "at_s": 1.0,
+            "end_s": 3.0,
+            "visual_label": "celeb1.jpg",
+        }
+    ]
+    assert beat_receipt["unplaced"] == []
+    lane_receipt = variant["phone_lane_receipt"]
+    assert lane_receipt["applied"] == ["overlays"]
+    assert lane_receipt["dropped"] == [
+        {
+            "lane": "sound_effects",
+            "id": "beat-b0-1-sfx",
+            "reason": "sound effect is no longer available for phone rendering",
+        }
+    ]
+    assert len(bind_calls) == 1
+
+
+def test_subtitled_reaction_beats_skipped_when_admin_authored_lane_present(monkeypatch):
+    """A hand-authored KRI-174 lane request -- even one carrying only sound
+    effects, no overlays -- wins outright over beats: grounding never runs,
+    the beat receipt records `matcher: "manual"`."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    _enable_beats(monkeypatch)
+    monkeypatch.setattr(gb, "_resolve_phone_sound_effect", _fake_resolve_sfx)
+    beat_grounding_mock = Mock(side_effect=AssertionError("manual lane must skip beat grounding"))
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod, "ground_phone_reaction_beats", beat_grounding_mock
+    )
+
+    job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD] = _lane_request(
+        sound_effects=[_sfx_request_dict("sfx1", "cat1", at_s=1.0)],
+    )
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [_beat_dict("b0", "he scores", visual_id="celeb1")],
+    }
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    beat_grounding_mock.assert_not_called()
+    assert variant["phone_beat_receipt"] == {
+        "version": 1,
+        "matcher": "manual",
+        "face_sampling": "skipped",
+        "placed": [],
+        "unplaced": [],
+        "closing": {"status": "none", "badge": "none"},
+    }
+    # A manual lane also carries `overlays == []` here, so KRI-176's own
+    # grounding (not mocked in this test) still runs for the empty overlay
+    # set -- unaffected by beats, which is the point being pinned.
+    assert variant["phone_overlay_receipt"]["matcher"] != "beats"
+
+
+def test_subtitled_reaction_beats_compiler_drop_demotes_receipt(monkeypatch):
+    """A beat card that survives grounding/binding but gets dropped by the
+    compiler's own retry loop (the whole "overlays" lane rejected) must not
+    linger in the beat receipt as `placed`."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    _enable_beats(monkeypatch)
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind([]))
+
+    card = SubtitledOverlayCard(
+        id="beat-b0-1",
+        media_id="celeb1",
+        gcs_path="users/u1/plan/item1/pool/celeb1.jpg",
+        generation="1",
+        start_s=1.0,
+        end_s=3.0,
+    )
+    receipt = _basic_beat_receipt(
+        placed=[
+            {
+                "beat_id": "b0",
+                "trigger": "he scores",
+                "at_s": 1.0,
+                "end_s": 3.0,
+                "visual_label": "celeb1.jpg",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod,
+        "ground_phone_reaction_beats",
+        _beat_grounding_mock([card], [], receipt),
+    )
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [_beat_dict("b0", "he scores", visual_id="celeb1")],
+    }
+
+    import app.pipeline.phone_subtitled_plan as subtitled_plan_mod
+
+    real_compile = subtitled_plan_mod.compile_phone_subtitled_plan
+    call_count = {"n": 0}
+
+    def _flaky_compile(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise SubtitledLaneError(
+                "overlays", "overlay geometry rejected", capability="visualBlocks"
+            )
+        return real_compile(*args, **kwargs)
+
+    monkeypatch.setattr(subtitled_plan_mod, "compile_phone_subtitled_plan", _flaky_compile)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    assert call_count["n"] == 2
+    beat_receipt = variant["phone_beat_receipt"]
+    assert beat_receipt["placed"] == []
+    assert beat_receipt["unplaced"] == [
+        {"beat_id": "b0", "trigger": "he scores", "reason": "compile_dropped"}
+    ]
+    assert PHONE_VISUALS_FIELD not in job.assembly_plan
 
 
 # --- KRI-174: _resolve_phone_sound_effect -----------------------------------

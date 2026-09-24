@@ -508,3 +508,145 @@ def test_main_creator_prompt_flag_on_adds_open_vocabulary_clip_intents_section(
     assert "dog" in prompt
     assert "pub" not in prompt.casefold()
     assert "talk to the camera" not in prompt.casefold()
+
+
+# --- KRI-178: reaction beats (name/word-triggered photo/sticker + sound
+# pop-ins, plus a held closing shot) on a phone `subtitled` (Talking) edit ---
+
+
+def _manifest_with_reaction_beats_available() -> ResolvedCreatorManifest:
+    manifest = _manifest()
+    return manifest.model_copy(
+        update={
+            "edit_format": "subtitled",
+            "capabilities": {
+                **manifest.capabilities,
+                "reaction_beats": CapabilityAvailability(available=True),
+            },
+        }
+    )
+
+
+def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> None:
+    """Byte-identical to before this field existed: with no `reaction_beats`
+    entry on the manifest (the default `_manifest()` / `_input()` shape), the
+    rendered prompt equals substituting the SAME template with the
+    `$reaction_beats_section` line removed entirely and every other slot
+    resolved exactly as `render_prompt` resolves it today."""
+    import json as json_module
+    from string import Template
+
+    import app.agents.main_creator as main_creator_module
+    from app.config import settings
+    from app.pipeline.prompt_loader import _get_raw
+
+    agent_input = _input()
+    actual = MainCreatorAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+    assert "REACTION BEATS" not in actual
+    assert "reaction_beats_section" not in actual
+
+    raw_without_slot = _get_raw("main_creator").replace("$reaction_beats_section", "")
+    prompt_manifest = agent_input.capability_manifest.model_dump_json(
+        exclude_none=True, exclude={"narration": True}
+    )
+    expected = Template(raw_without_slot).safe_substitute(
+        creator_context=agent_input.creator_context or "(not available)",
+        creator_direction=agent_input.creator_direction or "(none)",
+        item_context=agent_input.item_context or "(not available)",
+        media_context=json_module.dumps(agent_input.media_context, ensure_ascii=False),
+        capability_manifest=prompt_manifest,
+        conversation=json_module.dumps(agent_input.conversation, ensure_ascii=False),
+        creator_request=agent_input.creator_request or agent_input.user_message,
+        user_message=agent_input.user_message,
+        clip_intents_section=(
+            main_creator_module._CLIP_INTENTS_PROMPT_SECTION
+            if settings.clip_intents_enabled
+            else ""
+        ),
+        described_text_exception=(
+            main_creator_module._DESCRIBED_TEXT_EXCEPTION if settings.clip_intents_enabled else ""
+        ),
+        story_shape_section=(
+            main_creator_module._STORY_SHAPE_PROMPT_SECTION
+            if main_creator_module._story_shapes_available(agent_input.capability_manifest)
+            else ""
+        ),
+    )
+    assert actual == expected
+
+
+def test_reaction_beats_prompt_section_present_when_capability_available() -> None:
+    agent_input = _input().model_copy(
+        update={"capability_manifest": _manifest_with_reaction_beats_available()}
+    )
+    prompt = MainCreatorAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+
+    assert "REACTION BEATS" in prompt
+    assert "reaction_beats" in prompt
+    assert "closing_media" in prompt
+    assert "visual_id" in prompt
+    assert "Never set `licensed_sfx`" in prompt
+    assert 'edit_format: "subtitled"' in prompt
+
+
+def test_reaction_beats_prompt_section_absent_when_flag_off_but_manifest_shaped_like_montage() -> (
+    None
+):
+    """A manifest that never advertises `reaction_beats` (e.g. flag off, or a
+    non-subtitled edit) keeps rendering the exact same prompt regardless of
+    edit_format -- the model is never invited to author beats it cannot use."""
+    agent_input = _input()
+    assert agent_input.capability_manifest.capabilities.get("reaction_beats") is None
+    prompt = MainCreatorAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+    assert "REACTION BEATS" not in prompt
+
+
+def test_parse_accepts_propose_strategy_with_reaction_beats_and_closing_media() -> None:
+    agent_input = _input().model_copy(
+        update={"capability_manifest": _manifest_with_reaction_beats_available()}
+    )
+    raw = json.dumps(
+        {
+            "action": {
+                "kind": "propose_strategy",
+                "strategy": {
+                    "direction": "fast_montage",
+                    "edit_format": "subtitled",
+                    "audio_strategy": "original_audio",
+                    "render_program": "native",
+                    "selected_media_ids": [],
+                    "target_duration_s": 24,
+                    "rationale": "Talking edit with named reaction beats.",
+                    "reaction_beats": [
+                        {
+                            "beat_id": "greenwood",
+                            "trigger": "Mason Greenwood",
+                            "visual_id": "asset-00-22222222-2222-2222-2222-222222222222",
+                            "visual_role": "photo",
+                        },
+                        {
+                            "beat_id": "greenwood-no",
+                            "trigger": "no",
+                            "after": "Mason Greenwood",
+                            "visual_id": "asset-01-22222222-2222-2222-2222-222222222222",
+                            "visual_role": "sticker",
+                            "sound": "buzzer",
+                        },
+                    ],
+                    "closing_media": {
+                        "visual_id": "asset-04-22222222-2222-2222-2222-222222222222",
+                        "from_trigger": "Salah",
+                    },
+                },
+                "summary": "A Talking edit with named reaction beats.",
+            }
+        }
+    )
+    output = MainCreatorAgent(None).parse(raw, agent_input)  # type: ignore[arg-type]
+
+    assert isinstance(output.action, ProposeStrategy)
+    strategy = output.action.strategy
+    assert strategy.reaction_beats is not None
+    assert [beat.beat_id for beat in strategy.reaction_beats] == ["greenwood", "greenwood-no"]
+    assert strategy.closing_media is not None
+    assert strategy.closing_media.from_trigger == "Salah"

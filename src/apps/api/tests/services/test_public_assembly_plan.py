@@ -102,6 +102,58 @@ def test_projection_preserves_phone_overlay_receipt_on_a_variant() -> None:
     assert stored == snapshot
 
 
+def test_projection_preserves_phone_beat_receipt_on_a_variant() -> None:
+    """KRI-178: `phone_beat_receipt` (persisted by `_run_phone_subtitled_job`
+    when reaction-beats grounding runs) is a creator-safe summary -- matcher/
+    face_sampling enum status, placed/unplaced beat_id+trigger+timing rows,
+    and a closing status block -- with no signed URLs or storage paths, and
+    no key matched by `_is_private_key`, so it must survive the public
+    projection byte-for-byte, same as `phone_overlay_receipt` (KRI-176)."""
+    receipt = {
+        "version": 1,
+        "matcher": "phrase",
+        "face_sampling": "ok",
+        "placed": [
+            {
+                "beat_id": "beat-0",
+                "trigger": "he scores",
+                "at_s": 4.0,
+                "end_s": 6.5,
+                "visual_label": "celebration.jpg",
+                "sound_label": "Crowd cheer",
+            }
+        ],
+        "unplaced": [{"beat_id": "beat-1", "trigger": "final whistle", "reason": "never_heard"}],
+        "closing": {
+            "status": "placed",
+            "from_s": 27.0,
+            "visual_label": "team-photo.jpg",
+            "badge": "none",
+        },
+    }
+    stored = {
+        "variants": [
+            {
+                "variant_id": "subtitled",
+                "phone_beat_receipt": copy.deepcopy(receipt),
+            }
+        ],
+    }
+    snapshot = copy.deepcopy(stored)
+
+    projection = project_public_assembly_plan_with_metadata(stored)
+
+    assert projection.value == {
+        "variants": [
+            {
+                "variant_id": "subtitled",
+                "phone_beat_receipt": receipt,
+            }
+        ],
+    }
+    assert stored == snapshot
+
+
 def test_admin_candidate_projection_exposes_only_top_level_source_vector() -> None:
     candidates = {
         "clip_paths": ["durable/a.mp4"],
