@@ -5085,6 +5085,7 @@ def _run_phone_subtitled_job(
                             caption_style=caption_style,
                             visuals=visuals,
                             lanes=lanes,
+                            duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
                         )
                         break
                     except SubtitledLaneError as exc:

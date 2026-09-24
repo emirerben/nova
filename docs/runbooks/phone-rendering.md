@@ -482,6 +482,21 @@ three extra lanes on top of the unchanged speaker clip + captions:
   publish/ready/path-prefix contract, `sound-effects/{id}/` prefix). Only
   m4a/wav/mp3/aac play on the device (`PLAYABLE_SFX_EXTENSIONS`); any other
   format is rejected at resolve time. Clips are clamped to the timeline end.
+  **Speech duck** (`PHONE_SFX_SPEECH_DUCK_ENABLED`, default `false`): an
+  effect whose window overlaps a spoken word plays at
+  `SFX_SPEECH_DUCK_GAIN` (0.35, about -9 dB) × its requested volume; effects
+  in pauses keep full volume. The phone path has no loudnorm, and catalog
+  effects are mastered to -14 LUFS against roughly -23 dBFS phone speech, so
+  an un-ducked beat lands about 9 dB over the speaker. Speech windows come
+  from the caption cues' word timings (cue span when a corrected line lost
+  its words; gaps under 0.25 s are bridged). The speaker clip is never
+  lowered. Only existing clip `volume` values change, so there is no new
+  recipe field or capability and every installed app build honours it.
+  Level proof: `SfxSpeechDuckLevelTests.swift` in KriaMediaEngine; the gain
+  is pinned across languages by
+  `test_ios_level_test_pins_the_server_duck_gain`. Device check: enable the
+  flag on the local API, render a Talking edit whose SFX lands on a word and
+  one in a pause, and listen on the iPhone dev build.
 - **ending_clip** — a Visuals-pool VIDEO appended as a second clip on the
   main video track with per-clip `volume=0` (muted), which sidesteps the five
   "exactly one clip" gates (capabilities `max_clips`, upload/register routes,

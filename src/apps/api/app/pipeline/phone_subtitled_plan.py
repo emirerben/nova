@@ -76,6 +76,22 @@ _STORY_CANVAS = Canvas(width=1080, height=1920)
 # rather than emit a near-zero-length audio clip.
 _MIN_SFX_DURATION_S = 0.05
 
+# SFX-under-speech duck (KRI-181 follow-up). The phone renderer has no
+# loudnorm or sidechain stage, so a full-scale catalog effect landing on a
+# spoken word plays at its raw level and can mask the speaker. When
+# ``duck_sfx_under_speech`` is on, an effect whose window overlaps speech plays
+# at ``volume * SFX_SPEECH_DUCK_GAIN`` (0.35 is about -9 dB); an effect that
+# lands in a pause keeps its full requested volume so the beat still hits.
+# The speech clip itself is never lowered: ducking the speaker under the
+# effect would make the words quieter at exactly the moment they compete.
+SFX_SPEECH_DUCK_GAIN = 0.35
+# Word gaps shorter than this are still "inside a sentence", so an effect
+# dropped between two quick words counts as landing on speech.
+_SPEECH_WORD_BRIDGE_S = 0.25
+# Overlap shorter than this (a decaying tail brushing the next word) does not
+# trigger the duck.
+_SFX_SPEECH_MIN_OVERLAP_S = 0.05
+
 
 def compile_phone_subtitled_plan(
     bindings: tuple[PhoneSourceBinding, ...],
@@ -84,6 +100,7 @@ def compile_phone_subtitled_plan(
     caption_style: str = "sentence",
     visuals: tuple[PhoneVisualBinding, ...] = (),
     lanes: PhoneSubtitledLanes | None = None,
+    duck_sfx_under_speech: bool = False,
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
 
@@ -125,6 +142,13 @@ def compile_phone_subtitled_plan(
       - ``lanes.ending_clip``: an optional MUTED (``volume=0``) Visuals-pool
         video appended to the SAME main video track right after the speaker
         clip, extending the recipe's own duration.
+
+    ``duck_sfx_under_speech`` (default ``False``, from
+    ``settings.phone_sfx_speech_duck_enabled``) scales the volume of every
+    sound effect whose window overlaps a spoken word in ``caption_cues`` by
+    `SFX_SPEECH_DUCK_GAIN`. It only changes existing clip ``volume`` values,
+    so the recipe needs no new field or capability; ``False`` is
+    byte-identical to the pre-duck output.
 
     Rejects (all `UnsupportedPhonePlan`, fail-closed):
       - zero or more than one binding.
@@ -265,6 +289,9 @@ def compile_phone_subtitled_plan(
                 timeline_end=timeline_end,
                 assets=assets,
                 manifest=manifest,
+                speech_windows=(
+                    speech_windows_from_cues(caption_cues) if duck_sfx_under_speech else ()
+                ),
             )
         except UnsupportedPhonePlan:
             raise
@@ -354,6 +381,7 @@ def _compile_overlay_track(
     speaker_end: float,
     assets: dict[str, MediaAsset],
     manifest: dict[str, object],
+    speech_windows: tuple[tuple[float, float], ...] = (),
 ) -> TimelineTrack:
     ordered = sorted(cards, key=lambda card: (card.z, card.start_s, card.id))
     clips: list[TimelineClip] = []
@@ -411,6 +439,7 @@ def _compile_sfx_track(
     timeline_end: float,
     assets: dict[str, MediaAsset],
     manifest: dict[str, object],
+    speech_windows: tuple[tuple[float, float], ...] = (),
 ) -> TimelineTrack:
     ordered = sorted(
         resolved_effects, key=lambda resolved: (resolved.request.at_s, resolved.request.id)
@@ -459,10 +488,66 @@ def _compile_sfx_track(
                 source_duration=clamped_duration,
                 timeline_start=request.at_s,
                 rate=1,
-                volume=request.volume,
+                volume=_sfx_volume(
+                    request.volume,
+                    start_s=request.at_s,
+                    end_s=request.at_s + clamped_duration,
+                    speech_windows=speech_windows,
+                ),
             )
         )
     return TimelineTrack(id="sfx", kind="audio", clips=clips)
+
+
+def speech_windows_from_cues(caption_cues: list[dict]) -> tuple[tuple[float, float], ...]:
+    """Merged ``(start_s, end_s)`` windows where someone is talking.
+
+    Uses each cue's per-word timings when present (the subtitled caption path
+    always attaches them), else the cue's own span. Word gaps shorter than
+    `_SPEECH_WORD_BRIDGE_S` are merged so a sentence reads as one window.
+    Cues are untrusted transcript data: malformed or non-positive spans are
+    skipped instead of failing the compile.
+    """
+    spans: list[tuple[float, float]] = []
+    for cue in caption_cues or ():
+        if not isinstance(cue, dict):
+            continue
+        words = cue.get("words")
+        sources = words if isinstance(words, list) and words else [cue]
+        for item in sources:
+            if not isinstance(item, dict):
+                continue
+            start, end = item.get("start_s"), item.get("end_s")
+            if isinstance(start, bool) or isinstance(end, bool):
+                continue
+            if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+                continue
+            start, end = float(start), float(end)
+            if end > start >= 0:
+                spans.append((start, end))
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(spans):
+        if merged and start - merged[-1][1] < _SPEECH_WORD_BRIDGE_S:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return tuple(merged)
+
+
+def _sfx_volume(
+    volume: float,
+    *,
+    start_s: float,
+    end_s: float,
+    speech_windows: tuple[tuple[float, float], ...],
+) -> float:
+    overlap = sum(
+        max(0.0, min(end_s, speech_end) - max(start_s, speech_start))
+        for speech_start, speech_end in speech_windows
+    )
+    if overlap < _SFX_SPEECH_MIN_OVERLAP_S:
+        return volume
+    return round(volume * SFX_SPEECH_DUCK_GAIN, 4)
 
 
 def _display_dims(original) -> tuple[int, int]:
