@@ -357,6 +357,44 @@ def phone_subtitled_reaction_beats_supported() -> bool:
     )
 
 
+# Device feature the video-PiP lane needs on top of the overlay lane: the
+# compiler emits a video overlay card as a muted, trimmed `TimelineClip` on
+# the `subtitled-overlays` track, which the device composites through the
+# same `visualVideos` path the ending clip already uses.
+PHONE_SUBTITLED_VIDEO_OVERLAY_FEATURES: tuple[str, ...] = ("visualVideos",)
+
+
+def phone_subtitled_video_overlays_supported() -> bool:
+    """Single source of truth for "may a phone-rendered `subtitled`
+    (talk-to-camera) edit carry VIDEO Visuals as picture-in-picture cards
+    right now" (KRI-183).
+
+    Consulted by `app.tasks.generative_build._run_phone_subtitled_job`
+    (whether transcript grounding offers video Visuals to the matcher and
+    binds them as `kind="video"` cards) and by
+    `app.services.creator_capabilities.resolve_creator_manifest` (whether the
+    phone `subtitled` manifest's overlay capability advertises videos). A
+    manifest that advertises video cards while the worker still reports them
+    `video_not_supported` -- or vice versa -- is exactly the drift this
+    helper exists to prevent.
+
+    True iff ALL of:
+      - `phone_subtitled_video_overlays_enabled` (KRI-183 lane flag).
+      - `phone_subtitled_overlays_supported()` (video cards ride the same
+        overlay track, gates, and grounding as photo cards).
+      - every feature in `PHONE_SUBTITLED_VIDEO_OVERLAY_FEATURES` is in
+        `phone_render_verified_features` (device-parity gate; a rollout flag
+        alone never skips it).
+    """
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_subtitled_video_overlays_enabled
+        and phone_subtitled_overlays_supported()
+        and all(feature in verified for feature in PHONE_SUBTITLED_VIDEO_OVERLAY_FEATURES)
+    )
+
+
 def phone_render_supported_formats() -> frozenset[str]:
     """The single source of truth for "which edit formats can render on the
     phone for THIS deployment, right now" -- settings-aware, unlike the

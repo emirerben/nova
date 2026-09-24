@@ -9,8 +9,10 @@ from app.pipeline.portable_text_layout import compile_text_overlay
 from app.services.phone_rollout import (
     PHONE_SUBTITLED_OVERLAY_FEATURES,
     PHONE_SUBTITLED_SFX_FEATURES,
+    PHONE_SUBTITLED_VIDEO_OVERLAY_FEATURES,
     phone_subtitled_overlays_supported,
     phone_subtitled_reaction_beats_supported,
+    phone_subtitled_video_overlays_supported,
     validate_phone_pilot_recipe,
 )
 from tests.pipeline.test_phone_guided_plan import fixture
@@ -674,3 +676,47 @@ def test_phone_subtitled_reaction_beats_requires_every_sfx_feature(monkeypatch, 
 def test_phone_subtitled_reaction_beats_defaults_to_unsupported(monkeypatch):
     """Flag-off default settings never accidentally enable the lane."""
     assert phone_subtitled_reaction_beats_supported() is False
+
+
+def _enable_phone_subtitled_video_overlays(monkeypatch) -> None:
+    """KRI-183 happy-path setup: the overlay lane fully enabled PLUS the
+    video-PiP flag and the extra device feature (`visualVideos`)
+    `PHONE_SUBTITLED_VIDEO_OVERLAY_FEATURES` adds on top."""
+    _enable_phone_subtitled_overlays(monkeypatch)
+    monkeypatch.setattr(settings, "phone_subtitled_video_overlays_enabled", True)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        list(set(PHONE_SUBTITLED_OVERLAY_FEATURES) | set(PHONE_SUBTITLED_VIDEO_OVERLAY_FEATURES)),
+    )
+
+
+def test_phone_subtitled_video_overlays_supported_when_all_conditions_hold(monkeypatch):
+    _enable_phone_subtitled_video_overlays(monkeypatch)
+    assert phone_subtitled_video_overlays_supported() is True
+
+
+def test_phone_subtitled_video_overlays_requires_its_own_flag(monkeypatch):
+    _enable_phone_subtitled_video_overlays(monkeypatch)
+    monkeypatch.setattr(settings, "phone_subtitled_video_overlays_enabled", False)
+    assert phone_subtitled_video_overlays_supported() is False
+
+
+def test_phone_subtitled_video_overlays_requires_the_overlay_lane(monkeypatch):
+    """Video cards ride the photo-card lane: any overlay-lane prerequisite
+    dropping (here the generic media_overlays gate) flips this helper too."""
+    _enable_phone_subtitled_video_overlays(monkeypatch)
+    monkeypatch.setattr(settings, "media_overlays_enabled", False)
+    assert phone_subtitled_video_overlays_supported() is False
+
+
+def test_phone_subtitled_video_overlays_requires_visual_videos_verified(monkeypatch):
+    _enable_phone_subtitled_video_overlays(monkeypatch)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(PHONE_SUBTITLED_OVERLAY_FEATURES)
+    )
+    assert phone_subtitled_video_overlays_supported() is False
+
+
+def test_phone_subtitled_video_overlays_defaults_to_unsupported(monkeypatch):
+    assert phone_subtitled_video_overlays_supported() is False
