@@ -114,7 +114,9 @@ def _creation(monkeypatch):
 
 async def _create(user, db, **kwargs):
     await routes.create_thread(
-        request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
+        request=Request(
+            {"type": "http", "method": "POST", "path": "/creation-threads", "headers": []}
+        ),
         body=routes.CreateBody(),
         user=user,
         db=db,
