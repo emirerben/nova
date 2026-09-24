@@ -94,6 +94,72 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.deviceRenderCallCount, 2, "A generation refresh must resolve its current device recipe again")
     }
 
+    /// Job 385e3b13: a phone Talking edit with photo cards opened to a black
+    /// editor. The server keeps no timeline slots for it, so the preview had
+    /// no video track, yet the cards made the recipe valid. The source clip now
+    /// plays, locked, under the cards and captions.
+    func testPhoneTalkingEditPreviewsItsSourceVideoAsALockedClip() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true)
+
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertEqual(session.timelineClips.count, 1)
+        XCTAssertEqual(session.timelineClips.first?.sourceClipIndex, 0)
+        XCTAssertEqual(session.timelineClips.first?.start, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(session.timelineClips.first?.end), 0)
+        XCTAssertFalse(session.canEditTimeline)
+        XCTAssertFalse(session.hasUnsavedChanges, "The source clip is server state, never a user edit to Save")
+    }
+
+    /// Cards and sounds closed (their rollout flag off): the server sends no
+    /// lanes, so a live preview would drop what the finished MP4 shows. The
+    /// editor keeps playing the finished MP4.
+    func testPhoneTalkingEditWithClosedLanesKeepsTheFinishedMP4() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: false)
+
+        XCTAssertTrue(session.timelineClips.isEmpty)
+        guard case .failed = session.sourcePreviewState else {
+            return XCTFail("No video track must stay invalid so the finished MP4 plays")
+        }
+    }
+
+    private static func phoneTalkingSession(lanesEditable: Bool) async throws -> (NativeEditorSession, EditorCommitSpy) {
+        let threadID = UUID(), jobID = UUID()
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), to: input)
+        defer { try? FileManager.default.removeItem(at: input) }
+        let asset = try await AssetImportCoordinator(project: project).importAsset(from: input)
+        try SourceAssetStore(project: project).bind(mediaID: "source", original: asset)
+        let descriptor = OriginalMediaDescriptor(sha256: try XCTUnwrap(asset.fingerprint).hex, byteCount: try XCTUnwrap(asset.fingerprint).byteCount,
+            durationS: 1, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true)
+
+        let variant: [String: JSONValue] = [
+            "variant_id": .string("variant"),
+            "render_generation_id": .string("generation-1"),
+            "render_status": .string("ready"),
+            "render_destination": .string("device"),
+            "resolved_archetype": .string("subtitled"),
+            "output_url": .string("file:///tmp/kria-editor-test.mp4"),
+            "editor_capabilities": .object(["timeline": .bool(false), "text_elements": .bool(false), "mix": .bool(false),
+                "overlays": .bool(lanesEditable), "sfx": .bool(lanesEditable)]),
+            "caption_cues": .array([.object(["text": .string("Number three"), "start_s": .number(0.2), "end_s": .number(0.9)])]),
+        ]
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant
+        )
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: .init(mediaID: "source",
+            sourceURL: nil, original: descriptor, localRequired: true))], baseGeneration: "generation-1")
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(
+            phase: "published", request: deviceRenderRequest(jobID: jobID, revision: 1, digest: "a"), publishedGeneration: "generation-1"
+        )
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        return (session, fake)
+    }
+
     func testDeviceTimelineDurationUsesShorterOriginalAndKeepsEOFMargin() throws {
         XCTAssertEqual(try XCTUnwrap(NativeEditorSession.deviceTimelineDuration(proxyDuration: 2.2, localDuration: 2.0, minimum: 0.1)),
                        1.95, accuracy: 0.0001)
