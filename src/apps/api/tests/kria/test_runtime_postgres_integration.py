@@ -23,6 +23,8 @@ from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
 from app.database import engine as async_engine
 from app.kria.api_schemas import ApprovalDecisionBody, SubmitTurnBody
+from app.kria.brief import BriefUpdate
+from app.kria.contracts import KriaTurnPlan
 from app.kria.drafts import read_or_bootstrap_draft, undo_draft, write_draft
 from app.kria.planner import PlannedKriaTurn, adapt_creator_action, adapt_editor_action
 from app.kria.runtime import (
@@ -36,6 +38,7 @@ from app.models import (
     ContentPlan,
     CreationThread,
     CreationThreadEvent,
+    CreativeBriefVersion,
     CreatorAgentApproval,
     CreatorAgentExecution,
     CreatorAgentSession,
@@ -1187,4 +1190,427 @@ async def test_first_prompt_title_is_durable_and_manual_rename_wins(
         finish.set()
         if task is not None:
             await task
+        await async_engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# KRI-188: Creative Brief persistence, receipts and dispatch request (real DB)
+# ---------------------------------------------------------------------------
+
+
+def _brief_strategy_plan() -> KriaTurnPlan:
+    from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
+
+    labels = ResolvedClipIntent(
+        intent_id="landmark",
+        op="label",
+        attribute="the landmark shown",
+        assignments=[
+            ClipAssignment(
+                media_id="clip-1",
+                value="Eminonu",
+                confidence=0.9,
+                evidence="Bridge visible",
+                grounding="vision_verified",
+            )
+        ],
+    )
+    return adapt_creator_action(
+        ProposeStrategy(
+            kind="propose_strategy",
+            strategy=CreativeStrategy(
+                direction="guided_story",
+                edit_format="day_vlog",
+                audio_strategy="licensed_music",
+                pacing="fast",
+                render_program="guided",
+                selected_media_ids=[],
+                rationale="Chronological run.",
+                opening_title="20K Kosu",
+                target_duration_s=20,
+            ),
+            summary="A chronological 20K cut.",
+        ),
+        server_clip_intents=[labels],
+        server_resolved_clip_intents=[labels],
+    )
+
+
+def _brief_updates() -> tuple[BriefUpdate, ...]:
+    return (
+        BriefUpdate(kind="text", scope="title", literal="20K Kosu"),
+        BriefUpdate(kind="text", scope="per_clip", description="the landmark in each clip"),
+    )
+
+
+async def _submit(user_id, thread_id, message, revision):  # noqa: ANN001, ANN202
+    async with AsyncSessionLocal() as db:
+        accepted, _ = await submit_turn(
+            db,
+            thread_id=thread_id,
+            creator_id=user_id,
+            body=SubmitTurnBody(
+                message=message,
+                client_event_id=f"brief-{uuid.uuid4().hex}",
+                expected_thread_revision=revision,
+            ),
+        )
+    return accepted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("brief_on", [True, False])
+async def test_brief_turn_persists_version_receipts_and_dispatch_request(
+    monkeypatch: pytest.MonkeyPatch, brief_on: bool
+) -> None:
+    user_id, thread_id, session_id = _seed_runtime_project()
+    plan = _brief_strategy_plan()
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        extra = (
+            {
+                "brief_updates": _brief_updates(),
+                "brief_route": "replan",
+                "brief_clip_ids": ("clip-1", "clip-2"),
+            }
+            if brief_on
+            else {}
+        )
+        return PlannedKriaTurn(plan=plan, manifest_hash="a" * 64, context_hash="b" * 64, **extra)
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", brief_on)
+    monkeypatch.setattr(settings, "kria_creative_brief_user_ids", [])
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+    try:
+        accepted = await _submit(
+            user_id, thread_id, "Title it 20K Kosu and label each clip with its landmark", 2
+        )
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result["status"] == "awaiting_approval"
+
+        with sync_session() as db:
+            versions = list(
+                db.execute(
+                    select(CreativeBriefVersion).where(CreativeBriefVersion.thread_id == thread_id)
+                ).scalars()
+            )
+            draft_event = db.execute(
+                select(CreationThreadEvent).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "draft_applied",
+                )
+            ).scalar_one()
+            payload = dict(draft_event.payload)
+            content = draft_event.content
+            approval = db.execute(
+                select(CreatorAgentApproval).where(
+                    CreatorAgentApproval.turn_id == uuid.UUID(accepted.turn_id)
+                )
+            ).scalar_one()
+            approval_id = approval.id
+            draft_revision = approval.draft_revision
+            approval_token = approval_fingerprint(approval)
+            thread_revision = db.get(CreationThread, thread_id).revision
+            item_id = db.get(CreatorAgentSession, session_id).plan_item_id
+            version_rows = [(v.version, v.requirements, v.source_turn_id) for v in versions]
+
+        if not brief_on:
+            # Flag off: byte-identical to the pre-feature reply and payload.
+            assert version_rows == []
+            assert content == "A chronological 20K cut."
+            assert "requirement_receipts" not in payload
+        else:
+            assert [row[0] for row in version_rows] == [1]
+            assert [r["kind"] for r in version_rows[0][1]] == ["text", "text"]
+            assert version_rows[0][2] == uuid.UUID(accepted.turn_id)
+            receipts = {r["requirement_id"]: r for r in payload["requirement_receipts"]}
+            assert receipts["r1"]["status"] == "met"  # literal title is in the strategy
+            # 1 of the 2 clips got a label, and it was inferred from the footage.
+            assert receipts["r2"]["status"] == "partial"
+            assert receipts["r2"]["inferred"] == ["Eminonu"]
+            assert content.startswith("Not everything you asked for made it in")
+            assert "1 of 2" in content and "Eminonu" in content
+            assert "A chronological 20K cut." not in content
+
+        async with AsyncSessionLocal() as db:
+            await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="approve",
+                body=ApprovalDecisionBody(
+                    expected_thread_revision=thread_revision,
+                    expected_draft_revision=draft_revision,
+                    expected_approval_fingerprint=approval_token,
+                ),
+            )
+        seen: dict = {}
+
+        def _fake_dispatch(*_args, **kwargs) -> DispatchResult:  # noqa: ANN002, ANN003
+            seen.update(kwargs)
+            with sync_session() as db:
+                item = db.get(PlanItem, item_id, with_for_update=True)
+                job = Job(
+                    user_id=user_id,
+                    status="queued",
+                    mode="generative",
+                    raw_storage_path="",
+                    selected_platforms=["tiktok"],
+                    content_plan_item_id=item.id,
+                    content_plan_ownership_epoch=0,
+                    assembly_plan={"variants": []},
+                )
+                db.add(job)
+                db.flush()
+                item.current_job_id = job.id
+                db.commit()
+                return DispatchResult("dispatched", job_id=str(job.id))
+
+        monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
+        await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+        if brief_on:
+            # The strategy's creator request is the brief, not the draft summary.
+            assert seen["creator_request"].startswith("Creative brief")
+            assert '"20K Kosu"' in seen["creator_request"]
+            assert "the landmark in each clip" in seen["creator_request"]
+        else:
+            assert seen["creator_request"] == "A chronological 20K cut."
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_brief_version_is_idempotent_per_turn_and_never_written_on_requeue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.kria.brief import persist_brief_version_sync
+    from app.tasks.kria_runtime import _claim, _complete_response_turn
+
+    user_id, thread_id, _session_id = _seed_runtime_project()
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    try:
+        accepted = await _submit(user_id, thread_id, "Order them by when I filmed them", 2)
+        turn_id = uuid.UUID(accepted.turn_id)
+        claimed = await asyncio.to_thread(_claim, turn_id, "owner-1")
+        assert claimed is not None
+        _snapshot, _message, lease_epoch, revision = claimed
+        question = KriaTurnPlan(mode="respond", turn_value="question", response="Which order?")
+        updates = (BriefUpdate(kind="order", scope="global", description="chronological"),)
+
+        # A stale thread revision requeues the turn and must not record a version.
+        stale = await asyncio.to_thread(
+            lambda: _complete_response_turn(
+                turn_id,
+                lease_owner="owner-1",
+                lease_epoch=lease_epoch,
+                claimed_thread_revision=revision - 1,
+                plan=question,
+                brief_updates=updates,
+            )
+        )
+        assert stale.committed is False and stale.requeue_turn_id == str(turn_id)
+        with sync_session() as db:
+            count = db.scalar(
+                select(func.count())
+                .select_from(CreativeBriefVersion)
+                .where(CreativeBriefVersion.thread_id == thread_id)
+            )
+            assert count == 0
+
+        claimed = await asyncio.to_thread(_claim, turn_id, "owner-2")
+        assert claimed is not None
+        _snapshot, _message, lease_epoch, revision = claimed
+        done = await asyncio.to_thread(
+            lambda: _complete_response_turn(
+                turn_id,
+                lease_owner="owner-2",
+                lease_epoch=lease_epoch,
+                claimed_thread_revision=revision,
+                plan=question,
+                brief_updates=updates,
+            )
+        )
+        assert done.committed is True
+
+        def _persist_again() -> int:
+            with sync_session() as db:
+                brief = persist_brief_version_sync(
+                    db, thread_id=thread_id, turn_id=turn_id, updates=updates
+                )
+                db.commit()
+                return brief.version
+
+        assert await asyncio.to_thread(_persist_again) == 1
+        with sync_session() as db:
+            rows = list(
+                db.execute(
+                    select(CreativeBriefVersion.version).where(
+                        CreativeBriefVersion.thread_id == thread_id
+                    )
+                ).scalars()
+            )
+            assert rows == [1]
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_brief_read_service_returns_requirements_and_newest_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.kria.runtime import read_creative_brief
+
+    user_id, thread_id, _session_id = _seed_runtime_project()
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=_brief_strategy_plan(),
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            brief_updates=_brief_updates(),
+            brief_route="replan",
+            brief_clip_ids=("clip-1", "clip-2"),
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+    try:
+        accepted = await _submit(user_id, thread_id, "Title it 20K Kosu", 2)
+        await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        async with AsyncSessionLocal() as db:
+            brief = await read_creative_brief(db, thread_id=thread_id, creator_id=user_id)
+        assert brief.version == 1
+        assert {(r.id, r.status) for r in brief.requirements} == {("r1", "met"), ("r2", "partial")}
+        assert {r.requirement_id for r in brief.requirement_receipts} == {"r1", "r2"}
+        monkeypatch.setattr(settings, "kria_creative_brief_enabled", False)
+        async with AsyncSessionLocal() as db:
+            off = await read_creative_brief(db, thread_id=thread_id, creator_id=user_id)
+        assert off.version == 0 and off.requirements == []
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_editor_ops_turn_receipts_cover_only_this_turns_requirements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-188: editor-op receipts are scoped to this turn and never say "Couldn't"
+    for a requirement the editor payload simply has no structure to verify."""
+    from app.kria.brief import BriefRequirement
+
+    user_id, thread_id, session_id = _seed_runtime_project()
+    job_id = uuid.uuid4()
+    with sync_session() as db:
+        session = db.get(CreatorAgentSession, session_id, with_for_update=True)
+        item = db.get(PlanItem, session.plan_item_id, with_for_update=True)
+        db.add(
+            Job(
+                id=job_id,
+                user_id=user_id,
+                status="variants_ready",
+                mode="generative",
+                raw_storage_path="",
+                selected_platforms=["tiktok"],
+                content_plan_item_id=item.id,
+                content_plan_ownership_epoch=0,
+                all_candidates={"clip_paths": ["users/test/matcha.mp4"]},
+                assembly_plan={
+                    "variants": [
+                        {
+                            "variant_id": "original_text",
+                            "resolved_archetype": "montage",
+                            "render_status": "ready",
+                            "render_generation_id": "generation-1",
+                            "render_finished_at": "2026-09-07T08:00:00Z",
+                            "video_path": "generative-jobs/test/output.mp4",
+                            "base_video_path": "generative-jobs/test/base.mp4",
+                            "text_elements": [
+                                {
+                                    "id": "hook",
+                                    "text": "Old matcha hook",
+                                    "start_s": 0.0,
+                                    "end_s": 2.0,
+                                    "role": "generative_intro",
+                                    "font_family": "Playfair Display",
+                                    "size_px": 72,
+                                    "color": "#FFFFFF",
+                                    "effect": "static",
+                                    "alignment": "center",
+                                    "position": "middle",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+        )
+        db.flush()
+        item.current_job_id = job_id
+        session.target_job_id = job_id
+        session.target_variant_id = "original_text"
+        session.target_generation_id = "generation-1"
+        session.manifest_hash = "a" * 64
+        # An older requirement from a previous turn: must NOT be receipted here.
+        old = BriefRequirement(
+            id="r1",
+            kind="order",
+            scope="global",
+            description="chronological",
+            facts={"key": "capture_time"},
+            source_turn_id=None,
+        )
+        db.add(
+            CreativeBriefVersion(
+                thread_id=thread_id,
+                version=1,
+                requirements=[old.model_dump(mode="json")],
+                source_turn_id=None,
+            )
+        )
+        db.commit()
+
+    editor_plan = adapt_editor_action(
+        reply="Retitled the hook.",
+        request_render=False,
+        ops=[{"op": "edit_text", "bar_index": 0, "text": "Fresh matcha, finally"}],
+    )
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=editor_plan,
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            brief_updates=(
+                BriefUpdate(kind="text", scope="title", literal="Fresh matcha, finally"),
+                BriefUpdate(kind="text", scope="per_clip", description="a label on each clip"),
+            ),
+            brief_route="editor_ops",
+            brief_clip_ids=("clip-1", "clip-2"),
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+    try:
+        accepted = await _submit(user_id, thread_id, "Change the hook to Fresh matcha, finally", 2)
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result["status"] == "completed"
+        with sync_session() as db:
+            event = db.execute(
+                select(CreationThreadEvent).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "draft_applied",
+                )
+            ).scalar_one()
+            receipts = {r["requirement_id"]: r for r in event.payload["requirement_receipts"]}
+            content = event.content
+        assert set(receipts) == {"r2", "r3"}  # r1 is from an earlier turn
+        assert receipts["r2"]["status"] == "met"
+        assert receipts["r3"]["status"] == "partial"  # can't verify is not "Couldn't"
+        assert "Couldn't" not in content
+        assert "Done:" in content and "Partly:" in content
+    finally:
         await async_engine.dispose()

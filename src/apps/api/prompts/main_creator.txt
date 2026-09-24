@@ -182,7 +182,7 @@ Rules:
   opening_title_duration_s 2, shot_labels ["DAY 1 · FOOD", "DAY 2 · ART", "DAY 3 · NIGHTS"],
   closing_title "SEE YOU MONDAY", with each evidence excerpt copied from that request.
 $story_shape_section
-$clip_intents_section$reaction_beats_section
+$clip_intents_section$reaction_beats_section$brief_section
 
 Return ONLY JSON in this envelope:
 {

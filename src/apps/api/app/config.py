@@ -1,10 +1,10 @@
 import json
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 GUIDED_STORY_RENDERER_READY = True
 
@@ -421,6 +421,42 @@ class Settings(BaseSettings):
     kria_runtime_v2_phone_enabled: bool = False
     kria_runtime_v2_phone_user_ids: list[UUID] = Field(default_factory=list)
     kria_turn_lease_seconds: int = Field(default=15, ge=10, le=120)
+    # KRI-188: thread-level Creative Brief ledger + deterministic scope router +
+    # per-requirement receipts on runtime-v2 turns. False (default): the planner,
+    # router, draft validation, dispatch request and replies are byte-identical
+    # to before. `KRIA_CREATIVE_BRIEF_USER_IDS` (comma-separated or JSON list of
+    # creator user ids) turns it on for just those accounts while the global flag
+    # is still off, so a device check can run in prod. Apply:
+    # `fly secrets set KRIA_CREATIVE_BRIEF_ENABLED=true --app nova-video`
+    # + restart api + worker. Rollback: set it false + restart.
+    kria_creative_brief_enabled: bool = False
+    # NoDecode: pydantic-settings would otherwise JSON-decode the env string
+    # before the validator below runs, crashing boot on a bare id or CSV.
+    kria_creative_brief_user_ids: Annotated[list[str], NoDecode] = []
+
+    @field_validator("kria_creative_brief_user_ids", mode="before")
+    @classmethod
+    def parse_creative_brief_user_ids(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return value
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
+    def creative_brief_for(self, user_id: object) -> bool:
+        """Global flag OR the per-account allowlist (allowlist only ever adds)."""
+        if self.kria_creative_brief_enabled:
+            return True
+        return user_id is not None and str(user_id) in {
+            str(uid) for uid in self.kria_creative_brief_user_ids
+        }
+
     # GET /creation-threads/{id} degrades a thread whose render-graph edge
     # (PlanItem/CreatorAgentSession/Job ownership) has drifted incoherent,
     # instead of 404ing the whole project and its intact chat transcript.

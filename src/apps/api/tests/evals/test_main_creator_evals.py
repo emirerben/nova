@@ -177,6 +177,20 @@ def test_main_creator_eval(
         else:
             assert effect_id == sfx_intent["effect_id"]
 
+    brief_meta = fixture.meta.get("brief_updates")
+    if brief_meta:
+        # KRI-188: with the Creative Brief on, every requirement the message
+        # states comes back as a typed update (kind/scope), literal only for
+        # creator-written text, and the plan itself is still a normal strategy.
+        assert result.output is not None
+        assert result.output["action"]["kind"] == "propose_strategy"
+        updates = result.output["brief_updates"]
+        assert [[u["kind"], u["scope"]] for u in updates] == brief_meta["kinds"]
+        title = next(u for u in updates if u["scope"] == "title")
+        assert title["literal"] == "20K Koşu · Arnavutköy → Eminönü"
+        per_clip = next(u for u in updates if u["scope"] == "per_clip")
+        assert per_clip["literal"] is None and per_clip["description"]
+
     if fixture.meta.get("reaction_beats"):
         # KRI-178: a phone-Talking request naming specific photo/sticker and
         # sound moments must come back with a non-empty `reaction_beats` list
