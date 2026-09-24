@@ -186,10 +186,20 @@ def test_main_creator_eval(
         assert result.output["action"]["kind"] == "propose_strategy"
         updates = result.output["brief_updates"]
         assert [[u["kind"], u["scope"]] for u in updates] == brief_meta["kinds"]
-        title = next(u for u in updates if u["scope"] == "title")
-        assert title["literal"] == "20K Koşu · Arnavutköy → Eminönü"
+        title = next((u for u in updates if u["scope"] == "title"), None)
+        if title is not None:
+            assert title["literal"] == "20K Koşu · Arnavutköy → Eminönü"
         per_clip = next(u for u in updates if u["scope"] == "per_clip")
         assert per_clip["literal"] is None and per_clip["description"]
+        # KRI-190 (prompt v39): a stated route/distance/sequence is never dropped
+        # into prose; it lands as structured facts and an order requirement.
+        expected_facts = brief_meta.get("facts")
+        if expected_facts:
+            for key, value in expected_facts["per_clip"].items():
+                assert per_clip["facts"].get(key) == value, key
+            order = next(u for u in updates if u["kind"] == "order")
+            for key, value in expected_facts["order"].items():
+                assert order["facts"].get(key) == value, key
 
     if fixture.meta.get("reaction_beats"):
         # KRI-178: a phone-Talking request naming specific photo/sticker and

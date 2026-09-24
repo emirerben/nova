@@ -1782,3 +1782,27 @@ ignores the advertised list gets a v2 thread with that limitation.
 **Device check (human).** On a physical device with the allowlist set to your
 account: new phone thread -> brief -> approve plan -> device render -> chat edit
 -> approve -> device re-render, entirely on v2.
+
+## One montage plan on the phone (KRI-190)
+
+`MONTAGE_UNIFIED_PLAN_ENABLED` (or `MONTAGE_UNIFIED_PLAN_USER_IDS`, comma-separated
+or JSON) routes a phone montage-family job with no approved proposal through the
+guided fast-montage plan instead of `_run_phone_montage_job`. Design and decisions:
+`docs/pipelines/kria-agent-runtime.md` ("One montage plan"). The worker needs no
+capability beyond what any guided phone edit with text already needs (`authoredText`
+must be in `PHONE_RENDER_VERIFIED_FEATURES`, since the guided title and label fonts
+are variable fonts); a montage missing it fails as `phone_plan_unsupported`, exactly
+like an approved guided edit would.
+
+**Device check (human).** Allowlist your account, start a phone thread on v2, send
+one East Run message ("20K from Arnavutköy to Eminönü, name the landmark on each
+clip, in the order I filmed, fast but readable") with clips whose Photos capture
+time/location are on. Expect: clips in filming order, a label on every clip that has
+a place or a landmark, each label on screen for its reading time, the title
+`20K Run · Arnavutköy → Eminönü`, a review message that says what is partial, and a
+working chat text edit afterwards. Compare against the plain lane before the old
+lane is deleted.
+
+**Rollback.** `fly secrets set MONTAGE_UNIFIED_PLAN_ENABLED=false
+MONTAGE_UNIFIED_PLAN_USER_IDS= --app nova-video` + restart the worker. New jobs use
+the plain lane again; a job already planned keeps its pinned guided plan.

@@ -2511,3 +2511,26 @@ CLAUDE.md hit 38,000/38,000 chars while KRI-185 lanes each needed a flag line. T
 - `POSTER_ONDEMAND_REPAIR_ENABLED` / `POSTER_REPAIR_QUEUE` — default **`false`** / `celery`. `POST /me/jobs/posters/refresh` stops being a pure re-signer and enqueues `tasks.repair_job_poster` (`app/tasks/poster_repair.py`) to mint a missing library poster; off is byte-identical. **Set the queue FIRST** — the task downloads a full MP4 + runs ffmpeg, so prod needs `autoplace-jobs` (2GB), never the 1GB `light`/Beat machine. Guards: `tests/tasks/test_poster_repair.py`, `tests/routes/test_me_jobs.py`. Narrative + apply order: agents/DECISIONS.md "Storage retention incidents".
 
 - `SILENCE_CUT_ENABLED` / `RETAKE_CUT_ENABLED` — default `false`; speech paths only, fail-open. Removal-cap lever `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED` (default `1.0`) + `DETECTOR_VERSION` are in the policy fingerprint — a flip retires analyses, re-consents, reshuffles cohorts. **"cleanup cut a word" is a guard bug, not this lever** — use the kill switch. Full narrative + triage: `docs/runbooks/chat-speech-cleanup-rollout.md`. Pins `test_silence_cut*.py` (`TestRuleZeroCannotCutRealSpeech`); plans/010/019/021.
+
+## [2026-09-24] One montage plan: phone montage compiles through the guided fast-montage format (KRI-190)
+
+Context. A v2 phone approval reaches the worker with no `guided_edit`, so the plain
+phone-montage lane ran. It rejected every portrait-canvas job at the item's default
+`landscape_fit="fit"` (job 94c4c865, `phone_plan_unsupported`), ignored the brief, and
+could not take a chat text edit.
+
+Decision. Behind `MONTAGE_UNIFIED_PLAN_ENABLED`, build the guided plan in the worker
+deterministically (`app/pipeline/unified_montage.py`) and reuse `_run_phone_guided_job`,
+instead of running the item-locked `draft_edit_proposal` Celery flow (LLM planner,
+async approval, second Job mint) inside the render worker. The planner reuses
+`FastMontageCut`, `EditProposalSnapshot`, the strict compiler and the P3 capture
+ordering; the new logic is only order/label/reading-time/title. Per-clip text is a new
+snapshot field (`clip_labels`) rather than `montage_text_bindings` because bindings cap
+at 12 sources, are suppressed by an opening title, and `shot_labels` are ignored for
+fast montage.
+
+Consequences. Readable text beats a requested length; an ungrounded label is dropped
+and the receipt says partial. A montage with nothing to title with is titled with the
+clips' most common city, else `Montage` (never a model-authored hook). Fraunces lacks
+"→", so the planner selects a font that covers every string. Old lane deletion is a
+follow-up after a device visual comparison.

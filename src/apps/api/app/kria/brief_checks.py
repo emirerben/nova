@@ -57,6 +57,9 @@ class PlanFacts:
     ordering_basis: str | None = None
     ordering_fallback_clip_ids: tuple[str, ...] = ()
     texts: tuple[str, ...] = ()
+    # KRI-190: clips whose label is on a cut shorter than its reading time (the
+    # clip itself is too short). A label the viewer cannot read is not "met".
+    unreadable_label_clip_ids: tuple[str, ...] = ()
     # True when the facts come from an editor payload, which carries literal
     # on-screen text only (no per-clip structure, order or duration).
     editor: bool = False
@@ -118,6 +121,39 @@ def plan_facts_from_strategy(
             str(c) for c in (strategy.get("ordering_fallback_clip_ids") or [])
         ),
         texts=tuple(texts),
+    )
+
+
+def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFacts:
+    """Read verifiable facts off a unified montage plan record (KRI-190).
+
+    ``record`` is ``UnifiedMontagePlan.record()``: what the server actually put
+    in the plan (the ordered clips, the labels it could ground, the title, the
+    total length and how the order was decided), never what a model claimed.
+    """
+    record = record or {}
+    labels = [row for row in record.get("labels") or [] if isinstance(row, Mapping)]
+    per_clip = {str(row["media_id"]): str(row["text"]) for row in labels if row.get("text")}
+    inferred = {
+        str(row["media_id"]): str(row["text"])
+        for row in labels
+        if row.get("inferred") and row.get("text")
+    }
+    title = record.get("title")
+    duration = record.get("duration_s")
+    basis = record.get("ordering_basis")
+    return PlanFacts(
+        clip_ids=tuple(str(c) for c in record.get("clip_ids") or []),
+        title=str(title) if title else None,
+        per_clip_text=per_clip,
+        inferred_text=inferred,
+        duration_s=float(duration) if isinstance(duration, (int, float)) else None,
+        ordering_basis=str(basis) if basis else None,
+        ordering_fallback_clip_ids=tuple(
+            str(c) for c in record.get("ordering_fallback_clip_ids") or []
+        ),
+        texts=tuple(text for text in (title, *per_clip.values()) if text),
+        unreadable_label_clip_ids=tuple(str(c) for c in record.get("short_label_clip_ids") or []),
     )
 
 
@@ -197,6 +233,15 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
                 req, "partial", "The clips don't carry the exact text you gave.", inferred
             )
     if total and count >= total:
+        if facts.unreadable_label_clip_ids:
+            n = len(facts.unreadable_label_clip_ids)
+            return _receipt(
+                req,
+                "partial",
+                f"{n} clip{'s are' if n != 1 else ' is'} too short for its text to stay "
+                "on screen long enough to read.",
+                inferred,
+            )
         return _receipt(req, "met", None, inferred)
     if count == 0:
         return _receipt(
@@ -343,5 +388,6 @@ __all__ = [
     "check_requirement",
     "plan_facts_from_editor_payload",
     "plan_facts_from_strategy",
+    "plan_facts_from_unified_montage",
     "reply_from_receipts",
 ]

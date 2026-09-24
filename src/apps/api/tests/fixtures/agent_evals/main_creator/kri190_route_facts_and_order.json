@@ -1,0 +1,131 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-09-24-v39",
+  "input": {
+    "user_message": "Bugün Arnavutköy'den Eminönü'ne 20K koştum. Her klibe o klipteki simge yapının adını yaz, klipleri çektiğim sırayla diz, hızlı ama okunur olsun.",
+    "creator_request": "",
+    "creator_context": "Runner who posts long-run diaries in Turkish.",
+    "item_context": "Untitled video; montage; no recorded voiceover.",
+    "media_context": [
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-3",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-4",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-5",
+        "kind": "video",
+        "creator_note": null
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-east-run",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "clip-3",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "clip-4",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "clip-5",
+          "kind": "video",
+          "label": null
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Licensed warm acoustic"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "edit_format:montage": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "manifest_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"guided_story\", \"edit_format\": \"montage\", \"archetype\": \"day_vlog\", \"audio_strategy\": \"licensed_music\", \"render_program\": \"guided\", \"story_structure\": [\"Start\", \"Along the Bosphorus\", \"Finish\"], \"caption_style\": \"auto\", \"target_duration_s\": 20, \"clip_intents\": [{\"intent_id\": \"landmark\", \"op\": \"label\", \"attribute\": \"the landmark shown in the clip\", \"creator_text\": null}], \"rationale\": \"Every clip in filming order with its landmark named, quick but readable cuts.\"}, \"summary\": \"Klipleri çekim sırasıyla dizdim, her klipte simge yapının adı yazıyor.\", \"render_intent_evidence\": {\"opening_title\": null, \"font_family\": null, \"text_color\": null, \"opening_title_duration_s\": null, \"shot_labels\": null, \"closing_title\": null, \"licensed_sfx\": null}}, \"brief_updates\": [{\"kind\": \"text\", \"scope\": \"per_clip\", \"literal\": null, \"description\": \"her klipte o klipteki simge yapının adı\", \"facts\": {\"distance_km\": 20, \"activity\": \"koşu\", \"start\": \"Arnavutköy\", \"end\": \"Eminönü\"}}, {\"kind\": \"order\", \"scope\": \"global\", \"literal\": null, \"description\": \"çekim sırasıyla\", \"facts\": {\"key\": \"capture_time\", \"start\": \"Arnavutköy\", \"end\": \"Eminönü\"}}, {\"kind\": \"timing\", \"scope\": \"global\", \"literal\": null, \"description\": \"hızlı ama okunur\", \"facts\": {}}]}",
+  "output": {},
+  "meta": {
+    "source": "kri190-p4",
+    "brief_updates": {
+      "kinds": [
+        [
+          "text",
+          "per_clip"
+        ],
+        [
+          "order",
+          "global"
+        ],
+        [
+          "timing",
+          "global"
+        ]
+      ],
+      "facts": {
+        "per_clip": {
+          "distance_km": 20,
+          "start": "Arnavutköy",
+          "end": "Eminönü"
+        },
+        "order": {
+          "key": "capture_time"
+        }
+      },
+      "contract": "a message that names a route and a sequence yields structured facts (distance, start, end) on the per-clip text requirement and an order requirement keyed capture_time, Turkish kept verbatim"
+    }
+  }
+}

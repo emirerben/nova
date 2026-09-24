@@ -2157,6 +2157,7 @@ def _run_generative_job_impl(
             if ownership_epoch is not None:
                 _CONTENT_PLAN_FENCE.set((str(job.id), ownership_epoch))
             phone_snapshot = copy.deepcopy(job.assembly_plan)
+            phone_user_id = job.user_id
             # Planning uses its own short transactions. Release the entry locks
             # before invoking it, then recheck the owner/generation at publication.
             db.commit()
@@ -2181,9 +2182,23 @@ def _run_generative_job_impl(
                 elif declared_format not in phone_render_supported_formats():
                     raise ValueError("No phone renderer is registered for this edit")
                 elif declared_format in GUIDED_EDIT_FORMATS:
-                    _run_phone_montage_job(
-                        job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
-                    )
+                    if settings.montage_unified_plan_for(phone_user_id) and not (
+                        has_voiceover_candidate
+                    ):
+                        # KRI-190: one montage plan. The guided plan format
+                        # renders per-clip text, honours reading time and has a
+                        # phone editor; the plain lane below is the flag-off path.
+                        unified_snapshot = _run_phone_unified_montage_job(
+                            job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
+                        )
+                        if unified_snapshot is not None:
+                            _run_phone_guided_job(
+                                job_id, unified_snapshot, ownership_epoch=ownership_epoch
+                            )
+                    else:
+                        _run_phone_montage_job(
+                            job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
+                        )
                 elif declared_format == "subtitled" or (
                     declared_format in NARRATED_EDIT_FORMATS and not has_voiceover_candidate
                 ):
@@ -4404,6 +4419,192 @@ def _run_phone_montage_job(
         job.error_detail = None
         job.failure_reason = None
         db.commit()
+
+
+def _load_unified_montage_inputs(job_id: str) -> tuple[Any, list[dict], Any]:
+    """(user_id, the item's clip assignments, the thread's latest Creative Brief).
+
+    Read-only and short: no lock survives into the landmark/planning work. The
+    brief is None unless the Creative Brief is on for this account and the job's
+    item belongs to a thread that has one.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.kria.brief import load_latest_brief_sync  # noqa: PLC0415
+    from app.models import CreationThread, PlanItem  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            raise ValueError("Phone rendering requires its job")
+        user_id = job.user_id
+        item_id = getattr(job, "content_plan_item_id", None)
+        item = db.get(PlanItem, item_id) if item_id is not None else None
+        assignments = [
+            copy.deepcopy(row)
+            for row in (getattr(item, "clip_assignments", None) or [])
+            if isinstance(row, dict)
+        ]
+        brief = None
+        if item is not None and settings.creative_brief_for(user_id):
+            thread_id = db.execute(
+                select(CreationThread.id)
+                .where(
+                    CreationThread.active_plan_item_id == item.id,
+                    CreationThread.creator_id == user_id,
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            brief = load_latest_brief_sync(db, thread_id) if thread_id is not None else None
+    return user_id, assignments, brief
+
+
+def _run_phone_unified_montage_job(
+    job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
+) -> dict | None:
+    """KRI-190: plan a phone montage in the guided plan format and pin it.
+
+    Replaces `_run_phone_montage_job` when `MONTAGE_UNIFIED_PLAN_ENABLED` is on
+    for the account. Builds a deterministic guided fast-montage snapshot from the
+    attachment order, the P3 clip facts and the P2 Creative Brief
+    (`app.pipeline.unified_montage`), persists it as the job's immutable
+    `guided_edit` (plus a small `unified_montage` receipt record with the
+    requirement receipts), and returns the updated snapshot. The caller then
+    compiles it through `_run_phone_guided_job`, so the guided validators, the
+    guided phone compiler and the guided phone editor apply unchanged.
+
+    Returns None when a fence says this delivery must not publish (cancelled,
+    superseded owner/generation/sources). Never enters a media renderer.
+    """
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.unified_montage import (  # noqa: PLC0415
+        UnifiedClip,
+        brief_view,
+        plan_unified_montage,
+        skia_font_covers,
+    )
+    from app.services.clip_facts import (  # noqa: PLC0415
+        assignment_facts,
+        capture_time_from_facts,
+        enrich_clip_facts,
+        facts_for_prompt,
+    )
+    from app.services.device_render import DEVICE_RENDER_FIELD  # noqa: PLC0415
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    generation = snapshot.get("creator_generation_id")
+    if not isinstance(generation, str) or not generation:
+        raise ValueError("Phone rendering requires an immutable approved generation")
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row) for row in snapshot[PHONE_SOURCES_FIELD]
+    )
+    if not bindings:
+        raise ValueError("Phone rendering requires original source bindings")
+    if any(
+        isinstance(record, dict) and record.get("base_generation") == generation
+        for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
+    ):
+        return None
+    if not settings.phone_rendering_enabled:
+        raise ValueError(
+            "Phone rendering is currently unavailable; originals remain on the device."
+        )
+    clip_paths = list(all_candidates.get("clip_paths") or [])
+    binding_by_path = {binding.proxy_path: binding for binding in bindings}
+    if not clip_paths or any(path not in binding_by_path for path in clip_paths):
+        raise UnsupportedPhonePlan("every montage clip needs its phone source binding")
+
+    user_id, assignments, brief = _load_unified_montage_inputs(job_id)
+    view = brief_view(brief)
+    by_assignment_path = {str(row.get("gcs_path")): row for row in assignments}
+    facts_on = settings.clip_facts_for(user_id)
+    strategy = all_candidates.get("creator_strategy") or {}
+
+    with pipeline_trace_for(job_id):
+        entries = [dict(by_assignment_path.get(path) or {}) for path in clip_paths]
+        if facts_on and view.wants_per_clip_text:
+            from app.agents._runtime import RunContext  # noqa: PLC0415
+
+            # Best-effort: a landmark the agent could not name simply leaves that
+            # clip unlabelled (and the receipt says so). Capped at 45s inside.
+            enriched = enrich_clip_facts(
+                [
+                    (entry, SimpleNamespace(kind="video", analysis=entry.get("analysis") or {}))
+                    for entry in entries
+                    if entry
+                ],
+                make_ctx=lambda media_id: RunContext(
+                    job_id=job_id, request_id=f"unified-montage:{media_id}"
+                ),
+            )
+            enriched_by_path = {str(entry.get("gcs_path")): entry for entry, _ref in enriched}
+            entries = [
+                dict(enriched_by_path.get(path) or entry)
+                for path, entry in zip(clip_paths, entries, strict=True)
+            ]
+        clips: list[UnifiedClip] = []
+        for path, entry in zip(clip_paths, entries, strict=True):
+            binding = binding_by_path[path]
+            facts = facts_for_prompt(assignment_facts(entry)) if facts_on and entry else []
+            original = binding.original
+            clips.append(
+                UnifiedClip(
+                    media_id=binding.media_id,
+                    proxy_path=binding.proxy_path,
+                    generation=binding.generation,
+                    duration_s=float(original.duration_s),
+                    width=original.width,
+                    height=original.height,
+                    orientation_degrees=int(original.orientation_degrees),
+                    analysis=entry.get("analysis") or {},
+                    facts=tuple(facts),
+                    capture_time=capture_time_from_facts(facts),
+                )
+            )
+        plan = plan_unified_montage(
+            clips,
+            view,
+            strategy=strategy if isinstance(strategy, dict) else {},
+            clip_intents_enabled=settings.clip_intents_enabled,
+            font_covers=skia_font_covers,
+        )
+    record = plan.record()
+    if brief is not None and brief.live():
+        from app.kria.brief_checks import (  # noqa: PLC0415
+            build_receipts,
+            plan_facts_from_unified_montage,
+        )
+
+        record["requirement_receipts"] = [
+            receipt.model_dump(mode="json")
+            for receipt in build_receipts(brief.live(), plan_facts_from_unified_montage(record))
+        ]
+
+    with _sync_session() as db:
+        entry_row = _lock_owned_entry_job(db, job_id)
+        if (
+            entry_row is None
+            or entry_row[1] != ownership_epoch
+            or entry_row[0].status == _CANCELLED_JOB_STATUS
+        ):
+            return None
+        job = entry_row[0]
+        if not settings.phone_rendering_for(job.user_id):
+            raise ValueError("Phone rendering is unavailable for this account")
+        current = copy.deepcopy(job.assembly_plan or {})
+        if current.get("creator_generation_id") != generation or current.get(
+            PHONE_SOURCES_FIELD
+        ) != snapshot.get(PHONE_SOURCES_FIELD):
+            return None
+        if isinstance(current.get("guided_edit"), dict):
+            # A concurrent delivery already pinned this plan: never replace it.
+            return current
+        current["guided_edit"] = plan.guided_edit()
+        current["unified_montage"] = record
+        job.assembly_plan = current
+        db.commit()
+        return copy.deepcopy(current)
 
 
 def _phone_speech_cleanup_contract_guard(snapshot: dict) -> None:

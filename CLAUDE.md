@@ -197,6 +197,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Chat-first: permanent `/plan`; rollback reverts deployment. See `docs/runbooks/chat-first-creation.md`.
 - `KRIA_RUNTIME_V2_ENABLED` / `NEXT_PUBLIC_KRIA_RUNTIME_V2_ENABLED` — default `false`; enable Fly first, rebuild Vercel. `KRIA_TURN_LEASE_SECONDS=15` ([runbook](docs/runbooks/kria-agent-runtime.md)).
 - `KRIA_CREATIVE_BRIEF_ENABLED`/`_USER_IDS` — default `false`; ids = per-account on; `docs/pipelines/kria-agent-runtime.md`.
+- `MONTAGE_UNIFIED_PLAN_ENABLED`/`_USER_IDS` — default `false` (KRI-190): phone montage jobs compile via the guided fast-montage plan (per-clip text, reading time); off ⇒ plain lane, byte-identical. `docs/pipelines/kria-agent-runtime.md`.
 - `KRIA_RUNTIME_V2_PHONE_ENABLED` / `_USER_IDS` — default `false` / `[]` (KRI-187): offers phone-pilot accounts runtime v2; off ⇒ `[1]`. Runbook: `docs/runbooks/phone-rendering.md`.
 - `COPILOT_HONEST_REPLIES_ENABLED` — default `true` (KRI-186 kill switch); `false` ⇒ legacy chat-edit reply + stateless copilot. Guard: `test_flag_off_is_byte_identical_to_legacy`. Apply: fly secret + restart.
 - `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
