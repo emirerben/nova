@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.209.0] - 2026-09-24
+
+### Changed
+- fix(ios): phone Talking edits preview their video instead of a black canvas (#1226) <!-- release-pr: 1226 -->
+
 ## [0.76.208.0] - 2026-09-24
 
 ### Changed
