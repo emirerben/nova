@@ -199,10 +199,16 @@ enum NativeEditorRenderError: Error, Equatable {
                   let item = items.first(where: { $0.kind == .mediaOverlay && $0.id == overlay.id }), item.end > item.start else {
                 throw MediaEngineError.missingAsset(id)
             }
-            guard [nil, "none", "dissolve-out"].contains(overlay.raw["exit_token"]?.stringValue) else {
+            // Phone Talking-to-camera lanes (KRI-182 step 1) project their
+            // overlay cards with "none" tokens (a card's fade lives in the
+            // server-pinned recipe, not on the wire). "fade" is accepted as a
+            // forward-compatible token so a future projection can name it
+            // without failing compilation (preview and Save); see the
+            // `visualPlacement` comment below for why it does not yet animate.
+            guard [nil, "none", "dissolve-out", "fade"].contains(overlay.raw["exit_token"]?.stringValue) else {
                 throw NativeEditorRenderError.unsupportedLane("media dissolve")
             }
-            guard [nil, "none", "pop_in"].contains(overlay.raw["entrance_token"]?.stringValue) else {
+            guard [nil, "none", "pop_in", "fade"].contains(overlay.raw["entrance_token"]?.stringValue) else {
                 throw NativeEditorRenderError.unsupportedLane("media entrance")
             }
             assets[id] = MediaAsset(id: id, relativePath: id, fingerprint: fingerprint)
@@ -234,6 +240,18 @@ enum NativeEditorRenderError: Error, Equatable {
                 timelineStart: item.start, rate: playbackRate, transform: transform, volume: 0, holdDuration: max(0, window - moving / playbackRate),
                 overlayAboveText: true, overlayPopIn: !fullscreen && overlay.raw["entrance_token"] == .string("pop_in"),
                 overlayPreserveAlpha: !fullscreen && source.preserveAlpha,
+                // `visualPlacement` stays gated on `editorStyle`, not built
+                // unconditionally for "fade" tokens: VisualMediaPlacement's
+                // own `position(...)` sizes a pip from the RAW natural asset
+                // size (`widthFraction * naturalWidth`), while the `transform`
+                // above sizes it from a cover-fit of the canvas first. The two
+                // are not equivalent for non-square sources, so switching
+                // every overlay without an editor_style onto that path would
+                // silently change the on-screen size of every existing pip
+                // card. A "fade" token is therefore accepted (see the guards
+                // above) but currently renders static, like "none" -- true
+                // fade-in/out needs a fade path that doesn't also swap the
+                // positioning math (tracked as a follow-up, not this pass).
                 visualPlacement: editorStyle.map { VisualMediaPlacement(order: 0, contain: $0.fitMode == "contain", zoom: $0.zoom,
                     widthFraction: fullscreen ? nil : overlay.raw["scale"]?.numberValue ?? 0.35, xFraction: x, yFraction: y,
                     windowStart: item.start, windowEnd: item.end, editorStyle: $0) },

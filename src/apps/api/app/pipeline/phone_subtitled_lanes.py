@@ -8,7 +8,9 @@ The subtitled phone recipe is one speaker clip + Whisper captions today
     composited as a silent overlay track (mirrors
     `app.pipeline.phone_editor_visuals.compile_editor_media_track`'s clip
     shape).
-  - ``sound_effects``: one shared audio track of catalog sound effects.
+  - ``sound_effects``: one shared audio track of catalog sound effects,
+    optionally trimmed to a sub-range of the catalog effect's own source
+    audio (KRI-182 step 1).
   - ``ending_clip``: an optional MUTED video clip from the Visuals pool
     appended after the speaker clip on the same main video track.
 
@@ -89,6 +91,23 @@ class SubtitledSoundEffect(_LaneModel):
     catalog_id: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
     at_s: float = Field(ge=0)
     volume: float = Field(default=1.0, ge=0, le=2)
+    # Optional trim bounds within the catalog effect's own resolved source
+    # audio (KRI-182 step 1 -- the native editor already edits these on a
+    # generic `SoundEffectPlacement`). Defaults to None/None: byte-identical
+    # to pre-trim behaviour -- `_compile_sfx_track` plays from the top of the
+    # resolved duration, exactly as before this field existed.
+    trim_start_s: float | None = Field(default=None, ge=0)
+    trim_end_s: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _trim_window(self) -> SubtitledSoundEffect:
+        if (
+            self.trim_start_s is not None
+            and self.trim_end_s is not None
+            and self.trim_end_s <= self.trim_start_s
+        ):
+            raise ValueError("sound effect trim_end_s must be after trim_start_s")
+        return self
 
 
 class SubtitledEndingClip(_LaneModel):

@@ -127,6 +127,28 @@ class Settings(BaseSettings):
     # `phone_overlay_receipt` on the variant. The same rollback command above
     # switches this lane off too (no separate flag).
     phone_subtitled_media_lanes_enabled: bool = False
+    # KRI-182 step 1 (editable phone Talking edits): the native editor's
+    # generic `sound_effects`/`media_overlays` editor-commit sections apply
+    # to a phone-rendered `subtitled` (Talking to camera) variant --
+    # `prepare_phone_editor_commit` (`app.services.phone_editor`) recompiles
+    # `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan` from
+    # the committed sections instead of unconditionally 422ing
+    # `unsupported_phone_edit` (subtitled variants carry no guided-story
+    # execution plan to fall back to). Requires
+    # `phone_subtitled_media_lanes_enabled` (the underlying KRI-174 lane
+    # compiler must already be live) AND every feature in
+    # `app.services.phone_rollout.PHONE_SUBTITLED_EDITOR_FEATURES`
+    # (`stillImages`, `visualBlocks`, `alphaOverlay`, `audioMix`,
+    # `soundEffects`) verified in `phone_render_verified_features` -- see
+    # `phone_rollout.phone_subtitled_editor_lanes_supported()`, the single
+    # source of truth. False (default): byte-identical to before this flag
+    # existed -- every subtitled device-variant Save still 422s
+    # `unsupported_phone_edit`, and `_clamp_phone_editor_capabilities`
+    # continues to close `sfx`/`overlays` for every device variant regardless
+    # of archetype. Rollback: `fly secrets set
+    # PHONE_SUBTITLED_EDITOR_LANES_ENABLED=false --app nova-video` + `fly
+    # machine restart <id>` (api + worker).
+    phone_subtitled_editor_lanes_enabled: bool = False
     # KRI-132 (narrated walkthrough): a `narrated`/`narrated_planned`/
     # `narrated_ready` item WITH a recorded voiceover compiles through
     # `app.pipeline.phone_narrated_plan.compile_phone_narrated_plan`

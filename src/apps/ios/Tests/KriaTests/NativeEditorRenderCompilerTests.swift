@@ -536,6 +536,63 @@ import KriaMediaEngine
         XCTAssertTrue(recipe.effectiveCapabilities.contains(.visualBlocks))
     }
 
+    /// KRI-182 step 1: a phone-lane image media overlay (x/y/scale/start/end,
+    /// "fade" entrance/exit tokens) plus a point sfx with gain compile onto
+    /// the overlays track and a dedicated sfx audio track respectively. The
+    /// "fade" tokens must not throw (see the entrance/exit guards in
+    /// NativeEditorRenderCompiler.swift) -- `visualPlacement` legitimately
+    /// stays nil here (no `editor_style` on this overlay), so positioning is
+    /// asserted through the same cover-fit `transform` every other pip/
+    /// overlay card already uses.
+    func testImageOverlayAndPointSfxCompileOntoTheOverlayAndAudioTracks() throws {
+        let videoFingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let videoSource = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
+            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: videoFingerprint, duration: 4),
+            url: URL(fileURLWithPath: "/fixture/original.mp4"))
+        let overlayFingerprint = AssetFingerprint(hex: String(repeating: "b", count: 64), byteCount: 50)
+        let overlaySource = ResolvedEditorSource(preserveAlpha: true, clipIndex: -1, mediaID: "overlay-media",
+            asset: MediaAsset(id: "overlay-asset", relativePath: "overlay.png", fingerprint: overlayFingerprint, naturalSize: MediaSize(width: 400, height: 400)),
+            url: URL(fileURLWithPath: "/fixture/overlay.png"))
+        let sfxFingerprint = AssetFingerprint(hex: String(repeating: "c", count: 64), byteCount: 30)
+        let sfxSource = ResolvedEditorSource(clipIndex: -1, mediaID: "sfx-media",
+            asset: MediaAsset(id: "sfx-asset", relativePath: "sfx.wav", fingerprint: sfxFingerprint, duration: 1.5),
+            url: URL(fileURLWithPath: "/fixture/sfx.wav"))
+
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 4,
+            trimIn: 0, trimOut: 4, sourceDuration: 4, slotID: "slot")
+        let overlay = EditorTimedEffect(id: "overlay-1", startS: 1, endS: 3, kind: "image",
+            raw: ["kind": .string("image"), "x_frac": .number(0.6), "y_frac": .number(0.7), "scale": .number(0.4),
+                  "z": .number(1), "entrance_token": .string("fade"), "exit_token": .string("fade")])
+        let sfx = EditorTimedEffect(id: "sfx-1", startS: 1.2, endS: 1.2, pointS: 1.2, kind: "sfx",
+            raw: ["at_s": .number(1.2), "gain": .number(1.5)])
+        let document = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 4)],
+            soundEffects: [sfx], mediaOverlays: [overlay])
+        let items: [NativeEditorTimelineItem] = [
+            .init(selection: .init(kind: .mediaOverlay, id: "overlay-1"), start: 1, end: 3),
+            .init(selection: .init(kind: .soundEffect, id: "sfx-1"), start: 1.2, end: 1.2),
+        ]
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let program = try compiler.compile(document: document, clips: [clip], items: items,
+            sources: [0: videoSource], audioSources: ["sfx:sfx-1": sfxSource], mediaSources: ["overlay:overlay-1": overlaySource])
+
+        let overlayTrack = try XCTUnwrap(program.recipe.tracks.first(where: { $0.id == "overlays" }))
+        let overlayClip = try XCTUnwrap(overlayTrack.clips.first)
+        XCTAssertNil(overlayClip.visualPlacement, "no editor_style on this phone-lane overlay -- positioning stays on the transform path")
+        XCTAssertEqual(overlayClip.transform.scale, 0.225, accuracy: 0.0001)
+        XCTAssertEqual(overlayClip.transform.positionX, 108, accuracy: 0.0001)
+        XCTAssertEqual(overlayClip.transform.positionY, 384, accuracy: 0.0001)
+        XCTAssertEqual(overlayClip.timelineStart, 1)
+        XCTAssertEqual(overlayClip.overlayPreserveAlpha, true)
+        XCTAssertNotEqual(overlayClip.overlayPopIn, true, "\"fade\" is not \"pop_in\"")
+        XCTAssertNil(overlayClip.overlayDissolveSeed, "\"fade\" is not \"dissolve-out\"")
+
+        let sfxTrack = try XCTUnwrap(program.recipe.tracks.first(where: { $0.id == "sfx:sfx-1" }))
+        let sfxClip = try XCTUnwrap(sfxTrack.clips.first)
+        XCTAssertEqual(sfxClip.volume, 1.5)
+        XCTAssertEqual(sfxClip.timelineStart, 1.2, accuracy: 0.0001)
+        XCTAssertEqual(sfxClip.sourceDuration, 1.5, accuracy: 0.0001)
+    }
+
     func testLongCutTimelineReusesTracksAndCrossfadesKeepTwoSources() async throws {
         let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         for overlap in [false, true] {

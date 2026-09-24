@@ -658,6 +658,74 @@ one + `fly machine restart <id>` (api + worker) turns grounding off; the
 worker then behaves exactly as it did before KRI-176 (no `phone_overlay_receipt`,
 no grounding call).
 
+#### Phase 3: editing a Talking edit on the phone (KRI-182 step 1)
+
+**Gate:** `PHONE_SUBTITLED_EDITOR_LANES_ENABLED`
+(`settings.phone_subtitled_editor_lanes_enabled`, default `false`, Fly only --
+the server compiles, so there is no `NEXT_PUBLIC` twin) AND
+`phone_subtitled_media_lanes_enabled` AND every feature in
+`PHONE_SUBTITLED_EDITOR_FEATURES` (`stillImages`, `visualBlocks`,
+`alphaOverlay`, `audioMix`, `soundEffects`) in
+`phone_render_verified_features` --
+`app.services.phone_rollout.phone_subtitled_editor_lanes_supported()` is the
+single source of truth for both the capability map and the Save path. Off ⇒
+every response, capability map and Save is byte-identical to before (a Save
+on a phone Talking edit still 422s `unsupported_phone_edit`, as it always
+did). **Rollback:** `fly secrets set PHONE_SUBTITLED_EDITOR_LANES_ENABLED=false
+--app nova-video` + `fly machine restart <id>` (api + worker).
+
+**What opens.** For a device-rendered `subtitled` variant only,
+`_clamp_phone_editor_capabilities` (`routes/generative_jobs.py`) stops
+closing `sfx` and `overlays`; `visual_blocks`, `motion_scenes`,
+`camera_effects`, clip adds/looks/crop/rate stay closed, and `text_elements`
+is now closed too (it was advertised open while every text Save 422'd).
+Guided phone variants keep today's clamp.
+
+**What the editor sees.** The lanes the worker compiled are projected onto
+the generic editor sections (`app/services/phone_subtitled_editor.py`,
+`project_phone_subtitled_editor_sections`): overlay cards become
+`media_overlays` items (`kind: "image"`, `x_frac`/`y_frac`/`scale`/`start_s`/
+`end_s`/`z`, `entrance_token`/`exit_token: "fade"` when the card fades) and
+sound effects become `sound_effects` items (`sound_effect_id` = catalog id,
+`at_s`, `gain`, `duration_s`, `label`, optional `trim_start_s`/`trim_end_s`).
+The projection is DERIVED from the pinned device recipe (lazy backfill --
+older variants need no migration and `_run_phone_subtitled_job` is
+untouched); after a Save the compiled lanes are persisted on the variant as
+`_phone_subtitled_editor_lanes_v1` and preferred over derivation. The
+timeline route's `native_assets` carries the matching `sound_effect` /
+`media_overlay` rows so the native preview resolves them; a sound effect
+added from the iOS Sounds → Effects tab (backed by `GET /sound-effects`)
+previews from the catalog's `preview_audio_url` until the next snapshot.
+
+**Save.** `prepare_phone_editor_commit` (`app/services/phone_editor.py`)
+gains a Talking branch: the committed `sound_effects` / `media_overlays` /
+`caption_cues` sections (sections absent from the payload keep their current
+lane) are turned back into `PhoneSubtitledLanes`
+(`lanes_from_editor_sections`) and recompiled through
+`compile_phone_subtitled_plan` + `validate_phone_pilot_recipe`, then pinned
+as `recipe_revision + 1` inside the same request -- no cloud task, no
+download, no re-hash: visual pins come from `_phone_visuals_v1`, sound-effect
+pins are reused from the previous recipe's manifest, and only a NEWLY added
+catalog id is metadata-probed with `inspect_library_asset` after the same
+playability + `sound-effects/{id}/` prefix checks `_resolve_phone_sound_effect`
+applies. The ending clip is carried over unchanged (not editable yet).
+Fail-closed, named: any lane the creator edited that cannot compile, a photo
+that is not pinned for this edit (adding NEW photos to a Talking edit is not
+supported yet), a non-overlay `display_mode`, or any other section
+(`text_elements`, timeline, mix, music, orientation) returns
+`422 unsupported_phone_edit` with a `reason` -- a Save never silently drops a
+lane (unlike generation, where a failing lane is dropped and receipted).
+Entrance tokens other than `fade` render static (pop-in is unqualified on
+the phone). `SubtitledSoundEffect.trim_start_s`/`trim_end_s` are honoured by
+`_compile_sfx_track` (defaults `None` ⇒ byte-identical).
+
+**Guards:** `tests/services/test_phone_subtitled_editor.py`,
+`tests/routes/test_phone_subtitled_editor_commit.py`,
+`tests/routes/test_phone_subtitled_editor_capabilities.py`, trim cases in
+`tests/pipeline/test_phone_subtitled_plan.py`; iOS
+`NativeSfxBrowseTests`, `NativeEditorInspectorTests` (add/move/remove on the
+`phoneSubtitledLanes` fixture), `NativeEditorRenderCompilerTests`.
+
 ## Implemented foundations
 
 - `KriaMediaEngine/SourceAssetStore.swift` binds opaque server media IDs to
