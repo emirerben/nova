@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.195.0] - 2026-09-24
+
+### Changed
+- fix(ios): failed uploads no longer repeat their error; exact-30fps proxies no longer rejected (KRI-180) (#1209) <!-- release-pr: 1209 -->
+
 ## [0.76.194.0] - 2026-09-24
 
 ### Changed
