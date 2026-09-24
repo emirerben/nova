@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.194.0] - 2026-09-24
+
+### Changed
+- feat(phone): video Visuals as PiP cards, fail-safe face placement, beats+PiP coexistence, chat receipt (KRI-183) (#1213) <!-- release-pr: 1213 -->
+
 ## [0.76.193.0] - 2026-09-24
 
 ### Changed
