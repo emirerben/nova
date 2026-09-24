@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.190.0] - 2026-09-24
+
+### Changed
+- feat(creator): let the planner decide named sound effects from grounded evidence (#1208) <!-- release-pr: 1208 -->
+
 ## [0.76.189.0] - 2026-09-24
 
 ### Changed
