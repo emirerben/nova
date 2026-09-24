@@ -33,6 +33,31 @@ import UIKit
         }
     }
 
+    /// KRI-187: a phone-rendering account is offered `[1, 2]` once the server's
+    /// `KRIA_RUNTIME_V2_PHONE_ENABLED` covers it, and `[1]` otherwise. The
+    /// client has no phone special case: it follows the advertised versions, so
+    /// enrolling in the phone pilot must neither force v1 nor be required for v2.
+    func testPhoneRenderingAccountsFollowTheAdvertisedRuntime() async throws {
+        let phone: [String: Any] = ["enabled": true, "recipe_versions": [2], "verified_features": ["basicComposition"]]
+        for advertised in [[1], [1, 2]] {
+            let runtime = advertised.contains(2) ? 2 : 1
+            NativeEditorURLProtocol.handler = { request in
+                if request.url?.path == "/creation-threads/capabilities" {
+                    return (200, try JSONSerialization.data(withJSONObject: [
+                        "formats": [], "runtime_versions": advertised, "phone_rendering": phone
+                    ] as [String: Any]))
+                }
+                let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
+                XCTAssertEqual(body["runtime_version"] as? Int, runtime)
+                // v2 threads take their first message through /turns, never here.
+                XCTAssertEqual(body["message"] == nil, runtime == 2)
+                return (201, Self.thread(runtime: runtime))
+            }
+            let thread = try await NativeEditorTestSupport.api().createThread(message: "Suggest an edit.")
+            XCTAssertEqual(thread.runtimeVersion, runtime)
+        }
+    }
+
     func testLegacyMessagesAndRetryableActionsPreserveCallerIdentity() async throws {
         NativeEditorURLProtocol.handler = { request in
             let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])

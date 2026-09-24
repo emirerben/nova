@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
+from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from app.config import settings
@@ -42,6 +43,7 @@ from app.routes.generative_jobs import (
     enqueue_editor_commit_render,
     prepare_editor_commit,
 )
+from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
     compile_editor_ops,
     merge_editor_draft,
@@ -1386,15 +1388,61 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     if editor_payload.music_track_id
                     else None
                 )
-                editor_prep = prepare_editor_commit(
-                    current_job,
-                    approval.target_variant_id,
-                    editor_payload,
-                    user_id=str(thread.creator_id),
-                    music_track=music_track,
-                    plan_item_id=str(item.id),
-                )
+                device_variant = _is_device_variant(current_job, approval.target_variant_id)
+                try:
+                    editor_prep = prepare_editor_commit(
+                        current_job,
+                        approval.target_variant_id,
+                        editor_payload,
+                        user_id=str(thread.creator_id),
+                        music_track=music_track,
+                        plan_item_id=str(item.id),
+                    )
+                except (HTTPException, ValueError, KeyError) as exc:
+                    if not device_variant:
+                        raise
+                    # A device variant re-compiles its phone recipe here
+                    # (`prepare_phone_editor_commit`), and refusing an edit the
+                    # phone cannot draw is an expected outcome, not a crash.
+                    # Uncaught, this task would fail before any state moved and
+                    # the reconciler would republish the same approval forever.
+                    # Nothing was staged (validation runs on a copy).
+                    code = _device_refusal_code(exc)
+                    approval.status = "cancelled"
+                    execution.status = "failed"
+                    execution.error = {"code": code, "retryable": False, "recovery": "revise"}
+                    execution.completed_at = now
+                    turn.status = "failed"
+                    turn.completed_at = now
+                    turn.error = execution.error
+                    session.status = "awaiting_feedback"
+                    _append_sync_event(
+                        db,
+                        thread,
+                        role="assistant",
+                        event_type="assistant_error",
+                        content=_DEVICE_EDIT_REFUSALS.get(code, _DEVICE_EDIT_REFUSAL_FALLBACK),
+                        payload={
+                            "turn_id": str(turn.id),
+                            "approval_id": str(approval.id),
+                            "code": code,
+                            "recovery": "revise",
+                        },
+                    )
+                    db.commit()
+                    return None
                 target_generation_id = str(editor_prep["generation"])
+                if device_variant and editor_prep.get("render_destination") == "device":
+                    # The phone publishes under its own upload-attempt id, so the
+                    # observer matches this Save by the recipe revision it pinned.
+                    try:
+                        revision = device_status(
+                            current_job, approval.target_variant_id
+                        ).request.identity.recipe_revision
+                    except (KeyError, ValueError, TypeError):
+                        revision = None
+                    if revision is not None and editor_prep.get("has_render_section"):
+                        editor_prep = {**editor_prep, "device_recipe_revision": int(revision)}
 
         approval.status = "consumed"
         approval.consumed_at = approval.consumed_at or now
@@ -1426,11 +1474,88 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
         )
 
 
+_DEVICE_EDIT_REFUSALS = {
+    "unsupported_phone_edit": (
+        "That change can't be rendered on your iPhone yet, so I left the video as it was."
+    ),
+    "phone_editor_media_unavailable": (
+        "Adding that media isn't available for on-device edits yet, so I left the video as it was."
+    ),
+    "phone_rendering_unavailable": (
+        "On-device rendering isn't available for this account right now, "
+        "so I left the video as it was."
+    ),
+}
+_DEVICE_EDIT_REFUSAL_FALLBACK = (
+    "I couldn't apply that change on your iPhone, so I left the video as it was."
+)
+
+
+def _is_device_variant(job: Job | None, variant_id: str | None) -> bool:
+    """Whether ``variant_id`` on ``job`` renders on the creator's iPhone (KRI-187)."""
+
+    if job is None or not variant_id:
+        return False
+    return any(
+        isinstance(row, dict)
+        and row.get("variant_id") == variant_id
+        and row.get("render_destination") == "device"
+        for row in (job.assembly_plan or {}).get("variants") or []
+    )
+
+
+def _device_refusal_code(exc: Exception) -> str:
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, dict) and isinstance(detail.get("code"), str):
+        return detail["code"]
+    return "unsupported_phone_edit" if isinstance(exc, ValueError) else "device_edit_rejected"
+
+
+def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | None:
+    """Settle an execution whose Job renders on the iPhone: pending/ready/failed.
+
+    ``None`` means "not a device job" and leaves the cloud observer untouched.
+    A device job sits in ``awaiting_device`` (a non-terminal Job status) until
+    the phone publishes or the client/reaper marks the record
+    ``needs_attention`` -- which does NOT move ``Job.status``, so failure has
+    to be read off the pinned device record. The published variant carries the
+    phone's upload attempt id as its ``render_generation_id`` (never the id the
+    editor Save minted), so an editor execution is matched by recipe revision:
+    a record older than the one this approval pinned is still pending.
+    """
+
+    records = (job.assembly_plan or {}).get(DEVICE_RENDER_FIELD)
+    if not isinstance(records, dict) or not records:
+        return None
+    variant_id = str(execution.target_variant_id or "") or None
+    prep = (execution.result or {}).get("editor_prep")
+    minimum = prep.get("device_recipe_revision") if isinstance(prep, dict) else None
+    states: list[str] = []
+    for record_variant in [variant_id] if variant_id else list(records):
+        try:
+            status = device_status(job, record_variant)
+        except (KeyError, ValueError, TypeError):
+            states.append("pending")
+            continue
+        if isinstance(minimum, int) and status.request.identity.recipe_revision < minimum:
+            states.append("pending")
+        elif status.phase == "published":
+            states.append("ready")
+        elif status.phase == "needs_attention":
+            states.append("failed")
+        else:
+            states.append("pending")
+    if "pending" in states:
+        return "pending"
+    return "failed" if "failed" in states else "ready"
+
+
 def _finish_approval_dispatch(
     claim: _ApprovalDispatchClaim,
     *,
     outcome: str,
     job_id: str | None,
+    reason: str | None = None,
 ) -> tuple[str, str | None]:
     successful = outcome in {"dispatched", "already_active"} and job_id is not None
     successor_id: str | None = None
@@ -1545,6 +1670,7 @@ def _finish_approval_dispatch(
             "outcome": outcome,
             "retryable": outcome == "publish_failed",
             "recovery": "retry",
+            **({"reason": reason} if reason else {}),
         }
         execution.completed_at = now
         turn.status = "failed"
@@ -1598,6 +1724,7 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
 
         publish_preflight_after_commit(preflight_analysis_id)
 
+    dispatch_reason: str | None = None
     if getattr(claim, "draft_kind", "strategy") == "editor":
         if (
             claim.target_job_id is None
@@ -1606,7 +1733,14 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
         ):
             return {"approval_id": approval_id, "status": "ignored", "job_id": None}
         try:
-            if claim.editor_prep.get("speech_cut") is True:
+            if claim.editor_prep.get("render_destination") == "device":
+                # KRI-187: `prepare_phone_editor_commit` (inside the claim's
+                # `prepare_editor_commit`) already pinned revision N+1 and set
+                # the variant `awaiting_device`. There is no cloud task to
+                # enqueue: the phone picks the recipe up by polling, and the
+                # observer settles this execution from the device record.
+                pass
+            elif claim.editor_prep.get("speech_cut") is True:
                 from app.tasks.generative_build import rerender_speech_timing  # noqa: PLC0415
 
                 operation_id = str((claim.editor_prep.get("request") or {}).get("operation_id"))
@@ -1638,15 +1772,21 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
             str(claim.item_id),
             claim.ownership_epoch,
             bypass_guided_edit_gate=True,
+            # KRI-187: a phone account has no approved guided proposal on this
+            # path; the flag inside dispatch decides whether it may proceed to
+            # the device montage compiler. Non-phone accounts ignore it.
+            allow_phone_unapproved_montage=True,
             creator_strategy=claim.strategy,
             creator_request=claim.creator_request,
         )
         outcome = result.outcome
         result_job_id = result.job_id
+        dispatch_reason = getattr(result, "reason", None)
     status, successor_id = _finish_approval_dispatch(
         claim,
         outcome=outcome,
         job_id=result_job_id,
+        **({"reason": dispatch_reason} if dispatch_reason else {}),
     )
     if successor_id is not None:
         run_kria_turn.apply_async(
@@ -1756,11 +1896,20 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             and int(job.content_plan_ownership_epoch or 0) == int(session.ownership_epoch)
         )
         terminal = job.status in PLAN_ITEM_JOB_READY or job.status in PLAN_ITEM_JOB_FAILED
+        # A device render is `awaiting_device` (never terminal) until the phone
+        # publishes; its failure lives on the device record, not on Job.status.
+        device_state = _device_render_state(job, execution)
+        if device_state == "pending":
+            return "pending", None
+        if device_state == "failed":
+            terminal = True
         if not terminal:
             return "pending", None
 
         now = datetime.now(UTC)
-        variant_failure_code: str | None = None
+        variant_failure_code: str | None = (
+            "device_render_failed" if device_state == "failed" else None
+        )
         if exact_target and job.status in PLAN_ITEM_JOB_READY:
             pinned_variant_id = str(execution.target_variant_id or "") or None
             pinned_generation_id = str(execution.target_generation_id or "") or None
@@ -1788,7 +1937,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             variant = _ready_variant(
                 job,
                 variant_id=pinned_variant_id,
-                generation_id=pinned_generation_id,
+                # The phone publishes under its own upload-attempt id, so a
+                # published device render is matched by revision (above).
+                generation_id=None if device_state == "ready" else pinned_generation_id,
             )
             if variant is not None:
                 variant_id = str(variant["variant_id"])
