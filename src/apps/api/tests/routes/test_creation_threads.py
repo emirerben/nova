@@ -267,7 +267,9 @@ async def test_runtime_v2_thread_creation_fails_closed_while_backend_flag_is_off
     user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
 
     response = await create_thread(
-        request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
+        request=Request(
+            {"type": "http", "method": "POST", "path": "/creation-threads", "headers": []}
+        ),
         body=CreateBody(runtime_version=2),
         user=user,
         db=SimpleNamespace(),
@@ -285,7 +287,9 @@ async def test_runtime_v2_inline_message_uses_typed_validation_problem(
     user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
 
     response = await create_thread(
-        request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
+        request=Request(
+            {"type": "http", "method": "POST", "path": "/creation-threads", "headers": []}
+        ),
         body=CreateBody(runtime_version=2, message="make a travel diary"),
         user=user,
         db=SimpleNamespace(),
@@ -373,7 +377,9 @@ async def test_thread_create_idempotency_key_cannot_change_runtime_owner(
 
     with pytest.raises(HTTPException) as failure:
         await create_thread(
-            request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
+            request=Request(
+                {"type": "http", "method": "POST", "path": "/creation-threads", "headers": []}
+            ),
             body=CreateBody(client_event_id="create-1", runtime_version=2),
             user=user,
             db=db,
@@ -415,7 +421,9 @@ async def test_runtime_v2_thread_creation_provisions_receipt_session(
     )
 
     response = await create_thread(
-        request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
+        request=Request(
+            {"type": "http", "method": "POST", "path": "/creation-threads", "headers": []}
+        ),
         body=CreateBody(runtime_version=2),
         user=user,
         db=db,
@@ -2305,6 +2313,75 @@ async def test_upload_reservation_preserves_canonical_render_suffix(
 
 
 @pytest.mark.asyncio
+async def test_upload_urls_rate_limit_is_scoped_per_real_client_not_shared_machine_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-195: two users behind the same Fly machine must not share the
+    30/minute upload-urls budget. Prod logs show every request landing on a
+    given machine with the IDENTICAL raw socket address regardless of caller
+    -- reproduced here via a fixed `client` host on every request, distinct
+    real users disambiguated only by `Fly-Client-IP`. Before the fix (bare
+    `@limiter.limit("30/minute")` falling back to `get_remote_address`), user
+    B's very first request would already be rate-limited by user A's 30."""
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(
+        routes.storage, "signed_put_url", lambda path, content_type, size: "signed:" + path
+    )
+    reservations = Mock()
+    reservations.scalars.return_value.all.return_value = []
+    db = Mock()
+    db.execute = AsyncMock(return_value=reservations)
+    db.commit = AsyncMock()
+
+    def _request_from(fly_client_ip: str) -> Request:
+        # Every request in this test shares the SAME raw socket address --
+        # the proxy-to-machine hop these two real users both land on.
+        return Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/",
+                "headers": [(b"fly-client-ip", fly_client_ip.encode())],
+                "client": ("172.16.4.74", 0),
+            }
+        )
+
+    def _body(i: int) -> UploadBody:
+        return UploadBody(
+            files=[
+                UploadFile(
+                    filename="clip.mp4",
+                    content_type="video/mp4",
+                    file_size_bytes=10,
+                    client_upload_id=f"clip-{i}",
+                )
+            ]
+        )
+
+    user_a = SimpleNamespace(id=uuid.uuid4())
+    thread_a = SimpleNamespace(id=uuid.uuid4(), creator_id=user_a.id, status="active")
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread_a))
+    ip_a = f"203.0.113.{uuid.uuid4().int % 256}"
+
+    for i in range(30):
+        await upload_urls(_request_from(ip_a), str(thread_a.id), _body(i), user_a, db)
+
+    from slowapi.errors import RateLimitExceeded
+
+    with pytest.raises(RateLimitExceeded):
+        await upload_urls(_request_from(ip_a), str(thread_a.id), _body(30), user_a, db)
+
+    user_b = SimpleNamespace(id=uuid.uuid4())
+    thread_b = SimpleNamespace(id=uuid.uuid4(), creator_id=user_b.id, status="active")
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread_b))
+    ip_b = f"198.51.100.{uuid.uuid4().int % 256}"
+
+    result = await upload_urls(_request_from(ip_b), str(thread_b.id), _body(0), user_b, db)
+    assert result[0].media_id == "clip-0.mp4"
+
+
+@pytest.mark.asyncio
 async def test_subtitled_upload_reservation_enforces_one_clip_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2942,7 +3019,9 @@ async def test_create_thread_only_reserves_naming_for_a_submitted_prompt(
     )
 
     await routes.create_thread(
-        request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
+        request=Request(
+            {"type": "http", "method": "POST", "path": "/creation-threads", "headers": []}
+        ),
         body=CreateBody(message=message),
         user=user,
         db=db,
