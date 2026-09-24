@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.185.0] - 2026-09-24
+
+### Added
+- feat(ios): one "+" opens a Video/Visual/Text chooser, plus a Kria outro placeholder (KRI-166) (#1184) <!-- release-pr: 1184 -->
+
 ## [0.76.184.0] - 2026-09-23
 
 ### Changed
