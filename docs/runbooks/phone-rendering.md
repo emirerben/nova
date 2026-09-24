@@ -1753,19 +1753,31 @@ enqueued; the phone polls the new recipe. The claim stores the pinned
 `device_recipe_revision` on the execution's `editor_prep`. A refusal
 (`unsupported_phone_edit`, `phone_editor_media_unavailable`) cancels the
 approval and posts a plain assistant reply instead of failing the task, which
-the reconciler would republish forever.
+the reconciler would republish forever. The refusal is logged
+(`kria_device_edit_refused`); a `baseline_conflict` (the video was saved on the
+phone after the draft) gets its own "video changed" reply.
 
 **Observation.** `_observe_dispatched_execution` reads the device record: a
 non-published phase is `pending` (never failed), `published` completes the
 execution (matched by recipe revision, because the phone publishes under its own
 upload-attempt id), and `needs_attention` (client report or the 24h reaper)
 fails it with `device_render_failed`. `Job.status` stays `awaiting_device` on a
-device failure, so the record is the only signal. A later app-side retry re-pins
-the recipe but does not reopen an already-failed execution.
+device failure, so the record is the only signal. The failure reply uses
+`recovery: "manual"` and tells the creator to tap Retry on the phone (a chat retry
+cannot recover a device render). An editor execution with no render section
+pinned no revision and is not settled from the device record. A later app-side
+retry re-pins the recipe but does not reopen an already-failed execution.
+Known limits: the reconciler observes at most 50 dispatched executions per sweep
+(oldest first), so many long-pending device renders can delay newer ones.
 
 **Rollback.** `fly secrets set KRIA_RUNTIME_V2_PHONE_ENABLED=false --app
-nova-video` + restart api and worker. Phone accounts are offered `[1]` again;
-threads already on v2 keep working until they finish, and no new one is created.
+nova-video` + restart api and worker. Phone accounts are offered `[1]` again
+and new threads are created on v1. A phone thread already on v2 can still make
+device chat edits (editor approvals are not flag-gated), but a new *strategy*
+approval on it is refused as `unapproved_guided` until the flag is back on.
+`POST /creation-threads` with `runtime_version=2` is not refused for a phone
+account while the flag is off (only `/capabilities` is gated); a client that
+ignores the advertised list gets a v2 thread with that limitation.
 
 **Device check (human).** On a physical device with the allowlist set to your
 account: new phone thread -> brief -> approve plan -> device render -> chat edit

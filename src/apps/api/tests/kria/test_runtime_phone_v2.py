@@ -500,3 +500,100 @@ def test_claim_still_raises_for_a_cloud_variant_validation_error() -> None:
 
     with pytest.raises(HTTPException):
         _claim(job, refuse)
+
+
+# ---------------------------------------------------------------- review round
+
+
+def test_editor_edit_with_no_render_section_ignores_a_stale_device_record() -> None:
+    """A no-render edit pinned no revision; an older failed record is not its failure."""
+    job = _device_job()
+    mark_device_failed(job, VARIANT, reason_code="export_failed", detail="")
+    execution = SimpleNamespace(
+        target_variant_id=VARIANT, result={"editor_prep": {"generation": "g", "sections": {}}}
+    )
+    assert _device_render_state(job, execution) is None
+
+
+def test_device_render_failure_points_the_creator_at_the_phone_not_chat_retry() -> None:
+    job = _device_job()
+    mark_device_failed(job, VARIANT, reason_code="thermal", detail="")
+    _, execution, events = _observe(
+        job,
+        {"target_variant_id": VARIANT, "result": {"editor_prep": {"device_recipe_revision": 1}}},
+    )
+    assert execution.error["recovery"] == "manual"
+    assert execution.error["retryable"] is False
+    failed = events[-1]
+    assert failed["payload"]["recovery"] == "manual"
+    assert "iPhone" in failed["content"]
+    assert "retry without rebuilding" not in failed["content"]
+
+
+def test_a_cloud_render_failure_keeps_the_chat_retry_recovery() -> None:
+    job = _device_job(status="processing_failed")
+    job.assembly_plan = {"variants": [{"variant_id": VARIANT}]}  # no device records
+    job.failure_reason = "render_failed"
+    _, execution, events = _observe(job, {})
+    assert execution.error["recovery"] == "retry"
+    assert events[-1]["payload"]["recovery"] == "retry"
+
+
+def test_claim_reports_a_baseline_conflict_as_a_stale_video_not_an_unsupported_edit() -> None:
+    job = _device_job(status="variants_ready")
+    _publish(job)
+
+    def conflict(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise HTTPException(409, detail={"code": "baseline_conflict"})
+
+    claim, _, execution, events = _claim(job, conflict)
+    assert claim is None
+    assert execution.error["code"] == "baseline_conflict"
+    assert "changed" in events[0]["content"]
+    assert "can't be rendered" not in events[0]["content"]
+
+
+def test_a_refused_phone_dispatch_is_not_a_retry_loop() -> None:
+    job = _device_job()
+    db, _approval, execution, _rows = _claim_fixture(job)
+    execution.status = "accepted"
+    session = db._gets[CreatorAgentSession]
+    turn = db._gets[CreatorAgentTurn]
+    approval = db._gets[CreatorAgentApproval]
+    thread = db._gets[CreationThread]
+    session.render_attempts = 0
+    session.last_error = None
+    db._executes = [session, turn, approval, execution, thread]
+    claim = SimpleNamespace(
+        session_id=session.id,
+        turn_id=turn.id,
+        approval_id=approval.id,
+        execution_id=execution.id,
+        thread_id=thread.id,
+        target_variant_id=None,
+        target_generation_id=None,
+    )
+    events: list = []
+
+    def append(_db, _thread, **kwargs):  # noqa: ANN001, ANN202
+        events.append(kwargs)
+        return SimpleNamespace(id=uuid.uuid4())
+
+    @contextmanager
+    def sessions():  # noqa: ANN202
+        yield db
+
+    with (
+        patch.object(kria_runtime, "sync_session", sessions),
+        patch.object(kria_runtime, "_append_sync_event", append),
+        patch.object(kria_runtime, "_promote_queued_successor_sync", return_value=None),
+    ):
+        status, _ = kria_runtime._finish_approval_dispatch(
+            claim, outcome="invalid_clips", job_id=None, reason="unsupported_format"
+        )
+    assert status == "failed"
+    assert execution.error["reason"] == "unsupported_format"
+    assert execution.error["retryable"] is False
+    assert execution.error["recovery"] == "ask_user"
+    assert events[-1]["payload"]["recovery"] == "ask_user"
+    assert "retry without" not in events[-1]["content"]

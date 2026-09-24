@@ -463,3 +463,23 @@ def test_voiceover_with_matched_track_keeps_voiceover_music_when_music_bed_verif
     assert variant["variant_id"] == "voiceover_music"
     assert variant["music_track_id"] == "track1"
     cloud.assert_not_called()
+
+
+def test_v2_dispatch_snapshot_pins_an_awaiting_device_job_the_runtime_observer_holds_pending(
+    monkeypatch,
+):
+    """KRI-187: a runtime-v2 strategy approval mints this snapshot shape (phone
+    sources + `creator_generation_id`, NO `guided_edit`). The worker fork must
+    reach the montage runner, park the Job in `awaiting_device`, and the v2
+    observer must read that as pending -- not failed, not ready."""
+    from app.tasks.kria_runtime import _device_render_state
+
+    job, snapshot, _session, _bindings, _cloud = setup(monkeypatch)
+    assert "guided_edit" not in snapshot
+    assert snapshot["creator_generation_id"]
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    execution = SimpleNamespace(target_variant_id=None, result={})
+    assert _device_render_state(job, execution) == "pending"

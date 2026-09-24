@@ -1408,6 +1408,13 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     # the reconciler would republish the same approval forever.
                     # Nothing was staged (validation runs on a copy).
                     code = _device_refusal_code(exc)
+                    log.warning(
+                        "kria_device_edit_refused",
+                        approval_id=str(approval.id),
+                        code=code,
+                        error_type=type(exc).__name__,
+                        error=str(getattr(exc, "detail", None) or exc),
+                    )
                     approval.status = "cancelled"
                     execution.status = "failed"
                     execution.error = {"code": code, "retryable": False, "recovery": "revise"}
@@ -1475,6 +1482,10 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
 
 
 _DEVICE_EDIT_REFUSALS = {
+    "baseline_conflict": (
+        "The video changed on your iPhone after I drafted that edit, so I left it as it was. "
+        "Ask me again and I'll redo the change on the current version."
+    ),
     "unsupported_phone_edit": (
         "That change can't be rendered on your iPhone yet, so I left the video as it was."
     ),
@@ -1529,6 +1540,12 @@ def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | No
         return None
     variant_id = str(execution.target_variant_id or "") or None
     prep = (execution.result or {}).get("editor_prep")
+    if isinstance(prep, dict) and "device_recipe_revision" not in prep:
+        # An editor edit with no render section pinned no recipe revision: it
+        # changed nothing the phone draws, so the device record (possibly an
+        # older failure or publish) says nothing about it. Let the cloud
+        # observer settle it as before.
+        return None
     minimum = prep.get("device_recipe_revision") if isinstance(prep, dict) else None
     states: list[str] = []
     for record_variant in [variant_id] if variant_id else list(records):
@@ -1548,6 +1565,14 @@ def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | No
     if "pending" in states:
         return "pending"
     return "failed" if "failed" in states else "ready"
+
+
+def _phone_gate_refusal_copy(reason: str) -> str:
+    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
+
+    message = PHONE_GATE_MESSAGES.get(reason, (None, None))[1]
+    lead = message or "That kind of edit isn't available for iPhone renders yet."
+    return f"{lead} Tell me what you'd like to change and I'll try a different approach."
 
 
 def _finish_approval_dispatch(
@@ -1668,8 +1693,10 @@ def _finish_approval_dispatch(
         execution.error = {
             "code": "render_dispatch_failed",
             "outcome": outcome,
-            "retryable": outcome == "publish_failed",
-            "recovery": "retry",
+            "retryable": outcome == "publish_failed" and not reason,
+            # A phone-gate refusal (`reason`) refuses identically every time,
+            # so it must not send the creator into a retry loop.
+            "recovery": "ask_user" if reason else "retry",
             **({"reason": reason} if reason else {}),
         }
         execution.completed_at = now
@@ -1684,8 +1711,12 @@ def _finish_approval_dispatch(
             role="assistant",
             event_type="assistant_render_failed",
             content=(
-                "I couldn't start the render. Your draft is still saved, "
-                "so you can retry without repeating the edit."
+                _phone_gate_refusal_copy(reason)
+                if reason
+                else (
+                    "I couldn't start the render. Your draft is still saved, "
+                    "so you can retry without repeating the edit."
+                )
             ),
             payload={
                 "turn_id": str(turn.id),
@@ -1695,7 +1726,7 @@ def _finish_approval_dispatch(
                 "status": "failed",
                 "code": "render_dispatch_failed",
                 "dispatch_outcome": outcome,
-                "recovery": "retry",
+                "recovery": "ask_user" if reason else "retry",
             },
         )
         db.commit()
@@ -2024,10 +2055,14 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         execution.status = "failed"
         execution.completed_at = now
         execution.observed_at = now
+        device_failed = device_state == "failed"
+        # Chat retry cannot recover a device render (the Job is still
+        # `awaiting_device`); the creator retries from the phone's render panel.
+        recovery = "manual" if device_failed else "retry"
         execution.error = {
             "code": failure_code,
-            "retryable": True,
-            "recovery": "retry",
+            "retryable": not device_failed,
+            "recovery": recovery,
         }
         turn.status = "failed"
         turn.completed_at = now
@@ -2040,7 +2075,10 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             role="assistant",
             event_type="assistant_render_failed",
             content=(
-                "That render didn't finish. Your approved draft is still saved, "
+                "Your iPhone couldn't finish the render. Your approved edit is still saved: "
+                "open the project on your iPhone and tap Retry."
+                if device_failed
+                else "That render didn't finish. Your approved draft is still saved, "
                 "so you can retry without rebuilding the edit."
             ),
             payload={
@@ -2049,7 +2087,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "job_id": str(job.id),
                 "status": "failed",
                 "code": failure_code,
-                "recovery": "retry",
+                "recovery": recovery,
                 "receipt_ids": [str(execution.id)],
             },
         )
