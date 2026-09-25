@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.220.0] - 2026-09-25
+
+### Changed
+- feat(kria): one montage plan, guided fast montage with per-clip text (KRI-190) (#1236) <!-- release-pr: 1236 -->
+
 ## [0.76.219.0] - 2026-09-25
 
 ### Changed
