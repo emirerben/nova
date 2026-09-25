@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.230.0] - 2026-09-25
+
+### Changed
+- feat(ios): list every on-screen text block in the editor's Text tab (KRI-185) (#1250) <!-- release-pr: 1250 -->
+
 ## [0.76.229.0] - 2026-09-25
 
 ### Changed
