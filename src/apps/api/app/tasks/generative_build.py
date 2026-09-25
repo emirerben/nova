@@ -4491,6 +4491,64 @@ def _first_user_message(job_id: str) -> str:
     return content if isinstance(content, str) else ""
 
 
+def _checkpoint_unified_facts(job_id: str, entry: dict, _ref: Any) -> None:
+    """Persist one clip's enriched facts on the item's own assignment (best effort).
+
+    Without this a landmark asked for during a render is lost, so every re-render and
+    Celery retry would ask (and pay) again and could answer differently. Only the fact
+    rows and their cache key are written, for the exact media identity and storage
+    generation the guess was made for; a fact from an older generation of the file is
+    never written over a newer upload.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import PlanItem  # noqa: PLC0415
+    from app.schemas.clip_understanding import FACTS_KEY  # noqa: PLC0415
+    from app.services.clip_facts import LANDMARK_GENERATION_KEY  # noqa: PLC0415
+
+    analysis = entry.get("analysis")
+    if not isinstance(analysis, dict) or not entry.get("gcs_path") or not entry.get("media_id"):
+        return
+    generation = str(entry.get("generation") or entry.get("storage_generation") or "")
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            item_id = getattr(job, "content_plan_item_id", None)
+            if item_id is None:
+                return
+            item = db.execute(
+                select(PlanItem).where(PlanItem.id == item_id).with_for_update()
+            ).scalar_one_or_none()
+            if item is None:
+                return
+            rows = [
+                dict(row) if isinstance(row, dict) else row for row in item.clip_assignments or []
+            ]
+            changed = False
+            for index, row in enumerate(rows):
+                if not isinstance(row, dict):
+                    continue
+                if (
+                    row.get("media_id") != entry.get("media_id")
+                    or row.get("gcs_path") != entry.get("gcs_path")
+                    or str(row.get("generation") or row.get("storage_generation") or "")
+                    != generation
+                ):
+                    continue
+                merged = dict(row.get("analysis") or {})
+                for key in (FACTS_KEY, LANDMARK_GENERATION_KEY):
+                    if key in analysis:
+                        merged[key] = analysis[key]
+                if merged != (row.get("analysis") or {}):
+                    rows[index] = {**row, "analysis": merged}
+                    changed = True
+            if changed:
+                item.clip_assignments = rows
+                db.commit()
+    except Exception as exc:  # noqa: BLE001 - a lost checkpoint only costs a later re-ask
+        log.warning("unified_montage.facts_checkpoint_failed", error=str(exc)[:240])
+
+
 def _landmark_creator_text(view: Any, first_message: str) -> str:
     """The creator's own words the landmark agent should write its names in: the brief's
     exact texts (title, per-clip and route places) plus their first message."""
@@ -4583,6 +4641,7 @@ def _run_phone_unified_montage_job(
                 ),
                 # One language per edit: names follow the language the creator wrote in.
                 creator_text=_landmark_creator_text(view, _first_user_message(job_id)),
+                on_updated=lambda entry, ref: _checkpoint_unified_facts(job_id, entry, ref),
             )
             enriched_by_path = {str(entry.get("gcs_path")): entry for entry, _ref in enriched}
             entries = [

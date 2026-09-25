@@ -60,6 +60,7 @@ class EndpointFact:
 
     label: str = ""
     places: tuple[str, ...] = ()
+    media_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -85,8 +86,8 @@ class PlanFacts:
     route_end: str | None = None
     first_endpoint: EndpointFact | None = None
     last_endpoint: EndpointFact | None = None
-    # Seconds the phone appends after the edit (the Kria outro), never in the plan's own
-    # length: a 28.0s plan is a ~29.6s file (KRI-210).
+    # Seconds the phone appended after the edit (the Kria outro) when the record says so;
+    # never in the plan's own length: a 28.0s plan is a ~29.6s file (KRI-210). 0 = unknown.
     outro_s: float = 0.0
     # KRI-190: clips whose label is on a cut shorter than its reading time (the
     # clip itself is too short). A label the viewer cannot read is not "met".
@@ -260,14 +261,27 @@ def _endpoint_fact(raw: object) -> EndpointFact | None:
         if isinstance(row, Mapping) and row.get("text")
     )
     label = str(raw.get("label") or "")
-    return EndpointFact(label=label, places=places) if (label or places) else None
+    media_id = str(raw.get("media_id") or "")
+    return (
+        EndpointFact(label=label, places=places, media_id=media_id) if (label or places) else None
+    )
 
 
-def _phone_outro_s() -> float:
-    """The outro a phone-rendered montage gets on top of the plan's own length."""
+def _declared_outro_s(record: Mapping[str, Any]) -> float:
+    """The outro the record says the finished video carries, else 0 (unknown).
+
+    The phone declares its brand tail only when it exports, after the plan and its receipts
+    exist, so a plan-time record has none and the outro is never mentioned on an assumption.
+    """
     from app.kria.device_render import BRAND_TAIL_SECONDS  # noqa: PLC0415
 
-    return BRAND_TAIL_SECONDS["standard"]
+    declared = record.get("brand_tail")
+    if isinstance(declared, str) and declared in BRAND_TAIL_SECONDS:
+        return BRAND_TAIL_SECONDS[declared]
+    stored = record.get("brand_tail_s")
+    if isinstance(stored, (int, float)) and not isinstance(stored, bool) and stored > 0:
+        return float(stored)
+    return 0.0
 
 
 def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFacts:
@@ -307,7 +321,7 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         route_end=str(route["end"]) if route.get("end") else None,
         first_endpoint=_endpoint_fact(endpoints.get("first")),
         last_endpoint=_endpoint_fact(endpoints.get("last")),
-        outro_s=_phone_outro_s(),
+        outro_s=_declared_outro_s(record),
         per_clip_text=per_clip,
         inferred_text=inferred,
         duration_s=float(duration) if isinstance(duration, (int, float)) else None,
@@ -395,6 +409,12 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
         value = text_for(index, clip)
         if value is None and clip not in ids and wanted:
             value = next((t for t in facts.texts if _contains_text(t, wanted)), None)
+        if value is None and clip in facts.repeat_label_clip_ids:
+            return _receipt(
+                req,
+                "partial",
+                "That clip's label repeated the clip before it, so I left it off.",
+            )
         if value is None:
             return _receipt(req, "not_possible", "That clip didn't get its own text in this draft.")
         if wanted and not _contains_text(value, wanted):
@@ -494,6 +514,13 @@ def _route_reversed_reason(req: BriefRequirement, facts: PlanFacts) -> str | Non
     if not start or not end or facts.first_endpoint is None or facts.last_endpoint is None:
         return None
     first, last = facts.first_endpoint, facts.last_endpoint
+    untimed = set(facts.ordering_fallback_clip_ids)
+    if (first.media_id and first.media_id in untimed) or (
+        last.media_id and last.media_id in untimed
+    ):
+        # An endpoint without a capture time sits in an attachment slot, not where it was
+        # filmed: it says nothing about the direction the route was walked.
+        return None
     forward = _names_place(first, start) or _names_place(last, end)
     backward = _names_place(first, end) or _names_place(last, start)
     if forward or not backward:

@@ -254,18 +254,30 @@ def test_a_title_literal_only_has_to_appear_in_a_brief_written_title():
     assert check_requirement(req, other).status == "partial"
 
 
-def test_the_outro_is_named_when_the_length_misses_and_never_added_to_the_plan():
-    """KRI-210: 28.0s of edit becomes a ~29.6s file (the 1.6s Kria outro)."""
+def test_the_outro_is_named_only_when_the_record_says_the_video_carries_one():
+    """KRI-210: 28.0s of edit becomes a ~29.6s file (the 1.6s Kria outro), but the phone
+    declares its tail at export, after the plan's receipts exist: never assume it."""
     req = BriefRequirement(id="d1", kind="timing", scope="global", facts={"duration_s": 40})
     record = {"clip_ids": ["a"], "duration_s": 28.0, "ordering_basis": "attachment"}
-    facts = plan_facts_from_unified_montage(record)
-    assert facts.duration_s == 28.0 and facts.outro_s == pytest.approx(1.6)
-    miss = check_requirement(req, facts)
-    assert miss.status == "partial"
-    assert "28s (plus a 1.6s outro on the finished video)" in (miss.reason or "")
-    # The comparison is against the edit's own length: 28.0 satisfies "about 28".
-    req_ok = BriefRequirement(id="d2", kind="timing", scope="global", facts={"duration_s": 28})
-    assert check_requirement(req_ok, facts).status == "met"
+
+    plan_time = plan_facts_from_unified_montage(record)
+    assert plan_time.duration_s == 28.0 and plan_time.outro_s == 0.0
+    miss = check_requirement(req, plan_time)
+    assert miss.status == "partial" and "outro" not in (miss.reason or "")
+    assert "28s; you asked for 40s" in (miss.reason or "")
+
+    declared = plan_facts_from_unified_montage({**record, "brand_tail": "standard"})
+    assert declared.outro_s == pytest.approx(1.6)
+    assert "28s (plus a 1.6s outro on the finished video)" in (
+        check_requirement(req, declared).reason or ""
+    )
+    stored = plan_facts_from_unified_montage({**record, "brand_tail_s": 1.6})
+    assert stored.outro_s == pytest.approx(1.6)
+    none = plan_facts_from_unified_montage({**record, "brand_tail": "none"})
+    assert none.outro_s == 0.0
+    # The comparison is always against the edit's own length.
+    ok = BriefRequirement(id="d2", kind="timing", scope="global", facts={"duration_s": 28})
+    assert check_requirement(ok, declared).status == "met"
 
 
 # --------------------------------------------------------------------- KRI-207
@@ -310,6 +322,11 @@ def test_creator_language_reads_stopwords_not_proper_nouns():
     assert creator_language("my run from Eminönü to Arnavutköy") == "en"
     assert creator_language("Arnavutköy'den Eminönü'ne koşu ve bir yol") == "tr"
     assert creator_language("Eminönü Arnavutköy") == "und"
+    # The stopword set is folded like the input ("başladım" is not a lost match)...
+    assert creator_language("sabah başladım, nasıl bir yol") == "tr"
+    # ...and "run" is a loanword in Turkish running-event names: not English evidence.
+    assert creator_language("20k run") == "und"
+    assert creator_language("Arnavutköy 20k run ve bir yol") == "tr"
 
 
 def test_the_language_rule_is_injected_only_when_the_creator_wrote_something():
@@ -326,7 +343,7 @@ def test_the_landmark_prompt_version_moved_with_its_text():
     assert LandmarkGuessAgent.spec.prompt_version == "2026-09-25.1"
 
 
-def test_a_guess_is_reused_only_for_the_language_it_was_made_in():
+def test_a_guess_is_reused_for_its_language_or_the_bare_generation_but_not_another_language():
     from app.services import clip_facts as cf
 
     entry = {"media_id": "a", "storage_generation": "7"}
@@ -334,11 +351,106 @@ def test_a_guess_is_reused_only_for_the_language_it_was_made_in():
     assert en["analysis"][cf.LANDMARK_GENERATION_KEY] == "7|en"
     assert cf._landmark_attempted(en, "en")
     assert not cf._landmark_attempted(en, "tr")
-    # A guess recorded before names followed the creator's language never matches a
-    # creator-text run; no creator text keeps the old key byte-identical.
-    legacy = cf.with_landmark_fact(entry, None)
-    assert legacy["analysis"][cf.LANDMARK_GENERATION_KEY] == "7"
-    assert not cf._landmark_attempted(legacy, "en") and cf._landmark_attempted(legacy)
+    # The edit-proposal enrichment records the bare generation (no creator text yet); a
+    # render with creator text reuses that answer instead of asking again.
+    bare = cf.with_landmark_fact(entry, None)
+    assert bare["analysis"][cf.LANDMARK_GENERATION_KEY] == "7"
+    assert cf._landmark_attempted(bare) and cf._landmark_attempted(bare, "en")
+    # A new generation of the file never reuses an old answer.
+    assert not cf._landmark_attempted({**bare, "storage_generation": "8"}, "en")
+
+
+def _landmark_entry(*, key: str | None = "7"):
+    from app.schemas.clip_understanding import ClipFact
+    from app.services import clip_facts as cf
+
+    entry = {
+        "media_id": "a",
+        "storage_generation": "7",
+        "capture": {"place": {"locality": "Ortaköy"}, "capture_time": "2026-09-20T07:31:02Z"},
+    }
+    entry = cf.with_landmark_fact(
+        entry, ClipFact(kind="landmark", value="Mavi Köprü", provenance="inferred")
+    )
+    if key is not None:
+        entry["analysis"][cf.LANDMARK_GENERATION_KEY] = key
+    return entry
+
+
+def _ref():
+    return type("Ref", (), {"kind": "video", "analysis": {}})()
+
+
+def test_a_bare_generation_landmark_is_reused_with_no_agent_call_when_creator_text_exists(
+    monkeypatch,
+):
+    from app.services import clip_facts as cf
+
+    monkeypatch.setattr(
+        cf, "_guess_landmark", lambda *a, **k: pytest.fail("the agent ran for a cached clip")
+    )
+    entry = _landmark_entry(key="7")
+    out = cf.enrich_clip_facts(
+        [(entry, _ref())], make_ctx=lambda m: object(), creator_text="my run from A to B"
+    )
+    kept = cf.landmark_fact_for_assignment(out[0][0])
+    assert kept is not None and kept.value == "Mavi Köprü"
+
+
+def test_an_unknown_answer_never_deletes_a_landmark_found_for_the_same_generation(monkeypatch):
+    from app.services import clip_facts as cf
+
+    calls: list[str] = []
+
+    def guess(assignment, *, ctx, creator_text=""):
+        calls.append(creator_text)
+        return None
+
+    monkeypatch.setattr(cf, "_guess_landmark", guess)
+    # Recorded for another language: a fresh pass runs, says "unknown", the fact survives.
+    entry = _landmark_entry(key="7|tr")
+    out = cf.enrich_clip_facts(
+        [(entry, _ref())], make_ctx=lambda m: object(), creator_text="my run from A to B"
+    )
+    assert calls == ["my run from A to B"]
+    kept = cf.landmark_fact_for_assignment(out[0][0])
+    assert kept is not None and kept.value == "Mavi Köprü"
+    assert out[0][0]["analysis"][cf.LANDMARK_GENERATION_KEY] == "7|en"
+    # A NEW generation of the file does drop the old file's landmark.
+    moved = {**entry, "storage_generation": "8"}
+    dropped = cf.with_landmark_fact(moved, None, language="en")
+    assert cf.landmark_fact_for_assignment(dropped) is None
+
+
+def test_a_second_render_asks_the_agent_nothing_because_the_first_persisted_its_answer(
+    monkeypatch,
+):
+    from app.schemas.clip_understanding import ClipFact
+    from app.services import clip_facts as cf
+
+    calls: list[int] = []
+
+    def guess(assignment, *, ctx, creator_text=""):
+        calls.append(1)
+        return ClipFact(kind="landmark", value="Mavi Köprü", provenance="inferred")
+
+    monkeypatch.setattr(cf, "_guess_landmark", guess)
+    stored: dict = {}
+
+    def checkpoint(entry, ref):  # what the worker writes back onto the item's assignment
+        stored["entry"] = entry
+
+    capture = {"place": {"locality": "Ortaköy"}, "capture_time": "2026-09-20T07:31:02Z"}
+    entry = {"media_id": "a", "storage_generation": "7", "capture": capture}
+    text = "my run from A to B"
+    cf.enrich_clip_facts(
+        [(entry, _ref())], make_ctx=lambda m: object(), creator_text=text, on_updated=checkpoint
+    )
+    assert calls == [1] and cf.landmark_fact_for_assignment(stored["entry"]) is not None
+    cf.enrich_clip_facts(
+        [(stored["entry"], _ref())], make_ctx=lambda m: object(), creator_text=text
+    )
+    assert calls == [1], "the persisted answer must be reused"
 
 
 def test_enrich_passes_the_creators_words_to_the_agent_and_keys_the_answer(monkeypatch):
@@ -429,3 +541,41 @@ def test_unified_montage_needs_authored_text_only_for_its_variable_font_coordina
     monkeypatch.setattr(settings, "phone_render_verified_features", missing)
     with pytest.raises(ValueError, match="phone capability that is not enabled"):
         validate_phone_pilot_recipe(recipe)
+
+
+# --------------------------------------------------------------------- review follow-ups
+
+
+def test_an_untimed_endpoint_says_nothing_about_direction():
+    """The first/last clip has no capture time: it sits in an attachment slot."""
+    clips = [
+        UnifiedClip(
+            **{
+                **clip(0, minutes=10, place=END_PLACE).__dict__,
+                "capture_time": None,
+                "facts": ({"kind": "place", "value": END_PLACE, "provenance": "geocode"},),
+            }
+        ),
+        clip(1, minutes=30, place="Ortaköy, Tepeli, Karadeniz İli, Türkiye"),
+        clip(2, minutes=60, place=START_PLACE),
+    ]
+    plan = plan_unified_montage(clips, brief_view(brief()))
+    assert plan.ordering_fallback_clip_ids == ["c0"]
+    receipt = build_receipts(brief().live(), plan_facts_from_unified_montage(plan.record()))[1]
+    assert "reverse" not in (receipt.reason or "")
+
+
+def test_a_clip_scoped_label_dropped_as_a_repeat_says_so():
+    clips = [
+        clip(0, minutes=1, landmark="Mavi Köprü"),
+        clip(1, minutes=2, landmark="Mavi Köprü"),
+        clip(2, minutes=3, landmark="Yeşil Kule"),
+    ]
+    plan = plan_unified_montage(clips, brief_view(brief(start=None, end=None)))
+    facts = plan_facts_from_unified_montage(plan.record())
+    req = BriefRequirement(id="s9", kind="text", scope="clip:c1", description="name it")
+    receipt = check_requirement(req, facts)
+    assert receipt.status == "partial"
+    assert "repeated the clip before it" in (receipt.reason or "")
+    other = BriefRequirement(id="s8", kind="text", scope="clip:c2", description="name it")
+    assert check_requirement(other, facts).status == "met"

@@ -601,3 +601,70 @@ def test_first_user_message_is_best_effort_and_never_raises(monkeypatch):
     assert gb._first_user_message(str(uuid.uuid4())) == ""
     session.get.return_value = SimpleNamespace(content_plan_item_id=None)
     assert gb._first_user_message(str(uuid.uuid4())) == ""
+
+
+def _checkpoint_harness(monkeypatch, rows):
+    item = SimpleNamespace(clip_assignments=rows)
+    session = Mock()
+    session.get.return_value = SimpleNamespace(content_plan_item_id=uuid.uuid4())
+    session.execute.return_value.scalar_one_or_none.return_value = item
+
+    @contextmanager
+    def sessions():
+        yield session
+
+    monkeypatch.setattr(gb, "_sync_session", sessions)
+    return item, session
+
+
+def _enriched(generation="7", facts=None):
+    return {
+        "media_id": "clip-0",
+        "gcs_path": "users/u/analysis-proxy-clip-0.mp4",
+        "storage_generation": generation,
+        "analysis": {
+            clip_facts.FACTS_KEY: facts or [{"kind": "landmark", "value": "Galata Bridge"}],
+            clip_facts.LANDMARK_GENERATION_KEY: f"{generation}|en",
+        },
+    }
+
+
+def test_unified_facts_are_persisted_onto_the_items_own_assignment(monkeypatch):
+    """A landmark asked for during a render must survive it, or every re-render and Celery
+    retry asks (and pays) again."""
+    row = {
+        "media_id": "clip-0",
+        "gcs_path": "users/u/analysis-proxy-clip-0.mp4",
+        "storage_generation": "7",
+        "analysis": {"best_moments": [{"start_s": 1.0}]},
+    }
+    other = {"media_id": "clip-1", "gcs_path": "x", "analysis": {}}
+    item, session = _checkpoint_harness(monkeypatch, [row, other])
+
+    gb._checkpoint_unified_facts("00000000-0000-0000-0000-000000000001", _enriched(), None)
+
+    saved = item.clip_assignments[0]["analysis"]
+    assert saved["best_moments"] == [{"start_s": 1.0}], "other analysis is left alone"
+    assert saved[clip_facts.LANDMARK_GENERATION_KEY] == "7|en"
+    assert saved[clip_facts.FACTS_KEY][0]["value"] == "Galata Bridge"
+    assert item.clip_assignments[1] == other
+    session.commit.assert_called_once()
+
+
+def test_unified_facts_never_overwrite_a_newer_upload_of_the_same_clip(monkeypatch):
+    row = {
+        "media_id": "clip-0",
+        "gcs_path": "users/u/analysis-proxy-clip-0.mp4",
+        "storage_generation": "8",
+        "analysis": {},
+    }
+    item, session = _checkpoint_harness(monkeypatch, [row])
+    gb._checkpoint_unified_facts("00000000-0000-0000-0000-000000000001", _enriched("7"), None)
+    assert item.clip_assignments == [row]
+    session.commit.assert_not_called()
+
+
+def test_a_failed_facts_checkpoint_never_fails_the_render(monkeypatch):
+    item, session = _checkpoint_harness(monkeypatch, [])
+    session.execute.side_effect = RuntimeError("db down")
+    gb._checkpoint_unified_facts("00000000-0000-0000-0000-000000000001", _enriched(), None)

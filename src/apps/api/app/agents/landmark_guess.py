@@ -68,12 +68,19 @@ def normalize_landmark_name(value: object) -> str:
 # Proper nouns are deliberately not evidence: "Eminönü" appears in English sentences too.
 _LANGUAGE_WORDS = {
     "tr": frozenset(
-        "ve bir bu ile için ben benim biz koşu koştum gibi çok daha sonra kadar den dan "
-        "başladım bitirdim sabah akşam yol nasıl".split()
+        _fold(w)
+        for w in (
+            "ve bir bu ile için ben benim biz koşu koştum gibi çok daha sonra kadar den dan "
+            "başladım bitirdim sabah akşam yol nasıl"
+        ).split()
     ),
+    # No loanwords: "run" is ordinary Turkish running-event vocabulary ("20k run").
     "en": frozenset(
-        "the and to from my of in at for with is it was we run ran started finished "
-        "morning route along past then".split()
+        _fold(w)
+        for w in (
+            "the and to from my of in at for with is it was we ran started finished "
+            "morning route along past then"
+        ).split()
     ),
 }
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)

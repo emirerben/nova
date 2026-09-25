@@ -227,18 +227,25 @@ def _generation(assignment: Mapping[str, Any]) -> str:
 
 def _landmark_key(assignment: Mapping[str, Any], language: str = "") -> str:
     """The cache key of one landmark answer: the storage generation plus the language the
-    creator wrote in, so a guess made for another language (or before names followed the
-    creator's language) is never reused. No creator text keeps the bare generation."""
+    creator wrote in. No creator text is the bare generation (what the edit-proposal
+    enrichment records, since it runs before the creator's words are known)."""
     generation = _generation(assignment)
     return f"{generation}|{language}" if language else generation
 
 
 def _landmark_attempted(assignment: Mapping[str, Any], language: str = "") -> bool:
-    """True once a guess (even an empty one) was recorded for this generation + language."""
+    """True once a guess (even an empty one) was recorded for this generation.
+
+    A guess recorded under this language's key counts, and so does one recorded under the
+    bare generation key (the edit-proposal enrichment's): that answer is already stored on
+    the clip, so a render with creator text reuses it instead of paying for the same guess
+    again on every render, re-render and Celery retry. A guess made for a different
+    language does not count."""
     analysis = assignment.get("analysis")
     if not isinstance(analysis, dict):
         return False
-    return analysis.get(LANDMARK_GENERATION_KEY) == _landmark_key(assignment, language)
+    recorded = analysis.get(LANDMARK_GENERATION_KEY)
+    return recorded in (_landmark_key(assignment, language), _generation(assignment))
 
 
 def _landmark_prompt_place(assignment: Mapping[str, Any]) -> tuple[str, float | None, float | None]:
@@ -340,8 +347,21 @@ def with_landmark_fact(
     """Copy of ``assignment`` with the guess (or the "asked, no answer") recorded."""
     entry = dict(assignment)
     analysis = dict(entry.get("analysis") or {})
+    recorded = analysis.get(LANDMARK_GENERATION_KEY)
+    # "Unknown" from one pass (another language's, a retry) is not proof the landmark a
+    # previous pass found for THIS storage generation is wrong: only a new generation of
+    # the file invalidates it.
+    generation = _generation(entry)
+    keep_stored = (
+        fact is None
+        and generation != ""
+        and isinstance(recorded, str)
+        and recorded.split("|", 1)[0] == generation
+    )
     analysis[FACTS_KEY] = _merge_stored_facts(
-        analysis, [fact] if fact is not None else [], replace_kind="landmark"
+        analysis,
+        [fact] if fact is not None else [],
+        replace_kind=None if keep_stored else "landmark",
     )
     analysis[LANDMARK_GENERATION_KEY] = _landmark_key(entry, language)
     entry["analysis"] = analysis
