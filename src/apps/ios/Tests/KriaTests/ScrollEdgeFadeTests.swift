@@ -64,16 +64,13 @@ final class ScrollEdgeFadeTests: XCTestCase {
         XCTAssertEqual(metrics(offset: -60, content: 1000, container: 400, insets: topInset).top, 0)
     }
 
-    func testInsetsAreCarriedSoTheFadeZoneCoversFloatingChrome() {
+    func testContentBeneathFloatingChromeCountsAsHiddenBelowTheComposer() {
+        // Header 92pt + composer 84pt insets on a 700pt viewport, resting at the top:
+        // the header inset is not hidden content, the content below the composer is.
         let insets = EdgeInsets(top: 92, leading: 0, bottom: 84, trailing: 0)
         let m = metrics(offset: -92, content: 1000, container: 700, insets: insets)
-        XCTAssertEqual(m.insetTop, 92)
-        XCTAssertEqual(m.insetBottom, 84)
         XCTAssertEqual(m.top, 0, "at rest the header inset must not count as hidden content")
         XCTAssertEqual(m.bottom, 1, "content below the composer is hidden content")
-        // Negative insets (never expected) can't shrink the zone below the base length.
-        let odd = metrics(content: 400, container: 400, insets: EdgeInsets(top: -5, leading: 0, bottom: 0, trailing: 0))
-        XCTAssertEqual(odd.insetTop, 0)
     }
 
     func testFloatResidueIsNotTreatedAsHiddenContent() {

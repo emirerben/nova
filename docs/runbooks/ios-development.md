@@ -222,14 +222,15 @@ the editor's Kria sheet). Other scroll surfaces (the projects drawer, editor
 strips, carousels, slide-post rows) keep their normal hard clip on purpose.
 
 `.kriaScrollEdgeFade()` (`DesignSystem/ScrollEdgeFade.swift`) is an alpha mask
-on a vertical `ScrollView`. It is confined to the edges: near-transparent under
-the floating chrome (the content inset) and back to fully opaque `length`
-points (default 20) beyond it, so only content very close to the top or bottom
-is touched. An edge at rest, with nothing past it, is not faded at all. There
-is deliberately no blurred/frosted band: a frosted band read as a big grey
-"block" over the text. Apply the modifier directly on the `ScrollView`, before
-any `.overlay`/`.background` that must stay unmasked. It never changes frames
-or hit testing.
+on a vertical `ScrollView`: a hairline fade (`length`, default 2pt) at the
+scroll view's real frame edges, which are the screen edges because the
+transcript runs beneath the floating chrome. Content stays fully crisp, even
+behind the header and composer, until it is 2pt from the top or bottom edge. An
+edge at rest, with nothing past it, is not faded at all. There is deliberately
+no frosted/blurred band (an earlier version had one and it read as a large grey
+"block") and no fade zone tied to the header/composer height. Apply the
+modifier directly on the `ScrollView`, before any `.overlay`/`.background` that
+must stay unmasked. It never changes frames or hit testing.
 
 - **Floating chat chrome:** the chat header (menu, title, actions, editor
   switch) and the composer float over the transcript as frosted capsules
@@ -256,10 +257,8 @@ Geometry traps when the scroll view runs beneath insets (learned the hard way):
   `visibleRect` (`ScrollEdgeFadeMetrics(visibleRect:…)`); using `containerSize`
   made the bottom fade think hundreds of points were hidden at rest.
 - A `.mask` is laid out inside the safe-area-inset region, so the modifier
-  applies `.ignoresSafeArea()` to it; otherwise the fade zone starts at the
-  inset edge and runs about a header-height too long.
-- The fade zone is `inset + length` per edge, so it covers the space under the
-  floating chrome.
+  applies `.ignoresSafeArea()` to it; otherwise the fade sits at the inset edge
+  (under the header/composer) instead of at the screen edge.
 - Scroll to the end with `ScrollPosition.scrollTo(edge: .bottom)`, not an end
   marker with `anchor: .bottom` (that aligns to the frame bottom and leaves the
   last content under the composer). "Near bottom" adds `contentInsets.bottom`.

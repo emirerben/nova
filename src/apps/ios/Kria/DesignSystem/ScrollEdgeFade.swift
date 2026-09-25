@@ -10,12 +10,6 @@ import SwiftUI
 struct ScrollEdgeFadeMetrics: Equatable {
     var top: CGFloat = 0
     var bottom: CGFloat = 0
-    /// The scroll view's content insets (a floating header/composer added as a
-    /// `safeAreaInset`). The scroll view's frame runs beneath that chrome, so the
-    /// fade zone has to cover the space under it.
-    var insetTop: CGFloat = 0
-    var insetBottom: CGFloat = 0
-
     /// Hidden distance below this is float residue (KRI-128), not content.
     static let hiddenFloor: CGFloat = 0.5
     /// Strengths are rounded to this step so the geometry action fires on real
@@ -39,8 +33,6 @@ struct ScrollEdgeFadeMetrics: Equatable {
                 length: length
             )
         )
-        insetTop = max(0, contentInsets.top)
-        insetBottom = max(0, contentInsets.bottom)
     }
 
     static func strength(hidden: CGFloat, length: CGFloat) -> CGFloat {
@@ -51,27 +43,29 @@ struct ScrollEdgeFadeMetrics: Equatable {
 }
 
 extension View {
-    /// Softly fades a vertical scroll view's top and bottom edges where content
-    /// continues past them, instead of slicing it with a hard cut. Apply directly
-    /// on the `ScrollView`, before any `.overlay`/`.background` that must stay
-    /// unmasked.
+    /// Fades a vertical scroll view's top and bottom edges by a hairline
+    /// (`length`, default 2pt) where content continues past them, instead of
+    /// slicing it with a hard cut. Apply directly on the `ScrollView`, before any
+    /// `.overlay`/`.background` that must stay unmasked.
     ///
-    /// The fade is confined to the edges: near-transparent under any floating
-    /// chrome (the content inset) and back to fully crisp `length` points beyond
-    /// it. An edge at rest, with nothing past it, is not faded at all. The mask
-    /// never changes frames or hit testing.
-    func kriaScrollEdgeFade(length: CGFloat = 20) -> some View {
+    /// The fade sits at the scroll view's real frame edges, which are the screen
+    /// edges when the transcript runs beneath floating chrome, so content stays
+    /// fully crisp (even behind that chrome) until it is `length` points from the
+    /// edge. An edge at rest, with nothing past it, is not faded. The mask never
+    /// changes frames or hit testing.
+    func kriaScrollEdgeFade(length: CGFloat = 2) -> some View {
         modifier(KriaScrollEdgeFade(length: length))
     }
 }
 
 private struct KriaScrollEdgeFade: ViewModifier {
+    /// Thickness of the fade at each frame edge.
     let length: CGFloat
     @State private var metrics = ScrollEdgeFadeMetrics()
 
-    /// Opacity of content at the inset boundary (just under the floating
-    /// chrome), at full strength. It then ramps to fully opaque over `length`.
-    private static let opacityAtInset: CGFloat = 0.25
+    /// Hidden distance over which the fade eases on, so it doesn't pop the
+    /// instant a point of content passes an edge.
+    private static let rampLength: CGFloat = 24
 
     func body(content: Content) -> some View {
         content
@@ -80,43 +74,33 @@ private struct KriaScrollEdgeFade: ViewModifier {
                     visibleRect: geometry.visibleRect,
                     contentSize: geometry.contentSize,
                     contentInsets: geometry.contentInsets,
-                    length: length
+                    length: Self.rampLength
                 )
             } action: { _, newValue in
                 metrics = newValue
             }
-            // Laid out against the real frame edges: the scroll view runs beneath
-            // any floating header/composer, so the fade zones must too.
+            // A mask is laid out inside the safe-area-inset region; the fade
+            // belongs at the real frame edges (the screen edges).
             .mask { fadeMask.ignoresSafeArea() }
     }
 
     private var fadeMask: some View {
         VStack(spacing: 0) {
-            zone(strength: metrics.top, inset: metrics.insetTop, atTop: true)
+            edge(strength: metrics.top, atTop: true)
             Rectangle().fill(.black)
-            zone(strength: metrics.bottom, inset: metrics.insetBottom, atTop: false)
+            edge(strength: metrics.bottom, atTop: false)
         }
     }
 
-    /// One edge's gradient: transparent at the frame edge, `opacityAtInset` at
-    /// the inset boundary, opaque `length` points beyond it. `strength` (0...1)
-    /// scales how much of that fade applies, so an edge at rest is untouched.
-    private func zone(strength: CGFloat, inset: CGFloat, atTop: Bool) -> some View {
-        let height = inset + length
-        let insetLocation = height > 0 ? inset / height : 0
-        func opacity(_ base: CGFloat) -> Color { .black.opacity(1 - strength * (1 - base)) }
-        // Stops run edge -> content; flip for the bottom zone.
-        let stops: [Gradient.Stop] = [
-            .init(color: opacity(0), location: 0),
-            .init(color: opacity(Self.opacityAtInset), location: insetLocation),
-            .init(color: opacity(1), location: 1)
-        ]
-        return Rectangle()
+    /// Transparent at the frame edge, opaque `length` points in; `strength`
+    /// (0...1) scales it so an edge at rest is untouched.
+    private func edge(strength: CGFloat, atTop: Bool) -> some View {
+        Rectangle()
             .fill(LinearGradient(
-                stops: stops,
+                colors: [.black.opacity(1 - strength), .black],
                 startPoint: atTop ? .top : .bottom,
                 endPoint: atTop ? .bottom : .top
             ))
-            .frame(height: height)
+            .frame(height: length)
     }
 }
