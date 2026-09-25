@@ -912,12 +912,16 @@ def _speech_cleanup_dispatch_snapshot(
         # voiceover (when audio_mode == "voiceover") is a normal, fully
         # uploaded audio file, never an analysis proxy, even though this
         # same item's VIDEO clips are proxies; only the source cleanup would
-        # actually touch matters here. `preflight_enabled_for_source`
-        # already stops such a source from ever being scheduled (no
-        # analysis row -> no offered choice), but a stale/forged client
-        # request could still submit `choice == "clean"` against a row that
-        # predates the item becoming phone-sourced -- refuse explicitly
-        # here, before any Job row exists.
+        # actually touch matters here. Since KRI-205, `preflight_enabled_for_source`
+        # deliberately DOES schedule analysis and offer this choice for a
+        # phone (analysis-proxy) source -- detection only needs the proxy's
+        # audio, which is already a faithful full copy. Applying "clean" is
+        # different: it requires cutting real video frames, and a
+        # phone-rendered project never uploads the full-resolution video, so
+        # this refusal is now the everyday, expected outcome for a phone
+        # Talking-to-camera creator who picks "clean" (surfaced to them as
+        # `speech_cleanup_unavailable_on_phone`, not a generic failure),
+        # not just a defense against a stale/forged request.
         if resolution.source is not None and is_analysis_proxy_path(resolution.source.storage_path):
             return DispatchResult("speech_cleanup_unavailable_on_phone")
     try:
@@ -1562,7 +1566,6 @@ def _dispatch_item_render(
             resolution.source.source_policy_fingerprint,
             mode=settings.speech_cleanup_preflight_mode,
             rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
-            storage_path=resolution.source.storage_path,
         ):
             return DispatchResult("speech_cleanup_analysis_conflict")
     if speech_cleanup_analysis_id is not None or speech_cleanup_choice is not None:

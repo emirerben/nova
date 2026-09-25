@@ -446,47 +446,37 @@ async def test_preflight_off_never_touches_a_row_or_legacy_consent(
     assert item.speech_cleanup_enabled is True
 
 
-class TestPreflightEnabledForSourceOnPhone:
-    """KRI-118 L1 item 1: clean speech must never be offered on a phone
-    project -- the original audio bytes never reach the server, only a small
-    analysis proxy does, so speech cleanup can never actually run there."""
+class TestPreflightEnabledForSourceIgnoresSourceType:
+    """KRI-205: `preflight_enabled_for_source` no longer takes a `storage_path`
+    and no longer branches on phone (analysis-proxy) vs. cloud sources.
 
-    def test_enforce_mode_still_enables_a_normal_cloud_source(self) -> None:
-        assert (
-            preflight_enabled_for_source(
-                "fingerprint",
-                mode="enforce",
-                rollout_percent=100,
-                storage_path="users/private/take.wav",
-            )
-            is True
-        )
+    KRI-118 L1 item 1 originally rejected any analysis-proxy storage path
+    outright, on the theory that speech cleanup needs the real audio and a
+    phone project never uploads it. KRI-205 found the detector only ever
+    reads a downmixed audio-only WAV -- never video -- and a phone analysis
+    proxy's audio is already trusted elsewhere (phone-subtitled caption
+    transcription) as a faithful full copy, so scheduling/offering the
+    decision is now allowed for phone sources too. Only *applying*
+    `choice == "clean"` still needs the real video and is refused separately,
+    at consent time, by `content_plan_build._speech_cleanup_dispatch_snapshot`
+    (see `TestSpeechCleanupDispatchSnapshotPhoneGate`-equivalent coverage in
+    `tests/tasks/test_content_plan_build.py`).
+    """
 
-    def test_analysis_proxy_storage_path_is_rejected_even_at_full_rollout(self) -> None:
-        assert (
-            preflight_enabled_for_source(
-                "fingerprint",
-                mode="enforce",
-                rollout_percent=100,
-                storage_path="users/u/plan/i/analysis-proxy-source.mp4",
-            )
-            is False
-        )
-
-    def test_analysis_proxy_storage_path_is_rejected_in_shadow_mode_too(self) -> None:
-        assert (
-            preflight_enabled_for_source(
-                "fingerprint",
-                mode="shadow",
-                rollout_percent=100,
-                storage_path="analysis-proxy-source.mp4",
-            )
-            is False
-        )
-
-    def test_no_storage_path_falls_back_to_the_pre_existing_cohort_rule(self) -> None:
-        # Byte-identical to before this parameter existed when a caller omits it.
+    def test_enforce_mode_at_full_rollout_is_enabled(self) -> None:
         assert (
             preflight_enabled_for_source("fingerprint", mode="enforce", rollout_percent=100) is True
         )
+
+    def test_shadow_mode_at_full_rollout_is_enabled(self) -> None:
+        assert (
+            preflight_enabled_for_source("fingerprint", mode="shadow", rollout_percent=100) is True
+        )
+
+    def test_off_mode_is_disabled_regardless_of_rollout(self) -> None:
         assert preflight_enabled_for_source("fingerprint", mode="off", rollout_percent=100) is False
+
+    def test_zero_rollout_is_disabled_regardless_of_mode(self) -> None:
+        assert (
+            preflight_enabled_for_source("fingerprint", mode="enforce", rollout_percent=0) is False
+        )
