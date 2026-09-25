@@ -1,4 +1,5 @@
 import SwiftUI
+import KriaMediaEngine
 
 struct NativeEditorView: View {
     let project: ProjectSummary
@@ -18,6 +19,7 @@ struct NativeEditorView: View {
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
     @State private var showsDeviceRender = false
+    @State private var showsOriginalsRecovery = false
     @State private var showsConversation = false
     @State private var selectedTextForActions: String?
     /// KRI-185: a block opened from the Text tab's list edits its words first and
@@ -137,6 +139,11 @@ struct NativeEditorView: View {
                         .presentationDragIndicator(.visible)
                 }
             }
+            .sheet(isPresented: $showsOriginalsRecovery) {
+                EditorOriginalsRecoveryView(session: session)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
             .onChange(of: deviceLocalFile) { _, file in
                 if let file { session.showDeviceOutput(file) }
             }
@@ -232,7 +239,10 @@ struct NativeEditorView: View {
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { topChromeHeight = $0 }
 
-            NativeVideoPreview(session: session, onEmptyTap: enterFullscreen)
+            NativeVideoPreview(
+                session: session, onEmptyTap: enterFullscreen,
+                onFindOriginals: { showsOriginalsRecovery = true }
+            )
                 .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
                 .clipped()
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { previewGlobalFrame = $0 }
@@ -597,14 +607,21 @@ struct NativeEditorView: View {
     private func loadEditor() async {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
-        let sourceFailure = arguments.contains("-ui-testing-editor-source-failure")
-        if sourceFailure || arguments.contains("-ui-testing-editor-source-text") {
+        // A generic failure is retryable; missing originals are not (KRI-211), so they
+        // are separate fixtures with separate recovery UI.
+        let forcedFailure: Error? = arguments.contains("-ui-testing-editor-missing-originals")
+            ? SourceAssetError.missingOriginal("fixture-source")
+            : arguments.contains("-ui-testing-editor-source-failure") ? NativeEditorRenderError.missingVideoTrack : nil
+        if forcedFailure != nil || arguments.contains("-ui-testing-editor-source-text") {
             let delayed = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source")
             if delayed, session.loadState == .loaded { return }
-            let url = sourceFailure
+            let url = forcedFailure != nil
                 ? URL(fileURLWithPath: "/tmp/kria-missing-source-preview.mp4")
                 : Bundle.main.url(forResource: "montage", withExtension: "mp4")!
-            await session.prepareFixtureSourcePreview(url: url, delayedLoad: delayed, forceFailure: sourceFailure)
+            await session.prepareFixtureSourcePreview(
+                url: url, delayedLoad: delayed, forceFailure: forcedFailure != nil,
+                failure: forcedFailure ?? NativeEditorRenderError.missingVideoTrack
+            )
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }

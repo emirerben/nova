@@ -631,12 +631,20 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let multiline = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: First\nSecond")).firstMatch
         XCTAssertTrue(multiline.waitForExistence(timeout: 3))
         let multilineHeight = multiline.frame.height
-        app.buttons["Edit text"].tap()
+        // "Done" leaves the text panel open on its Style tab. All three tab buttons share the
+        // container's identifier, so pick the Edit one by identifier AND label rather than leaning on
+        // a bare "Edit text" label that the context strip's button shares whenever it is on screen (KRI-213).
+        let editTab = app.buttons.matching(identifier: "native-editor-text-tabs")
+            .matching(NSPredicate(format: "label == %@", "Edit text")).firstMatch
+        XCTAssertTrue(editTab.waitForExistence(timeout: 3))
+        editTab.tap()
         let edit = app.textViews["native-editor-text-content"]
         XCTAssertTrue(edit.waitForExistence(timeout: 3))
-        // A center tap can place the caret inside the second line. Tap beyond
-        // its trailing text so deletion starts at the end on every screen size.
-        edit.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.95)).tap()
+        // Selecting the tab focuses the field with the caret at the end of the text. Wait for the
+        // keyboard instead of tapping: typeText on an unfocused field taps its centre, which can
+        // land the caret inside the second line, and a coordinate near the corner was not a stable
+        // target either (the field resizes as the keyboard rises).
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         edit.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7))
         expectation(for: NSPredicate(format: "value == %@", "First"), evaluatedWith: edit)
         waitForExpectations(timeout: 5)
@@ -897,9 +905,34 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Showing finished render"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].exists)
+        XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].isHittable, "Retry must not sit under the canvas")
         XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)
         XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Text:")).firstMatch.exists,
                        "Fallback video is playback-only; canvas objects cannot be selected or manipulated")
+    }
+
+    /// KRI-211: a project made on another device has no originals here. Retry cannot fix that, so
+    /// the editor says so in plain words and offers the one thing that can: finding the files.
+    func testMissingOriginalsOffersFindingFilesInsteadOfRetry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-missing-originals"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Showing finished render"].waitForExistence(timeout: 8))
+        let copy = app.staticTexts["native-editor-originals-unavailable"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 3))
+        XCTAssertEqual(copy.label, "The original clips for this edit are on another device. Find the files to edit here.")
+        XCTAssertFalse(app.buttons["native-editor-retry-source-preview"].exists, "Retry can never make missing originals appear")
+        XCTAssertFalse(app.buttons["Retry"].exists)
+
+        let find = app.buttons["native-editor-find-originals"]
+        XCTAssertTrue(find.isHittable)
+        find.tap()
+        // The sheet lists the file the preview could not find (from the editor's own source pool),
+        // and never claims the originals are already here while the preview says they are not.
+        XCTAssertTrue(app.staticTexts["Find your originals"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Find original 1"].waitForExistence(timeout: 5), "A real relink target row is listed")
+        XCTAssertFalse(app.staticTexts["The original files are available on this iPhone."].exists)
     }
 
     func testHardSourcePreviewFailureShowsUnavailableStateWithoutFallbackPlayer() {
@@ -908,6 +941,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Preview unavailable"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Retry"].firstMatch.isHittable, "Retry must not sit under the canvas")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview-fallback"].exists)
         XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Text:")).firstMatch.exists)
     }

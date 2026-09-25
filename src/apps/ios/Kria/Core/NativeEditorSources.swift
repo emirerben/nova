@@ -725,7 +725,7 @@ enum NativePreviewDiagnostics {
                             "cuts": String(editor.document.clips.count),
                             "looks": Array(Set(editor.document.clips.compactMap(\.lookPreset))).sorted().joined(separator: ",")])
                         save()
-                        if case .failed = editor.sourcePreviewState,
+                        if editor.sourcePreviewState.isFailure,
                            let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
                            let data = try? Data(contentsOf: cache.appendingPathComponent("native-preview-diagnostics.json")),
                            let events = try? JSONDecoder().decode([[String: String]].self, from: data),

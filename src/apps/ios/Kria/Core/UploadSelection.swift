@@ -130,6 +130,19 @@ struct UploadFailure: Identifiable, Equatable, Sendable {
     /// Files and no-Photos-access failures. Keys the error to the asset, not to one attempt at it, so a
     /// re-attempt replaces the line instead of stacking another one (KRI-180).
     var selectionKey: String? = nil
+    /// Why it failed decides what the creator is told and offered (KRI-211): an unreadable file is
+    /// simply left out, while an upload that failed on the way still exists and can be retried.
+    var cause: Cause = .unreadable
+
+    enum Cause: Sendable {
+        /// The file could not be read at all; choosing it again is the only way back.
+        case unreadable
+        /// The file is fine but the upload or attach failed (network, storage, server). Its upload
+        /// record is kept, so Retry works.
+        case uploadFailed
+        /// A leftover record that can no longer be resumed; it has to be chosen again.
+        case cannotResume
+    }
 }
 
 /// FIFO limiter for the expensive part of preparing a clip (import + hash, and the proxy

@@ -62,11 +62,16 @@ struct SlidePostWorkspaceView: View {
     private var uploadProjectID: UUID { ownerThread.flatMap { UUID(uuidString: $0.id) } ?? project.id }
     private var hasPendingAssets: Bool {
         session.state?.assets.contains { ["pending", "queued", "uploaded", "processing", "analyzing", "uploading"].contains($0.status) } == true
-            || pendingUploads.contains { $0.projectID == uploadProjectID }
+            // A record whose upload failed stays for Retry but is not in progress (KRI-211).
+            || BackgroundUploadCoordinator.inProgressRecords(pendingUploads).contains { $0.projectID == uploadProjectID }
             || BackgroundUploadCoordinator.reservedCount(projectID: uploadProjectID, role: .visual, inFlight: uploadInFlight, records: pendingUploads, selections: photoSelections) > 0
     }
-    private var hasFailedUploads: Bool { uploadFailures.contains { $0.projectID == uploadProjectID } || session.state?.assets.contains { $0.status == "failed" || ["missing", "expired"].contains($0.mediaStatus ?? "") } == true }
-    private var canRequestProposal: Bool { !session.isBusy && !session.hasConflict && !hasPendingAssets && !hasFailedUploads && !session.readyAssets.isEmpty }
+    private var hasSkippedFiles: Bool { uploadFailures.contains { $0.projectID == uploadProjectID } }
+    /// The server still lists an asset it could not keep. A file that never got that far — one the
+    /// picker couldn't read (`hasSkippedFiles`) — is simply left out and never blocks asking Kria (KRI-211).
+    private var hasFailedAssets: Bool { session.state?.assets.contains { $0.status == "failed" || ["missing", "expired"].contains($0.mediaStatus ?? "") } == true }
+    private var hasFailedUploads: Bool { hasSkippedFiles || hasFailedAssets }
+    private var canRequestProposal: Bool { !session.isBusy && !session.hasConflict && !hasPendingAssets && !hasFailedAssets && !session.readyAssets.isEmpty }
 
     private var canCreateRender: Bool {
         guard !session.hasUnsavedChanges, !isRendering else { return false }
@@ -105,7 +110,7 @@ struct SlidePostWorkspaceView: View {
             SlidePostAssistantSheet(
                 session: session, api: model.api, itemID: itemID,
                 canRequestProposal: canRequestProposal,
-                uploadGuidance: hasFailedUploads ? "Resolve or remove failed photos and videos before asking Kria." : hasPendingAssets ? "Wait for every photo and video to finish importing before asking Kria." : nil
+                uploadGuidance: hasFailedAssets ? "Resolve or remove failed photos and videos before asking Kria." : hasPendingAssets ? "Wait for every photo and video to finish importing before asking Kria." : nil
             )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)

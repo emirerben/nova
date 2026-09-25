@@ -349,10 +349,6 @@ private struct CreationWorkspaceView: View {
         return selectedFormat == .montage && destination.visualKinds != nil ? fullThread?.deviceReadyVisualCount ?? 0 : 0
     }
 
-    private var hasUploadFailures: Bool {
-        uploadFailures.contains { $0.projectID == project.id }
-    }
-
     private var activeProposalEvent: ThreadEvent? {
         if let approval {
             return events.last { $0.eventType == "draft_applied" && $0.payload?["turn_id"]?.stringValue == approval.turnID }
@@ -396,7 +392,7 @@ private struct CreationWorkspaceView: View {
     }
 
     private var activeUploadIDs: Set<UUID> {
-        var ids = Set(uploadRecords.filter { $0.projectID == project.id }.map(\.id))
+        var ids = Set(BackgroundUploadCoordinator.inProgressRecords(uploadRecords).filter { $0.projectID == project.id }.map(\.id))
         ids.formUnion(uploadInFlight.filter { $0.value.projectID == project.id }.keys)
         if let selection = photoSelections[project.id.uuidString] {
             ids.formUnion(selection.entries.values.filter { $0.mediaID == nil }.map(\.recordID))
@@ -518,7 +514,8 @@ private struct CreationWorkspaceView: View {
     }
 
     private var pendingUploadCount: Int {
-        uploadRecords.filter { $0.projectID == project.id }.count + preparingUploadCount
+        // A record whose upload failed stays in `uploadRecords` for Retry, but Send must not wait for it.
+        BackgroundUploadCoordinator.inProgressRecords(uploadRecords).filter { $0.projectID == project.id }.count + preparingUploadCount
     }
 
     private var isUITesting: Bool {
@@ -582,7 +579,7 @@ private struct CreationWorkspaceView: View {
                     isSending: isSending || isActing,
                     canAttach: canAttachMedia,
                     canSendWithoutText: readyMediaCount > 0,
-                    blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures,
+                    blocksSubmission: isThinking || pendingUploadCount > 0,
                     placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
                     isFocused: $composerFocused,
                     attach: openAttachments,
@@ -607,6 +604,23 @@ private struct CreationWorkspaceView: View {
         .onReceive(model.uploads.$inFlight) { uploadInFlight = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$failures) { uploadFailures = $0 }
+        #if DEBUG
+        // KRI-211 fixtures: `1` = one file that couldn't be read; `record` = an upload that failed on
+        // the way and still has its record (Retry). Neither may block Send.
+        .task(id: project.id) {
+            switch ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_UPLOAD_FAILURE"] {
+            case "1":
+                model.uploads.reportFailure(
+                    projectID: project.id, role: .clip, filename: "Selected item",
+                    message: "This file couldn’t be read. Try Files or choose it again."
+                )
+            case "record":
+                model.uploads.seedFailedUploadForTesting(projectID: project.id)
+            default:
+                break
+            }
+        }
+        #endif
         .onReceive(model.uploads.$previewVersion) { previewVersion = $0 }
         .onReceive(model.uploads.$progress) { uploadProgress = $0 }
         .onReceive(model.uploads.$attachedThreads) { threads in
@@ -673,7 +687,7 @@ private struct CreationWorkspaceView: View {
             }
             ChatComposer(
                 text: $prompt, isSending: isSending || isActing,
-                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
+                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
             )
         }
         .background(KriaColor.paper)
@@ -706,6 +720,7 @@ private struct CreationWorkspaceView: View {
                     removeMedia: { mediaID in performAction("remove_media", payload: ["media_id": .string(mediaID)]) },
                     failures: uploadFailures.filter { $0.projectID == project.id },
                     dismissFailure: { model.uploads.dismissFailure(id: $0) },
+                    retryFailure: { id in Task { await model.uploads.retryUpload(recordID: id) } },
                     // Only a project this iPhone renders can be made of Visuals
                     // alone, and only from the Visuals the server's rule counts.
                     visualCount: selectedFormat == .slides
@@ -858,7 +873,7 @@ private struct CreationWorkspaceView: View {
         guard !isSending, !isActing, !isThinking,
               let message = ChatSubmission.message(
                 text: submittedMessage ?? prompt, readyMediaCount: readyMediaCount,
-                pendingUploadCount: pendingUploadCount, hasUploadFailures: hasUploadFailures
+                pendingUploadCount: pendingUploadCount
               ) else { return }
         let draftToRestore = submittedMessage == nil ? prompt : message
         isSending = true
@@ -894,6 +909,7 @@ private struct CreationWorkspaceView: View {
             do {
                 let thread = try await model.api.sendCreationMessage(threadID: project.id, message: message, expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID)
                 pendingTurnSubmission = nil
+                model.uploads.clearUnreadableFailures(projectID: project.id)
                 apply(thread, requestSequence: requestSequence)
                 conversationAcceptedID = UUID()
                 await editorSession.synchronizePromptRevision()
@@ -935,6 +951,9 @@ private struct CreationWorkspaceView: View {
             return
         }
         pendingTurnSubmission = nil
+        // The banner said these files won't be sent. Only now that the server has the message has it
+        // done its job; a conflict, a network error or an unsaved editor leaves it (and the draft) alone.
+        model.uploads.clearUnreadableFailures(projectID: project.id)
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
         conversationAcceptedID = UUID()
         isThinking = true
