@@ -64,6 +64,20 @@ final class ScrollEdgeFadeTests: XCTestCase {
         XCTAssertEqual(metrics(offset: -60, content: 1000, container: 400, insets: topInset).top, 0)
     }
 
+    func testTopInsetIsCarriedSoTheBlurCoversTheWholeHeaderBlock() {
+        // Status bar + header (+ Chat/Editor row when shown) is the top inset; the
+        // blur band is sized from it, and it grows when the extra row appears.
+        let header = EdgeInsets(top: 126, leading: 0, bottom: 116, trailing: 0)
+        XCTAssertEqual(metrics(offset: -126, content: 1000, container: 632, insets: header).insetTop, 126)
+        let withSwitch = EdgeInsets(top: 178, leading: 0, bottom: 116, trailing: 0)
+        XCTAssertEqual(metrics(offset: -178, content: 1000, container: 580, insets: withSwitch).insetTop, 178)
+        // No floating block -> no inset -> the caller falls back to the thin band.
+        XCTAssertEqual(metrics(content: 1000, container: 400).insetTop, 0)
+        // A negative inset (never expected) can't produce a negative band.
+        let odd = EdgeInsets(top: -5, leading: 0, bottom: 0, trailing: 0)
+        XCTAssertEqual(metrics(content: 400, container: 400, insets: odd).insetTop, 0)
+    }
+
     func testContentBeneathFloatingChromeCountsAsHiddenBelowTheComposer() {
         // Header 92pt + composer 84pt insets on a 700pt viewport, resting at the top:
         // the header inset is not hidden content, the content below the composer is.

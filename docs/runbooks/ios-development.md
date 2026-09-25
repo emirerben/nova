@@ -221,17 +221,23 @@ real safe-area inset, never inside `bottomClearance`'s own padding budget.
 the editor's Kria sheet). Other scroll surfaces (the projects drawer, editor
 strips, carousels, slide-post rows) keep their normal hard clip on purpose.
 
-`.kriaScrollEdgeFade()` (`DesignSystem/ScrollEdgeFade.swift`) blurs a thin band
-(`length`, default 6pt) at the top and bottom edges of a vertical `ScrollView`:
-a `.regularMaterial` strip at full strength across most of the band and easing
-out at its inner end, laid over the content. The band sits at the scroll view's real frame edges, which are
-the screen edges because the transcript runs beneath the floating chrome, so
-content stays fully crisp, even behind the header and composer, until it is 6pt
-from the top or bottom edge. An edge at rest, with nothing past it, is not
-touched. It is a blur, not a fade, and deliberately thin: an earlier, much
-taller frosted band read as a large grey "block". Apply the modifier directly
-on the `ScrollView`, before any `.overlay`/`.background` that must stay
-unmasked. It never changes frames or hit testing.
+`.kriaScrollEdgeFade()` (`DesignSystem/ScrollEdgeFade.swift`) blurs what scrolls
+past the edges of a vertical `ScrollView`, using `.regularMaterial` strips laid
+over the content:
+
+- **Top:** everything above the bottom of the block floating over the top of
+  the transcript is blurred. That block is the top content inset: status bar,
+  the chat header, and the Chat/Editor row when it is shown (the band is sized
+  from the inset, so it grows and shrinks with the row). Text passing under the
+  header is frosted; text below the block is crisp. With no top inset (the
+  editor's Kria sheet) it falls back to a thin band (`length`, default 6pt).
+- **Bottom:** a thin `length` (6pt) band at the screen edge.
+
+A blurred edge appears only once content has scrolled past it; at rest, with
+nothing past an edge, nothing is drawn. Both bands ease out over their inner
+~10pt so they don't end on a hard line. Apply the modifier directly on the
+`ScrollView`, before any `.overlay`/`.background` that must stay unmasked. It
+never changes frames or hit testing.
 
 - **Floating chat chrome:** the chat header (menu, title, actions, editor
   switch) and the composer float over the transcript as frosted capsules
@@ -245,7 +251,7 @@ unmasked. It never changes frames or hit testing.
   the header buttons do.
 - **Reduce Transparency** (system setting, or `UI_TEST_REDUCE_TRANSPARENCY=1`
   via `KriaTransparency.isReduced`): the floating capsules become solid paper
-  and the edge blur becomes a plain alpha fade over the same band.
+  and the edge blur becomes a plain alpha fade over the same bands.
   The env override exists because `simctl ui` does not flip the setting for a
   simulator app process; the glass island shares the same helper.
 - **Sheet titles:** the visible "Kria" heading is removed from both Kria AI

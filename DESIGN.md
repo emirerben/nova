@@ -541,11 +541,12 @@ changes or Reduce Motion, while panel drafts and outgoing edit cleanup stay
 shared across tool switches. See the KRI-148 section of the iOS development
 runbook for the interaction and verification contract.
 
-The native chat transcript never hard-cuts content at the screen edges: where
-content continues past the top or bottom, `kriaScrollEdgeFade` blurs a thin 6pt
-band at the very edge (an `.ultraThinMaterial` strip; a plain fade under Reduce
-Transparency). Content stays crisp until it is that close to the edge. Only the
-chat gets this; other scroll surfaces keep their normal clip. The chat header and composer float over the transcript as frosted
+The native chat transcript never hard-cuts content at the screen edges:
+`kriaScrollEdgeFade` blurs (an `.ultraThinMaterial`/`.regularMaterial` strip; a
+plain fade under Reduce Transparency) everything that scrolls above the floating
+header block (status bar, header, and the Chat/Editor row when shown), plus a
+thin 6pt band at the bottom edge. Text below the header block stays crisp. Only
+the chat gets this; other scroll surfaces keep their normal clip. The chat header and composer float over the transcript as frosted
 capsules (`kriaFloatingSurface`) and the transcript runs full-bleed beneath
 them, so text scrolls and fades under both instead of ending at an opaque bar.
 The Kria AI sheets carry no visible "Kria" title. See the KRI-197 section of
