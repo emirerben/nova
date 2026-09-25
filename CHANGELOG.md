@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.226.0] - 2026-09-25
+
+### Changed
+- fix(kria): verify reaction beats and whole-take asks in brief receipts (#1249) <!-- release-pr: 1249 -->
+
 ## [0.76.225.0] - 2026-09-25
 
 ### Changed
