@@ -603,68 +603,133 @@ def test_first_user_message_is_best_effort_and_never_raises(monkeypatch):
     assert gb._first_user_message(str(uuid.uuid4())) == ""
 
 
-def _checkpoint_harness(monkeypatch, rows):
-    item = SimpleNamespace(clip_assignments=rows)
+def _checkpoint_harness(monkeypatch, item, *, job_item_id="present"):
+    """A real (in-memory) PlanItem behind a fake session: the REAL sole-writer facade runs,
+    which is what a Mock item hid."""
     session = Mock()
-    session.get.return_value = SimpleNamespace(content_plan_item_id=uuid.uuid4())
-    session.execute.return_value.scalar_one_or_none.return_value = item
+    session.get.return_value = (
+        None
+        if job_item_id == "no-job"
+        else SimpleNamespace(
+            content_plan_item_id=None if job_item_id == "no-item" else uuid.uuid4()
+        )
+    )
+    session.execute.return_value.scalar_one_or_none.return_value = (
+        None if job_item_id == "missing-row" else item
+    )
 
     @contextmanager
     def sessions():
         yield session
 
     monkeypatch.setattr(gb, "_sync_session", sessions)
-    return item, session
+    # No speech-cleanup analysis rows in this harness (the rollout flag is off in prod paths
+    # that reach here too); the facade only needs the "current analysis" to be None.
+    monkeypatch.setattr(
+        "app.services.speech_cleanup_preflight.mutation_current_analysis_sync",
+        lambda *a, **k: None,
+    )
+    return session
 
 
-def _enriched(generation="7", facts=None):
+def _plan_item(rows):
+    from app.models import PlanItem
+
+    item = PlanItem()
+    item.id = uuid.uuid4()
+    item.clip_assignments = rows
+    item.clip_gcs_paths = [row["gcs_path"] for row in rows]
+    item.edit_format = "montage"
+    item.audio_mode = "kria"
+    item.speech_cleanup_enabled = True
+    return item
+
+
+def _row(**overrides):
     return {
+        "media_id": "clip-0",
+        "gcs_path": "users/u/analysis-proxy-clip-0.mp4",
+        "shot_id": None,
+        "storage_generation": "7",
+        "analysis": {"best_moments": [{"start_s": 1.0}]},
+        **overrides,
+    }
+
+
+def _enriched(generation="7", **overrides):
+    entry = {
         "media_id": "clip-0",
         "gcs_path": "users/u/analysis-proxy-clip-0.mp4",
         "storage_generation": generation,
         "analysis": {
-            clip_facts.FACTS_KEY: facts or [{"kind": "landmark", "value": "Galata Bridge"}],
+            clip_facts.FACTS_KEY: [
+                {"kind": "landmark", "value": "Galata Bridge", "provenance": "inferred"}
+            ],
             clip_facts.LANDMARK_GENERATION_KEY: f"{generation}|en",
         },
     }
+    entry.update(overrides)
+    return entry
 
 
-def test_unified_facts_are_persisted_onto_the_items_own_assignment(monkeypatch):
+JOB = "00000000-0000-0000-0000-000000000001"
+
+
+def test_unified_facts_are_persisted_through_the_sole_writer_facade(monkeypatch):
     """A landmark asked for during a render must survive it, or every re-render and Celery
-    retry asks (and pays) again."""
-    row = {
-        "media_id": "clip-0",
-        "gcs_path": "users/u/analysis-proxy-clip-0.mp4",
-        "storage_generation": "7",
-        "analysis": {"best_moments": [{"start_s": 1.0}]},
-    }
-    other = {"media_id": "clip-1", "gcs_path": "x", "analysis": {}}
-    item, session = _checkpoint_harness(monkeypatch, [row, other])
+    retry asks (and pays) again. Merged with what is stored, nothing else touched, and the
+    speech-cleanup identity is not disturbed."""
+    row = _row(
+        analysis={
+            "best_moments": [{"start_s": 1.0}],
+            clip_facts.FACTS_KEY: [
+                {"kind": "place", "value": "Ortaköy", "provenance": "geocode"},
+                {"kind": "landmark", "value": "Old Guess", "provenance": "inferred"},
+            ],
+        }
+    )
+    other = {"media_id": "clip-1", "gcs_path": "users/u/x.mp4", "shot_id": None, "analysis": {}}
+    item = _plan_item([row, other])
+    session = _checkpoint_harness(monkeypatch, item)
 
-    gb._checkpoint_unified_facts("00000000-0000-0000-0000-000000000001", _enriched(), None)
+    gb._checkpoint_unified_facts(JOB, _enriched(), None)
 
     saved = item.clip_assignments[0]["analysis"]
     assert saved["best_moments"] == [{"start_s": 1.0}], "other analysis is left alone"
     assert saved[clip_facts.LANDMARK_GENERATION_KEY] == "7|en"
-    assert saved[clip_facts.FACTS_KEY][0]["value"] == "Galata Bridge"
-    assert item.clip_assignments[1] == other
+    by_kind = {f["kind"]: f["value"] for f in saved[clip_facts.FACTS_KEY]}
+    assert by_kind == {"place": "Ortaköy", "landmark": "Galata Bridge"}, "merged, not overwritten"
+    assert item.clip_assignments[1]["gcs_path"] == other["gcs_path"]
+    # The facade ran: an analysis-only write superseded nothing and kept the consent mirror.
+    assert item.speech_cleanup_enabled is True
     session.commit.assert_called_once()
 
 
-def test_unified_facts_never_overwrite_a_newer_upload_of_the_same_clip(monkeypatch):
-    row = {
-        "media_id": "clip-0",
-        "gcs_path": "users/u/analysis-proxy-clip-0.mp4",
-        "storage_generation": "8",
-        "analysis": {},
-    }
-    item, session = _checkpoint_harness(monkeypatch, [row])
-    gb._checkpoint_unified_facts("00000000-0000-0000-0000-000000000001", _enriched("7"), None)
-    assert item.clip_assignments == [row]
+@pytest.mark.parametrize(
+    "mismatch",
+    [{"media_id": "other"}, {"gcs_path": "users/u/elsewhere.mp4"}, {"storage_generation": "8"}],
+)
+def test_unified_facts_are_only_written_for_the_exact_clip_and_generation(monkeypatch, mismatch):
+    item = _plan_item([_row()])
+    before = [dict(r) for r in item.clip_assignments]
+    session = _checkpoint_harness(monkeypatch, item)
+    gb._checkpoint_unified_facts(JOB, _enriched(**mismatch), None)
+    assert item.clip_assignments == before
+    session.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("missing", ["no-job", "no-item", "missing-row"])
+def test_unified_facts_checkpoint_tolerates_a_missing_job_or_item(monkeypatch, missing):
+    item = _plan_item([_row()])
+    before = [dict(r) for r in item.clip_assignments]
+    session = _checkpoint_harness(monkeypatch, item, job_item_id=missing)
+    gb._checkpoint_unified_facts(JOB, _enriched(), None)
+    assert item.clip_assignments == before
     session.commit.assert_not_called()
 
 
 def test_a_failed_facts_checkpoint_never_fails_the_render(monkeypatch):
-    item, session = _checkpoint_harness(monkeypatch, [])
+    item = _plan_item([_row()])
+    session = _checkpoint_harness(monkeypatch, item)
     session.execute.side_effect = RuntimeError("db down")
-    gb._checkpoint_unified_facts("00000000-0000-0000-0000-000000000001", _enriched(), None)
+    gb._checkpoint_unified_facts(JOB, _enriched(), None)

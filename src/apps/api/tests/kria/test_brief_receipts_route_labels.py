@@ -343,21 +343,25 @@ def test_the_landmark_prompt_version_moved_with_its_text():
     assert LandmarkGuessAgent.spec.prompt_version == "2026-09-25.1"
 
 
-def test_a_guess_is_reused_for_its_language_or_the_bare_generation_but_not_another_language():
+def test_which_recorded_guesses_count_as_already_asked():
     from app.services import clip_facts as cf
 
     entry = {"media_id": "a", "storage_generation": "7"}
-    en = cf.with_landmark_fact(entry, None, language="en")
-    assert en["analysis"][cf.LANDMARK_GENERATION_KEY] == "7|en"
-    assert cf._landmark_attempted(en, "en")
-    assert not cf._landmark_attempted(en, "tr")
-    # The edit-proposal enrichment records the bare generation (no creator text yet); a
-    # render with creator text reuses that answer instead of asking again.
     bare = cf.with_landmark_fact(entry, None)
+    tagged = cf.with_landmark_fact(entry, None, language="en")
     assert bare["analysis"][cf.LANDMARK_GENERATION_KEY] == "7"
-    assert cf._landmark_attempted(bare) and cf._landmark_attempted(bare, "en")
+    assert tagged["analysis"][cf.LANDMARK_GENERATION_KEY] == "7|en"
+    # The edit-proposal path (no creator language) never re-asks and never overwrites:
+    # any entry for this generation counts, bare or tagged.
+    assert cf._landmark_attempted(bare) and cf._landmark_attempted(tagged)
+    # Text in a language we cannot name shares the bare entry.
+    assert cf._landmark_attempted(bare, "und")
+    # A known language wants its own tagged entry: a bare guess is asked again once.
+    assert not cf._landmark_attempted(bare, "en")
+    assert cf._landmark_attempted(tagged, "en") and cf._landmark_attempted(tagged, "tr")
     # A new generation of the file never reuses an old answer.
-    assert not cf._landmark_attempted({**bare, "storage_generation": "8"}, "en")
+    assert not cf._landmark_attempted({**tagged, "storage_generation": "8"})
+    assert not cf._landmark_attempted(entry)
 
 
 def _landmark_entry(*, key: str | None = "7"):
@@ -381,76 +385,80 @@ def _ref():
     return type("Ref", (), {"kind": "video", "analysis": {}})()
 
 
-def test_a_bare_generation_landmark_is_reused_with_no_agent_call_when_creator_text_exists(
-    monkeypatch,
-):
-    from app.services import clip_facts as cf
-
-    monkeypatch.setattr(
-        cf, "_guess_landmark", lambda *a, **k: pytest.fail("the agent ran for a cached clip")
-    )
-    entry = _landmark_entry(key="7")
-    out = cf.enrich_clip_facts(
-        [(entry, _ref())], make_ctx=lambda m: object(), creator_text="my run from A to B"
-    )
-    kept = cf.landmark_fact_for_assignment(out[0][0])
-    assert kept is not None and kept.value == "Mavi Köprü"
+ENGLISH = "my run from A to B"
 
 
-def test_an_unknown_answer_never_deletes_a_landmark_found_for_the_same_generation(monkeypatch):
+def test_a_bare_key_landmark_is_re_asked_once_with_a_known_language_then_reused(monkeypatch):
+    from app.schemas.clip_understanding import ClipFact
     from app.services import clip_facts as cf
 
     calls: list[str] = []
 
     def guess(assignment, *, ctx, creator_text=""):
         calls.append(creator_text)
-        return None
+        return ClipFact(kind="landmark", value="Blue Bridge", provenance="inferred")
 
     monkeypatch.setattr(cf, "_guess_landmark", guess)
-    # Recorded for another language: a fresh pass runs, says "unknown", the fact survives.
-    entry = _landmark_entry(key="7|tr")
-    out = cf.enrich_clip_facts(
-        [(entry, _ref())], make_ctx=lambda m: object(), creator_text="my run from A to B"
+    persisted: dict = {}
+    first = cf.enrich_clip_facts(
+        [(_landmark_entry(key="7"), _ref())],
+        make_ctx=lambda m: object(),
+        creator_text=ENGLISH,
+        on_updated=lambda entry, ref: persisted.update(entry=entry),
     )
-    assert calls == ["my run from A to B"]
+    assert calls == [ENGLISH], "the bare-key guess predates the creator's language: ask again"
+    assert cf.landmark_fact_for_assignment(first[0][0]).value == "Blue Bridge"
+    assert persisted["entry"]["analysis"][cf.LANDMARK_GENERATION_KEY] == "7|en"
+
+    cf.enrich_clip_facts(
+        [(persisted["entry"], _ref())], make_ctx=lambda m: object(), creator_text=ENGLISH
+    )
+    assert calls == [ENGLISH], "a second render must not call the agent"
+
+
+def test_an_unnamed_language_reuses_the_bare_key_with_no_agent_call(monkeypatch):
+    from app.services import clip_facts as cf
+
+    monkeypatch.setattr(
+        cf, "_guess_landmark", lambda *a, **k: pytest.fail("the agent ran for a cached clip")
+    )
+    out = cf.enrich_clip_facts(
+        [(_landmark_entry(key="7"), _ref())],
+        make_ctx=lambda m: object(),
+        creator_text="Eminönü Arnavutköy",  # names only: language "und"
+    )
+    assert cf.landmark_fact_for_assignment(out[0][0]).value == "Mavi Köprü"
+    assert out[0][0]["analysis"][cf.LANDMARK_GENERATION_KEY] == "7"
+
+
+def test_the_proposal_path_leaves_a_language_tagged_entry_alone(monkeypatch):
+    """edit_proposal_build enriches with NO creator text, before any render."""
+    from app.services import clip_facts as cf
+
+    monkeypatch.setattr(
+        cf, "_guess_landmark", lambda *a, **k: pytest.fail("the proposal path re-asked")
+    )
+    entry = _landmark_entry(key="7|en")
+    out = cf.enrich_clip_facts([(entry, _ref())], make_ctx=lambda m: object())
+    assert out[0][0]["analysis"][cf.LANDMARK_GENERATION_KEY] == "7|en"
+    assert cf.landmark_fact_for_assignment(out[0][0]).value == "Mavi Köprü"
+
+
+def test_an_unknown_answer_never_deletes_a_landmark_found_for_the_same_generation(monkeypatch):
+    from app.services import clip_facts as cf
+
+    monkeypatch.setattr(cf, "_guess_landmark", lambda *a, **k: None)
+    out = cf.enrich_clip_facts(
+        [(_landmark_entry(key="7"), _ref())], make_ctx=lambda m: object(), creator_text=ENGLISH
+    )
     kept = cf.landmark_fact_for_assignment(out[0][0])
     assert kept is not None and kept.value == "Mavi Köprü"
     assert out[0][0]["analysis"][cf.LANDMARK_GENERATION_KEY] == "7|en"
     # A NEW generation of the file does drop the old file's landmark.
-    moved = {**entry, "storage_generation": "8"}
-    dropped = cf.with_landmark_fact(moved, None, language="en")
-    assert cf.landmark_fact_for_assignment(dropped) is None
-
-
-def test_a_second_render_asks_the_agent_nothing_because_the_first_persisted_its_answer(
-    monkeypatch,
-):
-    from app.schemas.clip_understanding import ClipFact
-    from app.services import clip_facts as cf
-
-    calls: list[int] = []
-
-    def guess(assignment, *, ctx, creator_text=""):
-        calls.append(1)
-        return ClipFact(kind="landmark", value="Mavi Köprü", provenance="inferred")
-
-    monkeypatch.setattr(cf, "_guess_landmark", guess)
-    stored: dict = {}
-
-    def checkpoint(entry, ref):  # what the worker writes back onto the item's assignment
-        stored["entry"] = entry
-
-    capture = {"place": {"locality": "Ortaköy"}, "capture_time": "2026-09-20T07:31:02Z"}
-    entry = {"media_id": "a", "storage_generation": "7", "capture": capture}
-    text = "my run from A to B"
-    cf.enrich_clip_facts(
-        [(entry, _ref())], make_ctx=lambda m: object(), creator_text=text, on_updated=checkpoint
+    moved = {**_landmark_entry(key="7"), "storage_generation": "8"}
+    assert (
+        cf.landmark_fact_for_assignment(cf.with_landmark_fact(moved, None, language="en")) is None
     )
-    assert calls == [1] and cf.landmark_fact_for_assignment(stored["entry"]) is not None
-    cf.enrich_clip_facts(
-        [(stored["entry"], _ref())], make_ctx=lambda m: object(), creator_text=text
-    )
-    assert calls == [1], "the persisted answer must be reused"
 
 
 def test_enrich_passes_the_creators_words_to_the_agent_and_keys_the_answer(monkeypatch):

@@ -233,19 +233,30 @@ def _landmark_key(assignment: Mapping[str, Any], language: str = "") -> str:
     return f"{generation}|{language}" if language else generation
 
 
-def _landmark_attempted(assignment: Mapping[str, Any], language: str = "") -> bool:
-    """True once a guess (even an empty one) was recorded for this generation.
+# Languages whose rule is worth a dedicated guess. "und" (text in another language) and ""
+# (no text) share the untagged bare-generation entry.
+_TAGGED_LANGUAGES = frozenset({"tr", "en"})
 
-    A guess recorded under this language's key counts, and so does one recorded under the
-    bare generation key (the edit-proposal enrichment's): that answer is already stored on
-    the clip, so a render with creator text reuses it instead of paying for the same guess
-    again on every render, re-render and Celery retry. A guess made for a different
-    language does not count."""
+
+def _landmark_attempted(assignment: Mapping[str, Any], language: str = "") -> bool:
+    """True once a guess (even an empty one) was recorded for this storage generation.
+
+    Without a known creator language (the edit-proposal enrichment, which runs before the
+    creator's words are known, or text in a language we cannot name) ANY entry for this
+    generation counts, bare or language-tagged: that path never re-asks and never
+    overwrites a tagged entry. With a known language only a language-tagged entry counts,
+    so a guess made before the creator's language was known is re-asked ONCE with the
+    language rule and then reused by every later render."""
     analysis = assignment.get("analysis")
     if not isinstance(analysis, dict):
         return False
     recorded = analysis.get(LANDMARK_GENERATION_KEY)
-    return recorded in (_landmark_key(assignment, language), _generation(assignment))
+    if not isinstance(recorded, str):
+        return False
+    generation, _sep, tag = recorded.partition("|")
+    if generation != _generation(assignment):
+        return False
+    return True if language not in _TAGGED_LANGUAGES else bool(tag)
 
 
 def _landmark_prompt_place(assignment: Mapping[str, Any]) -> tuple[str, float | None, float | None]:
@@ -401,6 +412,8 @@ def enrich_clip_facts(
     from app.agents.landmark_guess import creator_language  # noqa: PLC0415
 
     language = creator_language(creator_text)
+    if language not in _TAGGED_LANGUAGES:
+        language = ""  # untagged: shares (and reuses) the bare-generation entry
     updated: list[tuple[dict[str, Any], Any]] = []
     for entry, ref in results:
         new_entry = with_capture_facts(entry)
@@ -442,7 +455,7 @@ def enrich_clip_facts(
         entry, _ref = updated[index]
         try:
             # With no creator text the call is exactly the pre-KRI-210 one.
-            extra = {"creator_text": creator_text} if language else {}
+            extra = {"creator_text": creator_text} if creator_text.strip() else {}
             return _guess_landmark(entry, ctx=make_ctx(str(entry.get("media_id"))), **extra)
         except Exception as exc:  # noqa: BLE001 — best-effort context, never fatal
             log.warning(

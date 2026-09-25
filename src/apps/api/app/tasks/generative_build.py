@@ -4497,14 +4497,31 @@ def _checkpoint_unified_facts(job_id: str, entry: dict, _ref: Any) -> None:
     Without this a landmark asked for during a render is lost, so every re-render and
     Celery retry would ask (and pay) again and could answer differently. Only the fact
     rows and their cache key are written, for the exact media identity and storage
-    generation the guess was made for; a fact from an older generation of the file is
-    never written over a newer upload.
+    generation the guess was made for, and through the sole-writer facade
+    (`mutate_plan_item_media`) like every other clip-metadata write: an analysis-only
+    change leaves the narration fingerprint and footage identity alone, so nothing is
+    superseded (and no speech-cleanup preflight is scheduled for it).
+
+    No ownership-epoch fence is taken: a delivery that lost ownership can still write, but
+    what it writes is a fact for a specific (media_id, path, storage generation) that is
+    true whichever delivery learned it, so a stale write is harmless data.
     """
     from sqlalchemy import select  # noqa: PLC0415
 
     from app.models import PlanItem  # noqa: PLC0415
-    from app.schemas.clip_understanding import FACTS_KEY  # noqa: PLC0415
-    from app.services.clip_facts import LANDMARK_GENERATION_KEY  # noqa: PLC0415
+    from app.services.clip_facts import (  # noqa: PLC0415
+        FACTS_KEY,
+        LANDMARK_GENERATION_KEY,
+        _merge_stored_facts,
+        understanding_facts,
+    )
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        mutate_plan_item_media,
+    )
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        mutation_current_analysis_sync,
+    )
 
     analysis = entry.get("analysis")
     if not isinstance(analysis, dict) or not entry.get("gcs_path") or not entry.get("media_id"):
@@ -4535,16 +4552,28 @@ def _checkpoint_unified_facts(job_id: str, entry: dict, _ref: Any) -> None:
                     != generation
                 ):
                     continue
-                merged = dict(row.get("analysis") or {})
-                for key in (FACTS_KEY, LANDMARK_GENERATION_KEY):
-                    if key in analysis:
-                        merged[key] = analysis[key]
-                if merged != (row.get("analysis") or {}):
+                stored = dict(row.get("analysis") or {})
+                merged = dict(stored)
+                merged[FACTS_KEY] = _merge_stored_facts(stored, understanding_facts(analysis))
+                if LANDMARK_GENERATION_KEY in analysis:
+                    merged[LANDMARK_GENERATION_KEY] = analysis[LANDMARK_GENERATION_KEY]
+                if merged != stored:
                     rows[index] = {**row, "analysis": merged}
                     changed = True
-            if changed:
-                item.clip_assignments = rows
-                db.commit()
+            if not changed:
+                return
+            result = mutate_plan_item_media(
+                item,
+                detector_policy=current_detector_policy(),
+                clip_assignments=rows,
+                current_analysis=mutation_current_analysis_sync(db, item.id, for_update=True),
+            )
+            if result.source_changed:
+                # Never expected for an analysis-only write; if it happens the facade has
+                # already begun superseding, so undo it all rather than half-apply.
+                db.rollback()
+                return
+            db.commit()
     except Exception as exc:  # noqa: BLE001 - a lost checkpoint only costs a later re-ask
         log.warning("unified_montage.facts_checkpoint_failed", error=str(exc)[:240])
 
