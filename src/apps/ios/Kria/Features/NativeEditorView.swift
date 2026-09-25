@@ -20,6 +20,10 @@ struct NativeEditorView: View {
     @State private var showsDeviceRender = false
     @State private var showsConversation = false
     @State private var selectedTextForActions: String?
+    /// KRI-185: a block opened from the Text tab's list edits its words first and
+    /// returns to that list; one opened from the timeline keeps the old behaviour.
+    @State private var textEditOrigin: TextEditOrigin = .timeline
+    private enum TextEditOrigin { case timeline, list }
     @State private var keyboardVisible = false
     /// KRI-170: the timeline handle and the panel handle are independent.
     /// `previewResize` is in points (positive shrinks the preview, negative
@@ -435,12 +439,16 @@ struct NativeEditorView: View {
     @ViewBuilder private var panelContent: some View {
         switch panel {
         case .textCreation:
-            NativeTextCreationPanel(session: session) { selection in
+            NativeTextCreationPanel(session: session, onDone: { selection in
                 selectedTextForActions = selection.id
                 changePanel(to: .text(selection.id))
-            }
+            }, onSelectBlock: { openTextBlock($0) })
         case .text(let id):
-            NativeEditorTextPanel(id: id, session: session) { changePanel(to: nil) }.id(id)
+            NativeEditorTextPanel(
+                id: id, session: session, initialTab: textEditOrigin == .list ? .edit : .style
+            ) {
+                if textEditOrigin == .list { showTextTab() } else { changePanel(to: nil) }
+            }.id(id)
         case .captions:
             NativeCaptionPanel(session: session) { changePanel(to: nil) }
         case .visuals:
@@ -466,6 +474,7 @@ struct NativeEditorView: View {
         guard panel != destination else { return }
         finishPanelEditing()
         inspector = nil
+        if case .text = destination {} else { textEditOrigin = .timeline }
         withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
             panel = destination
         }
@@ -484,13 +493,7 @@ struct NativeEditorView: View {
                 // Finish the outgoing destination before creating the draft,
                 // then install the creation destination directly. This keeps
                 // the panel mounted throughout the transition.
-                finishPanelEditing()
-                session.beginTextCreation()
-                guard session.pendingText != nil else { return }
-                inspector = nil
-                withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
-                    panel = .textCreation
-                }
+                showTextTab()
             }
         case .captions: changePanel(to: .captions)
         case .visuals:
@@ -501,6 +504,32 @@ struct NativeEditorView: View {
             changePanel(to: nil)
             inspector = .tool(tool)
         }
+    }
+
+    /// Opens the Text tab: the new-text field with the list of existing blocks.
+    private func showTextTab() {
+        finishPanelEditing()
+        textEditOrigin = .timeline
+        session.beginTextCreation()
+        guard session.pendingText != nil else { return }
+        inspector = nil
+        withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
+            panel = .textCreation
+            // The default panel fits about one row; open taller when there is a list to
+            // browse. The handle still resizes it, and closing the panel resets it.
+            if session.document.textBlocks.count > 1 { panelExpansion = max(panelExpansion, 0.55) }
+        }
+    }
+
+    /// A row in the Text tab's list: jump to the block and edit its words. The
+    /// timeline is disabled while a panel is open, so this selects the block itself.
+    private func openTextBlock(_ id: String) {
+        guard session.document.textElements.contains(where: { $0.id == id }) else { return }
+        session.cancelTextCreation()
+        selectedTextForActions = id
+        textEditOrigin = .list
+        session.select(EditorSelection(kind: .text, id: id))
+        changePanel(to: .text(id))
     }
 
     private func routeSelection() {
