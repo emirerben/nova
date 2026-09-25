@@ -42,7 +42,9 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-188: Creative Brief requirement extraction (`brief_updates`, taught only
 # when the brief is on for the creator) -- v37.
 # KRI-189: when/where clip facts with provenance (v38).
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v38"
+# KRI-190: brief `facts` (distance/activity/start/end) and an `order` requirement
+# are always captured when the creator states a route or a sequence (v39).
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v39"
 
 # Appended to the OWNED FOOTAGE SUMMARIES header line ONLY when CLIP_FACTS is on
 # for the account ("" otherwise, so the flag-off prompt is byte-identical). The
@@ -198,7 +200,15 @@ null", "description": "what is wanted in the creator's own framing, or null", "f
 in `description` with `literal` null. Put structured details in `facts` (for order: {"key":
 "capture_time"}; for timing: {"duration_s": 20}; for a route or distance: {"distance_km": 20,
 "start": "...", "end": "..."}). Keep the creator's language and spelling (Turkish stays
-Turkish). One requirement per (kind, scope): a new one replaces the older one. A message that
+Turkish). ALWAYS record what the creator states as structured `facts` on the requirement it
+belongs to, even when the same words also sit in a title or a sentence: a distance, an
+activity, a start point or an end point ("I ran 20K from Arnavutköy to Eminönü") go in `facts`
+as {"distance_km": 20, "activity": "run", "start": "Arnavutköy", "end": "Eminönü"} on the text
+requirement (title or per_clip) they describe; never return empty `facts` for a message that
+names one. ALWAYS add an `order` requirement when the creator names a sequence ("in the order
+I filmed", "chronologically", "from A to B", "start at X and finish at Y"): {"kind": "order",
+"scope": "global", "facts": {"key": "capture_time"}} plus "start"/"end" when named. One
+requirement per (kind, scope): a new one replaces the older one. A message that
 only asks to redo the edit ("do it again based on my prompt") adds no requirements -- propose a
 full strategy that honours EVERY requirement in the contract. Example: "Title it 20K Koşu, put
 the landmark name on each clip and order them by the time I filmed them" => brief_updates:

@@ -283,6 +283,88 @@ def test_observer_completes_a_first_render_with_no_pinned_variant() -> None:
     assert execution.result["variant_id"] == VARIANT
 
 
+_LEGACY_REVIEW = (
+    "The guided story cut is ready. "
+    "The approved render finished; review the opening, pacing, and text, "
+    "then tell me what you want changed."
+)
+
+
+def _unified_brief(version: int = 3):  # noqa: ANN202
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    return CreativeBrief(
+        version=version,
+        requirements=[
+            BriefRequirement(id="r1", kind="text", scope="per_clip", description="landmarks"),
+            BriefRequirement(id="r2", kind="timing", scope="global", description="fast"),
+        ],
+    )
+
+
+def _observe_unified(job: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, brief) -> list:  # noqa: ANN001
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(kria_runtime, "load_latest_brief_sync", lambda _db, _thread_id: brief)
+    _publish(job)
+    _outcome, _execution_row, events = _observe(job, {})
+    return events
+
+
+def test_observer_review_carries_the_unified_montage_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _device_job()
+    job.assembly_plan["unified_montage"] = {
+        "brief_version": 3,
+        "requirement_receipts": [
+            {
+                "requirement_id": "r1",
+                "status": "partial",
+                "reason": "Text landed on 10 of 14 clips.",
+                "inferred": ["Dolmabahce"],
+            },
+            {
+                "requirement_id": "r2",
+                "status": "partial",
+                "reason": "I can't verify this timing automatically.",
+                "inferred": [],
+            },
+        ],
+    }
+    events = _observe_unified(job, monkeypatch, _unified_brief())
+    review = next(e for e in events if e["event_type"] == "assistant_review")
+    assert review["content"].startswith("Not everything you asked for made it in:")
+    assert "10 of 14 clips" in review["content"]
+    assert "I guessed these, tell me if any is wrong: Dolmabahce" in review["content"]
+    assert [r["requirement_id"] for r in review["payload"]["requirement_receipts"]] == ["r1", "r2"]
+
+
+def test_observer_review_ignores_receipts_from_an_older_brief_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _device_job()
+    job.assembly_plan["unified_montage"] = {
+        "brief_version": 2,
+        "requirement_receipts": [
+            {"requirement_id": "r1", "status": "partial", "reason": "x", "inferred": []}
+        ],
+    }
+    events = _observe_unified(job, monkeypatch, _unified_brief(version=3))
+    review = next(e for e in events if e["event_type"] == "assistant_review")
+    assert review["content"] == _LEGACY_REVIEW
+    assert "requirement_receipts" not in review["payload"]
+
+
+def test_observer_review_is_unchanged_for_a_job_with_no_unified_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _device_job()
+    events = _observe_unified(job, monkeypatch, _unified_brief())
+    review = next(e for e in events if e["event_type"] == "assistant_review")
+    assert review["content"] == _LEGACY_REVIEW
+    assert "requirement_receipts" not in review["payload"]
+
+
 def test_observer_fails_a_device_render_the_phone_gave_up_on() -> None:
     job = _device_job()
     mark_device_failed(job, VARIANT, reason_code="thermal", detail="")

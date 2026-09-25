@@ -2029,6 +2029,52 @@ def _ready_variant(
     )
 
 
+def _unified_montage_review(
+    db: Any, thread: CreationThread, job: Job, default_text: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """Review text and receipts for a unified montage (KRI-190), or the default.
+
+    The receipts were computed by the render worker from what it actually put in
+    the plan (`plan_facts_from_unified_montage`), so the reply can only say what
+    was checked: what was met, what was partial and what could not be done. With
+    the Creative Brief off, no unified record, or nothing to report, this is the
+    unchanged default review.
+    """
+
+    record = (job.assembly_plan or {}).get("unified_montage")
+    if not isinstance(record, dict) or not record.get("requirement_receipts"):
+        return default_text, []
+    if not settings.creative_brief_for(thread.creator_id):
+        return default_text, []
+    brief = load_latest_brief_sync(db, thread.id)
+    if brief is None:
+        return default_text, []
+    if record.get("brief_version") != brief.version:
+        # The brief changed after the plan was made: its receipts describe the
+        # old wording, so say nothing about them.
+        return default_text, []
+    from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
+
+    receipts = []
+    for raw in record["requirement_receipts"]:
+        try:
+            receipts.append(RequirementReceipt.model_validate(raw))
+        except ValueError:
+            continue
+    live = {req.id: req for req in brief.live()}
+    receipts = [receipt for receipt in receipts if receipt.requirement_id in live]
+    if not receipts:
+        return default_text, []
+    checked = CreativeBrief(
+        version=brief.version,
+        requirements=[live[receipt.requirement_id] for receipt in receipts],
+    )
+    return (
+        reply_from_receipts(checked, receipts, summary=default_text),
+        [receipt.model_dump(mode="json") for receipt in receipts],
+    )
+
+
 def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | None]:
     """Settle one dispatched receipt from durable Job truth."""
 
@@ -2198,16 +2244,20 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     },
                 )
                 execution.observed_event_id = event.id
+                review_text, review_receipts = _unified_montage_review(
+                    db,
+                    thread,
+                    job,
+                    f"The {variant_id.replace('_', ' ')} cut is ready. "
+                    "The approved render finished; review the opening, pacing, and text, "
+                    "then tell me what you want changed.",
+                )
                 review = _append_sync_event(
                     db,
                     thread,
                     role="assistant",
                     event_type="assistant_review",
-                    content=(
-                        f"The {variant_id.replace('_', ' ')} cut is ready. "
-                        "The approved render finished; review the opening, pacing, and text, "
-                        "then tell me what you want changed."
-                    ),
+                    content=review_text,
                     payload={
                         "turn_id": str(turn.id),
                         "turn_value": "review",
@@ -2218,6 +2268,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                         "receipt_ids": [str(execution.id)],
                         "next_actions": ["review_cut", "request_revision"],
                         "schema_version": 2,
+                        **({"requirement_receipts": review_receipts} if review_receipts else {}),
                     },
                 )
                 turn.observed_event_id = review.id

@@ -195,6 +195,40 @@ class Settings(BaseSettings):
     # set PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_video_overlays_enabled: bool = False
+    # KRI-190: one montage plan. True (or the account is in the allowlist): a
+    # phone-rendered montage-family job with no approved guided proposal is
+    # compiled through the guided plan format (fast montage + per-clip text)
+    # instead of the plain phone-montage lane. False (default): the plain lane,
+    # including its landscape-fit guard, runs byte-identically. Allowlist is
+    # comma-separated or a JSON list of user ids. Apply:
+    # `fly secrets set MONTAGE_UNIFIED_PLAN_ENABLED=true --app nova-video`
+    # + restart worker. Rollback: set it false + restart.
+    montage_unified_plan_enabled: bool = False
+    montage_unified_plan_user_ids: Annotated[list[str], NoDecode] = []
+
+    @field_validator("montage_unified_plan_user_ids", mode="before")
+    @classmethod
+    def parse_montage_unified_plan_user_ids(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return value
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
+    def montage_unified_plan_for(self, user_id: object) -> bool:
+        """Global flag OR the per-account allowlist (allowlist only ever adds)."""
+        if self.montage_unified_plan_enabled:
+            return True
+        return user_id is not None and str(user_id) in {
+            str(uid) for uid in self.montage_unified_plan_user_ids
+        }
+
     # KRI-132 (narrated walkthrough): a `narrated`/`narrated_planned`/
     # `narrated_ready` item WITH a recorded voiceover compiles through
     # `app.pipeline.phone_narrated_plan.compile_phone_narrated_plan`
