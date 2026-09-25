@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.228.0] - 2026-09-25
+
+### Changed
+- fix(ios): clamp overlapping caption_cues before burning captions (KRI-202) (#1252) <!-- release-pr: 1252 -->
+
 ## [0.76.227.0] - 2026-09-25
 
 ### Changed
