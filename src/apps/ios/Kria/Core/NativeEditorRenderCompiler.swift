@@ -310,6 +310,14 @@ enum NativeEditorRenderError: Error, Equatable {
         for rawElement in renderedTextElements where rawElement.raw["enabled"] != .bool(false) && rawElement.raw["removed"] != .bool(true) {
             if rawElement.isCaption {
                 if captionsGloballyDisabled { continue }
+                // Talking/subtitled variants carry their captions twice: as
+                // caption_cues rows and, for the editor's text lane, as
+                // caption_cue-tagged text elements mirroring the same sentences
+                // (the API's `_base_text_elements_for_variant` CAPTION path).
+                // The cue-native block below renders the cues, so skip the
+                // mirrors here; both firing burned every sentence twice, once
+                // mid-frame across the speaker's face (KRI-172 render 1aff3f03).
+                if !document.captionCues.isEmpty { continue }
             }
             let element = rawElement.isCaption
                 ? Self.applyingCaptionMeta(captionMeta, to: rawElement) : rawElement
