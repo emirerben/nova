@@ -2540,3 +2540,27 @@ Behaviour change vs the plain lane: no matched music bed, beat-snap or hero intr
 render keeps source audio only. Fraunces lacks
 "→", so the planner selects a font that covers every string. Old lane deletion is a
 follow-up after a device visual comparison.
+
+## [2026-09-25] Draft-time receipts defer to the unified montage planner; a country alone is not a label (KRI-190)
+
+Context. The first simulator and phone runs of the unified montage both rendered well, but the
+chat showed "Not everything you asked for made it in: Couldn't: the name of the place as text
+(None of the 14 clips got its own text in this draft)" before the render, and it stayed on
+screen after the video had 14 labels. The strategy draft is checked by
+`plan_facts_from_strategy`, which has no per-clip text, order or timing, because the unified
+planner writes those at render time. The render's own `assistant_review` already carries the
+true receipts and the "I guessed these, tell me if any is wrong" list. Separately, two clips were
+captioned "Türkiye": `_place_label` took the first part of a geocoded place, and a place with
+one part is the country alone.
+
+Decision. When the render will go through the unified planner (`defers_to_unified_montage`:
+phone account, montage-family format, `montage_unified_plan_for`, no voiceover, i.e. the same
+test the worker uses), the draft-time check leaves out the kinds that planner settles (`text`,
+`order`, `timing`) and the draft reply is the plain summary. Kinds it does not settle (`audio`,
+`style`, `select`) are still judged at draft time, and with the flag off every requirement is
+checked exactly as before. A single-part place is not a label; the clip is reported as
+unlabelled and the receipt says so.
+
+Consequences. The only receipts the creator sees for a unified montage are the render's.
+`ClipPlace.label()` always ends with the country, so "one part" means country only; a client
+that ever sent a locality without a country would lose that label (none does).

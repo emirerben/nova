@@ -332,6 +332,47 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
     return _receipt(req, "partial", "I can't verify this one automatically yet.")
 
 
+# KRI-190: requirement kinds the unified montage planner settles at render time. Its
+# receipts are built from the plan it actually made, so a draft-time check of these is
+# premature: the strategy draft has no per-clip text, order or timing yet, and would
+# report "None of the 14 clips got its own text" for a video that then gets 14 labels.
+UNIFIED_SETTLED_KINDS = frozenset({"text", "order", "timing"})
+
+
+def defers_to_unified_montage(
+    *, creator_id: object, edit_format: object, has_voiceover: bool = False
+) -> bool:
+    """True when this draft will render through the unified phone montage planner.
+
+    Mirrors the worker's own choice (`generative_build`: a phone job, a montage-family
+    format, `montage_unified_plan_for`, no voiceover) so the two cannot disagree.
+    """
+    from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS  # noqa: PLC0415
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(
+        not has_voiceover
+        and str(edit_format or "") in GUIDED_EDIT_FORMATS
+        and settings.phone_rendering_for(creator_id)
+        and settings.montage_unified_plan_for(creator_id)
+    )
+
+
+def requirements_for_draft_receipts(
+    requirements: Iterable[BriefRequirement], *, defers_to_render: bool
+) -> list[BriefRequirement]:
+    """The requirements a strategy draft can honestly be checked against.
+
+    When the unified planner will settle a requirement at render time it is left out,
+    so the draft reply is the plain summary instead of a premature failure notice; the
+    render's own receipts (met / partial / not possible, plus guessed names) follow.
+    With `defers_to_render` false this is the unchanged, full list.
+    """
+    return [
+        req for req in requirements if not (defers_to_render and req.kind in UNIFIED_SETTLED_KINDS)
+    ]
+
+
 def build_receipts(
     requirements: Iterable[BriefRequirement], facts: PlanFacts
 ) -> list[RequirementReceipt]:
@@ -388,6 +429,9 @@ def reply_from_receipts(
 
 
 __all__ = [
+    "UNIFIED_SETTLED_KINDS",
+    "defers_to_unified_montage",
+    "requirements_for_draft_receipts",
     "PlanFacts",
     "build_receipts",
     "check_requirement",

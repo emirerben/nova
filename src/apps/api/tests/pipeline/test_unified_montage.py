@@ -482,3 +482,27 @@ def test_a_label_on_a_clip_too_short_to_read_is_not_reported_as_met():
     receipt = build_receipts(brief.live(), plan_facts_from_unified_montage(plan.record()))[0]
     assert receipt.status == "partial"
     assert "too short" in (receipt.reason or "")
+
+
+@pytest.mark.parametrize("country_only", ["Türkiye", "Turquia", "Turkey", "  Türkiye  "])
+def test_a_country_alone_is_not_a_label_and_the_clip_is_reported_unlabelled(country_only):
+    """KRI-190 simulator test: two clips were captioned "Türkiye" because the geocoder
+    found nothing finer. A country says nothing about the clip, so it must not caption it."""
+    clips = [clip(0, place=country_only), clip(1, place="Dolmabahçe, Beşiktaş, Türkiye")]
+    plan = plan_unified_montage(clips, labels_view())
+    by_id = {label.media_id: label for label in plan.snapshot.clip_labels or []}
+    assert "c0" not in by_id
+    assert plan.dropped_label_clip_ids == ["c0"]
+    # A neighbourhood, or a city plus its country, is still a real place.
+    assert by_id["c1"].text == "Dolmabahçe"
+
+
+def test_a_landmark_still_labels_a_clip_whose_place_is_only_a_country():
+    plan = plan_unified_montage([clip(0, landmark="Galata Tower", place="Türkiye")], labels_view())
+    label = (plan.snapshot.clip_labels or [])[0]
+    assert (label.text, label.fact_kind) == ("Galata Tower", "landmark")
+
+
+def test_city_and_country_is_a_label_and_the_country_part_is_never_used():
+    plan = plan_unified_montage([clip(0, place="İstanbul, Türkiye")], labels_view())
+    assert (plan.snapshot.clip_labels or [])[0].text == "İstanbul"
