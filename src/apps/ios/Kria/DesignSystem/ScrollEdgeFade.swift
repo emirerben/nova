@@ -131,13 +131,18 @@ private struct KriaScrollEdgeFade: ViewModifier {
         }
     }
 
-    /// A frosted band that is strongest at the frame edge and eases out inward.
-    /// `strength` (0...1) scales it so an edge at rest is untouched.
+    /// A frosted band that stays at full strength across most of `length` and
+    /// only eases out at its inner end, so a band this thin still reads as a
+    /// blur. `strength` (0...1) scales it so an edge at rest is untouched.
     private func blurEdge(strength: CGFloat, atTop: Bool) -> some View {
         Rectangle()
-            .fill(.ultraThinMaterial)
+            .fill(.regularMaterial)
             .mask(LinearGradient(
-                colors: [.black, .clear],
+                stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black, location: 0.6),
+                    .init(color: .clear, location: 1)
+                ],
                 startPoint: atTop ? .top : .bottom,
                 endPoint: atTop ? .bottom : .top
             ))

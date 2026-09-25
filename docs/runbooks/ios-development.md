@@ -223,8 +223,8 @@ strips, carousels, slide-post rows) keep their normal hard clip on purpose.
 
 `.kriaScrollEdgeFade()` (`DesignSystem/ScrollEdgeFade.swift`) blurs a thin band
 (`length`, default 6pt) at the top and bottom edges of a vertical `ScrollView`:
-an `.ultraThinMaterial` strip, strongest at the edge and easing out inward, laid
-over the content. The band sits at the scroll view's real frame edges, which are
+a `.regularMaterial` strip at full strength across most of the band and easing
+out at its inner end, laid over the content. The band sits at the scroll view's real frame edges, which are
 the screen edges because the transcript runs beneath the floating chrome, so
 content stays fully crisp, even behind the header and composer, until it is 6pt
 from the top or bottom edge. An edge at rest, with nothing past it, is not
