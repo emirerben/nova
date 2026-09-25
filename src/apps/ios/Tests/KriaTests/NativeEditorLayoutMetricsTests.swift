@@ -29,13 +29,13 @@ final class NativeEditorLayoutMetricsTests: XCTestCase {
 
     // MARK: typing gives a text panel the preview's room (KRI-185)
 
-    func testATextPanelBeingTypedIntoShrinksThePreviewToItsMinimumButNeverHidesIt() {
+    func testATextPanelBeingTypedIntoShrinksThePreviewButKeepsItReadable() {
         let typing = pro(keyboard: true, shrinksWhileTyping: true)
-        XCTAssertEqual(typing.defaultPreviewHeight, NativeEditorLayoutMetrics.minPreviewHeight, accuracy: 0.001)
-        XCTAssertEqual(typing.previewHeight(resize: 0), NativeEditorLayoutMetrics.minPreviewHeight, accuracy: 0.001)
-        // Nothing to shrink further and nothing to grow: the preview is not resizable mid-typing.
-        XCTAssertEqual(typing.shrinkRange, 0, accuracy: 0.001)
-        XCTAssertEqual(typing.growRange, 0, accuracy: 0.001)
+        XCTAssertEqual(typing.defaultPreviewHeight, NativeEditorLayoutMetrics.typingPreviewHeight, accuracy: 0.001)
+        XCTAssertEqual(typing.previewHeight(resize: 0), NativeEditorLayoutMetrics.typingPreviewHeight, accuracy: 0.001)
+        // Compact but never hidden, and smaller than the untouched keyboard-up split.
+        XCTAssertGreaterThan(typing.defaultPreviewHeight, NativeEditorLayoutMetrics.minPreviewHeight)
+        XCTAssertLessThan(typing.defaultPreviewHeight, pro(keyboard: true).defaultPreviewHeight)
     }
 
     func testOtherPanelsAndTheKeyboardDownLayoutAreUnchanged() {
