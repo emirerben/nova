@@ -1,0 +1,188 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-25-v47",
+  "input": {
+    "utterance": "label each landmark",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "text",
+        "title"
+      ],
+      "label_facts": true,
+      "text_bars": [
+        {
+          "id": "guided-title",
+          "role": "generative_intro",
+          "text": "10K Run · Alpha Quay → Gamma Tower",
+          "start_s": 0.0,
+          "end_s": 1.4,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true
+        },
+        {
+          "id": "clip-label-unified-cut-1",
+          "role": "generative_intro",
+          "text": "Alpha Quay",
+          "start_s": 0.0,
+          "end_s": 1.4,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-0",
+          "inferred": true
+        }
+      ],
+      "slots": [
+        {
+          "key": "unified-cut-1",
+          "slot_id": "unified-cut-1",
+          "clip_index": 0,
+          "media_id": "clip-0",
+          "in_s": 0.0,
+          "duration_s": 1.4,
+          "source_duration_s": 4.0,
+          "output_start_s": 0.0,
+          "output_end_s": 1.4,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "facts": [
+            {
+              "kind": "landmark",
+              "value": "Alpha Quay",
+              "provenance": "inferred"
+            }
+          ]
+        },
+        {
+          "key": "unified-cut-2",
+          "slot_id": "unified-cut-2",
+          "clip_index": 1,
+          "media_id": "clip-1",
+          "in_s": 0.0,
+          "duration_s": 1.4,
+          "source_duration_s": 4.0,
+          "output_start_s": 1.4,
+          "output_end_s": 2.8,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "facts": [
+            {
+              "kind": "place",
+              "value": "Beta Bridge, Testville, Testland",
+              "provenance": "geocode"
+            }
+          ]
+        },
+        {
+          "key": "unified-cut-3",
+          "slot_id": "unified-cut-3",
+          "clip_index": 2,
+          "media_id": "clip-2",
+          "in_s": 0.0,
+          "duration_s": 1.4,
+          "source_duration_s": 4.0,
+          "output_start_s": 2.8,
+          "output_end_s": 4.2,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "facts": [
+            {
+              "kind": "capture_time",
+              "value": "2026-09-20T07:08:00Z",
+              "provenance": "exif"
+            }
+          ]
+        },
+        {
+          "key": "unified-cut-4",
+          "slot_id": "unified-cut-4",
+          "clip_index": 3,
+          "media_id": "clip-3",
+          "in_s": 0.0,
+          "duration_s": 1.4,
+          "source_duration_s": 4.0,
+          "output_start_s": 4.2,
+          "output_end_s": 5.6,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "facts": [
+            {
+              "kind": "landmark",
+              "value": "Gamma Tower",
+              "provenance": "inferred"
+            }
+          ]
+        },
+        {
+          "key": "unified-cut-5",
+          "slot_id": "unified-cut-5",
+          "clip_index": 4,
+          "media_id": "clip-4",
+          "in_s": 0.0,
+          "duration_s": 1.4,
+          "source_duration_s": 4.0,
+          "output_start_s": 5.6,
+          "output_end_s": 7.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "facts": [
+            {
+              "kind": "landmark",
+              "value": "Gamma Tower",
+              "provenance": "inferred"
+            }
+          ]
+        }
+      ],
+      "total_duration_s": 7.0,
+      "brief": "Creative brief (everything the creator has asked for, still in force):\n- [text/per_clip] the name of the place on each clip"
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"label_each_clip\",\"source\":\"facts\"}],\"confidence\":0.94,\"reply\":\"Labelled each clip from its place or landmark.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "label_each_clip",
+        "source": "facts"
+      }
+    ],
+    "confidence": 0.94,
+    "reply": "Labelled each clip from its place or landmark.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-191: label_each_clip fills the per-clip lane from grounded facts; skips a repeat, a clip with no place fact, and an already-correct bar; a label bar overlapping a clip's window counts as that clip's label",
+    "exact_edit_ops": [
+      {
+        "op": "label_each_clip",
+        "source": "facts",
+        "labels": [
+          {
+            "media_id": "clip-1",
+            "text": "Beta Bridge",
+            "start_s": 1.4,
+            "end_s": 2.8
+          },
+          {
+            "media_id": "clip-3",
+            "text": "Gamma Tower",
+            "start_s": 4.2,
+            "end_s": 5.6
+          }
+        ]
+      }
+    ]
+  }
+}

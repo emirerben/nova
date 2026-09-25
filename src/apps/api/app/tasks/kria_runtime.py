@@ -1001,11 +1001,20 @@ def _project_retryable_failure(
     thread: CreationThread,
     *,
     code: str,
+    detail: dict[str, str] | None = None,
 ) -> None:
-    """Fail a locked turn and tell the creator to retry; the caller commits."""
+    """Fail a locked turn and tell the creator to retry; the caller commits.
+
+    ``detail`` (``error_class`` + a truncated ``error_message``) makes an
+    otherwise opaque ``runtime_turn_failed`` diagnosable (KRI-203: the
+    2026-09-25 failure carried only the code). The full detail lives on
+    ``turn.error``, which only admin routes read. The ``assistant_error`` event
+    payload is returned unfiltered to the creator's app, so it gets the class
+    name only (see ``_event_failure_detail``). Creator-facing copy is unchanged.
+    """
 
     turn.status = "failed"
-    turn.error = {"code": code, "retryable": True, "recovery": "retry"}
+    turn.error = {"code": code, "retryable": True, "recovery": "retry", **(detail or {})}
     turn.completed_at = datetime.now(UTC)
     turn.lease_owner = None
     turn.lease_expires_at = None
@@ -1026,6 +1035,7 @@ def _project_retryable_failure(
             # Planning failed before a tool execution receipt existed.
             # Keep this empty rather than inventing a receipt identity.
             "receipt_ids": [],
+            **_event_failure_detail(detail),
         },
     )
     turn.observed_event_id = event.id
@@ -1064,12 +1074,37 @@ def _fail_exhausted_turn(
     return _ClaimsExhausted(str(successor.id) if successor is not None else None)
 
 
+_FAILURE_MESSAGE_CHARS = 200
+
+
+# Only these exceptions carry a message written for humans (no SQL, paths, URLs or
+# provider bodies), so only their message may reach the creator-visible event.
+_EVENT_SAFE_MESSAGE_CLASSES = frozenset({"KriaEditorOpError"})
+
+
+def _event_failure_detail(detail: dict[str, str] | None) -> dict[str, str]:
+    """The slice of a failure detail that may go on a creator-visible event."""
+    if not detail:
+        return {}
+    out = {"error_class": detail["error_class"]} if detail.get("error_class") else {}
+    if detail.get("error_class") in _EVENT_SAFE_MESSAGE_CLASSES and detail.get("error_message"):
+        out["error_message"] = detail["error_message"]
+    return out
+
+
+def _failure_detail(exc: BaseException) -> dict[str, str]:
+    """Bounded, single-line error summary safe to persist on a turn/event."""
+    message = " ".join(str(exc).split())[:_FAILURE_MESSAGE_CHARS]
+    return {"error_class": type(exc).__name__, "error_message": message}
+
+
 def _fail_turn(
     turn_id: uuid.UUID,
     *,
     code: str,
     lease_owner: str,
     lease_epoch: int,
+    detail: dict[str, str] | None = None,
 ) -> str | None:
     try:
         with sync_session() as db:
@@ -1090,7 +1125,7 @@ def _fail_turn(
             ).scalar_one_or_none()
             if thread is None:
                 return None
-            _project_retryable_failure(db, turn, thread, code=code)
+            _project_retryable_failure(db, turn, thread, code=code, detail=detail)
             db.commit()
         return _promote_queued_successor_sync(thread_id)
     except Exception:  # noqa: BLE001 - preserve the original task exception
@@ -1244,12 +1279,21 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     error_class=type(exc).__name__,
                 )
         return {"turn_id": turn_id, "status": "completed"}
-    except Exception:  # noqa: BLE001 - failure is projected before Celery records it
+    except Exception as exc:  # noqa: BLE001 - failure is projected before Celery records it
+        # The failure was invisible for weeks: no log line, no error detail
+        # (KRI-203). Record the class + a truncated message on the turn/event
+        # and log the traceback before re-raising.
+        log.exception(
+            "kria_turn_failed",
+            turn_id=turn_id,
+            error_class=type(exc).__name__,
+        )
         successor_turn_id = _fail_turn(
             identifier,
             code="runtime_turn_failed",
             lease_owner=lease_owner,
             lease_epoch=lease_epoch,
+            detail=_failure_detail(exc),
         )
         if successor_turn_id is not None:
             run_kria_turn.apply_async(

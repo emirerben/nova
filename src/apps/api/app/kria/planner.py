@@ -10,6 +10,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass, replace
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,7 +56,15 @@ from app.services.creator_sessions import (
     load_intent_clips_for_item,
     resolve_item_creator_context,
 )
-from app.services.kria_editor_ops import build_editor_snapshot, project_editor_draft
+from app.services.kria_editor_ops import (
+    MAX_EDITOR_OPS,
+    build_editor_snapshot,
+    clip_facts_by_media_id,
+    coalesce_text_style_ops,
+    project_editor_draft,
+)
+
+log = structlog.get_logger()
 
 
 @dataclass(frozen=True)
@@ -184,6 +193,20 @@ def adapt_editor_action(
     """Draft edits are reversible; rendering is a distinct, policy-gated action."""
     if not ops:
         return KriaTurnPlan(mode="respond", turn_value="question", response=reply)
+    # "Change all fonts" arrives as one op per bar; merge identical per-bar style
+    # patches so a many-bar edit fits the eight-op tool bound instead of failing
+    # the whole turn (KRI-203).
+    ops = coalesce_text_style_ops(ops)
+    if len(ops) > MAX_EDITOR_OPS:
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="recovery",
+            response=(
+                "That is more changes than I can apply in one go, so I left the video "
+                "as it was. Ask for it in smaller steps, or for all of one kind of "
+                "change at once (for example every font)."
+            ),
+        )
     intents = [
         {
             "intent_id": "apply-editor-ops",
@@ -214,6 +237,41 @@ class _EditorTarget:
     job_id: uuid.UUID
     snapshot: dict
     conversation: list[dict]
+
+
+async def _copilot_clip_context(
+    db: AsyncSession,
+    *,
+    thread: CreationThread,
+    thread_id: uuid.UUID,
+    job: Job,
+    variant: dict,
+    item: PlanItem,
+) -> dict:
+    """KRI-191: the Creative Brief and per-clip facts the copilot may see.
+
+    Context only ever ADDS to what the copilot knows, so any failure here
+    (a bad stored fact, a brief read error) logs and degrades to no context
+    rather than failing a turn that could still edit. The brief read runs in a
+    savepoint so a database error cannot poison the outer read transaction.
+    """
+    context: dict = {}
+    try:
+        if settings.clip_facts_for(job.user_id):
+            facts = clip_facts_by_media_id(job, variant, list(item.clip_assignments or []))
+            if facts:
+                context["facts"] = facts
+    except Exception:  # noqa: BLE001 - fail open to no clip facts
+        log.warning("kria_copilot_clip_facts_unavailable", thread_id=str(thread_id), exc_info=True)
+    try:
+        if settings.creative_brief_for(thread.creator_id):
+            async with db.begin_nested():
+                brief = await load_latest_brief(db, thread_id)
+            if brief is not None and brief.live():
+                context["brief"] = render_brief_request(brief)
+    except Exception:  # noqa: BLE001 - fail open to no brief
+        log.warning("kria_copilot_brief_unavailable", thread_id=str(thread_id), exc_info=True)
+    return context
 
 
 async def _load_editor_target(
@@ -258,7 +316,10 @@ async def _load_editor_target(
     ).scalar_one_or_none()
     if head is not None and (head.snapshot_json or {}).get("kind") == "editor":
         variant = project_editor_draft(variant, head.snapshot_json.get("editor_payload") or {})
-    snapshot = build_editor_snapshot(job, variant)
+    clip_context = await _copilot_clip_context(
+        db, thread=thread, thread_id=thread_id, job=job, variant=variant, item=item
+    )
+    snapshot = build_editor_snapshot(job, variant, clip_context=clip_context)
     if not snapshot["allowed_op_families"]:
         return None
     rows = list(

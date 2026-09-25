@@ -1,0 +1,141 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-25-v47",
+  "input": {
+    "utterance": "that's Besiktas Pier, not Dolmabahce Palace",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "text",
+        "title"
+      ],
+      "label_facts": true,
+      "text_bars": [
+        {
+          "id": "guided-title",
+          "role": "generative_intro",
+          "text": "10K Run · Alpha Quay → Gamma Tower",
+          "start_s": 0.0,
+          "end_s": 1.4,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true
+        },
+        {
+          "id": "clip-label-unified-cut-1",
+          "role": "generative_intro",
+          "text": "Alpha Quay",
+          "start_s": 1.4,
+          "end_s": 2.8,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-0",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-2",
+          "role": "generative_intro",
+          "text": "Dolmabahce Palace",
+          "start_s": 2.8,
+          "end_s": 4.199999999999999,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-1",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-3",
+          "role": "generative_intro",
+          "text": "Gamma Tower",
+          "start_s": 4.199999999999999,
+          "end_s": 5.6,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-2",
+          "inferred": true
+        }
+      ],
+      "slots": [
+        {
+          "key": "unified-cut-1",
+          "slot_id": "unified-cut-1",
+          "clip_index": 0,
+          "media_id": "clip-0",
+          "in_s": 0.0,
+          "duration_s": 1.4,
+          "source_duration_s": 4.0,
+          "output_start_s": 0.0,
+          "output_end_s": 1.4,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "moment": "Alpha Quay"
+        },
+        {
+          "key": "unified-cut-2",
+          "slot_id": "unified-cut-2",
+          "clip_index": 1,
+          "media_id": "clip-1",
+          "in_s": 0.0,
+          "duration_s": 1.4,
+          "source_duration_s": 4.0,
+          "output_start_s": 1.4,
+          "output_end_s": 2.8,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "moment": "Dolmabahce Palace"
+        },
+        {
+          "key": "unified-cut-3",
+          "slot_id": "unified-cut-3",
+          "clip_index": 2,
+          "media_id": "clip-2",
+          "in_s": 0.0,
+          "duration_s": 1.4,
+          "source_duration_s": 4.0,
+          "output_start_s": 2.8,
+          "output_end_s": 4.2,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "moment": "Gamma Tower"
+        }
+      ],
+      "total_duration_s": 4.2
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"edit_text\",\"bar_index\":2,\"text\":\"Besiktas Pier\"}],\"confidence\":0.96,\"reply\":\"Changed that one label to Besiktas Pier.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "edit_text",
+        "bar_index": 2,
+        "text": "Besiktas Pier"
+      }
+    ],
+    "confidence": 0.96,
+    "reply": "Changed that one label to Besiktas Pier.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-191: a one-line label correction is ONE edit_text on the matching bar, never label_each_clip",
+    "exact_edit_ops": [
+      {
+        "op": "edit_text",
+        "bar_index": 2,
+        "text": "Besiktas Pier"
+      }
+    ]
+  }
+}
