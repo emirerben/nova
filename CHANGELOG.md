@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.224.0] - 2026-09-25
+
+### Fixed
+- fix(ios): burn Talking captions once, not as cue and mirrored text element (#1245) <!-- release-pr: 1245 -->
+
 ## [0.76.223.0] - 2026-09-25
 
 ### Changed
