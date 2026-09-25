@@ -63,6 +63,10 @@ struct NativeEditorSaveBanner: View {
     @ObservedObject var session: NativeEditorSession
 
     @ViewBuilder var body: some View {
+        if session.saveState.showsBanner { content }
+    }
+
+    @ViewBuilder private var content: some View {
         switch session.saveState {
         case .conflict:
             VStack(spacing: 0) {
@@ -117,16 +121,10 @@ struct NativeEditorSaveBanner: View {
                     .background(KriaColor.softZinc)
                     .accessibilityIdentifier("native-editor-retry-preview")
             }
-        case .previewPending:
-            banner(
-                title: "Saved — preview updating",
-                detail: session.rendersOnDevice
-                    ? "Your edit is saved. Check rendering progress on this iPhone."
-                    : "Your edit is safe. The cloud preview is rendering now.",
-                systemImage: "checkmark.circle",
-                tint: KriaColor.ink
-            )
         default:
+            // A saved edit whose preview is still rendering (`.previewPending`)
+            // stays silent: the render continues in the background and the
+            // header checkmark is the save confirmation (KRI-196).
             EmptyView()
         }
     }
