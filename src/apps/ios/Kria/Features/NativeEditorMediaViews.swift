@@ -673,31 +673,6 @@ struct NativeVideoPreview: View {
                 .padding(24)
             }
 
-            if session.sourcePreviewState.isFailure, session.isShowingRenderedFallback {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Showing finished render")
-                        .font(KriaFont.body(12).weight(.semibold))
-                    if case .failed(let message) = session.sourcePreviewState {
-                        Text(message)
-                            .font(KriaFont.body(11))
-                            .lineLimit(2)
-                        Button("Retry") { Task { await session.prepareSourcePreview() } }
-                            .accessibilityIdentifier("native-editor-retry-source-preview")
-                            .font(KriaFont.body(11).weight(.semibold))
-                    } else {
-                        originalsUnavailableBody(textStyle: KriaFont.body(11), alignment: .leading)
-                    }
-                }
-                .foregroundStyle(.white)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .padding(10)
-                .frame(maxHeight: .infinity, alignment: .bottom)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("native-editor-preview-fallback")
-            }
-
             if let frozen = liveMediaFrame {
                 GeometryReader { proxy in
                     let anchor = UnitPoint(x: frozen.rect.midX, y: frozen.rect.midY)
@@ -765,10 +740,37 @@ struct NativeVideoPreview: View {
                 )
             }
             .accessibilityElement(children: .contain)
-            // The canvas is drawn last, so its full-size gesture surface sat over the fallback
-            // overlay's buttons and swallowed every tap on "Retry" (KRI-211: "Retry does nothing").
-            // A failed source preview has no editable objects, so nothing here needs touches.
-            .allowsHitTesting(!session.sourcePreviewState.isFailure)
+            // The canvas's full-size gesture surface used to sit over the failure UI and swallow every
+            // tap on "Retry" (KRI-211: "Retry does nothing"). With no video shown at all, the failure
+            // message sits underneath and the canvas has nothing to interact with. When the finished
+            // render still plays, the fallback card below is drawn above the canvas instead, so its
+            // buttons work and tap-to-fullscreen on the empty canvas keeps working.
+            .allowsHitTesting(!(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
+
+            if session.sourcePreviewState.isFailure, session.isShowingRenderedFallback {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Showing finished render")
+                        .font(KriaFont.body(12).weight(.semibold))
+                    if case .failed(let message) = session.sourcePreviewState {
+                        Text(message)
+                            .font(KriaFont.body(11))
+                            .lineLimit(2)
+                        Button("Retry") { Task { await session.prepareSourcePreview() } }
+                            .accessibilityIdentifier("native-editor-retry-source-preview")
+                            .font(KriaFont.body(11).weight(.semibold))
+                    } else {
+                        originalsUnavailableBody(textStyle: KriaFont.body(11), alignment: .leading)
+                    }
+                }
+                .foregroundStyle(.white)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(10)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("native-editor-preview-fallback")
+            }
 
         }
         .aspectRatio(session.previewAspectRatio, contentMode: .fit)

@@ -178,6 +178,33 @@ final class ChatTimelineTests: XCTestCase {
         XCTAssertEqual(ChatSubmission.message(text: "  Make it cinematic \n", readyMediaCount: 0, pendingUploadCount: 0), "Make it cinematic")
     }
 
+    /// KRI-211: the banner says what actually happened, and only an upload that failed on the way (and
+    /// still has its record) offers Retry. A network failure is never "couldn't be read".
+    func testUploadFailureBannerCopyFollowsTheCause() {
+        func failure(_ cause: UploadFailure.Cause) -> UploadFailure {
+            UploadFailure(id: UUID(), projectID: UUID(), role: .clip, filename: "a.mov", message: "x", cause: cause)
+        }
+        XCTAssertEqual(UploadFailureBanner.message(for: [failure(.unreadable)]), "1 file couldn’t be read and won’t be sent")
+        XCTAssertEqual(UploadFailureBanner.message(for: [failure(.unreadable), failure(.unreadable)]), "2 files couldn’t be read and won’t be sent")
+        XCTAssertEqual(UploadFailureBanner.message(for: [failure(.uploadFailed)]), "1 file didn’t upload and won’t be sent unless you retry")
+        XCTAssertEqual(UploadFailureBanner.message(for: [failure(.cannotResume)]), "1 file couldn’t be resumed and won’t be sent")
+        XCTAssertEqual(UploadFailureBanner.message(for: [failure(.unreadable), failure(.uploadFailed)]), "2 files won’t be sent")
+        XCTAssertFalse(UploadFailureBanner.canRetry([failure(.unreadable), failure(.cannotResume)]))
+        XCTAssertTrue(UploadFailureBanner.canRetry([failure(.unreadable), failure(.uploadFailed)]))
+    }
+
+    /// KRI-211: a record whose upload/attach failed stays for Retry but Send must not wait for it;
+    /// one still uploading (or retried) does.
+    func testFailedUploadRecordIsNotInProgress() {
+        func record(failed: Bool?) -> UploadRecoveryRecord {
+            UploadRecoveryRecord(id: UUID(), projectID: UUID(), localFilePath: "/tmp/a.mov", filename: "a.mov",
+                                 source: .files, purpose: .cloudRenderSource, taskIdentifier: 1, retryCount: 0, uploadFailed: failed)
+        }
+        let active = record(failed: nil), failed = record(failed: true)
+        XCTAssertEqual(BackgroundUploadCoordinator.inProgressRecords([active, failed]).map(\.id), [active.id])
+        XCTAssertEqual(BackgroundUploadCoordinator.inProgressRecords([record(failed: false)]).count, 1)
+    }
+
     private func event(
         id: String,
         sequence: Int,

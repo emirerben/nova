@@ -905,6 +905,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Showing finished render"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].exists)
+        XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].isHittable, "Retry must not sit under the canvas")
         XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)
         XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Text:")).firstMatch.exists,
                        "Fallback video is playback-only; canvas objects cannot be selected or manipulated")
@@ -927,8 +928,11 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let find = app.buttons["native-editor-find-originals"]
         XCTAssertTrue(find.isHittable)
         find.tap()
-        // The same recovery sheet the device-render panel opens.
+        // The sheet lists the file the preview could not find (from the editor's own source pool),
+        // and never claims the originals are already here while the preview says they are not.
         XCTAssertTrue(app.staticTexts["Find your originals"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Find original 1"].waitForExistence(timeout: 5), "A real relink target row is listed")
+        XCTAssertFalse(app.staticTexts["The original files are available on this iPhone."].exists)
     }
 
     func testHardSourcePreviewFailureShowsUnavailableStateWithoutFallbackPlayer() {
@@ -937,6 +941,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Preview unavailable"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Retry"].firstMatch.isHittable, "Retry must not sit under the canvas")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview-fallback"].exists)
         XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Text:")).firstMatch.exists)
     }

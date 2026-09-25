@@ -140,16 +140,9 @@ struct NativeEditorView: View {
                 }
             }
             .sheet(isPresented: $showsOriginalsRecovery) {
-                if let key = session.deviceRenderKey {
-                    // Same flow the device-render panel offers; once the files match, rebuild
-                    // the live preview that the missing originals had reduced to the finished render.
-                    DeviceSourceRecoveryView(key: key, sessions: model.deviceRenders) {
-                        await session.refreshDeviceRender(retry: true)
-                        await session.prepareSourcePreview()
-                    }
+                EditorOriginalsRecoveryView(session: session)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
-                }
             }
             .onChange(of: deviceLocalFile) { _, file in
                 if let file { session.showDeviceOutput(file) }
@@ -248,7 +241,7 @@ struct NativeEditorView: View {
 
             NativeVideoPreview(
                 session: session, onEmptyTap: enterFullscreen,
-                onFindOriginals: session.deviceRenderKey == nil ? nil : { showsOriginalsRecovery = true }
+                onFindOriginals: { showsOriginalsRecovery = true }
             )
                 .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
                 .clipped()

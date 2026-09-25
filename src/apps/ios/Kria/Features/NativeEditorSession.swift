@@ -323,6 +323,10 @@ struct NativeEditorTemporaryVideo {
     }
     private var sourceAudioPreserved: Bool { previewVariant["source_audio_preserved"]?.boolValue ?? true }
     private var sourcePool: NativeEditorSourcePool?
+    /// The source pool the last preview attempt asked for. `sourcePool` is only set once every source
+    /// resolves, so a preview that fails on a missing original has no pool there; this one stays, and
+    /// is what "Find original files" derives its targets from (KRI-211).
+    private var originalsRecoveryPool: NativeEditorSourcePool?
     private var resolvedMedia: [String: ResolvedEditorSource] = [:]
     private var resolvedSources: [Int: ResolvedEditorSource]?
     private var sourcePreviewTask: Task<Void, Never>?
@@ -716,12 +720,17 @@ struct NativeEditorTemporaryVideo {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-device") {
             rendersOnDevice = true
         }
-        // KRI-211: a device-rendered project whose originals live on another
-        // device needs a device-render identity for "Find original files" to open against.
+        // KRI-211: a project whose originals live on another device. The recovery sheet derives its
+        // targets from the source pool the preview tried to resolve, so the fixture supplies one.
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-missing-originals") {
-            rendersOnDevice = true
-            jobID = UUID(uuidString: "00000000-0000-4000-8000-0000000000a1")
-            variantKey = "fixture-variant"
+            let indices = Set(timelineClips.compactMap(\.sourceClipIndex)).union([0]).sorted()
+            originalsRecoveryPool = NativeEditorSourcePool(clips: indices.map { index in
+                .init(clipIndex: index, nativeSource: .init(
+                    mediaID: "fixture-source-\(index)", sourceURL: nil,
+                    original: OriginalMediaDescriptor(sha256: String(repeating: "ab", count: 32), byteCount: 4096,
+                        durationS: 3, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true),
+                    localRequired: true))
+            }, baseGeneration: "fixture", nativeAssets: [])
         }
         // KRI-167: no existing shape fixture closes `clips.transitions`, and
         // UI tests can't construct an EditorDocument directly -- they only
@@ -1332,6 +1341,60 @@ struct NativeEditorTemporaryVideo {
     }
     #endif
 
+    /// An original this edit needs that isn't on this iPhone (or no longer matches the approved file).
+    struct OriginalRelinkTarget: Identifiable, Equatable, Sendable {
+        let mediaID: String
+        let descriptor: OriginalMediaDescriptor
+        let title: String
+        var id: String { mediaID }
+    }
+
+    /// The local-required sources the preview needs whose bound file is absent or doesn't match the
+    /// approved descriptor — exactly what `SourceAssetStore.resolve` fails on (KRI-211). Empty when the
+    /// preview never got as far as asking for a pool.
+    func originalsNeedingRelink() async -> [OriginalRelinkTarget] {
+        guard let pool = originalsRecoveryPool else { return [] }
+        let required = Set(timelineClips.compactMap(\.sourceClipIndex))
+        var seen = Set<String>()
+        var wanted: [(mediaID: String, descriptor: OriginalMediaDescriptor)] = []
+        for clip in pool.clips where required.isEmpty || required.contains(clip.clipIndex) {
+            guard let source = clip.nativeSource, source.localRequired, let original = source.original,
+                  seen.insert(source.mediaID).inserted else { continue }
+            wanted.append((source.mediaID, original))
+        }
+        let store = SourceAssetStore(project: BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID))
+        return await Task.detached {
+            var missing: [OriginalRelinkTarget] = []
+            for (mediaID, descriptor) in wanted {
+                let binding = try? store.bindings().first { $0.mediaID == mediaID }
+                let matches = binding?.original.fingerprint?.hex == descriptor.sha256
+                    && binding?.original.fingerprint?.byteCount == descriptor.byteCount
+                if !matches || (try? store.resolve(mediaIDs: [mediaID])) == nil {
+                    missing.append(OriginalRelinkTarget(mediaID: mediaID, descriptor: descriptor, title: "Original \(missing.count + 1)"))
+                }
+            }
+            return missing
+        }.value
+    }
+
+    /// Verifies a creator-chosen file is the exact approved original, then binds it to this project.
+    /// Throws when it isn't; the caller says so and leaves the target listed.
+    func relinkOriginal(_ target: OriginalRelinkTarget, from file: URL) async throws {
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID)
+        let original = try await AssetImportCoordinator(project: project).importAsset(from: file)
+        let imported = project.root.appendingPathComponent(original.relativePath)
+        let reference = RenderAssetReference(
+            id: target.mediaID,
+            fingerprint: RenderFingerprint(sha256: target.descriptor.sha256, byteCount: target.descriptor.byteCount),
+            source: .original(mediaID: target.mediaID))
+        do {
+            try await Task.detached { try SourceAssetStore(project: project).relink(reference, original: original) }.value
+        } catch {
+            try? FileManager.default.removeItem(at: imported)
+            throw error
+        }
+    }
+
     /// KRI-211: plain words for "the originals live somewhere else", shared by the preview and
     /// the device-render panel so both explain the same thing the same way.
     static let originalsUnavailableMessage = "The original clips for this edit are on another device. Find the files to edit here."
@@ -1404,6 +1467,7 @@ struct NativeEditorTemporaryVideo {
             let resolver = sourceResolver ?? NativeEditorSourceResolver(project: BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID), jobID: jobID)
             sourceResolver = resolver
             guard !generation.isEmpty, pool.baseGeneration == generation else { throw APIError.conflict }
+            originalsRecoveryPool = pool
             let sources: [Int: ResolvedEditorSource]
             var phoneTalkingIndex: Int?
             if let base = NativeEditorBaseSource(variant: previewVariant, document: document) {

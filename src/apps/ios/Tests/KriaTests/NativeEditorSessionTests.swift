@@ -110,6 +110,39 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges, "The source clip is server state, never a user edit to Save")
     }
 
+    /// KRI-211: a project whose originals aren't on this iPhone settles into its own state (no Retry
+    /// can help), the relink targets come from the source pool that failed, a wrong file is refused, and
+    /// the right one rebuilds the live preview.
+    func testMissingOriginalsSettleIntoOriginalsUnavailableAndRelinkRebuildsThePreview() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true, bindOriginal: false)
+        XCTAssertEqual(session.sourcePreviewState, .originalsUnavailable)
+        XCTAssertTrue(session.sourcePreviewState.isFailure)
+
+        let targets = await session.originalsNeedingRelink()
+        XCTAssertEqual(targets.map(\.mediaID), ["source"])
+        XCTAssertEqual(targets.first?.title, "Original 1")
+        let target = try XCTUnwrap(targets.first)
+
+        let wrong = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try Data("not the approved original".utf8).write(to: wrong)
+        defer { try? FileManager.default.removeItem(at: wrong) }
+        do {
+            try await session.relinkOriginal(target, from: wrong)
+            XCTFail("A different file must not be accepted as the approved original")
+        } catch {}
+        let stillMissing = await session.originalsNeedingRelink()
+        XCTAssertEqual(stillMissing.count, 1)
+
+        let right = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), to: right)
+        defer { try? FileManager.default.removeItem(at: right) }
+        try await session.relinkOriginal(target, from: right)
+        let remaining = await session.originalsNeedingRelink()
+        XCTAssertTrue(remaining.isEmpty)
+        await session.prepareSourcePreview()
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+    }
+
     /// Cards and sounds closed (their rollout flag off): the server sends no
     /// lanes, so a live preview would drop what the finished MP4 shows. The
     /// editor keeps playing the finished MP4.
@@ -138,14 +171,14 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(session.displayedSourcePreviewRecipe)
     }
 
-    private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy) {
+    private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false, bindOriginal: Bool = true) async throws -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
         let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
         try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), to: input)
         defer { try? FileManager.default.removeItem(at: input) }
         let asset = try await AssetImportCoordinator(project: project).importAsset(from: input)
-        try SourceAssetStore(project: project).bind(mediaID: "source", original: asset)
+        if bindOriginal { try SourceAssetStore(project: project).bind(mediaID: "source", original: asset) }
         let descriptor = OriginalMediaDescriptor(sha256: try XCTUnwrap(asset.fingerprint).hex, byteCount: try XCTUnwrap(asset.fingerprint).byteCount,
             durationS: 1, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true)
         var nativeAssets: [NativeEditorAsset] = []

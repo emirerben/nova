@@ -40,6 +40,9 @@ struct UploadRecoveryRecord: Codable, Identifiable, Sendable, Equatable {
     /// Completion stays within the approved editor variant.  It must never be
     /// converted into a creation-thread media attachment.
     var editorSourceTarget: EditorSourceRegistrationTarget? = nil
+    /// The upload or attach failed and is waiting for the creator (Retry / Remove). The record stays for
+    /// that, but it is not "in progress": Send must not wait for it (KRI-211). Cleared by a retry.
+    var uploadFailed: Bool? = nil
     var role: CreationMediaRole { mediaRole ?? .clip }
 }
 
@@ -542,9 +545,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 
     func dismissFailure(id: UUID) { failures.removeAll { $0.id == id } }
 
-    /// Every failure line of a project, whatever the role (a sent message leaves none behind).
-    func clearFailures(projectID: UUID) {
-        failures.removeAll { $0.projectID == projectID }
+    /// Drops a project's "couldn't be read" lines once a message went out without those files. Lines
+    /// for uploads that failed but still have a record are kept: they can still be retried.
+    func clearUnreadableFailures(projectID: UUID) {
+        failures.removeAll { $0.projectID == projectID && $0.cause == .unreadable }
     }
 
     func clearFailures(projectID: UUID, role: CreationMediaRole) {
@@ -553,9 +557,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 
     /// One line per failed clip: a repeat of the same asset replaces its earlier line (matched by
     /// `selectionKey`), rather than appending another for every attempt.
-    private func recordFailure(id: UUID, projectID: UUID, role: CreationMediaRole, filename: String, message: String, selectionKey: String? = nil) {
+    private func recordFailure(id: UUID, projectID: UUID, role: CreationMediaRole, filename: String, message: String, selectionKey: String? = nil, cause: UploadFailure.Cause = .unreadable) {
         failures.removeAll { $0.id == id || (selectionKey != nil && $0.selectionKey == selectionKey) }
-        failures.append(UploadFailure(id: id, projectID: projectID, role: role, filename: filename, message: message, selectionKey: selectionKey))
+        failures.append(UploadFailure(id: id, projectID: projectID, role: role, filename: filename, message: message, selectionKey: selectionKey, cause: cause))
     }
 
     /// Drops the failure lines of assets that are no longer ticked, so un-ticking a failed clip clears its
@@ -768,8 +772,39 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 
     func clearInFlight(_ recordID: UUID) { inFlight[recordID] = nil }
 
-    func reportFailure(id: UUID = UUID(), projectID: UUID, role: CreationMediaRole, filename: String, message: String) {
-        recordFailure(id: id, projectID: projectID, role: role, filename: filename, message: message)
+    func reportFailure(id: UUID = UUID(), projectID: UUID, role: CreationMediaRole, filename: String, message: String, cause: UploadFailure.Cause = .unreadable) {
+        recordFailure(id: id, projectID: projectID, role: role, filename: filename, message: message, cause: cause)
+        if cause != .unreadable, let index = records.firstIndex(where: { $0.id == id }) {
+            records[index].uploadFailed = true
+            persist()
+        }
+    }
+
+    #if DEBUG
+    /// UI-test fixture: a record whose upload failed on the way (network), still listed for Retry.
+    func seedFailedUploadForTesting(projectID: UUID) {
+        let record = UploadRecoveryRecord(
+            id: UUID(), projectID: projectID, localFilePath: "/tmp/kria-fixture-failed-upload.mov",
+            filename: "fixture.mov", source: .files, purpose: .cloudRenderSource,
+            taskIdentifier: -1, retryCount: 0, uploadFailed: true
+        )
+        records.append(record)
+        recordFailure(id: record.id, projectID: projectID, role: .clip, filename: record.filename,
+                      message: "The network connection was lost.", cause: .uploadFailed)
+    }
+    #endif
+
+    private func clearUploadFailed(_ id: UUID) {
+        guard let index = records.firstIndex(where: { $0.id == id }), records[index].uploadFailed == true else { return }
+        records[index].uploadFailed = nil
+        persist()
+    }
+
+    /// The upload records that still have work ahead of them. A record whose upload or attach failed
+    /// stays in `records` (so Retry works) but is not "in progress": counting it kept Send disabled
+    /// for a file the creator can no longer wait for (KRI-211).
+    nonisolated static func inProgressRecords(_ records: [UploadRecoveryRecord]) -> [UploadRecoveryRecord] {
+        records.filter { $0.uploadFailed != true }
     }
 
     // MARK: Ledger
@@ -1113,11 +1148,16 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 
     func retryUpload(recordID: UUID) async {
         guard let record = records.first(where: { $0.id == recordID }) else { return }
+        // Retrying puts the record back in progress.
+        failures.removeAll { $0.id == recordID }
+        clearUploadFailed(recordID)
         if record.uploadCompleted == true { await attach(record) } else { await retry(record) }
     }
 
     func retryAttachment(recordID: UUID) async {
         guard let record = records.first(where: { $0.id == recordID }), record.uploadCompleted == true else { return }
+        failures.removeAll { $0.id == recordID }
+        clearUploadFailed(recordID)
         await attach(record)
     }
 
@@ -1166,7 +1206,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             lastError = message
             // KRI-194: this was `lastError`-only, so a PUT failure for one clip could sit
             // hidden behind another clip's still-showing failure line.
-            reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message)
+            reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message, cause: .uploadFailed)
         }
     }
 
@@ -1285,7 +1325,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 } else {
                     // KRI-194: this was `lastError`-only, so an attach failure for one visual
                     // could sit hidden behind another clip's still-showing failure line.
-                    reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: error.localizedDescription)
+                    reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: error.localizedDescription, cause: .uploadFailed)
                 }
             }
             return
@@ -1297,7 +1337,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         else {
             let message = "This upload was created by an older build. Choose the file again."
             lastError = message
-            reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message)
+            reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message, cause: .cannotResume)
             return
         }
         if let target = record.editorSourceTarget {
@@ -1351,7 +1391,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         lastError = message
         // KRI-194: this was `lastError`-only, so an attach failure for one clip could sit
         // hidden behind another clip's still-showing failure line.
-        reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message)
+        reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: message, cause: .uploadFailed)
     }
 
     /// Posts (or idempotently re-posts) admission and waits briefly for the

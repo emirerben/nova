@@ -62,7 +62,8 @@ struct SlidePostWorkspaceView: View {
     private var uploadProjectID: UUID { ownerThread.flatMap { UUID(uuidString: $0.id) } ?? project.id }
     private var hasPendingAssets: Bool {
         session.state?.assets.contains { ["pending", "queued", "uploaded", "processing", "analyzing", "uploading"].contains($0.status) } == true
-            || pendingUploads.contains { $0.projectID == uploadProjectID }
+            // A record whose upload failed stays for Retry but is not in progress (KRI-211).
+            || BackgroundUploadCoordinator.inProgressRecords(pendingUploads).contains { $0.projectID == uploadProjectID }
             || BackgroundUploadCoordinator.reservedCount(projectID: uploadProjectID, role: .visual, inFlight: uploadInFlight, records: pendingUploads, selections: photoSelections) > 0
     }
     private var hasSkippedFiles: Bool { uploadFailures.contains { $0.projectID == uploadProjectID } }

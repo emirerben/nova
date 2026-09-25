@@ -397,6 +397,8 @@ struct FootageStage: View {
     /// the user chose.
     var failures: [UploadFailure] = []
     var dismissFailure: (UUID) -> Void = { _ in }
+    /// Retries the upload behind a failure that still has its record (`cause == .uploadFailed`).
+    var retryFailure: (UUID) -> Void = { _ in }
     /// Ready photos and videos in the PlanItemAsset Visuals pool.
     var visualCount = 0
 
@@ -450,18 +452,29 @@ struct FootageStage: View {
             .accessibilityIdentifier(format.usesVisualPool ? "choose-photos-videos" : "choose-videos")
 
             if !failures.isEmpty {
-                // One line, not one per file (KRI-211): a file that couldn't be read is left out and
-                // never holds up the rest, so all the creator needs is that, and a way to clear it.
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(UploadFailureBanner.message(count: failures.count))
-                        .font(KriaFont.body(12))
-                        .foregroundStyle(KriaColor.failureText)
-                        .accessibilityIdentifier("footage-upload-failures-message")
-                    Spacer(minLength: 4)
-                    Button("Dismiss") { failures.forEach { dismissFailure($0.id) } }
-                        .font(KriaFont.body(12).weight(.medium))
+                // One line, not one per file (KRI-211): a file that couldn't be sent never holds up the
+                // rest. The wording follows the cause: a file that couldn't be read is simply left out,
+                // while an upload that failed on the way can still be retried.
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(UploadFailureBanner.message(for: failures))
+                            .font(KriaFont.body(12))
+                            .foregroundStyle(KriaColor.failureText)
+                            .accessibilityIdentifier("footage-upload-failures-message")
+                        Spacer(minLength: 4)
+                        Button("Dismiss") { failures.forEach { dismissFailure($0.id) } }
+                            .font(KriaFont.body(12).weight(.medium))
+                            .frame(minHeight: 44)
+                            .accessibilityIdentifier("footage-upload-failures-dismiss")
+                    }
+                    if UploadFailureBanner.canRetry(failures) {
+                        Button("Retry") {
+                            for failure in failures where failure.cause == .uploadFailed { retryFailure(failure.id) }
+                        }
+                        .font(KriaFont.body(12).weight(.semibold))
                         .frame(minHeight: 44)
-                        .accessibilityIdentifier("footage-upload-failures-dismiss")
+                        .accessibilityIdentifier("footage-upload-failures-retry")
+                    }
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("footage-upload-failures")
@@ -992,12 +1005,29 @@ struct RecoveryCard: View {
     }
 }
 
-/// Copy for the "some files were skipped" banner (KRI-211).
+/// Copy for the "some files weren't sent" banner (KRI-211). Says what actually happened: never
+/// "couldn't be read" for a network failure, and only "won't be sent" where that is true.
 enum UploadFailureBanner {
-    static func message(count: Int) -> String {
-        count == 1
-            ? "1 file couldn’t be read and won’t be sent"
-            : "\(count) files couldn’t be read and won’t be sent"
+    static func message(for failures: [UploadFailure]) -> String {
+        let unreadable = failures.filter { $0.cause == .unreadable }.count
+        let failedUpload = failures.filter { $0.cause == .uploadFailed }.count
+        let cannotResume = failures.filter { $0.cause == .cannotResume }.count
+        func files(_ n: Int) -> String { n == 1 ? "1 file" : "\(n) files" }
+        switch (unreadable > 0, failedUpload > 0, cannotResume > 0) {
+        case (true, false, false):
+            return "\(files(unreadable)) couldn’t be read and won’t be sent"
+        case (false, true, false):
+            return "\(files(failedUpload)) didn’t upload and won’t be sent unless you retry"
+        case (false, false, true):
+            return "\(files(cannotResume)) couldn’t be resumed and won’t be sent"
+        default:
+            return "\(files(failures.count)) won’t be sent"
+        }
+    }
+
+    /// Only an upload that failed on the way still has its record, so only that can be retried.
+    static func canRetry(_ failures: [UploadFailure]) -> Bool {
+        failures.contains { $0.cause == .uploadFailed }
     }
 }
 

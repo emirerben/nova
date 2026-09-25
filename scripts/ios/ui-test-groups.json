@@ -21,7 +21,8 @@
       "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges",
       "KriaUITests/SlidePostUITests/testSlidePostCreationUsesExplicitProposalAndCreateThenContextualKria",
       "KriaUITests/SlidePostUITests/testSlideFormatCoverAndBackRemainReachableAtLargeText",
-      "KriaUITests/CreationUITests/testUnreadableAttachmentDoesNotBlockSend"
+      "KriaUITests/CreationUITests/testUnreadableAttachmentDoesNotBlockSend",
+      "KriaUITests/CreationUITests/testFailedUploadWithRecordDoesNotBlockSendAndOffersRetry"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

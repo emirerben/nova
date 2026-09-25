@@ -45,7 +45,7 @@ struct DeviceRenderPanel: View {
     }
 }
 
-struct DeviceSourceRecoveryView: View {
+private struct DeviceSourceRecoveryView: View {
     let key: DeviceRenderKey
     let sessions: DeviceRenderSessions
     let retry: () async -> Void
@@ -62,7 +62,7 @@ struct DeviceSourceRecoveryView: View {
                     .font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                 if loading { ProgressView().accessibilityLabel("Checking original files") }
                 ForEach(targets) { target in
-                    DeviceOriginalRelinkRow(target: target) { file in
+                    DeviceOriginalRelinkRow(title: target.title) { file in
                         try await sessions.relink(target, for: key, from: file)
                         await refresh()
                         if targets.isEmpty && message == nil { await retry(); dismiss() }
@@ -88,8 +88,8 @@ struct DeviceSourceRecoveryView: View {
     }
 }
 
-private struct DeviceOriginalRelinkRow: View {
-    let target: DeviceRelinkTarget
+struct DeviceOriginalRelinkRow: View {
+    let title: String
     let relink: (URL) async throws -> Void
     @State private var selecting = false
     @State private var checking = false
@@ -98,7 +98,7 @@ private struct DeviceOriginalRelinkRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button { selecting = true } label: {
-                Label("Find \(target.title.lowercased())", systemImage: "folder")
+                Label("Find \(title.lowercased())", systemImage: "folder")
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(KriaSecondaryButtonStyle())
