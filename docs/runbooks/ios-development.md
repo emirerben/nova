@@ -221,16 +221,17 @@ real safe-area inset, never inside `bottomClearance`'s own padding budget.
 the editor's Kria sheet). Other scroll surfaces (the projects drawer, editor
 strips, carousels, slide-post rows) keep their normal hard clip on purpose.
 
-`.kriaScrollEdgeFade()` (`DesignSystem/ScrollEdgeFade.swift`) is an alpha mask
-on a vertical `ScrollView`: a thin fade (`length`, default 6pt) at the
-scroll view's real frame edges, which are the screen edges because the
-transcript runs beneath the floating chrome. Content stays fully crisp, even
-behind the header and composer, until it is 6pt from the top or bottom edge. An
-edge at rest, with nothing past it, is not faded at all. There is deliberately
-no frosted/blurred band (an earlier version had one and it read as a large grey
-"block") and no fade zone tied to the header/composer height. Apply the
-modifier directly on the `ScrollView`, before any `.overlay`/`.background` that
-must stay unmasked. It never changes frames or hit testing.
+`.kriaScrollEdgeFade()` (`DesignSystem/ScrollEdgeFade.swift`) blurs a thin band
+(`length`, default 6pt) at the top and bottom edges of a vertical `ScrollView`:
+an `.ultraThinMaterial` strip, strongest at the edge and easing out inward, laid
+over the content. The band sits at the scroll view's real frame edges, which are
+the screen edges because the transcript runs beneath the floating chrome, so
+content stays fully crisp, even behind the header and composer, until it is 6pt
+from the top or bottom edge. An edge at rest, with nothing past it, is not
+touched. It is a blur, not a fade, and deliberately thin: an earlier, much
+taller frosted band read as a large grey "block". Apply the modifier directly
+on the `ScrollView`, before any `.overlay`/`.background` that must stay
+unmasked. It never changes frames or hit testing.
 
 - **Floating chat chrome:** the chat header (menu, title, actions, editor
   switch) and the composer float over the transcript as frosted capsules
@@ -243,7 +244,8 @@ must stay unmasked. It never changes frames or hit testing.
   corrupts the accessibility frame of ancestors that carry an identifier, and
   the header buttons do.
 - **Reduce Transparency** (system setting, or `UI_TEST_REDUCE_TRANSPARENCY=1`
-  via `KriaTransparency.isReduced`): the floating capsules become solid paper.
+  via `KriaTransparency.isReduced`): the floating capsules become solid paper
+  and the edge blur becomes a plain alpha fade over the same band.
   The env override exists because `simctl ui` does not flip the setting for a
   simulator app process; the glass island shares the same helper.
 - **Sheet titles:** the visible "Kria" heading is removed from both Kria AI
@@ -256,9 +258,9 @@ Geometry traps when the scroll view runs beneath insets (learned the hard way):
   the whole frame, INCLUDING them. Hidden distance is measured from
   `visibleRect` (`ScrollEdgeFadeMetrics(visibleRect:…)`); using `containerSize`
   made the bottom fade think hundreds of points were hidden at rest.
-- A `.mask` is laid out inside the safe-area-inset region, so the modifier
-  applies `.ignoresSafeArea()` to it; otherwise the fade sits at the inset edge
-  (under the header/composer) instead of at the screen edge.
+- A `.mask` and an `.overlay` are laid out inside the safe-area-inset region, so
+  the modifier applies `.ignoresSafeArea()` to both; otherwise the band sits at
+  the inset edge (under the header/composer) instead of at the screen edge.
 - Scroll to the end with `ScrollPosition.scrollTo(edge: .bottom)`, not an end
   marker with `anchor: .bottom` (that aligns to the frame bottom and leaves the
   last content under the composer). "Near bottom" adds `contentInsets.bottom`.

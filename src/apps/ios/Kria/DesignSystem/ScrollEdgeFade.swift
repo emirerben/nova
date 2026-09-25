@@ -43,29 +43,33 @@ struct ScrollEdgeFadeMetrics: Equatable {
 }
 
 extension View {
-    /// Fades a vertical scroll view's top and bottom edges by a thin band
+    /// Blurs a vertical scroll view's top and bottom edges by a thin band
     /// (`length`, default 6pt) where content continues past them, instead of
     /// slicing it with a hard cut. Apply directly on the `ScrollView`, before any
     /// `.overlay`/`.background` that must stay unmasked.
     ///
-    /// The fade sits at the scroll view's real frame edges, which are the screen
+    /// The band sits at the scroll view's real frame edges, which are the screen
     /// edges when the transcript runs beneath floating chrome, so content stays
     /// fully crisp (even behind that chrome) until it is `length` points from the
-    /// edge. An edge at rest, with nothing past it, is not faded. The mask never
-    /// changes frames or hit testing.
+    /// edge. An edge at rest, with nothing past it, is not touched. Under Reduce
+    /// Transparency the blur becomes a plain fade. Frames and hit testing are
+    /// never changed.
     func kriaScrollEdgeFade(length: CGFloat = 6) -> some View {
         modifier(KriaScrollEdgeFade(length: length))
     }
 }
 
 private struct KriaScrollEdgeFade: ViewModifier {
-    /// Thickness of the fade at each frame edge.
+    /// Thickness of the band at each frame edge.
     let length: CGFloat
     @State private var metrics = ScrollEdgeFadeMetrics()
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
-    /// Hidden distance over which the fade eases on, so it doesn't pop the
+    /// Hidden distance over which the effect eases on, so it doesn't pop the
     /// instant a point of content passes an edge.
     private static let rampLength: CGFloat = 24
+
+    private var reduced: Bool { KriaTransparency.isReduced(reduceTransparency) }
 
     func body(content: Content) -> some View {
         content
@@ -79,22 +83,30 @@ private struct KriaScrollEdgeFade: ViewModifier {
             } action: { _, newValue in
                 metrics = newValue
             }
-            // A mask is laid out inside the safe-area-inset region; the fade
-            // belongs at the real frame edges (the screen edges).
+            // Both a mask and an overlay are laid out inside the safe-area-inset
+            // region; the band belongs at the real frame edges (the screen edges).
             .mask { fadeMask.ignoresSafeArea() }
+            .overlay { blurBands.ignoresSafeArea() }
     }
 
+    // MARK: Reduce Transparency: plain fade
+
+    @ViewBuilder
     private var fadeMask: some View {
-        VStack(spacing: 0) {
-            edge(strength: metrics.top, atTop: true)
+        if reduced {
+            VStack(spacing: 0) {
+                fadeEdge(strength: metrics.top, atTop: true)
+                Rectangle().fill(.black)
+                fadeEdge(strength: metrics.bottom, atTop: false)
+            }
+        } else {
             Rectangle().fill(.black)
-            edge(strength: metrics.bottom, atTop: false)
         }
     }
 
     /// Transparent at the frame edge, opaque `length` points in; `strength`
     /// (0...1) scales it so an edge at rest is untouched.
-    private func edge(strength: CGFloat, atTop: Bool) -> some View {
+    private func fadeEdge(strength: CGFloat, atTop: Bool) -> some View {
         Rectangle()
             .fill(LinearGradient(
                 colors: [.black.opacity(1 - strength), .black],
@@ -102,5 +114,34 @@ private struct KriaScrollEdgeFade: ViewModifier {
                 endPoint: atTop ? .bottom : .top
             ))
             .frame(height: length)
+    }
+
+    // MARK: Blur
+
+    @ViewBuilder
+    private var blurBands: some View {
+        if !reduced {
+            VStack(spacing: 0) {
+                blurEdge(strength: metrics.top, atTop: true)
+                Spacer(minLength: 0)
+                blurEdge(strength: metrics.bottom, atTop: false)
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+
+    /// A frosted band that is strongest at the frame edge and eases out inward.
+    /// `strength` (0...1) scales it so an edge at rest is untouched.
+    private func blurEdge(strength: CGFloat, atTop: Bool) -> some View {
+        Rectangle()
+            .fill(.ultraThinMaterial)
+            .mask(LinearGradient(
+                colors: [.black, .clear],
+                startPoint: atTop ? .top : .bottom,
+                endPoint: atTop ? .bottom : .top
+            ))
+            .frame(height: length)
+            .opacity(strength)
     }
 }
