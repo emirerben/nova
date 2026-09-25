@@ -4459,6 +4459,137 @@ def _load_unified_montage_inputs(job_id: str) -> tuple[Any, list[dict], Any]:
     return user_id, assignments, brief
 
 
+def _first_user_message(job_id: str) -> str:
+    """The creator's first chat message on this job's thread, or "" (best effort).
+
+    Only the language of the creator's own words is wanted from it (landmark names follow
+    it), so any failure to read it simply means "no creator text".
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import CreationThread, CreationThreadEvent  # noqa: PLC0415
+
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            item_id = getattr(job, "content_plan_item_id", None)
+            if item_id is None:
+                return ""
+            content = db.execute(
+                select(CreationThreadEvent.content)
+                .join(CreationThread, CreationThread.id == CreationThreadEvent.thread_id)
+                .where(
+                    CreationThread.active_plan_item_id == item_id,
+                    CreationThreadEvent.role == "user",
+                    CreationThreadEvent.content.is_not(None),
+                )
+                .order_by(CreationThreadEvent.sequence)
+                .limit(1)
+            ).scalar_one_or_none()
+    except Exception:  # noqa: BLE001 - context for a best-effort guess, never fatal
+        return ""
+    return content if isinstance(content, str) else ""
+
+
+def _checkpoint_unified_facts(job_id: str, entry: dict, _ref: Any) -> None:
+    """Persist one clip's enriched facts on the item's own assignment (best effort).
+
+    Without this a landmark asked for during a render is lost, so every re-render and
+    Celery retry would ask (and pay) again and could answer differently. Only the fact
+    rows and their cache key are written, for the exact media identity and storage
+    generation the guess was made for, and through the sole-writer facade
+    (`mutate_plan_item_media`) like every other clip-metadata write: an analysis-only
+    change leaves the narration fingerprint and footage identity alone, so nothing is
+    superseded (and no speech-cleanup preflight is scheduled for it).
+
+    No ownership-epoch fence is taken: a delivery that lost ownership can still write, but
+    what it writes is a fact for a specific (media_id, path, storage generation) that is
+    true whichever delivery learned it, so a stale write is harmless data.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import PlanItem  # noqa: PLC0415
+    from app.services.clip_facts import (  # noqa: PLC0415
+        FACTS_KEY,
+        LANDMARK_GENERATION_KEY,
+        _merge_stored_facts,
+        understanding_facts,
+    )
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        mutate_plan_item_media,
+    )
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        mutation_current_analysis_sync,
+    )
+
+    analysis = entry.get("analysis")
+    if not isinstance(analysis, dict) or not entry.get("gcs_path") or not entry.get("media_id"):
+        return
+    generation = str(entry.get("generation") or entry.get("storage_generation") or "")
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            item_id = getattr(job, "content_plan_item_id", None)
+            if item_id is None:
+                return
+            item = db.execute(
+                select(PlanItem).where(PlanItem.id == item_id).with_for_update()
+            ).scalar_one_or_none()
+            if item is None:
+                return
+            rows = [
+                dict(row) if isinstance(row, dict) else row for row in item.clip_assignments or []
+            ]
+            changed = False
+            for index, row in enumerate(rows):
+                if not isinstance(row, dict):
+                    continue
+                if (
+                    row.get("media_id") != entry.get("media_id")
+                    or row.get("gcs_path") != entry.get("gcs_path")
+                    or str(row.get("generation") or row.get("storage_generation") or "")
+                    != generation
+                ):
+                    continue
+                stored = dict(row.get("analysis") or {})
+                merged = dict(stored)
+                merged[FACTS_KEY] = _merge_stored_facts(stored, understanding_facts(analysis))
+                if LANDMARK_GENERATION_KEY in analysis:
+                    merged[LANDMARK_GENERATION_KEY] = analysis[LANDMARK_GENERATION_KEY]
+                if merged != stored:
+                    rows[index] = {**row, "analysis": merged}
+                    changed = True
+            if not changed:
+                return
+            result = mutate_plan_item_media(
+                item,
+                detector_policy=current_detector_policy(),
+                clip_assignments=rows,
+                current_analysis=mutation_current_analysis_sync(db, item.id, for_update=True),
+            )
+            if result.source_changed:
+                # Never expected for an analysis-only write; if it happens the facade has
+                # already begun superseding, so undo it all rather than half-apply.
+                db.rollback()
+                return
+            db.commit()
+    except Exception as exc:  # noqa: BLE001 - a lost checkpoint only costs a later re-ask
+        log.warning("unified_montage.facts_checkpoint_failed", error=str(exc)[:240])
+
+
+def _landmark_creator_text(view: Any, first_message: str) -> str:
+    """The creator's own words the landmark agent should write its names in: the brief's
+    exact texts (title, per-clip and route places) plus their first message."""
+    parts = [
+        *(view.clip_literals or {}).values(),
+        view.title_literal,
+        view.global_literal,
+        first_message,
+    ]
+    return " ".join(" ".join(str(part).split()) for part in parts if part)[:400]
+
+
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> dict | None:
@@ -4537,6 +4668,9 @@ def _run_phone_unified_montage_job(
                 make_ctx=lambda media_id: RunContext(
                     job_id=job_id, request_id=f"unified-montage:{media_id}"
                 ),
+                # One language per edit: names follow the language the creator wrote in.
+                creator_text=_landmark_creator_text(view, _first_user_message(job_id)),
+                on_updated=lambda entry, ref: _checkpoint_unified_facts(job_id, entry, ref),
             )
             enriched_by_path = {str(entry.get("gcs_path")): entry for entry, _ref in enriched}
             entries = [
