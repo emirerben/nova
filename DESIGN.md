@@ -545,7 +545,10 @@ Native scroll surfaces never hard-cut content: where content continues past an
 edge, `kriaScrollEdgeFade` softens it (a progressive blur that keeps content
 faintly visible, plus a light surface-color wash, on white vertical lists; fade-only on horizontal rows and inside the glass strip;
 fade-only under Reduce Transparency). The Kria AI sheets carry no visible "Kria"
-title. See the KRI-197 section of the iOS development runbook.
+title. The chat header and composer float over the transcript as frosted
+capsules (`kriaFloatingSurface`); the transcript runs full-bleed beneath them,
+so text scrolls and fades under both instead of ending at an opaque bar. See
+the KRI-197 section of the iOS development runbook.
 
 ### iOS wordmark asset
 

@@ -576,23 +576,6 @@ private struct CreationWorkspaceView: View {
         }
         .background(WorkspaceSurface())
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: responsePresentation.hapticToken)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !hasDedicatedSlideWorkspace {
-                ChatComposer(
-                    text: $prompt,
-                    isSending: isSending || isActing,
-                    canAttach: canAttachMedia,
-                    canSendWithoutText: readyMediaCount > 0,
-                    blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures,
-                    placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
-                    isFocused: $composerFocused,
-                    attach: openAttachments,
-                    send: { Task { await send() } }
-                )
-                .accessibilityHidden(projectsDrawerOpen)
-                .allowsHitTesting(!projectsDrawerOpen)
-            }
-        }
         .onAppear { if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) } }
         .onChange(of: prompt) { _, text in model.chatDrafts.setDraft(text, for: project.id) }
         .task {
@@ -643,8 +626,18 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// The transcript runs full-bleed and the header and composer float over it
+    /// as `safeAreaInset`s, so text scrolls (and softly fades) underneath both
+    /// instead of ending at an opaque bar. The scroll view is disabled while the
+    /// drawer is open; the insets are added after that so the header's menu
+    /// button stays tappable.
     private var genericChatWorkspace: some View {
-        VStack(spacing: 0) {
+        ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
+            conversationContent
+        }
+        .accessibilityHidden(projectsDrawerOpen)
+        .allowsHitTesting(!projectsDrawerOpen)
+        .safeAreaInset(edge: .top, spacing: 0) {
             WorkspaceHeader(
                 project: currentProject,
                 // `currentProject.status` (not `workspaceStage`) so the switch
@@ -656,20 +649,29 @@ private struct CreationWorkspaceView: View {
                 openAccount: openAccount
             )
             .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
-
-            ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
-                conversationContent
-            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ChatComposer(
+                text: $prompt,
+                isSending: isSending || isActing,
+                canAttach: canAttachMedia,
+                canSendWithoutText: readyMediaCount > 0,
+                blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures,
+                placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
+                isFocused: $composerFocused,
+                attach: openAttachments,
+                send: { Task { await send() } }
+            )
             .accessibilityHidden(projectsDrawerOpen)
             .allowsHitTesting(!projectsDrawerOpen)
         }
     }
 
     private var editorConversation: some View {
-        VStack(spacing: 0) {
-            ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
-                conversationContent
-            }
+        ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
+            conversationContent
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
                 text: $prompt, isSending: isSending || isActing,
                 canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }

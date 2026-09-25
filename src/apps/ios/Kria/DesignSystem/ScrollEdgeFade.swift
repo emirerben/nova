@@ -12,6 +12,13 @@ struct ScrollEdgeFadeMetrics: Equatable {
     var bottom: CGFloat = 0
     var leading: CGFloat = 0
     var trailing: CGFloat = 0
+    /// The scroll view's content insets (e.g. a floating header/composer added as
+    /// a `safeAreaInset`). The fade zone must cover the space under them, since
+    /// the scroll view's frame runs beneath that chrome.
+    var insetTop: CGFloat = 0
+    var insetBottom: CGFloat = 0
+    var insetLeading: CGFloat = 0
+    var insetTrailing: CGFloat = 0
 
     /// Hidden distance below this is float residue (KRI-128), not content.
     static let hiddenFloor: CGFloat = 0.5
@@ -26,21 +33,27 @@ struct ScrollEdgeFadeMetrics: Equatable {
         self.trailing = trailing
     }
 
-    /// Insets shift the resting offsets: at rest the leading/top offset is
-    /// `-inset`, and the last offset is `content + inset - container`.
-    init(contentOffset: CGPoint, contentSize: CGSize, containerSize: CGSize, contentInsets: EdgeInsets, length: CGFloat) {
+    /// `visibleRect` is the whole scroll frame in content coordinates, INCLUDING
+    /// the inset regions (`containerSize` excludes them, so it can't be used
+    /// here). At rest its top edge is `-inset.top`, and the last position is
+    /// where its bottom edge reaches `content + inset.bottom`.
+    init(visibleRect: CGRect, contentSize: CGSize, contentInsets: EdgeInsets, length: CGFloat) {
         self.init(
-            top: Self.strength(hidden: contentOffset.y + contentInsets.top, length: length),
+            top: Self.strength(hidden: visibleRect.minY + contentInsets.top, length: length),
             bottom: Self.strength(
-                hidden: contentSize.height + contentInsets.bottom - containerSize.height - contentOffset.y,
+                hidden: contentSize.height + contentInsets.bottom - visibleRect.maxY,
                 length: length
             ),
-            leading: Self.strength(hidden: contentOffset.x + contentInsets.leading, length: length),
+            leading: Self.strength(hidden: visibleRect.minX + contentInsets.leading, length: length),
             trailing: Self.strength(
-                hidden: contentSize.width + contentInsets.trailing - containerSize.width - contentOffset.x,
+                hidden: contentSize.width + contentInsets.trailing - visibleRect.maxX,
                 length: length
             )
         )
+        insetTop = max(0, contentInsets.top)
+        insetBottom = max(0, contentInsets.bottom)
+        insetLeading = max(0, contentInsets.leading)
+        insetTrailing = max(0, contentInsets.trailing)
     }
 
     static func strength(hidden: CGFloat, length: CGFloat) -> CGFloat {
@@ -92,6 +105,11 @@ private struct KriaScrollEdgeFade: ViewModifier {
 
     private var contentFloor: CGFloat { wash != nil ? Self.blurContentFloor : 0 }
 
+    /// Fade zones run from the frame edge through any content inset (a floating
+    /// header/composer sits over that space) plus `length` of visible content.
+    private var topZone: CGFloat { metrics.insetTop + length }
+    private var bottomZone: CGFloat { metrics.insetBottom + length }
+
     /// One axis per scroll view: vertical wins if a caller passes both.
     private var vertical: Bool { edges.contains(.top) || edges.contains(.bottom) }
 
@@ -99,17 +117,18 @@ private struct KriaScrollEdgeFade: ViewModifier {
         content
             .onScrollGeometryChange(for: ScrollEdgeFadeMetrics.self) { geometry in
                 ScrollEdgeFadeMetrics(
-                    contentOffset: geometry.contentOffset,
+                    visibleRect: geometry.visibleRect,
                     contentSize: geometry.contentSize,
-                    containerSize: geometry.containerSize,
                     contentInsets: geometry.contentInsets,
                     length: length
                 )
             } action: { _, newValue in
                 metrics = newValue
             }
-            .mask { fadeMask }
-            .overlay { blurBands }
+            // Laid out against the real frame edges: the scroll view runs beneath
+            // any floating header/composer, so the fade zones must too.
+            .mask { fadeMask.ignoresSafeArea() }
+            .overlay { blurBands.ignoresSafeArea() }
     }
 
     // MARK: Mask
@@ -118,9 +137,9 @@ private struct KriaScrollEdgeFade: ViewModifier {
     private var fadeMask: some View {
         if vertical {
             VStack(spacing: 0) {
-                gradient(startOpacity: 1 - (edges.contains(.top) ? metrics.top : 0) * (1 - contentFloor), endOpacity: 1, vertical: true)
+                gradient(startOpacity: 1 - (edges.contains(.top) ? metrics.top : 0) * (1 - contentFloor), endOpacity: 1, vertical: true, length: topZone)
                 Rectangle().fill(.black)
-                gradient(startOpacity: 1, endOpacity: 1 - (edges.contains(.bottom) ? metrics.bottom : 0) * (1 - contentFloor), vertical: true)
+                gradient(startOpacity: 1, endOpacity: 1 - (edges.contains(.bottom) ? metrics.bottom : 0) * (1 - contentFloor), vertical: true, length: bottomZone)
             }
         } else {
             HStack(spacing: 0) {
@@ -131,7 +150,8 @@ private struct KriaScrollEdgeFade: ViewModifier {
         }
     }
 
-    private func gradient(startOpacity: CGFloat, endOpacity: CGFloat, vertical: Bool) -> some View {
+    private func gradient(startOpacity: CGFloat, endOpacity: CGFloat, vertical: Bool, length: CGFloat? = nil) -> some View {
+        let length = length ?? self.length
         let fill = LinearGradient(
             colors: [.black.opacity(startOpacity), .black.opacity(endOpacity)],
             startPoint: vertical ? .top : .leading,
@@ -157,9 +177,9 @@ private struct KriaScrollEdgeFade: ViewModifier {
            !KriaTransparency.isReduced(reduceTransparency),
            vertical {
             VStack(spacing: 0) {
-                if edges.contains(.top) { band(wash: wash, atTop: true).opacity(metrics.top) }
+                if edges.contains(.top) { band(wash: wash, atTop: true, zone: topZone).opacity(metrics.top) }
                 Spacer(minLength: 0)
-                if edges.contains(.bottom) { band(wash: wash, atTop: false).opacity(metrics.bottom) }
+                if edges.contains(.bottom) { band(wash: wash, atTop: false, zone: bottomZone).opacity(metrics.bottom) }
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
@@ -170,7 +190,7 @@ private struct KriaScrollEdgeFade: ViewModifier {
     /// blurs crisp content. The frost tapers off at the very edge and a light
     /// wash blends it into the header/composer, so there is neither a hard grey
     /// line nor a white bar.
-    private func band(wash: Color, atTop: Bool) -> some View {
+    private func band(wash: Color, atTop: Bool, zone: CGFloat) -> some View {
         let toEdge: (start: UnitPoint, end: UnitPoint) = atTop ? (.bottom, .top) : (.top, .bottom)
         return ZStack {
             Rectangle()
@@ -192,6 +212,6 @@ private struct KriaScrollEdgeFade: ViewModifier {
                 startPoint: toEdge.start, endPoint: toEdge.end
             )
         }
-        .frame(height: length * 2.5)
+        .frame(height: zone + length * 1.5)
     }
 }

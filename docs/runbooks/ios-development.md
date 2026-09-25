@@ -239,9 +239,33 @@ testing, and an edge at rest stays crisp (strength 0).
   via `KriaTransparency.isReduced`): the blur band is dropped and only the mask
   fade remains. The env override exists because `simctl ui` does not flip the
   setting for a simulator app process; the glass island shares the same helper.
+- **Floating chat chrome:** the chat header (menu, title, actions) and the
+  composer float over the transcript as frosted capsules
+  (`.kriaFloatingSurface(_:)`, `DesignSystem/FloatingSurface.swift`; solid
+  paper under Reduce Transparency). `genericChatWorkspace` (and the editor's
+  Kria sheet) add them as `safeAreaInset`s on the `ChatConversationScroll`
+  itself, not on a wrapping stack, so the scroll view runs full-bleed beneath
+  them and text scrolls (and fades) under both, and under the status bar.
+  The floating surface is material-only on purpose: the editor island's
+  iOS 26 glass path corrupts the accessibility frame of ancestors that carry an
+  identifier, and the header buttons do.
 - **Sheet titles:** the visible "Kria" heading is removed from both Kria AI
   sheets (chat editor conversation, slide-post assistant); the slide-post sheet
   keeps a VoiceOver "Kria" label on its container.
+
+Geometry traps when the scroll view runs beneath insets (learned the hard way):
+- `ScrollGeometry.containerSize` EXCLUDES the content insets; `visibleRect` is
+  the whole frame, INCLUDING them. Hidden distance is measured from
+  `visibleRect` (`ScrollEdgeFadeMetrics(visibleRect:…)`); using `containerSize`
+  made the bottom fade think hundreds of points were hidden at rest.
+- A `.mask`/`.overlay` is laid out inside the safe-area-inset region, so the
+  modifier applies `.ignoresSafeArea()` to both; otherwise the fade zone starts
+  at the inset edge and runs ~a header-height too long.
+- The fade zone is `inset + length` per edge, so it covers the space under the
+  floating chrome.
+- Scroll to the end with `ScrollPosition.scrollTo(edge: .bottom)`, not an end
+  marker with `anchor: .bottom` (that aligns to the frame bottom and leaves the
+  last content under the composer). "Near bottom" adds `contentInsets.bottom`.
 
 `ScrollEdgeFadeMetrics` (hidden distance to 0...1 strength, insets, 0.5pt float
 floor, 0.05 step) is pure and covered by `ScrollEdgeFadeTests`. Open device

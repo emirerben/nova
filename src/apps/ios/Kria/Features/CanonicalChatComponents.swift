@@ -62,15 +62,22 @@ struct WorkspaceHeader: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Button(action: openProjects) { KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle()) }
+                Button(action: openProjects) { KriaIcon(.menu).frame(width: 44, height: 44).kriaFloatingSurface(Circle()) }
                     .accessibilityLabel(projectsDrawerOpen ? "Close projects" : "Open projects")
                     .accessibilityIdentifier("workspace-menu-toggle")
-                Text(project.workspaceTitle)
-                    .font(KriaFont.body(15).weight(.semibold))
-                    .lineLimit(1).frame(maxWidth: .infinity)
-                    .accessibilityIdentifier("workspace-project-title")
-                    .accessibilityHidden(projectsDrawerOpen)
-                ProjectActionsMenu(project: project)
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    Text(project.workspaceTitle)
+                        .font(KriaFont.body(15).weight(.semibold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 16).frame(height: 44)
+                        .kriaFloatingSurface(Capsule())
+                        .accessibilityIdentifier("workspace-project-title")
+                        .accessibilityHidden(projectsDrawerOpen)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity)
+                ProjectActionsMenu(project: project, floating: true)
                     .accessibilityHidden(projectsDrawerOpen)
                     .allowsHitTesting(!projectsDrawerOpen)
             }
@@ -79,15 +86,16 @@ struct WorkspaceHeader: View {
                 HStack(spacing: 4) {
                     Text("Chat").font(KriaFont.body(13).weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 10))
+                        .background(KriaColor.selectionSoft, in: Capsule())
                         .accessibilityAddTraits(.isSelected)
                     Button("Editor", action: openEditor).font(KriaFont.body(13).weight(.medium))
                         .frame(maxWidth: .infinity, minHeight: 44)
-                }.padding(.horizontal, 16).padding(.bottom, 8)
+                }.padding(4).kriaFloatingSurface(Capsule())
+                    .padding(.horizontal, 16).padding(.bottom, 8)
                     .accessibilityHidden(projectsDrawerOpen)
                     .allowsHitTesting(!projectsDrawerOpen)
             }
-        }.foregroundStyle(KriaColor.ink).background(WorkspaceSurface())
+        }.foregroundStyle(KriaColor.ink)
     }
 }
 
@@ -1034,9 +1042,8 @@ struct ChatComposer: View {
                 .accessibilityLabel(isSending ? "Sending message" : (canSendWithoutText && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Send clips" : "Send message"))
                 .accessibilityIdentifier("chat-send-message")
         }
-        .padding(7).background(WorkspaceSurface())
-        .overlay(RoundedRectangle(cornerRadius: 30).stroke(KriaColor.border, lineWidth: 1))
-        .padding(.horizontal, 14).padding(.vertical, 12).background(WorkspaceSurface())
+        .padding(7).kriaFloatingSurface(RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .padding(.horizontal, 14).padding(.vertical, 12)
     }
 }
 

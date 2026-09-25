@@ -7,15 +7,22 @@ final class ScrollEdgeFadeTests: XCTestCase {
     private let length: CGFloat = 24
     private let noInsets = EdgeInsets()
 
+    /// `container` is the viewport excluding insets (SwiftUI's `containerSize`);
+    /// the visible rect spans the whole frame, insets included.
     private func metrics(
         offset: CGPoint = .zero,
         content: CGSize,
         container: CGSize,
         insets: EdgeInsets? = nil
     ) -> ScrollEdgeFadeMetrics {
-        ScrollEdgeFadeMetrics(
-            contentOffset: offset, contentSize: content, containerSize: container,
-            contentInsets: insets ?? noInsets, length: length
+        let i = insets ?? noInsets
+        let frame = CGSize(
+            width: container.width + i.leading + i.trailing,
+            height: container.height + i.top + i.bottom
+        )
+        return ScrollEdgeFadeMetrics(
+            visibleRect: CGRect(origin: offset, size: frame), contentSize: content,
+            contentInsets: i, length: length
         )
     }
 
@@ -62,17 +69,29 @@ final class ScrollEdgeFadeTests: XCTestCase {
     }
 
     func testContentInsetsShiftTheRestingOffsets() {
-        // A 80pt bottom inset (composer): the resting-top offset is 0 and the
-        // last offset is content + inset - container = 680, not 600.
+        // An 80pt bottom inset (composer) on a 400pt viewport: the frame is 480pt,
+        // so the last offset is content + inset - frame = 600 (not 520).
         let insets = EdgeInsets(top: 0, leading: 0, bottom: 80, trailing: 0)
         let content = CGSize(width: 300, height: 1000)
         let container = CGSize(width: 300, height: 400)
-        XCTAssertEqual(metrics(offset: CGPoint(x: 0, y: 600), content: content, container: container, insets: insets).bottom, 1)
-        XCTAssertEqual(metrics(offset: CGPoint(x: 0, y: 680), content: content, container: container, insets: insets).bottom, 0)
+        XCTAssertEqual(metrics(offset: CGPoint(x: 0, y: 520), content: content, container: container, insets: insets).bottom, 1)
+        XCTAssertEqual(metrics(offset: CGPoint(x: 0, y: 600), content: content, container: container, insets: insets).bottom, 0)
 
         // A top inset makes the resting offset negative; that is still "at top".
         let topInset = EdgeInsets(top: 60, leading: 0, bottom: 0, trailing: 0)
         XCTAssertEqual(metrics(offset: CGPoint(x: 0, y: -60), content: content, container: container, insets: topInset).top, 0)
+    }
+
+    func testInsetsAreCarriedSoTheFadeZoneCoversFloatingChrome() {
+        let insets = EdgeInsets(top: 92, leading: 0, bottom: 84, trailing: 0)
+        let m = metrics(offset: CGPoint(x: 0, y: -92), content: CGSize(width: 300, height: 1000), container: CGSize(width: 300, height: 700), insets: insets)
+        XCTAssertEqual(m.bottom, 1, "content below the composer is hidden content")
+        XCTAssertEqual(m.insetTop, 92)
+        XCTAssertEqual(m.insetBottom, 84)
+        XCTAssertEqual(m.top, 0, "at rest the header inset must not count as hidden content")
+        // Negative insets (never expected) can't shrink the zone below the base length.
+        let odd = metrics(content: CGSize(width: 300, height: 400), container: CGSize(width: 300, height: 400), insets: EdgeInsets(top: -5, leading: 0, bottom: 0, trailing: 0))
+        XCTAssertEqual(odd.insetTop, 0)
     }
 
     func testFloatResidueIsNotTreatedAsHiddenContent() {
