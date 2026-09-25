@@ -435,6 +435,22 @@ enum NativeEditorRenderError: Error, Equatable {
                 shadows: meta["shadow_enabled"] == .bool(false) ? [] : [TextBlurLayer(color: try ink(appearance["shadow_color"], fallback: "#000000", alpha: appearance["shadow_opacity"]?.numberValue ?? 0.5), sigma: 0, dx: 1, dy: 1)],
                 bottomAligned: true, fontVariations: fontInstances[family] ?? [:])
             var previousWordEnd = 0.0
+            // KRI-202: two caption_cues rows can reach the client already
+            // overlapping in time (the cloud's own de-overlap guard,
+            // `phone_captions._prepare_cues`, runs on a compiled copy the
+            // native editor's live document never passes through). Burning
+            // both unclamped stacks two caption rows on the same frame.
+            // Clamp each rendered cue's end to the next rendered cue's start,
+            // mirroring that cloud guard, before compiling any layer below.
+            let renderedCues = document.captionCues
+                .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .sorted { $0.startS == $1.startS ? $0.id < $1.id : $0.startS < $1.startS }
+            var clampedCueEnd: [String: Double] = [:]
+            for index in renderedCues.indices {
+                clampedCueEnd[renderedCues[index].id] = index + 1 < renderedCues.count
+                    ? min(renderedCues[index].endS, renderedCues[index + 1].startS)
+                    : renderedCues[index].endS
+            }
             for cue in document.captionCues where !cue.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 guard let item = items.first(where: { $0.kind == .captionCue && $0.id == cue.id }),
                       item.start.isFinite, item.end.isFinite else {
@@ -442,6 +458,8 @@ enum NativeEditorRenderError: Error, Equatable {
                 }
                 if item.start >= total { continue }
                 guard item.end > item.start else { throw RecipeError.invalidTimeline }
+                let cueEnd = min(item.end, clampedCueEnd[cue.id] ?? item.end)
+                if cueEnd <= item.start { continue }
                 if wordStyle || explicitHighlight == true {
                     let tokens = cue.text.split(whereSeparator: \.isWhitespace).map(String.init)
                     let wordValues: [JSONValue]
@@ -449,13 +467,13 @@ enum NativeEditorRenderError: Error, Equatable {
                     let stored = wordValues.compactMap { $0.objectValue }
                     let matches = stored.map { $0["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" } == tokens
                     var windows: [(Double, Double)] = []
-                    let scale = (item.end - item.start) / max(0.01, cue.endS - cue.startS)
+                    let scale = (cueEnd - item.start) / max(0.01, cue.endS - cue.startS)
                     var synthesizedEnd = 0.0
                     for index in tokens.indices {
                         if matches, let begin = stored[index]["start_s"]?.numberValue, let end = stored[index]["end_s"]?.numberValue {
                             windows.append((item.start + (begin - cue.startS) * scale, item.start + (end - cue.startS) * scale))
                         } else {
-                            let next = max(Double(index + 1) * (item.end - item.start) / Double(tokens.count), synthesizedEnd + 0.05)
+                            let next = max(Double(index + 1) * (cueEnd - item.start) / Double(tokens.count), synthesizedEnd + 0.05)
                             windows.append((item.start + synthesizedEnd, item.start + next))
                             synthesizedEnd = next
                         }
@@ -471,7 +489,7 @@ enum NativeEditorRenderError: Error, Equatable {
                     if wordStyle, let highlighted = explicitHighlight {
                         for index in tokens.indices {
                             let start = max(item.start, starts[index])
-                            let end = min(total, item.end, index + 1 < starts.count ? starts[index + 1] : previousWordEnd)
+                            let end = min(total, cueEnd, index + 1 < starts.count ? starts[index + 1] : previousWordEnd)
                             guard end > start else { continue }
                             var style = captionStyle
                             if highlighted { style.color = try ink(meta["highlight_color"], fallback: "#C5F82A") }
@@ -481,11 +499,11 @@ enum NativeEditorRenderError: Error, Equatable {
                         continue
                     }
                     text.append(try AuthoredTextLayout.compileHighlightedWords(id: "caption-" + cue.id, text: cue.text,
-                        start: first, end: min(total, explicitHighlight == nil ? previousWordEnd : min(item.end, previousWordEnd)), starts: starts.map { $0 - first },
+                        start: first, end: min(total, explicitHighlight == nil ? previousWordEnd : min(cueEnd, previousWordEnd)), starts: starts.map { $0 - first },
                         highlight: try ink(meta["highlight_color"], fallback: "#C5F82A"), style: captionStyle, fontURL: font, canvas: canvas))
                 } else {
                     let layout = try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
-                        start: item.start, end: item.end, style: captionStyle, fontURL: font, canvas: canvas)
+                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas)
                     text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
                         effect: document.editFormat == "subtitled" ? .captionPop : .none))
