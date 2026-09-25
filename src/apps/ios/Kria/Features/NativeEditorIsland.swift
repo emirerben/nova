@@ -64,6 +64,10 @@ struct NativeEditorLayoutMetrics: Equatable {
     var previewAspectRatio: CGFloat
     var keyboardVisible: Bool
     var isAccessibilitySize: Bool
+    /// A text panel that is being typed into may rise over the preview even with the
+    /// keyboard up, so the box has the room it needs (KRI-185). Other panels keep the
+    /// keyboard-up ceiling, so this is `false` unless the caller opts in.
+    var raisesPanelWhileTyping = false
 
     private var referenceHeight: CGFloat {
         keyboardVisible ? viewportSize.height : viewportSize.height + safeAreaTop + safeAreaBottom
@@ -123,8 +127,9 @@ struct NativeEditorLayoutMetrics: Equatable {
     /// header/top chrome. The transport stays where it is and is simply covered.
     func panelMaxHeight(areaHeight: CGFloat, previewHeight: CGFloat) -> CGFloat {
         let budget = panelBudget(areaHeight: areaHeight)
-        guard !keyboardVisible, !isAccessibilitySize else { return budget }
-        return budget + Self.transportHeight + previewHeight
+        guard !isAccessibilitySize, !keyboardVisible || raisesPanelWhileTyping else { return budget }
+        // The transport is hidden while the keyboard is up, so there is nothing to cover.
+        return budget + (keyboardVisible ? 0 : Self.transportHeight) + previewHeight
             + Self.previewVerticalPadding + Self.resizeHandleHeight
     }
 
