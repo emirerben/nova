@@ -295,6 +295,55 @@ final class EditorUITests: XCTestCase {
         )
     }
 
+    /// KRI-185: the Text tab lists every on-screen text block, so a title or a
+    /// per-clip label is one tap away instead of a hunt along the timeline.
+    func testTextTabListsEveryTextBlockAndOpensOneForEditing() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-guided-text"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+
+        app.buttons["native-editor-tool-text"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-list"].waitForExistence(timeout: 3))
+        func row(_ id: String) -> XCUIElement {
+            app.descendants(matching: .any)["native-editor-text-row-" + id].firstMatch
+        }
+        let title = row("guided-title")
+        let first = row("clip-label-unified-cut-1")
+        let note = row("creator-note")
+        let second = row("clip-label-unified-cut-2")
+        for block in [title, first, note, second] { XCTAssertTrue(block.waitForExistence(timeout: 3)) }
+        // Captions have their own tab, and removed blocks are not in the video.
+        XCTAssertFalse(row("caption-1").exists)
+        XCTAssertFalse(row("clip-label-unified-cut-3").exists)
+        // Title first, then the clips and the creator's text in time order.
+        XCTAssertLessThan(title.frame.minY, first.frame.minY)
+        XCTAssertLessThan(first.frame.minY, note.frame.minY)
+        XCTAssertLessThan(note.frame.minY, second.frame.minY)
+        XCTAssertTrue(second.label.contains("Dolmabahçe Palace"))
+        XCTAssertTrue(second.label.contains("Clip 2"))
+
+        // One tap opens the block on its words.
+        second.tap()
+        let content = app.textViews["native-editor-text-content"]
+        XCTAssertTrue(content.waitForExistence(timeout: 3))
+        XCTAssertEqual(content.value as? String, "Dolmabahçe Palace")
+        // The block being edited must stay visible above the panel, not hidden under it.
+        let onCanvas = app.descendants(matching: .any)["native-editor-preview-text-clip-label-unified-cut-2"].firstMatch
+        let panelFrame = app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch.frame
+        XCTAssertTrue(onCanvas.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(onCanvas.frame.maxY, panelFrame.minY + 1,
+                                 "the panel must not cover the text that is being edited")
+        content.tap()
+        content.typeText(" Gate")
+        app.buttons["native-editor-text-inspector-done"].tap()
+
+        // Done returns to the list, which shows the edit.
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-list"].waitForExistence(timeout: 3))
+        XCTAssertTrue(second.waitForExistence(timeout: 3))
+        XCTAssertTrue(second.label.contains("Gate"))
+    }
+
     private static func clipDuration(_ clip: XCUIElement) -> Double {
         Double(clip.value as? String ?? "") ?? 0
     }
