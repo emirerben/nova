@@ -536,6 +536,25 @@ enum NativePreviewDiagnostics {
         events.append(fields.merging(["stage": stage, "time": ISO8601DateFormatter().string(from: Date())]) { _, value in value })
         if let data = try? JSONEncoder().encode(Array(events.suffix(40))) { try? data.write(to: url, options: .atomic) }
     }
+    /// Recorded from every build (unlike `failure`, which is DEBUG-only): a TestFlight phone is exactly where a
+    /// player item fails with nobody attached. Numeric AVFoundation identity only, so it is safe to upload.
+    static func playerItemFailure(kind: PlaybackFailureReport.PlayerKind, error: Error?, sourceState: String) -> PlaybackFailureReport {
+        let nsError = error.map { $0 as NSError }
+        let underlying = nsError?.userInfo[NSUnderlyingErrorKey] as? NSError
+        let report = PlaybackFailureReport(
+            playerKind: kind,
+            errorDomain: nsError?.domain ?? "unknown",
+            errorCode: nsError?.code ?? 0,
+            underlyingDomain: underlying?.domain,
+            underlyingCode: underlying.map(\.code),
+            sourceState: sourceState,
+            appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+        var fields = ["kind": kind.rawValue, "domain": report.errorDomain, "code": String(report.errorCode), "state": sourceState]
+        if let domain = report.underlyingDomain { fields["underlyingDomain"] = domain }
+        if let code = report.underlyingCode { fields["underlyingCode"] = String(code) }
+        record("player-item-failed", fields: fields)
+        return report
+    }
     #if DEBUG
     static func failure(_ stage: String, error: Error) {
         var fields = ["type": String(describing: type(of: error)), "domain": (error as NSError).domain, "code": String((error as NSError).code)]

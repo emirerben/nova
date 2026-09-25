@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import structlog.testing
 from fastapi.testclient import TestClient
 
 from app.auth import get_current_user
@@ -1451,6 +1452,68 @@ def test_playback_url_refresh_is_owner_fenced_and_hides_foreign_jobs() -> None:
     assert job_id in compiled.params.values()
     assert user.id in compiled.params.values()
     assert "jobs.user_id" in str(compiled)
+
+
+_PLAYBACK_DIAGNOSTIC = {
+    "player_kind": "live",
+    "error_domain": "AVFoundationErrorDomain",
+    "error_code": -11800,
+    "underlying_domain": "NSOSStatusErrorDomain",
+    "underlying_code": -12780,
+    "source_state": "ready",
+    "app_build": "1234",
+}
+
+
+def _diagnostics_url(job_id: object) -> str:
+    return f"/me/jobs/{job_id}/playback-diagnostics"
+
+
+def test_playback_diagnostics_logs_owned_job_failure() -> None:
+    user = _user()
+    job_id = uuid.uuid4()
+    db = _db([_scalar(job_id)])
+    _override(user, db)
+
+    with structlog.testing.capture_logs() as logs:
+        response = client.post(_diagnostics_url(job_id), json=_PLAYBACK_DIAGNOSTIC)
+
+    assert response.status_code == 204
+    assert response.content == b""
+    events = [entry for entry in logs if entry["event"] == "editor_playback_failed"]
+    assert len(events) == 1
+    assert events[0]["job_id"] == str(job_id)
+    assert events[0]["error_code"] == -11800
+    assert events[0]["player_kind"] == "live"
+    compiled = db.execute.await_args.args[0].compile()
+    assert job_id in compiled.params.values()
+    assert user.id in compiled.params.values()
+
+
+def test_playback_diagnostics_hides_foreign_jobs_and_logs_nothing() -> None:
+    user = _user()
+    db = _db([_scalar(None)])
+    _override(user, db)
+
+    with structlog.testing.capture_logs() as logs:
+        response = client.post(_diagnostics_url(uuid.uuid4()), json=_PLAYBACK_DIAGNOSTIC)
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Job not found"}
+    assert logs == []
+
+
+def test_playback_diagnostics_rejects_bad_id_and_invalid_body() -> None:
+    user = _user()
+    db = _db([])
+    _override(user, db)
+
+    assert client.post(_diagnostics_url("not-a-uuid"), json=_PLAYBACK_DIAGNOSTIC).status_code == 400
+    oversized = {**_PLAYBACK_DIAGNOSTIC, "error_domain": "x" * 500}
+    assert client.post(_diagnostics_url(uuid.uuid4()), json=oversized).status_code == 422
+    unknown_kind = {**_PLAYBACK_DIAGNOSTIC, "player_kind": "other"}
+    assert client.post(_diagnostics_url(uuid.uuid4()), json=unknown_kind).status_code == 422
+    db.execute.assert_not_awaited()
 
 
 def test_edit_recipe_is_owner_fenced_and_projects_only_portable_fields() -> None:
