@@ -141,6 +141,28 @@ time and `inflight_contracts_preserved=true` in the evidence. If any observation
 unknown, leave the rollout at the prior stage (or off/0) and investigate; unknown is
 never treated as healthy.
 
+### Accented speech: whisper's language vs Gemini's
+
+whisper-1 auto-detects the language from audio alone and misreads accented speech
+(Turkish-accented English -> `tr`), then writes a TRANSLATION, so fillers and word
+timings come from text nobody said. Preflight cross-checks its detection against
+Gemini's transcript of the same clip (the clip assignment's `analysis.transcript`,
+exact generation only) and, on a clear EN/TR disagreement, re-transcribes in the
+language Gemini heard before building the cut plan:
+
+- Gemini present at claim, or landed mid-run: the worker cross-checks before persisting.
+- Gemini lands after a settled, undecided run: the next preflight schedule (every
+  analysis writer calls it) logs `speech_cleanup_analysis.language_redo` and re-queues
+  the same row. A creator decision is never revoked; a run that already had a
+  reference is never repeated.
+- Evidence: the private payload's `diagnostics.language_crosscheck`
+  (`whisper_language`, `reference_language`, `applied`); absent means no Gemini
+  transcript existed for that run (voiceovers never have one).
+
+No flag and no fingerprint change: extra whisper work happens only on a disagreement
+(one call when Gemini was there at claim; a full re-analysis when it landed later),
+and it never reshuffles cohorts or consent.
+
 ## Local verification
 
 ```bash
