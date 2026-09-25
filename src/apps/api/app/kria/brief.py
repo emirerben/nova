@@ -236,7 +236,12 @@ class CurrentPlanShape:
     """What the router needs to know about the plan a render already carries."""
 
     has_render: bool
+    # A per-clip label bar exists (a single label can be corrected in place).
     has_per_clip_text_lane: bool = False
+    # The copilot can also FILL labels for every clip: a legacy lane, or the
+    # server-only `label_each_clip` capability (clip facts on the snapshot).
+    # None = same as `has_per_clip_text_lane` (callers that never distinguish).
+    can_fill_per_clip_text: bool | None = None
 
 
 _PER_CLIP_LANE_ROLES = {"shot_label", "clip_label", "per_clip", "label"}
@@ -284,18 +289,25 @@ def plan_shape_from_editor_snapshot(snapshot: Mapping[str, Any] | None) -> Curre
     if not snapshot:
         return CurrentPlanShape(has_render=False)
     bars = snapshot.get("text_bars") or []
-    # The unified montage writes its per-clip labels as `clip-label-*` bars with
-    # role "generative_intro" (KRI-191), so the id prefix is the reliable lane
-    # marker; without it a per-clip label correction was routed to a re-plan.
-    lane = any(
-        isinstance(bar, Mapping)
-        and (
-            str(bar.get("role") or "") in _PER_CLIP_LANE_ROLES
-            or str(bar.get("id") or "").startswith("clip-label-")
-        )
+    legacy_lane = any(
+        isinstance(bar, Mapping) and str(bar.get("role") or "") in _PER_CLIP_LANE_ROLES
         for bar in bars
     )
-    return CurrentPlanShape(has_render=True, has_per_clip_text_lane=lane)
+    # The unified montage writes its per-clip labels as `clip-label-*` bars with
+    # role "generative_intro" (KRI-191), so the id prefix is the reliable lane
+    # marker. Such a lane supports correcting ONE label (`edit_text`), but filling
+    # every clip needs `label_each_clip`, which exists only when the snapshot
+    # carries clip facts; without them the editor tool cannot serve "label every
+    # clip" and the router must keep re-planning.
+    label_bars = any(
+        isinstance(bar, Mapping) and str(bar.get("id") or "").startswith("clip-label-")
+        for bar in bars
+    )
+    return CurrentPlanShape(
+        has_render=True,
+        has_per_clip_text_lane=legacy_lane or label_bars,
+        can_fill_per_clip_text=legacy_lane or snapshot.get("label_facts") is True,
+    )
 
 
 def route_requirements(
@@ -322,6 +334,14 @@ def route_requirements(
         for req in reqs
     )
     if per_clip_text and not current_plan.has_per_clip_text_lane:
+        return "replan"
+    fills_every_clip = any(req.kind == "text" and req.scope == "per_clip" for req in reqs)
+    can_fill = (
+        current_plan.has_per_clip_text_lane
+        if current_plan.can_fill_per_clip_text is None
+        else current_plan.can_fill_per_clip_text
+    )
+    if fills_every_clip and not can_fill:
         return "replan"
     return "editor_ops"
 

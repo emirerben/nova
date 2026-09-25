@@ -220,8 +220,18 @@ def _clip_label_links(job: Any, variant: dict[str, Any]) -> dict[str, dict[str, 
         links[bar_id] = {
             "clip_id": media_id,
             "inferred": bool(label.get("inferred")) if same_text else False,
+            # Not the approved AI/fact label any more (the creator changed it, or
+            # it was authored in chat): `label_each_clip` must leave it alone.
+            "edited": not same_text,
         }
     return links
+
+
+def _is_guided_native(job: Any, variant: dict[str, Any]) -> bool:
+    """A story-native variant: no legacy timeline, timing lives in a guided revision."""
+    if variant.get("user_timeline") or variant.get("ai_timeline"):
+        return False
+    return _guided_v2_revision(job, variant) is not None
 
 
 def _has_label_lane(job: Any, variant: dict[str, Any]) -> bool:
@@ -232,7 +242,10 @@ def _bar_clip_link(row: dict[str, Any], links: dict[str, dict[str, Any]]) -> dic
     link = links.get(str(row.get("id")))
     if link is None:
         return {}
-    return {"clip_id": link["clip_id"], "inferred": link["inferred"]}
+    out = {"clip_id": link["clip_id"], "inferred": link["inferred"]}
+    if link["edited"]:
+        out["edited"] = True
+    return out
 
 
 def _slot_moments(job: Any, variant: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, str]:
@@ -370,15 +383,14 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         # `_guided_title_index` in app/agents/edit_copilot.py), which the
         # family gate must let through even though intro_controls is False.
         families.append("title")
-    # Per-clip label bars are timed on absolute output windows and do not follow a
-    # segment when the timeline is reordered, trimmed or retimed: a clip op on a
-    # guided variant with a label lane would silently desync every label from its
-    # clip. Those variants keep text edits only (KRI-191); before slots were
-    # visible the same ops simply could not resolve.
-    label_lane_on_guided = _has_label_lane(job, variant) and not (
-        variant.get("user_timeline") or variant.get("ai_timeline")
-    )
-    if caps.get("timeline") is True and not label_lane_on_guided:
+    # Guided (story-native) variants keep text-only editing until a guided
+    # `timeline_slots` commit is verified end to end: their per-clip label bars
+    # are timed on absolute output windows and do not follow a segment through a
+    # reorder/trim/retime, and no test drives a guided timeline commit. Before
+    # KRI-191 the same ops could not resolve at all (empty slots); filling the
+    # slots must not make them reachable.
+    guided_native = _is_guided_native(job, variant)
+    if caps.get("timeline") is True and not guided_native:
         families.append("clip")
         clips = caps.get("clips") or {}
         transition = clips.get("transitions") if isinstance(clips, dict) else None
@@ -403,7 +415,11 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         )
     ):
         families.append("music")
-    if _removable_visual_media(job, variant):
+    # Removing a visual block on a guided variant that carries per-clip labels
+    # could strand a label bar whose clip is gone; withheld until it drops the bar.
+    if _removable_visual_media(job, variant) and not (
+        guided_native and _has_label_lane(job, variant)
+    ):
         families.append("visual_media")
     # Phone recipes do not render the sound-effect or camera-effect lanes yet
     # (KRI-114 Phase 4): the phone compiler rejects them at commit, so a
@@ -795,7 +811,7 @@ def merge_editor_draft(previous: dict[str, Any], current: dict[str, Any]) -> dic
 # One draft bundle holds at most this many operations (`ApplyEditorOpsArguments`
 # enforces the same bound at the tool boundary).
 MAX_EDITOR_OPS = 8
-_MAX_CLIP_LABELS = 40
+_MAX_CLIP_LABELS = 80  # fast_cuts allows 80 cuts
 _LABEL_DEFAULTS = {
     "role": "generative_intro",
     "position": "custom",
@@ -868,6 +884,8 @@ def _apply_clip_labels(
         for row in slots
         if row.get("media_id") and not row.get("removed")
     }
+    seen_media: set[str] = set()
+    seen_bars: set[str] = set()
     for entry in labels:
         if not isinstance(entry, dict):
             raise KriaEditorOpError("A clip label changed before this edit could be drafted")
@@ -875,8 +893,16 @@ def _apply_clip_labels(
         media_id = str(entry.get("media_id") or "")
         if not value or len(value) > 120 or not media_id:
             raise KriaEditorOpError("A clip label changed before this edit could be drafted")
+        # One label per clip: the same media in two segments must never produce
+        # two bars (or two writes to one bar).
+        if media_id in seen_media:
+            raise KriaEditorOpError("A clip can only be labelled once")
+        seen_media.add(media_id)
         bar_id = entry.get("bar_id")
         if bar_id:
+            if bar_id in seen_bars:
+                raise KriaEditorOpError("A clip label bar can only be updated once")
+            seen_bars.add(bar_id)
             row = by_id.get(bar_id)
             if row is None or id(row) in removed_text_bars:
                 raise KriaEditorOpError("Text changed before this edit could be drafted")
@@ -889,10 +915,14 @@ def _apply_clip_labels(
             start, end = slot.get("output_start_s"), slot.get("output_end_s")
         if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or end <= start:
             raise KriaEditorOpError("That clip is no longer on the timeline")
+        new_id = f"{_CLIP_LABEL_MEDIA_PREFIX}{media_id}"
+        if new_id in by_id:
+            raise KriaEditorOpError("That clip already has a label bar")
+        by_id[new_id] = {}
         text.append(
             {
                 **style,
-                "id": f"{_CLIP_LABEL_MEDIA_PREFIX}{media_id}",
+                "id": new_id,
                 "text": value,
                 "start_s": round(float(start), 3),
                 "end_s": round(float(end), 3),

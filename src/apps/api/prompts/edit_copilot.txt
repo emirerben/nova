@@ -141,14 +141,16 @@ Text and clip:
   facts listed on each clip slot (never invent a name). It exists only when the
   CLIP SLOTS carry facts. It updates existing label bars and adds the missing
   ones, skips a clip whose label would repeat the previous one, and leaves a
-  clip with no fact alone; say which clips could not be labelled. Use it for
+  clip with no fact alone, and NEVER overwrites a label the creator changed
+  (bars marked edited=true keep their wording); say which clips were left
+  unlabelled or kept, and that hand-edited labels were preserved. Use it for
   "label each landmark", "add the place names", "name every clip".
 - Correcting ONE label ("that's Besiktas, not Dolmabahce", "clip 4 is the
   bridge"): find the single text bar whose text (or label_for_clip clip) matches
   the wrong name, and emit ONE edit_text on that bar with the creator's own
   wording. Never re-run label_each_clip for a one-label fix, never touch another
   bar, and copy the creator's spelling exactly. Bars marked guessed=true are AI
-  guesses the creator may correct.
+  guesses the creator may correct; edited=true bars are the creator's own words.
 - set_text_timing: {"op":"set_text_timing","bar_index":0,"start_s":0.2,"end_s":2.8}
 
 Text timing is supported for editable text bars, including generated labels.

@@ -1308,6 +1308,8 @@ def _format_snapshot(snapshot: dict) -> str:
                 semantic += f" label_for_clip={_field(clip_ref, max_chars=100)!r}"
                 if bar.get("inferred") is True:
                     semantic += " guessed=true"
+                if bar.get("edited") is True:
+                    semantic += " edited=true"
             identity = ""
             if component_context_enabled:
                 identity = (
@@ -3789,30 +3791,50 @@ def _coerce_label_each_clip(
 
     Each clip's text comes from ``unified_montage._fact_label`` (creator text,
     then landmark, then place) over the facts the SERVER put on the slot; nothing
-    the model writes is used. A clip whose label equals the previous kept label
-    is skipped (never the same place name twice in a row); a clip with no
-    grounded fact is left alone. Existing label bars are updated in place, and a
-    clip without one gets a new bar timed on its output window (compile step).
+    the model writes is used. Rules, in order, per clip (first segment wins when
+    one media fills several segments, so a clip gets at most one label):
+
+    * a clip with no grounded fact is left alone;
+    * a label equal to the previous kept label is skipped (no repeated name);
+    * an existing label bar the creator changed (``edited``) is never overwritten;
+    * an existing label bar already showing the label is left alone;
+    * a clip whose window already overlaps ANY label bar (including one that could
+      not be linked to a clip) is treated as labelled and skipped;
+    * otherwise an existing bar is updated in place, or a new bar is added on the
+      clip's output window (compile step).
     """
     from app.pipeline.unified_montage import _fact_label  # noqa: PLC0415
 
     if payload.get("source") != "facts":
         state.invalid_value()
         return None
-    bars = {
-        str(bar.get("clip_id")): bar
-        for bar in _snapshot_list(snapshot, _TEXT_INDEX_KEYS)
-        if isinstance(bar, dict) and bar.get("clip_id") and bar.get("id")
-    }
+    all_bars = [bar for bar in _snapshot_list(snapshot, _TEXT_INDEX_KEYS) if isinstance(bar, dict)]
+    bars: dict[str, dict] = {}
+    for bar in all_bars:
+        if bar.get("clip_id") and bar.get("id"):
+            bars.setdefault(str(bar["clip_id"]), bar)  # first bar per clip
+    label_windows = [
+        (float(bar["start_s"]), float(bar["end_s"]))
+        for bar in all_bars
+        if str(bar.get("id") or "").startswith("clip-label-")
+        and isinstance(bar.get("start_s"), (int, float))
+        and isinstance(bar.get("end_s"), (int, float))
+    ]
+    existing_ids = {str(bar.get("id")) for bar in all_bars if bar.get("id")}
     labels: list[dict[str, Any]] = []
     previous = ""
+    seen_media: set[str] = set()
     already_correct = 0
+    kept_edited = 0
     for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS):
         if not isinstance(slot, dict) or slot.get("removed"):
             continue
         media_id = slot.get("media_id")
         facts = slot.get("facts")
-        if not isinstance(media_id, str) or not media_id or not isinstance(facts, list):
+        if not isinstance(media_id, str) or not media_id or media_id in seen_media:
+            continue
+        seen_media.add(media_id)
+        if not isinstance(facts, list):
             continue
         chosen = _fact_label(SimpleNamespace(facts=tuple(f for f in facts if isinstance(f, dict))))
         if chosen is None:
@@ -3821,12 +3843,16 @@ def _coerce_label_each_clip(
         if not text or _label_fold(text) == previous:
             continue
         previous = _label_fold(text)
-        entry: dict[str, Any] = {"media_id": media_id, "text": text, "inferred": chosen[2]}
-        if media_id in bars:
-            if _label_fold(str(bars[media_id].get("text") or "")) == _label_fold(text):
+        entry: dict[str, Any] = {"media_id": media_id, "text": text}
+        bar = bars.get(media_id)
+        if bar is not None:
+            if bar.get("edited") is True:
+                kept_edited += 1
+                continue
+            if _label_fold(str(bar.get("text") or "")) == _label_fold(text):
                 already_correct += 1
                 continue
-            entry["bar_id"] = str(bars[media_id]["id"])
+            entry["bar_id"] = str(bar["id"])
         else:
             start, end = slot.get("output_start_s"), slot.get("output_end_s")
             if (
@@ -3837,6 +3863,13 @@ def _coerce_label_each_clip(
                 or end <= start
             ):
                 continue
+            if f"clip-label-media-{media_id}" in existing_ids:
+                continue
+            if any(
+                start < w_end - 0.05 and w_start < end - 0.05 for w_start, w_end in label_windows
+            ):
+                already_correct += 1
+                continue
             entry["start_s"] = round(float(start), 3)
             entry["end_s"] = round(float(end), 3)
         labels.append(entry)
@@ -3845,13 +3878,22 @@ def _coerce_label_each_clip(
             op=name,
             reason="capability_unavailable",
             detail=(
-                "every clip already shows its place label"
+                "every clip already has its label"
                 if already_correct
-                else "none of the clips has a grounded place, landmark or creator label"
+                else (
+                    "the labels you edited by hand were kept, and no other clip needs one"
+                    if kept_edited
+                    else "none of the clips has a grounded place, landmark or creator label"
+                )
             ),
         )
         return None
-    return {"source": "facts", "labels": labels}
+    if len(labels) > 80:
+        labels = labels[:80]
+    result: dict[str, Any] = {"source": "facts", "labels": labels}
+    if kept_edited:
+        result["kept_edited"] = kept_edited
+    return result
 
 
 def _index_in_bounds(value: object, count: int) -> bool:

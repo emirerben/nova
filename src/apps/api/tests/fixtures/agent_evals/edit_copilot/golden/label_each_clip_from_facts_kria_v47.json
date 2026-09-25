@@ -26,8 +26,8 @@
           "id": "clip-label-unified-cut-1",
           "role": "generative_intro",
           "text": "Alpha Quay",
-          "start_s": 1.4,
-          "end_s": 2.8,
+          "start_s": 0.0,
+          "end_s": 1.4,
           "size_px": 58,
           "font_family": "DM Sans",
           "stroke_width": 0.0,
@@ -163,7 +163,7 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "KRI-191: label_each_clip fills the per-clip lane from grounded facts; skips a repeat, a clip with no place fact, and an already-correct bar",
+    "case": "KRI-191: label_each_clip fills the per-clip lane from grounded facts; skips a repeat, a clip with no place fact, and an already-correct bar; a label bar overlapping a clip's window counts as that clip's label",
     "exact_edit_ops": [
       {
         "op": "label_each_clip",
@@ -172,14 +172,12 @@
           {
             "media_id": "clip-1",
             "text": "Beta Bridge",
-            "inferred": false,
             "start_s": 1.4,
             "end_s": 2.8
           },
           {
             "media_id": "clip-3",
             "text": "Gamma Tower",
-            "inferred": true,
             "start_s": 4.2,
             "end_s": 5.6
           }

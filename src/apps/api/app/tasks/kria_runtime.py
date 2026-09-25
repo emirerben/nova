@@ -1006,9 +1006,11 @@ def _project_retryable_failure(
     """Fail a locked turn and tell the creator to retry; the caller commits.
 
     ``detail`` (``error_class`` + a truncated ``error_message``) makes an
-    otherwise opaque ``runtime_turn_failed`` diagnosable from the admin
-    ``/turns`` and ``/events`` reads (KRI-203: the 2026-09-25 failure carried
-    only the code). It never changes the creator-facing copy.
+    otherwise opaque ``runtime_turn_failed`` diagnosable (KRI-203: the
+    2026-09-25 failure carried only the code). The full detail lives on
+    ``turn.error``, which only admin routes read. The ``assistant_error`` event
+    payload is returned unfiltered to the creator's app, so it gets the class
+    name only (see ``_event_failure_detail``). Creator-facing copy is unchanged.
     """
 
     turn.status = "failed"
@@ -1033,7 +1035,7 @@ def _project_retryable_failure(
             # Planning failed before a tool execution receipt existed.
             # Keep this empty rather than inventing a receipt identity.
             "receipt_ids": [],
-            **(detail or {}),
+            **_event_failure_detail(detail),
         },
     )
     turn.observed_event_id = event.id
@@ -1073,6 +1075,21 @@ def _fail_exhausted_turn(
 
 
 _FAILURE_MESSAGE_CHARS = 200
+
+
+# Only these exceptions carry a message written for humans (no SQL, paths, URLs or
+# provider bodies), so only their message may reach the creator-visible event.
+_EVENT_SAFE_MESSAGE_CLASSES = frozenset({"KriaEditorOpError"})
+
+
+def _event_failure_detail(detail: dict[str, str] | None) -> dict[str, str]:
+    """The slice of a failure detail that may go on a creator-visible event."""
+    if not detail:
+        return {}
+    out = {"error_class": detail["error_class"]} if detail.get("error_class") else {}
+    if detail.get("error_class") in _EVENT_SAFE_MESSAGE_CLASSES and detail.get("error_message"):
+        out["error_message"] = detail["error_message"]
+    return out
 
 
 def _failure_detail(exc: BaseException) -> dict[str, str]:

@@ -10,6 +10,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass, replace
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +63,8 @@ from app.services.kria_editor_ops import (
     coalesce_text_style_ops,
     project_editor_draft,
 )
+
+log = structlog.get_logger()
 
 
 @dataclass(frozen=True)
@@ -236,6 +239,41 @@ class _EditorTarget:
     conversation: list[dict]
 
 
+async def _copilot_clip_context(
+    db: AsyncSession,
+    *,
+    thread: CreationThread,
+    thread_id: uuid.UUID,
+    job: Job,
+    variant: dict,
+    item: PlanItem,
+) -> dict:
+    """KRI-191: the Creative Brief and per-clip facts the copilot may see.
+
+    Context only ever ADDS to what the copilot knows, so any failure here
+    (a bad stored fact, a brief read error) logs and degrades to no context
+    rather than failing a turn that could still edit. The brief read runs in a
+    savepoint so a database error cannot poison the outer read transaction.
+    """
+    context: dict = {}
+    try:
+        if settings.clip_facts_for(job.user_id):
+            facts = clip_facts_by_media_id(job, variant, list(item.clip_assignments or []))
+            if facts:
+                context["facts"] = facts
+    except Exception:  # noqa: BLE001 - fail open to no clip facts
+        log.warning("kria_copilot_clip_facts_unavailable", thread_id=str(thread_id), exc_info=True)
+    try:
+        if settings.creative_brief_for(thread.creator_id):
+            async with db.begin_nested():
+                brief = await load_latest_brief(db, thread_id)
+            if brief is not None and brief.live():
+                context["brief"] = render_brief_request(brief)
+    except Exception:  # noqa: BLE001 - fail open to no brief
+        log.warning("kria_copilot_brief_unavailable", thread_id=str(thread_id), exc_info=True)
+    return context
+
+
 async def _load_editor_target(
     db: AsyncSession,
     *,
@@ -278,18 +316,9 @@ async def _load_editor_target(
     ).scalar_one_or_none()
     if head is not None and (head.snapshot_json or {}).get("kind") == "editor":
         variant = project_editor_draft(variant, head.snapshot_json.get("editor_payload") or {})
-    clip_context: dict = {}
-    # KRI-191: the copilot sees what the creator asked for (the Creative Brief)
-    # and what the server knows about each clip (capture time, place, landmark
-    # with provenance), both behind the flags that already gate those systems.
-    if settings.clip_facts_for(job.user_id):
-        facts = clip_facts_by_media_id(job, variant, list(item.clip_assignments or []))
-        if facts:
-            clip_context["facts"] = facts
-    if settings.creative_brief_for(thread.creator_id):
-        brief = await load_latest_brief(db, thread_id)
-        if brief is not None and brief.live():
-            clip_context["brief"] = render_brief_request(brief)
+    clip_context = await _copilot_clip_context(
+        db, thread=thread, thread_id=thread_id, job=job, variant=variant, item=item
+    )
     snapshot = build_editor_snapshot(job, variant, clip_context=clip_context)
     if not snapshot["allowed_op_families"]:
         return None

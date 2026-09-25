@@ -519,3 +519,275 @@ def test_planner_answers_an_oversized_bundle_instead_of_failing_the_turn() -> No
     assert plan.mode == "respond"
     assert plan.turn_value == "recovery"
     assert "smaller steps" in (plan.response or "")
+
+
+# ── Review round: repeated media, edited labels, guided gating, fail-open ─────
+
+
+def _label_snapshot(slots: list[dict], bars: list[dict]) -> dict:
+    return {
+        "allowed_op_families": ["text", "title"],
+        "label_facts": True,
+        "text_bars": bars,
+        "slots": slots,
+        "total_duration_s": 10.0,
+    }
+
+
+def _slot(media_id: str, start: float, facts: list[dict] | None = None) -> dict:
+    return {
+        "key": f"s-{media_id}-{start}",
+        "slot_id": f"s-{media_id}-{start}",
+        "media_id": media_id,
+        "output_start_s": start,
+        "output_end_s": start + 1.0,
+        "duration_s": 1.0,
+        "in_s": 0.0,
+        "removed": False,
+        "transition_after": "cut",
+        "look_preset": "none",
+        "facts": facts
+        or [{"kind": "landmark", "value": f"Place {media_id}", "provenance": "inferred"}],
+    }
+
+
+def _bar(bar_id: str, text: str, start: float, **extra) -> dict:
+    return {
+        "id": bar_id,
+        "role": "generative_intro",
+        "text": text,
+        "start_s": start,
+        "end_s": start + 1.0,
+        "font_family": "DM Sans",
+        **extra,
+    }
+
+
+def test_repeated_media_gets_one_label_bar_not_two() -> None:
+    snapshot = _label_snapshot(
+        [_slot("A", 0.0), _slot("B", 1.0), _slot("A", 2.0)],
+        [_bar("guided-title", "Title", 0.0)],
+    )
+    output = _parse(snapshot, [{"op": "label_each_clip", "source": "facts"}])
+    labels = output.ops[0]["labels"]
+    assert [row["media_id"] for row in labels] == ["A", "B"]
+
+    job, variant = _thirteen_bars()
+    variant["text_elements"] = [
+        {**variant["text_elements"][0], "id": "guided-title"},
+    ]
+    variant["ai_timeline"] = {
+        "slots": [
+            {
+                "slot_id": "sa",
+                "clip_index": 0,
+                "media_id": "A",
+                "output_start_s": 0.0,
+                "output_end_s": 1.0,
+                "duration_s": 1.0,
+                "in_s": 0.0,
+                "removed": False,
+            },
+            {
+                "slot_id": "sb",
+                "clip_index": 1,
+                "media_id": "B",
+                "output_start_s": 1.0,
+                "output_end_s": 2.0,
+                "duration_s": 1.0,
+                "in_s": 0.0,
+                "removed": False,
+            },
+            {
+                "slot_id": "sa2",
+                "clip_index": 0,
+                "media_id": "A",
+                "output_start_s": 2.0,
+                "output_end_s": 3.0,
+                "duration_s": 1.0,
+                "in_s": 0.0,
+                "removed": False,
+            },
+        ]
+    }
+    saved = _saved_text(compile_editor_ops(job, variant, output.ops))
+    ids = [row["id"] for row in saved]
+    assert len(ids) == len(set(ids)) == 3
+    assert {"clip-label-media-A", "clip-label-media-B"} <= set(ids)
+
+
+def test_two_bars_for_the_same_media_update_only_the_first() -> None:
+    snapshot = _label_snapshot(
+        [_slot("A", 0.0), _slot("B", 1.0), _slot("A", 2.0)],
+        [
+            _bar("clip-label-c1", "Old A", 0.0, clip_id="A", inferred=True),
+            _bar("clip-label-c2", "Old B", 1.0, clip_id="B", inferred=True),
+            _bar("clip-label-c3", "Old A", 2.0, clip_id="A", inferred=True),
+        ],
+    )
+    # Not edited: the snapshot marks only creator-changed bars.
+    output = _parse(snapshot, [{"op": "label_each_clip", "source": "facts"}])
+    targets = [row.get("bar_id") for row in output.ops[0]["labels"]]
+    assert targets == ["clip-label-c1", "clip-label-c2"]
+
+
+def test_compile_refuses_duplicate_targets() -> None:
+    job, variant = _thirteen_bars()
+    op = {
+        "op": "label_each_clip",
+        "source": "facts",
+        "labels": [
+            {"media_id": "A", "text": "One", "start_s": 0.0, "end_s": 1.0},
+            {"media_id": "A", "text": "Two", "start_s": 2.0, "end_s": 3.0},
+        ],
+    }
+    with pytest.raises(KriaEditorOpError):
+        compile_editor_ops(job, variant, [op])
+    bar = variant["text_elements"][1]["id"]
+    op = {
+        "op": "label_each_clip",
+        "source": "facts",
+        "labels": [
+            {"media_id": "A", "text": "One", "bar_id": bar},
+            {"media_id": "B", "text": "Two", "bar_id": bar},
+        ],
+    }
+    with pytest.raises(KriaEditorOpError):
+        compile_editor_ops(job, variant, [op])
+
+
+def test_a_hand_edited_label_is_never_overwritten() -> None:
+    snapshot = _label_snapshot(
+        [_slot("A", 0.0), _slot("B", 1.0)],
+        [
+            _bar("clip-label-c1", "My own words", 0.0, clip_id="A", inferred=False, edited=True),
+            _bar("clip-label-c2", "Old B", 1.0, clip_id="B", inferred=True),
+        ],
+    )
+    output = _parse(snapshot, [{"op": "label_each_clip", "source": "facts"}])
+    assert [row["media_id"] for row in output.ops[0]["labels"]] == ["B"]
+    assert output.ops[0]["kept_edited"] == 1
+
+    only_edited = _label_snapshot(
+        [_slot("A", 0.0)],
+        [_bar("clip-label-c1", "My own words", 0.0, clip_id="A", edited=True)],
+    )
+    refused = _parse(only_edited, [{"op": "label_each_clip", "source": "facts"}])
+    assert refused.ops == []
+    assert "edited by hand" in refused.rejection_reasons[0]["detail"]
+
+
+def test_snapshot_marks_a_creator_changed_label_as_edited() -> None:
+    job, variant = _job_and_variant()
+    snapshot = build_editor_snapshot(job, variant)
+    label = next(b for b in snapshot["text_bars"] if b["id"] == "clip-label-unified-cut-1")
+    assert "edited" not in label
+    next(r for r in variant["text_elements"] if r["id"] == label["id"])["text"] = "Mine"
+    again = build_editor_snapshot(job, variant)
+    assert next(b for b in again["text_bars"] if b["id"] == label["id"])["edited"] is True
+
+
+def test_an_unlinked_label_bar_blocks_a_second_overlapping_bar() -> None:
+    # A clip-label bar whose cut id is missing from fast_cuts has no clip_id link.
+    snapshot = _label_snapshot(
+        [_slot("A", 0.0), _slot("B", 1.0)],
+        [_bar("clip-label-orphan", "Somebody", 0.0)],
+    )
+    output = _parse(snapshot, [{"op": "label_each_clip", "source": "facts"}])
+    assert [row["media_id"] for row in output.ops[0]["labels"]] == ["B"]
+    assert all("inferred" not in row for row in output.ops[0]["labels"])
+
+
+def test_more_than_forty_clips_can_be_labelled() -> None:
+    job, variant = _thirteen_bars()
+    op = {
+        "op": "label_each_clip",
+        "source": "facts",
+        "labels": [
+            {"media_id": f"m{i}", "text": f"P{i}", "start_s": float(i), "end_s": i + 1.0}
+            for i in range(60)
+        ],
+    }
+    saved = _saved_text(compile_editor_ops(job, variant, [op]))
+    assert len([r for r in saved if r["id"].startswith("clip-label-media-")]) == 60
+
+
+def test_guided_variants_never_advertise_clip_or_transition_families() -> None:
+    job, variant = _job_and_variant()
+    labelled = build_editor_snapshot(job, variant)["allowed_op_families"]
+    assert not {"clip", "transition"} & set(labelled)
+
+    # Same variant with no label lane: still a guided timeline, still withheld.
+    variant["text_elements"] = [
+        row for row in variant["text_elements"] if not row["id"].startswith("clip-label-")
+    ]
+    plain = build_editor_snapshot(job, variant)["allowed_op_families"]
+    assert not {"clip", "transition"} & set(plain)
+    assert "text" in plain
+
+
+def test_visual_media_removal_is_withheld_when_it_could_strand_a_label(monkeypatch) -> None:
+    job, variant = _job_and_variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._removable_visual_media",
+        lambda _job, _variant: [{"id": "vb-1", "kind": "media", "origin": "user"}],
+    )
+    assert "visual_media" not in build_editor_snapshot(job, variant)["allowed_op_families"]
+
+    # Without a label lane the family stays available.
+    variant["text_elements"] = [
+        row for row in variant["text_elements"] if not row["id"].startswith("clip-label-")
+    ]
+    assert "visual_media" in build_editor_snapshot(job, variant)["allowed_op_families"]
+
+
+def test_per_clip_label_routing_needs_the_copilot_to_be_able_to_fill_them() -> None:
+    job, variant = _job_and_variant()
+    every = BriefRequirement(id="r1", kind="text", scope="per_clip", description="label each clip")
+    one = BriefRequirement(
+        id="r2", kind="text", scope="clip:clip-1", literal="Besiktas Pier", description="fix"
+    )
+
+    with_facts = build_editor_snapshot(job, variant, clip_context=_context(job, variant))
+    shape = plan_shape_from_editor_snapshot(with_facts)
+    assert route_requirements([every], shape) == "editor_ops"
+
+    no_facts = build_editor_snapshot(job, variant)
+    assert "label_facts" not in no_facts
+    shape = plan_shape_from_editor_snapshot(no_facts)
+    assert shape.has_per_clip_text_lane
+    assert route_requirements([every], shape) == "replan"
+    # Correcting a single label needs only the existing bar.
+    assert route_requirements([one], shape) == "editor_ops"
+
+
+@pytest.mark.asyncio
+async def test_clip_context_failures_degrade_to_no_context(monkeypatch) -> None:
+    job, variant = _job_and_variant()
+    thread = SimpleNamespace(creator_id=job.user_id)
+    item = SimpleNamespace(clip_assignments=_assignments())
+    monkeypatch.setattr("app.config.settings.clip_facts_enabled", True)
+    monkeypatch.setattr("app.config.settings.kria_creative_brief_enabled", True)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("bad stored fact")
+
+    async def brief_boom(*_args, **_kwargs):
+        raise RuntimeError("db hiccup")
+
+    class Savepoint:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    db = SimpleNamespace(begin_nested=lambda: Savepoint())
+    monkeypatch.setattr(planner, "clip_facts_by_media_id", boom)
+    monkeypatch.setattr(planner, "load_latest_brief", brief_boom)
+
+    context = await planner._copilot_clip_context(
+        db, thread=thread, thread_id=uuid.uuid4(), job=job, variant=variant, item=item
+    )
+
+    assert context == {}

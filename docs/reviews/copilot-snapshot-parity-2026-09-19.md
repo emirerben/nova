@@ -90,10 +90,10 @@ the problem). Prompt `edit_copilot` is now `2026-09-25-v47`.
 
 | Section / key | Before | Now | Advertised only if compilable |
 |---|---|---|---|
-| `slots` on a guided v2 variant | empty (no legacy timeline) | filled from the revision through `_guided_v2_slot_rows` (shared with the public timeline projection, `include_source_path=False`, so unsigned and path-free) | n/a (read context). `clip`/`transition` are withheld when a per-clip label lane exists, because label bars are timed on absolute output windows and would desync on reorder/trim/retime |
+| `slots` on a guided v2 variant | empty (no legacy timeline) | filled from the revision through `_guided_v2_slot_rows` (shared with the public timeline projection, `include_source_path=False`, so unsigned and path-free) | n/a (read context). `clip`/`transition` are withheld for EVERY guided-native variant (no legacy timeline): no test drives a guided `timeline_slots` commit yet, and label bars are timed on absolute output windows so they would desync on reorder/trim/retime. `visual_media` is also withheld on a guided variant that has a label lane, since removing a block could strand a label bar |
 | `slots[].media_id`, `moment`, `facts` | absent | media id from the revision; `moment` = the clip's current label bar text, else its approved description; `facts` = capture time, place, landmark with provenance from `PlanItem.clip_assignments` (`clip_facts_by_media_id`, read by the async planner behind `clip_facts_for`) | n/a |
 | `brief` | absent | the rendered Creative Brief (`render_brief_request`) behind `creative_brief_for`; capped at 1500 chars | n/a |
-| `text_bars[].clip_id` / `inferred` | absent (only the `clip-label-*` id prefix linked a bar to its clip) | present for per-clip label bars. `clip-label-{cut_id}` resolves through the approved `fast_cuts`; a copilot-added label uses `clip-label-media-{media_id}`. `inferred` is a model landmark guess and clears once the creator edits the text | n/a |
+| `text_bars[].clip_id` / `inferred` | absent (only the `clip-label-*` id prefix linked a bar to its clip) | present for per-clip label bars. `clip-label-{cut_id}` resolves through the approved `fast_cuts`; a copilot-added label uses `clip-label-media-{media_id}`. `inferred` is a model landmark guess and clears once the creator edits the text; `edited: true` marks a bar whose text is no longer the approved label (creator-changed or chat-authored) | n/a |
 | `label_facts` marker | absent | set when any slot carries facts; the parser refuses `label_each_clip` without it, so the web drawer (whose snapshot never has it) can never receive an op `apply-ops.ts` cannot apply | yes |
 | `text_appearance` `font_family` and `group` | stroke/shadow only | `font_family` is a supported appearance field (validated against `_ALLOWED_FONTS`); targets carry `group` = `title`/`label` for `selector.group` | yes: compiled by `patch_text_appearance` |
 
@@ -101,7 +101,11 @@ New operation: `label_each_clip {source: "facts"}`. The parser resolves it into 
 `labels` from the facts the server put on each slot, using `unified_montage._fact_label`
 (creator text, then landmark, then place). Model-supplied labels are dropped. A clip whose
 label equals the previous kept label is skipped, a clip with no fact is left alone, an
-already-correct bar is left alone, and an existing label bar keeps its style and timing.
+already-correct bar is left alone, a bar the creator edited (`edited: true`) is never
+overwritten, a media that fills several segments is labelled once (first segment), a clip
+whose window already overlaps any label bar (even one that could not be linked to a clip)
+is treated as labelled, and an existing label bar keeps its style and timing. Compile
+refuses duplicate media/bar targets.
 A clip without a label bar gets `clip-label-media-{media_id}` on its own output window.
 A single correction ("that's X, not Y") stays a plain `edit_text` on the one matching bar.
 
@@ -111,11 +115,27 @@ silently misalign every label (the iOS timeline defers clip reorder for the same
 It needs label bars re-timed with their segment first.
 
 Bulk text: `patch_text_appearance` accepts `font_family`, so "change all fonts" is one op
-covering every bar. As a backstop for the flag-off case, `compile_editor_ops` merges adjacent
-`patch_text_style` ops with an identical patch (a bar that already appeared in the run is
-never folded in, so ordering semantics are unchanged) before the eight-op cap.
+covering every bar. As a backstop for the flag-off case, `adapt_editor_action` (planner)
+merges adjacent `patch_text_style` ops with an identical patch (a bar that already appeared
+in the run is never folded in, so ordering semantics are unchanged) before the tool's
+eight-op bound (`compile_editor_ops` applies the same merge). A bundle that is still over the
+bound gets a planner-level recovery reply ("more changes than I can apply in one go") instead
+of failing the turn.
 
-Still open: the legacy v1 chat path (`execute_copilot_edit`) builds its snapshot without
-clip context, so `label_each_clip` is not offered there; compile errors still surface as a
-retryable turn failure (now with `error_class`/`error_message` on `turn.error` and the
-`assistant_error` event) rather than a tailored recovery reply.
+Routing: a `clip-label-*` bar counts as the per-clip text lane, so correcting ONE label stays
+on the editor tool; "label every clip" (`scope: per_clip`) routes to the editor only when the
+copilot can fill labels (a legacy lane, or `label_facts` on the snapshot), else it re-plans.
+
+Fail-open: the clip-facts join and the brief read are context only; either failing logs and
+degrades to no context (the brief read runs in a savepoint).
+
+Failure detail: `turn.error` (admin routes only) carries `error_class` and a 200-char
+single-line `error_message`. The creator-visible `assistant_error` event payload carries
+`error_class` only, plus the message only for `KriaEditorOpError` (human-authored text), since
+`EventOut` returns event payloads unfiltered to the app.
+
+Still open: the legacy v1 chat path (`execute_copilot_edit`) builds its snapshot without clip
+context, so `label_each_clip` is not offered there. `order_clips` and guided `clip`/`transition`
+editing wait for a verified guided timeline commit that keeps label bars in step with their
+segments. Compile errors other than the bound and the guarded cases still surface as a
+retryable turn failure (now diagnosable) rather than a tailored recovery reply.

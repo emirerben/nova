@@ -272,8 +272,7 @@ def test_failed_turn_projects_a_durable_receipt_linked_recovery_event() -> None:
     db.commit.assert_called_once_with()
 
 
-def test_failed_turn_records_error_class_and_message_on_the_turn_and_event() -> None:
-    """KRI-203: runtime_turn_failed carried only its code; now it says what raised."""
+def _fail_with_detail(detail: dict):  # noqa: ANN202
     now = datetime.now(UTC)
     turn = SimpleNamespace(
         id=uuid.uuid4(),
@@ -292,8 +291,6 @@ def test_failed_turn_records_error_class_and_message_on_the_turn_and_event() -> 
         _Result(scalar=now),
         _Result(scalar=SimpleNamespace(id=turn.thread_id)),
     ]
-    detail = {"error_class": "KriaEditorOpError", "error_message": "at most eight"}
-
     with (
         patch("app.tasks.kria_runtime.sync_session", return_value=nullcontext(db)),
         patch(
@@ -309,18 +306,36 @@ def test_failed_turn_records_error_class_and_message_on_the_turn_and_event() -> 
             lease_epoch=3,
             detail=detail,
         )
+    return turn, append
 
-    assert turn.error == {
-        "code": "runtime_turn_failed",
-        "retryable": True,
-        "recovery": "retry",
-        **detail,
-    }
+
+def test_failure_detail_is_full_on_the_turn_but_class_only_on_the_creator_event() -> None:
+    """KRI-203: diagnosable for admins; never leaks exception text to the app."""
+    sql = (
+        "(psycopg2.errors.UndefinedColumn) column x does not exist\n"
+        "[SQL: SELECT * FROM users WHERE token = %(t)s] [parameters: {'t': 'sk-secret'}] "
+        "gs://bucket/users/u/private.mp4 https://storage.googleapis.com/b?X-Goog-Signature=abc"
+    )
+    turn, append = _fail_with_detail(
+        {"error_class": "ProgrammingError", "error_message": " ".join(sql.split())[:200]}
+    )
+
+    assert turn.error["error_class"] == "ProgrammingError"
+    assert "SELECT" in turn.error["error_message"]  # admin-only
     payload = append.call_args.kwargs["payload"]
-    assert payload["error_class"] == "KriaEditorOpError"
-    assert payload["error_message"] == "at most eight"
+    assert payload["error_class"] == "ProgrammingError"
+    assert "error_message" not in payload
+    assert "SELECT" not in str(payload) and "sk-secret" not in str(payload)
+    assert "gs://" not in str(payload)
     # The creator-facing copy is unchanged.
     assert "Try the request again" in append.call_args.kwargs["content"]
+
+
+def test_a_human_authored_editor_error_message_may_reach_the_event() -> None:
+    detail = {"error_class": "KriaEditorOpError", "error_message": "That clip is no longer there"}
+    turn, append = _fail_with_detail(detail)
+    assert turn.error["error_message"] == detail["error_message"]
+    assert append.call_args.kwargs["payload"]["error_message"] == detail["error_message"]
 
 
 def test_execute_approval_dispatches_only_the_claimed_server_strategy() -> None:
