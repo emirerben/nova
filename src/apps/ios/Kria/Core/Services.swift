@@ -135,6 +135,8 @@ protocol KriaAPIClient: Sendable {
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws
     func playbackURL(jobID: UUID) async throws -> URL
+    /// KRI-200: best-effort report of an editor player item that failed on this phone.
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation
     func cancelUpload(reservationID: UUID) async throws
@@ -169,6 +171,7 @@ extension KriaAPIClient {
     func requestAccountDeletion() async throws -> AccountDeletionRequest { throw APIError.unsupported }
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
         try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID)
@@ -894,6 +897,9 @@ struct KriaAPI: KriaAPIClient {
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)", method: "GET", bodyData: nil, decode: ApprovalSnapshot.self) }
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint)), decode: ApprovalResponse.self) }
     func playbackURL(jobID: UUID) async throws -> URL { let response = try await request(path: "me/jobs/\(jobID.uuidString)/playback-url", method: "GET", bodyData: nil, decode: PlaybackResponse.self); guard let url = URL(string: response.videoURL) else { throw APIError.invalidResponse }; return url }
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws {
+        _ = try await request(path: "me/jobs/\(jobID.uuidString)/playback-diagnostics", method: "POST", bodyData: try JSONEncoder().encode(report), decode: EmptyProjectResponse.self)
+    }
     func currentUser() async throws -> MobileUser { try await request(path: "auth/mobile/me", method: "GET", bodyData: nil, decode: MobileUser.self) }
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe { try await request(path: "me/jobs/\(jobID.uuidString)/edit-recipe", method: "GET", query: variantID.map { [URLQueryItem(name: "variant_id", value: $0)] } ?? [], bodyData: nil, decode: EditRecipe.self) }
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation { try await request(path: "generative-jobs/upload-url", method: "POST", bodyData: try JSONEncoder().encode(UploadReservationRequest(filename: filename, contentType: contentType, fileSizeBytes: size, purpose: purpose)), decode: UploadReservation.self) }
@@ -1210,6 +1216,22 @@ private struct LibraryPosterRequest: Encodable {
     let jobIDs: [UUID]
     let brokenJobIDs: [UUID]
     enum CodingKeys: String, CodingKey { case jobIDs = "job_ids"; case brokenJobIDs = "broken_job_ids" }
+}
+/// Identity of a failed editor player item: numeric AVFoundation codes and domains only, never URLs or error text.
+struct PlaybackFailureReport: Encodable, Equatable, Sendable {
+    enum PlayerKind: String, Encodable, Sendable { case live, finished }
+    let playerKind: PlayerKind
+    let errorDomain: String
+    let errorCode: Int
+    let underlyingDomain: String?
+    let underlyingCode: Int?
+    let sourceState: String
+    let appBuild: String?
+    enum CodingKeys: String, CodingKey {
+        case playerKind = "player_kind", errorDomain = "error_domain", errorCode = "error_code"
+        case underlyingDomain = "underlying_domain", underlyingCode = "underlying_code"
+        case sourceState = "source_state", appBuild = "app_build"
+    }
 }
 private struct PlaybackResponse: Decodable { let videoURL: String; enum CodingKeys: String, CodingKey { case videoURL = "video_url" } }
 private struct ApprovalResponse: Decodable {}
