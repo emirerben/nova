@@ -1,4 +1,4 @@
-"""Scorer, thread roll-up, KPI and the wrong-landmark stub."""
+"""Scorer, thread roll-up, KPI and the wrong-landmark rate."""
 
 from __future__ import annotations
 
@@ -188,7 +188,7 @@ def test_kpi_leaves_unrecorded_threads_out_and_counts_them():
     assert empty.met_share is None
 
 
-# ── wrong-landmark stub ──────────────────────────────────────────────────────
+# ── wrong-landmark rate ──────────────────────────────────────────────────────
 
 
 def _landmark_clip(cid: str, guess: str | None, truth: str | None, prov="inferred") -> ClipRecord:
@@ -213,3 +213,58 @@ def test_wrong_landmark_rate_counts_only_inferred_guesses_with_ground_truth():
         ],
     )
     assert wrong_landmark_rate(foot) == (1 / 3, 3)
+
+
+def test_wrong_landmark_rate_can_score_an_external_run_against_the_same_footage():
+    """A live landmark_guess run supplies `guesses`; they replace the fixture's inferred facts."""
+    foot = Footage(
+        footage_id="f",
+        clips=[
+            _landmark_clip("a", "Old Guess", "Galata Tower"),
+            _landmark_clip("b", None, "Beylerbeyi Palace"),
+            _landmark_clip("c", None, None),
+        ],
+    )
+    assert wrong_landmark_rate(foot) == (1.0, 1)
+    live = {"a": "Galata Tower", "b": "Dolmabahçe Palace", "c": "Anything"}
+    assert wrong_landmark_rate(foot, live) == (0.5, 2)
+
+
+def test_wrong_landmark_rate_on_the_synthetic_footage_has_a_denominator():
+    """P6b wires the metric: harbor_run and trip carry inferred guesses + ground truth."""
+    from .runner import load_footage
+
+    assert wrong_landmark_rate(load_footage("harbor_run")) == (1 / 7, 7)
+    assert wrong_landmark_rate(load_footage("trip")) == (1 / 4, 4)
+    for footage_id in ("food_day", "sport", "vlog"):
+        assert wrong_landmark_rate(load_footage(footage_id)) == (None, 0)
+
+
+def test_true_landmark_is_never_a_fact_a_planner_could_read():
+    """Ground truth lives on the clip record, not in `facts`."""
+    from .runner import load_footage
+
+    for footage_id in ("harbor_run", "trip"):
+        for clip in load_footage(footage_id).clips:
+            if clip.true_landmark:
+                assert all(
+                    f.value != clip.true_landmark or f.provenance == "inferred" for f in clip.facts
+                )
+                assert all(f.provenance != "annotation" for f in clip.facts)
+
+
+def test_reply_requirement_is_judged_on_the_turn_it_was_asked():
+    """A receipt requirement reads THAT turn's reply; a later reply cannot launder it."""
+    req = Requirement(
+        id="receipt",
+        kind="order",
+        request_type="order_route",
+        checker="reply_states",
+        params={"all_of": ["reverse"]},
+        introduced_in_turn=0,
+    )
+    fx = _thread_fixture([req], n_turns=2)
+    said_it = _results([(_plan("a"), "That is the reverse of your route."), (_plan("a"), "ok")])
+    assert score_thread(fx, FOOT, said_it)[0].status == "met"
+    said_it_late = _results([(_plan("a"), "ok"), (_plan("a"), "That is the reverse of it.")])
+    assert score_thread(fx, FOOT, said_it_late)[0].status == "unmet"

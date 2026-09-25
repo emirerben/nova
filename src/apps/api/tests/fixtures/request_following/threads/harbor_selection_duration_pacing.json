@@ -1,0 +1,107 @@
+{
+  "fixture_id": "harbor_selection_duration_pacing",
+  "provenance": "authored",
+  "footage": "harbor_run",
+  "description": "Three constraints in one sentence: one clip out, a target length, a fast pace.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Skip the cliff path, keep it around 16 seconds, fast cuts.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "skip-cliff",
+      "kind": "select",
+      "scope": "global",
+      "request_type": "selection",
+      "checker": "select_exclude",
+      "params": {
+        "clip_ids": [
+          "H6"
+        ]
+      },
+      "source": "Skip the cliff path, keep it around 16 seconds, fast cuts.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "sixteen-seconds",
+      "kind": "timing",
+      "scope": "global",
+      "request_type": "duration",
+      "checker": "duration_within",
+      "params": {
+        "target_s": 16.0,
+        "tol_frac": 0.1
+      },
+      "source": "Skip the cliff path, keep it around 16 seconds, fast cuts.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "fast",
+      "kind": "timing",
+      "scope": "global",
+      "request_type": "pacing",
+      "checker": "pacing_max_avg_clip",
+      "params": {
+        "max_avg_clip_s": 2.4
+      },
+      "source": "Skip the cliff path, keep it around 16 seconds, fast cuts.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "H1",
+          "start_s": 0.0,
+          "end_s": 2.3
+        },
+        {
+          "clip_id": "H2",
+          "start_s": 2.3,
+          "end_s": 4.6
+        },
+        {
+          "clip_id": "H3",
+          "start_s": 4.6,
+          "end_s": 6.9
+        },
+        {
+          "clip_id": "H4",
+          "start_s": 6.9,
+          "end_s": 9.2
+        },
+        {
+          "clip_id": "H5",
+          "start_s": 9.2,
+          "end_s": 11.5
+        },
+        {
+          "clip_id": "H7",
+          "start_s": 11.5,
+          "end_s": 13.8
+        },
+        {
+          "clip_id": "H8",
+          "start_s": 13.8,
+          "end_s": 16.1
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Brightwater run",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 16.1
+    },
+    "reply": "Left out the cliff path and cut it to about 16 seconds with quick shots."
+  }
+}

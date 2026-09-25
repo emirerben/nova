@@ -12,7 +12,7 @@ import unicodedata
 
 import pytest
 
-from .checkers import CHECKERS
+from .checkers import known_checker_ids
 from .models import REQUEST_TYPES, FinalPlan
 from .runner import (
     FIXTURE_ROOT,
@@ -28,12 +28,41 @@ PATHS = discover_fixture_paths()
 IDS = [p.stem for p in PATHS]
 
 
-def test_the_wave_1_fixture_set_is_present():
-    """East Run + 12 authored briefs over 4 more footage sets."""
+def test_the_p6b_golden_set_is_present():
+    """East Run + 29 authored briefs (12 wave-1 + 17 P6b) over 5 synthetic footage sets."""
     fixtures = [load_fixture(p) for p in PATHS]
     assert [f.fixture_id for f in fixtures if f.provenance == "prod_capture"] == ["east_run"]
-    assert len([f for f in fixtures if f.provenance == "authored"]) == 12
-    assert {f.footage for f in fixtures} == {"east_run", "food_day", "trip", "sport", "vlog"}
+    assert len([f for f in fixtures if f.provenance == "authored"]) == 29
+    assert len(fixtures) == 30
+    assert {f.footage for f in fixtures} == {
+        "east_run",
+        "food_day",
+        "trip",
+        "sport",
+        "vlog",
+        "harbor_run",
+    }
+
+
+def test_p6b_multi_turn_threads_are_a_meaningful_share():
+    authored = [load_fixture(p) for p in PATHS if p.stem != "east_run"]
+    assert sum(1 for f in authored if len(f.turns) > 1) >= 8
+    assert max(len(f.turns) for f in authored) == 3
+
+
+P6B_BEHAVIOURS = {
+    "reversed route receipt": "harbor_route_reversed",
+    "consecutive-label dedupe": "harbor_label_dedupe",
+    "brief-sourced title receipt": "harbor_title_from_brief",
+    "label each clip": "trip_label_each_clip_from_facts",
+    "one-label correction": "harbor_landmark_correction",
+    "change all fonts": "vlog_change_all_fonts",
+}
+
+
+@pytest.mark.parametrize("behaviour", sorted(P6B_BEHAVIOURS))
+def test_each_open_pr_behaviour_has_a_golden_brief(behaviour):
+    assert (FIXTURE_ROOT / "threads" / f"{P6B_BEHAVIOURS[behaviour]}.json").exists()
 
 
 def test_every_coverage_table_row_has_a_requirement():
@@ -53,7 +82,7 @@ def test_fixture_is_well_formed(path):
     footage = load_footage(fixture.footage)
     clip_ids = {c.clip_id for c in footage.clips}
     for req in fixture.requirements:
-        assert req.checker in CHECKERS, f"{req.id}: unknown checker {req.checker}"
+        assert req.checker in known_checker_ids(), f"{req.id}: unknown checker {req.checker}"
     plans: list[FinalPlan] = []
     for turn in fixture.turns:
         if turn.recorded:
@@ -67,6 +96,8 @@ def test_fixture_is_well_formed(path):
     for req in fixture.requirements:
         for key in ("clip_ids", "sequence"):
             assert set(req.params.get(key, [])) <= clip_ids, f"{req.id}: {key} names a missing clip"
+        if "clip_id" in req.params:
+            assert req.params["clip_id"] in clip_ids, f"{req.id}: clip_id names a missing clip"
         for key in ("labels", "clips"):
             assert set(req.params.get(key, {})) <= clip_ids, f"{req.id}: {key} names a missing clip"
 
@@ -105,7 +136,7 @@ def test_an_untouched_attachment_order_edit_does_not_pass(path):
 
 def test_authored_footage_is_attached_out_of_filming_order():
     """Otherwise chronological-order requirements would pass for free."""
-    for footage_id in ("food_day", "trip", "sport", "vlog"):
+    for footage_id in ("food_day", "trip", "sport", "vlog", "harbor_run"):
         footage = load_footage(footage_id)
         when = [c.fact("capture_time").value for c in footage.clips]
         assert when != sorted(when), footage_id

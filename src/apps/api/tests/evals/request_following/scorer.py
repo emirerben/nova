@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict
 
@@ -52,7 +52,7 @@ def score(
     """
     scores: list[RequirementScore] = []
     for req in requirements:
-        status, reason = run_checker(req, final_plan, footage, previous_plan)
+        status, reason = run_checker(req, final_plan, footage, previous_plan, reply)
         audited = addressed is None or req.id in addressed
         scores.append(
             RequirementScore(
@@ -160,26 +160,35 @@ def compute_kpi(results: Iterable[ThreadResult]) -> KPIReport:
     )
 
 
-# ── Wrong-landmark rate (stub; P3 supplies inferred landmark facts) ──────────
+# ── Wrong-landmark rate ──────────────────────────────────────────────────────
 
 
-def wrong_landmark_rate(footage: Footage) -> tuple[float | None, int]:
+def wrong_landmark_rate(
+    footage: Footage, guesses: Mapping[str, str] | None = None
+) -> tuple[float | None, int]:
     """Share of *inferred* landmark guesses that name the wrong place.
 
     D4 accepts best-guess landmark names, so the guess quality has to be measured. The
-    denominator is clips that carry both an `inferred` landmark fact and a ground-truth
-    `true_landmark`. Returns `(None, 0)` while no clip has an inferred landmark — the case
-    until P3 (clip facts) lands and fixtures are re-recorded with its output.
+    denominator is clips that carry both a guess and a ground-truth `true_landmark`. The guess
+    is the clip's `inferred` landmark fact, or `guesses[clip_id]` when given (so a live
+    `landmark_guess` run can be scored against the same footage without rewriting fixtures).
+    A guess is right when either name contains the other after case/diacritic folding.
+    Returns `(None, 0)` when no clip has both.
     """
     judged = wrong = 0
     for clip in footage.clips:
-        guess = next(
-            (f for f in clip.facts if f.kind == "landmark" and f.provenance == "inferred"), None
-        )
-        if guess is None or not clip.true_landmark:
+        if guesses is not None and clip.clip_id in guesses:
+            guess_text: str | None = guesses[clip.clip_id]
+        else:
+            fact = next(
+                (f for f in clip.facts if f.kind == "landmark" and f.provenance == "inferred"),
+                None,
+            )
+            guess_text = fact.value if fact else None
+        if not guess_text or not clip.true_landmark:
             continue
         judged += 1
-        guessed, truth = fold(guess.value), fold(clip.true_landmark)
+        guessed, truth = fold(guess_text), fold(clip.true_landmark)
         if truth not in guessed and guessed not in truth:
             wrong += 1
     return (wrong / judged if judged else None), judged

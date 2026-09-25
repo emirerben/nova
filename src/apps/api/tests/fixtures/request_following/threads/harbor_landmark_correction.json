@@ -1,0 +1,264 @@
+{
+  "fixture_id": "harbor_landmark_correction",
+  "provenance": "authored",
+  "footage": "harbor_run",
+  "description": "One guessed landmark is wrong; the creator corrects clip 5 and only that label may change.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Label every clip with the landmark it shows.",
+      "engine": "recorded"
+    },
+    {
+      "turn_id": "t1",
+      "user_message": "Clip 5 isn't Halden Watchtower, it's Fort Halden.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "labelled",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_described",
+      "checker": "label_coverage",
+      "params": {
+        "min_frac": 0.75
+      },
+      "source": "Label every clip with the landmark it shows.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "fix-clip-5",
+      "kind": "text",
+      "scope": "clip:H5",
+      "request_type": "label_exact",
+      "checker": "label_single_change",
+      "params": {
+        "clip_id": "H5",
+        "text": "Fort Halden"
+      },
+      "source": "Clip 5 isn't Halden Watchtower, it's Fort Halden.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "reply-confirms",
+      "kind": "text",
+      "scope": "clip:H5",
+      "request_type": "label_exact",
+      "checker": "reply_states",
+      "params": {
+        "all_of": [
+          "Fort Halden"
+        ]
+      },
+      "source": "Clip 5 isn't Halden Watchtower, it's Fort Halden.",
+      "introduced_in_turn": 1
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "H1",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "clip_id": "H2",
+          "start_s": 3.0,
+          "end_s": 5.5
+        },
+        {
+          "clip_id": "H3",
+          "start_s": 5.5,
+          "end_s": 9.0
+        },
+        {
+          "clip_id": "H4",
+          "start_s": 9.0,
+          "end_s": 11.5
+        },
+        {
+          "clip_id": "H5",
+          "start_s": 11.5,
+          "end_s": 14.5
+        },
+        {
+          "clip_id": "H6",
+          "start_s": 14.5,
+          "end_s": 16.5
+        },
+        {
+          "clip_id": "H7",
+          "start_s": 16.5,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "H8",
+          "start_s": 19.5,
+          "end_s": 23.0
+        }
+      ],
+      "texts": [
+        {
+          "id": "label-0",
+          "role": "label",
+          "text": "Old Mill Pier",
+          "start_s": 0.0,
+          "end_s": 3.0,
+          "font_family": "Inter",
+          "clip_id": "H1"
+        },
+        {
+          "id": "label-1",
+          "role": "label",
+          "text": "Saltwood Fish Market",
+          "start_s": 3.0,
+          "end_s": 5.5,
+          "font_family": "Inter",
+          "clip_id": "H2"
+        },
+        {
+          "id": "label-2",
+          "role": "label",
+          "text": "Tern Lighthouse",
+          "start_s": 5.5,
+          "end_s": 9.0,
+          "font_family": "Inter",
+          "clip_id": "H3"
+        },
+        {
+          "id": "label-4",
+          "role": "label",
+          "text": "Fort Halden",
+          "start_s": 11.5,
+          "end_s": 14.5,
+          "font_family": "Inter",
+          "clip_id": "H5"
+        },
+        {
+          "id": "label-6",
+          "role": "label",
+          "text": "Kestrel Beach",
+          "start_s": 16.5,
+          "end_s": 19.5,
+          "font_family": "Inter",
+          "clip_id": "H7"
+        },
+        {
+          "id": "label-7",
+          "role": "label",
+          "text": "Kestrel Point Finish",
+          "start_s": 19.5,
+          "end_s": 23.0,
+          "font_family": "Inter",
+          "clip_id": "H8"
+        }
+      ],
+      "total_duration_s": 23.0
+    },
+    "reply": "Changed clip 5's label to Fort Halden. The other labels are as they were.",
+    "plan_before": {
+      "clips": [
+        {
+          "clip_id": "H1",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "clip_id": "H2",
+          "start_s": 3.0,
+          "end_s": 5.5
+        },
+        {
+          "clip_id": "H3",
+          "start_s": 5.5,
+          "end_s": 9.0
+        },
+        {
+          "clip_id": "H4",
+          "start_s": 9.0,
+          "end_s": 11.5
+        },
+        {
+          "clip_id": "H5",
+          "start_s": 11.5,
+          "end_s": 14.5
+        },
+        {
+          "clip_id": "H6",
+          "start_s": 14.5,
+          "end_s": 16.5
+        },
+        {
+          "clip_id": "H7",
+          "start_s": 16.5,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "H8",
+          "start_s": 19.5,
+          "end_s": 23.0
+        }
+      ],
+      "texts": [
+        {
+          "id": "label-0",
+          "role": "label",
+          "text": "Old Mill Pier",
+          "start_s": 0.0,
+          "end_s": 3.0,
+          "font_family": "Inter",
+          "clip_id": "H1"
+        },
+        {
+          "id": "label-1",
+          "role": "label",
+          "text": "Saltwood Fish Market",
+          "start_s": 3.0,
+          "end_s": 5.5,
+          "font_family": "Inter",
+          "clip_id": "H2"
+        },
+        {
+          "id": "label-2",
+          "role": "label",
+          "text": "Tern Lighthouse",
+          "start_s": 5.5,
+          "end_s": 9.0,
+          "font_family": "Inter",
+          "clip_id": "H3"
+        },
+        {
+          "id": "label-4",
+          "role": "label",
+          "text": "Halden Watchtower",
+          "start_s": 11.5,
+          "end_s": 14.5,
+          "font_family": "Inter",
+          "clip_id": "H5"
+        },
+        {
+          "id": "label-6",
+          "role": "label",
+          "text": "Kestrel Beach",
+          "start_s": 16.5,
+          "end_s": 19.5,
+          "font_family": "Inter",
+          "clip_id": "H7"
+        },
+        {
+          "id": "label-7",
+          "role": "label",
+          "text": "Kestrel Point Finish",
+          "start_s": 19.5,
+          "end_s": 23.0,
+          "font_family": "Inter",
+          "clip_id": "H8"
+        }
+      ],
+      "total_duration_s": 23.0
+    }
+  }
+}
