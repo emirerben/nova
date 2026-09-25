@@ -20,7 +20,8 @@
       "KriaUITests/CreationUITests/testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap",
       "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges",
       "KriaUITests/SlidePostUITests/testSlidePostCreationUsesExplicitProposalAndCreateThenContextualKria",
-      "KriaUITests/SlidePostUITests/testSlideFormatCoverAndBackRemainReachableAtLargeText"
+      "KriaUITests/SlidePostUITests/testSlideFormatCoverAndBackRemainReachableAtLargeText",
+      "KriaUITests/CreationUITests/testReceiptChipsAndGuessedNamesStartACorrection"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
