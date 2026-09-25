@@ -23,8 +23,6 @@ struct NativeEditorView: View {
     /// KRI-185: a block opened from the Text tab's list edits its words first and
     /// returns to that list; one opened from the timeline keeps the old behaviour.
     @State private var textEditOrigin: TextEditOrigin = .timeline
-    /// The panel height before the keyboard raised it for typing, restored afterwards.
-    @State private var expansionBeforeTyping: CGFloat?
     private enum TextEditOrigin { case timeline, list }
     @State private var keyboardVisible = false
     /// KRI-170: the timeline handle and the panel handle are independent.
@@ -149,14 +147,8 @@ struct NativeEditorView: View {
                         .presentationDragIndicator(.visible)
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                keyboardVisible = true
-                raisePanelForTyping()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                keyboardVisible = false
-                restorePanelAfterTyping()
-            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
             .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
             .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.removeSharedFile) {
                 if let file = exporter.sharedFile { ShareSheetView(url: file) }
@@ -205,7 +197,7 @@ struct NativeEditorView: View {
             previewAspectRatio: session.previewAspectRatio,
             keyboardVisible: keyboardVisible,
             isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
-            raisesPanelWhileTyping: panel?.tool == .text
+            shrinksPreviewWhileTyping: panel?.tool == .text
         )
         let showsTimeline = panel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
@@ -512,25 +504,6 @@ struct NativeEditorView: View {
         default:
             changePanel(to: nil)
             inspector = .tool(tool)
-        }
-    }
-
-    /// Typing needs room: with the keyboard up the panel would only get what is left above
-    /// it, so a text panel rises over the preview and settles back when the keyboard closes.
-    private func raisePanelForTyping() {
-        guard panel?.tool == .text, expansionBeforeTyping == nil else { return }
-        expansionBeforeTyping = panelExpansion
-        withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
-            panelExpansion = 1
-        }
-    }
-
-    private func restorePanelAfterTyping() {
-        guard let before = expansionBeforeTyping else { return }
-        expansionBeforeTyping = nil
-        guard panel != nil else { return }
-        withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
-            panelExpansion = before
         }
     }
 

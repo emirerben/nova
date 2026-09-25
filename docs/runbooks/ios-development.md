@@ -227,9 +227,9 @@ the title, one label per clip and the creator's own text, in time order and
 without captions (they have their own tab) or removed blocks. A row seeks to the
 block and opens it on Edit text; Done returns to the list. The list stays inert
 while the new-text draft has words in it, and the panel opens partly expanded
-when there is more than one block. While the keyboard is up a text panel rises over
-the preview so the box keeps its full height, and settles back when it closes
-(other panels keep the keyboard-up ceiling). Its unfinished draft survives tab switches,
+when there is more than one block. While the keyboard is up a text panel grows into
+the room the preview would keep: the preview shrinks to its smallest visible size
+above it and returns when the keyboard closes (other panels keep today's split). Its unfinished draft survives tab switches,
 and tapping the active tool collapses the shell. The panel's visible grabber and the divider beneath the
 preview both resize the same panel/preview split, with a 44pt drag target and
 an accessibility adjustment action. The

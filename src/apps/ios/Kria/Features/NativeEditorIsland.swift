@@ -64,10 +64,11 @@ struct NativeEditorLayoutMetrics: Equatable {
     var previewAspectRatio: CGFloat
     var keyboardVisible: Bool
     var isAccessibilitySize: Bool
-    /// A text panel that is being typed into may rise over the preview even with the
-    /// keyboard up, so the box has the room it needs (KRI-185). Other panels keep the
-    /// keyboard-up ceiling, so this is `false` unless the caller opts in.
-    var raisesPanelWhileTyping = false
+    /// A text panel that is being typed into gets the room the preview would otherwise
+    /// keep: with the keyboard up the preview shrinks to its smallest visible size and the
+    /// panel grows into the space (KRI-185). The preview never goes away, so it still sits
+    /// above the panel. Other panels keep today's split, so this is `false` unless opted in.
+    var shrinksPreviewWhileTyping = false
 
     private var referenceHeight: CGFloat {
         keyboardVisible ? viewportSize.height : viewportSize.height + safeAreaTop + safeAreaBottom
@@ -83,9 +84,9 @@ struct NativeEditorLayoutMetrics: Equatable {
         let preferred = previewAspectRatio > 1 ? min(124, budget) : budget
         // With the keyboard up, reserve room for the header, divider and usable
         // text controls rather than letting their minimum heights overflow.
-        return keyboardVisible
-            ? min(preferred, max(Self.minPreviewHeight, viewportSize.height - 320 - topChromeHeight))
-            : preferred
+        guard keyboardVisible else { return preferred }
+        if shrinksPreviewWhileTyping { return Self.minPreviewHeight }
+        return min(preferred, max(Self.minPreviewHeight, viewportSize.height - 320 - topChromeHeight))
     }
 
     /// Largest preview the user can drag out to. Never below the default, and
@@ -127,9 +128,8 @@ struct NativeEditorLayoutMetrics: Equatable {
     /// header/top chrome. The transport stays where it is and is simply covered.
     func panelMaxHeight(areaHeight: CGFloat, previewHeight: CGFloat) -> CGFloat {
         let budget = panelBudget(areaHeight: areaHeight)
-        guard !isAccessibilitySize, !keyboardVisible || raisesPanelWhileTyping else { return budget }
-        // The transport is hidden while the keyboard is up, so there is nothing to cover.
-        return budget + (keyboardVisible ? 0 : Self.transportHeight) + previewHeight
+        guard !keyboardVisible, !isAccessibilitySize else { return budget }
+        return budget + Self.transportHeight + previewHeight
             + Self.previewVerticalPadding + Self.resizeHandleHeight
     }
 

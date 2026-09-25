@@ -8,13 +8,13 @@ final class NativeEditorLayoutMetricsTests: XCTestCase {
     // iPhone 16 Pro-like: 393×852 screen, safe 59 top / 34 bottom.
     private func pro(
         aspect: CGFloat = 9.0 / 16, chrome: CGFloat = 0, keyboard: Bool = false, accessibility: Bool = false,
-        raisesWhileTyping: Bool = false
+        shrinksWhileTyping: Bool = false
     ) -> NativeEditorLayoutMetrics {
         NativeEditorLayoutMetrics(
             viewportSize: CGSize(width: 393, height: 759), safeAreaTop: 59, safeAreaBottom: 34,
             topChromeHeight: chrome, previewAspectRatio: aspect,
             keyboardVisible: keyboard, isAccessibilitySize: accessibility,
-            raisesPanelWhileTyping: raisesWhileTyping
+            shrinksPreviewWhileTyping: shrinksWhileTyping
         )
     }
 
@@ -27,45 +27,27 @@ final class NativeEditorLayoutMetricsTests: XCTestCase {
         )
     }
 
-    // MARK: typing raises the text panel (KRI-185)
+    // MARK: typing gives a text panel the preview's room (KRI-185)
 
-    func testATextPanelMayRiseOverThePreviewWhileTheKeyboardIsUp() {
-        let typing = pro(keyboard: true, raisesWhileTyping: true)
-        let preview = typing.defaultPreviewHeight
-        let budget = typing.panelBudget(areaHeight: 300)
-        // The transport is hidden with the keyboard, so only the preview and its chrome are covered.
-        XCTAssertEqual(
-            typing.panelMaxHeight(areaHeight: 300, previewHeight: preview),
-            budget + preview + NativeEditorLayoutMetrics.previewVerticalPadding + NativeEditorLayoutMetrics.resizeHandleHeight,
-            accuracy: 0.01
-        )
-        XCTAssertGreaterThan(typing.panelMaxHeight(areaHeight: 300, previewHeight: preview), typing.panelDefaultHeight(areaHeight: 300))
-        XCTAssertEqual(
-            typing.panelHeight(areaHeight: 300, previewHeight: preview, expansion: 1),
-            typing.panelMaxHeight(areaHeight: 300, previewHeight: preview), accuracy: 0.01
-        )
+    func testATextPanelBeingTypedIntoShrinksThePreviewToItsMinimumButNeverHidesIt() {
+        let typing = pro(keyboard: true, shrinksWhileTyping: true)
+        XCTAssertEqual(typing.defaultPreviewHeight, NativeEditorLayoutMetrics.minPreviewHeight, accuracy: 0.001)
+        XCTAssertEqual(typing.previewHeight(resize: 0), NativeEditorLayoutMetrics.minPreviewHeight, accuracy: 0.001)
+        // Nothing to shrink further and nothing to grow: the preview is not resizable mid-typing.
+        XCTAssertEqual(typing.shrinkRange, 0, accuracy: 0.001)
+        XCTAssertEqual(typing.growRange, 0, accuracy: 0.001)
     }
 
-    func testOtherPanelsKeepTheKeyboardCeilingAndTheKeyboardDownLayoutIsUnchanged() {
-        let kb = pro(keyboard: true)
-        let preview = kb.defaultPreviewHeight
-        XCTAssertEqual(
-            kb.panelMaxHeight(areaHeight: 300, previewHeight: preview),
-            kb.panelBudget(areaHeight: 300), accuracy: 0.01, "opting out keeps the old ceiling"
-        )
+    func testOtherPanelsAndTheKeyboardDownLayoutAreUnchanged() {
+        // Opting out keeps today's keyboard-up split exactly.
+        XCTAssertEqual(pro(keyboard: true).defaultPreviewHeight, 258.06, accuracy: 0.01)
         // Opting in changes nothing while the keyboard is down.
-        let down = pro()
-        let raising = pro(raisesWhileTyping: true)
         XCTAssertEqual(
-            down.panelMaxHeight(areaHeight: 500, previewHeight: down.defaultPreviewHeight),
-            raising.panelMaxHeight(areaHeight: 500, previewHeight: raising.defaultPreviewHeight), accuracy: 0.001
+            pro(shrinksWhileTyping: true).defaultPreviewHeight, pro().defaultPreviewHeight, accuracy: 0.001
         )
-        // Accessibility sizes never rise, keyboard or not.
-        let access = pro(keyboard: true, accessibility: true, raisesWhileTyping: true)
-        XCTAssertEqual(
-            access.panelMaxHeight(areaHeight: 300, previewHeight: 150),
-            access.panelBudget(areaHeight: 300), accuracy: 0.01
-        )
+        // The panel's own ceiling with the keyboard up is untouched.
+        let kb = pro(keyboard: true, shrinksWhileTyping: true)
+        XCTAssertEqual(kb.panelMaxHeight(areaHeight: 300, previewHeight: 80), kb.panelBudget(areaHeight: 300), accuracy: 0.01)
     }
 
     // MARK: default preview (unchanged from before KRI-170)
