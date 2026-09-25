@@ -2540,3 +2540,33 @@ Behaviour change vs the plain lane: no matched music bed, beat-snap or hero intr
 render keeps source audio only. Fraunces lacks
 "→", so the planner selects a font that covers every string. Old lane deletion is a
 follow-up after a device visual comparison.
+
+## [2026-09-25] Draft-time receipts defer to the unified montage planner; a country alone is not a place (KRI-190)
+
+Context. The first simulator and phone runs of the unified montage both rendered well, but the
+chat showed "Not everything you asked for made it in: Couldn't: the name of the place as text
+(None of the 14 clips got its own text in this draft)" before the render, and it stayed on
+screen after the video had 14 labels. The strategy draft is checked by
+`plan_facts_from_strategy`, which has no per-clip text, order or timing, because the unified
+planner writes those at render time. The render's own `assistant_review` already carries the
+true receipts and the "I guessed these, tell me if any is wrong" list. Separately, two clips were
+captioned "Türkiye": a geocode that found nothing finer than the country became a place fact.
+
+Decision. (1) `requirements_to_check_at_draft` leaves `text`, `order` and `timing` out of the
+draft-time check when the render will go through the unified planner, so the draft reply is the
+plain summary. The test (`defers_to_unified_montage`) mirrors the worker's fork, not the item
+row: some clip is a phone analysis proxy, the account is enrolled, `montage_unified_plan_for`,
+a montage-family format, and `audio_strategy` is `original_audio` or `licensed_music`
+(approval sends anything else down the voiceover lane, which builds no render receipts, so it
+must still be judged at draft time; an absent strategy also is). `audio`/`style`/`select` are
+still judged at draft time and every flag-off path is unchanged. (2) `capture_facts` no longer
+emits a place fact for a country alone (no `sub_locality` and no `locality`). It is decided
+there, where the parts are still separate, so a city-state whose locality shares its country's
+name ("Singapore") keeps its label; the planner's `_place_label` is unchanged.
+
+Consequences. The only receipts the creator sees for a unified montage are the render's. A clip
+whose only place was a country now goes through the existing unlabelled-clip handling (dropped,
+receipt says partial). Facts already stored on earlier threads still hold the country-only place
+until those clips are re-attached. If the render's brief version changes after planning, its
+receipts are discarded (`_unified_montage_review`), which now leaves nothing at all for the
+deferred kinds; that needs a brief update between plan and review and is rare.

@@ -332,6 +332,72 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
     return _receipt(req, "partial", "I can't verify this one automatically yet.")
 
 
+# KRI-190: requirement kinds the unified montage planner settles at render time. Its
+# receipts are built from the plan it actually made, so a draft-time check of these is
+# premature: the strategy draft has no per-clip text, order or timing yet, and would
+# report "None of the 14 clips got its own text" for a video that then gets 14 labels.
+UNIFIED_SETTLED_KINDS = frozenset({"text", "order", "timing"})
+
+
+# Approval turns `audio_strategy` into the item's audio mode: only these two leave the
+# voiceover lane, and the worker takes the unified planner only outside it.
+_NON_VOICEOVER_AUDIO = frozenset({"original_audio", "licensed_music"})
+
+
+def defers_to_unified_montage(
+    *,
+    creator_id: object,
+    edit_format: object,
+    audio_strategy: object,
+    clip_paths: Iterable[object] = (),
+) -> bool:
+    """True when this draft will render through the unified phone montage planner.
+
+    Mirrors the worker's own choice so the two cannot leave a requirement judged nowhere:
+    a phone job (some clip is a phone analysis proxy and the account is enrolled), a
+    montage-family format, `montage_unified_plan_for`, and no voiceover lane. Approval
+    maps `audio_strategy` to the audio mode (`original_audio`/`licensed_music` leave the
+    voiceover lane; anything else is the voiceover lane or a `voiceover_required` refusal),
+    so an absent or voiceover-ish strategy is conservatively not deferred.
+    """
+    from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS  # noqa: PLC0415
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+
+    return bool(
+        str(audio_strategy or "") in _NON_VOICEOVER_AUDIO
+        and str(edit_format or "") in GUIDED_EDIT_FORMATS
+        and any(is_analysis_proxy_path(str(path)) for path in clip_paths or ())
+        and settings.phone_rendering_for(creator_id)
+        and settings.montage_unified_plan_for(creator_id)
+    )
+
+
+def requirements_to_check_at_draft(
+    requirements: Iterable[BriefRequirement],
+    *,
+    creator_id: object,
+    strategy: Mapping[str, Any] | None,
+    item_edit_format: object,
+    clip_paths: Iterable[object] = (),
+) -> list[BriefRequirement]:
+    """The requirements a strategy draft can honestly be checked against.
+
+    When the unified planner will settle a requirement at render time (`text`, `order`,
+    `timing`) it is left out, so the draft reply is the plain summary instead of a
+    premature failure notice; the render's own receipts (met / partial / not possible,
+    plus guessed names) follow. Otherwise this is the unchanged, full list.
+    """
+    strategy = strategy or {}
+    defers = defers_to_unified_montage(
+        creator_id=creator_id,
+        edit_format=strategy.get("edit_format") or item_edit_format,
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    )
+    return [req for req in requirements if not (defers and req.kind in UNIFIED_SETTLED_KINDS)]
+
+
 def build_receipts(
     requirements: Iterable[BriefRequirement], facts: PlanFacts
 ) -> list[RequirementReceipt]:
@@ -388,6 +454,9 @@ def reply_from_receipts(
 
 
 __all__ = [
+    "UNIFIED_SETTLED_KINDS",
+    "defers_to_unified_montage",
+    "requirements_to_check_at_draft",
     "PlanFacts",
     "build_receipts",
     "check_requirement",

@@ -482,3 +482,14 @@ def test_a_label_on_a_clip_too_short_to_read_is_not_reported_as_met():
     receipt = build_receipts(brief.live(), plan_facts_from_unified_montage(plan.record()))[0]
     assert receipt.status == "partial"
     assert "too short" in (receipt.reason or "")
+
+
+def test_a_landmark_still_labels_a_clip_whose_place_is_only_a_country():
+    plan = plan_unified_montage([clip(0, landmark="Galata Tower", place="Türkiye")], labels_view())
+    label = (plan.snapshot.clip_labels or [])[0]
+    assert (label.text, label.fact_kind) == ("Galata Tower", "landmark")
+
+
+def test_city_and_country_is_a_label_and_the_country_part_is_never_used():
+    plan = plan_unified_montage([clip(0, place="İstanbul, Türkiye")], labels_view())
+    assert (plan.snapshot.clip_labels or [])[0].text == "İstanbul"
