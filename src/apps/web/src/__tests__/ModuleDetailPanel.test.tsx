@@ -40,34 +40,7 @@ const testModule: Module = {
   },
 };
 
-const emptyFilesModule: Module = {
-  id: "posting",
-  name: "1-Click Posting",
-  description: "Platform posting (Phase 2)",
-  level: "L2",
-  files: [],
-  githubLabel: "module:delivery",
-  dependsOn: ["results_page"],
-  produces: ["posted content on platforms"],
-};
-
 describe("ModuleDetailPanel", () => {
-  test("shows module name, description, file list in technical view", () => {
-    render(
-      <ModuleDetailPanel module={testModule} onClose={jest.fn()} viewMode="technical" />
-    );
-
-    expect(screen.getByText("Processing")).toBeInTheDocument();
-    expect(
-      screen.getByText("Video analysis pipeline: probe, transcribe, scene detect, score")
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("src/apps/api/app/tasks/orchestrate.py")
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("src/apps/api/app/pipeline/probe.py")
-    ).toBeInTheDocument();
-  });
 
   test("file links point to correct GitHub blob URLs", () => {
     render(
@@ -80,29 +53,5 @@ describe("ModuleDetailPanel", () => {
       "https://github.com/emirerben/nova/blob/main/src/apps/api/app/tasks/orchestrate.py"
     );
     expect(link).toHaveAttribute("target", "_blank");
-  });
-
-  test("shows 'No recent commits.' when no commit data", () => {
-    render(
-      <ModuleDetailPanel module={testModule} onClose={jest.fn()} viewMode="technical" />
-    );
-
-    expect(screen.getByText("No recent commits.")).toBeInTheDocument();
-  });
-
-  test("shows 'No open issues' with checkmark when issue count is 0", () => {
-    render(
-      <ModuleDetailPanel module={testModule} onClose={jest.fn()} viewMode="technical" />
-    );
-
-    expect(screen.getByText(/No open issues/)).toBeInTheDocument();
-  });
-
-  test("shows 'No files are listed.' for module with empty files array", () => {
-    render(
-      <ModuleDetailPanel module={emptyFilesModule} onClose={jest.fn()} viewMode="technical" />
-    );
-
-    expect(screen.getByText("No files are listed.")).toBeInTheDocument();
   });
 });

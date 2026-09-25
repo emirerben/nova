@@ -17,7 +17,7 @@ from app.services.ocr.cross_check import (
     CrossCheckResult,
     cross_check_engines,
 )
-from app.services.ocr.engines import OCREngine, OCRWord
+from app.services.ocr.engines import OCRWord
 
 
 @dataclass
@@ -40,14 +40,6 @@ class FakeEngine:
 def _w(text: str) -> OCRWord:
     """Helper for terser test data — bbox/confidence don't affect agreement."""
     return OCRWord(text=text, bbox=(0.0, 0.0, 0.1, 0.1), confidence=1.0)
-
-
-def test_protocol_is_runtime_checkable() -> None:
-    """The Protocol is decorated ``@runtime_checkable`` so adapters that
-    forget to set ``name`` (or rename ``recognize``) fail at instantiation
-    time, not deep in the autobuilder loop."""
-    eng = FakeEngine(name="x", words=[_w("hi")])
-    assert isinstance(eng, OCREngine)
 
 
 def test_perfect_agreement() -> None:

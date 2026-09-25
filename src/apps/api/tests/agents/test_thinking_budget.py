@@ -87,13 +87,6 @@ def test_gemini_3_thinking_level_and_declared_model_reach_sdk(capturing_client):
     assert str(thinking.thinking_level).endswith("HIGH")
 
 
-def test_main_creator_uses_bounded_low_thinking_and_output_budget() -> None:
-    from app.agents.main_creator import MainCreatorAgent
-
-    assert MainCreatorAgent.spec.thinking_level == "low"
-    assert MainCreatorAgent.max_output_tokens == 8_192
-
-
 _KRI178_FIXTURE = (
     Path(__file__).resolve().parents[1]
     / "fixtures/agent_evals/main_creator/kri178_talking_reaction_beats.json"

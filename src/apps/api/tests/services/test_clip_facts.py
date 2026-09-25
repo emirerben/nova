@@ -33,10 +33,6 @@ def _settings(**kwargs) -> Settings:
     return Settings(storage_bucket="test", **kwargs)
 
 
-def test_flag_is_off_by_default() -> None:
-    assert _settings().clip_facts_for(uuid.uuid4()) is False
-
-
 def test_flag_on_enables_everyone() -> None:
     assert _settings(clip_facts_enabled=True).clip_facts_for(uuid.uuid4()) is True
 

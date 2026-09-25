@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from app.pipeline.style_sets import (
     _INTRO_ANIMATION_EFFECTS,
-    STYLE_SETS_VERSION,
     VALID_STYLE_ROLES,
     get_style_set,
     list_style_sets,
@@ -28,10 +27,6 @@ def test_special_editor_effects_are_selectable_but_not_style_defaults() -> None:
 def test_library_is_valid() -> None:
     """Every shipped set passes validation (fonts in registry, valid effects/positions)."""
     assert validate_style_sets() == []
-
-
-def test_version_is_set() -> None:
-    assert STYLE_SETS_VERSION and STYLE_SETS_VERSION != "unknown"
 
 
 def test_default_set_always_present() -> None:

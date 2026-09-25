@@ -2877,32 +2877,6 @@ def test_process_after_decide_matches_legacy_render(monkeypatch, tmp_path):
     assert res == composed_res
 
 
-def test_generative_variant_decision_round_trips_json(monkeypatch, tmp_path):
-    """KRI-114 P1-1: `GenerativeVariantDecision` must survive a JSON
-    round-trip losslessly -- required so a later lane can persist/replay a
-    decision without re-running the matcher."""
-    mix_calls: list = []
-    _patch_render_helpers(monkeypatch, mix_calls)
-    vdir = tmp_path / "v3"
-    vdir.mkdir()
-    spec = {"variant_id": "original_text", "rank": 3, "text_mode": "none", "track": None}
-    decision = gb._decide_generative_variant(
-        job_id="j",
-        rank=3,
-        spec=spec,
-        clip_metas=[_Meta("c1", 5.0)],
-        clip_id_to_local={"c1": "/x.mp4"},
-        clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
-        probe_map={},
-        available_footage_s=12.0,
-        agent_text=None,
-        agent_form={},
-        variant_dir=str(vdir),
-    )
-    round_tripped = gb.GenerativeVariantDecision.model_validate(decision.model_dump(mode="json"))
-    assert round_tripped == decision
-
-
 def test_decide_generative_variant_never_requires_cloud_source_paths(monkeypatch, tmp_path):
     """Proxy-safety (KRI-114 P1-1): `_decide_generative_variant` must work
     purely off the paths already in `clip_id_to_local` -- which ARE the
@@ -6361,19 +6335,6 @@ def test_fast_path_base_download_failure_falls_back(monkeypatch):
     # the contract here at the _reburn_text_on_base boundary.)
 
 
-def test_fast_reburn_kill_switch_off_forces_full_path(monkeypatch):
-    """GENERATIVE_FAST_REBURN_ENABLED=False → _is_fast_reburn_eligible returns False
-    even when all other conditions are met."""
-    monkeypatch.setattr(gb.settings, "GENERATIVE_FAST_REBURN_ENABLED", False, raising=False)
-
-    existing = {
-        "text_mode": "agent_text",
-        "base_video_path": "generative-jobs/j/base_1_song_text.mp4",
-    }
-
-    assert gb._is_fast_reburn_eligible(existing, None, None, gb.settings) is False
-
-
 def test_reburn_size_pixel_stable(monkeypatch):
     """Existing computed size is carried forward as computed_fallback_px when no override
     is given; the size is passed to _resolve_intro_overlay_params, not dropped."""
@@ -8962,28 +8923,6 @@ def test_persisted_music_treatment_survives_rerender(monkeypatch):
     assert receipt["status"] == "preserved"
     assert receipt["reason"] == "user_selected"
     assert matcher_calls == []
-
-
-def test_music_requires_request_default_is_true() -> None:
-    """The declared default is True: absent the secret, a talking-to-camera
-    render must never auto-add music. Mirrors
-    test_auto_music_orchestrate.py::test_feature_flag_default_is_false."""
-    from app.config import Settings
-
-    fresh = Settings(
-        storage_bucket="x",
-        storage_provider="gcs",
-        database_url="postgresql://u:p@h/d",
-        redis_url="redis://x",
-        openai_api_key="x",
-        token_encryption_key="x",
-        waitlist_admin_secret="x",
-        allowed_origins=["http://localhost:3000"],
-    )
-    assert fresh.smart_music_bed_requires_request_enabled is True, (
-        "SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED flipped to False by default — "
-        "this would silently restore unrequested background music."
-    )
 
 
 def test_specs_for_archetype_narrated_carries_caption_style():

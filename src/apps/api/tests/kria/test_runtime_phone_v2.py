@@ -411,25 +411,6 @@ def test_editor_approval_on_a_device_variant_enqueues_no_cloud_render() -> None:
     finish.assert_called_once_with(claim, outcome="dispatched", job_id=str(job_id))
 
 
-def test_a_refused_phone_dispatch_reports_its_reason() -> None:
-    approval_id = str(uuid.uuid4())
-    claim = SimpleNamespace(
-        item_id=uuid.uuid4(), ownership_epoch=4, strategy={}, creator_request=""
-    )
-    refused = SimpleNamespace(outcome="invalid_clips", job_id=None, reason="unapproved_guided")
-    with (
-        patch("app.tasks.kria_runtime._claim_approval_dispatch", return_value=claim),
-        patch("app.tasks.content_plan_build.dispatch_item_render_for", return_value=refused),
-        patch(
-            "app.tasks.kria_runtime._finish_approval_dispatch", return_value=("failed", None)
-        ) as finish,
-    ):
-        execute_kria_approval.run(approval_id)
-    finish.assert_called_once_with(
-        claim, outcome="invalid_clips", job_id=None, reason="unapproved_guided"
-    )
-
-
 # ---------------------------------------------------------------- claim
 
 

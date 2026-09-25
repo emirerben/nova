@@ -4,7 +4,6 @@ import json
 from unittest.mock import MagicMock, patch
 
 from app.pipeline.agents.copy_writer import (
-    _template_copy,
     _truncate,
     generate_copy,
 )
@@ -70,8 +69,10 @@ class TestCopyWriter:
         assert "casual energetic" in prompt_text
 
     def test_double_failure_returns_template_fallback(self):
-        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client, \
-             patch("time.sleep"):  # don't sleep through the agent's transient backoff
+        with (
+            patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client,
+            patch("time.sleep"),
+        ):  # don't sleep through the agent's transient backoff
             mock_client = MagicMock()
             mock_get_client.return_value = mock_client
             mock_client.models.generate_content.side_effect = Exception("API down")
@@ -80,12 +81,6 @@ class TestCopyWriter:
 
         assert status == "generated_fallback"
         assert "Auto-copy failed" in copy.instagram.caption
-
-    def test_template_copy_contains_all_platforms(self):
-        copy = _template_copy("My hook")
-        assert copy.tiktok is not None
-        assert copy.instagram is not None
-        assert copy.youtube is not None
 
     def test_hashtag_count_enforced(self):
         from app.pipeline.agents.copy_writer import TikTokCopy

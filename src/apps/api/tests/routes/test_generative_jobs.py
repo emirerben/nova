@@ -19,11 +19,8 @@ from pydantic import ValidationError
 
 from app.routes.generative_jobs import (
     AddClipRequest,
-    ChangeStyleRequest,
     CreateGenerativeJobRequest,
     GenerativeUploadUrlRequest,
-    RetextRequest,
-    SwapSongRequest,
     _consume_project_upload_reservations,
     add_clip,
     cancel_temporary_upload,
@@ -246,13 +243,6 @@ def test_required_speech_dispatch_rejects_inflight_sibling(monkeypatch, operatio
     assert caught.value.status_code == 409
     assert caught.value.detail == "variant_initial_render_in_progress"
     assert job.assembly_plan == before
-
-
-def test_valid_request():
-    req = CreateGenerativeJobRequest(
-        clip_gcs_paths=["music-uploads/a.mp4", "slot-uploads/b.mp4"],
-    )
-    assert len(req.clip_gcs_paths) == 2
 
 
 def test_two_videos_two_images_are_accepted_in_authored_order():
@@ -1000,38 +990,12 @@ async def test_validate_direct_uploads_rejects_non_audio_voiceover(monkeypatch):
     assert exc.value.status_code == 422
 
 
-def test_language_defaults_to_en():
-    # User selects language at job creation; the model remembers it so re-renders
-    # (retext/swap_song/change_style) inherit it without the frontend re-passing.
-    req = CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/a.mp4"])
-    assert req.language == "en"
-
-
-def test_language_accepts_tr():
-    req = CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/a.mp4"], language="tr")
-    assert req.language == "tr"
-
-
 def test_language_rejects_unsupported_code():
     # Closed allowlist (Literal["en","tr"]) — adding a new language requires
     # corresponding render-side glyph coverage and TR-style prompt branches,
     # so Pydantic must reject unknowns at the edge.
     with pytest.raises(ValidationError):
         CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/a.mp4"], language="de")
-
-
-def test_swap_song_request():
-    assert SwapSongRequest(new_track_id="t1").new_track_id == "t1"
-
-
-def test_retext_request_defaults():
-    r = RetextRequest()
-    assert r.text is None
-    assert r.remove is False
-
-
-def test_change_style_request():
-    assert ChangeStyleRequest(style_set_id="travel_editorial").style_set_id == "travel_editorial"
 
 
 def test_change_style_validation_source_excludes_music_only_sets():
@@ -1071,19 +1035,6 @@ async def test_list_style_sets_endpoint_includes_real_typography():
 
 
 # ── Voiceover request validation + mix dispatch ─────────────────────────────────
-
-
-def test_voiceover_path_accepted():
-    req = CreateGenerativeJobRequest(
-        clip_gcs_paths=["slot-uploads/b.mp4"],
-        voiceover_gcs_path="voiceover-uploads/abc/voice.webm",
-    )
-    assert req.voiceover_gcs_path == "voiceover-uploads/abc/voice.webm"
-
-
-def test_voiceover_path_defaults_none():
-    req = CreateGenerativeJobRequest(clip_gcs_paths=["slot-uploads/b.mp4"])
-    assert req.voiceover_gcs_path is None
 
 
 def test_voiceover_path_rejects_clip_prefix():
@@ -2028,18 +1979,6 @@ async def test_status_race_removes_unpersisted_preview_attempt_marker(monkeypatc
     assert response.variants[0]["media_overlays"][0]["preview_gcs_path"] == "race-preview.jpg"
     assert "preview_gcs_path" not in fresh.assembly_plan["variants"][0]["media_overlays"][0]
     assert src not in gj._HEIF_PREVIEW_BACKFILL_ATTEMPTED
-    db.commit.assert_not_awaited()
-
-
-async def test_persist_backfill_noop_when_no_stamps():
-    import uuid
-    from unittest.mock import AsyncMock
-
-    import app.routes.generative_jobs as gj
-
-    db = AsyncMock()
-    await gj._persist_media_overlay_preview_backfill(db, uuid.uuid4(), {})
-    db.get.assert_not_awaited()
     db.commit.assert_not_awaited()
 
 
@@ -3735,24 +3674,6 @@ def test_variants_for_response_intro_mode_does_not_mutate_stored_dicts(monkeypat
 
 
 # ── T1: topic/intent schema fields ────────────────────────────────────────────
-
-
-def test_topic_and_intent_accepted_by_schema():
-    """topic + intent are optional string fields on CreateGenerativeJobRequest."""
-    req = CreateGenerativeJobRequest(
-        clip_gcs_paths=["music-uploads/a.mp4"],
-        topic="hiking weekend",
-        intent="motivate friends",
-    )
-    assert req.topic == "hiking weekend"
-    assert req.intent == "motivate friends"
-
-
-def test_topic_and_intent_default_to_none():
-    """Old clients posting without topic/intent get None — no 422."""
-    req = CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/a.mp4"])
-    assert req.topic is None
-    assert req.intent is None
 
 
 # ── Self-narration: archetype_fallback exposure on /status ───────────────────

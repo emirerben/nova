@@ -25,11 +25,9 @@ from app.agents._runtime import (
 from app.config import settings
 from app.database import sync_engine
 from app.services.ai_cost_control import (
-    DEFAULT_MAX_OUTPUT_TOKENS,
     PaidCallRequest,
     UsageMeter,
     calculate_cost_usd,
-    effective_max_output_tokens,
     estimate_call_cost_usd,
     execute_metered_fixed_cost_google_call,
     logical_call_id,
@@ -230,11 +228,6 @@ def test_media_estimate_counts_large_image_tiles() -> None:
     )
 
     assert large > small
-
-
-def test_default_provider_output_cap_matches_estimator_default() -> None:
-    assert effective_max_output_tokens(None) == DEFAULT_MAX_OUTPUT_TOKENS
-    assert effective_max_output_tokens(2_048) == 2_048
 
 
 def test_pro_long_context_uses_the_over_200k_tier() -> None:

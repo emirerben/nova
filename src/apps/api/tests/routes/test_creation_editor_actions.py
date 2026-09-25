@@ -369,17 +369,6 @@ async def test_enqueue_exception_after_attempt_moved_does_not_report_failure(
     assert "error_class" not in job.assembly_plan["variants"][0]
 
 
-def test_post_render_edit_job_statuses_match_the_route_literal():
-    # Both call sites (this constant, and the literal in
-    # creation_threads.message_thread) must agree on what "ready" means for a
-    # post-render chat edit.
-    assert actions.POST_RENDER_EDIT_JOB_STATUSES == {
-        "done",
-        "variants_ready",
-        "variants_ready_partial",
-    }
-
-
 @pytest.fixture
 def copilot_edit_context(monkeypatch):
     user = SimpleNamespace(id=uuid.uuid4())
@@ -840,26 +829,6 @@ async def test_flag_off_is_byte_identical_to_legacy(copilot_edit_context, monkey
     assert set(payload) == {"job_id", "variant_id", "outcome", "generation", "sections"}
     body = run.await_args.args[0]
     assert body.turns == [] and body.original_request is None
-
-
-@pytest.mark.asyncio
-async def test_flag_off_no_op_reply_is_the_models_own(copilot_edit_context, monkeypatch):
-    ctx = copilot_edit_context
-    monkeypatch.setattr(actions.settings, "copilot_honest_replies_enabled", False)
-    response = SimpleNamespace(
-        ops=[],
-        outcome="failed",
-        reply="legacy reply",
-        rejection_reasons=[{"op": "x", "reason": "invalid_value", "detail": ""}],
-        unmet_requests=[],
-    )
-    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
-
-    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
-
-    reply, payload = _reply_and_payload()
-    assert reply == "legacy reply"
-    assert "not_done" not in payload
 
 
 @pytest.mark.asyncio

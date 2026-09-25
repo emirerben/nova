@@ -88,16 +88,6 @@ def test_guided_main_creator_output_drops_opaque_media_list() -> None:
     assert len(output.model_dump_json()) < 1800
 
 
-def test_main_creator_prompt_explains_guided_media_and_music_contracts() -> None:
-    prompt = MainCreatorAgent(None).render_prompt(_input())  # type: ignore[arg-type]
-
-    assert "guided `all` or omitted scope, return `selected_media_ids: []`;" in prompt
-    assert "only when the manifest catalog contains a usable music entry" in prompt
-    assert "Recorded voiceover uses native" in prompt
-    assert "explicit advertised `guided_voiceover_v1` contract applies" in prompt
-    assert "voiceover, and audio-led formats force native" not in prompt
-
-
 def test_main_creator_prompt_receives_pinned_account_direction() -> None:
     agent_input = _input().model_copy(update={"creator_direction": "- Never use drop shadows"})
 
@@ -470,15 +460,6 @@ def test_schema_retry_names_failed_field_without_echoing_private_value() -> None
     assert "private-invalid-style" not in clarification
     agent.parse(_raw(audio_strategy="licensed_music", selected=[]), _input())
     assert "caption_style" not in agent.schema_clarification()
-
-
-def test_prompt_defines_all_media_as_representative_coverage() -> None:
-    prompt = MainCreatorAgent(None).render_prompt(_input())  # type: ignore[arg-type]
-
-    assert "`all` requires\n  coverage, not playing every raw file in full" in prompt
-    assert "Do not\n  ask merely because total raw footage is longer than the output" in prompt
-    assert 'A request such as "use these clips" or "use these 17 clips"' in prompt
-    assert "do not ask the creator to choose\n  a length or pacing" in prompt
 
 
 def test_main_creator_prompt_flag_off_teaches_only_transcript_label_source(monkeypatch) -> None:

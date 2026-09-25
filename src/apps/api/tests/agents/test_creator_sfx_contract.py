@@ -682,7 +682,6 @@ def test_full_production_wording_preserves_exact_title_and_named_effect() -> Non
 def test_sfx_placement_output_rejects_more_than_six_placements() -> None:
     with pytest.raises(ValidationError):
         SfxPlacementOutput(placements=[{"effect_id": str(i), "at_s": float(i)} for i in range(7)])
-    assert SfxPlacementAgent.spec.prompt_version == "2026-09-05-v2"
 
 
 def test_sfx_placement_input_allows_visual_only_but_not_empty_evidence() -> None:

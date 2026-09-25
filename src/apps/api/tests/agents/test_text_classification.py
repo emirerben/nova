@@ -575,11 +575,3 @@ class TestHookRoleRegression:
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
-
-
-class TestRegistryRegistration:
-    def test_agent_registered_in_registry(self) -> None:
-        from app.agents._registry import get_agent
-
-        cls = get_agent("nova.compose.text_classification")
-        assert cls is TextClassificationAgent

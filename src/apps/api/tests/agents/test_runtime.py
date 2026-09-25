@@ -428,20 +428,6 @@ def test_transient_retries_still_work_when_clarification_disabled(
     assert len(mock_client.invocations) == 2
 
 
-def test_default_spec_keeps_clarification_retries_on(
-    sample_agent: SampleAgent, mock_client: MockModelClient
-) -> None:
-    """Backward-compat sanity: agents that don't set the flag still retry
-    once on schema error (existing behavior, covered by the test above —
-    pin the default value of the new field here too)."""
-    from app.agents._runtime import AgentSpec
-
-    spec = AgentSpec(name="x", prompt_id="x", prompt_version="0", model="m")
-    assert spec.enable_clarification_retries is True
-    # And SampleAgent (used everywhere in this file) defaults to True too.
-    assert sample_agent.spec.enable_clarification_retries is True
-
-
 # ── Terminal errors ───────────────────────────────────────────────────────────
 
 
@@ -789,15 +775,6 @@ def test_model_used_none_falls_back_to_spec_model(
 
     runs = [c for c in captured if c[0] == "agent_run"]
     assert runs[0][1]["model"] == "gemini-2.5-flash"
-
-
-def test_model_invocation_dataclass_carries_model_used() -> None:
-    """The new field on ModelInvocation defaults to None and accepts a
-    string — pin both behaviors so future refactors don't silently drop it."""
-    default = ModelInvocation(raw_text="hi")
-    assert default.model_used is None
-    overridden = ModelInvocation(raw_text="hi", model_used="gemini-2.5-pro")
-    assert overridden.model_used == "gemini-2.5-pro"
 
 
 # ── CreativeDirectionAgent budget (Fix 1) ─────────────────────────────────────

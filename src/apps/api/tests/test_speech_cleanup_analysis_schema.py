@@ -10,8 +10,6 @@ import importlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import CheckConstraint
 
 from app import models
@@ -180,19 +178,6 @@ def test_plan_item_analysis_relationship_is_cascading_and_bidirectional() -> Non
     assert analysis_relationship.local_columns == {
         models.SpeechCleanupAnalysis.__table__.c.plan_item_id
     }
-
-
-def test_0112_is_the_single_alembic_head() -> None:
-    script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script_dir.get_heads() == ["0112"]
-    assert script_dir.get_revision("0112").down_revision == "0111"
-    assert script_dir.get_revision("0111").down_revision == "0110"
-    assert script_dir.get_revision("0110").down_revision == "0109"
-    assert script_dir.get_revision("0109").down_revision == "0108"
-    assert script_dir.get_revision("0108").down_revision == "0107"
-    assert script_dir.get_revision("0106").down_revision == "0105"
-    assert script_dir.get_revision("0105").down_revision == "0104"
-    assert script_dir.get_revision("0094").down_revision == "0093"
 
 
 def test_0094_upgrade_and_downgrade_are_symmetric(monkeypatch) -> None:

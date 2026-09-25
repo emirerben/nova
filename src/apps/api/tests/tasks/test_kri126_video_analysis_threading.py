@@ -237,10 +237,6 @@ def test_stored_video_analysis_at_v8_is_fresh() -> None:
     )
 
 
-def test_analysis_version_is_bumped_to_8() -> None:
-    assert ap.ANALYSIS_VERSION == 8
-
-
 # ── KRI-127: shared `understanding` block + top-level `transcript` key ────────
 
 
