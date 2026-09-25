@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.222.0] - 2026-09-25
+
+### Changed
+- fix(phone): snap float-noise text overshoot so unified montage recipes validate (KRI-190) (#1246) <!-- release-pr: 1246 -->
+
 ## [0.76.221.0] - 2026-09-25
 
 ### Changed
