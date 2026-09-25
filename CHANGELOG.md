@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.223.0] - 2026-09-25
+
+### Changed
+- fix(montage): defer draft-time receipts to the unified planner; a country alone is not a place (KRI-190) (#1247) <!-- release-pr: 1247 -->
+
 ## [0.76.222.0] - 2026-09-25
 
 ### Changed
