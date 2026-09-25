@@ -7,6 +7,7 @@
 
 import type { EditorCapabilities, PlanItemVariant } from "@/lib/plan-api";
 import { hasCaptionArchetypeName, isCaptionArchetype } from "@/lib/variant-editor/eligibility";
+import { isNarrationCaptionBar } from "./editor-bars";
 import type { EditorTool } from "./ToolRail";
 
 export const CAPTIONS_TAB_REASON = "Captions can be selected and edited in this editor";
@@ -47,6 +48,12 @@ export function captionToolState(
     const hasCues = (variant.caption_cues?.length ?? 0) > 0;
     return hasCues ? "editable" : "pending";
   }
+  // Guided-story captions persist as ordinary `TextElement`s tagged
+  // `source_params.source === "caption_cue"` (role "generative_sequence"),
+  // not through the `caption_cues` lane the two branches above cover — this
+  // is the dominant archetype for new videos, so without this branch the
+  // Captions rail stays greyed out for most creators' work (KRI-201).
+  if (variant.text_elements?.some(isNarrationCaptionBar)) return "editable";
   return "unavailable";
 }
 

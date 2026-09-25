@@ -221,3 +221,72 @@ describe("EditorShell — guided-story narration captions (KRI-18)", () => {
     expect(splitButton).toHaveAttribute("title", "Caption timing follows your narration.");
   });
 });
+
+/**
+ * KRI-201: the on-canvas inspector above (KRI-18) covers per-caption
+ * selection, but deliberately has no "Edit all captions" section — global
+ * styling and Find/Replace across every caption line stayed unreachable for
+ * guided-story, the dominant archetype. This suite covers the Captions RAIL
+ * TOOL (the drawer) becoming reachable for guided-story too, alongside —
+ * not instead of — the on-canvas inspector covered above.
+ */
+describe("EditorShell — Captions drawer reachable for guided-story (KRI-201)", () => {
+  it("the Captions rail tool is enabled (not the false 'this edit has no captions' state) and lists every narration caption", async () => {
+    await renderShell();
+
+    const captionsButton = screen.getByRole("button", { name: "Captions tool" });
+    expect(captionsButton).not.toHaveAttribute("aria-disabled", "true");
+
+    fireEvent.click(captionsButton);
+
+    const cueList = await screen.findByRole("list", { name: "Caption lines" });
+    expect(within(cueList).getByText("Caption number 0")).toBeInTheDocument();
+    expect(within(cueList).getByText("Caption number 1")).toBeInTheDocument();
+  });
+
+  it("Find/Replace All rewrites every matching narration caption, not just caption_cues-lane text", async () => {
+    await renderShell();
+
+    fireEvent.click(screen.getByRole("button", { name: "Captions tool" }));
+    const cueList = await screen.findByRole("list", { name: "Caption lines" });
+    expect(within(cueList).getByText("Caption number 0")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Find in captions"), {
+      target: { value: "Caption number" },
+    });
+    fireEvent.change(screen.getByLabelText("Replace matches with"), {
+      target: { value: "Line" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Replace all" }));
+
+    expect(await screen.findByText("Replaced 2 lines. Cmd+Z to undo.")).toBeInTheDocument();
+    expect(within(cueList).getByText("Line 0")).toBeInTheDocument();
+    expect(within(cueList).getByText("Line 1")).toBeInTheDocument();
+  });
+
+  it("a global 'All captions' font change previews on the narration caption bars and is included in the save payload", async () => {
+    await renderShell();
+
+    fireEvent.click(screen.getByRole("button", { name: "Captions tool" }));
+    await screen.findByRole("list", { name: "Caption lines" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^All captions/, expanded: false }));
+    const hexInput = await screen.findByLabelText("All captions fill color hex");
+    fireEvent.change(hexInput, { target: { value: "#FF0000" } });
+    fireEvent.blur(hexInput);
+
+    const saveButton = screen.getByRole("button", { name: /^Save$/ });
+    await act(async () => {
+      fireEvent.click(saveButton);
+    });
+
+    expect(mockCommitEditorSession).toHaveBeenCalled();
+    const [, , commitRequest] = mockCommitEditorSession.mock.calls[0];
+    const elements = commitRequest.text_elements as Array<{ id: string; color?: string | null }>;
+    const narrationElements = elements.filter((el) => el.id.startsWith("narration-caption-"));
+    expect(narrationElements).toHaveLength(2);
+    for (const el of narrationElements) {
+      expect(el.color).toBe("#FF0000");
+    }
+  });
+});

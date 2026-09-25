@@ -2249,24 +2249,32 @@ The same root cause has three other surfaces; each is real but out of scope
 for a single-client bugfix. Root-cause narrative and code map:
 `~/.claude/plans/kri-110-fluffy-sky.md`.
 
-### Web editor has the identical Captions-tab blind spot
-**What:** `captionToolState` (`src/apps/web/src/app/plan/items/[id]/_editor/editor-capabilities.ts:27-51`)
-requires `resolved_archetype ∈ {narrated, subtitled}`, so `captionsControl` stays
-`undefined` (`EditorShell.tsx:6730`) and the Captions rail button greys out for
-every guided-story video on the web. `captionCueRows` (`EditorShell.tsx:3416`)
-also filters with the narrow `isCaptionBar` instead of the union predicate.
-**Why:** Guided-story is the dominant archetype for new videos (chat-first
-creation is canonical), so this is not a corner case — it is the common case,
-on the surface most creators actually use to edit.
-**How:** Structurally identical fix to the iOS one. The union predicate
-already exists — `isCaptionUnitBar` (`editor-bars.ts:280`) — unlike iOS, which
-had to add one. Swap it into `captionCueRows`'s filter, widen
-`captionToolState` to also accept a `guided_story` variant carrying
-`caption_cue`-tagged text elements, and route the drawer's edit callback to
-`text_elements` for those bars (mirrors the iOS `updateCaptionCue` split).
-**Effort:** M (CC: ~1h — same shape as the iOS fix, plus web test fixtures)
-**Priority:** P1
-**Depends on:** —
+### Web editor has the identical Captions-tab blind spot — FIXED (KRI-201)
+**What it was:** `captionToolState` required `resolved_archetype ∈ {narrated,
+subtitled}`, so `captionsControl` stayed `undefined` and the Captions rail
+button greyed out — with the dishonest "this edit has no captions" tooltip —
+for every guided-story video on the web, even one with real narration
+captions. `captionCueRows` also filtered with the narrow `isCaptionBar`
+instead of the union predicate, so even a forced-open drawer would show zero
+rows.
+**Fix shipped:** `captionToolState` (`editor-capabilities.ts`) now also
+returns `"editable"` when `variant.text_elements` contains a narration-caption
+bar (`isNarrationCaptionBar`); `captionCueRows` (`EditorShell.tsx`) and
+`buildCaptionTextReplacement` (`editor-bars.ts`) were swapped from
+`isCaptionBar` to the existing union predicate `isCaptionUnitBar`. Global
+"All captions" style patches (`patchCaptionMeta`) and Find/Replace All
+(`replaceInCaptions`) now also mark `textDirty` when they touch a
+narration-caption bar, since those bars persist through `text_elements`, not
+`caption_cues` — without that split the live preview would update but Save
+would silently drop the change. This is additive to KRI-18's on-canvas
+per-caption inspector (unaffected) — the drawer's job is exactly what KRI-18's
+inspector deliberately excludes: global/bulk caption styling and Find/Replace
+across every line.
+Covered by `EditorShell-captions-guided-story.test.tsx` (new "Captions drawer
+reachable for guided-story (KRI-201)" suite: rail enabled + cue rows, Replace
+All rewrites narration captions, a global font/color change round-trips into
+the `text_elements` save payload), plus unit coverage in
+`editor-capabilities.test.tsx` and `editor-text-lane-rows.test.ts`.
 
 ### AI copilot cannot see or edit guided-story captions
 **What:** `kria_editor_ops.py`'s caption snapshot (~line 198) is built from
