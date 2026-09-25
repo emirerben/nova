@@ -545,16 +545,24 @@ def test_dispatch_snapshots_only_explicit_speech_cleanup_contracts(
     assert mock_build.call_args.kwargs["creator_request"] == "x" * 2000
 
 
-# --- KRI-118 L1 item 1: clean speech must never be accepted on phone -------
+# --- KRI-118 L1 item 1: clean speech must never be APPLIED on phone --------
+#
+# KRI-205 narrowed this: `preflight_enabled_for_source` now schedules and
+# offers the cleanup decision for a phone (analysis-proxy) source same as a
+# cloud one, since detection only needs audio. This refusal is the half of
+# the invariant that's still true -- applying `choice == "clean"` needs the
+# real, full-resolution video to cut frames, which a phone-rendered project
+# never uploads -- and it's now the everyday outcome for that choice on
+# phone, not just a defense against a stale/forged request.
 
 
 def test_speech_cleanup_dispatch_snapshot_refuses_clean_on_phone_sourced_item() -> None:
     """`choice == "clean"` against an item whose ACTIVE narration source is an
     analysis proxy is refused with a typed reason, before any DB row is even
-    read -- the original audio bytes never reach the server on a phone
-    project, so speech cleanup can never actually run there. This gates on
-    the resolved source, not the item's raw clip paths -- a phone item's
-    recorded voiceover (the active source when `audio_mode == "voiceover"`)
+    read -- applying a cut needs the real, full-resolution video, which a
+    phone-rendered project never uploads. This gates on the resolved source,
+    not the item's raw clip paths -- a phone item's recorded voiceover (the
+    active source when `audio_mode == "voiceover"`)
     is a normal, fully uploaded file even though its video clips are
     proxies (see `test_..._recorded_voiceover_source_is_unaffected` below)."""
     from app.tasks.content_plan_build import DispatchResult, _speech_cleanup_dispatch_snapshot
