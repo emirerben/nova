@@ -94,6 +94,8 @@ protocol KriaAPIClient: Sendable {
     func projects() async throws -> [ProjectSummary]
     func project(threadID: UUID) async throws -> CreationThread
     func creationCapabilities() async throws -> CreationCapabilities
+    /// KRI-207: the creator's current requirements and how each was handled.
+    func creationBrief(threadID: UUID) async throws -> CreativeBrief
     func sendCreationMessage(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
     func creationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int, clientActionID: String) async throws -> CreationThread
     func reserveVisualUpload(itemID: String, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> VisualUploadTarget
@@ -193,6 +195,7 @@ extension KriaAPIClient {
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
+    func creationBrief(threadID: UUID) async throws -> CreativeBrief { throw APIError.unsupported }
 
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
         _ = jobID
@@ -760,6 +763,7 @@ struct KriaAPI: KriaAPIClient {
         Operations.reserveDeviceExport.id,
         Operations.completeDeviceExport.id,
         Operations.getCreationCapabilities.id,
+        Operations.getCreationBrief.id,
         Operations.applyCreationAction.id,
         Operations.sendCreationMessage.id,
         Operations.reserveCreationVisualUploads.id,
@@ -789,6 +793,7 @@ struct KriaAPI: KriaAPIClient {
     func projects() async throws -> [ProjectSummary] { try await request(path: "creation-threads", method: "GET", bodyData: nil, decode: [CreationThread].self).map(\.summary) }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func creationCapabilities() async throws -> CreationCapabilities { try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self) }
+    func creationBrief(threadID: UUID) async throws -> CreativeBrief { try await request(path: "creation-threads/\(threadID.uuidString)/brief", method: "GET", bodyData: nil, decode: CreativeBrief.self) }
     func library() async throws -> [ProjectSummary] {
         var summaries: [ProjectSummary] = []
         var seenJobIDs = Set<String>()
