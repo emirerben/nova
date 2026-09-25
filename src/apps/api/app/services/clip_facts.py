@@ -103,7 +103,11 @@ def capture_facts(capture: ClipCapture | None) -> list[ClipFact]:
                     kind="capture_time", value=_iso_utc(capture.capture_time), provenance="exif"
                 )
             )
-    if capture.place is not None:
+    # A country alone ("Türkiye") says nothing about where the clip was filmed, so it is
+    # not a place fact and can never caption a clip (KRI-190 simulator test). Decided
+    # here, where the parts are still separate: a lone "Singapore" from a locality that
+    # shares its country's name is a real place and is kept.
+    if capture.place is not None and (capture.place.sub_locality or capture.place.locality):
         label = capture.place.label()
         if label:
             # A label made only of characters the fact cleaner strips is "no place".

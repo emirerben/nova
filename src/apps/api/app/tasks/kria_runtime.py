@@ -30,11 +30,10 @@ from app.kria.brief import (
 )
 from app.kria.brief_checks import (
     build_receipts,
-    defers_to_unified_montage,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
     reply_from_receipts,
-    requirements_for_draft_receipts,
+    requirements_to_check_at_draft,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
@@ -458,16 +457,12 @@ def _complete_draft_turn(
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
                     # them against this text-free draft would only mislead.
-                    strategy_format = (document.strategy or {}).get("edit_format") or (
-                        item.edit_format
-                    )
-                    checked = requirements_for_draft_receipts(
+                    checked = requirements_to_check_at_draft(
                         checked,
-                        defers_to_render=defers_to_unified_montage(
-                            creator_id=thread.creator_id,
-                            edit_format=strategy_format,
-                            has_voiceover=bool(item.voiceover_gcs_path),
-                        ),
+                        creator_id=thread.creator_id,
+                        strategy=document.strategy,
+                        item_edit_format=item.edit_format,
+                        clip_paths=item.clip_gcs_paths or (),
                     )
                 else:
                     # Editor operations verify only the requirements stated in

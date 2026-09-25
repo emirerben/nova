@@ -217,17 +217,8 @@ def title_from_facts(facts: Mapping[str, Any]) -> str | None:
 
 
 def _place_label(value: str) -> str:
-    """The most specific part of a geocoded place ("Sarıyer, Istanbul, Türkiye").
-
-    `ClipPlace.label()` always ends with the country, so a place of a single part is the
-    country alone: the geocoder found nothing finer. "Türkiye" says nothing about the
-    clip, so it is not a label and the clip is reported as unlabelled instead
-    (KRI-190 simulator test: two clips were captioned "Türkiye").
-    """
-    parts = [part.strip() for part in value.split(",") if part.strip()]
-    if len(parts) < 2:
-        return ""
-    return _nfc(parts[0])
+    """The most specific part of a geocoded place ("Sarıyer, Istanbul, Türkiye")."""
+    return _nfc(value.split(",", 1)[0])
 
 
 def _fact_label(clip: UnifiedClip) -> tuple[str, str, bool] | None:
