@@ -3,6 +3,7 @@ import {
   AI_SEQUENCE_BADGE_LABEL,
   barsToCaptionCues,
   barsToTextElements,
+  buildCaptionTextReplacement,
   captionMetaPatchFromCaptionBarPatch,
   convertCaptionCues,
   deriveLaneRows,
@@ -772,6 +773,62 @@ describe("isCaptionUnitBar / isNarrationCaptionBar (KRI-18)", () => {
     // EditorTimelineBody's captions lane — it never calls deriveLaneRows);
     // this pins that stacking is impossible for the TEXT lane specifically.
     expect(deriveTextLaneRows(plainTextBars).rowCount).toBe(1);
+  });
+});
+
+// KRI-201: the Captions drawer's Replace All operates over `captionCueRows`,
+// which is now seeded via the `isCaptionUnitBar` union (EditorShell.tsx) so
+// guided-story's narration captions show up as rows at all. Replace All must
+// cover the same union — otherwise the drawer would report a match on a
+// narration-caption row (its text is in `cues`) that a click on "Replace All"
+// silently fails to change.
+describe("buildCaptionTextReplacement (KRI-201 — union across both caption representations)", () => {
+  const cueCaptionBar: TextElementBar = {
+    id: "caption-0",
+    text: "we flew to Turkey",
+    start_s: 0,
+    end_s: 1,
+    role: "narrated_caption",
+  };
+  const narrationCaptionBar: TextElementBar = {
+    id: "narration-caption-1",
+    text: "we flew to Turkey",
+    start_s: 1,
+    end_s: 2,
+    role: "generative_sequence",
+    source_params: { source: "caption_cue", key: "0" },
+  };
+  const plainIntroBar: TextElementBar = {
+    id: "title-1",
+    text: "we flew to Turkey too",
+    start_s: 2,
+    end_s: 4,
+    role: "generative_intro",
+  };
+
+  it("replaces matches in both a caption_cues bar and a narration-caption bar", () => {
+    const { patches, matchCount, lineCount } = buildCaptionTextReplacement(
+      [cueCaptionBar, narrationCaptionBar],
+      "Turkey",
+      "Spain",
+    );
+    expect(patches).toEqual(
+      expect.arrayContaining([
+        { id: "caption-0", patch: { text: "we flew to Spain" } },
+        { id: "narration-caption-1", patch: { text: "we flew to Spain" } },
+      ]),
+    );
+    expect(lineCount).toBe(2);
+    expect(matchCount).toBe(2);
+  });
+
+  it("leaves a non-caption bar untouched even when its text matches", () => {
+    const { patches } = buildCaptionTextReplacement(
+      [narrationCaptionBar, plainIntroBar],
+      "Turkey",
+      "Spain",
+    );
+    expect(patches).toEqual([{ id: "narration-caption-1", patch: { text: "we flew to Spain" } }]);
   });
 });
 
