@@ -43,8 +43,8 @@ struct ScrollEdgeFadeMetrics: Equatable {
 }
 
 extension View {
-    /// Fades a vertical scroll view's top and bottom edges by a hairline
-    /// (`length`, default 2pt) where content continues past them, instead of
+    /// Fades a vertical scroll view's top and bottom edges by a thin band
+    /// (`length`, default 6pt) where content continues past them, instead of
     /// slicing it with a hard cut. Apply directly on the `ScrollView`, before any
     /// `.overlay`/`.background` that must stay unmasked.
     ///
@@ -53,7 +53,7 @@ extension View {
     /// fully crisp (even behind that chrome) until it is `length` points from the
     /// edge. An edge at rest, with nothing past it, is not faded. The mask never
     /// changes frames or hit testing.
-    func kriaScrollEdgeFade(length: CGFloat = 2) -> some View {
+    func kriaScrollEdgeFade(length: CGFloat = 6) -> some View {
         modifier(KriaScrollEdgeFade(length: length))
     }
 }

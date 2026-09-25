@@ -222,10 +222,10 @@ the editor's Kria sheet). Other scroll surfaces (the projects drawer, editor
 strips, carousels, slide-post rows) keep their normal hard clip on purpose.
 
 `.kriaScrollEdgeFade()` (`DesignSystem/ScrollEdgeFade.swift`) is an alpha mask
-on a vertical `ScrollView`: a hairline fade (`length`, default 2pt) at the
+on a vertical `ScrollView`: a thin fade (`length`, default 6pt) at the
 scroll view's real frame edges, which are the screen edges because the
 transcript runs beneath the floating chrome. Content stays fully crisp, even
-behind the header and composer, until it is 2pt from the top or bottom edge. An
+behind the header and composer, until it is 6pt from the top or bottom edge. An
 edge at rest, with nothing past it, is not faded at all. There is deliberately
 no frosted/blurred band (an earlier version had one and it read as a large grey
 "block") and no fade zone tied to the header/composer height. Apply the
