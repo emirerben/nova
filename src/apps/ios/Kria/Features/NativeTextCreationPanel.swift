@@ -13,11 +13,18 @@ struct NativeTextCreationPanel: View {
     var onSelectBlock: ((String) -> Void)?
     @State private var focused = false
     @Environment(\.nativeEditorConnectedPanel) private var connected
+    /// One line of body text plus the editor's insets; it grows with Dynamic Type.
+    @ScaledMetric(relativeTo: .body) private var compactInputHeight: CGFloat = 36
+
+    private var interactive: Bool {
+        EditorTextBlock.listIsInteractive(draft: session.pendingText?.text, canEdit: session.canEdit(.text))
+    }
 
     private var blocks: [EditorTextBlock] { connected && onSelectBlock != nil ? session.document.textBlocks : [] }
 
     var body: some View {
-        VStack(spacing: 6) {
+        let blocks = self.blocks
+        return VStack(spacing: 6) {
             HStack {
                 Button { focused = false; session.cancelTextCreation() } label: {
                     Text("Cancel").frame(minWidth: 64, minHeight: 44)
@@ -39,10 +46,11 @@ struct NativeTextCreationPanel: View {
                 get: { session.pendingText?.text ?? "" },
                 set: { session.updatePendingText($0) }
             ), focused: $focused, identifier: "native-editor-new-text-input")
-                .frame(minHeight: blocks.isEmpty ? (connected ? 44 : 76) : 36, maxHeight: blocks.isEmpty ? .infinity : 36)
+                .frame(minHeight: blocks.isEmpty ? (connected ? 44 : 76) : compactInputHeight,
+                       maxHeight: blocks.isEmpty ? .infinity : compactInputHeight)
                 .padding(8)
                 .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
-            if !blocks.isEmpty { blockList }
+            if !blocks.isEmpty { blockList(blocks) }
         }
         .padding(.horizontal, connected ? 24 : 16)
         .padding(.bottom, 8)
@@ -58,14 +66,20 @@ struct NativeTextCreationPanel: View {
         }
     }
 
-    private var blockList: some View {
+    private func blockList(_ blocks: [EditorTextBlock]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("On screen")
-                .font(KriaFont.body(12).weight(.semibold))
-                .foregroundStyle(KriaColor.mutedInk)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 6)
-                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 8) {
+                Text("On screen").font(KriaFont.body(12).weight(.semibold))
+                if !interactive {
+                    // The reason the rows are inert stays visible.
+                    Text(session.canEdit(.text) ? "Finish your new text first" : "Text editing is unavailable")
+                        .font(KriaFont.body(11))
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(KriaColor.mutedInk)
+            .padding(.top, 6)
+            .accessibilityAddTraits(.isHeader)
             ScrollView {
                 // Not lazy: a few dozen rows at most, and every row stays reachable to
                 // VoiceOver and UI tests even while it is scrolled out of view.
@@ -74,7 +88,7 @@ struct NativeTextCreationPanel: View {
                         NativeEditorTextBlockRow(
                             block: block,
                             selected: session.selection == EditorSelection(kind: .text, id: block.id),
-                            enabled: EditorTextBlock.listIsInteractive(draft: session.pendingText?.text, canEdit: session.canEdit(.text))
+                            enabled: interactive
                         ) {
                             focused = false
                             onSelectBlock?(block.id)
@@ -117,7 +131,7 @@ struct NativeEditorTextBlockRow: View {
         .onTapGesture { onTap() }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction(named: "Edit text") { onTap() }
+        .accessibilityAction(named: "Edit text") { if enabled { onTap() } }
         .accessibilityIdentifier("native-editor-text-row-" + block.id)
         .disabled(!enabled)
     }

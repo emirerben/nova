@@ -51,25 +51,37 @@ extension EditorTextBlock {
 }
 
 extension EditorDocument {
+    fileprivate static func trailingNumber(of id: String) -> Int? {
+        let digits = id.reversed().prefix { $0.isNumber }
+        return digits.isEmpty ? nil : Int(String(digits.reversed()))
+    }
+
     /// The on-screen text a creator can edit, in the order it appears.
     ///
     /// Left out on purpose: captions (they have their own tab and list), blocks the
     /// renderer skips (`removed`, `enabled == false`), and zero-length blocks that
     /// cannot be selected on the timeline either.
     var textBlocks: [EditorTextBlock] {
+        var seen = Set<String>()
         let authored = textElements.filter { element in
             !element.isCaption
                 && element.raw["removed"] != .bool(true)
                 && element.raw["enabled"] != .bool(false)
                 && element.endS > element.startS
+                // A duplicate id would crash `ForEach` and mislabel a row; keep the first.
+                && seen.insert(element.id).inserted
         }
-        // Clip labels are numbered in time order, whatever order the server stored them in.
-        let labelPosition: [String: Int] = Dictionary(
-            uniqueKeysWithValues: authored
-                .filter { $0.id.hasPrefix("clip-label-") }
-                .sorted { ($0.startS, $0.id) < ($1.startS, $1.id) }
-                .enumerated().map { ($1.id, $0 + 1) }
-        )
+        // "Clip N" is the clip's own number, so a clip without a label, or a removed
+        // label, never renumbers its neighbours. The server names a label after its cut
+        // ("clip-label-unified-cut-3"); an id without a trailing number falls back to the
+        // label's place in time order.
+        var labelPosition: [String: Int] = [:]
+        let labels = authored
+            .filter { $0.id.hasPrefix("clip-label-") }
+            .sorted { ($0.startS, $0.id) < ($1.startS, $1.id) }
+        for (index, element) in labels.enumerated() {
+            labelPosition[element.id] = Self.trailingNumber(of: element.id) ?? index + 1
+        }
         func kind(of element: EditorTextElement) -> EditorTextBlock.Kind {
             if element.id == "guided-title" { return .title }
             if let position = labelPosition[element.id] { return .clipLabel(position) }

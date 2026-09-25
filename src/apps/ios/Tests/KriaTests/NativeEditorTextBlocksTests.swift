@@ -39,6 +39,40 @@ final class NativeEditorTextBlocksTests: XCTestCase {
         XCTAssertEqual(labels.map(\.kind), [.clipLabel(1), .clipLabel(2)])
     }
 
+    func testAClipLabelKeepsItsOwnClipNumberWhenAnotherClipHasNoLabel() {
+        // The server skips a clip without a label; the next label is still that clip's.
+        var doc = document
+        doc.textElements.removeAll { $0.id == "clip-label-unified-cut-1" }
+        XCTAssertEqual(doc.textBlocks.first { $0.id == "clip-label-unified-cut-2" }?.kind, .clipLabel(2))
+    }
+
+    func testRemovingALabelNeverRenumbersTheOthers() {
+        var doc = document
+        let index = doc.textElements.firstIndex { $0.id == "clip-label-unified-cut-1" }!
+        doc.textElements[index].raw["removed"] = .bool(true)
+        XCTAssertEqual(doc.textBlocks.first { $0.id == "clip-label-unified-cut-2" }?.kind, .clipLabel(2))
+    }
+
+    func testAnIdWithoutATrailingNumberFallsBackToTimeOrder() {
+        var doc = document
+        for index in doc.textElements.indices {
+            if doc.textElements[index].id == "clip-label-unified-cut-2" { doc.textElements[index].id = "clip-label-b" }
+            if doc.textElements[index].id == "clip-label-unified-cut-1" { doc.textElements[index].id = "clip-label-a" }
+        }
+        let labels = doc.textBlocks.filter { $0.id.hasPrefix("clip-label-") }
+        XCTAssertEqual(labels.map(\.id), ["clip-label-a", "clip-label-b"])
+        XCTAssertEqual(labels.map(\.kind), [.clipLabel(1), .clipLabel(2)])
+    }
+
+    func testADuplicateIdIsListedOnceAndNeverTrapsTheProjection() {
+        var doc = document
+        doc.textElements.append(doc.textElements.first { $0.id == "clip-label-unified-cut-1" }!)
+        doc.textElements.append(doc.textElements.first { $0.id == "guided-title" }!)
+        let ids = doc.textBlocks.map(\.id)
+        XCTAssertEqual(ids.count, Set(ids).count)
+        XCTAssertEqual(ids.count, 4)
+    }
+
     func testAnEditedTextIsReflectedInTheNextProjection() {
         var doc = document
         let index = doc.textElements.firstIndex { $0.id == "clip-label-unified-cut-2" }!

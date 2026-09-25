@@ -524,8 +524,14 @@ struct NativeEditorView: View {
     /// A row in the Text tab's list: jump to the block and edit its words. The
     /// timeline is disabled while a panel is open, so this selects the block itself.
     private func openTextBlock(_ id: String) {
-        guard session.document.textElements.contains(where: { $0.id == id }) else { return }
+        guard session.document.textElements.contains(where: { $0.id == id }),
+              EditorTextBlock.listIsInteractive(draft: session.pendingText?.text, canEdit: session.canEdit(.text))
+        else { return }
         session.cancelTextCreation()
+        // The raised list would hide the very text being edited under the panel.
+        withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
+            panelExpansion = 0
+        }
         selectedTextForActions = id
         textEditOrigin = .list
         session.select(EditorSelection(kind: .text, id: id))

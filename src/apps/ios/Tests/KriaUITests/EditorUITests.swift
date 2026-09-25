@@ -328,6 +328,12 @@ final class EditorUITests: XCTestCase {
         let content = app.textViews["native-editor-text-content"]
         XCTAssertTrue(content.waitForExistence(timeout: 3))
         XCTAssertEqual(content.value as? String, "Dolmabahçe Palace")
+        // The block being edited must stay visible above the panel, not hidden under it.
+        let onCanvas = app.descendants(matching: .any)["native-editor-preview-text-clip-label-unified-cut-2"].firstMatch
+        let panelFrame = app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch.frame
+        XCTAssertTrue(onCanvas.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(onCanvas.frame.maxY, panelFrame.minY + 1,
+                                 "the panel must not cover the text that is being edited")
         content.tap()
         content.typeText(" Gate")
         app.buttons["native-editor-text-inspector-done"].tap()
