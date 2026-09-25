@@ -16,9 +16,16 @@
           "kind": "place",
           "value": "Kaymaklı, Nevşehir",
           "provenance": "geocode"
+        },
+        {
+          "kind": "landmark",
+          "value": "Kaymaklı Underground City",
+          "provenance": "inferred",
+          "confidence": 0.6
         }
       ],
-      "route_rank": 7
+      "route_rank": 7,
+      "true_landmark": "Kaymaklı Underground City"
     },
     {
       "clip_id": "T2",
@@ -52,9 +59,16 @@
           "kind": "place",
           "value": "Göreme, Nevşehir",
           "provenance": "geocode"
+        },
+        {
+          "kind": "landmark",
+          "value": "Red Valley",
+          "provenance": "inferred",
+          "confidence": 0.6
         }
       ],
-      "route_rank": 5
+      "route_rank": 5,
+      "true_landmark": "Rose Valley"
     },
     {
       "clip_id": "T1",
@@ -106,9 +120,16 @@
           "kind": "place",
           "value": "Göreme, Nevşehir",
           "provenance": "geocode"
+        },
+        {
+          "kind": "landmark",
+          "value": "Love Valley",
+          "provenance": "inferred",
+          "confidence": 0.6
         }
       ],
-      "route_rank": 4
+      "route_rank": 4,
+      "true_landmark": "Love Valley"
     },
     {
       "clip_id": "T3",
@@ -124,9 +145,16 @@
           "kind": "place",
           "value": "Uçhisar, Nevşehir",
           "provenance": "geocode"
+        },
+        {
+          "kind": "landmark",
+          "value": "Uçhisar Castle",
+          "provenance": "inferred",
+          "confidence": 0.6
         }
       ],
-      "route_rank": 3
+      "route_rank": 3,
+      "true_landmark": "Uçhisar Castle"
     },
     {
       "clip_id": "T6",

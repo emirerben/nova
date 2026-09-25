@@ -131,11 +131,11 @@ def replay_v1_copilot(
 
 
 def _v2_traces(fixture: RFFixture) -> dict[str, Any]:
-    from app.kria.replay import KriaReplayFixture, replay_thread
-
     v2_turns = [t for t in fixture.turns if t.engine == "v2_kria"]
     if not v2_turns:
         return {}
+    from app.kria.replay import KriaReplayFixture, replay_thread
+
     fixtures = [KriaReplayFixture.model_validate(t.kria) for t in v2_turns]
     trace = replay_thread(fixture.fixture_id, fixtures)
     return {t.turn_id: tr for t, tr in zip(v2_turns, trace.traces, strict=True)}

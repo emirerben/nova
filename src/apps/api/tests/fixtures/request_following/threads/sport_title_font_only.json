@@ -1,0 +1,224 @@
+{
+  "fixture_id": "sport_title_font_only",
+  "provenance": "authored",
+  "footage": "sport",
+  "description": "A scoped style change: the title moves, the labels and the clips do not.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Label the goals: \"GOAL 1\" on the first goal and \"FULL TIME\" on the handshakes, and add a title.",
+      "engine": "recorded"
+    },
+    {
+      "turn_id": "t1",
+      "user_message": "Set the title in Playfair Display but leave the goal labels as they are.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "labels",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_exact",
+      "checker": "label_exact",
+      "params": {
+        "labels": {
+          "S3": "GOAL 1",
+          "S8": "FULL TIME"
+        }
+      },
+      "source": "Label the goals: \"GOAL 1\" on the first goal and \"FULL TIME\" on the handshakes, and add a title.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "title-font",
+      "kind": "style",
+      "scope": "title",
+      "request_type": "style",
+      "checker": "font_all_equal",
+      "params": {
+        "font": "Playfair Display",
+        "roles": [
+          "title"
+        ]
+      },
+      "source": "Set the title in Playfair Display but leave the goal labels as they are.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "labels-keep-font",
+      "kind": "style",
+      "scope": "per_clip",
+      "request_type": "style",
+      "checker": "font_all_equal",
+      "params": {
+        "font": "Inter",
+        "roles": [
+          "label"
+        ]
+      },
+      "source": "Set the title in Playfair Display but leave the goal labels as they are.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "no-replan",
+      "kind": "style",
+      "scope": "global",
+      "request_type": "style",
+      "checker": "clips_unchanged",
+      "params": {},
+      "source": "Set the title in Playfair Display but leave the goal labels as they are.",
+      "introduced_in_turn": 1
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "S1",
+          "start_s": 0.0,
+          "end_s": 2.5
+        },
+        {
+          "clip_id": "S2",
+          "start_s": 2.5,
+          "end_s": 4.5
+        },
+        {
+          "clip_id": "S3",
+          "start_s": 4.5,
+          "end_s": 7.5
+        },
+        {
+          "clip_id": "S4",
+          "start_s": 7.5,
+          "end_s": 10.0
+        },
+        {
+          "clip_id": "S5",
+          "start_s": 10.0,
+          "end_s": 12.0
+        },
+        {
+          "clip_id": "S6",
+          "start_s": 12.0,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "S7",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "S8",
+          "start_s": 17.0,
+          "end_s": 19.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Five-a-side",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Playfair Display"
+        },
+        {
+          "id": "label-2",
+          "role": "label",
+          "text": "GOAL 1",
+          "start_s": 4.5,
+          "end_s": 7.5,
+          "font_family": "Inter",
+          "clip_id": "S3"
+        },
+        {
+          "id": "label-7",
+          "role": "label",
+          "text": "FULL TIME",
+          "start_s": 17.0,
+          "end_s": 19.5,
+          "font_family": "Inter",
+          "clip_id": "S8"
+        }
+      ],
+      "total_duration_s": 19.5
+    },
+    "reply": "Set the title in Playfair Display. The labels are unchanged.",
+    "plan_before": {
+      "clips": [
+        {
+          "clip_id": "S1",
+          "start_s": 0.0,
+          "end_s": 2.5
+        },
+        {
+          "clip_id": "S2",
+          "start_s": 2.5,
+          "end_s": 4.5
+        },
+        {
+          "clip_id": "S3",
+          "start_s": 4.5,
+          "end_s": 7.5
+        },
+        {
+          "clip_id": "S4",
+          "start_s": 7.5,
+          "end_s": 10.0
+        },
+        {
+          "clip_id": "S5",
+          "start_s": 10.0,
+          "end_s": 12.0
+        },
+        {
+          "clip_id": "S6",
+          "start_s": 12.0,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "S7",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "S8",
+          "start_s": 17.0,
+          "end_s": 19.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Five-a-side",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        },
+        {
+          "id": "label-2",
+          "role": "label",
+          "text": "GOAL 1",
+          "start_s": 4.5,
+          "end_s": 7.5,
+          "font_family": "Inter",
+          "clip_id": "S3"
+        },
+        {
+          "id": "label-7",
+          "role": "label",
+          "text": "FULL TIME",
+          "start_s": 17.0,
+          "end_s": 19.5,
+          "font_family": "Inter",
+          "clip_id": "S8"
+        }
+      ],
+      "total_duration_s": 19.5
+    }
+  }
+}

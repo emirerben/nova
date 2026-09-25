@@ -222,16 +222,24 @@ python -m tests.evals.request_following.report --phase P0 \
   turns; use the same paid-run guards as the rest of this directory. **Run it live before merging
   any planner, copilot or prompt change.**
 - **Provenance.** `east_run` is a read-only prod capture (KRI-185, regenerate with
-  `python -m tests.evals.request_following.capture_east_run`). The other twelve are authored
-  briefs (`author_fixtures.py`) with a hand-built reference edit: they prove each checker can be
-  passed and can fail, and stay out of the KPI (`awaiting recording`) until P6b records outcomes.
+  `python -m tests.evals.request_following.capture_east_run`). The other 29 are authored briefs
+  (`author_fixtures.py`, five synthetic footage sets incl. `harbor_run`, invented places only)
+  with a hand-built reference edit: they prove each checker can be passed and can fail, and
+  stay out of the KPI (`awaiting recording`) until their turns carry recorded outcomes. Nine
+  are multi-turn (up to three turns). P6b added briefs for the reversed-route receipt,
+  consecutive-label dedupe, brief-sourced title receipt, label-each-clip, one-label
+  correction and bulk "change all fonts". Some checkers read the reply (`reply_states`, a
+  receipt must say what the AI saw and did); those are event checkers, judged on the turn they
+  were asked. `--eval-mode live` on `report.py` needs the same paid-run guards as pytest live.
 - **Baseline pin.** `east_run.json` stores `baseline` statuses and `test_east_run_baseline_is_pinned`
   fails when a code change moves one. That is the intended signal: review the movement, then
   re-stamp with `runner.stamp_baseline`. The committed report
   `docs/reviews/kri-185/request-following-baseline.md` is kept in sync by
   `test_committed_baseline_report_matches_the_replay`.
-- **Wrong-landmark rate** (`scorer.wrong_landmark_rate`) is a stub: it reports `n/a` until P3
-  supplies inferred landmark facts and fixtures carry `true_landmark` ground truth.
+- **Wrong-landmark rate** (`scorer.wrong_landmark_rate`) is judged over clips that carry an
+  `inferred` landmark fact and a ground-truth `true_landmark` (`harbor_run`, `trip`; the truth
+  is on the clip record, never in `facts`). Pass `guesses={clip_id: name}` to score a live
+  `landmark_guess` run against the same footage.
 
 ## CI
 

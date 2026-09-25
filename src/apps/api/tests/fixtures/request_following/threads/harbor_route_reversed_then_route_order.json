@@ -1,0 +1,169 @@
+{
+  "fixture_id": "harbor_route_reversed_then_route_order",
+  "provenance": "authored",
+  "footage": "harbor_run",
+  "description": "After the reversal receipt the creator picks their own route: the edit is re-ordered along route_rank.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "I ran from Kestrel Point to Old Mill Pier this morning. Show the run in that order.",
+      "engine": "recorded"
+    },
+    {
+      "turn_id": "t1",
+      "user_message": "Yes, use my route order.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "route-order",
+      "kind": "order",
+      "scope": "global",
+      "request_type": "order_route",
+      "checker": "order_by_key",
+      "params": {
+        "key": "route_rank"
+      },
+      "source": "Yes, use my route order.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "reordered",
+      "kind": "select",
+      "scope": "global",
+      "request_type": "restructure",
+      "checker": "restructure_changed",
+      "params": {},
+      "source": "Yes, use my route order.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "says-route-order",
+      "kind": "order",
+      "scope": "global",
+      "request_type": "order_route",
+      "checker": "reply_states",
+      "params": {
+        "all_of": [
+          "route order"
+        ]
+      },
+      "source": "Yes, use my route order.",
+      "introduced_in_turn": 1
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "H8",
+          "start_s": 0.0,
+          "end_s": 3.5
+        },
+        {
+          "clip_id": "H7",
+          "start_s": 3.5,
+          "end_s": 6.5
+        },
+        {
+          "clip_id": "H6",
+          "start_s": 6.5,
+          "end_s": 8.5
+        },
+        {
+          "clip_id": "H5",
+          "start_s": 8.5,
+          "end_s": 11.5
+        },
+        {
+          "clip_id": "H4",
+          "start_s": 11.5,
+          "end_s": 14.0
+        },
+        {
+          "clip_id": "H3",
+          "start_s": 14.0,
+          "end_s": 17.5
+        },
+        {
+          "clip_id": "H2",
+          "start_s": 17.5,
+          "end_s": 20.0
+        },
+        {
+          "clip_id": "H1",
+          "start_s": 20.0,
+          "end_s": 23.0
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Brightwater run",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 23.0
+    },
+    "reply": "Re-ordered all 8 clips in your route order, Kestrel Point first.",
+    "plan_before": {
+      "clips": [
+        {
+          "clip_id": "H1",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "clip_id": "H2",
+          "start_s": 3.0,
+          "end_s": 5.5
+        },
+        {
+          "clip_id": "H3",
+          "start_s": 5.5,
+          "end_s": 9.0
+        },
+        {
+          "clip_id": "H4",
+          "start_s": 9.0,
+          "end_s": 11.5
+        },
+        {
+          "clip_id": "H5",
+          "start_s": 11.5,
+          "end_s": 14.5
+        },
+        {
+          "clip_id": "H6",
+          "start_s": 14.5,
+          "end_s": 16.5
+        },
+        {
+          "clip_id": "H7",
+          "start_s": 16.5,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "H8",
+          "start_s": 19.5,
+          "end_s": 23.0
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Brightwater run",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 23.0
+    }
+  }
+}
