@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.227.0] - 2026-09-25
+
+### Changed
+- fix(web): make guided-story captions reachable in the Captions drawer (KRI-201) (#1251) <!-- release-pr: 1251 -->
+
 ## [0.76.226.0] - 2026-09-25
 
 ### Changed
