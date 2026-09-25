@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.221.0] - 2026-09-25
+
+### Changed
+- chore(tests): prune low-signal unit tests + add testing rules (KRI-198) (#1232) <!-- release-pr: 1232 -->
+
 ## [0.76.220.0] - 2026-09-25
 
 ### Changed
