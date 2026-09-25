@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.225.0] - 2026-09-25
+
+### Changed
+- fix(ios): editor play never silently does nothing when the player item fails (KRI-200) (#1248) <!-- release-pr: 1248 -->
+
 ## [0.76.224.0] - 2026-09-25
 
 ### Fixed
