@@ -254,7 +254,7 @@ def client():
     return TestClient(app, raise_server_exceptions=False)
 
 
-def _db_gen(item, assets, jobs):
+def _db_gen(item, assets, jobs, thread_link=None):
     db_holder: dict[str, AsyncMock] = {}
 
     async def _gen():
@@ -265,7 +265,9 @@ def _db_gen(item, assets, jobs):
         assets_res.scalars.return_value.all.return_value = assets
         jobs_res = MagicMock()
         jobs_res.scalars.return_value.all.return_value = jobs
-        db.execute = AsyncMock(side_effect=[item_res, assets_res, jobs_res])
+        thread_res = MagicMock()
+        thread_res.first.return_value = thread_link
+        db.execute = AsyncMock(side_effect=[item_res, assets_res, jobs_res, thread_res])
         db_holder["db"] = db
         yield db
 
@@ -305,6 +307,30 @@ class TestAdminPlanItemsAuth:
             finally:
                 app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 200
+        body = res.json()
+        assert body["thread_id"] is None
+        assert body["runtime_version"] is None
+
+    def test_debug_exposes_owning_thread_additively(self, client):
+        item = _plan_item_row()
+        thread_id = uuid.uuid4()
+        gen, _holder = _db_gen(item, [], [], thread_link=(thread_id, 2))
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = gen
+            try:
+                res = client.get(
+                    f"/admin/plan-items/{item.id}/debug",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 200
+        body = res.json()
+        assert body["thread_id"] == str(thread_id)
+        assert body["runtime_version"] == 2
+        # Additive: the pre-existing top-level keys are all still present.
+        assert {"item", "jobs", "clip_assignments", "edit_proposal"} <= set(body)
 
     def test_proposal_trace_requires_admin_token(self, client):
         with patch("app.routes.admin.settings") as s:

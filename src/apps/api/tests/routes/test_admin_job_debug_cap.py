@@ -138,6 +138,7 @@ def test_debug_caps_context_runs_and_omits_heavy_io(client: TestClient) -> None:
                     _rows_result([job_run]),
                     _rows_result(template_runs),
                     _rows_result(track_runs),
+                    MagicMock(first=MagicMock(return_value=None)),
                 ]
             )
             yield db
@@ -238,6 +239,67 @@ def test_null_template_and_track_ids_skip_context_queries(client: TestClient) ->
     assert body["template_agent_runs_has_more"] is False
     assert body["track_agent_runs"] == []
     assert body["track_agent_runs_has_more"] is False
-    assert len(executed) == 3
+    assert len(executed) == 4  # incl. the thread-link lookup
     assert all("template_id IS NULL" not in stmt for stmt in executed)
     assert all("music_track_id IS NULL" not in stmt for stmt in executed)
+
+
+def _job_debug_with_thread(client: TestClient, job, thread_row):
+    with patch("app.routes.admin.settings") as settings:
+        settings.admin_api_key = VALID_TOKEN
+
+        async def _gen():
+            db = AsyncMock()
+            calls = {"n": 0}
+
+            async def _execute(stmt, *args, **kwargs):
+                calls["n"] += 1
+                sql = str(stmt)
+                if calls["n"] == 1:
+                    return _scalar_result(job)
+                if "FROM creation_threads" in sql:
+                    result = MagicMock()
+                    result.first.return_value = thread_row
+                    return result
+                result = _rows_result([])
+                result.scalars.return_value.first.return_value = None
+                return result
+
+            db.execute = _execute
+            yield db
+
+        app.dependency_overrides[get_db] = _gen
+        try:
+            return client.get(f"/admin/jobs/{job.id}/debug", headers={"X-Admin-Token": VALID_TOKEN})
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+
+def test_debug_links_job_to_owning_thread_additively(client: TestClient) -> None:
+    thread_id = uuid.uuid4()
+    job = _job_row(
+        template_id=None, music_track_id=None, content_plan_item_id=uuid.uuid4(), mode="generative"
+    )
+
+    res = _job_debug_with_thread(client, job, (thread_id, 2))
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["thread_id"] == str(thread_id)
+    assert body["runtime_version"] == 2
+    assert {"job", "job_clips", "agent_runs", "runtime", "kria_turn_id"} <= set(body)
+
+
+def test_debug_thread_fields_null_without_thread_or_plan_item(client: TestClient) -> None:
+    orphan = _job_row(template_id=None, music_track_id=None)
+    res = _job_debug_with_thread(client, orphan, None)
+    assert res.status_code == 200
+    assert res.json()["thread_id"] is None
+    assert res.json()["runtime_version"] is None
+
+    linked_no_thread = _job_row(
+        template_id=None, music_track_id=None, content_plan_item_id=uuid.uuid4()
+    )
+    res = _job_debug_with_thread(client, linked_no_thread, None)
+    assert res.status_code == 200
+    assert res.json()["thread_id"] is None
