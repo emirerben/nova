@@ -541,14 +541,15 @@ changes or Reduce Motion, while panel drafts and outgoing edit cleanup stay
 shared across tool switches. See the KRI-148 section of the iOS development
 runbook for the interaction and verification contract.
 
-Native scroll surfaces never hard-cut content: where content continues past an
-edge, `kriaScrollEdgeFade` softens it (a progressive blur that keeps content
-faintly visible, plus a light surface-color wash, on white vertical lists; fade-only on horizontal rows and inside the glass strip;
-fade-only under Reduce Transparency). The Kria AI sheets carry no visible "Kria"
-title. The chat header and composer float over the transcript as frosted
-capsules (`kriaFloatingSurface`); the transcript runs full-bleed beneath them,
-so text scrolls and fades under both instead of ending at an opaque bar. See
-the KRI-197 section of the iOS development runbook.
+The native chat transcript never hard-cuts content at its edges: where content
+continues past the top or bottom, `kriaScrollEdgeFade` fades it (an alpha mask,
+near-transparent under the floating chrome and crisp again within ~20pt of it;
+no frosted band). Only the chat gets this; other scroll surfaces keep their
+normal clip. The chat header and composer float over the transcript as frosted
+capsules (`kriaFloatingSurface`) and the transcript runs full-bleed beneath
+them, so text scrolls and fades under both instead of ending at an opaque bar.
+The Kria AI sheets carry no visible "Kria" title. See the KRI-197 section of
+the iOS development runbook.
 
 ### iOS wordmark asset
 

@@ -215,52 +215,49 @@ pure, nonisolated function so `NativeEditorIslandMetricsTests` can cover it
 without SwiftUI. The island itself always sits `bottomPadding` (6pt) above the
 real safe-area inset, never inside `bottomClearance`'s own padding budget.
 
-### Soft scroll edges (KRI-197)
+### Soft scroll edges + floating chat chrome (KRI-197)
 
-Scroll views soften where content continues past an edge instead of slicing it
-with a hard cut. Apply `.kriaScrollEdgeFade(_:length:style:)`
-(`DesignSystem/ScrollEdgeFade.swift`) directly on the `ScrollView`, before any
-`.overlay`/`.background` that must stay unmasked, and pass edges of ONE axis
-(vertical wins if both are passed). The mask never changes frames or hit
-testing, and an edge at rest stays crisp (strength 0).
+**Scope: the chat transcript only** (`ChatConversationScroll`, which also backs
+the editor's Kria sheet). Other scroll surfaces (the projects drawer, editor
+strips, carousels, slide-post rows) keep their normal hard clip on purpose.
 
-- **Vertical lists on a white surface** (chat transcript, the slide-post Kria
-  sheet): `.blur(wash:)` or `.blurWorkspaceSurface` adds a progressive
-  `.ultraThinMaterial` band. Content keeps ~22% opacity at the outer edge so
-  it reads as blurred content rather than a white bar; the frost tapers off at
-  the very edge and a light wash (up to 30%) blends it into the header or
-  composer, so there is no hard grey line. `.blurWorkspaceSurface` resolves the wash from
-  `KriaColor.workspaceSurface(progress:)`, the same source `WorkspaceSurface`
-  uses, so it tracks the projects drawer without the host observing drawer
-  progress.
-- **Horizontal rows and anything inside a glass strip:** fade only (`.fade`, the
-  default); no blur.
+`.kriaScrollEdgeFade()` (`DesignSystem/ScrollEdgeFade.swift`) is an alpha mask
+on a vertical `ScrollView`. It is confined to the edges: near-transparent under
+the floating chrome (the content inset) and back to fully opaque `length`
+points (default 20) beyond it, so only content very close to the top or bottom
+is touched. An edge at rest, with nothing past it, is not faded at all. There
+is deliberately no blurred/frosted band: a frosted band read as a big grey
+"block" over the text. Apply the modifier directly on the `ScrollView`, before
+any `.overlay`/`.background` that must stay unmasked. It never changes frames
+or hit testing.
+
+- **Floating chat chrome:** the chat header (menu, title, actions, editor
+  switch) and the composer float over the transcript as frosted capsules
+  (`.kriaFloatingSurface(_:)`, `DesignSystem/FloatingSurface.swift`; solid paper
+  under Reduce Transparency). `genericChatWorkspace` (and the editor's Kria
+  sheet) add them as `safeAreaInset`s on the `ChatConversationScroll` itself,
+  not on a wrapping stack, so the scroll view runs full-bleed beneath them and
+  text scrolls (and fades) under both, and under the status bar. The floating
+  surface is material-only on purpose: the editor island's iOS 26 glass path
+  corrupts the accessibility frame of ancestors that carry an identifier, and
+  the header buttons do.
 - **Reduce Transparency** (system setting, or `UI_TEST_REDUCE_TRANSPARENCY=1`
-  via `KriaTransparency.isReduced`): the blur band is dropped and only the mask
-  fade remains. The env override exists because `simctl ui` does not flip the
-  setting for a simulator app process; the glass island shares the same helper.
-- **Floating chat chrome:** the chat header (menu, title, actions) and the
-  composer float over the transcript as frosted capsules
-  (`.kriaFloatingSurface(_:)`, `DesignSystem/FloatingSurface.swift`; solid
-  paper under Reduce Transparency). `genericChatWorkspace` (and the editor's
-  Kria sheet) add them as `safeAreaInset`s on the `ChatConversationScroll`
-  itself, not on a wrapping stack, so the scroll view runs full-bleed beneath
-  them and text scrolls (and fades) under both, and under the status bar.
-  The floating surface is material-only on purpose: the editor island's
-  iOS 26 glass path corrupts the accessibility frame of ancestors that carry an
-  identifier, and the header buttons do.
+  via `KriaTransparency.isReduced`): the floating capsules become solid paper.
+  The env override exists because `simctl ui` does not flip the setting for a
+  simulator app process; the glass island shares the same helper.
 - **Sheet titles:** the visible "Kria" heading is removed from both Kria AI
   sheets (chat editor conversation, slide-post assistant); the slide-post sheet
-  keeps a VoiceOver "Kria" label on its container.
+  is now scrollable, scrolls "Apply proposal" into view when a proposal
+  arrives, and keeps a VoiceOver "Kria" label on its container.
 
 Geometry traps when the scroll view runs beneath insets (learned the hard way):
 - `ScrollGeometry.containerSize` EXCLUDES the content insets; `visibleRect` is
   the whole frame, INCLUDING them. Hidden distance is measured from
   `visibleRect` (`ScrollEdgeFadeMetrics(visibleRect:…)`); using `containerSize`
   made the bottom fade think hundreds of points were hidden at rest.
-- A `.mask`/`.overlay` is laid out inside the safe-area-inset region, so the
-  modifier applies `.ignoresSafeArea()` to both; otherwise the fade zone starts
-  at the inset edge and runs ~a header-height too long.
+- A `.mask` is laid out inside the safe-area-inset region, so the modifier
+  applies `.ignoresSafeArea()` to it; otherwise the fade zone starts at the
+  inset edge and runs about a header-height too long.
 - The fade zone is `inset + length` per edge, so it covers the space under the
   floating chrome.
 - Scroll to the end with `ScrollPosition.scrollTo(edge: .bottom)`, not an end
@@ -269,9 +266,7 @@ Geometry traps when the scroll view runs beneath insets (learned the hard way):
 
 `ScrollEdgeFadeMetrics` (hidden distance to 0...1 strength, insets, 0.5pt float
 floor, 0.05 step) is pure and covered by `ScrollEdgeFadeTests`. Open device
-checks (focused prompt field under the top band, iOS 26 nav-bar edge effect
-doubling, RTL offsets) are tracked in `TODOS.md` under "KRI-197 soft scroll
-edges".
+checks are tracked in `TODOS.md` under "KRI-197 soft scroll edges".
 
 ### Connected editor panels (KRI-148)
 

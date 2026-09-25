@@ -476,7 +476,6 @@ private struct CreationWorkspaceView: View {
                 }
             }
         }
-        .kriaScrollEdgeFade(.horizontal)
         .background {
             GeometryReader { geometry in
                 Color.clear.preference(key: DrawerGestureExclusionPreference.self, value: [geometry.frame(in: .global)])

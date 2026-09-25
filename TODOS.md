@@ -32,39 +32,17 @@ fails when an agent deadline grows past the task budget.
 
 ## KRI-197 soft scroll edges — deferred follow-ups (2026-09-24)
 
-iOS scroll surfaces now soften where content continues past an edge
-(`kriaScrollEdgeFade`, `DesignSystem/ScrollEdgeFade.swift`). These review
+The native chat transcript now fades at its top/bottom edges under a floating
+header and composer (`kriaScrollEdgeFade`, `kriaFloatingSurface`). These review
 findings were scoped out of that PR.
 
-### Focused prompt field can land under the top blur band (slide-post Kria sheet)
+### Verify the floating chat chrome on device (keyboard up, iOS 26)
 **Priority:** P3
-**What:** `SlidePostAssistantSheet` is now a ScrollView at the `.medium`
-detent. When the keyboard scrolls the prompt field into view it can sit inside
-the top 24-48pt band, which is masked and washed while content is hidden above.
-**Acceptance:** Pad the scroll content by the band height (or hold the top edge
-crisp while a field is focused); verify on device with the keyboard up.
-
-### iOS 26 nav-bar scroll-edge effect doubles the custom top band
-**Priority:** P3
-**What:** That sheet's ScrollView sits under a `NavigationStack`; on iOS 26 the
-system draws its own scroll-edge effect at the top in addition to ours.
-**Acceptance:** Confirm on an iOS 26 device; if doubled, use
-`.scrollEdgeEffectStyle(.hard, for: .top)` behind `#available(iOS 26, *)` or
-drop the top edge for that sheet.
-
-### RTL: horizontal edge-fade offsets are unverified
-**Priority:** P3
-**What:** The metrics use `contentOffset.x + contentInsets.leading`, and the
-mask flips with the HStack. Whether `contentOffset.x` is physical or logical in
-RTL is unverified. The app ships EN/TR only, so this is latent.
-**Acceptance:** Add an RTL fixture before shipping an RTL locale.
-
-### Edge-to-edge shelf layout for the format carousel and media receipts
-**Priority:** P3
-**What:** Those rows sit inside the transcript's 16pt side padding, so they fade
-at x=16 rather than the screen edge. The standard iOS shelf pattern lets them
-run edge to edge with `contentMargins`.
-**Acceptance:** Design call; if adopted, drop the fade on those two rows.
+**What:** Checked on the simulator only. On device, confirm the composer
+floats correctly with the keyboard up, that the transcript still scrolls to
+the last message above it, and that the header capsules stay legible over text.
+**Acceptance:** A device pass with the keyboard up in a long chat and in the
+editor's Kria sheet; fix any inset or fade-zone drift.
 
 ### `testIncomingResponseDoesNotPullReaderFromScrolledHistory` fails on `main` locally
 **Priority:** P3

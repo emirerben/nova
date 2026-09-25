@@ -333,7 +333,6 @@ struct SlidePostWorkspaceView: View {
                 }
             }
         }
-        .kriaScrollEdgeFade(.horizontal)
     }
 
     private func editorTools(_ draft: SlidePostDraft) -> some View {
@@ -366,7 +365,6 @@ struct SlidePostWorkspaceView: View {
                         }
                     }
                 }
-                .kriaScrollEdgeFade(.horizontal)
             }
         }
     }
@@ -395,7 +393,7 @@ struct SlidePostWorkspaceView: View {
     }
 
     private func assetReceipts(_ assets: [SlidePostAsset]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 8) { ForEach(assets) { asset in SlidePostAssetThumbnail(asset: asset).frame(width: 76, height: 88) } } }.kriaScrollEdgeFade(.horizontal)
+        ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 8) { ForEach(assets) { asset in SlidePostAssetThumbnail(asset: asset).frame(width: 76, height: 88) } } }
     }
     private func proposalPreview(_ draft: SlidePostDraft) -> some View { thumbrail(draft).padding(12).background(KriaColor.sage.opacity(0.35), in: RoundedRectangle(cornerRadius: 14)) }
     private func status(_ message: String) -> some View { Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc).padding(12).frame(maxWidth: .infinity, alignment: .leading).background(KriaColor.sage.opacity(0.45), in: RoundedRectangle(cornerRadius: 12)) }
@@ -531,7 +529,6 @@ private struct SlidePostAssistantSheet: View {
                 .onChange(of: session.proposal != nil) { _, hasProposal in
                     if hasProposal { withAnimation { proxy.scrollTo("slidepost-apply", anchor: .bottom) } }
                 }
-                .kriaScrollEdgeFade(.vertical, style: .blur(wash: KriaColor.paper))
                 .background(KriaColor.paper)
                 // The visible "Kria" heading is gone; keep the sheet's VoiceOver context.
                 .accessibilityElement(children: .contain)
