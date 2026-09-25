@@ -242,6 +242,30 @@ import KriaMediaEngine
         XCTAssertEqual(run.fontSize, 101)
     }
 
+    // Talking/subtitled documents carry each caption as a caption_cues row AND
+    // as a caption_cue-tagged text element (the API mirrors cues into the
+    // editor's text lane). The generic per-element pass and the cue-native
+    // caption block must never both fire for it: that burned every sentence
+    // twice, once mid-frame over the speaker's face (KRI-172 render 1aff3f03).
+    func testCaptionTaggedTextElementIsSkippedWhenCaptionCuesAlsoCoverIt() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let staleTextElement = EditorTextElement(id: "cue-dup", text: "Number three, Mason Greenwood?", startS: 0, endS: 2,
+            role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")])])
+        let cue = EditorCaptionCue(id: "cue-dup", startS: 0, endS: 2, text: "Number three, Mason Greenwood?")
+        let document = EditorDocument(textElements: [staleTextElement], captionCues: [cue])
+        let items = [
+            NativeEditorTimelineItem(selection: .init(kind: .text, id: "cue-dup"), start: 0, end: 2),
+            NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue-dup"), start: 0, end: 2),
+        ]
+        let recipe = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source]).recipe
+        XCTAssertEqual(recipe.textLayers.count, 1, "the same sentence must be burned exactly once")
+        XCTAssertEqual(recipe.textLayers.first?.id, "caption-cue-dup", "the surviving layer must come from the cue-native path")
+    }
+
     func testGuidedStorySentenceCaptionProjectionKeepsSourceItemsAndLeavesTitlesAlone() throws {
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
             fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
