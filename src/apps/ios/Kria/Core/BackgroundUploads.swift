@@ -542,6 +542,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 
     func dismissFailure(id: UUID) { failures.removeAll { $0.id == id } }
 
+    /// Every failure line of a project, whatever the role (a sent message leaves none behind).
+    func clearFailures(projectID: UUID) {
+        failures.removeAll { $0.projectID == projectID }
+    }
+
     func clearFailures(projectID: UUID, role: CreationMediaRole) {
         failures.removeAll { $0.projectID == projectID && $0.role == role }
     }

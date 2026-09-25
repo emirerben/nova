@@ -450,19 +450,20 @@ struct FootageStage: View {
             .accessibilityIdentifier(format.usesVisualPool ? "choose-photos-videos" : "choose-videos")
 
             if !failures.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(failures) { failure in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text("\(failure.filename) wasn’t added. \(failure.message)")
-                                .font(KriaFont.body(12))
-                                .foregroundStyle(KriaColor.failureText)
-                            Spacer(minLength: 4)
-                            Button("Dismiss") { dismissFailure(failure.id) }
-                                .font(KriaFont.body(12).weight(.medium))
-                                .frame(minHeight: 44)
-                        }
-                    }
+                // One line, not one per file (KRI-211): a file that couldn't be read is left out and
+                // never holds up the rest, so all the creator needs is that, and a way to clear it.
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(UploadFailureBanner.message(count: failures.count))
+                        .font(KriaFont.body(12))
+                        .foregroundStyle(KriaColor.failureText)
+                        .accessibilityIdentifier("footage-upload-failures-message")
+                    Spacer(minLength: 4)
+                    Button("Dismiss") { failures.forEach { dismissFailure($0.id) } }
+                        .font(KriaFont.body(12).weight(.medium))
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("footage-upload-failures-dismiss")
                 }
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("footage-upload-failures")
             }
 
@@ -988,6 +989,15 @@ struct RecoveryCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(KriaColor.softZinc)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+/// Copy for the "some files were skipped" banner (KRI-211).
+enum UploadFailureBanner {
+    static func message(count: Int) -> String {
+        count == 1
+            ? "1 file couldn’t be read and won’t be sent"
+            : "\(count) files couldn’t be read and won’t be sent"
     }
 }
 

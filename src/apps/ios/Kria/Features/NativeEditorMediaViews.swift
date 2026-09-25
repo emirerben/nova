@@ -75,6 +75,10 @@ struct NativeVideoPreview: View {
     /// KRI-170: called for a tap that lands on no object (and not on a selected
     /// object's rotate/scale corner) so the editor can open the fullscreen preview.
     private let onEmptyTap: (() -> Void)?
+    /// KRI-211: opens the "find your original files" flow. Nil when this
+    /// session has no device-render identity to relink against, in which case
+    /// the missing-originals state explains itself without offering the action.
+    private let onFindOriginals: (() -> Void)?
     /// Last time a drag or pinch changed on the canvas. A drag that also
     /// resolves as a tap (its tap location is where the finger went down) must
     /// never count as an empty tap. Reference type: writing it must not re-render.
@@ -108,9 +112,10 @@ struct NativeVideoPreview: View {
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
 
-    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil) {
+    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil) {
         self.session = session
         self.onEmptyTap = onEmptyTap
+        self.onFindOriginals = onFindOriginals
         _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
@@ -590,6 +595,23 @@ struct NativeVideoPreview: View {
         }
     }
 
+    /// KRI-211: plain copy plus the one useful next step. Retry is deliberately absent.
+    @ViewBuilder private func originalsUnavailableBody(textStyle: Font, alignment: HorizontalAlignment = .center) -> some View {
+        Text(onFindOriginals == nil
+             ? "The original clips for this edit are on another device. Open the edit there to change it."
+             : NativeEditorSession.originalsUnavailableMessage)
+            .font(textStyle)
+            .multilineTextAlignment(alignment == .center ? .center : .leading)
+            .padding(.horizontal, alignment == .center ? 16 : 0)
+            .accessibilityIdentifier("native-editor-originals-unavailable")
+        if let onFindOriginals {
+            Button("Find original files", action: onFindOriginals)
+                .font(textStyle.weight(.semibold))
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("native-editor-find-originals")
+        }
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.black
@@ -621,6 +643,13 @@ struct NativeVideoPreview: View {
                     Button("Retry") { Task { await session.prepareSourcePreview() } }
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if session.sourcePreviewState == .originalsUnavailable {
+                // No Retry: trying again cannot make the files appear.
+                VStack(spacing: 12) {
+                    Text("Preview unavailable").font(KriaFont.body(14).weight(.semibold))
+                    originalsUnavailableBody(textStyle: KriaFont.body(12))
+                }
+                .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
                 BundledPosterImage(name: "montage")
                     .scaledToFill()
@@ -644,16 +673,20 @@ struct NativeVideoPreview: View {
                 .padding(24)
             }
 
-            if case .failed(let message) = session.sourcePreviewState, session.isShowingRenderedFallback {
+            if session.sourcePreviewState.isFailure, session.isShowingRenderedFallback {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Showing finished render")
                         .font(KriaFont.body(12).weight(.semibold))
-                    Text(message)
-                        .font(KriaFont.body(11))
-                        .lineLimit(2)
-                    Button("Retry") { Task { await session.prepareSourcePreview() } }
-                        .accessibilityIdentifier("native-editor-retry-source-preview")
-                        .font(KriaFont.body(11).weight(.semibold))
+                    if case .failed(let message) = session.sourcePreviewState {
+                        Text(message)
+                            .font(KriaFont.body(11))
+                            .lineLimit(2)
+                        Button("Retry") { Task { await session.prepareSourcePreview() } }
+                            .accessibilityIdentifier("native-editor-retry-source-preview")
+                            .font(KriaFont.body(11).weight(.semibold))
+                    } else {
+                        originalsUnavailableBody(textStyle: KriaFont.body(11), alignment: .leading)
+                    }
                 }
                 .foregroundStyle(.white)
                 .padding(10)
@@ -732,6 +765,10 @@ struct NativeVideoPreview: View {
                 )
             }
             .accessibilityElement(children: .contain)
+            // The canvas is drawn last, so its full-size gesture surface sat over the fallback
+            // overlay's buttons and swallowed every tap on "Retry" (KRI-211: "Retry does nothing").
+            // A failed source preview has no editable objects, so nothing here needs touches.
+            .allowsHitTesting(!session.sourcePreviewState.isFailure)
 
         }
         .aspectRatio(session.previewAspectRatio, contentMode: .fit)

@@ -172,11 +172,10 @@ final class ChatTimelineTests: XCTestCase {
     }
 
     func testChatSubmissionUsesMediaFallbackOnlyWhenReady() {
-        XCTAssertEqual(ChatSubmission.message(text: "  ", readyMediaCount: 2, pendingUploadCount: 0, hasUploadFailures: false), ChatSubmission.mediaOnlyMessage)
-        XCTAssertNil(ChatSubmission.message(text: "  ", readyMediaCount: 0, pendingUploadCount: 0, hasUploadFailures: false))
-        XCTAssertNil(ChatSubmission.message(text: "Make it cinematic", readyMediaCount: 2, pendingUploadCount: 1, hasUploadFailures: false))
-        XCTAssertNil(ChatSubmission.message(text: "Make it cinematic", readyMediaCount: 2, pendingUploadCount: 0, hasUploadFailures: true))
-        XCTAssertEqual(ChatSubmission.message(text: "  Make it cinematic \n", readyMediaCount: 0, pendingUploadCount: 0, hasUploadFailures: false), "Make it cinematic")
+        XCTAssertEqual(ChatSubmission.message(text: "  ", readyMediaCount: 2, pendingUploadCount: 0), ChatSubmission.mediaOnlyMessage)
+        XCTAssertNil(ChatSubmission.message(text: "  ", readyMediaCount: 0, pendingUploadCount: 0))
+        XCTAssertNil(ChatSubmission.message(text: "Make it cinematic", readyMediaCount: 2, pendingUploadCount: 1))
+        XCTAssertEqual(ChatSubmission.message(text: "  Make it cinematic \n", readyMediaCount: 0, pendingUploadCount: 0), "Make it cinematic")
     }
 
     private func event(

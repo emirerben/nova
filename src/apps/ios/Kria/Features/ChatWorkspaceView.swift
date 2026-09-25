@@ -349,10 +349,6 @@ private struct CreationWorkspaceView: View {
         return selectedFormat == .montage && destination.visualKinds != nil ? fullThread?.deviceReadyVisualCount ?? 0 : 0
     }
 
-    private var hasUploadFailures: Bool {
-        uploadFailures.contains { $0.projectID == project.id }
-    }
-
     private var activeProposalEvent: ThreadEvent? {
         if let approval {
             return events.last { $0.eventType == "draft_applied" && $0.payload?["turn_id"]?.stringValue == approval.turnID }
@@ -582,7 +578,7 @@ private struct CreationWorkspaceView: View {
                     isSending: isSending || isActing,
                     canAttach: canAttachMedia,
                     canSendWithoutText: readyMediaCount > 0,
-                    blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures,
+                    blocksSubmission: isThinking || pendingUploadCount > 0,
                     placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
                     isFocused: $composerFocused,
                     attach: openAttachments,
@@ -607,6 +603,16 @@ private struct CreationWorkspaceView: View {
         .onReceive(model.uploads.$inFlight) { uploadInFlight = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$failures) { uploadFailures = $0 }
+        #if DEBUG
+        // KRI-211 fixture: one attach that "couldn't be read", to prove it never blocks Send.
+        .task(id: project.id) {
+            guard ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_UPLOAD_FAILURE"] == "1" else { return }
+            model.uploads.reportFailure(
+                projectID: project.id, role: .clip, filename: "Selected item",
+                message: "This file couldn’t be read. Try Files or choose it again."
+            )
+        }
+        #endif
         .onReceive(model.uploads.$previewVersion) { previewVersion = $0 }
         .onReceive(model.uploads.$progress) { uploadProgress = $0 }
         .onReceive(model.uploads.$attachedThreads) { threads in
@@ -673,7 +679,7 @@ private struct CreationWorkspaceView: View {
             }
             ChatComposer(
                 text: $prompt, isSending: isSending || isActing,
-                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
+                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
             )
         }
         .background(KriaColor.paper)
@@ -858,8 +864,11 @@ private struct CreationWorkspaceView: View {
         guard !isSending, !isActing, !isThinking,
               let message = ChatSubmission.message(
                 text: submittedMessage ?? prompt, readyMediaCount: readyMediaCount,
-                pendingUploadCount: pendingUploadCount, hasUploadFailures: hasUploadFailures
+                pendingUploadCount: pendingUploadCount
               ) else { return }
+        // The banner said these files won't be sent; now that the message is on its way it has
+        // done its job and must not linger over the next one.
+        model.uploads.clearFailures(projectID: project.id)
         let draftToRestore = submittedMessage == nil ? prompt : message
         isSending = true
         failure = nil

@@ -6,6 +6,19 @@ import UIKit
 
 enum NativeSourcePreviewState: Equatable {
     case idle, preparing, ready, failed(String)
+    /// KRI-211: the project's original clips are not on this iPhone (made on
+    /// another device, or the file changed). Retrying cannot fix it — only
+    /// finding the files can — so it is its own state with its own copy.
+    case originalsUnavailable
+
+    /// Both settle on the finished render (when there is one); only the way
+    /// out differs (Retry versus finding the originals).
+    var isFailure: Bool {
+        switch self {
+        case .failed, .originalsUnavailable: true
+        case .idle, .preparing, .ready: false
+        }
+    }
 }
 
 /// A player item that built fine but failed while loading or playing (KRI-200). Before this, a failed
@@ -327,7 +340,7 @@ struct NativeEditorTemporaryVideo {
     /// instead show only the server-rendered video, with canvas interaction
     /// deliberately disabled until a retry produces a source preview.
     var isShowingRenderedFallback: Bool {
-        guard case .failed = sourcePreviewState else { return false }
+        guard sourcePreviewState.isFailure else { return false }
         return player != nil && player === finishedRenderPlayer
     }
 
@@ -356,7 +369,7 @@ struct NativeEditorTemporaryVideo {
             // surface is the honest state until the source preview, built
             // straight from the current document, is ready.
             return player === finishedRenderPlayer && finishedRenderIsCurrent
-        case .failed:
+        case .failed, .originalsUnavailable:
             // Once source-preview construction has genuinely failed (not
             // merely still preparing), a stale finished render is still
             // strictly better than nothing — the user can at least see and
@@ -541,7 +554,7 @@ struct NativeEditorTemporaryVideo {
         switch sourcePreviewState {
         case .ready:
             displayedVideoIsCurrent = sourcePreview.map { player?.currentItem === $0.preview.playerItem } ?? false
-        case .failed:
+        case .failed, .originalsUnavailable:
             displayedVideoIsCurrent = player != nil && player === finishedRenderPlayer
         case .idle, .preparing:
             displayedVideoIsCurrent = false
@@ -561,7 +574,7 @@ struct NativeEditorTemporaryVideo {
         switch sourcePreviewState {
         case .idle, .preparing:
             return "Preparing the preview…"
-        case .failed, .ready:
+        case .failed, .originalsUnavailable, .ready:
             // The source preview is ready or has fallen back to the rendered
             // video, but the player hasn't caught up yet (a brief window
             // during a rebuild) or the session has no job to export from.
@@ -577,7 +590,7 @@ struct NativeEditorTemporaryVideo {
                 throw NativeEditorVideoDownloadError.unavailable
             }
             return .sourcePreview
-        case .failed:
+        case .failed, .originalsUnavailable:
             break
         case .idle, .preparing:
             throw NativeEditorVideoDownloadError.unavailable
@@ -702,6 +715,13 @@ struct NativeEditorTemporaryVideo {
         // rendering path, not just the untested cloud one.
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-device") {
             rendersOnDevice = true
+        }
+        // KRI-211: a device-rendered project whose originals live on another
+        // device needs a device-render identity for "Find original files" to open against.
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-missing-originals") {
+            rendersOnDevice = true
+            jobID = UUID(uuidString: "00000000-0000-4000-8000-0000000000a1")
+            variantKey = "fixture-variant"
         }
         // KRI-167: no existing shape fixture closes `clips.transitions`, and
         // UI tests can't construct an EditorDocument directly -- they only
@@ -1266,14 +1286,13 @@ struct NativeEditorTemporaryVideo {
 
     #if DEBUG
     /// Account-free verification still uses the production compiler and compositor.
-    func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false, mediaSources: [String: ResolvedEditorSource] = [:], forceFailure: Bool = false) async {
+    func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false, mediaSources: [String: ResolvedEditorSource] = [:], forceFailure: Bool = false,
+                                      failure: Error = NativeEditorRenderError.missingVideoTrack) async {
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence
         sourcePreviewState = .preparing
         do {
-            if forceFailure {
-                throw SourceAssetError.missingOriginal("fixture-source")
-            }
+            if forceFailure { throw failure }
             if delayedLoad {
                 loadState = .loaded
                 try await Task.sleep(for: .milliseconds(600))
@@ -1313,6 +1332,17 @@ struct NativeEditorTemporaryVideo {
     }
     #endif
 
+    /// KRI-211: plain words for "the originals live somewhere else", shared by the preview and
+    /// the device-render panel so both explain the same thing the same way.
+    static let originalsUnavailableMessage = "The original clips for this edit are on another device. Find the files to edit here."
+
+    static func isMissingOriginals(_ error: Error) -> Bool {
+        switch error {
+        case SourceAssetError.missingOriginal, SourceAssetError.changedOriginal: true
+        default: false
+        }
+    }
+
     static func sourcePreviewMessage(for error: Error) -> String {
         switch error {
         case APIError.conflict:
@@ -1330,7 +1360,7 @@ struct NativeEditorTemporaryVideo {
         case NativeEditorPlaybackFailure.finishedItem:
             return "The video couldn’t be loaded. Check your connection and retry."
         case SourceAssetError.missingOriginal, SourceAssetError.changedOriginal:
-            return "The original video is unavailable on this iPhone. Open the edit on the device that imported it."
+            return Self.originalsUnavailableMessage
         default:
             return RequestFailureCause(error) == .connection
                 ? "A source video or edit asset could not be loaded. Check your connection and retry."
@@ -4128,9 +4158,7 @@ struct NativeEditorTemporaryVideo {
         // preview construction genuinely fails, same as before — stale is
         // still better than nothing once every other option is exhausted.
         finishedRenderIsCurrent = isCurrent
-        let previewFailed: Bool
-        if case .failed = sourcePreviewState { previewFailed = true } else { previewFailed = false }
-        guard sourcePreviewState == .idle || previewFailed || player == nil else { return }
+        guard sourcePreviewState == .idle || sourcePreviewState.isFailure || player == nil else { return }
         installPlayer(item: AVPlayerItem(url: url), preferredDuration: preferredDuration)
         finishedRenderPlayer = player
     }
@@ -4148,7 +4176,9 @@ struct NativeEditorTemporaryVideo {
 
     private func failSourcePreview(_ error: Error) {
         restoreFinishedRenderFallback()
-        sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+        sourcePreviewState = Self.isMissingOriginals(error)
+            ? .originalsUnavailable
+            : .failed(Self.sourcePreviewMessage(for: error))
         // A queued play tap follows the fallback; with nothing to show it is dropped, not left armed.
         if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() } else { pendingPlayRequest = false }
     }
@@ -4164,6 +4194,7 @@ struct NativeEditorTemporaryVideo {
         case .preparing: "preparing"
         case .ready: "ready"
         case .failed: "failed"
+        case .originalsUnavailable: "originals_unavailable"
         }
     }
 
