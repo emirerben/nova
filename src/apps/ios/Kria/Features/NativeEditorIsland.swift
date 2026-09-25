@@ -161,15 +161,8 @@ struct NativeEditorIslandSurface: ViewModifier {
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: cornerRadius, style: .continuous) }
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
-    // Neither `xcrun simctl ui` nor writing the `com.apple.Accessibility`
-    // defaults domain actually flips `UIAccessibility.isReduceTransparencyEnabled`
-    // (and therefore this SwiftUI environment value) for a simulator app
-    // process — this mirrors the existing `UI_TEST_REDUCE_MOTION` override
-    // pattern (`NativeEditorView.shouldReduceMotion`) so fixtures and
-    // screenshots can exercise this branch deterministically.
-    private var effectiveReduceTransparency: Bool {
-        reduceTransparency || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_TRANSPARENCY"] == "1"
-    }
+    // See `KriaTransparency.isReduced` for the UI-test override.
+    private var effectiveReduceTransparency: Bool { KriaTransparency.isReduced(reduceTransparency) }
 
     func body(content: Content) -> some View {
         if !isEnabled {
@@ -269,10 +262,7 @@ struct NativeEditorIslandScrim: View {
     let showsContext: Bool
     let safeAreaBottom: CGFloat
 
-    // See `NativeEditorIslandSurface.effectiveReduceTransparency`.
-    private var effectiveReduceTransparency: Bool {
-        reduceTransparency || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_TRANSPARENCY"] == "1"
-    }
+    private var effectiveReduceTransparency: Bool { KriaTransparency.isReduced(reduceTransparency) }
 
     private var height: CGFloat {
         NativeEditorIslandMetrics.scrimHeight(showsContext: showsContext, safeAreaBottom: safeAreaBottom)

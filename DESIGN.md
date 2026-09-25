@@ -541,6 +541,17 @@ changes or Reduce Motion, while panel drafts and outgoing edit cleanup stay
 shared across tool switches. See the KRI-148 section of the iOS development
 runbook for the interaction and verification contract.
 
+The native chat transcript never hard-cuts content at the screen edges:
+`kriaScrollEdgeFade` blurs (an `.ultraThinMaterial`/`.regularMaterial` strip; a
+plain fade under Reduce Transparency) everything that scrolls above the floating
+header block (status bar, header, and the Chat/Editor row when shown), plus a
+thin 6pt band at the bottom edge. Text below the header block stays crisp. Only
+the chat gets this; other scroll surfaces keep their normal clip. The chat header and composer float over the transcript as frosted
+capsules (`kriaFloatingSurface`) and the transcript runs full-bleed beneath
+them, so text scrolls and fades under both instead of ending at an opaque bar.
+The Kria AI sheets carry no visible "Kria" title. See the KRI-197 section of
+the iOS development runbook.
+
 ### iOS wordmark asset
 
 The native app uses the approved Main Brand Assets icon artwork (Paper ETC-0): DynaPuff letterforms in `#9BCAFF` on white `#FFFFFF` for the app icon. `KriaWordmark.imageset` preserves the same lettering as a transparent vector PDF, cropped to the artwork bounds and centered within the existing header frame. Do not reconstruct this mark with independent SwiftUI text offsets. This artwork color does not change the semantic Sky selection token.

@@ -215,6 +215,66 @@ pure, nonisolated function so `NativeEditorIslandMetricsTests` can cover it
 without SwiftUI. The island itself always sits `bottomPadding` (6pt) above the
 real safe-area inset, never inside `bottomClearance`'s own padding budget.
 
+### Soft scroll edges + floating chat chrome (KRI-197)
+
+**Scope: the chat transcript only** (`ChatConversationScroll`, which also backs
+the editor's Kria sheet). Other scroll surfaces (the projects drawer, editor
+strips, carousels, slide-post rows) keep their normal hard clip on purpose.
+
+`.kriaScrollEdgeFade()` (`DesignSystem/ScrollEdgeFade.swift`) blurs what scrolls
+past the edges of a vertical `ScrollView`, using `.regularMaterial` strips laid
+over the content:
+
+- **Top:** everything above the bottom of the block floating over the top of
+  the transcript is blurred. That block is the top content inset: status bar,
+  the chat header, and the Chat/Editor row when it is shown (the band is sized
+  from the inset, so it grows and shrinks with the row). Text passing under the
+  header is frosted; text below the block is crisp. With no top inset (the
+  editor's Kria sheet) it falls back to a thin band (`length`, default 6pt).
+- **Bottom:** a thin `length` (6pt) band at the screen edge.
+
+A blurred edge appears only once content has scrolled past it; at rest, with
+nothing past an edge, nothing is drawn. Both bands ease out over their inner
+~10pt so they don't end on a hard line. Apply the modifier directly on the
+`ScrollView`, before any `.overlay`/`.background` that must stay unmasked. It
+never changes frames or hit testing.
+
+- **Floating chat chrome:** the chat header (menu, title, actions, editor
+  switch) and the composer float over the transcript as frosted capsules
+  (`.kriaFloatingSurface(_:)`, `DesignSystem/FloatingSurface.swift`; solid paper
+  under Reduce Transparency). `genericChatWorkspace` (and the editor's Kria
+  sheet) add them as `safeAreaInset`s on the `ChatConversationScroll` itself,
+  not on a wrapping stack, so the scroll view runs full-bleed beneath them and
+  text scrolls (and fades) under both, and under the status bar. The floating
+  surface is material-only on purpose: the editor island's iOS 26 glass path
+  corrupts the accessibility frame of ancestors that carry an identifier, and
+  the header buttons do.
+- **Reduce Transparency** (system setting, or `UI_TEST_REDUCE_TRANSPARENCY=1`
+  via `KriaTransparency.isReduced`): the floating capsules become solid paper
+  and the edge blur becomes a plain alpha fade over the same bands.
+  The env override exists because `simctl ui` does not flip the setting for a
+  simulator app process; the glass island shares the same helper.
+- **Sheet titles:** the visible "Kria" heading is removed from both Kria AI
+  sheets (chat editor conversation, slide-post assistant); the slide-post sheet
+  is now scrollable, scrolls "Apply proposal" into view when a proposal
+  arrives, and keeps a VoiceOver "Kria" label on its container.
+
+Geometry traps when the scroll view runs beneath insets (learned the hard way):
+- `ScrollGeometry.containerSize` EXCLUDES the content insets; `visibleRect` is
+  the whole frame, INCLUDING them. Hidden distance is measured from
+  `visibleRect` (`ScrollEdgeFadeMetrics(visibleRect:…)`); using `containerSize`
+  made the bottom fade think hundreds of points were hidden at rest.
+- A `.mask` and an `.overlay` are laid out inside the safe-area-inset region, so
+  the modifier applies `.ignoresSafeArea()` to both; otherwise the band sits at
+  the inset edge (under the header/composer) instead of at the screen edge.
+- Scroll to the end with `ScrollPosition.scrollTo(edge: .bottom)`, not an end
+  marker with `anchor: .bottom` (that aligns to the frame bottom and leaves the
+  last content under the composer). "Near bottom" adds `contentInsets.bottom`.
+
+`ScrollEdgeFadeMetrics` (hidden distance to 0...1 strength, insets, 0.5pt float
+floor, 0.05 step) is pure and covered by `ScrollEdgeFadeTests`. Open device
+checks are tracked in `TODOS.md` under "KRI-197 soft scroll edges".
+
 ### Connected editor panels (KRI-148)
 
 Text, Captions, Visuals, and Sounds share one bottom-connected panel shell and

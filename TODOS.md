@@ -30,6 +30,30 @@ runs instead of re-planning forever, but each of those runs still pays.
 **Acceptance:** Limits sized from the agent specs, with a guard test that
 fails when an agent deadline grows past the task budget.
 
+## KRI-197 soft scroll edges — deferred follow-ups (2026-09-24)
+
+The native chat transcript now fades at its top/bottom edges under a floating
+header and composer (`kriaScrollEdgeFade`, `kriaFloatingSurface`). These review
+findings were scoped out of that PR.
+
+### Verify the floating chat chrome on device (keyboard up, iOS 26)
+**Priority:** P3
+**What:** Checked on the simulator only. On device, confirm the composer
+floats correctly with the keyboard up, that the transcript still scrolls to
+the last message above it, and that the header capsules stay legible over text.
+**Acceptance:** A device pass with the keyboard up in a long chat and in the
+editor's Kria sheet; fix any inset or fade-zone drift.
+
+### `testIncomingResponseDoesNotPullReaderFromScrolledHistory` fails on `main` locally
+**Priority:** P3
+**What:** On pure `origin/main` source in a local iPhone 17 Pro / iOS 26.5
+simulator it fails 0/4 (never sees "Send clips" after tapping Montage); the
+harness's 3-attempt retry masks it as "flaky, passed after 3 attempts" when it
+does pass. Not caused by KRI-197 (reproduced without those changes).
+**Acceptance:** Find why the format tap doesn't advance under
+`KRIA_CHAT_LONG_HISTORY` (the Montage card sits at the composer's top edge),
+and make the test wait for the transcript to settle before tapping.
+
 ## SFX picker search — deferred follow-ups (2026-09-24)
 
 The web editor's Sounds drawer and legacy SFX lane gained search + category
