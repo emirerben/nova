@@ -55,7 +55,13 @@ from app.services.creator_sessions import (
     load_intent_clips_for_item,
     resolve_item_creator_context,
 )
-from app.services.kria_editor_ops import build_editor_snapshot, project_editor_draft
+from app.services.kria_editor_ops import (
+    MAX_EDITOR_OPS,
+    build_editor_snapshot,
+    clip_facts_by_media_id,
+    coalesce_text_style_ops,
+    project_editor_draft,
+)
 
 
 @dataclass(frozen=True)
@@ -184,6 +190,20 @@ def adapt_editor_action(
     """Draft edits are reversible; rendering is a distinct, policy-gated action."""
     if not ops:
         return KriaTurnPlan(mode="respond", turn_value="question", response=reply)
+    # "Change all fonts" arrives as one op per bar; merge identical per-bar style
+    # patches so a many-bar edit fits the eight-op tool bound instead of failing
+    # the whole turn (KRI-203).
+    ops = coalesce_text_style_ops(ops)
+    if len(ops) > MAX_EDITOR_OPS:
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="recovery",
+            response=(
+                "That is more changes than I can apply in one go, so I left the video "
+                "as it was. Ask for it in smaller steps, or for all of one kind of "
+                "change at once (for example every font)."
+            ),
+        )
     intents = [
         {
             "intent_id": "apply-editor-ops",
@@ -258,7 +278,19 @@ async def _load_editor_target(
     ).scalar_one_or_none()
     if head is not None and (head.snapshot_json or {}).get("kind") == "editor":
         variant = project_editor_draft(variant, head.snapshot_json.get("editor_payload") or {})
-    snapshot = build_editor_snapshot(job, variant)
+    clip_context: dict = {}
+    # KRI-191: the copilot sees what the creator asked for (the Creative Brief)
+    # and what the server knows about each clip (capture time, place, landmark
+    # with provenance), both behind the flags that already gate those systems.
+    if settings.clip_facts_for(job.user_id):
+        facts = clip_facts_by_media_id(job, variant, list(item.clip_assignments or []))
+        if facts:
+            clip_context["facts"] = facts
+    if settings.creative_brief_for(thread.creator_id):
+        brief = await load_latest_brief(db, thread_id)
+        if brief is not None and brief.live():
+            clip_context["brief"] = render_brief_request(brief)
+    snapshot = build_editor_snapshot(job, variant, clip_context=clip_context)
     if not snapshot["allowed_op_families"]:
         return None
     rows = list(

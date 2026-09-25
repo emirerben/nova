@@ -1,0 +1,439 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-25-v47",
+  "input": {
+    "utterance": "make just the place names Montserrat",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "text",
+        "title"
+      ],
+      "text_appearance_version": 1,
+      "text_appearance": {
+        "version": 1,
+        "targets": [
+          {
+            "id": "guided-title",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "badaae61e2ca8ac5",
+            "group": "title"
+          },
+          {
+            "id": "clip-label-unified-cut-1",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "afbe0f0a5b79fc05",
+            "group": "label"
+          },
+          {
+            "id": "clip-label-unified-cut-2",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "f27b621d9056ed83",
+            "group": "label"
+          },
+          {
+            "id": "clip-label-unified-cut-3",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "ecda3be9bceeba44",
+            "group": "label"
+          },
+          {
+            "id": "clip-label-unified-cut-4",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "7261a355e3e8907c",
+            "group": "label"
+          },
+          {
+            "id": "clip-label-unified-cut-5",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "16e1d3159f46881a",
+            "group": "label"
+          },
+          {
+            "id": "clip-label-unified-cut-6",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "c19ecfec2f4580c9",
+            "group": "label"
+          },
+          {
+            "id": "clip-label-unified-cut-7",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "9f1e31509cef56ed",
+            "group": "label"
+          },
+          {
+            "id": "clip-label-unified-cut-8",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "80c03f260176de5f",
+            "group": "label"
+          },
+          {
+            "id": "clip-label-unified-cut-9",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "d312d5f8c415cb89",
+            "group": "label"
+          },
+          {
+            "id": "clip-label-unified-cut-10",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "e77334a937a590f3",
+            "group": "label"
+          },
+          {
+            "id": "clip-label-unified-cut-11",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "5141c261ae4e172f",
+            "group": "label"
+          },
+          {
+            "id": "clip-label-unified-cut-12",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled",
+              "font_family"
+            ],
+            "values": {
+              "stroke_width": 0.0,
+              "shadow_enabled": true,
+              "font_family": "DM Sans"
+            },
+            "identity": "417a1bd8e75d92fb",
+            "group": "label"
+          }
+        ]
+      },
+      "text_bars": [
+        {
+          "id": "guided-title",
+          "role": "generative_intro",
+          "text": "10K Run · Alpha Quay → Delta Palace",
+          "start_s": 0.0,
+          "end_s": 1.4,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true
+        },
+        {
+          "id": "clip-label-unified-cut-1",
+          "role": "generative_intro",
+          "text": "Alpha Quay",
+          "start_s": 1.4,
+          "end_s": 2.8,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-0",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-2",
+          "role": "generative_intro",
+          "text": "Beta Bridge",
+          "start_s": 2.8,
+          "end_s": 4.199999999999999,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-1",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-3",
+          "role": "generative_intro",
+          "text": "Gamma Tower",
+          "start_s": 4.199999999999999,
+          "end_s": 5.6,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-2",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-4",
+          "role": "generative_intro",
+          "text": "Delta Palace",
+          "start_s": 5.6,
+          "end_s": 7.0,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-3",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-5",
+          "role": "generative_intro",
+          "text": "Epsilon Cove",
+          "start_s": 7.0,
+          "end_s": 8.4,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-4",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-6",
+          "role": "generative_intro",
+          "text": "Zeta Steps",
+          "start_s": 8.399999999999999,
+          "end_s": 9.799999999999999,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-5",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-7",
+          "role": "generative_intro",
+          "text": "Eta Gate",
+          "start_s": 9.799999999999999,
+          "end_s": 11.2,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-6",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-8",
+          "role": "generative_intro",
+          "text": "Theta Market",
+          "start_s": 11.2,
+          "end_s": 12.6,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-7",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-9",
+          "role": "generative_intro",
+          "text": "Iota Park",
+          "start_s": 12.6,
+          "end_s": 14.0,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-8",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-10",
+          "role": "generative_intro",
+          "text": "Kappa Pier",
+          "start_s": 14.0,
+          "end_s": 15.4,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-9",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-11",
+          "role": "generative_intro",
+          "text": "Lambda Hill",
+          "start_s": 15.399999999999999,
+          "end_s": 16.799999999999997,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-10",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-unified-cut-12",
+          "role": "generative_intro",
+          "text": "Mu Harbor",
+          "start_s": 16.799999999999997,
+          "end_s": 18.199999999999996,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "stroke_width": 0.0,
+          "shadow_enabled": true,
+          "clip_id": "clip-11",
+          "inferred": true
+        }
+      ],
+      "slots": [],
+      "total_duration_s": 18.2
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_appearance\",\"selector\":{\"scope\":\"editable_text\",\"quantifier\":\"all\",\"group\":\"labels\"},\"patch\":{\"font_family\":\"Montserrat\"},\"text_appearance_version\":1}],\"confidence\":0.93,\"reply\":\"Set the place labels to Montserrat and left the title alone.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all",
+          "group": "labels"
+        },
+        "patch": {
+          "font_family": "Montserrat"
+        },
+        "text_appearance_version": 1
+      }
+    ],
+    "confidence": 0.93,
+    "reply": "Set the place labels to Montserrat and left the title alone.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-203: group=labels narrows a bulk font change to the per-clip label lane",
+    "exact_edit_ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all",
+          "group": "labels"
+        },
+        "patch": {
+          "font_family": "Montserrat"
+        },
+        "text_appearance_version": 1
+      }
+    ]
+  }
+}

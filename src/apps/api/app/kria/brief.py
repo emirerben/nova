@@ -284,8 +284,15 @@ def plan_shape_from_editor_snapshot(snapshot: Mapping[str, Any] | None) -> Curre
     if not snapshot:
         return CurrentPlanShape(has_render=False)
     bars = snapshot.get("text_bars") or []
+    # The unified montage writes its per-clip labels as `clip-label-*` bars with
+    # role "generative_intro" (KRI-191), so the id prefix is the reliable lane
+    # marker; without it a per-clip label correction was routed to a re-plan.
     lane = any(
-        isinstance(bar, Mapping) and str(bar.get("role") or "") in _PER_CLIP_LANE_ROLES
+        isinstance(bar, Mapping)
+        and (
+            str(bar.get("role") or "") in _PER_CLIP_LANE_ROLES
+            or str(bar.get("id") or "").startswith("clip-label-")
+        )
         for bar in bars
     )
     return CurrentPlanShape(has_render=True, has_per_clip_text_lane=lane)

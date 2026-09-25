@@ -272,6 +272,57 @@ def test_failed_turn_projects_a_durable_receipt_linked_recovery_event() -> None:
     db.commit.assert_called_once_with()
 
 
+def test_failed_turn_records_error_class_and_message_on_the_turn_and_event() -> None:
+    """KRI-203: runtime_turn_failed carried only its code; now it says what raised."""
+    now = datetime.now(UTC)
+    turn = SimpleNamespace(
+        id=uuid.uuid4(),
+        thread_id=uuid.uuid4(),
+        status="planning",
+        lease_owner="worker-1",
+        lease_epoch=3,
+        lease_expires_at=now + timedelta(seconds=10),
+        error=None,
+        completed_at=None,
+        observed_event_id=None,
+    )
+    db = MagicMock()
+    db.execute.side_effect = [
+        _Result(scalar=turn),
+        _Result(scalar=now),
+        _Result(scalar=SimpleNamespace(id=turn.thread_id)),
+    ]
+    detail = {"error_class": "KriaEditorOpError", "error_message": "at most eight"}
+
+    with (
+        patch("app.tasks.kria_runtime.sync_session", return_value=nullcontext(db)),
+        patch(
+            "app.tasks.kria_runtime._append_sync_event",
+            return_value=SimpleNamespace(id=uuid.uuid4()),
+        ) as append,
+        patch("app.tasks.kria_runtime._promote_queued_successor_sync", return_value=None),
+    ):
+        _fail_turn(
+            turn.id,
+            code="runtime_turn_failed",
+            lease_owner="worker-1",
+            lease_epoch=3,
+            detail=detail,
+        )
+
+    assert turn.error == {
+        "code": "runtime_turn_failed",
+        "retryable": True,
+        "recovery": "retry",
+        **detail,
+    }
+    payload = append.call_args.kwargs["payload"]
+    assert payload["error_class"] == "KriaEditorOpError"
+    assert payload["error_message"] == "at most eight"
+    # The creator-facing copy is unchanged.
+    assert "Try the request again" in append.call_args.kwargs["content"]
+
+
 def test_execute_approval_dispatches_only_the_claimed_server_strategy() -> None:
     approval_id = str(uuid.uuid4())
     job_id = str(uuid.uuid4())
