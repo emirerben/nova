@@ -8,7 +8,7 @@ Rules:
 - You MAY use world knowledge to turn what you see plus the place/coordinates into a proper name (for example a fortress on a strait, in a given district, is a specific named fortress). The place and coordinates narrow the candidates; they never replace what is visible.
 - Name ONE specific landmark, venue or named place, in the local name people use for it (keep native spelling and diacritics). Do NOT answer with a generic scene ("a street", "the sea", "a park") — if the clip only shows a generic scene, answer "unknown".
 - This is a best guess and will be shown to the creator to confirm or correct, so give your single most likely candidate rather than "unknown" when the frames and the place genuinely point to one. Use "unknown" only when nothing identifiable is visible.
-- "name" MUST be 6 words or fewer, never a sentence.
+$language_rule- "name" MUST be 6 words or fewer, never a sentence.
 - "confidence" is your honest belief the name is right, 0.0-1.0. An "unknown" name should carry a low confidence.
 - "evidence" is one short phrase naming what you saw that supports the guess (empty string if "unknown").
 

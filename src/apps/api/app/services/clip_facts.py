@@ -225,12 +225,20 @@ def _generation(assignment: Mapping[str, Any]) -> str:
     return str(assignment.get("generation") or assignment.get("storage_generation") or "")
 
 
-def _landmark_attempted(assignment: Mapping[str, Any]) -> bool:
-    """True once a guess (even an empty one) was recorded for this generation."""
+def _landmark_key(assignment: Mapping[str, Any], language: str = "") -> str:
+    """The cache key of one landmark answer: the storage generation plus the language the
+    creator wrote in, so a guess made for another language (or before names followed the
+    creator's language) is never reused. No creator text keeps the bare generation."""
+    generation = _generation(assignment)
+    return f"{generation}|{language}" if language else generation
+
+
+def _landmark_attempted(assignment: Mapping[str, Any], language: str = "") -> bool:
+    """True once a guess (even an empty one) was recorded for this generation + language."""
     analysis = assignment.get("analysis")
     if not isinstance(analysis, dict):
         return False
-    return analysis.get(LANDMARK_GENERATION_KEY) == _generation(assignment)
+    return analysis.get(LANDMARK_GENERATION_KEY) == _landmark_key(assignment, language)
 
 
 def _landmark_prompt_place(assignment: Mapping[str, Any]) -> tuple[str, float | None, float | None]:
@@ -253,7 +261,9 @@ def _has_landmark_context(assignment: Mapping[str, Any]) -> bool:
     return bool(place) or (lat is not None and lon is not None)
 
 
-def _guess_landmark(assignment: dict[str, Any], *, ctx: Any) -> ClipFact | None:
+def _guess_landmark(
+    assignment: dict[str, Any], *, ctx: Any, creator_text: str = ""
+) -> ClipFact | None:
     """Download the pinned clip, upload it once, ask the landmark agent."""
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents.landmark_guess import LandmarkGuessAgent, LandmarkGuessInput  # noqa: PLC0415
@@ -275,6 +285,7 @@ def _guess_landmark(assignment: dict[str, Any], *, ctx: Any) -> ClipFact | None:
                 place=place,
                 lat=lat,
                 lon=lon,
+                creator_text=creator_text[:400],
             ),
             ctx=ctx,
         )
@@ -323,14 +334,16 @@ def with_capture_facts(assignment: dict[str, Any]) -> dict[str, Any]:
     return {**assignment, "analysis": analysis}
 
 
-def with_landmark_fact(assignment: dict[str, Any], fact: ClipFact | None) -> dict[str, Any]:
+def with_landmark_fact(
+    assignment: dict[str, Any], fact: ClipFact | None, *, language: str = ""
+) -> dict[str, Any]:
     """Copy of ``assignment`` with the guess (or the "asked, no answer") recorded."""
     entry = dict(assignment)
     analysis = dict(entry.get("analysis") or {})
     analysis[FACTS_KEY] = _merge_stored_facts(
         analysis, [fact] if fact is not None else [], replace_kind="landmark"
     )
-    analysis[LANDMARK_GENERATION_KEY] = _generation(entry)
+    analysis[LANDMARK_GENERATION_KEY] = _landmark_key(entry, language)
     entry["analysis"] = analysis
     return entry
 
@@ -346,6 +359,7 @@ def enrich_clip_facts(
     make_ctx: Any,
     on_updated: Any = None,
     budget_s: float = LANDMARK_BUDGET_S,
+    creator_text: str = "",
 ) -> list[tuple[dict[str, Any], Any]]:
     """Store every clip's facts on its analysis: capture copies, then a landmark guess.
 
@@ -359,9 +373,14 @@ def enrich_clip_facts(
 
     ``on_updated(entry, ref)`` lets the caller checkpoint each enriched
     assignment so a Celery retry does not pay for the guess twice.
-    ``make_ctx(media_id)`` builds the per-call RunContext. Returns the results
+    ``make_ctx(media_id)`` builds the per-call RunContext. ``creator_text`` (the creator's
+    own words, when known) makes the landmark names follow their language, and its language
+    is part of each guess's cache key (KRI-210). Returns the results
     with entries AND refs updated (the ref carries the new analysis).
     """
+    from app.agents.landmark_guess import creator_language  # noqa: PLC0415
+
+    language = creator_language(creator_text)
     updated: list[tuple[dict[str, Any], Any]] = []
     for entry, ref in results:
         new_entry = with_capture_facts(entry)
@@ -378,7 +397,7 @@ def enrich_clip_facts(
 
     def _record(index: int, fact: ClipFact | None) -> None:
         entry, ref = updated[index]
-        new_entry = with_landmark_fact(entry, fact)
+        new_entry = with_landmark_fact(entry, fact, language=language)
         ref = _ref_with_analysis(ref, new_entry["analysis"])
         final[index] = (new_entry, ref)
         if on_updated is not None:
@@ -389,7 +408,7 @@ def enrich_clip_facts(
 
     todo: list[int] = []
     for index, (entry, ref) in enumerate(updated):
-        if getattr(ref, "kind", "video") != "video" or _landmark_attempted(entry):
+        if getattr(ref, "kind", "video") != "video" or _landmark_attempted(entry, language):
             continue
         if not _has_landmark_context(entry):
             # Nothing to narrow a guess with: record "asked, no answer" and never call.
@@ -402,7 +421,9 @@ def enrich_clip_facts(
     def run(index: int) -> ClipFact | None:
         entry, _ref = updated[index]
         try:
-            return _guess_landmark(entry, ctx=make_ctx(str(entry.get("media_id"))))
+            # With no creator text the call is exactly the pre-KRI-210 one.
+            extra = {"creator_text": creator_text} if language else {}
+            return _guess_landmark(entry, ctx=make_ctx(str(entry.get("media_id"))), **extra)
         except Exception as exc:  # noqa: BLE001 — best-effort context, never fatal
             log.warning(
                 "clip_facts.landmark_failed",

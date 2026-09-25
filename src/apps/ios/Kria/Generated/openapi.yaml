@@ -3149,6 +3149,37 @@
         "title": "HandwritingContent",
         "type": "object"
       },
+      "InferredLabel": {
+        "additionalProperties": false,
+        "description": "One name the server guessed for one clip (KRI-207), so the creator can correct it.\n\n``clip_index`` is the clip's zero-based position in the plan's own clip order (what\nthe creator sees as \"clip 4\" is index 3); ``media_id`` is its stable identity.",
+        "properties": {
+          "clip_index": {
+            "default": null,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Clip Index",
+            "type": "integer"
+          },
+          "media_id": {
+            "default": null,
+            "maxLength": 160,
+            "nullable": true,
+            "title": "Media Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "InferredLabel",
+        "type": "object"
+      },
       "KaraokeContent": {
         "additionalProperties": false,
         "properties": {
@@ -5520,7 +5551,7 @@
       },
       "RequirementReceipt": {
         "additionalProperties": false,
-        "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one.",
+        "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one. ``inferred_labels`` is the same list with\nthe clip each guess belongs to (additive, KRI-207); ``inferred`` stays for\nclients that only read strings.",
         "properties": {
           "inferred": {
             "items": {
@@ -5528,6 +5559,14 @@
             },
             "maxItems": 24,
             "title": "Inferred",
+            "type": "array"
+          },
+          "inferred_labels": {
+            "items": {
+              "$ref": "#/components/schemas/InferredLabel"
+            },
+            "maxItems": 24,
+            "title": "Inferred Labels",
             "type": "array"
           },
           "reason": {

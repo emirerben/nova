@@ -36,6 +36,7 @@ from app.kria.device_render import (
     DeviceRenderStatus,
     DeviceRetryBody,
     DeviceRetryOut,
+    finished_durations,
     require_current_request,
 )
 from app.kria.render_assets import LibraryRenderAsset, VisualRenderAsset, VoiceoverRenderAsset
@@ -698,8 +699,7 @@ async def complete_device_export(
             "video_path": attempt["path"],
             "output_url": url,
             "render_destination": "device",
-            "duration_s": status.request.recipe.duration
-            + BRAND_TAIL_SECONDS[attempt.get("brand_tail", "none")],
+            **finished_durations(status.request.recipe.duration, attempt.get("brand_tail", "none")),
         }
         if v.get("variant_id") == body.identity.variant_id
         else v

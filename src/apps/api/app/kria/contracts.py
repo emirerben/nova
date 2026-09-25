@@ -107,18 +107,33 @@ class KriaToolReceipt(_KriaModel):
         return self
 
 
+class InferredLabel(_KriaModel):
+    """One name the server guessed for one clip (KRI-207), so the creator can correct it.
+
+    ``clip_index`` is the clip's zero-based position in the plan's own clip order (what
+    the creator sees as "clip 4" is index 3); ``media_id`` is its stable identity.
+    """
+
+    text: str = Field(min_length=1, max_length=120)
+    media_id: str | None = Field(default=None, max_length=160)
+    clip_index: int | None = Field(default=None, ge=0)
+
+
 class RequirementReceipt(_KriaModel):
     """One deterministic outcome per Creative Brief requirement (KRI-188).
 
     ``inferred`` lists values the server guessed rather than read from the
     creator or the footage (for example a landmark name), so the client can show
-    them and let the creator correct one.
+    them and let the creator correct one. ``inferred_labels`` is the same list with
+    the clip each guess belongs to (additive, KRI-207); ``inferred`` stays for
+    clients that only read strings.
     """
 
     requirement_id: str = Field(min_length=1, max_length=24)
     status: Literal["met", "partial", "not_possible"]
     reason: str | None = Field(default=None, max_length=300)
     inferred: list[str] = Field(default_factory=list, max_length=24)
+    inferred_labels: list[InferredLabel] = Field(default_factory=list, max_length=24)
 
 
 class CreativeBriefRequirementOut(_KriaModel):

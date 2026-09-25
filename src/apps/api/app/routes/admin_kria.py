@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings, settings
 from app.database import get_db
 from app.routes.admin import _require_admin
 from app.services.kria_trace import (
@@ -69,3 +70,36 @@ async def dry_run_kria_reconcile(
     """Inspect exact recovery actions; deliberately performs no mutation or publish."""
 
     return await get_kria_trace(db=db, thread_id=thread_id, turn_id=turn_id)
+
+
+class PhoneRenderConfigResponse(BaseModel):
+    phone_rendering_enabled: bool
+    montage_unified_plan_enabled: bool
+    # The device-parity capability allowlist as this process reads it (a Fly secret in
+    # prod). The code default is empty, so an empty list here means the secret is unset.
+    verified_features: list[str]
+    default_verified_features: list[str]
+    # Capabilities a text layer can add on its own (animation phases, backgrounds,
+    # caption pop, karaoke); a unified montage's labels need none of them (KRI-209).
+    authored_text_verified: bool
+
+
+@router.get("/phone-render-config", response_model=PhoneRenderConfigResponse)
+async def get_phone_render_config() -> PhoneRenderConfigResponse:
+    """Read-only: the phone-render feature allowlist the running API actually uses.
+
+    Lets an operator confirm `authoredText` (and the rest) with
+    `python scripts/admin.py --prod GET kria/phone-render-config` instead of `fly ssh`.
+    Names only: capability strings, never a secret value.
+    """
+    default = Settings.model_fields["phone_render_verified_features"].get_default(
+        call_default_factory=True
+    )
+    verified = sorted(str(feature) for feature in settings.phone_render_verified_features)
+    return PhoneRenderConfigResponse(
+        phone_rendering_enabled=bool(settings.phone_rendering_enabled),
+        montage_unified_plan_enabled=bool(settings.montage_unified_plan_enabled),
+        verified_features=verified,
+        default_verified_features=sorted(default),
+        authored_text_verified="authoredText" in verified,
+    )

@@ -4459,6 +4459,50 @@ def _load_unified_montage_inputs(job_id: str) -> tuple[Any, list[dict], Any]:
     return user_id, assignments, brief
 
 
+def _first_user_message(job_id: str) -> str:
+    """The creator's first chat message on this job's thread, or "" (best effort).
+
+    Only the language of the creator's own words is wanted from it (landmark names follow
+    it), so any failure to read it simply means "no creator text".
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import CreationThread, CreationThreadEvent  # noqa: PLC0415
+
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            item_id = getattr(job, "content_plan_item_id", None)
+            if item_id is None:
+                return ""
+            content = db.execute(
+                select(CreationThreadEvent.content)
+                .join(CreationThread, CreationThread.id == CreationThreadEvent.thread_id)
+                .where(
+                    CreationThread.active_plan_item_id == item_id,
+                    CreationThreadEvent.role == "user",
+                    CreationThreadEvent.content.is_not(None),
+                )
+                .order_by(CreationThreadEvent.sequence)
+                .limit(1)
+            ).scalar_one_or_none()
+    except Exception:  # noqa: BLE001 - context for a best-effort guess, never fatal
+        return ""
+    return content if isinstance(content, str) else ""
+
+
+def _landmark_creator_text(view: Any, first_message: str) -> str:
+    """The creator's own words the landmark agent should write its names in: the brief's
+    exact texts (title, per-clip and route places) plus their first message."""
+    parts = [
+        *(view.clip_literals or {}).values(),
+        view.title_literal,
+        view.global_literal,
+        first_message,
+    ]
+    return " ".join(" ".join(str(part).split()) for part in parts if part)[:400]
+
+
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> dict | None:
@@ -4537,6 +4581,8 @@ def _run_phone_unified_montage_job(
                 make_ctx=lambda media_id: RunContext(
                     job_id=job_id, request_id=f"unified-montage:{media_id}"
                 ),
+                # One language per edit: names follow the language the creator wrote in.
+                creator_text=_landmark_creator_text(view, _first_user_message(job_id)),
             )
             enriched_by_path = {str(entry.get("gcs_path")): entry for entry, _ref in enriched}
             entries = [

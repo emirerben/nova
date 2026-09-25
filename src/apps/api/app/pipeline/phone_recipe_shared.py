@@ -2,9 +2,10 @@
 
 `app.pipeline.phone_guided_plan` was the first phone compiler
 (`compile_phone_guided_plan`) and keeps its own inline copies of the
-export-safety-margin refit math and its rounding tolerance -- it is left
-untouched here (byte-identical behavior, its test suite unmodified) since its
-logic is already load-bearing and verified. This module exists so the SECOND
+export-safety-margin refit math and its rounding tolerance -- those stay
+untouched (byte-identical behavior) since that logic is already load-bearing
+and verified; only the float-noise text snap below is shared with it. This
+module exists so the SECOND
 compiler (`app.pipeline.phone_montage_plan`, for the montage/day_vlog/
 single_hero archetypes) doesn't have to reinvent that math, and so a THIRD
 compiler (voiceover/subtitled/etc., future phases) has somewhere to import it
@@ -12,6 +13,9 @@ from instead of copy-pasting again.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,6 +31,33 @@ EXPORT_SAFETY_MARGIN_S = 0.05
 # by a couple of milliseconds without that being a real timing-program
 # mismatch.
 TIMING_ROUNDING_TOLERANCE_S = 0.005
+
+
+def snap_text_overshoot(layers: Iterable[Any], timeline_end_s: float) -> None:
+    """Snap a text layer that overshoots the timeline by float noise back onto it.
+
+    ``EditRecipeV2`` (and the Swift twin) reject ``layer.end > duration`` with a
+    strict compare, so a layer that ends at a plan's nominal end can trip it when
+    the summed millisecond-rounded cuts (or a ``usable / (usable / target)`` slow-
+    down) land 1 ULP short: 23.531 + 1.467 == 24.997999999999998 < 24.998 (KRI-190
+    device test, job 5df2e3ec). Only an overshoot of at most
+    ``TIMING_ROUNDING_TOLERANCE_S`` moves, so every layer that already fits stays
+    byte-identical and a real overrun is still rejected by the recipe validator.
+    """
+    for layer in layers:
+        if 0 < layer.end - timeline_end_s <= TIMING_ROUNDING_TOLERANCE_S:
+            layer.end = timeline_end_s
+
+
+def timeline_end_s(clips: Iterable[Any]) -> float:
+    """Where these clips end: ``EditRecipeV2.duration``'s formula over ``clips``."""
+    return max(
+        (
+            clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0)
+            for clip in clips
+        ),
+        default=0.0,
+    )
 
 
 def refit_source_window(

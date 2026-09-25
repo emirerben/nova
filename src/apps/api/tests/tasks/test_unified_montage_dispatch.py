@@ -176,7 +176,7 @@ def harness(monkeypatch):
 
         monkeypatch.setattr(gb, "_guided_execution_plan", fake_guided_plan)
 
-        def fake_enrich(results, *, make_ctx, on_updated=None, budget_s=45.0):
+        def fake_enrich(results, *, make_ctx, on_updated=None, budget_s=45.0, creator_text=""):
             out = []
             for entry, ref in results:
                 index = int(str(entry["media_id"]).rsplit("-", 1)[1])
@@ -269,7 +269,13 @@ def test_receipts_say_what_was_met_and_what_was_partial(harness):
     assert receipts["r1"]["status"] == "partial"
     assert "10 of 14" in receipts["r1"]["reason"]
     assert receipts["r1"]["inferred"], "guessed landmarks must be listed for correction"
-    assert receipts["r4"]["status"] == "met"
+    # KRI-208: the East Run shape. The creator said Arnavutköy -> Eminönü but the clips
+    # were filmed the other way round; the plan keeps filming order and says so.
+    assert receipts["r4"]["status"] == "partial"
+    assert "reverse of the route you gave (Arnavutköy → Eminönü)" in receipts["r4"]["reason"]
+    assert "ending at Arnavutköy" in receipts["r4"]["reason"]
+    assert "I kept filming order" in receipts["r4"]["reason"]
+    assert job.assembly_plan["unified_montage"]["ordering_basis"] == "capture_time"
     assert receipts["r3"]["status"] == "met"
 
 
@@ -562,3 +568,36 @@ def test_loader_handles_a_job_with_no_plan_item(monkeypatch):
     job, _db, _latest, loaded = _loader(monkeypatch, item=None, thread_id=None, brief_flag=True)
     user_id, assignments, brief = gb._load_unified_montage_inputs(str(job.id))
     assert user_id == job.user_id and assignments == [] and brief is None and loaded == []
+
+
+def test_landmark_creator_text_is_the_briefs_exact_words_plus_the_first_message():
+    from app.pipeline.unified_montage import BriefView
+
+    view = BriefView(
+        clip_literals={"c1": "Km   5"}, title_literal="20k run", global_literal="Slow  Sunday"
+    )
+    text = gb._landmark_creator_text(view, "my run   from A to B")
+    assert text == "Km 5 20k run Slow Sunday my run from A to B"
+    assert gb._landmark_creator_text(BriefView(), "") == ""
+    assert len(gb._landmark_creator_text(BriefView(), "x" * 900)) == 400
+
+
+def test_first_user_message_is_best_effort_and_never_raises(monkeypatch):
+    job = SimpleNamespace(content_plan_item_id=uuid.uuid4())
+    session = Mock()
+    session.get.return_value = job
+    session.execute.return_value.scalar_one_or_none.return_value = "my run from A to B"
+
+    @contextmanager
+    def sessions():
+        yield session
+
+    monkeypatch.setattr(gb, "_sync_session", sessions)
+    assert gb._first_user_message(str(uuid.uuid4())) == "my run from A to B"
+
+    session.execute.return_value.scalar_one_or_none.return_value = None
+    assert gb._first_user_message(str(uuid.uuid4())) == ""
+    session.execute.side_effect = RuntimeError("db down")
+    assert gb._first_user_message(str(uuid.uuid4())) == ""
+    session.get.return_value = SimpleNamespace(content_plan_item_id=None)
+    assert gb._first_user_message(str(uuid.uuid4())) == ""

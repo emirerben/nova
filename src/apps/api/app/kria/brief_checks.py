@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import json
 import re
-import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.kria.brief import BriefRequirement, CreativeBrief
-from app.kria.contracts import RequirementReceipt
+from app.kria.brief_route import END_KEYS, START_KEYS, first_text, fold_text, loose_text
+from app.kria.contracts import InferredLabel, RequirementReceipt
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
@@ -32,11 +32,7 @@ _CAPTURE_ORDER_KEYS = {"capture_time", "chronological", "route", "time", "shot_o
 _CAPTURE_BASES = {"capture_time", "route", "capture_order"}
 
 
-def _fold(value: str) -> str:
-    """NFC + Turkish-aware case fold ("KIRMIZI" == "Kırmızı"), whitespace collapsed."""
-    text = unicodedata.normalize("NFC", value)
-    text = text.replace("\u0130", "i").replace("I", "i").replace("\u0131", "i")
-    return " ".join(text.casefold().split())
+_fold = fold_text
 
 
 def _contains_text(haystack: str, wanted: str) -> bool:
@@ -59,6 +55,14 @@ class BeatFact:
 
 
 @dataclass(frozen=True)
+class EndpointFact:
+    """Where the first or last clip of the plan was filmed (place and landmark texts)."""
+
+    label: str = ""
+    places: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class PlanFacts:
     """What a drafted plan verifiably contains. Missing facts stay None/empty."""
 
@@ -71,6 +75,19 @@ class PlanFacts:
     ordering_basis: str | None = None
     ordering_fallback_clip_ids: tuple[str, ...] = ()
     texts: tuple[str, ...] = ()
+    # Where the title came from: "creator" (their words), "brief" (written from the
+    # brief's facts), "default" (nothing to title with), None = unknown.
+    title_source: str | None = None
+    # Clips whose label was left off because it repeated the previous one (KRI-210).
+    repeat_label_clip_ids: tuple[str, ...] = ()
+    # The route the creator stated and where the first/last clips were filmed (KRI-208).
+    route_start: str | None = None
+    route_end: str | None = None
+    first_endpoint: EndpointFact | None = None
+    last_endpoint: EndpointFact | None = None
+    # Seconds the phone appends after the edit (the Kria outro), never in the plan's own
+    # length: a 28.0s plan is a ~29.6s file (KRI-210).
+    outro_s: float = 0.0
     # KRI-190: clips whose label is on a cut shorter than its reading time (the
     # clip itself is too short). A label the viewer cannot read is not "met".
     unreadable_label_clip_ids: tuple[str, ...] = ()
@@ -234,6 +251,25 @@ def plan_facts_from_strategy(
     )
 
 
+def _endpoint_fact(raw: object) -> EndpointFact | None:
+    if not isinstance(raw, Mapping):
+        return None
+    places = tuple(
+        str(row["text"])
+        for row in raw.get("places") or []
+        if isinstance(row, Mapping) and row.get("text")
+    )
+    label = str(raw.get("label") or "")
+    return EndpointFact(label=label, places=places) if (label or places) else None
+
+
+def _phone_outro_s() -> float:
+    """The outro a phone-rendered montage gets on top of the plan's own length."""
+    from app.kria.device_render import BRAND_TAIL_SECONDS  # noqa: PLC0415
+
+    return BRAND_TAIL_SECONDS["standard"]
+
+
 def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFacts:
     """Read verifiable facts off a unified montage plan record (KRI-190).
 
@@ -252,9 +288,26 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
     title = record.get("title")
     duration = record.get("duration_s")
     basis = record.get("ordering_basis")
+    route = record.get("route") if isinstance(record.get("route"), Mapping) else {}
+    endpoints = (
+        record.get("endpoint_places") if isinstance(record.get("endpoint_places"), Mapping) else {}
+    )
+    reasons = record.get("dropped_label_reasons")
+    repeats = (
+        tuple(str(k) for k, v in reasons.items() if v == "repeat")
+        if isinstance(reasons, Mapping)
+        else ()
+    )
     return PlanFacts(
         clip_ids=tuple(str(c) for c in record.get("clip_ids") or []),
         title=str(title) if title else None,
+        title_source=str(record["title_source"]) if record.get("title_source") else None,
+        repeat_label_clip_ids=repeats,
+        route_start=str(route["start"]) if route.get("start") else None,
+        route_end=str(route["end"]) if route.get("end") else None,
+        first_endpoint=_endpoint_fact(endpoints.get("first")),
+        last_endpoint=_endpoint_fact(endpoints.get("last")),
+        outro_s=_phone_outro_s(),
         per_clip_text=per_clip,
         inferred_text=inferred,
         duration_s=float(duration) if isinstance(duration, (int, float)) else None,
@@ -288,14 +341,35 @@ def plan_facts_from_editor_payload(payload: Mapping[str, Any] | None) -> PlanFac
 
 
 def _receipt(
-    req: BriefRequirement, status: str, reason: str | None, inferred: Iterable[str] = ()
+    req: BriefRequirement,
+    status: str,
+    reason: str | None,
+    inferred: Iterable[str] = (),
+    labels: Iterable[InferredLabel] = (),
 ) -> RequirementReceipt:
     return RequirementReceipt(
         requirement_id=req.id,
         status=status,  # type: ignore[arg-type]
         reason=reason[:300] if reason else None,
         inferred=list(dict.fromkeys(str(x) for x in inferred))[:24],
+        inferred_labels=list(labels)[:24],
     )
+
+
+def _guess_labels(facts: PlanFacts, only: str | None = None) -> list[InferredLabel]:
+    """The guessed names with the clip each belongs to (plan order first)."""
+    ids = list(facts.clip_ids)
+    order = [c for c in ids if c in facts.inferred_text] or list(facts.inferred_text)
+    if only is not None:
+        order = [c for c in order if c == only]
+    return [
+        InferredLabel(
+            text=facts.inferred_text[clip][:120],
+            media_id=clip,
+            clip_index=ids.index(clip) if clip in ids else None,
+        )
+        for clip in order
+    ]
 
 
 def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -325,22 +399,21 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
             return _receipt(req, "not_possible", "That clip didn't get its own text in this draft.")
         if wanted and not _contains_text(value, wanted):
             return _receipt(req, "partial", "That clip's text isn't the exact text you gave.")
-        guessed = [facts.inferred_text[clip]] if clip in facts.inferred_text else []
-        return _receipt(req, "met", None, guessed)
+        guessed = _guess_labels(facts, only=clip)
+        return _receipt(req, "met", None, [g.text for g in guessed], guessed)
 
     total = len(ids)
     if ids:
         count = sum(1 for i, clip in enumerate(ids) if text_for(i, clip) is not None)
     else:
         count = max(len(facts.per_clip_text), len(facts.positional_labels))
-    inferred = [
-        f"{facts.inferred_text[clip]}" for clip in ids if clip in facts.inferred_text
-    ] or list(facts.inferred_text.values())
+    guessed = _guess_labels(facts)
+    inferred = [g.text for g in guessed]
     if wanted and count:
         given = [*facts.per_clip_text.values(), *facts.positional_labels]
         if not any(_contains_text(t, wanted) for t in given):
             return _receipt(
-                req, "partial", "The clips don't carry the exact text you gave.", inferred
+                req, "partial", "The clips don't carry the exact text you gave.", inferred, guessed
             )
     if total and count >= total:
         if facts.unreadable_label_clip_ids:
@@ -351,8 +424,9 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
                 f"{n} clip{'s are' if n != 1 else ' is'} too short for its text to stay "
                 "on screen long enough to read.",
                 inferred,
+                guessed,
             )
-        return _receipt(req, "met", None, inferred)
+        return _receipt(req, "met", None, inferred, guessed)
     if count == 0:
         return _receipt(
             req,
@@ -362,7 +436,74 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
             else f"None of the {total} clips got its own text in this draft.",
         )
     reason = f"Text landed on {count} of {total} clips." if total else f"Text on {count} clips."
-    return _receipt(req, "partial", reason, inferred)
+    repeats = len(facts.repeat_label_clip_ids)
+    if repeats:
+        # Left off on purpose: the same name twice in a row adds nothing to the viewer.
+        reason = (
+            f"{reason[:-1]}; {repeats} more repeated the label before, so I left "
+            f"{'them' if repeats != 1 else 'it'} off."
+        )
+    return _receipt(req, "partial", reason, inferred, guessed)
+
+
+_NAME_IN_REASON_CHARS = 32
+
+
+def _short(name: str) -> str:
+    text = " ".join(name.split())
+    return text if len(text) <= _NAME_IN_REASON_CHARS else text[: _NAME_IN_REASON_CHARS - 1] + "…"
+
+
+def _names_place(endpoint: EndpointFact | None, name: str) -> bool:
+    """True when the creator's ``name`` is one of the places recorded for ``endpoint``.
+
+    Matches whole words either way round, ignoring case and Turkish diacritics, against
+    the full geocode and each comma-separated part of it ("Fatih" in "Eminönü, Fatih,
+    İstanbul"). A one-word name never matches inside a longer word.
+    """
+    if endpoint is None:
+        return False
+    wanted = loose_text(name)
+    if not wanted:
+        return False
+    for place in (*endpoint.places, endpoint.label):
+        for part in (place, *(p for p in place.split(",") if p.strip())):
+            seen = loose_text(part)
+            if not seen:
+                continue
+            if seen == wanted:
+                return True
+            for hay, needle in ((seen, wanted), (wanted, seen)):
+                if re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", hay):
+                    return True
+    return False
+
+
+def _route_reversed_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """A plain-language reason when the clips were filmed in the opposite direction.
+
+    The plan follows filming order (capture time). If the creator stated a route and the
+    first/last clips' places say it was walked the other way, the receipt says what was
+    seen and what was done and asks which to follow. It never silently reorders, and
+    stays quiet unless a side positively matches the reverse and nothing matches forward.
+    """
+    if facts.ordering_basis not in _CAPTURE_BASES:
+        return None
+    start = first_text(req.facts, START_KEYS) or facts.route_start
+    end = first_text(req.facts, END_KEYS) or facts.route_end
+    if not start or not end or facts.first_endpoint is None or facts.last_endpoint is None:
+        return None
+    first, last = facts.first_endpoint, facts.last_endpoint
+    forward = _names_place(first, start) or _names_place(last, end)
+    backward = _names_place(first, end) or _names_place(last, start)
+    if forward or not backward:
+        return None
+    saw_first, saw_last = _short(first.label or end), _short(last.label or start)
+    return (
+        f"Your clips were filmed starting at {saw_first} and ending at {saw_last}, the reverse "
+        f"of the route you gave ({_short(start)} → {_short(end)}). I kept filming order; "
+        "tell me if you want your route order instead."
+    )
 
 
 def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -370,6 +511,9 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if not facts.ordering_basis:
         return _receipt(req, "partial", "I can't confirm the order this draft uses.")
     basis = facts.ordering_basis
+    reversed_reason = _route_reversed_reason(req, facts)
+    if reversed_reason is not None:
+        return _receipt(req, "partial", reversed_reason)
     if key in _CAPTURE_ORDER_KEYS:
         if basis not in _CAPTURE_BASES:
             return _receipt(
@@ -522,7 +666,8 @@ def _names(values: Iterable[str]) -> str:
 # reply (like a requirement with no checker), never a failure notice.
 _CANT_CHECK_BEATS = "I can't check the pop-ins on this draft yet."
 _CANT_CHECK_TAKE = "I can't confirm this draft keeps your whole take."
-_NEUTRAL_REASONS = frozenset({_CANT_CHECK_BEATS, _CANT_CHECK_TAKE})
+_CANT_CHECK_TITLE = "I can't confirm where this draft's title came from."
+_NEUTRAL_REASONS = frozenset({_CANT_CHECK_BEATS, _CANT_CHECK_TAKE, _CANT_CHECK_TITLE})
 
 
 def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -613,17 +758,39 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         return _receipt(req, "partial", "I can't confirm this draft's length yet.")
     if abs(facts.duration_s - float(target)) <= DURATION_TOLERANCE * float(target):
         return _receipt(req, "met", None)
+    # The edit's own length is what is compared: the phone adds its outro after the edit,
+    # so the file runs `outro_s` longer than this (28.0s of edit is a ~29.6s video).
+    outro = f" (plus a {facts.outro_s:g}s outro on the finished video)" if facts.outro_s else ""
     return _receipt(
         req,
         "partial",
-        f"This draft is about {facts.duration_s:g}s; you asked for {float(target):g}s.",
+        f"This draft is about {facts.duration_s:g}s{outro}; you asked for {float(target):g}s.",
     )
+
+
+_TITLE_SOURCES_THE_CREATOR_OWNS = frozenset({"creator", "brief"})
+
+
+def _check_title(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """A title requirement with no exact text: met when the title is the creator's own
+    words or was written from what their brief said (never a default or a model hook)."""
+    if not facts.title or facts.title_source is None:
+        return _receipt(req, "partial", _CANT_CHECK_TITLE)
+    if facts.title_source in _TITLE_SOURCES_THE_CREATOR_OWNS:
+        return _receipt(req, "met", None)
+    return _receipt(req, "partial", "I used a plain default title because none was given.")
 
 
 def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     wanted = _fold(req.literal or "")
     if req.scope == "title" and facts.title:
-        found = _fold(facts.title) == wanted
+        # A title written from the brief may add the route to the creator's words
+        # ("20k run · Arnavutköy → Eminönü"), so it only has to contain them.
+        found = (
+            _contains_text(facts.title, wanted)
+            if facts.title_source == "brief"
+            else _fold(facts.title) == wanted
+        )
     else:
         found = any(_contains_text(t, wanted) for t in facts.texts)
     if found:
@@ -634,7 +801,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
     if req.kind == "text":
-        return bool(req.scope == "per_clip" or req.scope.startswith("clip:") or req.literal)
+        return bool(
+            req.scope in ("per_clip", "title") or req.scope.startswith("clip:") or req.literal
+        )
     if req.kind == "timing":
         # "Fast but readable" has no number to check: that is "can't verify"
         # (neutral in the reply), not a failed requirement. "Keep my whole take"
@@ -651,6 +820,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
             return _check_per_clip_text(req, facts)
         if req.literal:
             return _check_literal_text(req, facts)
+        if req.scope == "title":
+            return _check_title(req, facts)
     elif req.kind == "order":
         return _check_order(req, facts)
     elif req.kind == "timing":

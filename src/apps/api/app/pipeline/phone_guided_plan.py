@@ -26,7 +26,11 @@ from app.pipeline.guided_story import (
     _story_canvas,
     plan_preserves_source_audio,
 )
-from app.pipeline.phone_recipe_shared import PhoneNarrationBed
+from app.pipeline.phone_recipe_shared import (
+    PhoneNarrationBed,
+    snap_text_overshoot,
+    timeline_end_s,
+)
 from app.schemas.guided_edit_revision import GUIDED_EDITOR_FPS
 from app.services.phone_sources import (
     PhoneSourceBinding,
@@ -542,16 +546,7 @@ def compile_phone_guided_plan(
         # at 24.998, and `EditRecipeV2` compares with a strict `>` (KRI-190 device
         # test, job 5df2e3ec). Snap only such an overshoot, so every layer that
         # already fits stays byte-identical.
-        recipe_duration = max(
-            (
-                clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0)
-                for clip in clips
-            ),
-            default=0.0,
-        )
-        for layer in layers:
-            if 0 < layer.end - recipe_duration <= _TIMING_ROUNDING_TOLERANCE_S:
-                layer.end = recipe_duration
+        snap_text_overshoot(layers, timeline_end_s(clips))
     tracks = [TimelineTrack(id="story", kind="video", clips=clips)]
     if plan.editor_visual_blocks:
         from app.pipeline.phone_editor_visuals import (  # noqa: PLC0415

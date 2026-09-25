@@ -17,6 +17,7 @@ visible and where the phone was.
 from __future__ import annotations
 
 import json
+import re
 from typing import ClassVar
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -62,6 +63,36 @@ def normalize_landmark_name(value: object) -> str:
     return " ".join(text.split()[:_NAME_MAX_WORDS])[:_NAME_MAX_CHARS]
 
 
+# Stopword votes for the coarse language a creator wrote in. Only the two languages this
+# product is used in are named; anything else is "und" (the model still reads the text).
+# Proper nouns are deliberately not evidence: "Eminönü" appears in English sentences too.
+_LANGUAGE_WORDS = {
+    "tr": frozenset(
+        "ve bir bu ile için ben benim biz koşu koştum gibi çok daha sonra kadar den dan "
+        "başladım bitirdim sabah akşam yol nasıl".split()
+    ),
+    "en": frozenset(
+        "the and to from my of in at for with is it was we run ran started finished "
+        "morning route along past then".split()
+    ),
+}
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def creator_language(text: str) -> str:
+    """ "tr" / "en" when the stopwords say so, "und" for other text, "" when there is none."""
+    words = [_fold(w) for w in _WORD_RE.findall(text or "")]
+    if not words:
+        return ""
+    tr = sum(1 for w in words if w in _LANGUAGE_WORDS["tr"])
+    en = sum(1 for w in words if w in _LANGUAGE_WORDS["en"])
+    if tr > en:
+        return "tr"
+    if en > tr:
+        return "en"
+    return "und"
+
+
 class LandmarkGuessInput(BaseModel):
     file_uri: str = Field(min_length=1)
     file_mime: str = "video/mp4"
@@ -70,6 +101,9 @@ class LandmarkGuessInput(BaseModel):
     # Coarse (two decimals, about 1 km) coordinates, when the phone sent them.
     lat: float | None = Field(default=None, ge=-90, le=90)
     lon: float | None = Field(default=None, ge=-180, le=180)
+    # What the creator wrote (their brief's exact texts plus their first message), or "".
+    # The landmark name follows its language; with none, the local name is used (KRI-210).
+    creator_text: str = Field(default="", max_length=400)
 
 
 class LandmarkGuessOutput(BaseModel):
@@ -93,7 +127,7 @@ class LandmarkGuessAgent(Agent[LandmarkGuessInput, LandmarkGuessOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.video.landmark_guess",
         prompt_id="landmark_guess",
-        prompt_version="2026-09-24.1",
+        prompt_version="2026-09-25.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -123,10 +157,22 @@ class LandmarkGuessAgent(Agent[LandmarkGuessInput, LandmarkGuessOutput]):
             coordinates = f"about {input.lat:.2f}, {input.lon:.2f} (rounded to roughly 1 km)"
         else:
             coordinates = "(not available)"
+        creator = " ".join((input.creator_text or "").split())
+        # Injected only when there is something to follow: an empty "(none)" block is
+        # inert context that measurably degrades the output.
+        language_rule = (
+            "- LANGUAGE: the creator wrote the text below. Write the name in the language "
+            "they wrote in (Turkish text: the Turkish name; English text: the name English "
+            "speakers use). Use ONE language for the whole name, never a mix.\n"
+            f'  Creator text: "{creator}"\n'
+            if creator
+            else ""
+        )
         return load_prompt(
             "landmark_guess",
             place=input.place or "(not available)",
             coordinates=coordinates,
+            language_rule=language_rule,
         )
 
     def parse(self, raw_text: str, input: LandmarkGuessInput) -> LandmarkGuessOutput:  # noqa: A002
@@ -168,5 +214,6 @@ __all__ = [
     "LandmarkGuessAgent",
     "LandmarkGuessInput",
     "LandmarkGuessOutput",
+    "creator_language",
     "normalize_landmark_name",
 ]

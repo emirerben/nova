@@ -381,3 +381,19 @@ def test_declaring_a_tail_that_was_not_appended_is_rejected():
     _, request = _fixture()
     with pytest.raises(ValueError, match="duration mismatch"):
         _run_verify(_probe_with_duration(request.recipe.duration), "standard")
+
+
+def test_a_branded_render_is_the_plans_length_plus_the_outro_not_an_overrun():
+    """KRI-210: an East Run-shaped 28.0s plan came back as a 29.6s file. That is the
+    1.6s Kria outro, and the stored lengths say which part of the file is which."""
+    from app.kria.device_render import finished_durations
+
+    branded = finished_durations(28.0, "standard")
+    assert branded["duration_s"] == pytest.approx(29.6)
+    assert branded["edit_duration_s"] == 28.0
+    assert branded["brand_tail_s"] == pytest.approx(1.6)
+    assert finished_durations(28.0) == {
+        "duration_s": 28.0,
+        "edit_duration_s": 28.0,
+        "brand_tail_s": 0.0,
+    }
