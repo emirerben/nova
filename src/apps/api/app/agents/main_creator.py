@@ -42,7 +42,9 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-188: Creative Brief requirement extraction (`brief_updates`, taught only
 # when the brief is on for the creator) -- v37.
 # KRI-189: when/where clip facts with provenance (v38).
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v38"
+# KRI-190: brief `facts` (distance/activity/start/end) and an `order` requirement
+# are always captured when the creator states a route or a sequence (v39).
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v39"
 
 # Appended to the OWNED FOOTAGE SUMMARIES header line ONLY when CLIP_FACTS is on
 # for the account ("" otherwise, so the flag-off prompt is byte-identical). The
@@ -198,7 +200,15 @@ null", "description": "what is wanted in the creator's own framing, or null", "f
 in `description` with `literal` null. Put structured details in `facts` (for order: {"key":
 "capture_time"}; for timing: {"duration_s": 20}; for a route or distance: {"distance_km": 20,
 "start": "...", "end": "..."}). Keep the creator's language and spelling (Turkish stays
-Turkish). One requirement per (kind, scope): a new one replaces the older one. A message that
+Turkish). ALWAYS record what the creator states as structured `facts` on the requirement it
+belongs to, even when the same words also sit in a title or a sentence: a distance, an
+activity, a start point or an end point ("I ran 20K from Arnavutköy to Eminönü") go in `facts`
+as {"distance_km": 20, "activity": "run", "start": "Arnavutköy", "end": "Eminönü"} on the text
+requirement (title or per_clip) they describe; never return empty `facts` for a message that
+names one. ALWAYS add an `order` requirement when the creator names a sequence ("in the order
+I filmed", "chronologically", "from A to B", "start at X and finish at Y"): {"kind": "order",
+"scope": "global", "facts": {"key": "capture_time"}} plus "start"/"end" when named. One
+requirement per (kind, scope): a new one replaces the older one. A message that
 only asks to redo the edit ("do it again based on my prompt") adds no requirements -- propose a
 full strategy that honours EVERY requirement in the contract. Example: "Title it 20K Koşu, put
 the landmark name on each clip and order them by the time I filmed them" => brief_updates:
@@ -247,7 +257,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         # `max_attempts - 1` is otherwise unreachable dead configuration.
         max_attempts=3,
         backoff_s=(2.0,),
-        timeout_s=35.0,
+        # Generation time grows with thinking + answer tokens: ~4.7 s + 5.7 ms
+        # per token in prod, up to 2 s slower (the latency model in
+        # tests/agents/test_thinking_budget.py). At that worst case a
+        # heavy-thinking reaction-beat plan takes ~38 s, and the full
+        # `max_output_tokens` budget runs out (~54 s) before this deadline, so a
+        # runaway call truncates (retryable) instead of ending outcome-unknown.
+        timeout_s=60.0,
         # Reserve output capacity for the full source manifest.
         thinking_level="low",
         sensitive_io=True,
@@ -260,7 +276,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
     Input = MainCreatorInput
     Output = MainCreatorOutput
     response_json = True
-    max_output_tokens = 4096
+    # Gemini 3 counts thinking against this budget. A reaction-beat plan alone
+    # runs ~2.4k answer tokens (KRI-172 football prompt), so 4,096 truncated any
+    # such turn that thought for more than ~1.7k tokens (prod thread 9b6594a6
+    # thought 3,047 and failed at MAX_TOKENS on 2026-09-24).
+    max_output_tokens = 8_192
 
     def required_fields(self) -> list[str]:
         return ["action"]

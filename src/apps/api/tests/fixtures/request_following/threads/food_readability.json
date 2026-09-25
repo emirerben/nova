@@ -1,0 +1,159 @@
+{
+  "fixture_id": "food_readability",
+  "provenance": "authored",
+  "footage": "food_day",
+  "description": "Captions must stay on screen for the reading-time rule (0.8s + 0.06s/char, 1.2-3.0s).",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Caption every clip, but keep each caption up long enough to read.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "captioned",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_described",
+      "checker": "label_coverage",
+      "params": {
+        "min_frac": 1.0
+      },
+      "source": "Caption every clip, but keep each caption up long enough to read.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "readable",
+      "kind": "timing",
+      "scope": "per_clip",
+      "request_type": "readability",
+      "checker": "readability",
+      "params": {},
+      "source": "Caption every clip, but keep each caption up long enough to read.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "F1",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "clip_id": "F2",
+          "start_s": 3.0,
+          "end_s": 5.5
+        },
+        {
+          "clip_id": "F3",
+          "start_s": 5.5,
+          "end_s": 9.0
+        },
+        {
+          "clip_id": "F4",
+          "start_s": 9.0,
+          "end_s": 12.0
+        },
+        {
+          "clip_id": "F5",
+          "start_s": 12.0,
+          "end_s": 14.5
+        },
+        {
+          "clip_id": "F6",
+          "start_s": 14.5,
+          "end_s": 16.5
+        },
+        {
+          "clip_id": "F7",
+          "start_s": 16.5,
+          "end_s": 20.0
+        },
+        {
+          "clip_id": "F8",
+          "start_s": 20.0,
+          "end_s": 23.0
+        }
+      ],
+      "texts": [
+        {
+          "id": "label-0",
+          "role": "label",
+          "text": "Simit and tea to start",
+          "start_s": 0.0,
+          "end_s": 3.0,
+          "font_family": "Inter",
+          "clip_id": "F1"
+        },
+        {
+          "id": "label-1",
+          "role": "label",
+          "text": "Turkish coffee",
+          "start_s": 3.0,
+          "end_s": 5.5,
+          "font_family": "Inter",
+          "clip_id": "F2"
+        },
+        {
+          "id": "label-2",
+          "role": "label",
+          "text": "The spice market",
+          "start_s": 5.5,
+          "end_s": 9.0,
+          "font_family": "Inter",
+          "clip_id": "F3"
+        },
+        {
+          "id": "label-3",
+          "role": "label",
+          "text": "Fresh lahmacun",
+          "start_s": 9.0,
+          "end_s": 12.0,
+          "font_family": "Inter",
+          "clip_id": "F4"
+        },
+        {
+          "id": "label-4",
+          "role": "label",
+          "text": "Baklava",
+          "start_s": 12.0,
+          "end_s": 14.5,
+          "font_family": "Inter",
+          "clip_id": "F5"
+        },
+        {
+          "id": "label-5",
+          "role": "label",
+          "text": "Snack on the ferry",
+          "start_s": 14.5,
+          "end_s": 16.5,
+          "font_family": "Inter",
+          "clip_id": "F6"
+        },
+        {
+          "id": "label-6",
+          "role": "label",
+          "text": "Dinner, meze everywhere",
+          "start_s": 16.5,
+          "end_s": 20.0,
+          "font_family": "Inter",
+          "clip_id": "F7"
+        },
+        {
+          "id": "label-7",
+          "role": "label",
+          "text": "Dondurma to finish",
+          "start_s": 20.0,
+          "end_s": 23.0,
+          "font_family": "Inter",
+          "clip_id": "F8"
+        }
+      ],
+      "total_duration_s": 23.0
+    },
+    "reply": "Captioned every clip, each held for its full shot."
+  }
+}

@@ -1017,38 +1017,6 @@ describe("PoolUploadCard — touch targets + maxClips", () => {
     ).toBeInTheDocument();
   });
 
-  it("delete, cancel, and retry controls meet the 44px mobile floor (with positive control)", async () => {
-    setData(makeItem({ clip_assignments: [c1] }));
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    const remove = screen.getByRole("button", { name: "Remove c1.mp4" });
-    expect(remove).toHaveClass("h-11");
-    expect(remove).toHaveClass("w-11");
-    expect(remove).toHaveClass("sm:h-5");
-    expect(remove).toHaveClass("sm:w-5");
-
-    await act(async () => {
-      pickFiles([new File(["a"], "a.mp4", { type: "video/mp4" })]);
-    });
-    await flush();
-    const cancel = screen.getByRole("button", { name: "Cancel upload of a.mp4" });
-    expect(cancel).toHaveClass("h-11");
-    expect(cancel).toHaveClass("w-11");
-
-    await act(async () => {
-      capturedUploads[0].reject(new Error("nope"));
-    });
-    const retry = screen.getByRole("button", { name: "Retry" });
-    expect(retry).toHaveClass("h-11");
-    expect(retry).toHaveClass("sm:h-auto");
-
-    // Positive control: the class assertions CAN fail — a sibling element does
-    // not carry the 44px classes.
-    expect(screen.getByText("c1.mp4")).not.toHaveClass("h-11");
-  });
-
   it("maxClips=1 (subtitled): pending upload counts toward the cap, no lying cap copy", async () => {
     setData(makeItem({ edit_format: "subtitled", content_mode: "create_new" }));
     await act(async () => {

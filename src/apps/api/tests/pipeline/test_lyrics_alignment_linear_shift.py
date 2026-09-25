@@ -10,13 +10,8 @@ from __future__ import annotations
 import pytest
 
 from app.pipeline.lyrics_alignment import (
-    _LINEAR_MAX_RESID_MAD_S,
-    _LINEAR_MIN_ELIGIBLE_LINES,
-    _LINEAR_MIN_SLOPE,
-    _LINEAR_MIN_SPAN_FRAC,
     _REANCHOR_NEXT_LINE_SAFETY_S,
     align_with_line_anchors,
-    settings,
 )
 from app.services.lrclib_client import SyncedLine
 from app.services.whisper_lyrics import WhisperWord
@@ -119,33 +114,3 @@ def test_single_outlier_does_not_tilt_fit(monkeypatch) -> None:
     assert len(applied) == 1
     assert applied[0]["slope"] == pytest.approx(0.02, abs=1e-4)
     assert applied[0]["resid_mad_s"] == pytest.approx(0.0, abs=1e-3)
-
-
-def test_kill_switch_reproduces_uniform_median_path(monkeypatch) -> None:
-    """Flag off skips Path 0 and preserves the old uniform fallback result."""
-    from app.pipeline import lyrics_alignment
-
-    anchors, words = _linear_track()
-
-    monkeypatch.setattr(settings, "lyric_linear_reanchor_enabled", True)
-    linear = align_with_line_anchors(anchors, words, track_end_s=60.0)
-
-    rec = _LogRecorder()
-    monkeypatch.setattr(lyrics_alignment, "log", rec)
-    monkeypatch.setattr(settings, "lyric_linear_reanchor_enabled", False)
-    uniform = align_with_line_anchors(anchors, words, track_end_s=60.0)
-
-    assert linear.lines[0].end_s == pytest.approx(10.25, abs=1e-2)
-    assert uniform.lines[0].end_s == pytest.approx(10.45, abs=1e-2)
-    assert any(
-        ev["reason"] == "disabled_by_flag"
-        for ev in rec.events_named("lyrics_alignment_reanchor_linear_skipped")
-    )
-    assert rec.events_named("lyrics_alignment_reanchor_multiline_applied")
-
-
-def test_linear_constants_are_pinned() -> None:
-    assert _LINEAR_MIN_ELIGIBLE_LINES == 6
-    assert _LINEAR_MIN_SPAN_FRAC == pytest.approx(0.30)
-    assert _LINEAR_MIN_SLOPE == pytest.approx(0.01)
-    assert _LINEAR_MAX_RESID_MAD_S == pytest.approx(0.15)

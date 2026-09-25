@@ -1,0 +1,150 @@
+{
+  "footage_id": "trip",
+  "description": "Two days in Cappadocia. Eight clips attached out of filming order; route_rank is the order the couple travelled.",
+  "clips": [
+    {
+      "clip_id": "T7",
+      "duration_s": 3.0,
+      "subject": "underground city corridor",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-08-15T13:00:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Kaymaklı, Nevşehir",
+          "provenance": "geocode"
+        }
+      ],
+      "route_rank": 7
+    },
+    {
+      "clip_id": "T2",
+      "duration_s": 3.0,
+      "subject": "cave hotel breakfast terrace",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-08-14T08:30:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Göreme, Nevşehir",
+          "provenance": "geocode"
+        }
+      ],
+      "route_rank": 2
+    },
+    {
+      "clip_id": "T5",
+      "duration_s": 3.5,
+      "subject": "sunset over red cliffs",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-08-14T18:20:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Göreme, Nevşehir",
+          "provenance": "geocode"
+        }
+      ],
+      "route_rank": 5
+    },
+    {
+      "clip_id": "T1",
+      "duration_s": 4.0,
+      "subject": "hot-air balloons at sunrise",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-08-14T05:50:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Göreme, Nevşehir",
+          "provenance": "geocode"
+        }
+      ],
+      "route_rank": 1
+    },
+    {
+      "clip_id": "T8",
+      "duration_s": 3.0,
+      "subject": "testi kebab being cracked open",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-08-15T19:30:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Göreme, Nevşehir",
+          "provenance": "geocode"
+        }
+      ],
+      "route_rank": 8
+    },
+    {
+      "clip_id": "T4",
+      "duration_s": 3.0,
+      "subject": "walk through a rock valley",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-08-14T14:00:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Göreme, Nevşehir",
+          "provenance": "geocode"
+        }
+      ],
+      "route_rank": 4
+    },
+    {
+      "clip_id": "T3",
+      "duration_s": 3.5,
+      "subject": "castle rock above the town",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-08-14T11:00:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Uçhisar, Nevşehir",
+          "provenance": "geocode"
+        }
+      ],
+      "route_rank": 3
+    },
+    {
+      "clip_id": "T6",
+      "duration_s": 2.5,
+      "subject": "pottery workshop",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-08-15T10:15:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Avanos, Nevşehir",
+          "provenance": "geocode"
+        }
+      ],
+      "route_rank": 6
+    }
+  ]
+}

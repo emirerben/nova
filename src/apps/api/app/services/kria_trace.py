@@ -12,7 +12,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -61,6 +61,38 @@ def _percentile(values: list[int], percentile: float) -> int | None:
     ordered = sorted(values)
     index = max(0, min(len(ordered) - 1, int((len(ordered) * percentile) + 0.999999) - 1))
     return ordered[index]
+
+
+async def find_thread_link(
+    db: AsyncSession,
+    *,
+    plan_item_id: uuid.UUID | None = None,
+    job_id: uuid.UUID | None = None,
+) -> tuple[str, int] | None:
+    """Return ``(thread_id, runtime_version)`` for the thread that owns a plan item / job.
+
+    Read-only, additive debug correlation so an operator can go from a job or item
+    to its creation thread without parsing storage paths. ``None`` when no thread
+    points at either id (legacy/non-chat items).
+    """
+    conditions = []
+    if plan_item_id is not None:
+        conditions.append(CreationThread.active_plan_item_id == plan_item_id)
+    if job_id is not None:
+        conditions.append(CreationThread.active_job_id == job_id)
+    if not conditions:
+        return None
+    row = (
+        await db.execute(
+            select(CreationThread.id, CreationThread.runtime_version)
+            .where(or_(*conditions))
+            .order_by(CreationThread.updated_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return None
+    return str(row[0]), int(row[1])
 
 
 async def resolve_kria_trace(

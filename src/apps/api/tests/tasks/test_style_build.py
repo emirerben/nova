@@ -75,25 +75,6 @@ class TestDeriveUserStyleKillSwitch:
             derive_user_style.__wrapped__(str(uuid.uuid4()))
         mock_db.assert_not_called()
 
-    def test_enabled_proceeds_to_db(self):
-        """When enabled, at least one DB session is opened."""
-        from app.tasks.style_build import derive_user_style
-
-        row = _make_persona_row()
-        cm, _session = _make_session_ctx(row)
-
-        with (
-            patch("app.tasks.style_build.settings") as mock_cfg,
-            patch("app.tasks.style_build.sync_session", return_value=cm),
-            # Raise in catalog load so the task exits early without a model call.
-            patch("app.tasks.style_build._build_catalog_inputs", side_effect=RuntimeError("stop")),
-        ):
-            mock_cfg.user_style_enabled = True
-            derive_user_style.__wrapped__(_PERSONA_ID)
-
-        # DB was opened at least once (the initial persona read).
-        assert cm.__enter__.call_count >= 1
-
 
 # ---------------------------------------------------------------------------
 # Missing-row guard

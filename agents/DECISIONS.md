@@ -2491,3 +2491,52 @@ that doesn't touch git, so nothing forced fly.toml to be revisited when prod's r
 changed. There's no automated check tying `min_machines_running` to the live scale count;
 that drift is now findable only by reading this entry or noticing another `[[services]]`
 comment says "single-replica" while `fly scale show` says otherwise.
+
+## [2026-09-24] CLAUDE.md flag detail moved out to stay under the 38k budget (KRI-185)
+
+CLAUDE.md hit 38,000/38,000 chars while KRI-185 lanes each needed a flag line. The eight longest env-var lines were shortened to invariants + guard names; their full original text is preserved verbatim below.
+
+- `EDITORIAL_SEQUENCE_ENABLED` — defaults to `true`. Editorial (cluster) variants with audible, coherent original speech render the transcript-synced typographic sequence (`phrase_sequence.py` + `SequenceEmphasisAgent` + `EDITORIAL_STYLE`); otherwise RHYTHM MODE paces an agent-authored quote (`SequenceQuoteWriterAgent`; agent failure ⇒ static cluster, never heuristic). `false` ⇒ legacy single static cluster, byte-identical. Guards: `tests/tasks/test_generative_build_sequence.py`. Apply: `fly secrets set EDITORIAL_SEQUENCE_ENABLED=false --app nova-video` + `fly machine restart <id>`.
+
+- `SOUND_EFFECTS_ENABLED` / `MEDIA_OVERLAYS_ENABLED` — both default **`false`**. Gate the SFX-lane and overlay-lane write/render routes in `routes/plan_items.py` (404 when off); public `GET /sound-effects` stays ungated (picker loads). Caption archetypes (subtitled/narrated) carry both lanes; every caption reburn re-applies persisted lanes (`docs/pipelines/generative.md`). **Dual-flag trap:** frontend lanes use the `NEXT_PUBLIC_` twins (Vercel); frontend on + backend off ⇒ saves 404. Keep Fly + Vercel in sync. Apply: `fly secrets set SOUND_EFFECTS_ENABLED=true --app nova-video` + `fly machine restart <id>` (api + worker).
+
+- `FULLSCREEN_CUTAWAYS_ENABLED` — defaults **`false`**. Gates the AI fullscreen branch (`build_suggestions` slot `"full"` → `display_mode="fullscreen"` cover-crop takeover). Dual-flag with `NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED` (Vercel; gates the MANUAL promote affordances): **Fly first, then Vercel** — new web + OLD api silently bakes manual fullscreen as pip. Render rollback = `MEDIA_OVERLAYS_ENABLED`. Guards: `tests/test_overlay_fullscreen_rules.py`, dual preset pins in `tests/test_media_overlay_command.py`. Narrative: agents/DECISIONS.md "Kill-switch incidents"; plans/009.
+
+- `SUBTITLED_TEXT_LANE_ENABLED` — defaults **`false`**. Styled-text lane on subtitled variants: text burns (Skia) onto the caption-free base FIRST, captions LAST via `_compose_subtitled_final`; every fast-reburn mints a NEW GCS key + deletes the old (CDN staleness). Dual-flag with `NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED` (Vercel). Fly first, then Vercel. Apply: `fly secrets set SUBTITLED_TEXT_LANE_ENABLED=true --app nova-video` + `fly machine restart <id>` (api + worker). Internals: `docs/pipelines/generative.md`.
+
+- `SUBTITLED_ARCHETYPE_ENABLED` — **ON in prod** (code default `false`). Gates the subtitled single-clip edit style (talk-to-camera clip → auto-language captions, editable, sentence-per-cue; TR/EN). Off ⇒ montage. Dual-flag with `NEXT_PUBLIC_SUBTITLED_ENABLED` (Vercel, also ON) — build-time inlined, so a change needs a `vercel --prod` rebuild. Companions: `SUBTITLED_CAPTION_CORRECTION_ENABLED` (default `true`) + `CAPTION_CORRECTION_MODEL` (default `gpt-4o`). Rollback: `fly secrets set SUBTITLED_ARCHETYPE_ENABLED=false` (api + worker) + `vercel env rm NEXT_PUBLIC_SUBTITLED_ENABLED production` + `vercel --prod`.
+
+- `NARRATED_SELF_NARRATION_ENABLED` — defaults **`false`**. Narrated items generate WITHOUT a recorded voiceover when the footage's own audio carries the voice: 1 clip → `subtitled` (captions), 2+ → `talking_head` (speech spine); no speech → montage + reason persisted on `assembly_plan["archetype_fallback"]` (item-page banner). SOLE gate — deliberately bypasses the two archetype flags above. Dual-flag `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED` (Vercel); flip Fly first. Voiceover, when recorded, still wins (narrated archetype unchanged). Guards: flag-off pins in `tests/tasks/test_generative_dispatch.py`.
+
+- `POSTER_ONDEMAND_REPAIR_ENABLED` / `POSTER_REPAIR_QUEUE` — default **`false`** / `celery`. `POST /me/jobs/posters/refresh` stops being a pure re-signer and enqueues `tasks.repair_job_poster` (`app/tasks/poster_repair.py`) to mint a missing library poster; off is byte-identical. **Set the queue FIRST** — the task downloads a full MP4 + runs ffmpeg, so prod needs `autoplace-jobs` (2GB), never the 1GB `light`/Beat machine. Guards: `tests/tasks/test_poster_repair.py`, `tests/routes/test_me_jobs.py`. Narrative + apply order: agents/DECISIONS.md "Storage retention incidents".
+
+- `SILENCE_CUT_ENABLED` / `RETAKE_CUT_ENABLED` — default `false`; speech paths only, fail-open. Removal-cap lever `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED` (default `1.0`) + `DETECTOR_VERSION` are in the policy fingerprint — a flip retires analyses, re-consents, reshuffles cohorts. **"cleanup cut a word" is a guard bug, not this lever** — use the kill switch. Full narrative + triage: `docs/runbooks/chat-speech-cleanup-rollout.md`. Pins `test_silence_cut*.py` (`TestRuleZeroCannotCutRealSpeech`); plans/010/019/021.
+
+## [2026-09-24] One montage plan: phone montage compiles through the guided fast-montage format (KRI-190)
+
+Context. A v2 phone approval reaches the worker with no `guided_edit`, so the plain
+phone-montage lane ran. It rejected every portrait-canvas job at the item's default
+`landscape_fit="fit"` (job 94c4c865, `phone_plan_unsupported`), ignored the brief, and
+could not take a chat text edit.
+
+Decision. Behind `MONTAGE_UNIFIED_PLAN_ENABLED`, build the guided plan in the worker
+deterministically (`app/pipeline/unified_montage.py`) and reuse `_run_phone_guided_job`,
+instead of running the item-locked `draft_edit_proposal` Celery flow (LLM planner,
+async approval, second Job mint) inside the render worker. The planner reuses
+`FastMontageCut`, `EditProposalSnapshot`, the strict compiler and the P3 capture
+ordering; the new logic is only order/label/reading-time/title. Per-clip text is a new
+snapshot field (`clip_labels`) rather than `montage_text_bindings` because bindings cap
+at 12 sources, are suppressed by an opening title, and `shot_labels` are ignored for
+fast montage.
+
+Consequences. Readable text beats a requested length; an ungrounded label is dropped
+and the receipt says partial. A montage with nothing to title with is titled with the
+`Montage` (never a model-authored hook, never unrequested place text). The unified
+`guided_edit` carries no minted `generation_attempt_id`: a v2 session that dispatched
+without a proposal has none, and the render projection drops a job whose attempt id
+differs. Deliberate deviation from the wave-2 amendment: the planner is a new
+deterministic one rather than `draft_edit_proposal` (item-locked, async Celery flow).
+Behaviour change vs the plain lane: no matched music bed, beat-snap or hero intro; the
+render keeps source audio only. Fraunces lacks
+"→", so the planner selects a font that covers every string. Old lane deletion is a
+follow-up after a device visual comparison.

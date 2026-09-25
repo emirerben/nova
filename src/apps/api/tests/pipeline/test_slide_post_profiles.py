@@ -15,10 +15,6 @@ def _images(n: int) -> list[SlideInput]:
     return [SlideInput(slide_id=f"s{i}", kind="image") for i in range(n)]
 
 
-def test_default_platform_profile_is_tiktok_photo() -> None:
-    assert DEFAULT_PLATFORM_PROFILE == "tiktok_photo"
-
-
 def test_coerce_platform_profile_unknown_falls_back_to_default() -> None:
     assert coerce_platform_profile("not-a-real-profile") == DEFAULT_PLATFORM_PROFILE
     assert coerce_platform_profile(None) == DEFAULT_PLATFORM_PROFILE

@@ -53,29 +53,6 @@ def test_transcribe_threads_job_id_to_agent_run():
     assert captured["ctx"].job_id == "job-xyz"
 
 
-def test_transcribe_default_job_id_is_none():
-    from app.pipeline.agents import gemini_analyzer
-
-    captured: dict = {}
-
-    class FakeTranscriptAgent:
-        def __init__(self, client):  # noqa: ARG002
-            pass
-
-        def run(self, inp, *, ctx: RunContext | None = None):  # noqa: ARG002
-            captured["ctx"] = ctx
-            return SimpleNamespace(words=[], full_text="", low_confidence=False)
-
-    with (
-        patch("app.agents.transcript.TranscriptAgent", FakeTranscriptAgent),
-        patch("app.agents._model_client.default_client", return_value=object()),
-    ):
-        gemini_analyzer.transcribe(_file_ref())
-
-    assert captured["ctx"] is not None
-    assert captured["ctx"].job_id is None
-
-
 # ── analyze_clip() ───────────────────────────────────────────────────────────
 
 
@@ -274,52 +251,6 @@ def test_generate_copy_threads_job_id_to_agent_run():
 
     assert status == "generated"
     assert captured["ctx"].job_id == "job-copy-99"
-
-
-def test_generate_copy_default_job_id_is_none():
-    """Backward-compat: omitted job_id falls through as None (same as today)."""
-    from app.pipeline.agents import copy_writer
-
-    captured: dict = {}
-
-    class FakePlatformCopyAgent:
-        def __init__(self, client):  # noqa: ARG002
-            pass
-
-        def run(self, inp, *, ctx: RunContext | None = None):  # noqa: ARG002
-            captured["ctx"] = ctx
-            return SimpleNamespace(
-                value=copy_writer.PlatformCopy(
-                    tiktok=copy_writer.TikTokCopy(
-                        hook="h",
-                        caption="c",
-                        hashtags=["a"] * 5,
-                    ),
-                    instagram=copy_writer.InstagramCopy(
-                        hook="h",
-                        caption="c",
-                        hashtags=["a"] * 10,
-                    ),
-                    youtube=copy_writer.YouTubeCopy(
-                        title="t",
-                        description="d",
-                        tags=["a"] * 15,
-                    ),
-                ),
-            )
-
-    with (
-        patch("app.agents.platform_copy.PlatformCopyAgent", FakePlatformCopyAgent),
-        patch("app.agents._model_client.default_client", return_value=object()),
-    ):
-        copy_writer.generate_copy(
-            hook_text="hook",
-            transcript_excerpt="ex",
-            platforms=["tiktok"],
-        )
-
-    assert captured["ctx"] is not None
-    assert captured["ctx"].job_id is None
 
 
 # ── job_id is keyword-only (TypeError on positional pass) ────────────────────

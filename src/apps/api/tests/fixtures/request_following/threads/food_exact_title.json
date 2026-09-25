@@ -1,0 +1,85 @@
+{
+  "fixture_id": "food_exact_title",
+  "provenance": "authored",
+  "footage": "food_day",
+  "description": "Exact title with Turkish characters: NFC-preserved, never ASCII-folded.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Make a Sunday food-day video and call it exactly \"Kadıköy'de Pazar\".",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "title",
+      "kind": "text",
+      "scope": "title",
+      "request_type": "title_exact",
+      "checker": "title_exact",
+      "params": {
+        "literal": "Kadıköy'de Pazar"
+      },
+      "source": "Make a Sunday food-day video and call it exactly \"Kadıköy'de Pazar\".",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "F1",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "clip_id": "F2",
+          "start_s": 3.0,
+          "end_s": 5.5
+        },
+        {
+          "clip_id": "F3",
+          "start_s": 5.5,
+          "end_s": 9.0
+        },
+        {
+          "clip_id": "F4",
+          "start_s": 9.0,
+          "end_s": 12.0
+        },
+        {
+          "clip_id": "F5",
+          "start_s": 12.0,
+          "end_s": 14.5
+        },
+        {
+          "clip_id": "F6",
+          "start_s": 14.5,
+          "end_s": 16.5
+        },
+        {
+          "clip_id": "F7",
+          "start_s": 16.5,
+          "end_s": 20.0
+        },
+        {
+          "clip_id": "F8",
+          "start_s": 20.0,
+          "end_s": 23.0
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Kadıköy'de Pazar",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 23.0
+    },
+    "reply": "Titled it \"Kadıköy'de Pazar\" and cut the day in the order you ate it."
+  }
+}

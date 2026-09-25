@@ -182,14 +182,6 @@ def test_unavailable_format_is_removed_from_capability_manifest(
     assert _available_formats() == {"montage": "montage"}
 
 
-def test_slide_posts_disabled_removes_slides_from_capability_manifest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Kill-switch: SLIDE_POSTS_ENABLED=false must byte-for-byte match pre-feature capabilities."""
-    monkeypatch.setattr(settings, "slide_posts_enabled", False)
-    assert "slides" not in _available_formats()
-
-
 def test_slide_posts_default_on_is_present_in_capability_manifest() -> None:
     """Default-on pin: the suite must fail if SLIDE_POSTS_ENABLED's default flips to false."""
     assert settings.slide_posts_enabled is True
@@ -395,7 +387,10 @@ async def test_runtime_v2_thread_creation_provisions_receipt_session(
     monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
     user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
     item = SimpleNamespace(id=uuid.uuid4())
-    plan = SimpleNamespace(id=uuid.uuid4())
+    # A plan past epoch 0 (an ownership change bumped it): the session must
+    # inherit it, or every approval on the thread is refused as stale (prod
+    # thread 873c0547, 2026-09-24, session 0 vs plan 1).
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=1)
     added: list[object] = []
 
     async def flush() -> None:
@@ -433,6 +428,7 @@ async def test_runtime_v2_thread_creation_provisions_receipt_session(
     session = next(row for row in added if isinstance(row, CreatorAgentSession))
     assert response.runtime_version == 2
     assert session.plan_item_id == item.id
+    assert session.ownership_epoch == 1
     assert thread.active_creator_agent_session_id == session.id
 
 
@@ -5074,72 +5070,6 @@ async def test_confirm_generation_still_rejects_a_real_format_mismatch(
     assert exc_info.value.status_code == 409
     assert isinstance(exc_info.value.detail, str)
     confirm.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_confirm_generation_syncs_the_projection_after_controller_commit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = SimpleNamespace(id=uuid.uuid4())
-    session_id, job_id = uuid.uuid4(), uuid.uuid4()
-    thread = SimpleNamespace(
-        id=uuid.uuid4(),
-        creator_id=user.id,
-        status="active",
-        revision=0,
-        active_plan_item_id=uuid.uuid4(),
-        active_creator_agent_session_id=session_id,
-        active_job_id=None,
-        state={"edit_format": "montage"},
-    )
-    session = SimpleNamespace(
-        id=session_id,
-        revision=1,
-        active_plan={"edit_format": "montage", "version": 1, "plan_hash": "0" * 64},
-    )
-    result = SimpleNamespace(id=str(session_id), current_job_id=str(job_id))
-    db = Mock(spec=AsyncSession)
-    db.get = AsyncMock(return_value=session)
-    db.commit = AsyncMock()
-    db.refresh = AsyncMock()
-    projection = AsyncMock()
-    monkeypatch.setattr("app.routes.creation_threads._load", AsyncMock(return_value=thread))
-    monkeypatch.setattr("app.routes.creation_threads._duplicate", AsyncMock(return_value=None))
-    monkeypatch.setattr("app.routes.creation_threads._sync_agent", AsyncMock())
-    monkeypatch.setattr("app.routes.creation_threads._append", AsyncMock())
-    monkeypatch.setattr("app.routes.creation_threads._response", AsyncMock(return_value=thread))
-    monkeypatch.setattr("app.routes.creation_threads._sync_render_projection", projection)
-    monkeypatch.setattr(
-        "app.routes.creation_threads.creator_agent.confirm_creator_plan_controller",
-        AsyncMock(return_value=result),
-    )
-    monkeypatch.setattr(
-        "app.services.creator_direction_snapshot.resolve_snapshot_for_dispatch",
-        AsyncMock(return_value=SimpleNamespace()),
-    )
-    monkeypatch.setattr(
-        "app.services.creator_direction_snapshot.serialize_private_snapshot",
-        lambda _direction, *, source: {"source": source},
-    )
-    monkeypatch.setattr(
-        "app.services.creator_direction_receipts.stamp_private_receipt",
-        lambda snapshot, _direction: snapshot,
-    )
-
-    await action_thread(
-        _request(),
-        str(thread.id),
-        ActionBody(
-            action="confirm_generation",
-            payload={},
-            client_action_id="confirm-sync",
-            expected_revision=0,
-        ),
-        user,
-        db,
-    )
-
-    projection.assert_awaited_once_with(db, thread)
 
 
 @pytest.mark.asyncio

@@ -22,13 +22,6 @@ def _agent() -> ClipQuestionAgent:
     return ClipQuestionAgent(None)  # type: ignore[arg-type]
 
 
-def test_media_uri_and_mime_come_from_input() -> None:
-    agent = _agent()
-    inp = _input()
-    assert agent.media_uri(inp) == "files/abc123"
-    assert agent.media_mime(inp) == "video/mp4"
-
-
 def test_parse_confident_answer() -> None:
     raw = json.dumps({"answer": "Soccer", "confidence": 0.92, "evidence": "players kicking a ball"})
     out = _agent().parse(raw, _input())

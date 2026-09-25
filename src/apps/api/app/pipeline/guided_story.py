@@ -1354,6 +1354,75 @@ def _text_elements(
             ).model_dump(mode="json", exclude_none=True)
         ]
 
+    # KRI-190: per-clip text is a standard lane of a fast montage. Each label
+    # lives for its clip's whole cut (the planner sized the cut to the label's
+    # reading time) at the bottom, so it coexists with an opening title at the
+    # top. Only snapshots that carry `clip_labels` reach this branch; every
+    # earlier snapshot keeps its projection byte-for-byte.
+    if (
+        snapshot.clip_labels is not None
+        and snapshot.direction == "fast_montage"
+        and snapshot.fast_cuts
+        and snapshot.narration is None
+    ):
+        label_by_source = {label.media_id: label.text for label in snapshot.clip_labels}
+        label_elements: list[dict] = []
+        title_elements: list[dict] = []
+        if snapshot.opening_title:
+            title_elements.append(
+                TextElement(
+                    id="guided-title",
+                    text=snapshot.opening_title,
+                    start_s=0.0,
+                    end_s=title_end,
+                    role="generative_intro",
+                    position="custom",
+                    x_frac=0.5,
+                    y_frac=0.16,
+                    font_family=snapshot.font_family or "Fraunces",
+                    size_px=76,
+                    color=snapshot.text_color or "#FFF8F0",
+                    highlight_color="#D9FF70",
+                    stroke_width=0,
+                    shadow_enabled=True,
+                    shadow_style="standard",
+                    effect="static",
+                    alignment="center",
+                    max_width_frac=0.84,
+                ).model_dump(mode="json", exclude_none=True)
+            )
+        for cut, window in zip(snapshot.fast_cuts, beat_windows, strict=True):
+            label = label_by_source.get(cut.media_id)
+            if not label:
+                continue
+            label_elements.append(
+                TextElement(
+                    id=f"clip-label-{cut.cut_id}",
+                    text=label,
+                    start_s=round(float(window["start_s"]), 3),
+                    end_s=round(float(window["end_s"]), 3),
+                    role="generative_intro",
+                    position="custom",
+                    x_frac=0.5,
+                    y_frac=0.78,
+                    font_family=snapshot.font_family or "Fraunces",
+                    size_px=58,
+                    color=snapshot.text_color or "#FFF8F0",
+                    highlight_color="#D9FF70",
+                    stroke_width=0,
+                    shadow_enabled=True,
+                    shadow_style="standard",
+                    effect="static",
+                    alignment="center",
+                    max_width_frac=0.82,
+                ).model_dump(mode="json", exclude_none=True)
+            )
+        return [
+            *title_elements,
+            *label_elements,
+            *closing_elements(fast=True, effect="static"),
+            *_narration_caption_elements(snapshot),
+        ]
     # Explicit Main Creator copy is immutable. Specialist montage bindings are
     # advisory and must not replace a confirmed title with generated words.
     # Narrated plans use grounded labels and timed captions. Advisory montage

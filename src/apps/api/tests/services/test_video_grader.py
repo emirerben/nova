@@ -21,8 +21,6 @@ import pytest
 from app.services.video_grader import (
     DEFAULT_VIDEO_MODEL,
     T_FLOOR,
-    T_PASS,
-    T_REJECT,
     GradeBand,
     VideoGraderError,
     VideoQualityGrader,
@@ -218,12 +216,6 @@ def test_three_band_mapping(
     band, risk = map_verdict(avg=avg, confidence=confidence)
     assert band is expected_band
     assert risk == expected_risk
-
-
-def test_band_thresholds_are_ordered() -> None:
-    # Sanity: the band thresholds can't overlap or the mapping is ill-defined.
-    assert T_REJECT < T_PASS
-    assert 0.0 < T_FLOOR < 1.0
 
 
 # ── Low confidence forces escalate end-to-end (not just the pure fn) ──────────

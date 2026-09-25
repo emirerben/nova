@@ -10,7 +10,8 @@ Covers the two `app/routes/generative_jobs.py` edit points this step owns:
 2. `_variants_for_response` / `_native_editor_assets` — lazily backfill
    `sound_effects`/`media_overlays` for a subtitled device variant from the
    pinned recipe (`project_phone_subtitled_editor_sections`) whenever the
-   variant hasn't persisted them yet (i.e. never Saved through the editor).
+   variant hasn't persisted them yet (i.e. never Saved through the editor),
+   while at least one lane is open (`_phone_subtitled_editor_lanes_open`).
 
 `app/services/phone_subtitled_editor.py` owns `is_phone_subtitled_editor_variant`
 / `project_phone_subtitled_editor_sections` and `app/services/phone_rollout.py`
@@ -25,7 +26,7 @@ import uuid
 from types import SimpleNamespace
 
 import app.routes.generative_jobs as gj
-from tests.routes.test_editor_commit import _arm_every_editor_lane, _job
+from tests.routes.test_editor_commit import _arm, _arm_every_editor_lane, _job
 
 _PHONE_CLOSED = {"editable": False, "reason": "phone_edit_unsupported"}
 
@@ -166,6 +167,18 @@ def _subtitled_device_variant(**extra) -> dict:
     }
 
 
+def _open_lanes(monkeypatch) -> dict:
+    """Flag on AND a lane the clamped capability map leaves editable (the SFX
+    and overlay kill switches on, a rendered video): lanes only project while
+    iOS hydrates the Talking source clip (`_phone_subtitled_editor_lanes_open`;
+    closed-lane drops live in `test_phone_subtitled_editor_rollback.py`).
+    Returns a ready variant."""
+    _arm(monkeypatch)
+    monkeypatch.setattr(gj, "is_phone_subtitled_editor_variant", lambda v: True)
+    monkeypatch.setattr(gj, "phone_subtitled_editor_lanes_supported", lambda: True)
+    return _subtitled_device_variant(video_path="jobs/phone/subtitled.mp4")
+
+
 def test_variants_for_response_leaves_sections_absent_when_flag_off(monkeypatch):
     job = SimpleNamespace(
         id=uuid.uuid4(), assembly_plan={"variants": [_subtitled_device_variant()]}
@@ -184,11 +197,7 @@ def test_variants_for_response_leaves_sections_absent_when_flag_off(monkeypatch)
 
 
 def test_variants_for_response_fills_missing_sections_from_projection(monkeypatch):
-    job = SimpleNamespace(
-        id=uuid.uuid4(), assembly_plan={"variants": [_subtitled_device_variant()]}
-    )
-    monkeypatch.setattr(gj, "is_phone_subtitled_editor_variant", lambda v: True)
-    monkeypatch.setattr(gj, "phone_subtitled_editor_lanes_supported", lambda: True)
+    job = SimpleNamespace(id=uuid.uuid4(), assembly_plan={"variants": [_open_lanes(monkeypatch)]})
     monkeypatch.setattr(gj, "signed_get_url", lambda p, ttl=None: f"https://signed/{p}")
     sfx = [{"id": "sfx-1", "src_gcs_path": "sound-effects/pop/a.wav", "at_s": 1.0, "gain": 0.8}]
     overlays = [
@@ -220,14 +229,13 @@ def test_variants_for_response_never_overwrites_a_present_key(monkeypatch):
         id=uuid.uuid4(),
         assembly_plan={
             "variants": [
-                _subtitled_device_variant(
-                    sound_effects=[{"id": "existing", "src_gcs_path": "sound-effects/x.wav"}]
-                )
+                {
+                    **_open_lanes(monkeypatch),
+                    "sound_effects": [{"id": "existing", "src_gcs_path": "sound-effects/x.wav"}],
+                }
             ]
         },
     )
-    monkeypatch.setattr(gj, "is_phone_subtitled_editor_variant", lambda v: True)
-    monkeypatch.setattr(gj, "phone_subtitled_editor_lanes_supported", lambda: True)
     overlays = [{"id": "card-1", "kind": "image", "src_gcs_path": "users/u/plan/p/card.png"}]
     monkeypatch.setattr(
         gj,
@@ -279,8 +287,7 @@ def test_variants_for_response_ignores_non_subtitled_device_variants(monkeypatch
 
 
 def test_native_editor_assets_include_derived_phone_lane_rows(monkeypatch):
-    monkeypatch.setattr(gj, "is_phone_subtitled_editor_variant", lambda v: True)
-    monkeypatch.setattr(gj, "phone_subtitled_editor_lanes_supported", lambda: True)
+    variant = _open_lanes(monkeypatch)
     monkeypatch.setattr(
         gj,
         "project_phone_subtitled_editor_sections",
@@ -296,9 +303,7 @@ def test_native_editor_assets_include_derived_phone_lane_rows(monkeypatch):
             ],
         },
     )
-    job = SimpleNamespace(
-        id=uuid.uuid4(), assembly_plan={"variants": [_subtitled_device_variant()]}
-    )
+    job = SimpleNamespace(id=uuid.uuid4(), assembly_plan={"variants": [variant]})
 
     assets = gj._native_editor_assets(
         job, "subtitled", sign_url=lambda path, ttl: f"https://signed/{path}"
@@ -359,8 +364,7 @@ def test_native_editor_assets_non_phone_lane_image_card_keeps_flag_gated_alpha(m
 
 
 def test_native_editor_assets_prefer_the_catalog_path_for_phone_lane_rows(monkeypatch):
-    monkeypatch.setattr(gj, "is_phone_subtitled_editor_variant", lambda v: True)
-    monkeypatch.setattr(gj, "phone_subtitled_editor_lanes_supported", lambda: True)
+    variant = _open_lanes(monkeypatch)
     monkeypatch.setattr(
         gj,
         "project_phone_subtitled_editor_sections",
@@ -376,9 +380,7 @@ def test_native_editor_assets_prefer_the_catalog_path_for_phone_lane_rows(monkey
             "media_overlays": [],
         },
     )
-    job = SimpleNamespace(
-        id=uuid.uuid4(), assembly_plan={"variants": [_subtitled_device_variant()]}
-    )
+    job = SimpleNamespace(id=uuid.uuid4(), assembly_plan={"variants": [variant]})
 
     assets = gj._native_editor_assets(
         job,
@@ -421,10 +423,29 @@ async def test_phone_subtitled_sfx_paths_reads_catalog_rows_only_for_derived_lan
     assert paths == {"pop": "sound-effects/pop/audio.m4a"}
     assert len(executed) == 1
 
-    # A variant that already persisted its sound lane (a Save happened) needs
-    # no lookup, and neither does one outside the gate.
-    persisted = _subtitled_device_variant(sound_effects=[])
-    assert await gj._phone_subtitled_sfx_paths(_DB(), job, persisted) == {}
+    # A persisted sound lane (a Save happened) is read as-is: empty, or rows
+    # that already carry the real catalog object, need no lookup...
+    real_row = {
+        "id": "sfx-1",
+        "sound_effect_id": "pop",
+        "src_gcs_path": "sound-effects/pop/audio.m4a",
+        "source": "phone_lane",
+    }
+    for rows in ([], [real_row]):
+        persisted = _subtitled_device_variant(sound_effects=rows)
+        assert await gj._phone_subtitled_sfx_paths(_DB(), job, persisted) == {}
+    assert len(executed) == 1
+    # ...but a row persisted with the synthetic placeholder is resolved (it
+    # used to return {} for any persisted list, so the placeholder got signed).
+    placeholder = _subtitled_device_variant(
+        sound_effects=[{**real_row, "src_gcs_path": "sound-effects/pop/pop"}]
+    )
+    assert await gj._phone_subtitled_sfx_paths(_DB(), job, placeholder) == {
+        "pop": "sound-effects/pop/audio.m4a"
+    }
+    assert len(executed) == 2
+    # Nothing is looked up outside the gate.
     monkeypatch.setattr(gj, "phone_subtitled_editor_lanes_supported", lambda: False)
     assert await gj._phone_subtitled_sfx_paths(_DB(), job, _subtitled_device_variant()) == {}
-    assert len(executed) == 1
+    assert await gj._phone_subtitled_sfx_paths(_DB(), job, placeholder) == {}
+    assert len(executed) == 2

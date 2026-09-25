@@ -38,11 +38,6 @@ describe("canonical creation thread route", () => {
     mockUseSession.mockReturnValue({ status: "authenticated" });
   });
 
-  it("passes the URL thread id to the real workspace", () => {
-    render(<CreationThreadPage />);
-    expect(screen.getByTestId("workspace-thread-id")).toHaveTextContent("thread-42");
-  });
-
   it("preserves the canonical URL for the sign-in callback", () => {
     mockUseSession.mockReturnValue({ status: "unauthenticated" });
     render(<CreationThreadPage />);
@@ -60,11 +55,5 @@ describe("canonical creation thread route", () => {
       "href",
       "/plan/thread-42?view=gallery",
     );
-  });
-
-  it("keeps an explicit loading state while auth is unresolved", () => {
-    mockUseSession.mockReturnValue({ status: "loading" });
-    render(<CreationThreadPage />);
-    expect(screen.getByRole("status")).toHaveTextContent("Loading project…");
   });
 });

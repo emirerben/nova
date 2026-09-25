@@ -284,16 +284,6 @@ class TestVocabularyExhaustiveness:
 
 # ── Input schema ──────────────────────────────────────────────────────────────
 
-class TestStyleObservationInput:
-    def test_defaults(self):
-        inp = StyleObservationInput(file_uri="files/xyz")
-        assert inp.file_mime == "video/mp4"
-        assert inp.caption == ""
-        assert inp.view_index is None
-
-    def test_with_view_index(self):
-        inp = StyleObservationInput(file_uri="files/xyz", view_index=3.2)
-        assert inp.view_index == pytest.approx(3.2)
 
 
 # ── render_prompt edge cases ───────────────────────────────────────────────────

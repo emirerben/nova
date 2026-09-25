@@ -71,11 +71,44 @@ timestamps, tool names, and opaque identities, but no creator message, prompt,
 transcript, draft body, media path, or signed URL. The dry run lists exact safe
 recovery actions and performs no mutation or broker publish.
 
+The generic reply "I couldn't finish that step, but your project and saved draft
+are safe" is an `assistant_error` event: `run_kria_turn` raised before any tool
+receipt, so the turn ends `failed` with `error.code = runtime_turn_failed` and
+the traceback sits in the `light` process group's worker log (it consumes
+`agent-control`). A Main Creator attempt ending `terminal_output_truncated` ran
+out of `max_output_tokens` (8,192), which Gemini 3 thinking shares with the
+answer. A `kria_turn_lease_renewal_failed` warning is not a failure: the
+heartbeat retries on its next 5-second tick and the turn keeps planning.
+
+The same reply with `error.code = runtime_turn_claims_exhausted` means three
+runs of the turn ended without a result: each was killed at `run_kria_turn`'s
+time limit or lost its worker, so its planning lease lapsed. The reconciler (or
+a redelivered task that reaches the lapsed lease first) counts each lapse once
+in `creator_agent_turns.abandoned_claims`; a requeue after a thread-revision
+conflict and the reconciler's backoff stamp on a waiting pending turn do not
+count, so `lease_epoch` overstates it. The next claim fails the turn instead of
+planning it again, promotes the queued follow-up in the same transaction, and
+logs `kria_turn_claims_exhausted`. Look for the kills (`TimeLimitExceeded`,
+`WorkerLostError`) in the `light` worker log. Guards: the real-Postgres
+`test_turn_abandoned_three_times_fails_and_promotes_its_successor` and
+`test_turn_requeued_past_the_cap_and_stamped_while_waiting_is_still_claimed`.
+
 ## Adding a tool or recovery
 
 - Add tools through `app.kria.registry.KRIA_TOOLS`; do not add prompt-only names.
 - Keep route functions to auth, input parsing, service call, and serialization.
 - Do not hold database locks during model, evidence, storage, or broker calls.
+- Each `run_kria_turn` plans inside a fresh `asyncio.run` loop. Open async DB
+  sessions on a per-call `NullPool` engine, as `_plan_with_live_agent` does,
+  never the shared `AsyncSessionLocal` pool: an asyncpg connection pooled by the
+  previous turn in the same Celery child fails with "attached to a different
+  loop". Guards: `test_consecutive_live_turns_in_one_worker_each_plan_on_their_own_engine`
+  (`tests/kria/test_runtime_v2.py`) and the real-Postgres
+  `test_live_planner_session_survives_consecutive_task_event_loops`.
+- Growing the Main Creator's output (plan schema, reaction beats) eats the same
+  budget as its thinking. Re-check `tests/agents/test_thinking_budget.py`, which
+  pins that a heavy-thinking plan fits and that the budget runs out before
+  `spec.timeout_s` (60 s).
 - Extend the checked tool snapshot and whole-turn replay fixture.
 - For prompt changes, bump the v2 `AgentSpec.prompt_version`, run structural
   replay evals, and run the required live judged fixtures before cohort rollout.

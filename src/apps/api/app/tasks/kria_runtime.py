@@ -15,9 +15,11 @@ from typing import Any
 import structlog
 from fastapi import HTTPException
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.config import settings
-from app.database import AsyncSessionLocal, sync_session
+from app.database import sync_session
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.brief import (
     BriefUpdate,
@@ -52,8 +54,10 @@ from app.models import (
 )
 from app.routes.generative_jobs import (
     EditorCommitRequest,
+    _find_variant,
     dispatch_apply_speech_cut_candidate,
     enqueue_editor_commit_render,
+    phone_subtitled_sfx_paths_sync,
     prepare_editor_commit,
 )
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
@@ -68,6 +72,10 @@ log = structlog.get_logger()
 _REPUBLISH_BACKOFF = timedelta(minutes=1)
 _APPROVAL_TTL = timedelta(minutes=30)
 _LEASE_HEARTBEAT_SECONDS = 5
+# A turn whose runs ended without a result this many times (killed at the task's
+# time limit, a lost worker) is failed instead of re-planned: every run can pay
+# for a Main Creator call, and the reconciler would republish it forever.
+_MAX_ABANDONED_CLAIMS = 3
 _DRAFT_BODY_RETENTION = timedelta(days=30)
 
 
@@ -76,6 +84,11 @@ class _Completion:
     committed: bool
     successor_turn_id: str | None = None
     requeue_turn_id: str | None = None
+
+
+@dataclass(frozen=True)
+class _ClaimsExhausted:
+    successor_turn_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -685,18 +698,33 @@ async def _plan_with_live_agent(
                 await asyncio.wait_for(stop.wait(), timeout=_LEASE_HEARTBEAT_SECONDS)
                 return
             except TimeoutError:
-                alive = await asyncio.to_thread(
-                    _renew_turn_lease,
-                    turn_id,
-                    lease_owner=lease_owner,
-                    lease_epoch=lease_epoch,
-                )
+                try:
+                    alive = await asyncio.to_thread(
+                        _renew_turn_lease,
+                        turn_id,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                    )
+                except Exception:  # noqa: BLE001 - the lease outlasts a missed renewal
+                    # Ending the heartbeat here would let the lease lapse mid-plan
+                    # and, re-raised in `finally`, replace a finished plan.
+                    log.warning(
+                        "kria_turn_lease_renewal_failed", turn_id=str(turn_id), exc_info=True
+                    )
+                    continue
                 if not alive:
                     return
 
+    # Each task run plans inside a fresh `asyncio.run` loop, and asyncpg
+    # connections cannot be shared across loops: a connection pooled by the
+    # previous turn in this Celery child fails its pre-ping with "attached to a
+    # different loop". Plan on an unpooled engine that lives for this loop only.
+    # Unpooled means the planner's rollbacks before model calls close the
+    # connection (a reconnect costs tens of ms against multi-second model calls).
+    engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
     heartbeat = asyncio.create_task(_heartbeat())
     try:
-        async with AsyncSessionLocal() as db:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
             return await plan_live_turn(
                 db,
                 thread_id=uuid.UUID(str(snapshot["thread_id"])),
@@ -706,7 +734,10 @@ async def _plan_with_live_agent(
             )
     finally:
         stop.set()
-        await heartbeat
+        try:
+            await heartbeat
+        finally:
+            await engine.dispose()
 
 
 def _append_sync_event(
@@ -759,7 +790,9 @@ def _owns_turn_lease(
     )
 
 
-def _claim(turn_id: uuid.UUID, lease_owner: str) -> tuple[dict[str, Any], str, int, int] | None:
+def _claim(
+    turn_id: uuid.UUID, lease_owner: str
+) -> tuple[dict[str, Any], str, int, int] | _ClaimsExhausted | None:
     """Claim briefly; no lock survives tool/model/storage/broker work."""
 
     if not settings.kria_runtime_v2_enabled:
@@ -782,6 +815,12 @@ def _claim(turn_id: uuid.UUID, lease_owner: str) -> tuple[dict[str, Any], str, i
             turn.completed_at = datetime.now(UTC)
             db.commit()
             return None
+        if expired_read_lease:
+            # A redelivered task reached the lapsed lease before the reconciler
+            # reset it; the run that held it ended without a result.
+            turn.abandoned_claims = int(turn.abandoned_claims or 0) + 1
+        if int(turn.abandoned_claims or 0) >= _MAX_ABANDONED_CLAIMS:
+            return _fail_exhausted_turn(db, turn)
         turn.status = "planning"
         turn.lease_owner = lease_owner
         turn.lease_epoch = int(turn.lease_epoch or 0) + 1
@@ -911,21 +950,28 @@ def _complete_read_turn(
     return _Completion(committed=True, successor_turn_id=successor_turn_id)
 
 
+def _lock_queued_successor(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread_id: uuid.UUID,
+) -> CreatorAgentTurn | None:
+    return (
+        db.execute(
+            select(CreatorAgentTurn)
+            .where(
+                CreatorAgentTurn.thread_id == thread_id,
+                CreatorAgentTurn.status == "queued",
+            )
+            .order_by(CreatorAgentTurn.created_at, CreatorAgentTurn.id)
+            .with_for_update()
+        )
+        .scalars()
+        .first()
+    )
+
+
 def _promote_queued_successor_sync(thread_id: uuid.UUID) -> str | None:
     with sync_session() as db:
-        successor = (
-            db.execute(
-                select(CreatorAgentTurn)
-                .where(
-                    CreatorAgentTurn.thread_id == thread_id,
-                    CreatorAgentTurn.status == "queued",
-                )
-                .order_by(CreatorAgentTurn.created_at, CreatorAgentTurn.id)
-                .with_for_update()
-            )
-            .scalars()
-            .first()
-        )
+        successor = _lock_queued_successor(db, thread_id)
         if successor is not None:
             # Turn -> Thread serializes this slot promotion with turn submit.
             db.execute(
@@ -934,6 +980,75 @@ def _promote_queued_successor_sync(thread_id: uuid.UUID) -> str | None:
             successor.status = "pending"
         db.commit()
         return str(successor.id) if successor is not None else None
+
+
+def _project_retryable_failure(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    turn: CreatorAgentTurn,
+    thread: CreationThread,
+    *,
+    code: str,
+) -> None:
+    """Fail a locked turn and tell the creator to retry; the caller commits."""
+
+    turn.status = "failed"
+    turn.error = {"code": code, "retryable": True, "recovery": "retry"}
+    turn.completed_at = datetime.now(UTC)
+    turn.lease_owner = None
+    turn.lease_expires_at = None
+    event = _append_sync_event(
+        db,
+        thread,
+        role="assistant",
+        event_type="assistant_error",
+        content=(
+            "I couldn't finish that step, but your project and saved draft are safe. "
+            "Try the request again."
+        ),
+        payload={
+            "turn_id": str(turn.id),
+            "code": code,
+            "retryable": True,
+            "recovery": "retry",
+            # Planning failed before a tool execution receipt existed.
+            # Keep this empty rather than inventing a receipt identity.
+            "receipt_ids": [],
+        },
+    )
+    turn.observed_event_id = event.id
+
+
+def _fail_exhausted_turn(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    turn: CreatorAgentTurn,
+) -> _ClaimsExhausted | None:
+    """Fail a locked turn that is out of claims and promote its successor.
+
+    One transaction, Turn -> successor Turn -> Thread (`CANONICAL_LOCK_ORDER`):
+    promoting separately could fail after the commit and strand the successor
+    `queued` behind a finished turn, where no sweep promotes it and every new
+    message is refused with `queued_successor_exists`.
+    """
+
+    successor = _lock_queued_successor(db, turn.thread_id)
+    thread = db.execute(
+        select(CreationThread).where(CreationThread.id == turn.thread_id).with_for_update()
+    ).scalar_one_or_none()
+    if thread is None:
+        return None
+    _project_retryable_failure(db, turn, thread, code="runtime_turn_claims_exhausted")
+    if successor is not None:
+        successor.status = "pending"
+    db.commit()
+    log.warning(
+        "kria_turn_claims_exhausted",
+        turn_id=str(turn.id),
+        thread_id=str(thread.id),
+        abandoned_claims=int(turn.abandoned_claims),
+        lease_epoch=int(turn.lease_epoch),
+        successor_turn_id=str(successor.id) if successor is not None else None,
+    )
+    return _ClaimsExhausted(str(successor.id) if successor is not None else None)
 
 
 def _fail_turn(
@@ -962,31 +1077,7 @@ def _fail_turn(
             ).scalar_one_or_none()
             if thread is None:
                 return None
-            turn.status = "failed"
-            turn.error = {"code": code, "retryable": True, "recovery": "retry"}
-            turn.completed_at = datetime.now(UTC)
-            turn.lease_owner = None
-            turn.lease_expires_at = None
-            event = _append_sync_event(
-                db,
-                thread,
-                role="assistant",
-                event_type="assistant_error",
-                content=(
-                    "I couldn't finish that step, but your project and saved draft are safe. "
-                    "Try the request again."
-                ),
-                payload={
-                    "turn_id": str(turn.id),
-                    "code": code,
-                    "retryable": True,
-                    "recovery": "retry",
-                    # Planning failed before a tool execution receipt existed.
-                    # Keep this empty rather than inventing a receipt identity.
-                    "receipt_ids": [],
-                },
-            )
-            turn.observed_event_id = event.id
+            _project_retryable_failure(db, turn, thread, code=code)
             db.commit()
         return _promote_queued_successor_sync(thread_id)
     except Exception:  # noqa: BLE001 - preserve the original task exception
@@ -1009,6 +1100,14 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     claimed = _claim(identifier, lease_owner)
     if claimed is None:
         return {"turn_id": turn_id, "status": "ignored"}
+    if isinstance(claimed, _ClaimsExhausted):
+        if claimed.successor_turn_id is not None:
+            run_kria_turn.apply_async(
+                args=[claimed.successor_turn_id],
+                task_id=claimed.successor_turn_id,
+                queue="agent-control",
+            )
+        return {"turn_id": turn_id, "status": "failed"}
     snapshot, user_message, lease_epoch, claimed_thread_revision = claimed
     try:
         if settings.main_creator_agent_enabled and snapshot.get("item_id"):
@@ -1452,6 +1551,13 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 )
                 device_variant = _is_device_variant(current_job, approval.target_variant_id)
                 try:
+                    # Inside the try: deriving the lanes re-validates the pinned
+                    # recipe, and a device recipe that fails is a refusal too.
+                    phone_sfx_catalog_paths = phone_subtitled_sfx_paths_sync(
+                        db,
+                        current_job,
+                        _find_variant(current_job, approval.target_variant_id) or {},
+                    )
                     editor_prep = prepare_editor_commit(
                         current_job,
                         approval.target_variant_id,
@@ -1459,6 +1565,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         user_id=str(thread.creator_id),
                         music_track=music_track,
                         plan_item_id=str(item.id),
+                        phone_sfx_catalog_paths=phone_sfx_catalog_paths,
                     )
                 except (HTTPException, ValueError, KeyError) as exc:
                     if not device_variant:
@@ -1922,6 +2029,52 @@ def _ready_variant(
     )
 
 
+def _unified_montage_review(
+    db: Any, thread: CreationThread, job: Job, default_text: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """Review text and receipts for a unified montage (KRI-190), or the default.
+
+    The receipts were computed by the render worker from what it actually put in
+    the plan (`plan_facts_from_unified_montage`), so the reply can only say what
+    was checked: what was met, what was partial and what could not be done. With
+    the Creative Brief off, no unified record, or nothing to report, this is the
+    unchanged default review.
+    """
+
+    record = (job.assembly_plan or {}).get("unified_montage")
+    if not isinstance(record, dict) or not record.get("requirement_receipts"):
+        return default_text, []
+    if not settings.creative_brief_for(thread.creator_id):
+        return default_text, []
+    brief = load_latest_brief_sync(db, thread.id)
+    if brief is None:
+        return default_text, []
+    if record.get("brief_version") != brief.version:
+        # The brief changed after the plan was made: its receipts describe the
+        # old wording, so say nothing about them.
+        return default_text, []
+    from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
+
+    receipts = []
+    for raw in record["requirement_receipts"]:
+        try:
+            receipts.append(RequirementReceipt.model_validate(raw))
+        except ValueError:
+            continue
+    live = {req.id: req for req in brief.live()}
+    receipts = [receipt for receipt in receipts if receipt.requirement_id in live]
+    if not receipts:
+        return default_text, []
+    checked = CreativeBrief(
+        version=brief.version,
+        requirements=[live[receipt.requirement_id] for receipt in receipts],
+    )
+    return (
+        reply_from_receipts(checked, receipts, summary=default_text),
+        [receipt.model_dump(mode="json") for receipt in receipts],
+    )
+
+
 def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | None]:
     """Settle one dispatched receipt from durable Job truth."""
 
@@ -2091,16 +2244,20 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     },
                 )
                 execution.observed_event_id = event.id
+                review_text, review_receipts = _unified_montage_review(
+                    db,
+                    thread,
+                    job,
+                    f"The {variant_id.replace('_', ' ')} cut is ready. "
+                    "The approved render finished; review the opening, pacing, and text, "
+                    "then tell me what you want changed.",
+                )
                 review = _append_sync_event(
                     db,
                     thread,
                     role="assistant",
                     event_type="assistant_review",
-                    content=(
-                        f"The {variant_id.replace('_', ' ')} cut is ready. "
-                        "The approved render finished; review the opening, pacing, and text, "
-                        "then tell me what you want changed."
-                    ),
+                    content=review_text,
                     payload={
                         "turn_id": str(turn.id),
                         "turn_value": "review",
@@ -2111,6 +2268,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                         "receipt_ids": [str(execution.id)],
                         "next_actions": ["review_cut", "request_revision"],
                         "schema_version": 2,
+                        **({"requirement_receipts": review_receipts} if review_receipts else {}),
                     },
                 )
                 turn.observed_event_id = review.id
@@ -2212,6 +2370,10 @@ def reconcile_kria_turns() -> dict[str, int]:
         # skip these locked rows, and a worker may still claim the pending row
         # immediately because broker delivery is the intended fast path.
         for turn in turns:
+            if turn.status == "planning":
+                # Its lease lapsed: the run was killed at the task's time limit
+                # or lost its worker. A pending row only waited for delivery.
+                turn.abandoned_claims = int(turn.abandoned_claims or 0) + 1
             turn.status = "pending"
             turn.lease_owner = None
             turn.lease_expires_at = database_now + _REPUBLISH_BACKOFF

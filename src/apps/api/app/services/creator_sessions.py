@@ -159,7 +159,8 @@ def _positive_duration_s(value: object) -> float | None:
 
 
 # Per-clip budget for the chat prompt: up to MAX_CREATOR_MEDIA_REFS clips share
-# one MainCreatorAgent call (35s timeout), so every free-text field is capped.
+# one MainCreatorAgent call (bounded by its `spec.timeout_s`), so every free-text
+# field is capped.
 CHAT_EVIDENCE_TRANSCRIPT_CHARS = 160
 CHAT_EVIDENCE_MAX_MOMENTS = 2
 CHAT_EVIDENCE_MAX_FACTS = 6

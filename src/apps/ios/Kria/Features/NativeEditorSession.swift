@@ -1302,6 +1302,8 @@ struct NativeEditorTemporaryVideo {
             return "This edit contains an effect that iPhone preview does not support yet."
         case NativeEditorRenderError.missingFont:
             return "A required font is missing from this app build. Update the app and try again."
+        case NativeEditorRenderError.missingVideoTrack:
+            return "This edit’s video can’t be previewed on iPhone yet."
         case SourceAssetError.missingOriginal, SourceAssetError.changedOriginal:
             return "The original video is unavailable on this iPhone. Open the edit on the device that imported it."
         default:
@@ -1348,6 +1350,7 @@ struct NativeEditorTemporaryVideo {
             sourceResolver = resolver
             guard !generation.isEmpty, pool.baseGeneration == generation else { throw APIError.conflict }
             let sources: [Int: ResolvedEditorSource]
+            var phoneTalkingIndex: Int?
             if let base = NativeEditorBaseSource(variant: previewVariant, document: document) {
                 #if DEBUG
                 NativePreviewDiagnostics.record("prepare-composite-base")
@@ -1368,11 +1371,24 @@ struct NativeEditorTemporaryVideo {
                 setAuthoritativeDuration(duration)
                 refreshDuration()
             } else {
+                phoneTalkingIndex = NativePhoneTalkingSource.sourceIndex(variant: previewVariant, document: document,
+                    pool: pool, lanesEditable: canEdit(.mediaOverlays) || canEdit(.soundEffects))
                 sources = try await resolver.resolve(pool, generation: generation,
-                    requiredIndices: Set(timelineClips.compactMap(\.sourceClipIndex)))
+                    requiredIndices: Set(timelineClips.compactMap(\.sourceClipIndex) + (phoneTalkingIndex.map { [$0] } ?? [])))
             }
             guard sequence == sourcePreviewSequence, !Task.isCancelled,
                   document.revision.baseGeneration == generation else { return }
+            if let phoneTalkingIndex {
+                guard let duration = sources[phoneTalkingIndex]?.asset.duration else { throw APIError.invalidResponse }
+                #if DEBUG
+                NativePreviewDiagnostics.record("phone-talking-source", fields: ["index": String(phoneTalkingIndex), "duration": String(duration)])
+                #endif
+                document = try NativePhoneTalkingSource.hydrate(document, clipIndex: phoneTalkingIndex, duration: duration)
+                cleanDocument = try NativePhoneTalkingSource.hydrate(cleanDocument, clipIndex: phoneTalkingIndex, duration: duration)
+                undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration) }
+                redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration) }
+                refreshDuration()
+            }
             if previewVariant["resolved_archetype"] == .string("narrated") {
                 document = try NativeNarratedSourceTiming.hydrate(document, sources: sources)
                 cleanDocument = try NativeNarratedSourceTiming.hydrate(cleanDocument, sources: sources)

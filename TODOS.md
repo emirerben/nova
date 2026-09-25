@@ -8,6 +8,28 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Kria runtime-v2 turn failures — deferred follow-ups (2026-09-24)
+
+The "I couldn't finish that step" fix raised the Main Creator's budget to
+8,192 tokens and 60 s and gave each v2 turn its own DB engine. The ship review
+scoped these two out.
+
+### ~~Cap re-runs of abandoned turns with a real counter~~ — SHIPPED (migration 0112, 2026-09-25)
+`creator_agent_turns.abandoned_claims` counts runs whose planning lease lapsed;
+at 3 the claim fails the turn with `runtime_turn_claims_exhausted` and promotes
+the queued follow-up. See docs/runbooks/kria-agent-runtime.md.
+
+### Fit `run_kria_turn`'s time limits to its agent deadlines
+**Priority:** P2
+**What:** `soft_time_limit=90`/`time_limit=120`, but one planning turn can
+chain the edit copilot (20 s), the Main Creator (60 s per attempt, up to 3)
+and the clip-intent planner (20 s). After a soft-limit hit, `asyncio.run`
+waits for the in-flight model thread, so the hard kill can land before
+`_fail_turn` projects anything. Such a turn now fails after three abandoned
+runs instead of re-planning forever, but each of those runs still pays.
+**Acceptance:** Limits sized from the agent specs, with a guard test that
+fails when an agent deadline grows past the task budget.
+
 ## KRI-197 soft scroll edges — deferred follow-ups (2026-09-24)
 
 iOS scroll surfaces now soften where content continues past an edge
@@ -304,15 +326,6 @@ were purely a stale schema (local DB was pinned at 0096, missing 0097/0098).
 it is a real staleness bug in the approval path. Either way give the module
 per-test isolation so a reused DB cannot poison it.
 **Priority:** P2
-
-### `tests/scripts/test_analyze_waka_waka_diff.py` is flaky under load
-**What:** local-only integration test over `~/Downloads/morocco.mp4` +
-`thisismorocco.mp4` (skipped in CI, runs on the maintainer's machine). Identical
-code produced 0, 3 and 6 failures across runs; passes in isolation. Load-sensitive
-ffmpeg analysis with exact-match acceptance assertions.
-**Fix:** loosen the assertions to ranges, or gate the module behind an explicit
-opt-in env var so an unrelated `/ship` run is not blocked by it.
-**Priority:** P3
 
 ## Kria agent platform follow-up — creator preference memory (autoplan CEO review, 2026-09-06)
 
@@ -718,15 +731,14 @@ the re-render tasks themselves (still keying staleness off `worker_heartbeat_at`
 **Priority:** P1
 **Depends on:** —
 
-### Three backend tests fail under load, not under logic (CI flakiness)
+### Backend tests fail under load, not under logic (CI flakiness)
 **What:** Fixed wall-clock budgets that hold on an idle machine and blow when the
-box is busy. All three passed in isolation and failed only in a full-tree run
+box is busy. All passed in isolation and failed only in a full-tree run
 with other suites running concurrently, on unrelated branches:
 - `tests/tasks/test_template_orchestrate.py::test_probe_and_upload_concurrent_actually_overlaps`
   — two 0.2s sleeps against a 0.35s tolerance (its docstring already flags the risk).
 - `tests/pipeline/test_text_behind_subject_render.py` (2 tests) — a 3600-frame Skia
   render against the 30s `pytest-timeout`.
-- `tests/scripts/test_analyze_waka_waka_diff.py` — ~25-29s against the same 30s budget.
 **Why:** Every one reads as a real failure. Diagnosing costs a full-tree re-run plus
 an isolation run, and `-q` hides the `Failed: Timeout` message so it looks like an
 assertion. Expect intermittent red CI unrelated to the change under review.

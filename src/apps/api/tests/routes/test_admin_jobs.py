@@ -339,8 +339,17 @@ class TestJobDebug:
                 runs_res.scalars.return_value.all.return_value = []
                 track_runs_res = MagicMock()
                 track_runs_res.scalars.return_value.all.return_value = []
+                no_thread_res = MagicMock()
+                no_thread_res.first.return_value = None
                 db.execute = AsyncMock(
-                    side_effect=[job_res, clips_res, mt_res, runs_res, track_runs_res]
+                    side_effect=[
+                        job_res,
+                        clips_res,
+                        mt_res,
+                        runs_res,
+                        track_runs_res,
+                        no_thread_res,
+                    ]
                 )
                 yield db
 
@@ -365,6 +374,7 @@ class TestJobDebug:
     def test_runtime_v2_job_includes_lazy_turn_correlation(self, client):
         item_id = uuid.uuid4()
         turn_id = uuid.uuid4()
+        thread_id = uuid.uuid4()
         j = _job_row(content_plan_item_id=item_id, mode="generative")
         with patch("app.routes.admin.settings") as settings:
             settings.admin_api_key = VALID_TOKEN
@@ -385,6 +395,8 @@ class TestJobDebug:
                 execution_res.scalars.return_value.first.return_value = SimpleNamespace(
                     turn_id=turn_id
                 )
+                thread_res = MagicMock()
+                thread_res.first.return_value = (thread_id, 2)
                 db.execute = AsyncMock(
                     side_effect=[
                         job_res,
@@ -393,6 +405,7 @@ class TestJobDebug:
                         runs_res,
                         track_runs_res,
                         execution_res,
+                        thread_res,
                     ]
                 )
                 yield db
@@ -408,6 +421,8 @@ class TestJobDebug:
 
         assert response.status_code == 200
         assert response.json()["kria_turn_id"] == str(turn_id)
+        assert response.json()["thread_id"] == str(thread_id)
+        assert response.json()["runtime_version"] == 2
 
     def test_debug_projects_private_assembly_controls_but_keeps_timing_trace(self, client):
         import copy
@@ -457,8 +472,17 @@ class TestJobDebug:
                 runs_res.scalars.return_value.all.return_value = []
                 track_runs_res = MagicMock()
                 track_runs_res.scalars.return_value.all.return_value = []
+                no_thread_res = MagicMock()
+                no_thread_res.first.return_value = None
                 db.execute = AsyncMock(
-                    side_effect=[job_res, clips_res, mt_res, runs_res, track_runs_res]
+                    side_effect=[
+                        job_res,
+                        clips_res,
+                        mt_res,
+                        runs_res,
+                        track_runs_res,
+                        no_thread_res,
+                    ]
                 )
                 yield db
 
@@ -529,8 +553,17 @@ class TestJobDebug:
                 runs_res.scalars.return_value.all.return_value = []
                 track_runs_res = MagicMock()
                 track_runs_res.scalars.return_value.all.return_value = []
+                no_thread_res = MagicMock()
+                no_thread_res.first.return_value = None
                 db.execute = AsyncMock(
-                    side_effect=[job_res, clips_res, mt_res, runs_res, track_runs_res]
+                    side_effect=[
+                        job_res,
+                        clips_res,
+                        mt_res,
+                        runs_res,
+                        track_runs_res,
+                        no_thread_res,
+                    ]
                 )
                 yield db
 
@@ -640,6 +673,7 @@ class TestJobDebug:
                         runs_res,
                         tpl_runs_res,
                         track_runs_res,
+                        MagicMock(first=MagicMock(return_value=None)),
                     ]
                 )
                 yield db

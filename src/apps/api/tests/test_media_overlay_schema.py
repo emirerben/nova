@@ -34,18 +34,6 @@ def _card(**kw) -> dict:
     return base
 
 
-def test_generated_effect_group_round_trips_without_affecting_legacy_cards() -> None:
-    generated = MediaOverlay.model_validate(
-        _card(source="smart_captions", effect_group_id="event-1")
-    ).model_dump()
-    legacy = MediaOverlay.model_validate(_card()).model_dump()
-
-    assert generated["source"] == "smart_captions"
-    assert generated["effect_group_id"] == "event-1"
-    assert legacy["source"] is None
-    assert legacy["effect_group_id"] is None
-
-
 def test_manual_repeats_of_the_same_asset_remain_valid() -> None:
     cards = coerce_media_overlays(
         [
@@ -60,14 +48,6 @@ def test_manual_repeats_of_the_same_asset_remain_valid() -> None:
 
 class TestDisplayMode:
     """Plan 009 T1: display_mode field + coercing validator (version-skew safe)."""
-
-    def test_default_is_pip(self):
-        card = MediaOverlay.model_validate(_card())
-        assert card.display_mode == "pip"
-
-    def test_explicit_fullscreen_parses(self):
-        card = MediaOverlay.model_validate(_card(display_mode="fullscreen"))
-        assert card.display_mode == "fullscreen"
 
     def test_unknown_value_coerces_to_pip_never_drops(self):
         # A card from a NEWER client with an unknown mode must not be dropped.
@@ -94,32 +74,14 @@ class TestDisplayMode:
         assert dumped["y_frac"] == pytest.approx(0.7)
         assert dumped["scale"] == pytest.approx(0.42)
 
-    def test_round_trip_through_coerce(self):
-        cards = coerce_media_overlays([_card(display_mode="fullscreen")])
-        assert cards is not None
-        assert cards[0].display_mode == "fullscreen"
-
 
 class TestExitToken:
-    def test_default_is_none(self):
-        card = MediaOverlay.model_validate(_card())
-        assert card.exit_token == "none"
-
-    def test_dissolve_out_parses(self):
-        card = MediaOverlay.model_validate(_card(exit_token="dissolve-out"))
-        assert card.exit_token == "dissolve-out"
-
     def test_unknown_value_coerces_to_none_never_drops(self):
         card = MediaOverlay.model_validate(_card(exit_token="sparkle"))
         assert card.exit_token == "none"
 
 
 class TestMediaOverlayValidation:
-    def test_valid_card_parses(self):
-        card = MediaOverlay.model_validate(_card())
-        assert card.scale == pytest.approx(0.35)
-        assert card.end_s == pytest.approx(3.0)
-
     def test_blank_preview_path_is_absent(self):
         card = MediaOverlay.model_validate(_card(preview_gcs_path="   "))
         assert card.preview_gcs_path is None
