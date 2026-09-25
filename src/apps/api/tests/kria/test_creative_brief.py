@@ -651,6 +651,8 @@ async def test_order_requirement_skips_the_copilot_and_replans(
     copilot.assert_not_awaited()
     assert result.brief_route == "replan"
     assert [(u.kind, u.scope) for u in result.brief_updates] == [("order", "global")]
+    # The receipt checks resolve reaction beats against this same manifest.
+    assert result.brief_manifest is not None
     assert runs and runs[0].brief_enabled is True
 
 
