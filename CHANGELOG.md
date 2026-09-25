@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.219.0] - 2026-09-25
+
+### Changed
+- feat(admin): creation-thread events/turns routes + thread_id on job/item debug (KRI-185) (#1233) <!-- release-pr: 1233 -->
+
 ## [0.76.218.0] - 2026-09-24
 
 ### Fixed
