@@ -86,7 +86,10 @@ struct WorkspaceHeader: View {
                 HStack(spacing: 4) {
                     Text("Chat").font(KriaFont.body(13).weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(KriaColor.selectionSoft, in: Capsule())
+                        // White (not the pale selection blue, which vanishes on the
+                        // frosted capsule), lifted with a faint shadow.
+                        .background(KriaColor.paper, in: Capsule())
+                        .shadow(color: KriaColor.ink.opacity(0.10), radius: 3, y: 1)
                         .accessibilityAddTraits(.isSelected)
                     Button("Editor", action: openEditor).font(KriaFont.body(13).weight(.medium))
                         .frame(maxWidth: .infinity, minHeight: 44)
