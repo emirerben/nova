@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.229.0] - 2026-09-25
+
+### Changed
+- fix(speech-cleanup): show cleanup question for Talking-to-camera on phone (KRI-205) (#1253) <!-- release-pr: 1253 -->
+
 ## [0.76.228.0] - 2026-09-25
 
 ### Changed
