@@ -8,6 +8,15 @@ enum NativeSourcePreviewState: Equatable {
     case idle, preparing, ready, failed(String)
 }
 
+/// A player item that built fine but failed while loading or playing (KRI-200). Before this, a failed
+/// item left `play()` a silent no-op: the button flipped straight back and nothing explained why.
+enum NativeEditorPlaybackFailure: Error, Equatable {
+    /// The editable source composition failed; the finished render takes over.
+    case liveItem
+    /// The finished render itself could not be loaded, even after a fresh link.
+    case finishedItem
+}
+
 enum NativeTrimEdge: Sendable { case leading, trailing }
 
 /// Lets a background-task expiration handler end the very assertion it belongs to. The identifier only
@@ -502,6 +511,16 @@ struct NativeEditorTemporaryVideo {
     nonisolated(unsafe) private var observingPlayer: AVPlayer?
     nonisolated(unsafe) private var endObserver: NSObjectProtocol?
     private var playbackStateObserver: NSKeyValueObservation?
+    private var itemStatusObserver: NSKeyValueObservation?
+    nonisolated(unsafe) private var itemFailureObserver: NSObjectProtocol?
+    /// The item whose failure was already reported, so status + failed-to-end (which can both fire for one
+    /// failure) produce one diagnostic and one recovery.
+    private weak var failureHandledItem: AVPlayerItem?
+    /// A play tap that arrived while the editable preview was still building. Played as soon as a
+    /// displayable player exists (the ready preview, or the finished-render fallback).
+    private var pendingPlayRequest = false
+    private var finishedRenderRefreshAttempted = false
+    private var finishedRenderRecoveryTask: Task<Void, Never>?
     private var durationLoadTask: Task<Void, Never>?
     private var promptRefreshSequence: UInt64 = 0
     private let playbackEndTolerance: TimeInterval = 0.05
@@ -729,6 +748,8 @@ struct NativeEditorTemporaryVideo {
         observingPlayer?.pause()
         if let timeObserver, let observingPlayer { observingPlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
+        finishedRenderRecoveryTask?.cancel()
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
@@ -1304,6 +1325,10 @@ struct NativeEditorTemporaryVideo {
             return "A required font is missing from this app build. Update the app and try again."
         case NativeEditorRenderError.missingVideoTrack:
             return "This edit’s video can’t be previewed on iPhone yet."
+        case NativeEditorPlaybackFailure.liveItem:
+            return "The editable preview couldn’t play on this iPhone, so the finished video is shown. Retry to rebuild it."
+        case NativeEditorPlaybackFailure.finishedItem:
+            return "The video couldn’t be loaded. Check your connection and retry."
         case SourceAssetError.missingOriginal, SourceAssetError.changedOriginal:
             return "The original video is unavailable on this iPhone. Open the edit on the device that imported it."
         default:
@@ -1714,6 +1739,7 @@ struct NativeEditorTemporaryVideo {
                 sourcePreviewSettledSequence = sequence
                 if !isPlaying { seek(to: currentTime) }
                 prepareInteractionLayers()
+                startPendingPlaybackIfPossible()
                 return
             }
             #if DEBUG
@@ -1735,6 +1761,7 @@ struct NativeEditorTemporaryVideo {
                 seek(to: latestTime)
             }
             prepareInteractionLayers()
+            startPendingPlaybackIfPossible()
             #if DEBUG
             NativePreviewDiagnostics.record("preview-ready")
             #endif
@@ -1765,10 +1792,14 @@ struct NativeEditorTemporaryVideo {
 
     func togglePlayback() {
         guard canDisplayCurrentPlayer, let player else {
+            // While the editable preview is still building there is nothing to play yet. Remember the tap
+            // instead of dropping it, so play starts the moment the preview (or its fallback) is ready.
+            pendingPlayRequest = sourcePreviewState == .preparing && !isPlaying
             player?.pause()
             isPlaying = false
             return
         }
+        pendingPlayRequest = false
         if isPlaying {
             pausePlayback()
             return
@@ -1815,6 +1846,7 @@ struct NativeEditorTemporaryVideo {
     }
 
     func pausePlayback() {
+        pendingPlayRequest = false
         player?.pause()
         isPlaying = false
         // Preserve a scrub target while its seek is still pending. Otherwise
@@ -4117,6 +4149,69 @@ struct NativeEditorTemporaryVideo {
     private func failSourcePreview(_ error: Error) {
         restoreFinishedRenderFallback()
         sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+        // A queued play tap follows the fallback; with nothing to show it is dropped, not left armed.
+        if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() } else { pendingPlayRequest = false }
+    }
+
+    private func startPendingPlaybackIfPossible() {
+        guard pendingPlayRequest, canDisplayCurrentPlayer, !isPlaying else { return }
+        togglePlayback()
+    }
+
+    private var sourcePreviewStateLabel: String {
+        switch sourcePreviewState {
+        case .idle: "idle"
+        case .preparing: "preparing"
+        case .ready: "ready"
+        case .failed: "failed"
+        }
+    }
+
+    /// One place for "the item AVPlayer is holding cannot play". Reports the error identity from every
+    /// build, then recovers: a failed editable preview hands over to the finished render, and a failed
+    /// finished render gets one fresh link before the failure is surfaced.
+    func handlePlayerItemFailure(_ item: AVPlayerItem, error: Error?) {
+        guard let failedPlayer = player, failedPlayer.currentItem === item, failureHandledItem !== item else { return }
+        failureHandledItem = item
+        let kind: PlaybackFailureReport.PlayerKind = failedPlayer === finishedRenderPlayer ? .finished : .live
+        let report = NativePreviewDiagnostics.playerItemFailure(kind: kind, error: error, sourceState: sourcePreviewStateLabel)
+        if let api, let jobID {
+            Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
+        }
+        let wantsPlayback = isPlaying || pendingPlayRequest
+        failedPlayer.pause()
+        isPlaying = false
+        switch kind {
+        case .live:
+            pendingPlayRequest = wantsPlayback
+            failSourcePreview(NativeEditorPlaybackFailure.liveItem)
+        case .finished:
+            pendingPlayRequest = wantsPlayback
+            recoverFinishedRender(failedPlayer: failedPlayer)
+        }
+    }
+
+    private func recoverFinishedRender(failedPlayer: AVPlayer) {
+        guard !finishedRenderRefreshAttempted, let api, let jobID else {
+            surfaceUnplayableFinishedRender()
+            return
+        }
+        finishedRenderRefreshAttempted = true
+        finishedRenderRecoveryTask?.cancel()
+        finishedRenderRecoveryTask = Task { @MainActor [weak self, weak failedPlayer] in
+            let fresh = try? await api.playbackURL(jobID: jobID)
+            guard let self, !Task.isCancelled, let failedPlayer, self.player === failedPlayer else { return }
+            guard let fresh else { self.surfaceUnplayableFinishedRender(); return }
+            self.installFinishedRenderPlayer(url: fresh, preferredDuration: self.finishedRenderDuration)
+            self.startPendingPlaybackIfPossible()
+        }
+    }
+
+    private func surfaceUnplayableFinishedRender() {
+        // An editable preview still building will take over by itself; only a settled state needs a message.
+        guard sourcePreviewState != .preparing else { return }
+        sourcePreviewState = .failed(Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+        pendingPlayRequest = false
     }
 
     private func restoreFinishedRenderFallback() {
@@ -4139,6 +4234,8 @@ struct NativeEditorTemporaryVideo {
         durationSourcesInvalidated = false
 
         playbackStateObserver?.invalidate()
+        itemStatusObserver?.invalidate()
+        if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
         // SwiftUI may retain the outgoing VideoPlayer after this replacement.
         // Stop and detach it first so its audio cannot outlive the visible player.
         player?.pause()
@@ -4150,6 +4247,28 @@ struct NativeEditorTemporaryVideo {
             Task { @MainActor [weak self, weak next] in
                 guard let self, let next, self.player === next else { return }
                 self.reconcilePlaybackState(next.timeControlStatus)
+            }
+        }
+        // timeControlStatus alone cannot tell "buffering" from "this item will never play": a failed item
+        // just sits paused and the play button snaps back (KRI-200).
+        itemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self, weak item] observed, _ in
+            let status = observed.status
+            let error = observed.error
+            Task { @MainActor [weak self, weak item] in
+                guard let self, let item else { return }
+                if status == .failed { self.handlePlayerItemFailure(item, error: error) }
+                else if status == .readyToPlay, self.player?.currentItem === item, self.player === self.finishedRenderPlayer {
+                    self.finishedRenderRefreshAttempted = false
+                }
+            }
+        }
+        itemFailureObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main
+        ) { [weak self, weak item] note in
+            let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+            Task { @MainActor [weak self, weak item] in
+                guard let self, let item else { return }
+                self.handlePlayerItemFailure(item, error: error)
             }
         }
         if let preferredDuration, preferredDuration.isFinite, preferredDuration > 0 {

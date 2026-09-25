@@ -2570,3 +2570,45 @@ receipt says partial). Facts already stored on earlier threads still hold the co
 until those clips are re-attached. If the render's brief version changes after planning, its
 receipts are discarded (`_unified_montage_review`), which now leaves nothing at all for the
 deferred kinds; that needs a brief update between plan and review and is rare.
+
+## [2026-09-25] Speech cleanup's phone gate narrows to apply-only (KRI-205)
+
+Context. Talking-to-camera (`subtitled`/`talking_head`) never showed the speech cleanup
+question or check on iPhone. `preflight_enabled_for_source` (KRI-118 L1 item 1) refused to
+even schedule a `SpeechCleanupAnalysis` whenever the resolved narration source's storage path
+was a phone `analysis-proxy-*` object, on the premise that "speech cleanup needs the real
+audio, and a phone project never uploads it." That premise only ever held for *applying* a
+cut: the detector (`analyze_speech_cleanup`) reads nothing but a downmixed 16kHz mono WAV, and
+an iOS analysis-proxy's audio track is already a faithful, full-duration copy of the original
+(`MediaSourceContract.analysisProxy` rejects a duration/audio-presence mismatch before upload;
+`_run_phone_subtitled_job` already trusts this exact file for word-level Whisper caption
+transcription in production). So the one iOS journey whose narration source is always an
+embedded, phone-proxied clip — Talking-to-camera — could never enter the cohort, while a
+Narrated item with a fully-uploaded recorded voiceover could.
+
+Decision. `preflight_enabled_for_source` no longer takes a `storage_path`/no longer branches on
+source type at all — a phone source is scheduled, projected as `applicable`, and enforced on
+generate exactly like a cloud one. The other half of KRI-118 is untouched and now carries the
+whole invariant on its own: `content_plan_build._speech_cleanup_dispatch_snapshot` still refuses
+`choice == "clean"` outright whenever the active source is an analysis proxy, because applying a
+cut on an embedded-spine source means re-encoding real video frames
+(`generative_build.py`'s `reframe_and_export` cut path), and a phone-rendered project never
+uploads the full-resolution video — only its audio, via the proxy. That refusal is no longer a
+defense against a stale/forged request; it is the first-class, expected outcome the very first
+time a phone Talking-to-camera creator taps "Clean up speech and create". Both clients already
+had a graceful path for it before this shipped: iOS's `nonRetryablePhoneGateErrorCodes` already
+listed `speech_cleanup_unavailable_on_phone` and renders the server's own sentence instead of a
+generic error, and web's generic mutation-failure copy ("I couldn't start that video. Your
+project and speech choice are safe—try again.") is safe, non-crashy, and leaves the decision
+card's "Keep original speech" option live to retry with. Neither needed a code change.
+
+Consequences. A phone Talking-to-camera creator now sees real findings and can pick "Keep
+original speech" to proceed, or "Clean up speech" to learn (via the existing message) that it
+can't run on iPhone yet and fall back to the same card. No cut is ever actually applied for a
+phone-sourced item — that remains a real, separate gap: applying one would need either a new
+on-device frame-accurate trim in `KriaMediaEngine` (there is none today) or uploading the
+full-resolution video, which would break the "phone renders stay on device" rule this project
+already treats as non-negotiable. That's tracked as a distinct follow-up, not attempted here.
+Self-narration phone journeys (narrated format, no separate voiceover, multi-clip embedded
+audio) go through the identical `embedded_spine` path and get the same benefit/limit, though
+KRI-205 was reported specifically for Talking-to-camera.

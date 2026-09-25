@@ -184,6 +184,69 @@ final class NativeCompositionTests: XCTestCase {
         XCTAssertGreaterThan(frames, 0, "the live player advanced without producing a single video frame")
     }
 
+    /// KRI-200: a phone-rendered 14-cut montage (separate local proxies, title + one label per cut,
+    /// the branded outro) would not start in the editor. Drives the same shape through a LIVE
+    /// AVPlayer, from the start and from just before the outro, and requires the item to stay
+    /// healthy, produce frames, and reach the end.
+    @MainActor func testFourteenCutBrandedStoryPlaysThroughALivePlayer() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cuts = [2.733, 1.6, 2.0, 1.767, 2.333, 2.1, 2.033, 2.467, 2.067, 1.867, 1.967, 1.967, 1.5, 1.6]
+        var urls: [String: URL] = [:]
+        for index in cuts.indices {
+            // Real proxies are a little longer than the cut they feed.
+            urls["clip\(index)"] = try await makeVideo(directory: directory, name: "clip\(index)", color: CGColor(red: 0, green: CGFloat(index) / 14, blue: 1, alpha: 1), frames: Int(cuts[index] * 30) + 6)
+        }
+        let root = try XCTUnwrap(#filePath.range(of: "/src/apps/ios/"))
+        let font = URL(fileURLWithPath: String(#filePath[..<root.lowerBound])).appendingPathComponent("src/apps/api/assets/fonts/Inter-Regular.ttf")
+        urls["font"] = font
+        let assets = try urls.map { MediaAsset(id: $0.key, relativePath: $0.key, fingerprint: try SHA256Fingerprinter().fingerprint(file: $0.value)) }
+        let manifest = try RenderAssetManifest(assets: assets.map { asset in
+            RenderAssetReference(id: asset.id, fingerprint: try RenderFingerprint(asset.fingerprint!),
+                source: asset.id == "font" ? .library(catalog: .font, catalogID: "Inter-Regular.ttf", generation: asset.fingerprint!.hex) : .original(mediaID: asset.id))
+        })
+        let canvas = Canvas(width: 1080, height: 1920)
+        var clips: [TimelineClip] = []
+        var text: [PortableTextLayer] = []
+        var cursor = 0.0
+        for (index, cut) in cuts.enumerated() {
+            clips.append(TimelineClip(id: "cut\(index)", sourceAssetID: "clip\(index)", sourceDuration: cut, timelineStart: cursor))
+            text.append(try AuthoredTextLayout.compile(id: "label-\(index)", text: "Bosphorus Strait", start: cursor, end: cursor + cut,
+                style: .init(fontAssetID: "font", size: 48, color: .init(red: 1, green: 1, blue: 1, alpha: 1)), fontURL: font, canvas: canvas))
+            cursor += cut
+        }
+        text.append(try AuthoredTextLayout.compile(id: "title", text: "20K Run", start: 0, end: 2.2,
+            style: .init(fontAssetID: "font", size: 96, color: .init(red: 1, green: 1, blue: 1, alpha: 1)), fontURL: font, canvas: canvas))
+        let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas, assets: assets,
+            tracks: [TimelineTrack(id: "video", kind: .video, clips: clips)], assetManifest: manifest, textLayers: text)
+        let live = try await LivePreviewComposition(recipe: recipe, assetURLs: urls, branding: .standard)
+        let item = live.preview.playerItem
+        let assetDuration = try await item.asset.load(.duration).seconds
+        let instructions = try XCTUnwrap(item.videoComposition?.instructions.last).timeRange.end.seconds
+        XCTAssertGreaterThanOrEqual(instructions + 0.001, assetDuration, "instructions must cover the asset (incl. outro) or AVPlayer renders nothing")
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        item.add(output)
+        let player = AVPlayer(playerItem: item)
+        player.isMuted = true
+        for start in [0.0, max(0, cursor - 0.4)] {
+            await player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+            player.play()
+            var frames = 0
+            var advanced = false
+            for _ in 0..<80 where !(frames > 2 && advanced) {
+                try await Task.sleep(for: .milliseconds(50))
+                XCTAssertNotEqual(item.status, .failed, "item failed: \(String(describing: item.error))")
+                let time = item.currentTime()
+                advanced = time.seconds > start + 0.15
+                if output.hasNewPixelBuffer(forItemTime: time), output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) != nil { frames += 1 }
+            }
+            player.pause()
+            XCTAssertGreaterThan(frames, 2, "no frames from \(start) s")
+            XCTAssertTrue(advanced, "clock did not advance from \(start) s")
+        }
+    }
+
     @MainActor func testLongStoryDecodesWithMoreThan64MBOfTimedText() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -712,7 +775,7 @@ final class NativeCompositionTests: XCTestCase {
         XCTAssertThrowsError(try visualRecipe.validate(), "A held tail still must fit its authored visual window")
     }
 
-    @MainActor private func makeVideo(directory: URL, name: String, color: CGColor, preferred: CGAffineTransform = .identity, asymmetric: Bool = false) async throws -> URL {
+    @MainActor private func makeVideo(directory: URL, name: String, color: CGColor, preferred: CGAffineTransform = .identity, asymmetric: Bool = false, frames: Int = 30) async throws -> URL {
         let url = directory.appendingPathComponent("\(name).mp4")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 96, AVVideoHeightKey: 160])
@@ -721,7 +784,7 @@ final class NativeCompositionTests: XCTestCase {
         writer.add(input)
         XCTAssertTrue(writer.startWriting())
         writer.startSession(atSourceTime: .zero)
-        for index in 0..<30 {
+        for index in 0..<frames {
             while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
             var buffer: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer)

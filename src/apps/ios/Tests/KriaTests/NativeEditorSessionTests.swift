@@ -903,6 +903,127 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.canDisplayCurrentPlayer, "An unconfirmed cached seed must not display — it may already be stale")
     }
 
+    // MARK: KRI-200 — a play tap must never be a silent no-op
+
+    private func waitUntil(timeout: Duration = .seconds(5), _ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        return condition()
+    }
+
+    private static func failedStateMessage(_ session: NativeEditorSession) -> String? {
+        if case .failed(let message) = session.sourcePreviewState { message } else { nil }
+    }
+
+    /// A finished render that cannot load used to leave a player that ignored `play()`: the icon flipped
+    /// straight back and nothing said why. With nobody to refresh the link it must say so.
+    func testUnplayableFinishedRenderSurfacesAMessageInsteadOfADeadPlayButton() async {
+        let missing = URL(fileURLWithPath: "/tmp/kria-missing-\(UUID().uuidString).mp4")
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: missing)
+        let settled = await waitUntil { Self.failedStateMessage(session) != nil }
+        XCTAssertTrue(settled, "a failed item must surface, not sit silently paused")
+        XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+    }
+
+    /// The failed finished render gets exactly one fresh link, the failure is reported with its AVFoundation
+    /// identity, and the recovered player plays.
+    func testFailedFinishedRenderRefreshesItsLinkOnceReportsAndRecovers() async throws {
+        let jobID = UUID()
+        let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var variant = Self.variant(duration: 2, generation: "g1")
+        variant["output_url"] = .string("file:///tmp/kria-missing-\(UUID().uuidString).mp4")
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant)
+        fake.playbackURLResult = good
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+
+        let recovered = await waitUntil { (session.player?.currentItem?.asset as? AVURLAsset)?.url == good }
+        XCTAssertTrue(recovered, "the refreshed link replaces the failed item")
+        XCTAssertEqual(fake.playbackURLCallCount, 1, "one refresh, not a retry loop")
+        let reported = await waitUntil { !fake.playbackFailureReports.isEmpty }
+        XCTAssertTrue(reported)
+        let report = try XCTUnwrap(fake.playbackFailureReports.first)
+        XCTAssertEqual(report.playerKind, .finished)
+        XCTAssertEqual(report.errorDomain, AVFoundationErrorDomain)
+        XCTAssertEqual(fake.playbackFailureReports.count, 1, "one report per failed item")
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+        session.pausePlayback()
+    }
+
+    /// The editable live composition failing must hand over to the finished render, and the tap that
+    /// triggered it must not be lost.
+    func testLiveItemFailureFallsBackToTheFinishedRenderAndKeepsThePlayTap() async throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: url)
+        let finished = try XCTUnwrap(session.player)
+        await session.prepareFixtureSourcePreview(url: url)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let live = try XCTUnwrap(session.player)
+        XCTAssertFalse(live === finished)
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+
+        session.handlePlayerItemFailure(try XCTUnwrap(live.currentItem), error: NSError(domain: AVFoundationErrorDomain, code: -11800))
+
+        XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.liveItem))
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        XCTAssertTrue(session.isPlaying, "the play tap carries over to the finished render")
+        session.pausePlayback()
+    }
+
+    /// While the editable preview builds against a render that predates the document, there is nothing
+    /// displayable. The tap is remembered and plays the moment a player can be shown.
+    func testPlayTapDuringPreparationPlaysOnceThePreviewSettles() async throws {
+        let session = try await Self.preparingSession()
+        XCTAssertEqual(session.session.sourcePreviewState, .preparing)
+        XCTAssertFalse(session.session.canDisplayCurrentPlayer)
+        session.session.togglePlayback()
+        XCTAssertFalse(session.session.isPlaying, "nothing to show yet")
+        session.spy.resumeSourcePool()
+        _ = await session.loading.value
+        let playing = await waitUntil { session.session.isPlaying }
+        XCTAssertTrue(playing, "the remembered tap starts playback once a player can be displayed")
+        session.session.pausePlayback()
+    }
+
+    func testPauseCancelsARememberedPlayTap() async throws {
+        let session = try await Self.preparingSession()
+        session.session.togglePlayback()
+        session.session.pausePlayback()
+        session.spy.resumeSourcePool()
+        _ = await session.loading.value
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(session.session.isPlaying)
+    }
+
+    private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>) {
+        let jobID = UUID()
+        let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var stale = variant(duration: 2, generation: "g1")
+        stale["output_url"] = .string(good.absoluteString)
+        stale["render_status"] = .string("rendering")  // the render predates the loaded document → not displayable
+        let spy = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: stale)
+        spy.suspendNextSourcePool = true
+        let session = NativeEditorSession()
+        let loading = Task { @MainActor in await session.load(api: spy, threadID: UUID()) }
+        for _ in 0..<200 where !spy.sourcePoolIsSuspended { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertTrue(spy.sourcePoolIsSuspended)
+        return (session, spy, loading)
+    }
+
     func testNeedsReloadIsTrueBeforeAnyLoadAndFalseAfterMatchingRevision() async {
         let jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
@@ -3117,7 +3238,15 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { throw APIError.unsupported }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { throw APIError.unsupported }
-    func playbackURL(jobID: UUID) async throws -> URL { throw APIError.unsupported }
+    var playbackURLResult: URL?
+    var playbackURLCallCount = 0
+    var playbackFailureReports: [PlaybackFailureReport] = []
+    func playbackURL(jobID: UUID) async throws -> URL {
+        playbackURLCallCount += 1
+        guard let playbackURLResult else { throw APIError.unsupported }
+        return playbackURLResult
+    }
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { playbackFailureReports.append(report) }
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse {
         deviceRenderCallCount += 1
         guard let deviceRenderResponse else { throw APIError.unsupported }

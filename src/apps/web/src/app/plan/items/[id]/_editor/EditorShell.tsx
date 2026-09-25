@@ -3385,11 +3385,18 @@ export default function EditorShell({
       setCaptionMetaDirty(true);
       const barPatch = captionBarPatchFromMetaPatch(patch);
       if (Object.keys(barPatch).length === 0) return; // enabled/style: meta-only
-      const patches = state.bars
-        .filter(isCaptionBar)
-        .map((bar) => ({ id: bar.id, patch: barPatch }));
+      // Union filter so global appearance changes also live-preview onto
+      // guided-story's narration-caption bars, not just `caption_cues`-lane
+      // ones — those bars persist through text_elements, so they additionally
+      // need textDirty (patchBar's split, mirrored here) or the preview would
+      // update but Save would silently drop the change (KRI-201).
+      const affectedBars = state.bars.filter(isCaptionUnitBar);
+      const patches = affectedBars.map((bar) => ({ id: bar.id, patch: barPatch }));
       if (patches.length > 0) {
         dispatch({ type: "PATCH_BARS", patches });
+        if (affectedBars.some(isNarrationCaptionBar)) {
+          setTextDirty(true);
+        }
         // Global appearance also clears per-cue overrides; persist that clear
         // only when cue editing is available (meta-only drafts keep their cues).
         if (variant?.base_video_path && (patch.stroke_width !== undefined || patch.shadow_enabled !== undefined)) {
@@ -3411,18 +3418,29 @@ export default function EditorShell({
       const { patches } = buildCaptionTextReplacement(state.bars, find, replace);
       if (patches.length === 0) return 0;
       history.record();
-      setCaptionDirty(true);
+      // Split by persistence path, mirroring patchBar: `caption_cues`-lane
+      // bars dirty the cue-list save, guided-story's narration-caption bars
+      // (TextElements) dirty the text-elements save — a match on ONLY the
+      // latter must still actually persist, not just patch the local preview.
+      const patchedIds = new Set(patches.map((p) => p.id));
+      const patchedBars = state.bars.filter((bar) => patchedIds.has(bar.id));
+      if (patchedBars.some(isCaptionBar)) setCaptionDirty(true);
+      if (patchedBars.some(isNarrationCaptionBar)) setTextDirty(true);
       dispatch({ type: "PATCH_BARS", patches });
       return patches.length;
     },
     [history, readOnly, state.bars],
   );
 
-  /** Cue rows for the drawer, chronological (bar array order is insertion order). */
+  /** Cue rows for the drawer, chronological (bar array order is insertion
+   * order). Union filter (`isCaptionUnitBar`) so guided-story's narration
+   * caption bars — persisted as `TextElement`s, not `caption_cues` — show up
+   * here too; the dominant archetype for new videos was otherwise invisible
+   * to the Captions drawer entirely (KRI-201). */
   const captionCueRows = useMemo<CaptionCueRow[]>(
     () =>
       state.bars
-        .filter(isCaptionBar)
+        .filter(isCaptionUnitBar)
         .map((bar) => ({
           id: bar.id,
           text: bar.text,

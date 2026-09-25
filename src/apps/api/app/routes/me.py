@@ -3,6 +3,7 @@
 GET    /me/jobs                           — the signed-in user's videos (the library)
 POST   /me/jobs/posters/refresh           — refresh owned poster metadata in one batch
 GET    /me/jobs/{job_id}/playback-url     — refresh one owned ready preview URL
+POST   /me/jobs/{job_id}/playback-diagnostics — log a client-reported editor playback failure
 DELETE /me/jobs/{job_id}                   — delete one terminal video and its local media
 POST   /me/jobs/{job_id}/add-to-plan      — pin a standalone video onto a plan day
 POST   /me/jobs/{job_id}/open-in-editor   — promote a ready first cut into the editor
@@ -907,6 +908,23 @@ class LibraryResponse(BaseModel):
 
 class LibraryPlaybackResponse(BaseModel):
     video_url: str
+
+
+class LibraryPlaybackDiagnostic(BaseModel):
+    """An editor player item that failed on the phone (KRI-200).
+
+    Release builds record nothing about playback failures on-device, so the app
+    reports the AVFoundation error identity here. Numeric codes and domains
+    only: no URLs, tokens, or error text, so nothing user-authored is stored.
+    """
+
+    player_kind: Literal["live", "finished"]
+    error_domain: str = Field(max_length=120)
+    error_code: int
+    underlying_domain: str | None = Field(default=None, max_length=120)
+    underlying_code: int | None = None
+    source_state: str = Field(max_length=32)
+    app_build: str | None = Field(default=None, max_length=32)
 
 
 class LibraryPosterRefreshRequest(BaseModel):
@@ -1945,6 +1963,35 @@ async def _delete_job_storage_after_commit(outbox_id: uuid.UUID | None) -> None:
             outbox_id=str(outbox_id),
             error=str(exc),
         )
+
+
+@router.post("/jobs/{job_id}/playback-diagnostics", status_code=status.HTTP_204_NO_CONTENT)
+async def report_library_playback_failure(
+    job_id: str,
+    body: LibraryPlaybackDiagnostic,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Log that an owned job's editor player item failed on the caller's phone.
+
+    Log-only (no DB write) and best-effort for the client. Foreign and missing
+    ids share the 404 so job ids stay unguessable.
+    """
+    try:
+        jid = uuid.UUID(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+    owned = (
+        await db.execute(select(Job.id).where(Job.id == jid, Job.user_id == user.id))
+    ).scalar_one_or_none()
+    if owned is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    log.warning(
+        "editor_playback_failed",
+        job_id=str(jid),
+        user_id=str(user.id),
+        **body.model_dump(),
+    )
 
 
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)

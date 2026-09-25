@@ -266,6 +266,32 @@ import KriaMediaEngine
         XCTAssertEqual(recipe.textLayers.first?.id, "caption-cue-dup", "the surviving layer must come from the cue-native path")
     }
 
+    // KRI-202: talk-to-camera (subtitled) documents can reach the client with
+    // two caption_cues rows whose windows overlap (the cloud's own de-overlap
+    // guard, phone_captions._prepare_cues, runs on a compiled copy the native
+    // editor's live document never passes through). Burning both unclamped
+    // showed two caption rows stacked on the same frame.
+    func testOverlappingCaptionCuesAreClampedToNonOverlappingWindows() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 5,
+            trimIn: 0, trimOut: 5, sourceDuration: 5, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let earlyCue = EditorCaptionCue(id: "cue-a", startS: 0, endS: 3, text: "First sentence here")
+        let overlappingCue = EditorCaptionCue(id: "cue-b", startS: 2, endS: 5, text: "Second sentence here")
+        let document = EditorDocument(captionCues: [earlyCue, overlappingCue])
+        let items = [
+            NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue-a"), start: 0, end: 3),
+            NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue-b"), start: 2, end: 5),
+        ]
+        let recipe = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source]).recipe
+        XCTAssertEqual(recipe.textLayers.count, 2)
+        let first = try XCTUnwrap(recipe.textLayers.first { $0.id == "caption-cue-a" })
+        let second = try XCTUnwrap(recipe.textLayers.first { $0.id == "caption-cue-b" })
+        XCTAssertLessThanOrEqual(first.end, second.start, "adjacent cues must never be visible at the same time")
+        XCTAssertEqual(first.end, 2, "the earlier cue must clamp to the next cue's start")
+    }
+
     func testGuidedStorySentenceCaptionProjectionKeepsSourceItemsAndLeavesTitlesAlone() throws {
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
             fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))

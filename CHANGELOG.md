@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.229.0] - 2026-09-25
+
+### Changed
+- fix(speech-cleanup): show cleanup question for Talking-to-camera on phone (KRI-205) (#1253) <!-- release-pr: 1253 -->
+
+## [0.76.228.0] - 2026-09-25
+
+### Changed
+- fix(ios): clamp overlapping caption_cues before burning captions (KRI-202) (#1252) <!-- release-pr: 1252 -->
+
+## [0.76.227.0] - 2026-09-25
+
+### Changed
+- fix(web): make guided-story captions reachable in the Captions drawer (KRI-201) (#1251) <!-- release-pr: 1251 -->
+
+## [0.76.226.0] - 2026-09-25
+
+### Changed
+- fix(kria): verify reaction beats and whole-take asks in brief receipts (#1249) <!-- release-pr: 1249 -->
+
+## [0.76.225.0] - 2026-09-25
+
+### Changed
+- fix(ios): editor play never silently does nothing when the player item fails (KRI-200) (#1248) <!-- release-pr: 1248 -->
+
 ## [0.76.224.0] - 2026-09-25
 
 ### Fixed

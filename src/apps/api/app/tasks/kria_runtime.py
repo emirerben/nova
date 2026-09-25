@@ -452,6 +452,8 @@ def _complete_draft_turn(
                     facts = plan_facts_from_strategy(
                         document.strategy,
                         clip_ids=planned.brief_clip_ids,
+                        manifest=planned.brief_manifest,
+                        speech_cleanup_enabled=bool(getattr(item, "speech_cleanup_enabled", False)),
                     )
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
