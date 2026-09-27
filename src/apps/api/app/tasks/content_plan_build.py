@@ -915,14 +915,26 @@ def _speech_cleanup_dispatch_snapshot(
         # actually touch matters here. Since KRI-205, `preflight_enabled_for_source`
         # deliberately DOES schedule analysis and offer this choice for a
         # phone (analysis-proxy) source -- detection only needs the proxy's
-        # audio, which is already a faithful full copy. Applying "clean" is
-        # different: it requires cutting real video frames, and a
-        # phone-rendered project never uploads the full-resolution video, so
-        # this refusal is now the everyday, expected outcome for a phone
-        # Talking-to-camera creator who picks "clean" (surfaced to them as
-        # `speech_cleanup_unavailable_on_phone`, not a generic failure),
-        # not just a defense against a stale/forged request.
-        if resolution.source is not None and is_analysis_proxy_path(resolution.source.storage_path):
+        # audio, which is already a faithful full copy.
+        #
+        # Applying "clean" against the ACTIVE VIDEO source (a proxy) used to
+        # be refused outright: it requires cutting real video frames, and a
+        # phone-rendered project never uploads the full-resolution video.
+        # `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan`'s
+        # `cut_plan` param now lets `_run_phone_subtitled_job` apply a
+        # CutPlan's keep segments directly against the analysis proxy itself
+        # (no full-resolution video needed -- the proxy IS what renders), but
+        # ONLY for the single-clip "Talking to camera" shape that compiler
+        # requires. A self-narrated item still carrying 2+ clips routes to
+        # the montage/self_narration_multi_clip phone family instead, which
+        # has no timeline-reshaping primitive at all, so THAT shape keeps the
+        # refusal (surfaced to the creator as
+        # `speech_cleanup_unavailable_on_phone`, not a generic failure).
+        if (
+            resolution.source is not None
+            and is_analysis_proxy_path(resolution.source.storage_path)
+            and len(item.clip_gcs_paths or []) != 1
+        ):
             return DispatchResult("speech_cleanup_unavailable_on_phone")
     try:
         identifier = uuid.UUID(str(analysis_id))

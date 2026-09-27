@@ -747,6 +747,7 @@ async def test_approve_records_consent_but_never_dispatches_render() -> None:
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),
@@ -801,6 +802,7 @@ async def test_approve_rejects_changed_draft_head() -> None:
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),
@@ -847,6 +849,7 @@ async def test_approve_rejects_changed_session_pin() -> None:
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),
@@ -950,6 +953,7 @@ async def test_approval_expiry_is_persisted_before_rejection() -> None:
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),
@@ -993,6 +997,7 @@ async def test_approval_rejects_mismatched_fingerprint_without_mutation() -> Non
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),
@@ -1043,6 +1048,7 @@ async def test_approval_rejects_non_pending_record_without_replaying_decision() 
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),

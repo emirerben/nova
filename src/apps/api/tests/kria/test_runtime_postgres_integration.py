@@ -775,6 +775,411 @@ async def test_live_planner_strategy_creates_draft_and_separate_pinned_approval(
         await async_engine.dispose()
 
 
+def _seed_narration_ready_project() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+    """A project whose strategy draft resolves a REAL enforce-mode narration source.
+
+    ``audio_strategy="voiceover"`` with a recorded voiceover already on the
+    item resolves an active ``voiceover`` narration source once
+    `mutate_plan_item_media` sets `edit_format="narrated"` /
+    `audio_mode="voiceover"` at approval time -- exactly the KRI-205 phone
+    cohort scenario (a Talking/Narrated item with a narration source), just
+    with a plain (non-proxy) storage path so it also exercises the ordinary
+    cloud cohort path.
+    """
+
+    user_id = uuid.uuid4()
+    persona_id = uuid.uuid4()
+    plan_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    thread_id = uuid.uuid4()
+    with sync_session() as db:
+        db.add(User(id=user_id, email=f"{user_id}@test.local"))
+        db.flush()
+        db.add(
+            Persona(
+                id=persona_id,
+                user_id=user_id,
+                persona_status="ready",
+                persona={"content_mode": "travel", "tone": "direct"},
+            )
+        )
+        db.flush()
+        db.add(ContentPlan(id=plan_id, user_id=user_id, persona_id=persona_id))
+        db.flush()
+        db.add(
+            PlanItem(
+                id=item_id,
+                content_plan_id=plan_id,
+                position=1,
+                idea="A matcha-making diary",
+                item_status="awaiting_clips",
+                voiceover_gcs_path="users/private/matcha-voiceover.wav",
+                voiceover_generation="voiceover-generation-1",
+                voiceover_duration_s=30.0,
+            )
+        )
+        db.flush()
+        db.add(CreatorAgentSession(id=session_id, creator_id=user_id, plan_item_id=item_id))
+        db.flush()
+        db.add(
+            CreationThread(
+                id=thread_id,
+                creator_id=user_id,
+                runtime_version=2,
+                content_plan_id=plan_id,
+                active_plan_item_id=item_id,
+                active_creator_agent_session_id=session_id,
+                title="Matcha diary",
+                revision=2,
+                status="active",
+            )
+        )
+        db.commit()
+    return user_id, thread_id, session_id, item_id
+
+
+@pytest.mark.asyncio
+async def test_strategy_approval_gates_on_speech_cleanup_then_dispatch_receives_the_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-205 full path: approve (aware, no choice) -> 409 ask_user, approval
+    stays pending, a real analysis is scheduled and committed; mark it ready
+    with findings; approve again (aware, choice=keep_original) -> approved,
+    stashed on the execution; claim reads the stash back; dispatch receives
+    the exact `speech_cleanup_analysis_id`/`speech_cleanup_choice` kwargs.
+    """
+    from app.models import SpeechCleanupAnalysis
+
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    user_id, thread_id, session_id, item_id = _seed_narration_ready_project()
+    body = SubmitTurnBody(
+        message="Make the matcha update feel personal, narrated over the footage",
+        client_event_id=f"cleanup-{uuid.uuid4().hex}",
+        expected_thread_revision=2,
+    )
+    strategy_plan = adapt_creator_action(
+        ProposeStrategy(
+            kind="propose_strategy",
+            strategy=CreativeStrategy(
+                direction="guided_story",
+                edit_format="narrated",
+                audio_strategy="voiceover",
+                pacing="fast",
+                render_program="guided",
+                selected_media_ids=[],
+                rationale="Narrate over the whisk and packed order.",
+            ),
+            summary="Narrate over the whisk and the packed order.",
+        )
+    )
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=strategy_plan,
+            manifest_hash="c" * 64,
+            context_hash="d" * 64,
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+
+    try:
+        async with AsyncSessionLocal() as db:
+            accepted, _ = await submit_turn(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                body=body,
+            )
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result == {"turn_id": accepted.turn_id, "status": "awaiting_approval"}
+
+        with sync_session() as db:
+            turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+            approval = db.execute(
+                select(CreatorAgentApproval).where(CreatorAgentApproval.turn_id == turn.id)
+            ).scalar_one()
+            approval_id = approval.id
+            approval_token = approval_fingerprint(approval)
+            thread_revision = db.get(CreationThread, thread_id).revision
+            draft_revision = approval.draft_revision
+
+        # --- 1) aware, no choice: refused, approval stays pending, a real
+        # analysis row is scheduled and committed under enforce mode. ---
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(RuntimeFailure) as failure:
+                await decide_approval(
+                    db,
+                    thread_id=thread_id,
+                    approval_id=approval_id,
+                    creator_id=user_id,
+                    decision="approve",
+                    body=ApprovalDecisionBody(
+                        expected_thread_revision=thread_revision,
+                        expected_draft_revision=draft_revision,
+                        expected_approval_fingerprint=approval_token,
+                        speech_cleanup_aware=True,
+                    ),
+                )
+        assert failure.value.status_code == 409
+        assert failure.value.phase == "approval"
+        assert failure.value.recovery == "ask_user"
+        # No analysis existed before this very call (it schedules its own), so
+        # an aware client submitting no id is correctly told the identity is
+        # new -- exactly the same code v1's fence returns for that case.
+        assert failure.value.code == "speech_cleanup_analysis_changed"
+
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            assert approval.status == "pending"
+            item = db.get(PlanItem, item_id)
+            assert item.edit_format == "narrated"
+            assert item.audio_mode == "voiceover"
+            analysis = db.execute(
+                select(SpeechCleanupAnalysis).where(
+                    SpeechCleanupAnalysis.plan_item_id == item_id,
+                    SpeechCleanupAnalysis.superseded_at.is_(None),
+                )
+            ).scalar_one()
+            assert analysis.status == "queued"
+            # --- Simulate the worker finishing the check with findings. ---
+            analysis.status = "ready"
+            analysis.candidate_count = 2
+            db.commit()
+            analysis_id = analysis.id
+
+        # --- 2) aware, valid choice: approved; the choice is stashed on the
+        # render execution for the claim to read back. The first attempt
+        # never flipped approval/draft/thread state, so the SAME precomputed
+        # pins are still valid -- this is a genuine retry of one approval. ---
+        async with AsyncSessionLocal() as db:
+            decision, successor_id = await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="approve",
+                body=ApprovalDecisionBody(
+                    expected_thread_revision=thread_revision,
+                    expected_draft_revision=draft_revision,
+                    expected_approval_fingerprint=approval_token,
+                    speech_cleanup_aware=True,
+                    speech_cleanup_analysis_id=analysis_id,
+                    speech_cleanup_choice="keep_original",
+                ),
+            )
+        assert decision.status == "approved"
+        assert successor_id is None
+
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            assert approval.status == "consumed" or approval.status == "approved"
+            execution = db.execute(
+                select(CreatorAgentExecution).where(
+                    CreatorAgentExecution.id == uuid.UUID(approval.execution_ids[0])
+                )
+            ).scalar_one()
+            assert execution.result["speech_cleanup"] == {
+                "analysis_id": str(analysis_id),
+                "choice": "keep_original",
+            }
+
+        # --- 3) the claim reads the stash back and dispatch receives it. ---
+        captured: dict[str, object] = {}
+
+        def _fake_dispatch(*args, **kwargs):  # noqa: ANN002, ANN003
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            with sync_session() as db:
+                item = db.get(PlanItem, item_id, with_for_update=True)
+                assert item is not None
+                job = Job(
+                    user_id=user_id,
+                    status="queued",
+                    mode="generative",
+                    raw_storage_path="",
+                    selected_platforms=["tiktok"],
+                    content_plan_item_id=item.id,
+                    content_plan_ownership_epoch=0,
+                    assembly_plan={"variants": []},
+                )
+                db.add(job)
+                db.flush()
+                item.current_job_id = job.id
+                db.commit()
+                return DispatchResult("dispatched", job_id=str(job.id))
+
+        monkeypatch.setattr(
+            "app.tasks.content_plan_build.dispatch_item_render_for",
+            _fake_dispatch,
+        )
+        dispatched = await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+        assert dispatched["status"] == "dispatched"
+        assert captured["kwargs"]["speech_cleanup_analysis_id"] == str(analysis_id)
+        assert captured["kwargs"]["speech_cleanup_choice"] == "keep_original"
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_denying_a_speech_cleanup_gated_strategy_restores_the_rejected_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A "Change direction" deny after a 409 must not strand the item.
+
+    approve(aware, no choice) -> 409, commits `edit_format="narrated"` /
+    `audio_mode="voiceover"` and schedules a real analysis, approval stays
+    pending -> deny -- the PlanItem must be restored to its PRE-strategy
+    values (here, the untouched column defaults) and the analysis this
+    rejected direction scheduled must be superseded, not left dangling.
+    """
+    from app.models import SpeechCleanupAnalysis
+
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    user_id, thread_id, session_id, item_id = _seed_narration_ready_project()
+    body = SubmitTurnBody(
+        message="Make the matcha update feel personal, narrated over the footage",
+        client_event_id=f"cleanup-deny-{uuid.uuid4().hex}",
+        expected_thread_revision=2,
+    )
+    strategy_plan = adapt_creator_action(
+        ProposeStrategy(
+            kind="propose_strategy",
+            strategy=CreativeStrategy(
+                direction="guided_story",
+                edit_format="narrated",
+                audio_strategy="voiceover",
+                pacing="fast",
+                render_program="guided",
+                selected_media_ids=[],
+                rationale="Narrate over the whisk and packed order.",
+            ),
+            summary="Narrate over the whisk and the packed order.",
+        )
+    )
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=strategy_plan,
+            manifest_hash="e" * 64,
+            context_hash="f" * 64,
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+
+    try:
+        with sync_session() as db:
+            original_item = db.get(PlanItem, item_id)
+            original_edit_format = original_item.edit_format
+            original_audio_mode = original_item.audio_mode
+            original_caption_style = original_item.voiceover_caption_style
+            original_user_edited = original_item.user_edited
+
+        async with AsyncSessionLocal() as db:
+            accepted, _ = await submit_turn(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                body=body,
+            )
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result == {"turn_id": accepted.turn_id, "status": "awaiting_approval"}
+
+        with sync_session() as db:
+            turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+            approval = db.execute(
+                select(CreatorAgentApproval).where(CreatorAgentApproval.turn_id == turn.id)
+            ).scalar_one()
+            approval_id = approval.id
+            approval_token = approval_fingerprint(approval)
+            thread_revision = db.get(CreationThread, thread_id).revision
+            draft_revision = approval.draft_revision
+
+        # --- 1) aware, no choice: refused; commits the strategy's media
+        # mutation and schedules a real analysis, approval stays pending. ---
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(RuntimeFailure):
+                await decide_approval(
+                    db,
+                    thread_id=thread_id,
+                    approval_id=approval_id,
+                    creator_id=user_id,
+                    decision="approve",
+                    body=ApprovalDecisionBody(
+                        expected_thread_revision=thread_revision,
+                        expected_draft_revision=draft_revision,
+                        expected_approval_fingerprint=approval_token,
+                        speech_cleanup_aware=True,
+                    ),
+                )
+
+        with sync_session() as db:
+            item = db.get(PlanItem, item_id)
+            assert item.edit_format == "narrated"
+            assert item.audio_mode == "voiceover"
+            mutated_analysis = db.execute(
+                select(SpeechCleanupAnalysis).where(
+                    SpeechCleanupAnalysis.plan_item_id == item_id,
+                    SpeechCleanupAnalysis.superseded_at.is_(None),
+                )
+            ).scalar_one()
+            assert mutated_analysis.status == "queued"
+
+        # --- 2) "Change direction": deny the SAME approval (its pins never
+        # changed, so the original precomputed fingerprint is still valid). ---
+        async with AsyncSessionLocal() as db:
+            decision, successor_id = await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="deny",
+                body=ApprovalDecisionBody(
+                    expected_thread_revision=thread_revision,
+                    expected_draft_revision=draft_revision,
+                    expected_approval_fingerprint=approval_token,
+                ),
+            )
+        assert decision.status == "denied"
+
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+            assert approval.status == "denied"
+            assert turn.status == "completed"
+
+            item = db.get(PlanItem, item_id)
+            assert item.edit_format == original_edit_format
+            assert item.audio_mode == original_audio_mode
+            assert item.voiceover_caption_style == original_caption_style
+            assert item.user_edited == original_user_edited
+
+            # The rejected direction's analysis must not dangle as "current".
+            still_current = db.execute(
+                select(SpeechCleanupAnalysis).where(
+                    SpeechCleanupAnalysis.plan_item_id == item_id,
+                    SpeechCleanupAnalysis.superseded_at.is_(None),
+                )
+            ).scalar_one_or_none()
+            assert still_current is None
+            superseded = db.get(SpeechCleanupAnalysis, mutated_analysis.id)
+            assert superseded.superseded_at is not None
+
+            execution = db.execute(
+                select(CreatorAgentExecution).where(
+                    CreatorAgentExecution.id == uuid.UUID(approval.execution_ids[0])
+                )
+            ).scalar_one()
+            assert "strategy_media_before" not in (execution.result or {})
+        assert successor_id is None
+    finally:
+        await async_engine.dispose()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("job_status", "assembly_plan", "failure_reason", "expected_code"),

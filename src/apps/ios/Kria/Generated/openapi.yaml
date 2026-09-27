@@ -127,6 +127,29 @@
             "minimum": 0,
             "title": "Expected Thread Revision",
             "type": "integer"
+          },
+          "speech_cleanup_analysis_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Speech Cleanup Analysis Id",
+            "type": "string"
+          },
+          "speech_cleanup_aware": {
+            "default": false,
+            "title": "Speech Cleanup Aware",
+            "type": "boolean"
+          },
+          "speech_cleanup_choice": {
+            "default": null,
+            "enum": [
+              "clean",
+              "keep_original",
+              "create_without_cleanup"
+            ],
+            "nullable": true,
+            "title": "Speech Cleanup Choice",
+            "type": "string"
           }
         },
         "required": [
