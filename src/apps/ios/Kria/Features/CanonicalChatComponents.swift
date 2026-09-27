@@ -571,14 +571,29 @@ private struct FootageThumbnail: View {
 struct DirectionStage: View {
     let approval: ApprovalSnapshot
     let format: CreationFormat?
+    /// The v2 thread's `speech_cleanup` projection (`CreationThread.speechCleanup`).
+    /// Nil for a thread that predates the field or hasn't loaded it yet, which
+    /// resolves to the same plain "Create this video" flow as `applicable: false`.
+    var speechCleanup: [String: JSONValue]? = nil
     let isBusy: Bool
     var responseStartedAt: Date? = nil
-    let decide: (String) -> Void
+    /// `decision` is "approve" or "deny". `cleanupChoice` is only meaningful on
+    /// "approve" -- "clean" / "keep_original" / "create_without_cleanup" -- and
+    /// nil otherwise. `analysisID`, when known, always rides along so the
+    /// server can match the decision to the analysis it answered about.
+    let decide: (_ decision: String, _ cleanupChoice: String?, _ analysisID: String?) -> Void
+    /// Posts the v1-style `retry_speech_cleanup` thread action (shared endpoint,
+    /// not the approval decision) when the analysis itself failed.
+    let retrySpeechCheck: (_ analysisID: String?) -> Void
 
     private var directionTitle: String {
         approval.consequenceSummary
             .replacingOccurrences(of: "Render this draft:", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var cleanupResolution: (offer: SpeechCleanupOffer, analysisID: String?) {
+        SpeechCleanupOffer.resolve(speechCleanup)
     }
 
     var body: some View {
@@ -616,12 +631,43 @@ struct DirectionStage: View {
                 .font(KriaFont.body(12))
                 .foregroundStyle(KriaColor.zinc)
 
-            Button("Create this video") { decide("approve") }
-                .buttonStyle(CanonicalPrimaryButtonStyle())
-                .disabled(isBusy)
-            Button("Change direction") { decide("deny") }
+            cleanupActions
+
+            Button("Change direction") { decide("deny", nil, nil) }
                 .buttonStyle(CanonicalSecondaryButtonStyle())
                 .disabled(isBusy)
+        }
+        .accessibilityIdentifier("direction-stage")
+    }
+
+    @ViewBuilder private var cleanupActions: some View {
+        let resolution = cleanupResolution
+        switch resolution.offer {
+        case .plain:
+            Button("Create this video") { decide("approve", nil, nil) }
+                .buttonStyle(CanonicalPrimaryButtonStyle())
+                .disabled(isBusy)
+        case .checking:
+            ProgressView("Checking speech…")
+                .accessibilityIdentifier("speech-cleanup-checking")
+            Button("Create without cleanup") { decide("approve", "create_without_cleanup", resolution.analysisID) }
+                .buttonStyle(CanonicalSecondaryButtonStyle())
+                .disabled(isBusy)
+        case .failed:
+            Text("The speech check couldn’t finish.")
+                .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            Button("Retry speech check") { retrySpeechCheck(resolution.analysisID) }
+                .disabled(isBusy)
+            Button("Create without cleanup") { decide("approve", "create_without_cleanup", resolution.analysisID) }
+                .buttonStyle(CanonicalPrimaryButtonStyle())
+                .disabled(isBusy)
+        case let .choice(stats):
+            SpeechCleanupChoiceButtons(
+                stats: stats,
+                isDisabled: isBusy,
+                clean: { decide("approve", "clean", resolution.analysisID) },
+                keepOriginal: { decide("approve", "keep_original", resolution.analysisID) }
+            )
         }
     }
 }
@@ -910,7 +956,7 @@ struct FailedStage: View {
     var nonRetryableReasonCode: String? = nil
 
     private var isNonRetryable: Bool {
-        nonRetryableReasonCode.map(nonRetryablePhoneGateErrorCodes.contains) == true
+        isNonRetryableFailureCode(nonRetryableReasonCode)
     }
 
     var body: some View {
