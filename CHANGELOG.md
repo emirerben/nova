@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.2.0] - 2026-09-28
+
+### Changed
+- test(ios): expect Edit text's 120pt typing preview in the resize test (KRI-185) (#1263) <!-- release-pr: 1263 -->
+
 ## [0.77.1.0] - 2026-09-28
 
 ### Changed
