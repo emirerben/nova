@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Any, Literal
 
@@ -73,6 +74,16 @@ class ApprovalDecisionBody(_StrictBody):
     expected_thread_revision: int = Field(ge=0)
     expected_draft_revision: int = Field(ge=0)
     expected_approval_fingerprint: str = Field(min_length=64, max_length=64)
+    # KRI-205 phone speech-cleanup offer: an aware client (one that renders the
+    # question) submits its exact analysis id/choice; `speech_cleanup_aware`
+    # distinguishes it from an older build with no cleanup UI at all, which
+    # must never be blocked by enforce mode (see `decide_approval`'s legacy
+    # default). None of these three fields feed `approval_fingerprint()` --
+    # that hash is computed from the server-authored `CreatorAgentApproval`
+    # row alone, never from this request body.
+    speech_cleanup_aware: bool = False
+    speech_cleanup_analysis_id: uuid.UUID | None = None
+    speech_cleanup_choice: Literal["clean", "keep_original", "create_without_cleanup"] | None = None
 
     @field_validator("expected_approval_fingerprint")
     @classmethod

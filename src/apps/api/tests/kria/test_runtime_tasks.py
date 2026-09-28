@@ -11,10 +11,12 @@ import pytest
 from app.config import settings
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.tasks.kria_runtime import (
+    _ApprovalDispatchClaim,
     _claim,
     _complete_read_turn,
     _Completion,
     _fail_turn,
+    _finish_approval_dispatch,
     _validate_draft_plan,
     execute_kria_approval,
     prune_kria_drafts,
@@ -29,6 +31,9 @@ class _Scalars:
 
     def __iter__(self):  # noqa: ANN204
         return iter(self._values)
+
+    def first(self):  # noqa: ANN201
+        return self._values[0] if self._values else None
 
 
 class _Result:
@@ -280,6 +285,8 @@ def test_execute_approval_dispatches_only_the_claimed_server_strategy() -> None:
         ownership_epoch=4,
         strategy={"edit_format": "day_vlog", "pacing": "fast"},
         creator_request="Open on the whisk.",
+        speech_cleanup_analysis_id=None,
+        speech_cleanup_choice=None,
     )
     dispatch_result = SimpleNamespace(outcome="dispatched", job_id=job_id)
 
@@ -305,8 +312,47 @@ def test_execute_approval_dispatches_only_the_claimed_server_strategy() -> None:
         phone_speech_cleanup_unattended=True,
         creator_strategy=claim.strategy,
         creator_request=claim.creator_request,
+        speech_cleanup_analysis_id=None,
+        speech_cleanup_choice=None,
     )
     finish.assert_called_once_with(claim, outcome="dispatched", job_id=job_id)
+
+
+def test_execute_approval_forwards_decide_approval_stashed_speech_cleanup_choice() -> None:
+    """KRI-205: `decide_approval` stashes its (or its legacy default's) decision on
+    the render execution; the claim reads it back and dispatch must receive it
+    exactly, so an enforce-mode dispatch never re-asks a question already answered.
+    """
+
+    approval_id = str(uuid.uuid4())
+    job_id = str(uuid.uuid4())
+    analysis_id = uuid.uuid4()
+    claim = SimpleNamespace(
+        item_id=uuid.uuid4(),
+        ownership_epoch=4,
+        strategy={"edit_format": "day_vlog", "pacing": "fast"},
+        creator_request="Open on the whisk.",
+        speech_cleanup_analysis_id=analysis_id,
+        speech_cleanup_choice="keep_original",
+    )
+    dispatch_result = SimpleNamespace(outcome="dispatched", job_id=job_id)
+
+    with (
+        patch("app.tasks.kria_runtime._claim_approval_dispatch", return_value=claim),
+        patch(
+            "app.tasks.content_plan_build.dispatch_item_render_for",
+            return_value=dispatch_result,
+        ) as dispatch,
+        patch(
+            "app.tasks.kria_runtime._finish_approval_dispatch",
+            return_value=("dispatched", None),
+        ),
+    ):
+        result = execute_kria_approval.run(approval_id)
+
+    assert result == {"approval_id": approval_id, "status": "dispatched", "job_id": job_id}
+    assert dispatch.call_args.kwargs["speech_cleanup_analysis_id"] == str(analysis_id)
+    assert dispatch.call_args.kwargs["speech_cleanup_choice"] == "keep_original"
 
 
 def test_execute_approval_enqueues_exact_committed_editor_generation() -> None:
@@ -773,3 +819,100 @@ def test_draft_only_tool_group_is_valid_without_render_authority() -> None:
     plan = adapt_editor_action(reply="Smaller text.", ops=[{"op": "set_title", "title": "Morning"}])
     _validate_draft_plan(plan)
     assert all(intent.tool_name != "render.request" for intent in plan.intents)
+
+
+def _dispatch_claim(**overrides: object) -> _ApprovalDispatchClaim:
+    defaults = dict(
+        approval_id=uuid.uuid4(),
+        execution_id=uuid.uuid4(),
+        thread_id=uuid.uuid4(),
+        turn_id=uuid.uuid4(),
+        session_id=uuid.uuid4(),
+        item_id=uuid.uuid4(),
+        ownership_epoch=1,
+        draft_kind="strategy",
+        strategy={"edit_format": "day_vlog"},
+        editor_prep=None,
+        target_job_id=None,
+        target_variant_id=None,
+        target_generation_id=None,
+        creator_request="Open on the whisk.",
+    )
+    defaults.update(overrides)
+    return _ApprovalDispatchClaim(**defaults)
+
+
+def _run_finish_approval_dispatch(
+    claim: _ApprovalDispatchClaim, *, outcome: str
+) -> tuple[dict[str, object], SimpleNamespace]:
+    """Drive `_finish_approval_dispatch`'s failure branch with a faked sync Session."""
+
+    session = SimpleNamespace(
+        id=claim.session_id,
+        status="executing",
+        target_job_id=None,
+        target_variant_id=None,
+        target_generation_id=None,
+        render_attempts=0,
+        last_error=None,
+    )
+    turn = SimpleNamespace(id=claim.turn_id, status="executing", completed_at=None, error=None)
+    approval = SimpleNamespace(id=claim.approval_id)
+    execution = SimpleNamespace(
+        id=claim.execution_id, status="accepted", result={}, error=None, completed_at=None
+    )
+    thread = SimpleNamespace(id=claim.thread_id, revision=1)
+    db = MagicMock()
+    db.execute.side_effect = [
+        _Result(scalar=session),
+        _Result(scalar=turn),
+        _Result(scalar=approval),
+        _Result(scalar=execution),
+        _Result(scalar=thread),
+        _Result(scalar=-1),  # _append_sync_event's max-sequence lookup
+        _Result(scalars=[]),  # _lock_queued_successor: no queued turn
+    ]
+
+    with patch("app.tasks.kria_runtime.sync_session", return_value=nullcontext(db)):
+        status, successor_id = _finish_approval_dispatch(claim, outcome=outcome, job_id=None)
+    return {"status": status, "successor_id": successor_id}, execution
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected_fragment"),
+    [
+        ("speech_cleanup_analysis_conflict", "choose how to handle the pauses"),
+        ("speech_cleanup_recovery_conflict", "choose how to handle the pauses"),
+        ("speech_cleanup_unavailable", "render it without cleanup"),
+        ("speech_cleanup_unavailable_on_phone", "keep the original speech"),
+    ],
+)
+def test_finish_approval_dispatch_maps_speech_cleanup_outcomes_to_ask_user(
+    outcome: str, expected_fragment: str
+) -> None:
+    """KRI-205 safety net: a speech-cleanup dispatch refusal must never fall
+    into the generic "retry" dead loop this whole feature exists to close.
+    """
+
+    claim = _dispatch_claim()
+
+    result, execution = _run_finish_approval_dispatch(claim, outcome=outcome)
+
+    assert result["status"] == "failed"
+    assert execution.status == "failed"
+    assert execution.error["code"] == "render_dispatch_failed"
+    assert execution.error["outcome"] == outcome
+    assert execution.error["retryable"] is False
+    assert execution.error["recovery"] == "ask_user"
+
+
+def test_finish_approval_dispatch_keeps_generic_retry_copy_for_other_failures() -> None:
+    """A non-speech-cleanup, non-phone-gate failure is unaffected by this change."""
+
+    claim = _dispatch_claim()
+
+    result, execution = _run_finish_approval_dispatch(claim, outcome="publish_failed")
+
+    assert result["status"] == "failed"
+    assert execution.error["recovery"] == "retry"
+    assert execution.error["retryable"] is True

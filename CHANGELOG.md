@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.0.0] - 2026-09-28
+
+### Added
+- feat(web): launch video-led Kria landing hero (#1262) <!-- release-pr: 1262 -->
+
+## [0.76.232.0] - 2026-09-28
+
+### Changed
+- feat(ios): ask the speech-cleanup question on the runtime-v2 approval card (#1261) <!-- release-pr: 1261 -->
+
+## [0.76.231.0] - 2026-09-28
+
+### Changed
+- fix(kria): ask the speech-cleanup question in runtime v2 and apply it on the phone (#1260) <!-- release-pr: 1260 -->
+
 ## [0.76.230.0] - 2026-09-25
 
 ### Changed

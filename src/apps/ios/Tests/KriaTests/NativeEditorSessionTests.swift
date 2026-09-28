@@ -3237,7 +3237,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { throw APIError.unsupported }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { throw APIError.unsupported }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws { throw APIError.unsupported }
     var playbackURLResult: URL?
     var playbackURLCallCount = 0
     var playbackFailureReports: [PlaybackFailureReport] = []

@@ -906,6 +906,70 @@ def test_completion_without_a_required_guided_cleanup_writes_no_receipt(fixture,
     assert "speech_cleanup_outcome" not in complete_device_export(fixture, monkeypatch, extra)
 
 
+def test_subtitled_completion_records_the_applied_cleanup_from_the_variant_context(
+    fixture, monkeypatch
+):
+    """A non-guided phone render (`_run_phone_subtitled_job`'s "subtitled"/
+    self-narrated shape, or `_run_phone_narrated_job`'s narrated-with-
+    voiceover shape) persists its OWN `_speech_cleanup_outcome_context` on
+    the completed variant at plan time, mirroring the cloud renderer's
+    `base["_speech_cleanup_outcome_context"]` -- completion publishes the
+    SAME public receipt shape the guided-story path does, straight from that
+    context, with no separate re-binding proof needed."""
+    from app.pipeline.speech_cleanup_apply import (
+        PREFLIGHT_JOB_CONTRACT_FIELD,
+        PREFLIGHT_JOB_CONTRACT_VALUE,
+    )
+
+    fixture.job.assembly_plan["variants"][0]["_speech_cleanup_outcome_context"] = {
+        "analysis_attempt_id": str(uuid.uuid4()),
+        "analysis_view": "full_clip",
+        "detector_version": "v1",
+        "source_tag": "a" * 16,
+        "selected_plan": "candidate",
+        "candidate_status": "ready",
+        "output_removal_count": 2,
+        "output_removed_ms": 2440,
+    }
+    plan = complete_device_export(
+        fixture,
+        monkeypatch,
+        {
+            "speech_cleanup_contract": "required_v1",
+            "creator_generation_id": "creator-generation",
+            PREFLIGHT_JOB_CONTRACT_FIELD: PREFLIGHT_JOB_CONTRACT_VALUE,
+        },
+    )
+    assert plan["speech_cleanup_outcome"] == {
+        "job_id": str(fixture.job.id),
+        "render_generation_id": "creator-generation",
+        "status": "applied",
+        "removal_count": 2,
+        "removed_ms": 2440,
+    }
+
+
+def test_subtitled_completion_with_no_persisted_context_writes_no_receipt(fixture, monkeypatch):
+    """A non-guided phone render under `off_v1`/`legacy_auto` never persists
+    `_speech_cleanup_outcome_context` on its variant -- completion must not
+    fabricate a receipt from nothing."""
+    from app.pipeline.speech_cleanup_apply import (
+        PREFLIGHT_JOB_CONTRACT_FIELD,
+        PREFLIGHT_JOB_CONTRACT_VALUE,
+    )
+
+    plan = complete_device_export(
+        fixture,
+        monkeypatch,
+        {
+            "speech_cleanup_contract": "required_v1",
+            "creator_generation_id": "creator-generation",
+            PREFLIGHT_JOB_CONTRACT_FIELD: PREFLIGHT_JOB_CONTRACT_VALUE,
+        },
+    )
+    assert "speech_cleanup_outcome" not in plan
+
+
 def test_published_phone_export_edits_pin_next_device_revision(fixture, monkeypatch):
     from app.routes import generative_jobs as gj
     from tests.routes.test_phone_editor_commit import phone_job, save
