@@ -2609,6 +2609,45 @@ def _removed_before(t: float, removals: list[Removal]) -> float:
     return sum(max(0.0, min(r.end_s, t) - r.start_s) for r in removals)
 
 
+def remap_time(t: float, plan: CutPlan) -> float:
+    """Map one source-timeline instant into cut-timeline time.
+
+    The shared primitive behind `remap_words`/`remap_range`: shift ``t`` left
+    by the cumulative removed time strictly before it. An instant that falls
+    INSIDE a removal maps to that removal's cut-timeline edge (the same
+    clamp `remap_words` applies to a word endpoint straddling a removal),
+    which is exactly what a single placement point (an SFX `at_s`, a beat
+    trigger) wants: it lands at the nearest surviving moment rather than
+    raising or silently keeping stale source-time coordinates.
+    """
+    removals = sorted(plan.removed, key=lambda r: (r.start_s, r.end_s))
+    return float(t) - _removed_before(float(t), removals)
+
+
+def remap_range(start: float, end: float, plan: CutPlan) -> tuple[float, float] | None:
+    """Map one source-timeline window ``[start, end)`` into cut-timeline time.
+
+    Mirrors `remap_words`' per-word logic for an arbitrary window (a phone
+    lane's overlay card, a caption cue's span): both endpoints shift left by
+    the cumulative removed time before them, so a window straddling a
+    removal shrinks by exactly the removed time inside it (the same
+    behavior a stretched word gets under V2 rule 0). Returns ``None`` when
+    the window is entirely covered by removals -- fully collapsed, not a
+    zero-width edge case the caller must special-case.
+    """
+    if end <= start:
+        return None
+    removals = sorted(plan.removed, key=lambda r: (r.start_s, r.end_s))
+    covered = sum(max(0.0, min(end, r.end_s) - max(start, r.start_s)) for r in removals)
+    if covered >= (end - start) - _EPS:
+        return None
+    new_start = start - _removed_before(start, removals)
+    new_end = end - _removed_before(end, removals)
+    if new_end <= new_start + _EPS:
+        return None
+    return new_start, new_end
+
+
 def remap_words(words: Sequence[Any] | None, plan: CutPlan) -> list[dict]:
     """Shift surviving words into cut-timeline coordinates.
 

@@ -44,6 +44,8 @@ from app.pipeline.silence_cut import (
     no_op_plan,
     plan_event_payload,
     plan_summary,
+    remap_range,
+    remap_time,
     remap_words,
 )
 
@@ -1111,6 +1113,72 @@ class TestRemapWords:
         remapped = remap_words(words, plan)
         starts = [entry["start_s"] for entry in remapped]
         assert starts == sorted(starts)
+
+
+class TestRemapTime:
+    """`remap_time` -- the single-instant primitive behind `remap_range` and
+    the phone lane placements (`app.pipeline.phone_subtitled_lanes.
+    remap_lanes_for_cut`)."""
+
+    def test_before_any_removal_is_unshifted(self):
+        plan = plan_with_removals([(2.0, 3.0)], 10.0)
+        assert remap_time(1.0, plan) == pytest.approx(1.0, abs=1e-9)
+
+    def test_after_removal_shifts_left_by_removed_time(self):
+        plan = plan_with_removals([(2.0, 3.0)], 10.0)
+        assert remap_time(5.0, plan) == pytest.approx(4.0, abs=1e-9)
+
+    def test_cumulative_across_multiple_removals(self):
+        plan = plan_with_removals([(1.0, 2.0), (5.0, 6.0)], 10.0)
+        assert remap_time(7.0, plan) == pytest.approx(5.0, abs=1e-9)
+
+    def test_instant_inside_a_removal_clamps_to_its_cut_time_edge(self):
+        plan = plan_with_removals([(2.0, 4.0)], 10.0)
+        # 3.0 is inside the removal -- 1.0s of it has already elapsed, so it
+        # maps to the same cut-timeline instant as the removal's own start.
+        assert remap_time(3.0, plan) == pytest.approx(2.0, abs=1e-9)
+        assert remap_time(2.0, plan) == pytest.approx(2.0, abs=1e-9)
+
+    def test_noop_plan_is_identity(self):
+        plan = no_op_plan(DUR)
+        assert remap_time(5.0, plan) == pytest.approx(5.0, abs=1e-9)
+
+
+class TestRemapRange:
+    """`remap_range` -- the shared window-remap primitive `phone_captions`'
+    caller and `phone_subtitled_lanes.remap_lanes_for_cut` build on."""
+
+    def test_untouched_window_is_unshifted(self):
+        plan = plan_with_removals([(5.0, 6.0)], 10.0)
+        assert remap_range(1.0, 2.0, plan) == pytest.approx((1.0, 2.0))
+
+    def test_window_after_a_removal_shifts_left(self):
+        plan = plan_with_removals([(2.0, 3.0)], 10.0)
+        assert remap_range(4.0, 5.0, plan) == pytest.approx((3.0, 4.0))
+
+    def test_window_straddling_a_removal_shrinks_by_the_removed_time(self):
+        plan = plan_with_removals([(2.0, 3.0)], 10.0)
+        # [1.5, 4.0) loses the 1.0s removed inside it -> width 1.5s.
+        start, end = remap_range(1.5, 4.0, plan)
+        assert (start, end) == pytest.approx((1.5, 3.0))
+        assert end - start == pytest.approx(1.5, abs=1e-9)
+
+    def test_window_fully_inside_a_removal_is_dropped(self):
+        plan = plan_with_removals([(2.0, 5.0)], 10.0)
+        assert remap_range(2.5, 4.5, plan) is None
+
+    def test_window_spanning_several_removals_is_dropped_when_fully_covered(self):
+        plan = plan_with_removals([(0.0, 2.0), (2.0, 4.0)], 10.0)
+        assert remap_range(0.5, 3.5, plan) is None
+
+    def test_degenerate_window_is_dropped(self):
+        plan = plan_with_removals([(2.0, 3.0)], 10.0)
+        assert remap_range(5.0, 5.0, plan) is None
+        assert remap_range(5.0, 4.0, plan) is None
+
+    def test_noop_plan_is_identity(self):
+        plan = no_op_plan(DUR)
+        assert remap_range(1.0, 3.0, plan) == pytest.approx((1.0, 3.0))
 
 
 # ---------------------------------------------------------------------------------
