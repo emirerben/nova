@@ -2049,6 +2049,12 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
             # path; the flag inside dispatch decides whether it may proceed to
             # the device montage compiler. Non-phone accounts ignore it.
             allow_phone_unapproved_montage=True,
+            # Runtime-v2 has no creator choice surface for the speech-cleanup
+            # card v1's chat route offers, so an undecided phone (analysis
+            # proxy) narration source dispatches without cleanup instead of
+            # refusing under the enforce guard (see the docstring on
+            # `_dispatch_item_render` in content_plan_build.py).
+            phone_speech_cleanup_unattended=True,
             creator_strategy=claim.strategy,
             creator_request=claim.creator_request,
             speech_cleanup_analysis_id=(
