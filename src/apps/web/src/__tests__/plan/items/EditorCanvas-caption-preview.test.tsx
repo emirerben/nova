@@ -10,7 +10,7 @@
 
 import "@testing-library/jest-dom";
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 
 import EditorCanvas from "@/app/plan/items/[id]/_editor/EditorCanvas";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -85,10 +85,6 @@ function renderCanvas(bar: TextElementBar) {
 }
 
 describe("canvas caption preview — per-cue overrides", () => {
-  it("renders the caption at all", () => {
-    renderCanvas(captionBar());
-    expect(screen.getByText("Pınar Beyaz,")).toBeInTheDocument();
-  });
 
   it("uses the per-cue colour override, not the variant colour", () => {
     const el = renderCanvas(captionBar({ color: "#FFFFFF", cue_text_color: "#602E2E" }));

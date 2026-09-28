@@ -611,7 +611,12 @@ def test_decide_approval_delegates_and_publishes_denied_turn_successor(
     assert decide.await_args.kwargs["approval_id"] == approval_id
     assert decide.await_args.kwargs["creator_id"] == user.id
     assert decide.await_args.kwargs["decision"] == "deny"
-    assert decide.await_args.kwargs["body"].model_dump() == body
+    assert decide.await_args.kwargs["body"].model_dump() == {
+        **body,
+        "speech_cleanup_aware": False,
+        "speech_cleanup_analysis_id": None,
+        "speech_cleanup_choice": None,
+    }
     publish.assert_called_once_with(successor_id)
     db.rollback.assert_not_awaited()
 

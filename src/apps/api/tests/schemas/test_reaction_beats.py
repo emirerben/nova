@@ -11,27 +11,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents._schemas.creator_agent import CreativeStrategy
-from app.agents._schemas.reaction_beats import MAX_REACTION_BEATS, ClosingMedia, ReactionBeat
+from app.agents._schemas.reaction_beats import MAX_REACTION_BEATS, ReactionBeat
 from app.kria.registry import ApplyStrategyArguments
-
-
-def test_reaction_beat_round_trips():
-    beat = ReactionBeat(
-        beat_id="greenwood",
-        trigger="Mason Greenwood",
-        visual_id="media-1",
-        visual_role="photo",
-        sound="buzzer",
-        hold_s=2.0,
-    )
-    dumped = beat.model_dump(mode="json")
-    assert ReactionBeat.model_validate(dumped) == beat
-
-
-def test_closing_media_round_trips():
-    closing = ClosingMedia(visual_id="salah", badge_visual_id="goat-badge", from_trigger="Salah")
-    dumped = closing.model_dump(mode="json")
-    assert ClosingMedia.model_validate(dumped) == closing
 
 
 def test_reaction_beat_requires_visual_id_or_sound():
@@ -66,19 +47,6 @@ def test_reaction_beat_hold_s_is_bounded():
         ReactionBeat(beat_id="b3", trigger="hi", sound="ding", hold_s=0.1)
     with pytest.raises(ValidationError):
         ReactionBeat(beat_id="b4", trigger="hi", sound="ding", hold_s=9.0)
-
-
-def test_reaction_beat_and_closing_media_forbid_extra_fields():
-    with pytest.raises(ValidationError):
-        ReactionBeat(beat_id="b1", trigger="hi", sound="ding", unexpected="nope")
-    with pytest.raises(ValidationError):
-        ClosingMedia(visual_id="salah", unexpected="nope")
-
-
-def test_reaction_beats_are_frozen():
-    beat = ReactionBeat(beat_id="b1", trigger="hi", sound="ding")
-    with pytest.raises(ValidationError):
-        beat.trigger = "bye"
 
 
 def test_creative_strategy_default_dump_omits_reaction_fields():

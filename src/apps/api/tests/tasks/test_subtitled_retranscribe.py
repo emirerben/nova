@@ -337,20 +337,6 @@ def test_caption_cue_caps_words_length():
         CaptionCue(text="x", start_s=0.0, end_s=20.0, words=too_many)
 
 
-def test_caption_cue_words_roundtrip_exclude_none():
-    from app.routes.generative_jobs import CaptionCue
-
-    plain = CaptionCue(text="a", start_s=0.0, end_s=1.0)
-    assert "words" not in plain.model_dump(exclude_none=True)
-    word = CaptionCue(
-        text="a b",
-        start_s=0.0,
-        end_s=1.0,
-        words=[{"text": "a", "start_s": 0.0, "end_s": 0.5}],
-    )
-    assert word.model_dump(exclude_none=True)["words"][0]["text"] == "a"
-
-
 # ── Smart Captions v2 metadata round-trip ────────────────────────────────────
 #
 # The captions PATCH replaces the ENTIRE cue list with

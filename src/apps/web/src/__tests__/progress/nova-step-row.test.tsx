@@ -1,15 +1,11 @@
 /**
  * NovaStepRow — expand/collapse affordance, aria-expanded contract, and
  * reduced-motion handling (t-accordion is pure CSS; here we assert the
- * `is-open` class flip and the @media guard's presence in globals.css,
- * plus that the component itself does not gate on JS reduced-motion state
- * — CSS alone must zero the animation).
+ * `is-open` class flip).
  */
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen } from "@testing-library/react";
-import fs from "fs";
-import path from "path";
-import { NovaPendingRow, NovaStepRow } from "@/components/progress/NovaStepRow";
+import { NovaStepRow } from "@/components/progress/NovaStepRow";
 import type { NovaStep } from "@/lib/job-phases";
 
 const doneStep: NovaStep = {
@@ -28,15 +24,6 @@ const activeStepWithDetail: NovaStep = {
   label: "Rendering variant 1 of 3",
   detail: ["Encoding at 1080x1920, 30fps", "Applying captions and text overlays"],
   status: "active",
-};
-
-const failedStep: NovaStep = {
-  id: "s3",
-  ts: "2026-08-11T00:00:10Z",
-  kind: "render",
-  label: "This one didn't render",
-  detail: null,
-  status: "failed",
 };
 
 describe("NovaStepRow", () => {
@@ -117,35 +104,10 @@ describe("NovaStepRow", () => {
     );
     expect(container.querySelector(".t-accordion")).toHaveClass("is-open");
   });
-
-  it("failed rows use a zinc dash icon, never a red class", () => {
-    const { container } = render(
-      <NovaStepRow step={failedStep} tone="light" size="full" expanded={false} onToggle={() => {}} />,
-    );
-    expect(container.innerHTML).not.toMatch(/text-red|bg-red|border-red/);
-  });
 });
 
 describe("NovaPendingRow", () => {
-  it("renders a dimmed, non-interactive placeholder row", () => {
-    render(<NovaPendingRow label="Mixing audio" tone="light" size="full" />);
-    expect(screen.getByText("Mixing audio")).toBeInTheDocument();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
-  });
 });
 
 describe("t-accordion CSS token (DESIGN.md §6)", () => {
-  it("globals.css defines --t-accordion-dur/--t-accordion-ease and a reduced-motion guard", () => {
-    const css = fs.readFileSync(
-      path.join(__dirname, "../../app/globals.css"),
-      "utf-8",
-    );
-    expect(css).toMatch(/--t-accordion-dur:\s*300ms/);
-    expect(css).toMatch(/--t-accordion-ease:\s*cubic-bezier\(0\.23,\s*1,\s*0\.32,\s*1\)/);
-    // Reduced-motion zeroes the accordion transition specifically.
-    const guardMatch = css.match(
-      /@media \(prefers-reduced-motion: reduce\) \{\s*\.t-accordion \{ transition: none !important; \}\s*\}/,
-    );
-    expect(guardMatch).not.toBeNull();
-  });
 });

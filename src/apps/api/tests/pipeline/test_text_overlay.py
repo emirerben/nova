@@ -4,7 +4,6 @@ import os
 import tempfile
 
 from app.pipeline.text_overlay import (
-    _ASS_OVERLAY_HEADER,
     CANVAS_H,
     CANVAS_W,
     FONT_CYCLE_FAST_INTERVAL_S,
@@ -58,20 +57,23 @@ class TestValidateOverlay:
 
     def test_clamps_end_to_slot_duration(self):
         _, _, end, _ = _validate_overlay(
-            {"text": "Test", "start_s": 0.0, "end_s": 10.0}, 5.0,
+            {"text": "Test", "start_s": 0.0, "end_s": 10.0},
+            5.0,
         )
         assert end == 5.0
 
     def test_skips_when_start_ge_end(self):
         text, _, _, _ = _validate_overlay(
-            {"text": "X", "start_s": 5.0, "end_s": 3.0}, 10.0,
+            {"text": "X", "start_s": 5.0, "end_s": 3.0},
+            10.0,
         )
         assert text is None
 
     def test_truncates_long_text(self):
         long_text = "A" * (MAX_OVERLAY_TEXT_LEN + 50)
         text, _, _, _ = _validate_overlay(
-            {"text": long_text, "start_s": 0.0, "end_s": 3.0}, 5.0,
+            {"text": long_text, "start_s": 0.0, "end_s": 3.0},
+            5.0,
         )
         assert len(text) == MAX_OVERLAY_TEXT_LEN
         assert text.endswith("\u2026")
@@ -84,9 +86,18 @@ class TestAnimatedOverlayASS:
     def test_fade_in_contains_fad_tag(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Hello", "start_s": 0.0, "end_s": 3.0,
-                  "position": "center", "effect": "fade-in"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Hello",
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "center",
+                        "effect": "fade-in",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None
             assert len(result) == 1
@@ -97,9 +108,18 @@ class TestAnimatedOverlayASS:
     def test_typewriter_contains_k_tags(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Hi!", "start_s": 0.0, "end_s": 3.0,
-                  "position": "center", "effect": "typewriter"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Hi!",
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "center",
+                        "effect": "typewriter",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None
             with open(result[0]) as f:
@@ -111,9 +131,18 @@ class TestAnimatedOverlayASS:
     def test_slide_up_contains_move_tag(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Slide", "start_s": 0.0, "end_s": 3.0,
-                  "position": "center", "effect": "slide-up"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Slide",
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "center",
+                        "effect": "slide-up",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None
             with open(result[0]) as f:
@@ -128,9 +157,18 @@ class TestAnimatedOverlayASS:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Drop", "start_s": 0.0, "end_s": 3.0,
-                  "position": "bottom", "effect": "slide-down"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Drop",
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "bottom",
+                        "effect": "slide-down",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None and len(result) == 1
             with open(result[0]) as f:
@@ -139,6 +177,7 @@ class TestAnimatedOverlayASS:
             # Start y must be negative (above the top edge); end y must be
             # within canvas. Extract the four-arg \move(x1,y1,x2,y2,t1,t2) tag.
             import re
+
             m = re.search(r"\\move\((\d+),(-?\d+),(\d+),(\d+),", content)
             assert m, f"could not parse \\move tag: {content[:300]}"
             start_y = int(m.group(2))
@@ -150,18 +189,36 @@ class TestAnimatedOverlayASS:
         """Generated ASS file has all required sections."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Test", "start_s": 0.0, "end_s": 2.0,
-                  "position": "center", "effect": "fade-in"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Test",
+                        "start_s": 0.0,
+                        "end_s": 2.0,
+                        "position": "center",
+                        "effect": "fade-in",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert _validate_ass_file(result[0])
 
     def test_position_mapping_top(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Top", "start_s": 0.0, "end_s": 2.0,
-                  "position": "top", "effect": "fade-in"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Top",
+                        "start_s": 0.0,
+                        "end_s": 2.0,
+                        "position": "top",
+                        "effect": "fade-in",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             with open(result[0]) as f:
                 content = f.read()
@@ -170,9 +227,18 @@ class TestAnimatedOverlayASS:
     def test_position_mapping_bottom(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Bottom", "start_s": 0.0, "end_s": 2.0,
-                  "position": "bottom", "effect": "fade-in"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Bottom",
+                        "start_s": 0.0,
+                        "end_s": 2.0,
+                        "position": "bottom",
+                        "effect": "fade-in",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             with open(result[0]) as f:
                 content = f.read()
@@ -182,9 +248,18 @@ class TestAnimatedOverlayASS:
         """generate_animated_overlay_ass ignores static/none effects."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Static", "start_s": 0.0, "end_s": 3.0,
-                  "position": "center", "effect": "static"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Static",
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "center",
+                        "effect": "static",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is None
 
@@ -192,9 +267,18 @@ class TestAnimatedOverlayASS:
         """Long text is truncated in ASS content."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "A" * (MAX_OVERLAY_TEXT_LEN + 50), "start_s": 0.0, "end_s": 3.0,
-                  "position": "center", "effect": "fade-in"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "A" * (MAX_OVERLAY_TEXT_LEN + 50),
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "center",
+                        "effect": "fade-in",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             with open(result[0]) as f:
                 content = f.read()
@@ -210,9 +294,18 @@ class TestAnimatedOverlayASS:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Pop", "start_s": 0.0, "end_s": 1.1,
-                  "position": "bottom", "effect": "pop-in"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Pop",
+                        "start_s": 0.0,
+                        "end_s": 1.1,
+                        "position": "bottom",
+                        "effect": "pop-in",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None and len(result) == 1
             with open(result[0]) as f:
@@ -232,15 +325,23 @@ class TestAnimatedOverlayASS:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Bounce", "start_s": 0.0, "end_s": 2.0,
-                  "position": "center", "effect": "bounce"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Bounce",
+                        "start_s": 0.0,
+                        "end_s": 2.0,
+                        "position": "center",
+                        "effect": "bounce",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None and len(result) == 1
             with open(result[0]) as f:
                 content = f.read()
-            for scale in ("\\fscx100\\fscy100", "\\fscx125\\fscy125",
-                          "\\fscx90\\fscy90"):
+            for scale in ("\\fscx100\\fscy100", "\\fscx125\\fscy125", "\\fscx90\\fscy90"):
                 assert scale in content, f"missing {scale}: {content[:400]}"
             assert content.count("\\t(") >= 3
 
@@ -252,9 +353,18 @@ class TestAnimatedOverlayASS:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "X", "start_s": 0.0, "end_s": 0.2,
-                  "position": "center", "effect": "bounce"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "X",
+                        "start_s": 0.0,
+                        "end_s": 0.2,
+                        "position": "center",
+                        "effect": "bounce",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             with open(result[0]) as f:
                 content = f.read()
@@ -262,10 +372,8 @@ class TestAnimatedOverlayASS:
             # The default bounce ends at 500ms; clamped, the last \t() target
             # should land at \u2264200ms.
             import re
-            t_endings = [
-                int(m.group(2))
-                for m in re.finditer(r"\\t\((\d+),(\d+),", content)
-            ]
+
+            t_endings = [int(m.group(2)) for m in re.finditer(r"\\t\((\d+),(\d+),", content)]
             assert t_endings, "no \\t() tags emitted"
             assert max(t_endings) <= 200, (
                 f"clamp failed: keyframe at {max(t_endings)}ms > 200ms window"
@@ -275,6 +383,7 @@ class TestAnimatedOverlayASS:
         """ASS_ANIMATED_EFFECTS must include the two new effects so the
         animation path runs instead of the static-PNG fallback."""
         from app.pipeline.text_overlay import ASS_ANIMATED_EFFECTS
+
         assert "pop-in" in ASS_ANIMATED_EFFECTS
         assert "bounce" in ASS_ANIMATED_EFFECTS
         # Sanity: ensure we didn't accidentally promote scale-up too
@@ -288,25 +397,29 @@ class TestAnimatedOverlayASS:
         Without pre-wrap, libass shows 1 line at \\fscx30 and 2 lines at
         \\fscx100 — the rewrap reads as text jitter at the entrance.
         """
-        long_text = (
-            '"Who are you trying to impress with all those travel stories?"'
-        )
+        long_text = '"Who are you trying to impress with all those travel stories?"'
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{
-                    "text": long_text, "start_s": 0.5, "end_s": 3.5,
-                    "position": "center", "effect": "pop-in",
-                    "font_family": "Inter Tight",
-                    "position_y_frac": 0.62, "outline_px": 3,
-                }],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": long_text,
+                        "start_s": 0.5,
+                        "end_s": 3.5,
+                        "position": "center",
+                        "effect": "pop-in",
+                        "font_family": "Inter Tight",
+                        "position_y_frac": 0.62,
+                        "outline_px": 3,
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None and len(result) == 1
             content = open(result[0]).read()
             # Locate the Dialogue line so we only assert on the rendered text.
-            dialogue = next(
-                ln for ln in content.splitlines() if ln.startswith("Dialogue:")
-            )
+            dialogue = next(ln for ln in content.splitlines() if ln.startswith("Dialogue:"))
             # WrapStyle override so libass does not re-wrap during \fscx ramp.
             assert "\\q2" in dialogue, dialogue
             # Pre-computed break inserted at the natural word boundary.
@@ -328,17 +441,23 @@ class TestAnimatedOverlayASS:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{
-                    "text": "I got room", "start_s": 0.0, "end_s": 1.5,
-                    "position": "bottom", "effect": "pop-in",
-                    "pop_animated_suffix": "room",
-                }],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "I got room",
+                        "start_s": 0.0,
+                        "end_s": 1.5,
+                        "position": "bottom",
+                        "effect": "pop-in",
+                        "pop_animated_suffix": "room",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None and len(result) == 1
             dialogue = next(
-                ln for ln in open(result[0]).read().splitlines()
-                if ln.startswith("Dialogue:")
+                ln for ln in open(result[0]).read().splitlines() if ln.startswith("Dialogue:")
             )
             # Scale animation tags still emitted...
             assert "\\fscx30\\fscy30" in dialogue
@@ -366,25 +485,25 @@ class TestAnimatedOverlayASS:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{
-                    "text": (
-                        "Let's make this happen let's make this happen "
-                        "let's make this happen"
-                    ),
-                    "start_s": 0.0,
-                    "end_s": 1.5,
-                    "position": "bottom",
-                    "effect": "pop-in",
-                    "pop_animated_suffix": "happen",
-                }],
+                [
+                    {
+                        "text": (
+                            "Let's make this happen let's make this happen let's make this happen"
+                        ),
+                        "start_s": 0.0,
+                        "end_s": 1.5,
+                        "position": "bottom",
+                        "effect": "pop-in",
+                        "pop_animated_suffix": "happen",
+                    }
+                ],
                 5.0,
                 tmpdir,
                 0,
             )
             assert result is not None and len(result) == 1
             dialogue = next(
-                ln for ln in open(result[0]).read().splitlines()
-                if ln.startswith("Dialogue:")
+                ln for ln in open(result[0]).read().splitlines() if ln.startswith("Dialogue:")
             )
             assert "\\q2" in dialogue, dialogue
             assert "\\N" in dialogue, dialogue
@@ -402,17 +521,23 @@ class TestAnimatedOverlayASS:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{
-                    "text": "I", "start_s": 0.0, "end_s": 0.4,
-                    "position": "bottom", "effect": "pop-in",
-                    "pop_animated_suffix": "I",
-                }],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "I",
+                        "start_s": 0.0,
+                        "end_s": 0.4,
+                        "position": "bottom",
+                        "effect": "pop-in",
+                        "pop_animated_suffix": "I",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None and len(result) == 1
             dialogue = next(
-                ln for ln in open(result[0]).read().splitlines()
-                if ln.startswith("Dialogue:")
+                ln for ln in open(result[0]).read().splitlines() if ln.startswith("Dialogue:")
             )
             assert "\\fscx30\\fscy30" in dialogue
             assert "\\fscx100\\fscy100" in dialogue
@@ -428,17 +553,23 @@ class TestAnimatedOverlayASS:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{
-                    "text": "Pop", "start_s": 0.0, "end_s": 1.1,
-                    "position": "center", "effect": "pop-in",
-                    "font_family": "Inter Tight",
-                }],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Pop",
+                        "start_s": 0.0,
+                        "end_s": 1.1,
+                        "position": "center",
+                        "effect": "pop-in",
+                        "font_family": "Inter Tight",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None
             dialogue = next(
-                ln for ln in open(result[0]).read().splitlines()
-                if ln.startswith("Dialogue:")
+                ln for ln in open(result[0]).read().splitlines() if ln.startswith("Dialogue:")
             )
             assert "\\N" not in dialogue, dialogue
             assert "\\q2" in dialogue  # \q2 emitted unconditionally for pop-in
@@ -449,22 +580,26 @@ class TestAnimatedOverlayASS:
         100→125→90→100 crosses the same wrap threshold as pop-in's
         30→115→100, so the same `\\N` + `\\q2` treatment must apply.
         """
-        long_text = (
-            "This is a long bouncing reaction line that will not fit"
-        )
+        long_text = "This is a long bouncing reaction line that will not fit"
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{
-                    "text": long_text, "start_s": 0.0, "end_s": 2.0,
-                    "position": "center", "effect": "bounce",
-                    "font_family": "Inter Tight",
-                }],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": long_text,
+                        "start_s": 0.0,
+                        "end_s": 2.0,
+                        "position": "center",
+                        "effect": "bounce",
+                        "font_family": "Inter Tight",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None
             dialogue = next(
-                ln for ln in open(result[0]).read().splitlines()
-                if ln.startswith("Dialogue:")
+                ln for ln in open(result[0]).read().splitlines() if ln.startswith("Dialogue:")
             )
             assert "\\q2" in dialogue
             assert "\\N" in dialogue
@@ -479,18 +614,23 @@ class TestAnimatedOverlayASS:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{
-                    "text": "this is some long fading text that wraps fine",
-                    "start_s": 0.0, "end_s": 2.0,
-                    "position": "center", "effect": "fade-in",
-                    "font_family": "Inter Tight",
-                }],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "this is some long fading text that wraps fine",
+                        "start_s": 0.0,
+                        "end_s": 2.0,
+                        "position": "center",
+                        "effect": "fade-in",
+                        "font_family": "Inter Tight",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None
             dialogue = next(
-                ln for ln in open(result[0]).read().splitlines()
-                if ln.startswith("Dialogue:")
+                ln for ln in open(result[0]).read().splitlines() if ln.startswith("Dialogue:")
             )
             assert "\\q2" not in dialogue, dialogue
             assert "\\N" not in dialogue, dialogue
@@ -505,9 +645,18 @@ class TestAnimatedOverlayASS:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Static", "start_s": 0.0, "end_s": 3.0,
-                  "position": "center", "effect": "scale-up"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Static",
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "center",
+                        "effect": "scale-up",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is None
 
@@ -518,18 +667,39 @@ class TestAnimatedOverlayASS:
         x_frac=0.82 \u2192 885. Reference shows them at lower-left / lower-right.
         """
         import re
+
         with tempfile.TemporaryDirectory() as tmpdir:
             r1 = generate_animated_overlay_ass(
-                [{"text": "This", "start_s": 0.0, "end_s": 1.0,
-                  "position": "bottom", "effect": "fade-in",
-                  "position_x_frac": 0.18, "position_y_frac": 0.85}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "This",
+                        "start_s": 0.0,
+                        "end_s": 1.0,
+                        "position": "bottom",
+                        "effect": "fade-in",
+                        "position_x_frac": 0.18,
+                        "position_y_frac": 0.85,
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             r2 = generate_animated_overlay_ass(
-                [{"text": "is", "start_s": 0.0, "end_s": 1.0,
-                  "position": "bottom", "effect": "fade-in",
-                  "position_x_frac": 0.82, "position_y_frac": 0.85}],
-                5.0, tmpdir, 1,
+                [
+                    {
+                        "text": "is",
+                        "start_s": 0.0,
+                        "end_s": 1.0,
+                        "position": "bottom",
+                        "effect": "fade-in",
+                        "position_x_frac": 0.82,
+                        "position_y_frac": 0.85,
+                    }
+                ],
+                5.0,
+                tmpdir,
+                1,
             )
             assert r1 and r2
             c1 = open(r1[0]).read()
@@ -551,24 +721,25 @@ class TestAnimatedOverlayASS:
         with tempfile.TemporaryDirectory() as tmpdir:
             for idx, (anchor, alignment_tag) in enumerate(cases):
                 result = generate_animated_overlay_ass(
-                    [{
-                        "text": anchor,
-                        "start_s": 0.0,
-                        "end_s": 1.0,
-                        "position": "bottom",
-                        "effect": "fade-in",
-                        "position_x_frac": 0.25,
-                        "position_y_frac": 0.80,
-                        "text_anchor": anchor,
-                    }],
+                    [
+                        {
+                            "text": anchor,
+                            "start_s": 0.0,
+                            "end_s": 1.0,
+                            "position": "bottom",
+                            "effect": "fade-in",
+                            "position_x_frac": 0.25,
+                            "position_y_frac": 0.80,
+                            "text_anchor": anchor,
+                        }
+                    ],
                     5.0,
                     tmpdir,
                     idx,
                 )
                 assert result
                 dialogue = next(
-                    ln for ln in open(result[0]).read().splitlines()
-                    if ln.startswith("Dialogue:")
+                    ln for ln in open(result[0]).read().splitlines() if ln.startswith("Dialogue:")
                 )
                 assert f"{alignment_tag}\\pos(270,1536)" in dialogue, dialogue
 
@@ -581,25 +752,26 @@ class TestAnimatedOverlayASS:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{
-                    "text": "only time that I'd be by your side",
-                    "start_s": 0.0,
-                    "end_s": 1.5,
-                    "position": "bottom",
-                    "effect": "pop-in",
-                    "position_x_frac": 0.06,
-                    "text_anchor": "left",
-                    "font_family": "Bodoni Moda",
-                    "pop_animated_suffix": "side",
-                }],
+                [
+                    {
+                        "text": "only time that I'd be by your side",
+                        "start_s": 0.0,
+                        "end_s": 1.5,
+                        "position": "bottom",
+                        "effect": "pop-in",
+                        "position_x_frac": 0.06,
+                        "text_anchor": "left",
+                        "font_family": "Bodoni Moda",
+                        "pop_animated_suffix": "side",
+                    }
+                ],
                 5.0,
                 tmpdir,
                 0,
             )
             assert result
             dialogue = next(
-                ln for ln in open(result[0]).read().splitlines()
-                if ln.startswith("Dialogue:")
+                ln for ln in open(result[0]).read().splitlines() if ln.startswith("Dialogue:")
             )
             assert "\\an4\\pos(64,1632)" in dialogue, dialogue
             assert "\\an5\\pos(64,1632)" not in dialogue, dialogue
@@ -609,12 +781,23 @@ class TestAnimatedOverlayASS:
         for both start and end coordinates (otherwise text slides centered
         even when caller asks for off-center)."""
         import re
+
         with tempfile.TemporaryDirectory() as tmpdir:
             r = generate_animated_overlay_ass(
-                [{"text": "Drop", "start_s": 0.0, "end_s": 2.0,
-                  "position": "bottom", "effect": "slide-down",
-                  "position_x_frac": 0.25, "position_y_frac": 0.80}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Drop",
+                        "start_s": 0.0,
+                        "end_s": 2.0,
+                        "position": "bottom",
+                        "effect": "slide-down",
+                        "position_x_frac": 0.25,
+                        "position_y_frac": 0.80,
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert r
             content = open(r[0]).read()
@@ -627,47 +810,49 @@ class TestAnimatedOverlayASS:
     def test_text_anchor_left_in_slide_uses_middle_left_move_anchor(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{
-                    "text": "Drop",
-                    "start_s": 0.0,
-                    "end_s": 2.0,
-                    "position": "bottom",
-                    "effect": "slide-down",
-                    "position_x_frac": 0.25,
-                    "position_y_frac": 0.80,
-                    "text_anchor": "left",
-                }],
+                [
+                    {
+                        "text": "Drop",
+                        "start_s": 0.0,
+                        "end_s": 2.0,
+                        "position": "bottom",
+                        "effect": "slide-down",
+                        "position_x_frac": 0.25,
+                        "position_y_frac": 0.80,
+                        "text_anchor": "left",
+                    }
+                ],
                 5.0,
                 tmpdir,
                 0,
             )
             assert result
             dialogue = next(
-                ln for ln in open(result[0]).read().splitlines()
-                if ln.startswith("Dialogue:")
+                ln for ln in open(result[0]).read().splitlines() if ln.startswith("Dialogue:")
             )
             assert "\\an4\\move(270,-200,270,1536,0,500)" in dialogue, dialogue
 
     def test_typewriter_uses_explicit_pos_and_text_anchor(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{
-                    "text": "Type",
-                    "start_s": 0.0,
-                    "end_s": 1.0,
-                    "position": "bottom",
-                    "effect": "typewriter",
-                    "position_x_frac": 0.06,
-                    "text_anchor": "left",
-                }],
+                [
+                    {
+                        "text": "Type",
+                        "start_s": 0.0,
+                        "end_s": 1.0,
+                        "position": "bottom",
+                        "effect": "typewriter",
+                        "position_x_frac": 0.06,
+                        "text_anchor": "left",
+                    }
+                ],
                 5.0,
                 tmpdir,
                 0,
             )
             assert result
             dialogue = next(
-                ln for ln in open(result[0]).read().splitlines()
-                if ln.startswith("Dialogue:")
+                ln for ln in open(result[0]).read().splitlines() if ln.startswith("Dialogue:")
             )
             assert "\\an4\\pos(64,1632)" in dialogue, dialogue
             assert "\\k" in dialogue, dialogue
@@ -676,20 +861,28 @@ class TestAnimatedOverlayASS:
         """No position_x_frac \u2192 existing centered behavior (x=540 on 1080
         canvas). Guard against accidentally requiring the new field."""
         import re
+
         with tempfile.TemporaryDirectory() as tmpdir:
             r = generate_animated_overlay_ass(
-                [{"text": "Center", "start_s": 0.0, "end_s": 1.0,
-                  "position": "center", "effect": "fade-in",
-                  "position_y_frac": 0.5}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Center",
+                        "start_s": 0.0,
+                        "end_s": 1.0,
+                        "position": "center",
+                        "effect": "fade-in",
+                        "position_y_frac": 0.5,
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert r
             content = open(r[0]).read()
             m = re.search(r"\\pos\((\d+),(\d+)\)", content)
             # When y_frac is set but not x_frac, x defaults to canvas center.
-            assert m and int(m.group(1)) == 540, (
-                f"expected centered x=540, got {m and m.group(1)}"
-            )
+            assert m and int(m.group(1)) == 540, f"expected centered x=540, got {m and m.group(1)}"
 
 
 # -- PNG overlay generation ---------------------------------------------------
@@ -698,8 +891,10 @@ class TestAnimatedOverlayASS:
 class TestGenerateTextOverlayPng:
     def test_single_center_overlay(self, tmp_path):
         result = generate_text_overlay_png(
-            [_make_overlay()], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [_make_overlay()],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         assert len(result) == 1
@@ -714,8 +909,10 @@ class TestGenerateTextOverlayPng:
             _make_overlay(text="Bottom text", position="bottom", start_s=2.0, end_s=4.0),
         ]
         result = generate_text_overlay_png(
-            overlays, slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            overlays,
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         assert len(result) == 3
@@ -725,9 +922,12 @@ class TestGenerateTextOverlayPng:
 
     def test_png_is_valid_image(self, tmp_path):
         from PIL import Image
+
         result = generate_text_overlay_png(
-            [_make_overlay()], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [_make_overlay()],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         img = Image.open(result[0]["png_path"])
         assert img.mode == "RGBA"
@@ -735,8 +935,10 @@ class TestGenerateTextOverlayPng:
 
     def test_empty_overlay_list(self, tmp_path):
         result = generate_text_overlay_png(
-            [], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is None
 
@@ -744,7 +946,8 @@ class TestGenerateTextOverlayPng:
         result = generate_text_overlay_png(
             [_make_overlay(start_s=3.0, end_s=2.0)],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is None
 
@@ -752,7 +955,8 @@ class TestGenerateTextOverlayPng:
         result = generate_text_overlay_png(
             [_make_overlay(start_s=0.0, end_s=10.0)],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         assert result[0]["end_s"] == 5.0
@@ -763,7 +967,8 @@ class TestGenerateTextOverlayPng:
         result = generate_text_overlay_png(
             [_make_overlay(text=long_text)],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         assert os.path.exists(result[0]["png_path"])
@@ -772,7 +977,8 @@ class TestGenerateTextOverlayPng:
         result = generate_text_overlay_png(
             [_make_overlay(text=r"{\b1}injected text{\i1}")],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         # Should still render (sanitized to "injected text")
         assert result is not None
@@ -781,16 +987,20 @@ class TestGenerateTextOverlayPng:
         result = generate_text_overlay_png(
             [_make_overlay(text="   ")],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is None
 
     def test_png_has_text_pixels(self, tmp_path):
         """The PNG should have non-transparent pixels (the text)."""
         from PIL import Image
+
         result = generate_text_overlay_png(
-            [_make_overlay(text="HELLO")], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [_make_overlay(text="HELLO")],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         img = Image.open(result[0]["png_path"])
         # Check that some pixels are non-transparent
@@ -799,12 +1009,16 @@ class TestGenerateTextOverlayPng:
 
     def test_different_slot_indices_unique_filenames(self, tmp_path):
         r1 = generate_text_overlay_png(
-            [_make_overlay()], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [_make_overlay()],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         r2 = generate_text_overlay_png(
-            [_make_overlay()], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=1,
+            [_make_overlay()],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=1,
         )
         assert r1[0]["png_path"] != r2[0]["png_path"]
 
@@ -812,9 +1026,18 @@ class TestGenerateTextOverlayPng:
         """generate_text_overlay_png renders ALL overlays including animated (as fallback)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_text_overlay_png(
-                [{"text": "Fade", "start_s": 0.0, "end_s": 3.0,
-                  "position": "center", "effect": "fade-in"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Fade",
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "center",
+                        "effect": "fade-in",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None
             assert len(result) == 1
@@ -823,9 +1046,18 @@ class TestGenerateTextOverlayPng:
         """Static effect produces a PNG file."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_text_overlay_png(
-                [{"text": "Hello", "start_s": 0.0, "end_s": 3.0,
-                  "position": "center", "effect": "static"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Hello",
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "center",
+                        "effect": "static",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None
             assert len(result) == 1
@@ -841,7 +1073,8 @@ class TestFontCycleEffect:
         result = generate_text_overlay_png(
             [_make_overlay(text="PERU", effect="font-cycle", start_s=0.0, end_s=2.0)],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         # Should have multiple frames (cycling) + 1 settle frame
@@ -855,7 +1088,8 @@ class TestFontCycleEffect:
         result = generate_text_overlay_png(
             [_make_overlay(text="TOKYO", effect="font-cycle", start_s=0.5, end_s=2.5)],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         # First frame starts at overlay start
@@ -868,7 +1102,8 @@ class TestFontCycleEffect:
         result = generate_text_overlay_png(
             [_make_overlay(text="PARIS", effect="font-cycle", start_s=0.0, end_s=3.0)],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         for i in range(len(result) - 1):
@@ -877,10 +1112,12 @@ class TestFontCycleEffect:
     def test_font_cycle_pngs_are_valid_images(self, tmp_path):
         """Each font-cycle PNG should be a valid RGBA 1080x1920 image with text."""
         from PIL import Image
+
         result = generate_text_overlay_png(
             [_make_overlay(text="HELLO", effect="font-cycle", start_s=0.0, end_s=1.5)],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         for r in result:
@@ -895,7 +1132,8 @@ class TestFontCycleEffect:
         result = generate_text_overlay_png(
             [_make_overlay(text="ROME", effect="font-cycle", start_s=0.0, end_s=2.0)],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         last = result[-1]
@@ -909,7 +1147,8 @@ class TestFontCycleEffect:
         result = generate_text_overlay_png(
             [_make_overlay(text="NYC", effect="font-cycle", start_s=0.0, end_s=2.0)],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         paths = [r["png_path"] for r in result]
@@ -922,8 +1161,10 @@ class TestFontCycleEffect:
             _make_overlay(text="ISTANBUL", effect="font-cycle", start_s=0.0, end_s=2.0),
         ]
         result = generate_text_overlay_png(
-            overlays, slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            overlays,
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         # Should have 1 static + multiple font-cycle frames
@@ -934,7 +1175,8 @@ class TestFontCycleEffect:
         result = generate_text_overlay_png(
             [_make_overlay(text="HI", effect="font-cycle", start_s=0.0, end_s=0.3)],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         assert len(result) >= 2  # at least 1 cycle + 1 settle
@@ -942,6 +1184,7 @@ class TestFontCycleEffect:
     def test_font_cycle_frame_cap_fills_gap(self, tmp_path):
         """When frame cap is hit, gap-fill PNG bridges cycling to settle phase."""
         from app.pipeline.text_overlay import FONT_CYCLE_INTERVAL_S, MAX_FONT_CYCLE_FRAMES
+
         # Create an overlay long enough that the frame cap is hit during cycling.
         # cycling covers 70% of duration; at 0.15s per frame, cap needs
         # duration * 0.7 / 0.15 > MAX_FONT_CYCLE_FRAMES
@@ -949,13 +1192,14 @@ class TestFontCycleEffect:
         result = generate_text_overlay_png(
             [_make_overlay(text="LONG", effect="font-cycle", start_s=0.0, end_s=min_duration)],
             slot_duration_s=min_duration + 1.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         # Verify no timing gaps between any consecutive frames
         for i in range(len(result) - 1):
             gap = result[i + 1]["start_s"] - result[i]["end_s"]
-            assert abs(gap) < 0.001, f"Gap of {gap:.4f}s between frame {i} and {i+1}"
+            assert abs(gap) < 0.001, f"Gap of {gap:.4f}s between frame {i} and {i + 1}"
         # First frame starts at overlay start, last ends at overlay end
         assert result[0]["start_s"] == 0.0
         assert abs(result[-1]["end_s"] - min_duration) < 0.001
@@ -992,10 +1236,21 @@ class TestPlayfairDisplayFonts:
         from PIL import Image
 
         result = generate_text_overlay_png(
-            [{"text": "PORTUGAL", "start_s": 0.0, "end_s": 3.0,
-              "position": "center", "effect": "none", "font_style": "display",
-              "text_size": "large", "text_color": "#FFFFFF"}],
-            5.0, str(tmp_path), 0,
+            [
+                {
+                    "text": "PORTUGAL",
+                    "start_s": 0.0,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "effect": "none",
+                    "font_style": "display",
+                    "text_size": "large",
+                    "text_color": "#FFFFFF",
+                }
+            ],
+            5.0,
+            str(tmp_path),
+            0,
         )
         assert result is not None
         img = Image.open(result[0]["png_path"])
@@ -1007,18 +1262,24 @@ class TestPlayfairDisplayFonts:
     def test_serif_style_renders(self, tmp_path):
         """The 'serif' font_style (Playfair Regular) renders a valid PNG."""
         result = generate_text_overlay_png(
-            [{"text": "Welcome to", "start_s": 0.0, "end_s": 3.0,
-              "position": "top", "effect": "none", "font_style": "serif",
-              "text_size": "medium", "text_color": "#FFFFFF"}],
-            5.0, str(tmp_path), 0,
+            [
+                {
+                    "text": "Welcome to",
+                    "start_s": 0.0,
+                    "end_s": 3.0,
+                    "position": "top",
+                    "effect": "none",
+                    "font_style": "serif",
+                    "text_size": "medium",
+                    "text_color": "#FFFFFF",
+                }
+            ],
+            5.0,
+            str(tmp_path),
+            0,
         )
         assert result is not None
         assert os.path.exists(result[0]["png_path"])
-
-    def test_ass_header_uses_playfair(self):
-        """ASS overlay header should reference Playfair Display, not Montserrat."""
-        assert "Playfair Display" in _ASS_OVERLAY_HEADER
-        assert "Montserrat" not in _ASS_OVERLAY_HEADER
 
     def test_cycle_cache_reset(self):
         """Font-cycle cache can be reset and rebuilt."""
@@ -1047,8 +1308,10 @@ class TestFontCycleTextColor:
             "text_color": "#FFD700",
         }
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         # Check that PNGs contain yellow-ish pixels (R > 200, G > 150)
@@ -1072,8 +1335,10 @@ class TestFontCycleTextColor:
             "text_color": "#FF0000",
         }
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         img = Image.open(result[0]["png_path"])
@@ -1094,8 +1359,10 @@ class TestFontCycleTextColor:
             "effect": "font-cycle",
         }
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         img = Image.open(result[0]["png_path"])
@@ -1121,19 +1388,35 @@ class TestFontCycleAcceleration:
 
         # Normal speed: 3s overlay
         normal = generate_text_overlay_png(
-            [{"text": "PERU", "start_s": 0.0, "end_s": 3.0,
-              "position": "center", "effect": "font-cycle"}],
+            [
+                {
+                    "text": "PERU",
+                    "start_s": 0.0,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                }
+            ],
             slot_duration_s=5.0,
-            output_dir=str(normal_dir), slot_index=0,
+            output_dir=str(normal_dir),
+            slot_index=0,
         )
 
         # Accelerated: same 3s overlay, fast after 1.0s
         accel = generate_text_overlay_png(
-            [{"text": "PERU", "start_s": 0.0, "end_s": 3.0,
-              "position": "center", "effect": "font-cycle",
-              "font_cycle_accel_at_s": 1.0}],
+            [
+                {
+                    "text": "PERU",
+                    "start_s": 0.0,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "font_cycle_accel_at_s": 1.0,
+                }
+            ],
             slot_duration_s=5.0,
-            output_dir=str(accel_dir), slot_index=0,
+            output_dir=str(accel_dir),
+            slot_index=0,
         )
 
         assert normal is not None
@@ -1144,11 +1427,19 @@ class TestFontCycleAcceleration:
     def test_acceleration_no_timing_gaps(self, tmp_path):
         """Accelerated font-cycle frames still have no timing gaps."""
         result = generate_text_overlay_png(
-            [{"text": "ROME", "start_s": 0.0, "end_s": 3.0,
-              "position": "center", "effect": "font-cycle",
-              "font_cycle_accel_at_s": 1.5}],
+            [
+                {
+                    "text": "ROME",
+                    "start_s": 0.0,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "font_cycle_accel_at_s": 1.5,
+                }
+            ],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         for i in range(len(result) - 1):
@@ -1157,11 +1448,19 @@ class TestFontCycleAcceleration:
     def test_acceleration_covers_full_duration(self, tmp_path):
         """Accelerated overlay still covers start to end."""
         result = generate_text_overlay_png(
-            [{"text": "PARIS", "start_s": 1.0, "end_s": 4.0,
-              "position": "center", "effect": "font-cycle",
-              "font_cycle_accel_at_s": 2.5}],
+            [
+                {
+                    "text": "PARIS",
+                    "start_s": 1.0,
+                    "end_s": 4.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "font_cycle_accel_at_s": 2.5,
+                }
+            ],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         assert result[0]["start_s"] == 1.0
@@ -1170,11 +1469,19 @@ class TestFontCycleAcceleration:
     def test_font_cycle_accel_skips_settle_phase(self, tmp_path):
         """With accel_at_s, no settle PNG — cycling extends to end_s."""
         result = generate_text_overlay_png(
-            [{"text": "ROME", "start_s": 0.0, "end_s": 3.0,
-              "position": "center", "effect": "font-cycle",
-              "font_cycle_accel_at_s": 1.5}],
+            [
+                {
+                    "text": "ROME",
+                    "start_s": 0.0,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "font_cycle_accel_at_s": 1.5,
+                }
+            ],
             slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         # No settle PNG should exist — all PNGs should be cycling frames
@@ -1205,18 +1512,34 @@ class TestFontCycleTextSize:
         os.makedirs(large_dir, exist_ok=True)
 
         small = generate_text_overlay_png(
-            [{"text": "HI", "start_s": 0.0, "end_s": 2.0,
-              "position": "center", "effect": "font-cycle",
-              "text_size": "small"}],
+            [
+                {
+                    "text": "HI",
+                    "start_s": 0.0,
+                    "end_s": 2.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "text_size": "small",
+                }
+            ],
             slot_duration_s=5.0,
-            output_dir=str(small_dir), slot_index=0,
+            output_dir=str(small_dir),
+            slot_index=0,
         )
         large = generate_text_overlay_png(
-            [{"text": "HI", "start_s": 0.0, "end_s": 2.0,
-              "position": "center", "effect": "font-cycle",
-              "text_size": "large"}],
+            [
+                {
+                    "text": "HI",
+                    "start_s": 0.0,
+                    "end_s": 2.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "text_size": "large",
+                }
+            ],
             slot_duration_s=5.0,
-            output_dir=str(large_dir), slot_index=0,
+            output_dir=str(large_dir),
+            slot_index=0,
         )
 
         assert small is not None
@@ -1325,10 +1648,19 @@ class TestFontFamilyResolution:
         from PIL import Image
 
         result = generate_text_overlay_png(
-            [{"text": "Hello", "start_s": 0.0, "end_s": 3.0,
-              "position": "center", "effect": "none",
-              "font_family": "Space Grotesk"}],
-            5.0, str(tmp_path), 0,
+            [
+                {
+                    "text": "Hello",
+                    "start_s": 0.0,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "effect": "none",
+                    "font_family": "Space Grotesk",
+                }
+            ],
+            5.0,
+            str(tmp_path),
+            0,
         )
         assert result is not None
         img = Image.open(result[0]["png_path"])
@@ -1340,11 +1672,20 @@ class TestFontFamilyResolution:
     def test_font_family_missing_falls_back_to_font_style(self, tmp_path):
         """Unknown font_family falls back to font_style rendering."""
         result = generate_text_overlay_png(
-            [{"text": "Fallback", "start_s": 0.0, "end_s": 3.0,
-              "position": "center", "effect": "none",
-              "font_family": "NonExistent Font",
-              "font_style": "sans"}],
-            5.0, str(tmp_path), 0,
+            [
+                {
+                    "text": "Fallback",
+                    "start_s": 0.0,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "effect": "none",
+                    "font_family": "NonExistent Font",
+                    "font_style": "sans",
+                }
+            ],
+            5.0,
+            str(tmp_path),
+            0,
         )
         assert result is not None
         assert os.path.exists(result[0]["png_path"])
@@ -1352,10 +1693,20 @@ class TestFontFamilyResolution:
     def test_no_font_family_renders_identically_to_legacy(self, tmp_path):
         """REGRESSION: overlay without font_family uses font_style (same as before)."""
         result = generate_text_overlay_png(
-            [{"text": "Legacy", "start_s": 0.0, "end_s": 3.0,
-              "position": "center", "effect": "none",
-              "font_style": "display", "text_size": "large"}],
-            5.0, str(tmp_path), 0,
+            [
+                {
+                    "text": "Legacy",
+                    "start_s": 0.0,
+                    "end_s": 3.0,
+                    "position": "center",
+                    "effect": "none",
+                    "font_style": "display",
+                    "text_size": "large",
+                }
+            ],
+            5.0,
+            str(tmp_path),
+            0,
         )
         assert result is not None
         assert os.path.exists(result[0]["png_path"])
@@ -1364,10 +1715,19 @@ class TestFontFamilyResolution:
         """font_family set on font-cycle overlay becomes the settle font."""
         _reset_cycle_cache()
         result = generate_text_overlay_png(
-            [{"text": "PERU", "start_s": 0.0, "end_s": 2.0,
-              "position": "center", "effect": "font-cycle",
-              "font_family": "Space Grotesk"}],
-            5.0, str(tmp_path), 0,
+            [
+                {
+                    "text": "PERU",
+                    "start_s": 0.0,
+                    "end_s": 2.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "font_family": "Space Grotesk",
+                }
+            ],
+            5.0,
+            str(tmp_path),
+            0,
         )
         assert result is not None
         # Should have cycling + settle frames
@@ -1396,10 +1756,19 @@ class TestFontFamilyResolution:
         """Animated overlay ASS uses font_family's ass_name."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Fade", "start_s": 0.0, "end_s": 3.0,
-                  "position": "center", "effect": "fade-in",
-                  "font_family": "Bodoni Moda"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Fade",
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "center",
+                        "effect": "fade-in",
+                        "font_family": "Bodoni Moda",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None
             with open(result[0]) as f:
@@ -1410,9 +1779,18 @@ class TestFontFamilyResolution:
         """ASS without font_family defaults to Playfair Display."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "Default", "start_s": 0.0, "end_s": 3.0,
-                  "position": "center", "effect": "fade-in"}],
-                5.0, tmpdir, 0,
+                [
+                    {
+                        "text": "Default",
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "center",
+                        "effect": "fade-in",
+                    }
+                ],
+                5.0,
+                tmpdir,
+                0,
             )
             assert result is not None
             with open(result[0]) as f:
@@ -1457,8 +1835,10 @@ class TestSpanRendering:
             ],
         )
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         assert len(result) == 1
@@ -1475,8 +1855,10 @@ class TestSpanRendering:
             text="Hello",
         )
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         assert os.path.exists(result[0]["png_path"])
@@ -1492,8 +1874,10 @@ class TestSpanRendering:
             ],
         )
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         img = Image.open(result[0]["png_path"])
@@ -1510,8 +1894,10 @@ class TestSpanRendering:
             text="test",
         )
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         img = Image.open(result[0]["png_path"])
@@ -1526,8 +1912,10 @@ class TestSpanRendering:
             text="test",
         )
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         assert os.path.exists(result[0]["png_path"])
@@ -1543,8 +1931,10 @@ class TestSpanRendering:
             "spans": [],
         }
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         assert os.path.exists(result[0]["png_path"])
@@ -1559,8 +1949,10 @@ class TestSpanRendering:
             font_family="Montserrat",
         )
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         img = Image.open(result[0]["png_path"])
@@ -1582,8 +1974,10 @@ class TestSpanRendering:
             end_s=2.0,
         )
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         # Should produce multiple font-cycle frames
@@ -1604,8 +1998,10 @@ class TestSpanRendering:
             end_s=2.0,
         )
         result = generate_text_overlay_png(
-            [overlay], slot_duration_s=5.0,
-            output_dir=str(tmp_path), slot_index=0,
+            [overlay],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path),
+            slot_index=0,
         )
         assert result is not None
         settle_pngs = [r for r in result if "_settle" in os.path.basename(r["png_path"])]
@@ -1636,14 +2032,20 @@ class TestComputeFontCycleFrameSpecs:
 
     def test_returns_empty_when_no_fonts(self):
         specs = _compute_font_cycle_frame_specs(
-            start_s=0.0, end_s=3.0, cycle_fonts=[], accel_at=None,
+            start_s=0.0,
+            end_s=3.0,
+            cycle_fonts=[],
+            accel_at=None,
         )
         assert specs == []
 
     def test_normal_cycle_uses_default_interval(self):
         fonts = ["A", "B", "C"]  # fonts are opaque tokens here
         specs = _compute_font_cycle_frame_specs(
-            start_s=0.0, end_s=3.0, cycle_fonts=fonts, accel_at=None,
+            start_s=0.0,
+            end_s=3.0,
+            cycle_fonts=fonts,
+            accel_at=None,
         )
         # Frames in cycle phase honor FONT_CYCLE_INTERVAL_S
         cycle_frames = [s for s in specs if s[3] == "cycle"]
@@ -1655,14 +2057,15 @@ class TestComputeFontCycleFrameSpecs:
     def test_acceleration_switches_interval(self):
         fonts = ["A", "B"]
         specs = _compute_font_cycle_frame_specs(
-            start_s=0.0, end_s=2.0, cycle_fonts=fonts, accel_at=1.0,
+            start_s=0.0,
+            end_s=2.0,
+            cycle_fonts=fonts,
+            accel_at=1.0,
         )
         # No settle when accel_at is set
         assert not any(s[3] == "settle" for s in specs)
         # Frames at or after accel_at use the fast interval
-        post_accel = [
-            s for s in specs if s[3] == "cycle" and s[1] >= 1.0
-        ]
+        post_accel = [s for s in specs if s[3] == "cycle" and s[1] >= 1.0]
         assert post_accel, "expected at least one post-acceleration frame"
         for _font, fs, fe, _kind, _idx in post_accel[:-1]:
             assert abs((fe - fs) - FONT_CYCLE_FAST_INTERVAL_S) < 1e-6
@@ -1670,7 +2073,10 @@ class TestComputeFontCycleFrameSpecs:
     def test_specs_cover_entire_range_contiguously(self):
         fonts = ["A", "B", "C"]
         specs = _compute_font_cycle_frame_specs(
-            start_s=0.0, end_s=4.0, cycle_fonts=fonts, accel_at=None,
+            start_s=0.0,
+            end_s=4.0,
+            cycle_fonts=fonts,
+            accel_at=None,
         )
         # Every spec abuts the next; first starts at start_s; last ends at end_s.
         assert specs[0][1] == 0.0
@@ -1683,7 +2089,10 @@ class TestComputeFontCycleFrameSpecs:
         fonts = ["A", "B"]
         long_end = MAX_FONT_CYCLE_FRAMES * FONT_CYCLE_INTERVAL_S * 5
         specs = _compute_font_cycle_frame_specs(
-            start_s=0.0, end_s=long_end, cycle_fonts=fonts, accel_at=None,
+            start_s=0.0,
+            end_s=long_end,
+            cycle_fonts=fonts,
+            accel_at=None,
         )
         kinds = [s[3] for s in specs]
         cycle_count = kinds.count("cycle")
@@ -1747,7 +2156,9 @@ class TestRenderOverlaysAtTime:
     def test_empty_overlays_yields_transparent_canvas(self, tmp_path):
         out = str(tmp_path / "preview.png")
         render_overlays_at_time(
-            overlays=[], slot_duration_s=5.0, time_in_slot_s=1.0,
+            overlays=[],
+            slot_duration_s=5.0,
+            time_in_slot_s=1.0,
             output_path=out,
         )
         assert os.path.exists(out)
@@ -1764,7 +2175,9 @@ class TestRenderOverlaysAtTime:
             "effect": "none",
         }
         render_overlays_at_time(
-            overlays=[overlay], slot_duration_s=5.0, time_in_slot_s=1.0,
+            overlays=[overlay],
+            slot_duration_s=5.0,
+            time_in_slot_s=1.0,
             output_path=out,
         )
         assert _png_is_transparent(out)
@@ -1779,7 +2192,9 @@ class TestRenderOverlaysAtTime:
             "effect": "none",
         }
         render_overlays_at_time(
-            overlays=[overlay], slot_duration_s=5.0, time_in_slot_s=2.0,
+            overlays=[overlay],
+            slot_duration_s=5.0,
+            time_in_slot_s=2.0,
             output_path=out,
         )
         assert _png_size(out) == (CANVAS_W, CANVAS_H)
@@ -1799,7 +2214,9 @@ class TestRenderOverlaysAtTime:
             ],
         }
         render_overlays_at_time(
-            overlays=[overlay], slot_duration_s=5.0, time_in_slot_s=2.0,
+            overlays=[overlay],
+            slot_duration_s=5.0,
+            time_in_slot_s=2.0,
             output_path=out,
         )
         assert _png_has_content(out)
@@ -1819,11 +2236,15 @@ class TestRenderOverlaysAtTime:
         out1 = str(tmp_path / "t1.png")
         out2 = str(tmp_path / "t2.png")
         render_overlays_at_time(
-            [overlay], slot_duration_s=5.0, time_in_slot_s=0.05,
+            [overlay],
+            slot_duration_s=5.0,
+            time_in_slot_s=0.05,
             output_path=out1,
         )
         render_overlays_at_time(
-            [overlay], slot_duration_s=5.0, time_in_slot_s=3.5,
+            [overlay],
+            slot_duration_s=5.0,
+            time_in_slot_s=3.5,
             output_path=out2,
         )
         assert _png_has_content(out1)
@@ -1834,17 +2255,23 @@ class TestRenderOverlaysAtTime:
         overlays = [
             {
                 "text": "TOP",
-                "start_s": 0.0, "end_s": 4.0,
-                "position": "top", "effect": "none",
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "position": "top",
+                "effect": "none",
             },
             {
                 "text": "BOTTOM",
-                "start_s": 0.0, "end_s": 4.0,
-                "position": "bottom", "effect": "none",
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "position": "bottom",
+                "effect": "none",
             },
         ]
         render_overlays_at_time(
-            overlays=overlays, slot_duration_s=5.0, time_in_slot_s=2.0,
+            overlays=overlays,
+            slot_duration_s=5.0,
+            time_in_slot_s=2.0,
             output_path=out,
         )
         assert _png_has_content(out)
@@ -1855,18 +2282,24 @@ class TestRenderOverlaysAtTime:
         overlays = [
             {
                 "text": "VALID",
-                "start_s": 0.0, "end_s": 4.0,
-                "position": "center", "effect": "none",
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "position": "center",
+                "effect": "none",
             },
             {
                 # Malformed: text=None and no spans -> _validate_overlay rejects.
                 "text": None,
-                "start_s": 0.0, "end_s": 4.0,
-                "position": "center", "effect": "none",
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "position": "center",
+                "effect": "none",
             },
         ]
         render_overlays_at_time(
-            overlays=overlays, slot_duration_s=5.0, time_in_slot_s=1.0,
+            overlays=overlays,
+            slot_duration_s=5.0,
+            time_in_slot_s=1.0,
             output_path=out,
         )
         assert _png_has_content(out)

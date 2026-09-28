@@ -9,11 +9,7 @@ from __future__ import annotations
 
 import tempfile
 
-from app.pipeline.text_overlay import ASS_ANIMATED_EFFECTS, generate_animated_overlay_ass
-
-
-def test_lyric_line_is_registered_as_animated_effect() -> None:
-    assert "lyric-line" in ASS_ANIMATED_EFFECTS
+from app.pipeline.text_overlay import generate_animated_overlay_ass
 
 
 def _render(overlay: dict, slot_duration_s: float = 5.0) -> str:

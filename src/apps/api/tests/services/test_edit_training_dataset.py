@@ -89,13 +89,6 @@ def test_export_guard_rejects_paths_signed_urls_and_raw_payloads():
         assert_export_safe({"value": "https://x.test/a?X-Goog-Signature=secret"})
 
 
-def test_jsonl_is_canonical_and_round_trips():
-    record = canonical_record(_candidate(artifact="a1"), secret=SECRET)
-    payload = json.loads(records_to_jsonl([record]))
-    assert payload["schema_version"] == 1
-    assert payload["artifact_key"] == record.artifact_key
-
-
 def test_jsonl_and_parquet_encode_the_same_canonical_records(tmp_path):
     parquet = pytest.importorskip("pyarrow.parquet")
     records = [

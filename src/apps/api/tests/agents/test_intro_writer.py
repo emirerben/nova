@@ -94,11 +94,6 @@ def test_invalid_json_raises_schema_error():
         _agent().parse("not json", _input())
 
 
-def test_language_defaults_to_en_in_input():
-    inp = _input()
-    assert inp.language == "en"
-
-
 def test_render_prompt_en_branch_does_not_include_tr_marker():
     inp = IntroWriterInput(
         hero_clip=ClipSummary(clip_id="c1", duration_s=4.0, subject="x", hook_score=5.0),

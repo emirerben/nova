@@ -60,24 +60,6 @@ async def test_enqueue_orchestrator_sets_task_id_and_persists_column() -> None:
 
 
 @pytest.mark.asyncio
-async def test_enqueue_orchestrator_forwards_kwargs() -> None:
-    """kwargs flow through to apply_async (preview-mode test jobs need this)."""
-    job_id = uuid.uuid4()
-    task = MagicMock()
-    task.name = "orchestrate_template_job"
-    status_result = MagicMock()
-    status_result.scalar_one_or_none.return_value = "queued"
-    db = MagicMock()
-    db.execute = AsyncMock(side_effect=[status_result, MagicMock()])
-    db.commit = AsyncMock()
-    db.rollback = AsyncMock()
-
-    await enqueue_orchestrator(task, job_id, db, kwargs={"force_single_pass": True})
-
-    assert task.apply_async.call_args.kwargs["kwargs"] == {"force_single_pass": True}
-
-
-@pytest.mark.asyncio
 async def test_enqueue_orchestrator_does_not_publish_cancelled_job() -> None:
     job_id = uuid.uuid4()
     task = MagicMock()

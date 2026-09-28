@@ -152,6 +152,101 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   draft was checked against; requirements past the 40-live cap are dropped
   silently; `read_creative_brief` scans only the newest 30 assistant events.
 
+## One montage plan (KRI-190)
+
+Behind `MONTAGE_UNIFIED_PLAN_ENABLED` (or a `MONTAGE_UNIFIED_PLAN_USER_IDS`
+allowlist entry; comma-separated or JSON, same shape as the brief allowlist); off
+is byte-identical. Code: `app/pipeline/unified_montage.py` (pure planner),
+`_run_phone_unified_montage_job` in `app/tasks/generative_build.py` (worker),
+`_unified_montage_review` in `app/tasks/kria_runtime.py` (reply).
+
+**Why.** A runtime-v2 phone approval has no approved guided proposal, so the worker
+fell to the plain phone-montage lane. That lane shows one intro hook, orders by
+matcher score, ignores the brief, and rejects every portrait-canvas job at the
+item's default `landscape_fit="fit"` (`phone_plan_unsupported: letterboxed landscape
+fit ...`, job 94c4c865). It also 422'd every chat text edit (`unsupported_phone_edit`)
+because it never wrote a `guided_story_execution_plan`.
+
+**What happens with the flag on.** In `_run_generative_job_impl`, a phone job in the
+montage family (`GUIDED_EDIT_FORMATS`), no recorded voiceover, no `guided_edit`,
+plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
+
+1. Inputs: the job's clip order (`all_candidates.clip_paths`), the phone bindings
+   (durations, dimensions), the item's clip assignments (capture time, place,
+   stored landmark facts), the thread's latest Creative Brief, the strategy's
+   confirmed copy. `CLIP_FACTS_*` gates the facts; landmark guesses use the
+   existing `enrich_clip_facts` (45s cap, fail-open).
+2. `plan_unified_montage` returns an `EditProposalSnapshot` (`fast_montage`, exact
+   `fast_cuts`, `video_reuse_policy="once"`, new `clip_labels`) persisted as the
+   job's immutable `guided_edit`, plus a small `unified_montage` record.
+3. The guided compiler, its validators, the guided phone compiler and the guided
+   phone editor apply unchanged; text-only chat saves recompile normally.
+
+**Decisions the planner owns** (nothing else):
+
+- *Order*: capture time only when the brief has an `order` requirement with a
+  capture key and two clips carry a time; otherwise the creator's pinned order
+  (`all_candidates.creator_clip_order`, a revision keeps a reordered timeline,
+  basis `creator_order`), else attachment order. The basis and
+  the clips that fell back are recorded (`ordering_basis`,
+  `ordering_fallback_clip_ids`). A selection order is never silently overridden.
+- *Per-clip text*: only when the brief (or confirmed shot labels / verified clip
+  intents) asks for it. Grounding, in priority: creator words (`clip:<id>` literal,
+  positional `shot_labels`, creator-text intent) > verified intent > clip fact
+  (`creator` > `landmark` > `place`, most specific part) > brief `start`/`end` for
+  the first/last clip. No grounding means no label; the receipt says partial.
+  Landmarks are `inferred` and listed for correction.
+- *Reading time*: `min_display_s = clamp(0.8 + 0.06 * chars, 1.2, 3.0)`; a labelled
+  cut lasts at least that long, capped by the clip itself (then the receipt says
+  the label is too short to read). Unlabelled cuts are 1.2s. A requested length
+  (`brief timing.duration_s`, else `strategy.target_duration_s`) grows cuts (up to the
+  clip's length; without a stated length, at most 3s each) or shrinks unlabelled
+  cuts (not below 0.8s); readable text wins.
+- *Title*: confirmed strategy title > brief title literal > brief global literal
+  (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`) >
+  `Montage`. Never a model hook, never place text nobody asked for. Creator-written
+  labels keep up to 120 characters; fact/model labels are cut at 60.
+  Text stays NFC; nothing is folded to ASCII.
+- *Typography*: Fraunces has no "→" glyph and the phone lays out from exact glyph
+  ids (a missing glyph fails the whole recipe), so `skia_font_covers` picks the
+  first bundled font (creator font, Fraunces, DM Sans) that covers every string;
+  only uncovered characters are dropped when none does.
+
+**Not covered / known gaps.** The worker plans from the thread's *latest* brief, not
+the approved version (a redelivery before the plan is pinned can pick up a newer
+one; receipts are dropped from the reply when `brief_version` differs). With the
+flag on, a phone montage renders source audio only (no matched music bed, beat-snap
+or hero intro). A single clip under 3s fails as "too short to make a montage".
+
+**Snapshot lane.** `EditProposalSnapshot.clip_labels` (omitted when `None`, so
+stored snapshots and approval hashes are byte-identical) and the
+`clip_labels is not None` branch of `guided_story._text_elements` draw the title at
+the top and one label per cut at the bottom. `TimelineClip.text` exists in the
+recipe schema but the guided compiler, like every guided plan, emits positioned
+`text_layers`, which the iPhone engine already renders.
+
+**Receipts.** The worker computes receipts from what it put in the plan
+(`brief_checks.plan_facts_from_unified_montage`: clip ids, labels, inferred labels,
+title, total length, ordering basis, too-short labels) and stores them on
+`unified_montage.requirement_receipts`. When the render is ready the observer's
+`assistant_review` event is composed from them (`reply_from_receipts`) and carries
+`requirement_receipts`; with the brief off or no record it is the unchanged default
+review.
+
+**Planner prompt.** `main_creator` v39 always records route/distance/activity
+`facts` and an `order` requirement when the creator names a sequence.
+
+**Not in this change.** Deleting `compile_phone_montage_plan` and its intro-only
+lane follows once a human has compared the new renders on a device. Cloud
+(non-phone) montage is untouched.
+
+Guards: `tests/pipeline/test_unified_montage.py`,
+`tests/tasks/test_unified_montage_dispatch.py` (the East Run repro, flag-off pins,
+chat edit), `tests/kria/test_unified_montage_receipts.py`,
+`tests/evals/test_main_creator_evals.py::kri190_route_facts_and_order`.
+Rollback: `fly secrets set MONTAGE_UNIFIED_PLAN_ENABLED=false MONTAGE_UNIFIED_PLAN_USER_IDS=
+--app nova-video` + restart the worker; in-flight jobs keep their pinned plan.
+
 ## Render consent
 
 Every initial render and rerender requires a separate, expiring approval pinned

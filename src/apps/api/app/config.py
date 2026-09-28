@@ -195,6 +195,40 @@ class Settings(BaseSettings):
     # set PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_video_overlays_enabled: bool = False
+    # KRI-190: one montage plan. True (or the account is in the allowlist): a
+    # phone-rendered montage-family job with no approved guided proposal is
+    # compiled through the guided plan format (fast montage + per-clip text)
+    # instead of the plain phone-montage lane. False (default): the plain lane,
+    # including its landscape-fit guard, runs byte-identically. Allowlist is
+    # comma-separated or a JSON list of user ids. Apply:
+    # `fly secrets set MONTAGE_UNIFIED_PLAN_ENABLED=true --app nova-video`
+    # + restart worker. Rollback: set it false + restart.
+    montage_unified_plan_enabled: bool = False
+    montage_unified_plan_user_ids: Annotated[list[str], NoDecode] = []
+
+    @field_validator("montage_unified_plan_user_ids", mode="before")
+    @classmethod
+    def parse_montage_unified_plan_user_ids(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return value
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
+    def montage_unified_plan_for(self, user_id: object) -> bool:
+        """Global flag OR the per-account allowlist (allowlist only ever adds)."""
+        if self.montage_unified_plan_enabled:
+            return True
+        return user_id is not None and str(user_id) in {
+            str(uid) for uid in self.montage_unified_plan_user_ids
+        }
+
     # KRI-132 (narrated walkthrough): a `narrated`/`narrated_planned`/
     # `narrated_ready` item WITH a recorded voiceover compiles through
     # `app.pipeline.phone_narrated_plan.compile_phone_narrated_plan`
@@ -220,6 +254,12 @@ class Settings(BaseSettings):
     # needs_attention so the item page can surface a retry instead of polling
     # forever. Default: 24h.
     device_render_stale_after_s: int = 86400
+
+    def clip_facts_for(self, user_id: object) -> bool:
+        """Global flag OR per-account allowlist (KRI-189); off by default."""
+        if self.clip_facts_enabled:
+            return True
+        return user_id is not None and str(user_id) in {str(u) for u in self.clip_facts_user_ids}
 
     def phone_rendering_for(self, user_id: object) -> bool:
         """Apply the kill switch and optional account-scoped pilot cohort."""
@@ -409,6 +449,19 @@ class Settings(BaseSettings):
     # runtime_version=1 project remain available when this is false; the new
     # durable turn/approval endpoints deliberately fail closed as 404.
     kria_runtime_v2_enabled: bool = False
+    # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
+    # best-guess landmark per clip, each with provenance. Gates SERVER
+    # CONSUMPTION only: the landmark agent run, exposing facts to the Main
+    # Creator / edit planner prompts, capture-time ordering, the by_capture_time
+    # / by_route order intents. The API always accepts the additive optional
+    # attach fields. False (default) with no allowlist match is byte-identical
+    # to before. `clip_facts_user_ids` (JSON list of account UUIDs) enables the
+    # feature for those accounts even while the global flag is false, so the
+    # device check can run in prod. Rollback: `fly secrets set
+    # CLIP_FACTS_ENABLED=false CLIP_FACTS_USER_IDS=[] --app nova-video` +
+    # `fly machine restart <id>` (api + worker).
+    clip_facts_enabled: bool = False
+    clip_facts_user_ids: list[UUID] = Field(default_factory=list)
     # KRI-187: phone-rendering accounts are offered runtime v2 (`GET
     # /creation-threads/capabilities` -> `runtime_versions: [1, 2]`) and a v2
     # strategy approval may dispatch a device job. False (default) keeps

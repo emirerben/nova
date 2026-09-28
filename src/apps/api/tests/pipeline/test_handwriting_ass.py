@@ -6,16 +6,11 @@ import re
 import tempfile
 from pathlib import Path
 
-from app.pipeline.text_overlay import ASS_ANIMATED_EFFECTS, generate_animated_overlay_ass
+from app.pipeline.text_overlay import generate_animated_overlay_ass
 
 
 def _dialogues(path: str) -> list[str]:
     return [line for line in Path(path).read_text().splitlines() if line.startswith("Dialogue:")]
-
-
-def test_write_on_effects_route_through_the_ass_fallback_path():
-    assert "handwriting" in ASS_ANIMATED_EFFECTS
-    assert "ink-reveal" in ASS_ANIMATED_EFFECTS
 
 
 def test_ink_reveal_ass_clips_the_whole_painted_block_and_settles():

@@ -18,6 +18,17 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _ROLE_MARKERS = re.compile(r"(?i)(^|[\s.;!?])(system|assistant|user|tool|developer)\s*[:>]")
 _FENCE = re.compile(r"```+")
 
+# Rendered onto the `order` bullet ONLY when CLIP_FACTS is on ("" otherwise, so the
+# flag-off prompt is byte-identical). Ordering by when clips were filmed needs no
+# footage reading: the server sorts by each clip's capture-time fact.
+_ORDER_BY_NOTE = (
+    '\n  A request to arrange ALL the clips by when or where they were filmed ("in the order'
+    ' I filmed them", "chronological", "in the order of my route", "from first stop to last")'
+    ' is an order intent with `order_by`: "capture_time" for filming order, "route" for a'
+    " route walked or driven. Leave `position` null for it; it is never combined with"
+    " first/last. Attribute: the creator's own words for the order."
+)
+
 
 def _sanitize_text(value: str) -> str:
     value = _CONTROL_CHARS.sub(" ", value)
@@ -36,6 +47,9 @@ class ClipIntentPlannerInput(BaseModel):
     latest_user_message: str | None = Field(default=None, max_length=CREATOR_REQUEST_MAX_CHARS)
     # Strategy-produced candidates can aid recall, but never authorize output.
     candidate_intents: list[ClipIntent] | None = Field(default=None, max_length=MAX_CLIP_INTENTS)
+    # KRI-189: CLIP_FACTS is on for this creator, so the prompt also teaches the
+    # fact-based `order_by` field. Omitted from dumps when off (byte-identical).
+    clip_facts: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 class ClipIntentPlannerOutput(BaseModel):
@@ -47,7 +61,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_intent_planner",
         prompt_id="clip_intent_planner",
-        prompt_version="2026-09-22.3",
+        prompt_version="2026-09-24.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -94,6 +108,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             latest_user_message=_sanitize_text(input.latest_user_message or ""),
             candidate_intents=json.dumps(candidates, ensure_ascii=False),
             max_intents=str(MAX_CLIP_INTENTS),
+            order_by_note=_ORDER_BY_NOTE if input.clip_facts else "",
         )
 
     def parse(self, raw_text: str, input: ClipIntentPlannerInput) -> ClipIntentPlannerOutput:  # noqa: A002
@@ -112,7 +127,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
 
         sources = (input.creator_request, input.latest_user_message or "")
         intents: list[PlannedClipIntent] = []
-        seen: set[tuple[str, str, str | None, str | None, str, str | None]] = set()
+        seen: set[tuple[str, str, str | None, str | None, str | None, str, str | None]] = set()
         seen_ids: set[str] = set()
         for index, raw_intent in enumerate(raw_intents):
             if not isinstance(raw_intent, dict):
@@ -141,6 +156,11 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                     f"clip_intent_planner: intent {intent.intent_id!r} "
                     f"has caption_attribute for {intent.op}"
                 )
+            if intent.order_by is not None and not input.clip_facts:
+                # The flag-off prompt never teaches `order_by`, so a stray one behaves as if the
+                # field did not exist: the intent is dropped rather than failing the whole
+                # output (which would retry the model for nothing).
+                continue
             if intent.op != "order" and intent.position is not None:
                 raise SchemaError(
                     f"clip_intent_planner: intent {intent.intent_id!r} has position for {intent.op}"
@@ -154,6 +174,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 intent.attribute.casefold(),
                 intent.creator_text,
                 intent.position,
+                intent.order_by,
                 intent.label_source,
                 intent.transcript_kind,
             )

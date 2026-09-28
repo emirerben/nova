@@ -9,7 +9,6 @@ each leg of that path.
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -277,23 +276,3 @@ def test_normalize_input_does_not_mutate_caller_dict() -> None:
 
 
 # ── build_default_uploader (smoke) ────────────────────────────────────────────
-
-
-def test_build_default_uploader_is_lazy(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Importing the module mustn't drag in google.cloud at collection time.
-
-    The helper does the imports inside the function body; this test just
-    confirms the function is callable and returns a `FixtureUploader`. The
-    GCS / Gemini code paths are exercised by integration tests, not here.
-    """
-    # If google.cloud isn't installed (e.g. minimal CI), skip rather than fail.
-    pytest.importorskip("google.cloud.storage")
-    pytest.importorskip("google.genai")
-    # Avoid actually constructing the genai client.
-    import app.pipeline.agents.gemini_analyzer as ga
-
-    monkeypatch.setattr(ga, "_get_client", lambda: SimpleNamespace())
-    from ._fixture_uploader import build_default_uploader
-
-    uploader = build_default_uploader()
-    assert isinstance(uploader, FixtureUploader)

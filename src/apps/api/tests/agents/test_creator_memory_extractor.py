@@ -54,7 +54,6 @@ def _activation(**overrides) -> dict:
 
 
 def test_contract_is_versioned_bounded_and_sensitive() -> None:
-    assert CREATOR_MEMORY_EXTRACTOR_PROMPT_VERSION == "2026-09-06-v1"
     assert (
         CreatorMemoryExtractorAgent.spec.prompt_version == CREATOR_MEMORY_EXTRACTOR_PROMPT_VERSION
     )

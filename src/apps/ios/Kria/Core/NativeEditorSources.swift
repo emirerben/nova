@@ -145,6 +145,41 @@ struct NativeEditorBaseSource: Sendable {
     }
 }
 
+/// A phone-rendered Talking (subtitled) edit plays its one source clip whole,
+/// with its own audio, and the server keeps no timeline slots for it. Without
+/// that clip the preview has no video track: photo cards once made that recipe
+/// validate as a black canvas (the compiler now rejects it, `missingVideoTrack`,
+/// so it falls back to the finished MP4). The source becomes the same locked
+/// composite clip a talking-head base uses, so the preview stays live.
+///
+/// Only when the edit's cards and sounds are editable (`lanesEditable`): with
+/// them closed the server doesn't send those lanes, so a live preview would
+/// drop what the finished MP4 shows.
+enum NativePhoneTalkingSource {
+    static let slotID = "native-phone-talking-source"
+
+    static func sourceIndex(variant: [String: JSONValue], document: EditorDocument,
+                            pool: NativeEditorSourcePool, lanesEditable: Bool) -> Int? {
+        guard lanesEditable,
+              variant["resolved_archetype"] == .string("subtitled"),
+              variant["render_destination"] == .string("device"),
+              document.capabilities["timeline"]?.editable != true,
+              document.tombstones.isEmpty,
+              document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }),
+              pool.clips.count == 1 else { return nil }
+        return pool.clips[0].clipIndex
+    }
+
+    static func hydrate(_ document: EditorDocument, clipIndex: Int, duration: Double) throws -> EditorDocument {
+        guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
+        guard document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return document }
+        var result = document
+        result.clips = [.init(id: slotID, clipIndex: clipIndex, inS: 0, durationS: duration,
+            raw: ["native_composite_source": .bool(true), "source_duration_s": .number(duration)])]
+        return result
+    }
+}
+
 enum NativeNarratedSourceTiming {
     /// Mirrors narrated_assembler._fit_clip_segment: short footage slows to
     /// fill its voiceover step, with a 50 ms guard before source EOF.
@@ -500,6 +535,25 @@ enum NativePreviewDiagnostics {
         var events = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([[String: String]].self, from: $0) } ?? []
         events.append(fields.merging(["stage": stage, "time": ISO8601DateFormatter().string(from: Date())]) { _, value in value })
         if let data = try? JSONEncoder().encode(Array(events.suffix(40))) { try? data.write(to: url, options: .atomic) }
+    }
+    /// Recorded from every build (unlike `failure`, which is DEBUG-only): a TestFlight phone is exactly where a
+    /// player item fails with nobody attached. Numeric AVFoundation identity only, so it is safe to upload.
+    static func playerItemFailure(kind: PlaybackFailureReport.PlayerKind, error: Error?, sourceState: String) -> PlaybackFailureReport {
+        let nsError = error.map { $0 as NSError }
+        let underlying = nsError?.userInfo[NSUnderlyingErrorKey] as? NSError
+        let report = PlaybackFailureReport(
+            playerKind: kind,
+            errorDomain: nsError?.domain ?? "unknown",
+            errorCode: nsError?.code ?? 0,
+            underlyingDomain: underlying?.domain,
+            underlyingCode: underlying.map(\.code),
+            sourceState: sourceState,
+            appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+        var fields = ["kind": kind.rawValue, "domain": report.errorDomain, "code": String(report.errorCode), "state": sourceState]
+        if let domain = report.underlyingDomain { fields["underlyingDomain"] = domain }
+        if let code = report.underlyingCode { fields["underlyingCode"] = String(code) }
+        record("player-item-failed", fields: fields)
+        return report
     }
     #if DEBUG
     static func failure(_ stage: String, error: Error) {

@@ -100,6 +100,7 @@ from app.routes.generative_jobs import (
     TimelineEditRequest,
     TimelineResponse,
     _find_variant,
+    _phone_subtitled_sfx_paths,
     _publish_committed_variant_render,
     cascade_removed_overlay_effect_groups,
     dispatch_apply_captions,
@@ -7000,6 +7001,11 @@ async def editor_commit_item(
         background_music_track=selected_background_music_track,
         plan_item_id=str(item.id),
         visual_assets=visual_assets,
+        # iOS commits only changed sections: a phone Talking Save that leaves
+        # the sound lane untouched still persists its effects' real paths.
+        phone_sfx_catalog_paths=await _phone_subtitled_sfx_paths(
+            db, locked_job, _find_variant(locked_job, variant_id) or {}
+        ),
     )
 
     canonical_revision_hash = str(

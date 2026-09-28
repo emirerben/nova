@@ -1,0 +1,142 @@
+{
+  "footage_id": "food_day",
+  "description": "A Sunday eating around Kadıköy, Istanbul. Eight clips attached out of filming order.",
+  "clips": [
+    {
+      "clip_id": "F4",
+      "duration_s": 3.0,
+      "subject": "lahmacun coming out of the oven",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-20T13:15:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Kadıköy, İstanbul",
+          "provenance": "geocode"
+        }
+      ]
+    },
+    {
+      "clip_id": "F1",
+      "duration_s": 3.0,
+      "subject": "simit and tea breakfast",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-20T09:05:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Kadıköy, İstanbul",
+          "provenance": "geocode"
+        }
+      ]
+    },
+    {
+      "clip_id": "F7",
+      "duration_s": 3.5,
+      "subject": "dinner table full of meze",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-20T20:10:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Moda, İstanbul",
+          "provenance": "geocode"
+        }
+      ]
+    },
+    {
+      "clip_id": "F2",
+      "duration_s": 2.5,
+      "subject": "Turkish coffee being poured",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-20T10:40:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Kadıköy, İstanbul",
+          "provenance": "geocode"
+        }
+      ]
+    },
+    {
+      "clip_id": "F8",
+      "duration_s": 3.0,
+      "subject": "dondurma street vendor",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-20T21:30:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Moda, İstanbul",
+          "provenance": "geocode"
+        }
+      ]
+    },
+    {
+      "clip_id": "F3",
+      "duration_s": 3.5,
+      "subject": "market stall with spices",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-20T11:30:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Kadıköy, İstanbul",
+          "provenance": "geocode"
+        }
+      ]
+    },
+    {
+      "clip_id": "F6",
+      "duration_s": 2.0,
+      "subject": "snack on the Kadıköy ferry",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-20T17:00:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Kadıköy, İstanbul",
+          "provenance": "geocode"
+        }
+      ]
+    },
+    {
+      "clip_id": "F5",
+      "duration_s": 2.5,
+      "subject": "baklava being plated",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-20T15:20:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Kadıköy, İstanbul",
+          "provenance": "geocode"
+        }
+      ]
+    }
+  ]
+}

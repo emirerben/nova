@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from app.services.video_frames import (
-    DEFAULT_FPS,
     ExtractedFrame,
     extract_frames,
     frames_workdir,
@@ -124,11 +123,6 @@ def test_extract_raises_on_unreadable_video(tmp_path):
 def test_extract_raises_on_missing_file(tmp_path):
     with pytest.raises(RuntimeError, match="ffmpeg failed"):
         extract_frames(tmp_path / "missing.mp4", out_dir=tmp_path / "f", fps=2.0)
-
-
-def test_default_fps_is_2():
-    # Pinning the default — design-doc / cost-budget contract.
-    assert DEFAULT_FPS == 2.0
 
 
 def test_frames_workdir_tempdir_path_is_cleaned_up():

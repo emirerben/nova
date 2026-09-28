@@ -326,26 +326,54 @@ def _cleaned_voiceover_path(
     return narration.gcs_path
 
 
-def _device_speech_cleanup_outcome(assembly: dict, job_id: uuid.UUID) -> dict | None:
-    """The public "Clean up speech" receipt for a device-rendered guided story.
+def _device_speech_cleanup_outcome(
+    assembly: dict, job_id: uuid.UUID, variant_id: str
+) -> dict | None:
+    """The public "Clean up speech" receipt for a device-rendered edit.
 
     The phone never reaches the cloud finalizer, so completion writes the same
-    receipt: ``applied`` when the published recipe played the cleaned
-    derivative the Job's required_v1 snapshot consented to, ``failed`` when it
-    cannot prove that. None (nothing written) for every other Job, including
-    one whose narration is raw: such a Job was pinned before guided cleanup
-    existed (a new one is refused at dispatch), so a native re-export of it
-    must not gain a false "failed" receipt.
+    receipt the cloud finalizer would: ``applied`` when the published recipe
+    played the cleaned derivative the Job's required_v1 snapshot consented to,
+    ``checked_no_change``/``failed`` otherwise. None (nothing written) for
+    every other Job.
+
+    Two phone shapes carry this proof, checked in order:
+      - A guided-story narration (`_approved_guided_narration`): re-binds the
+        approved `NarrationTrack` to the snapshot via
+        `require_guided_cleanup_binding` (a Job pinned before guided cleanup
+        existed carries no cleaned narration, so this yields ``None`` rather
+        than a false "failed" receipt for a native re-export of it).
+      - A subtitled/self-narrated (`_run_phone_subtitled_job`) or
+        narrated-with-voiceover (`_run_phone_narrated_job`) render: both
+        persist their OWN `_speech_cleanup_outcome_context` directly on the
+        completed ``variant_id`` entry at plan time (mirrors the cloud
+        renderer's `base["_speech_cleanup_outcome_context"]`) -- no separate
+        re-binding proof is needed here, since that variant was only ever
+        pinned by the SAME render pass that validated the snapshot.
     """
     narration = _approved_guided_narration(assembly)
-    if narration is None or assembly.get("speech_cleanup_contract") != "required_v1":
-        return None
-    try:
-        if narration_speech_cleanup(narration) is None:
+    if narration is not None:
+        if assembly.get("speech_cleanup_contract") != "required_v1":
             return None
-        context = require_guided_cleanup_binding(assembly, narration)
-    except (ValueError, SpeechCleanupFailure):
-        context = None
+        try:
+            if narration_speech_cleanup(narration) is None:
+                return None
+            context = require_guided_cleanup_binding(assembly, narration)
+        except (ValueError, SpeechCleanupFailure):
+            context = None
+        return build_preflight_public_outcome(
+            assembly,
+            job_id=str(job_id),
+            results=[{"ok": True, "_speech_cleanup_outcome_context": context}],
+        )
+    variant = next(
+        (v for v in assembly.get("variants") or [] if v.get("variant_id") == variant_id), None
+    )
+    if not isinstance(variant, dict):
+        return None
+    context = variant.get("_speech_cleanup_outcome_context")
+    if context is None:
+        return None
     return build_preflight_public_outcome(
         assembly,
         job_id=str(job_id),
@@ -710,7 +738,7 @@ async def complete_device_export(
         job.status = "variants_ready"
         job.current_phase = None
         job.finished_at = datetime.now(UTC)
-        outcome = _device_speech_cleanup_outcome(assembly, job.id)
+        outcome = _device_speech_cleanup_outcome(assembly, job.id, body.identity.variant_id)
         if outcome is not None:
             job.assembly_plan = {**assembly, "speech_cleanup_outcome": outcome}
     cleanup.status = "attached"

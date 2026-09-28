@@ -18,7 +18,6 @@ import pytest
 
 from app.agents._schemas.text_overlay_ocr import FrameDetection, OcrPolygon
 from app.pipeline.text_overlay_v2.pipeline import (
-    DEFAULT_OCR_CONCURRENCY,
     _classified_phrases_to_output,
     _dump_stage,
     _normalize_overlay_text,
@@ -250,11 +249,6 @@ def test_x_band_threshold_is_forwarded_to_phrase_reconstruction():
 
 
 # ── Module constants ──────────────────────────────────────────────────────────
-
-
-def test_default_ocr_concurrency_is_10():
-    # Pinning the design-doc value so a follow-up cap change is intentional.
-    assert DEFAULT_OCR_CONCURRENCY == 10
 
 
 # ── Error propagation ─────────────────────────────────────────────────────────
@@ -1002,8 +996,7 @@ def test_stage_g_split_sub_groups_stack_vertically():
     )
     y_norms = {round(o.bbox.y_norm, 4) for o in out.overlays}
     assert len(y_norms) > 1, (
-        "split sub-groups must render at distinct y values; got "
-        f"single y={y_norms}"
+        f"split sub-groups must render at distinct y values; got single y={y_norms}"
     )
     # The first sub-group must keep the line group's original anchor (no
     # offset for sub_group_idx=0).
@@ -1039,8 +1032,7 @@ def test_stage_g_unsplit_line_group_keeps_single_anchor_y():
         classified, slot_boundaries_s=[(0.0, 5.0)], line_groups=[lg]
     )
     assert all(o.bbox.y_norm == pytest.approx(0.62) for o in out.overlays), (
-        f"single sub-group must keep anchor y={0.62}; "
-        f"got {[o.bbox.y_norm for o in out.overlays]}"
+        f"single sub-group must keep anchor y={0.62}; got {[o.bbox.y_norm for o in out.overlays]}"
     )
 
 
@@ -1076,8 +1068,7 @@ def test_stage_g_cumulative_overlays_meet_min_duration():
     for ov in out.overlays:
         duration = ov.end_s - ov.start_s
         assert duration >= 0.2 - 1e-6, (
-            f"cumulative overlay {ov.sample_text!r} duration {duration:.3f}s "
-            "below 0.2s floor"
+            f"cumulative overlay {ov.sample_text!r} duration {duration:.3f}s below 0.2s floor"
         )
 
 
@@ -1180,8 +1171,7 @@ def test_stage_g_clustered_timestamps_reveal_one_word_at_a_time():
     # "just" and "luck" share a timestamp (prod OCR clustering).
     starts = [0.0, 0.9, 1.5, 1.5]
     classified = [
-        _make_atomized_classified(w, s, x_min=0.05)
-        for w, s in zip(words, starts, strict=True)
+        _make_atomized_classified(w, s, x_min=0.05) for w, s in zip(words, starts, strict=True)
     ]
     lg = LineGroup(
         phrase_indices=[0, 1, 2, 3],

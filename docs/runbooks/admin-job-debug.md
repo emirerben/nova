@@ -82,6 +82,42 @@ command with `--prod`. Diagnostics include requested/effective frame counts,
 semantic plan, selected windows, repairs and failure reason. They are absent from
 ordinary plan-item responses. The existing redacted `/debug` endpoint stays small.
 
+## Creation-thread transcript and turns (read-only)
+
+Chat-first jobs are owned by a creation thread. Three additive admin surfaces let an
+operator read what the creator actually said and what the runtime did, without guessing:
+
+- `GET /admin/creation-threads/{thread_id}/events?limit=100&cursor=` — transcript events in
+  `sequence` order (`limit` 1-500, default 100). Each event carries `sequence`, `kind`
+  (`event_type`), `actor` (`role`), `created_at`, `revision`, `client_event_id`, `content`
+  (the creator's message text), `payload` (chips, receipts, ...). An event that started a
+  runtime-v2 turn also carries `turn_id` and the `brief_version` that turn produced.
+  `next_cursor` is the last `sequence` returned; pass it back as `cursor`; `null` on the last page.
+- `GET /admin/creation-threads/{thread_id}/turns?limit=50&cursor=` — runtime-v2 turns, oldest
+  first (`limit` 1-200). Each turn returns the persisted `KriaTurnPlan` (`plan`), `status`,
+  `error`, `brief_version`, its `executions` (tool receipts: `tool_name`, `status`, `result`,
+  `error`, target job/variant/draft ids) and the de-duplicated `job_ids` they touched. A
+  runtime-v1 thread has no turn rows and returns `turns: []`. `next_cursor` is an opaque
+  `(created_at, id)` keyset.
+- `thread_id` + `runtime_version` are added to `GET /admin/plan-items/{id}/debug` and
+  `GET /admin/jobs/{id}/debug` (null when no thread owns the item/job), so a job traces to
+  its thread directly (`services/kria_trace.find_thread_link`).
+
+Known limits: `thread_id` is resolved from the thread's *current* `active_plan_item_id` /
+`active_job_id`, so an older job whose thread has since moved to a newer render can return
+`null`. A turn's `job_ids` come only from its tool executions, so plan-item render dispatches
+that mint a job without an execution row do not appear on a turn. `/turns` limit/cursor and
+the events `cursor` (a non-negative ASCII integer <= 2^31-1) are additive extras.
+
+Same admin auth as `/integrity`. These routes return creator text, so treat output as
+sensitive; signed storage URLs inside payloads/receipts are replaced by
+`[redacted-signed-url]` (substring heuristic on signature/credential markers; event `content` is not scrubbed). Examples:
+
+```bash
+python scripts/admin.py --prod GET creation-threads/<thread_id>/events
+python scripts/admin.py --prod GET "creation-threads/<thread_id>/turns?limit=10"
+```
+
 ## Eval harness opt-out
 
 The eval RunContext sets `extra={"skip_agent_run_persist": True}` so replay-mode evals

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import structlog
@@ -44,6 +44,7 @@ from app.services.phone_sources import (
 )
 from app.services.phone_subtitled_editor import (
     PHONE_SUBTITLED_EDITOR_LANES_FIELD,
+    is_catalog_sfx_path,
     is_phone_subtitled_editor_variant,
     lanes_from_editor_sections,
     lanes_from_recipe,
@@ -75,8 +76,16 @@ class _StagedJob:
 
 
 def prepare_phone_editor_commit(
-    job: Any, variant_id: str, *, prepare: Callable[[Any], dict]
+    job: Any,
+    variant_id: str,
+    *,
+    prepare: Callable[[Any], dict],
+    sfx_catalog_paths: Mapping[str, str] | None = None,
 ) -> dict:
+    """``sfx_catalog_paths`` maps a sound-effect catalog id to its
+    `SoundEffect.audio_gcs_path` for the phone Talking effects a Save carries
+    over without a known storage path (the caller's async catalog read,
+    `generative_jobs._phone_subtitled_sfx_paths`; Save itself never queries)."""
     staged = _StagedJob(job)
     prep = prepare(staged)
     if not prep["has_render_section"]:
@@ -89,7 +98,13 @@ def prepare_phone_editor_commit(
         variant = next(v for v in assembly["variants"] if v.get("variant_id") == variant_id)
         if is_phone_subtitled_editor_variant(variant):
             _compile_subtitled_editor_commit(
-                staged, assembly, variant, variant_id, prep=prep, previous=previous
+                staged,
+                assembly,
+                variant,
+                variant_id,
+                prep=prep,
+                previous=previous,
+                sfx_catalog_paths=sfx_catalog_paths or {},
             )
         else:
             plan = copy.deepcopy(
@@ -204,6 +219,7 @@ def _compile_subtitled_editor_commit(
     *,
     prep: dict,
     previous: Any,
+    sfx_catalog_paths: Mapping[str, str],
 ) -> None:
     """The `resolved_archetype == "subtitled"` counterpart of the guided-story
     branch above: recompile `compile_phone_subtitled_plan` from the committed
@@ -232,7 +248,8 @@ def _compile_subtitled_editor_commit(
         labels = dict(persisted["labels"])
     # Real catalog audio object per catalog id (recipes carry no storage
     # paths); the committed section carries the route-resolved path for every
-    # effect it names, and previously persisted paths cover the rest.
+    # effect it names, previously persisted paths and `sfx_catalog_paths`
+    # cover the rest (see the fill below the compile).
     paths: dict[str, str] = {}
     if isinstance(persisted, dict) and isinstance(persisted.get("paths"), dict):
         paths = {str(k): str(v) for k, v in persisted["paths"].items() if v}
@@ -303,8 +320,23 @@ def _compile_subtitled_editor_commit(
         path = item.get("src_gcs_path")
         if isinstance(catalog_id, str) and isinstance(label, str) and label:
             labels[catalog_id] = label
-        if isinstance(catalog_id, str) and isinstance(path, str) and path:
+        # A chat edit compiles its section from the variant's own rows without
+        # the route's catalog resolve, so it can echo a placeholder back.
+        if isinstance(catalog_id, str) and is_catalog_sfx_path(catalog_id, path):
             paths[catalog_id] = path
+    # iOS commits only CHANGED sections: an effect carried over from the
+    # pinned recipe (or from a Save that never learned its path) has no known
+    # object, and persisting the placeholder made every later preview sign a
+    # 404. Fill it from the caller's catalog read; the bag only ever holds real
+    # catalog objects.
+    for catalog_id in active_catalog_ids:
+        if is_catalog_sfx_path(catalog_id, paths.get(catalog_id)):
+            continue
+        resolved_path = sfx_catalog_paths.get(catalog_id)
+        if is_catalog_sfx_path(catalog_id, resolved_path):
+            paths[catalog_id] = resolved_path
+        else:
+            paths.pop(catalog_id, None)
 
     sections = sections_from_lanes(lanes, labels=labels, paths=paths)
     for row in staged.assembly_plan["variants"]:

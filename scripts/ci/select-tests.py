@@ -180,6 +180,24 @@ def selection(event, base, head):
     return selection_details(event, base, head)[:2]
 
 
+def ui_shards(event, groups):
+    """Native iOS legs for the UI tests ios.yml executes for this selection.
+
+    Mirrors its UI step: non-PR events run the full suite, a PR runs smoke when
+    the selector wants full, and "none" is one build/unit leg. Every leg
+    re-derives its exact part from the same checkout, so a count only changes
+    how the work is split, never what is covered.
+    """
+    if groups == "none":
+        return 1
+    execution = "smoke" if event == "pull_request" and groups == "full" else groups
+    try:
+        return ui_tests.shard_count(execution)
+    except (OSError, ValueError, KeyError, TypeError):
+        # The UI step fails closed on the same error; one leg reports it.
+        return 1
+
+
 def gate(needs, suite, job):
     """A skipped job passes ONLY when a successful selector explicitly opted out."""
     if set(needs) != {"changes", job} or needs["changes"].get("result") != "success":
@@ -193,6 +211,10 @@ def gate(needs, suite, job):
             raise ValueError("Inconsistent iOS UI groups")
         if ui not in ("true", "false") or (ui == "true" and selected != "true"):
             raise ValueError("Missing or inconsistent iOS UI selection")
+        shards = outputs.get("ios_ui_shards")
+        counts = {str(count) for count in range(1, ui_tests.MAX_SHARDS + 1)}
+        if shards not in counts or (ui == "false" and shards != "1"):
+            raise ValueError("Missing or inconsistent iOS UI shard count")
     if suite == "lint":
         if any(outputs.get(key) not in ("true", "false") for key in ("web", "api")):
             raise ValueError("Missing or invalid lint selection")
@@ -214,13 +236,15 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "gate":
         print(gate(json.loads(os.environ.get("CI_NEEDS", "{}")), *sys.argv[2:]))
         return
+    event = os.environ.get("CI_EVENT")
     suites, reason, groups = selection_details(
-        os.environ.get("CI_EVENT"),
+        event,
         os.environ.get("CI_BASE", ""),
         os.environ.get("CI_HEAD", ""),
     )
+    shards = ui_shards(event, groups)
     output = "".join(f"{suite}={str(suite in suites).lower()}\n" for suite in SUITES)
-    output += f"ios_ui_groups={groups}\n"
+    output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\n"
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
@@ -228,7 +252,8 @@ def main():
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as stream:
             stream.write(
-                f"## CI selection\n\n{reason}\n\niOS UI groups: {groups}\n\n"
+                f"## CI selection\n\n{reason}\n\niOS UI groups: {groups}"
+                f" ({shards} native leg{'s' if shards > 1 else ''})\n\n"
                 + "\n".join(
                     f"- {s}: {'run' if s in suites else 'not applicable'}"
                     for s in SUITES

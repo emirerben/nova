@@ -23,17 +23,6 @@ def test_hdr_tonemap_pins_explicit_desat_not_ffmpeg_default() -> None:
     assert float(match.group(1)) == settings.hdr_tonemap_desat
 
 
-def test_hdr_tonemap_desat_defaults_to_zero_disabling_highlight_bleach() -> None:
-    """Default must disable the desaturation knee, not restore FFmpeg's `2`.
-
-    `2.0` is the documented rollback value (byte-identical to pre-fix
-    behavior) for `fly secrets set HDR_TONEMAP_DESAT=2`, not the default.
-    """
-    from app.config import Settings
-
-    assert Settings.model_fields["hdr_tonemap_desat"].default == 0.0
-
-
 def test_hdr_tonemap_forces_even_dimensions_before_subsampled_zscale() -> None:
     """Round both resized axes even before later zscale stages.
 

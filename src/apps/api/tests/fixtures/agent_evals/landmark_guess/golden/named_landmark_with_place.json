@@ -1,0 +1,22 @@
+{
+  "agent": "nova.video.landmark_guess",
+  "prompt_version": "2026-09-24.1",
+  "input": {
+    "file_uri": "clips/devtest-1778504452/clip_00.mp4",
+    "file_mime": "video/mp4",
+    "place": "Sarıyer, İstanbul, Türkiye",
+    "lat": 41.09,
+    "lon": 29.06
+  },
+  "raw_text": "{\"name\": \"Rumeli Hisarı\", \"confidence\": 0.82, \"evidence\": \"medieval fortress towers on the Bosphorus shore\"}",
+  "output": {
+    "name": "Rumeli Hisarı",
+    "confidence": 0.82,
+    "evidence": "medieval fortress towers on the Bosphorus shore"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Frames plus a district-level place narrow one specific, locally-spelled landmark; the guess is returned directly (D4, provenance inferred).",
+    "live_note": "Bucket-relative dev clip; live mode uploads it via the fixture uploader. Replay uses raw_text; live is structural only (the dev clip's real content differs from the recorded answer)."
+  }
+}

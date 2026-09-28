@@ -44,6 +44,9 @@ def _matches_requirement(row: dict[str, Any], requirement: dict[str, Any]) -> bo
     if creator_text is not None and row.get("creator_text") != creator_text:
         return False
 
+    if row.get("order_by") != requirement.get("order_by"):
+        return False
+
     position = requirement.get("position")
     return position is None or row.get("position") == position
 

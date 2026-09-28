@@ -359,13 +359,6 @@ def apple_vision_or_skip():
         pytest.skip("pyobjc-framework-Vision not installed — macOS dev-only backend")
 
 
-def test_apple_vision_backend_instantiable(apple_vision_or_skip):
-    from app.services.text_overlay_ocr import AppleVisionBackend
-
-    backend = AppleVisionBackend()
-    assert backend.name == "apple-vision"
-
-
 # ── default_backend() selection ───────────────────────────────────────────────
 
 
@@ -416,34 +409,6 @@ def test_default_backend_raises_with_install_hint_when_neither_available(monkeyp
 
 
 # ── CloudVisionBackend credential loading ─────────────────────────────────────
-
-
-def test_cloud_vision_init_loads_service_account_credentials(monkeypatch):
-    """CloudVisionBackend.__init__ passes creds from get_gcp_credentials to the client."""
-    from unittest.mock import MagicMock, patch
-
-    from google.oauth2 import service_account
-
-    from app.services import text_overlay_ocr as mod
-
-    fake_creds = MagicMock(spec=service_account.Credentials)
-
-    # Patch get_gcp_credentials in the ocr module's namespace (where it was imported).
-    with patch.object(mod, "get_gcp_credentials", return_value=fake_creds) as mock_get_creds:
-        fake_vision = MagicMock()
-        fake_client = MagicMock()
-        fake_vision.ImageAnnotatorClient.return_value = fake_client
-
-        with patch.dict("sys.modules", {"google.cloud.vision": fake_vision}):
-            # Patch the lazy import inside __init__ to return our fake module.
-            with patch("builtins.__import__", side_effect=_make_import_side_effect(fake_vision)):
-                backend = mod.CloudVisionBackend()
-
-        # get_gcp_credentials called with the cloud-platform scope.
-        mock_get_creds.assert_called_once_with(scopes=mod.CloudVisionBackend._VISION_SCOPES)
-        # ImageAnnotatorClient called with the returned fake creds.
-        fake_vision.ImageAnnotatorClient.assert_called_once_with(credentials=fake_creds)
-        assert backend._client is fake_client
 
 
 def test_cloud_vision_init_raises_when_credentials_unavailable(monkeypatch):

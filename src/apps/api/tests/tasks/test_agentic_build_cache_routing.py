@@ -40,15 +40,6 @@ from app.tasks import agentic_template_build
 # routing logic from the cache calls.
 
 
-def test_task_imports_resolve_text_overlay_version():
-    """_resolve_text_overlay_version must be imported at the module level so
-    the call site can resolve it — if it's missing the task crashes at runtime."""
-    assert hasattr(agentic_template_build, "_resolve_text_overlay_version"), (
-        "agentic_template_build must import _resolve_text_overlay_version "
-        "from app.pipeline.template_cache"
-    )
-
-
 def test_task_source_calls_resolve_text_overlay_version():
     """The task body must call _resolve_text_overlay_version before the cache
     check so the version dimension is always determined from the current flags,
@@ -139,9 +130,7 @@ def test_cache_uses_v2_namespace_when_use_layer2_true(monkeypatch: pytest.Monkey
     get_calls: list[dict] = []
     set_calls: list[dict] = []
 
-    def _fake_get(
-        template_hash, analysis_mode, *, agent_set, text_overlay_version, template_id
-    ):
+    def _fake_get(template_hash, analysis_mode, *, agent_set, text_overlay_version, template_id):
         get_calls.append(
             {
                 "template_hash": template_hash,
@@ -203,14 +192,6 @@ def test_cache_uses_v2_namespace_when_use_layer2_true(monkeypatch: pytest.Monkey
 
     assert get_calls[0]["text_overlay_version"] == TEXT_OVERLAY_VERSION_V2
     assert set_calls[0]["text_overlay_version"] == TEXT_OVERLAY_VERSION_V2
-
-
-def test_cache_uses_v1_namespace_when_use_layer2_false_and_flag_off(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Default case (no override, no global flag) → v1 namespace."""
-    resolved = _resolve_text_overlay_version(force_layer2=False, settings_flag=False)
-    assert resolved == TEXT_OVERLAY_VERSION_V1
 
 
 def test_cache_uses_v2_namespace_when_global_flag_on(

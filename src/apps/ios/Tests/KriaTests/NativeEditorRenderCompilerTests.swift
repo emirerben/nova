@@ -242,6 +242,56 @@ import KriaMediaEngine
         XCTAssertEqual(run.fontSize, 101)
     }
 
+    // Talking/subtitled documents carry each caption as a caption_cues row AND
+    // as a caption_cue-tagged text element (the API mirrors cues into the
+    // editor's text lane). The generic per-element pass and the cue-native
+    // caption block must never both fire for it: that burned every sentence
+    // twice, once mid-frame over the speaker's face (KRI-172 render 1aff3f03).
+    func testCaptionTaggedTextElementIsSkippedWhenCaptionCuesAlsoCoverIt() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let staleTextElement = EditorTextElement(id: "cue-dup", text: "Number three, Mason Greenwood?", startS: 0, endS: 2,
+            role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")])])
+        let cue = EditorCaptionCue(id: "cue-dup", startS: 0, endS: 2, text: "Number three, Mason Greenwood?")
+        let document = EditorDocument(textElements: [staleTextElement], captionCues: [cue])
+        let items = [
+            NativeEditorTimelineItem(selection: .init(kind: .text, id: "cue-dup"), start: 0, end: 2),
+            NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue-dup"), start: 0, end: 2),
+        ]
+        let recipe = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source]).recipe
+        XCTAssertEqual(recipe.textLayers.count, 1, "the same sentence must be burned exactly once")
+        XCTAssertEqual(recipe.textLayers.first?.id, "caption-cue-dup", "the surviving layer must come from the cue-native path")
+    }
+
+    // KRI-202: talk-to-camera (subtitled) documents can reach the client with
+    // two caption_cues rows whose windows overlap (the cloud's own de-overlap
+    // guard, phone_captions._prepare_cues, runs on a compiled copy the native
+    // editor's live document never passes through). Burning both unclamped
+    // showed two caption rows stacked on the same frame.
+    func testOverlappingCaptionCuesAreClampedToNonOverlappingWindows() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 5,
+            trimIn: 0, trimOut: 5, sourceDuration: 5, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let earlyCue = EditorCaptionCue(id: "cue-a", startS: 0, endS: 3, text: "First sentence here")
+        let overlappingCue = EditorCaptionCue(id: "cue-b", startS: 2, endS: 5, text: "Second sentence here")
+        let document = EditorDocument(captionCues: [earlyCue, overlappingCue])
+        let items = [
+            NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue-a"), start: 0, end: 3),
+            NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue-b"), start: 2, end: 5),
+        ]
+        let recipe = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source]).recipe
+        XCTAssertEqual(recipe.textLayers.count, 2)
+        let first = try XCTUnwrap(recipe.textLayers.first { $0.id == "caption-cue-a" })
+        let second = try XCTUnwrap(recipe.textLayers.first { $0.id == "caption-cue-b" })
+        XCTAssertLessThanOrEqual(first.end, second.start, "adjacent cues must never be visible at the same time")
+        XCTAssertEqual(first.end, 2, "the earlier cue must clamp to the next cue's start")
+    }
+
     func testGuidedStorySentenceCaptionProjectionKeepsSourceItemsAndLeavesTitlesAlone() throws {
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
             fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
@@ -445,7 +495,7 @@ import KriaMediaEngine
         ], capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "generation"))
         let items = [NativeEditorTimelineItem(selection: .init(kind: .text, id: "title"), start: 0, end: min(2, duration), zIndex: 0, sourceIndex: 0)]
         XCTAssertThrowsError(try compiler.compile(document: document, clips: [], items: items, sources: [:])) {
-            XCTAssertEqual($0 as? RecipeError, .invalidTimeline)
+            XCTAssertEqual($0 as? NativeEditorRenderError, .missingVideoTrack)
         }
         let base = try XCTUnwrap(NativeEditorBaseSource(variant: [
             "resolved_archetype": .string("talking_head"),
@@ -467,6 +517,31 @@ import KriaMediaEngine
         let changed = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source])
         _ = try preview.updateText(recipe: changed.recipe, assetURLs: changed.assetURLs)
         XCTAssertEqual(changed.recipe.textLayers.first?.runs.map(\.text).joined(separator: " "), "Changed locally")
+    }
+
+    /// Job 385e3b13 shape: a card and no video clip. The card alone made the
+    /// recipe valid, so the editor played it over a black canvas instead of
+    /// failing over to the finished MP4.
+    func testMediaOverlayWithoutVideoClipsDoesNotCompile() throws {
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let media = ResolvedEditorSource(clipIndex: -1, mediaID: "card", asset: MediaAsset(id: "card", relativePath: "card.png",
+            fingerprint: fingerprint, naturalSize: MediaSize(width: 96, height: 160)), url: URL(fileURLWithPath: "/fixture/card.png"))
+        let document = EditorDocument(editFormat: "subtitled", mediaOverlays: [.init(id: "card", startS: 0.2, endS: 1.2)])
+        let item = NativeEditorTimelineItem(selection: .init(kind: .mediaOverlay, id: "card"), start: 0.2, end: 1.2)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        XCTAssertThrowsError(try compiler.compile(document: document, clips: [], items: [item], sources: [:],
+                                                  mediaSources: ["overlay:card": media])) {
+            XCTAssertEqual($0 as? NativeEditorRenderError, .missingVideoTrack)
+        }
+        // The same card over a clip is an ordinary preview.
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: fingerprint), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 2,
+            trimIn: 0, trimOut: 2, sourceDuration: 2, slotID: "slot")
+        let recipe = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source],
+                                          mediaSources: ["overlay:card": media]).recipe
+        XCTAssertEqual(recipe.tracks.first { $0.kind == .video }?.clips.count, 1)
+        XCTAssertEqual(recipe.tracks.first { $0.kind == .overlay }?.clips.count, 1)
     }
 
     func testAuthoredMotionNormalizesServerDefaultsAndBounds() throws {

@@ -15,7 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext, TerminalError
-from app.agents._schemas.creator_agent import AskUser, ProposeStrategy, ReviewDecision
+from app.agents._schemas.creator_agent import (
+    AskUser,
+    ProposeStrategy,
+    ResolvedCreatorManifest,
+    ReviewDecision,
+)
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCreatorOutput
 from app.config import settings
 from app.kria.brief import (
@@ -66,6 +71,9 @@ class PlannedKriaTurn:
     brief_updates: tuple[BriefUpdate, ...] = ()
     brief_route: Route | None = None
     brief_clip_ids: tuple[str, ...] = ()
+    # The manifest this turn planned against, so the receipt checks resolve
+    # reaction beats (owned images, capability) exactly as approval will.
+    brief_manifest: ResolvedCreatorManifest | None = None
 
 
 def adapt_creator_action(
@@ -698,6 +706,7 @@ async def plan_live_turn(
                 brief_updates=updates,
                 brief_route=route,
                 brief_clip_ids=clip_ids,
+                brief_manifest=manifest,
             )
     planned = await _plan_from_creator_output(
         db,
@@ -721,6 +730,7 @@ async def plan_live_turn(
         # editor plan; only an act plan is held to the router's verdict.
         brief_route=route,
         brief_clip_ids=clip_ids,
+        brief_manifest=manifest,
     )
 
 

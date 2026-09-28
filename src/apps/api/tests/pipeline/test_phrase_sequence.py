@@ -12,7 +12,6 @@ from __future__ import annotations
 import pytest
 
 from app.pipeline.phrase_sequence import (
-    COVERAGE_MIN_FRAC,
     FADE_OUT_S,
     HOLD_CAP_S,
     MAX_PHRASE_WORDS,
@@ -20,7 +19,6 @@ from app.pipeline.phrase_sequence import (
     MIN_SPEECH_WORDS,
     PAUSE_GAP_S,
     RHYTHM_LEAD_IN_S,
-    RHYTHM_MIN_CHAR_WEIGHT,
     RHYTHM_SPEAK_FRAC,
     RHYTHM_TAIL_S,
     SCENE_CLEAR_GAP_S,
@@ -58,17 +56,6 @@ def _run(texts: str, *, start: float = 0.0, dur: float = 0.25, gap: float = 0.05
 
 
 # -- constants (doc-locked, shared with the renderer/orchestration) -------------
-
-
-def test_module_constants_are_locked():
-    assert PAUSE_GAP_S == 0.35
-    assert MAX_PHRASE_WORDS == 6
-    assert MIN_SPEECH_WORDS == 4
-    assert HOLD_CAP_S == 4.0
-    assert SCENE_CLEAR_GAP_S == 0.1
-    assert MIN_SCENE_GAP_S == 0.034
-    assert FADE_OUT_S == 0.4
-    assert COVERAGE_MIN_FRAC == 0.5
 
 
 # -- eligibility (D8) ------------------------------------------------------------
@@ -461,13 +448,6 @@ _GOLDEN_WINDOWS = [
     (7.533, 8.467),
     (8.567, 10.4),
 ]
-
-
-def test_rhythm_constants_are_locked():
-    assert RHYTHM_LEAD_IN_S == 0.3
-    assert RHYTHM_TAIL_S == 0.8
-    assert RHYTHM_SPEAK_FRAC == 0.62
-    assert RHYTHM_MIN_CHAR_WEIGHT == 2
 
 
 def test_golden_demo_quote_reproduces_approved_scene_windows():

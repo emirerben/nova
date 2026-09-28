@@ -535,6 +535,23 @@ def compile_phone_guided_plan(
                 layer.end = text_bound_s
                 if layer.end - layer.start < _FRAME_S:
                     layer.start = max(0.0, layer.end - _FRAME_S)
+    else:
+        # No refit shrink, but a layer that ends at the plan's nominal end can still
+        # overshoot the recipe's own duration by float noise: the millisecond-rounded
+        # cuts 23.531 + 1.467 sum to 24.997999999999998, just under a layer that ends
+        # at 24.998, and `EditRecipeV2` compares with a strict `>` (KRI-190 device
+        # test, job 5df2e3ec). Snap only such an overshoot, so every layer that
+        # already fits stays byte-identical.
+        recipe_duration = max(
+            (
+                clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0)
+                for clip in clips
+            ),
+            default=0.0,
+        )
+        for layer in layers:
+            if 0 < layer.end - recipe_duration <= _TIMING_ROUNDING_TOLERANCE_S:
+                layer.end = recipe_duration
     tracks = [TimelineTrack(id="story", kind="video", clips=clips)]
     if plan.editor_visual_blocks:
         from app.pipeline.phone_editor_visuals import (  # noqa: PLC0415

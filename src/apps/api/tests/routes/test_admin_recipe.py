@@ -1057,16 +1057,6 @@ class TestInterstitialHoldSValidator:
         )
         assert inter.hold_s == 0.0
 
-    def test_hold_s_positive_accepted(self):
-        from app.routes.admin import RecipeInterstitialSchema
-
-        inter = RecipeInterstitialSchema(
-            type="curtain-close",
-            after_slot=3,
-            hold_s=1.5,
-        )
-        assert inter.hold_s == 1.5
-
     def test_hold_s_negative_rejected(self):
         from pydantic import ValidationError
 

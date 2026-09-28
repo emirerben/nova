@@ -93,9 +93,8 @@ final class CreationUITests: XCTestCase {
         XCTAssertLessThanOrEqual(toggle.frame.maxX, viewport.maxX)
         XCTAssertEqual(app.buttons.matching(identifier: "Close projects").count, 1)
         toggle.tap()
-        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Open projects'"), object: toggle)
-        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 3), .completed)
-        XCTAssertEqual(toggle.frame.minX, closedMenuX, accuracy: 2)
+        XCTAssertTrue(eventually { toggle.label == "Open projects" }, "Toggle still reads \(toggle.label)")
+        XCTAssertTrue(eventually { abs(toggle.frame.minX - closedMenuX) <= 2 }, "Toggle stayed at x=\(toggle.frame.minX)")
         let swipeStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.55))
         let swipeEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.55))
         swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
@@ -106,9 +105,8 @@ final class CreationUITests: XCTestCase {
         drawerScreenshot.lifetime = .keepAlways
         add(drawerScreenshot)
         swipeEnd.press(forDuration: 0.05, thenDragTo: swipeStart)
-        let swipeClosed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Open projects'"), object: toggle)
-        XCTAssertEqual(XCTWaiter.wait(for: [swipeClosed], timeout: 3), .completed)
-        XCTAssertEqual(toggle.frame.minX, closedMenuX, accuracy: 2)
+        XCTAssertTrue(eventually { toggle.label == "Open projects" }, "Toggle still reads \(toggle.label)")
+        XCTAssertTrue(eventually { abs(toggle.frame.minX - closedMenuX) <= 2 }, "Toggle stayed at x=\(toggle.frame.minX)")
         toggle.tap()
         XCTAssertTrue(app.staticTexts["Recent chats"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.buttons["drawer-new-chat"].exists)
@@ -552,5 +550,20 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["What are we making?"].waitForExistence(timeout: 20))
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["drawer-new-chat"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+    }
+
+    /// Re-checks `condition` until it holds or `timeout` passes. XCTWaiter polls an
+    /// NSPredicate expectation only after 1s and abandons a check still running at the
+    /// deadline. On a contended CI simulator one accessibility query took 3.8s, so a 3s
+    /// wait for the closed drawer timed out mid-query although the app had closed it
+    /// 2s earlier (run 36047011682). Here the first check starts at once and a check
+    /// that began before the deadline always counts.
+    private func eventually(timeout: TimeInterval = 3, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            guard Date() < deadline else { return false }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return true
     }
 }

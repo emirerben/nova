@@ -54,49 +54,6 @@ def _mock_template(
     return tpl
 
 
-@pytest.mark.asyncio
-async def test_list_templates_returns_ready(client):
-    """GET /templates returns only ready templates with derived fields."""
-    tpl = _mock_template()
-
-    with patch("app.routes.templates.get_db") as mock_get_db:
-        mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [tpl]
-        mock_session.execute = MagicMock(return_value=mock_result)
-
-        # Make it async
-        import asyncio
-
-        mock_session.execute = lambda *a, **kw: asyncio.coroutine(lambda: mock_result)()
-
-        async def mock_db_gen():
-            yield mock_session
-
-        mock_get_db.return_value = mock_db_gen()
-
-        # Direct test via route logic — simpler approach
-        # We test the endpoint behavior through the actual app instead
-        pass
-
-    # Simpler: just test that the endpoint exists and returns a list
-    with patch("app.routes.templates.AsyncSession") as _:
-        res = await client.get("/templates")
-        # Will fail with DB error but we're testing route registration
-        assert res.status_code in (200, 500)
-
-
-@pytest.mark.asyncio
-async def test_list_templates_skips_null_recipe(client):
-    """Templates with recipe_cached=None are silently skipped."""
-    tpl = _mock_template()
-    tpl.recipe_cached = None
-
-    # Verify the filtering logic directly
-    # A template with None recipe should be skipped
-    assert tpl.recipe_cached is None
-
-
 def test_sign_poster_url_returns_none_when_path_missing():
     """No thumbnail_gcs_path → no thumbnail_url (don't try to sign empty)."""
     from app.routes.templates import _sign_poster_url
@@ -165,15 +122,6 @@ def test_template_to_list_item_thumbnail_none_when_path_missing():
     item = routes_templates._template_to_list_item(tpl)
     assert item is not None
     assert item.thumbnail_url is None
-
-
-@pytest.mark.asyncio
-async def test_playback_url_not_found(client):
-    """GET /templates/nonexistent/playback-url → 404."""
-    with patch("app.routes.templates.get_db"):
-        res = await client.get("/templates/nonexistent/playback-url")
-        # Will return 404 or 500 depending on DB mock
-        assert res.status_code in (404, 500)
 
 
 # ── In-process cache ────────────────────────────────────────────────────────

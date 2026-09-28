@@ -1,0 +1,89 @@
+{
+  "fixture_id": "sport_explicit_order",
+  "provenance": "authored",
+  "footage": "sport",
+  "description": "Three named clips must appear in the stated sequence.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Open on the first goal, then the celebration, and end on the handshakes.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "sequence",
+      "kind": "order",
+      "scope": "global",
+      "request_type": "order_explicit",
+      "checker": "order_explicit",
+      "params": {
+        "sequence": [
+          "S3",
+          "S4",
+          "S8"
+        ]
+      },
+      "source": "Open on the first goal, then the celebration, and end on the handshakes.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "S3",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "clip_id": "S4",
+          "start_s": 3.0,
+          "end_s": 5.5
+        },
+        {
+          "clip_id": "S1",
+          "start_s": 5.5,
+          "end_s": 8.0
+        },
+        {
+          "clip_id": "S2",
+          "start_s": 8.0,
+          "end_s": 10.0
+        },
+        {
+          "clip_id": "S5",
+          "start_s": 10.0,
+          "end_s": 12.0
+        },
+        {
+          "clip_id": "S6",
+          "start_s": 12.0,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "S7",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "S8",
+          "start_s": 17.0,
+          "end_s": 19.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Five-a-side",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 19.5
+    },
+    "reply": "Opened on the first goal, then the celebration, and closed on the handshakes."
+  }
+}

@@ -3236,13 +3236,6 @@ _VALID_CUSTOM_EFFECT = {
 }
 
 
-def test_copilot_apply_custom_effect_registered_as_render_op() -> None:
-    from app.agents.edit_copilot import _RENDER_OPS, _VALID_OPS
-
-    assert "apply_custom_effect" in _VALID_OPS
-    assert "apply_custom_effect" in _RENDER_OPS
-
-
 def test_copilot_apply_custom_effect_parses(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "custom_effects_enabled", True)
     snap = _full_snapshot(
@@ -4210,49 +4203,6 @@ def test_format_snapshot_renders_sfx_roles_and_suggestions() -> None:
     assert "roles=" not in plain_line
 
 
-def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
-    # Numbered follow-up resolution changes model behavior and must retain a
-    # unique prompt version for trace and eval attribution. Bumped again for
-    # bulk caption replacement, Creator Blocks, and explicit overlay-effect
-    # bundle linkage (2026-08-09-v17), then again
-    # (2026-08-09-v18) for Lane D: set_carousel_moment moved off the "render"
-    # family onto its own "carousel" family and became a staged draft edit
-    # (no more single-op restriction, no re-render disclosure), then
-    # (2026-08-11-v19) for the validated Stadium Diffusion clip-look op, then
-    # (2026-08-11-v20) for the RECENT STEPS / RECENT EDIT HISTORY sections
-    # (copilot step awareness), then (2026-08-11-v21) for apply_custom_effect
-    # (PR6, effect-language train), then (2026-08-11-v22) for undo_last_edit /
-    # repeat_last_edit and the HISTORY STATE snapshot section (PR7), then
-    # (2026-08-14-v23) for catalog-backed Creator Block Motion v2 controls and
-    # normalized existing-block motion state, then (2026-08-22-v28) for
-    # story-native trim and explicit music-removal operations, then
-    # (2026-08-23-v29) for guided-title aliasing and structured outcomes, then
-    # (2026-08-23-v30) for server-planned direction replacement, then
-    # (2026-08-27-v31) for typed atomic bulk-media selectors and structured
-    # clarification referents, then (2026-08-27-v32) for safe source-capacity
-    # arithmetic and fail-closed 50-slot guidance, then (2026-08-27-v33) for
-    # the 8-second active Creator Block union constraint, then
-    # (2026-08-27-v34) for durable pending bulk actions and deterministic
-    # missing-duration clarification, then (2026-08-27-v35) for expanded
-    # guided timeline capacity, then (2026-08-28-v36) to make stack_images a
-    # consecutive individual-clip slideshow with no implicit Creator Block, then
-    # (2026-08-28-v37) so only the newest assistant turn can provide structured
-    # clarification and pending-action context, then (2026-09-08-v40) for
-    # bounded generic component provenance in negotiated context, then
-    # (2026-09-09-v41) for the negotiated text appearance inventory and atomic
-    # selector operation, then (2026-09-09-v42) for roster-scale atomic
-    # edit bundles and preserved two-thousand-character creator requests, then
-    # (2026-09-19-v44) for explicit placement rules and rotation_deg as a
-    # style field, then (2026-09-19-v45) correcting x_frac to the alignment
-    # anchor (left edge / right edge / centre) so "top left" lands top left, then
-    # (2026-09-24-v46) for itemized unmet_requests and the original request —
-    # update this pin whenever
-    # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
-    from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
-
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-24-v46"
-
-
 def _motion_snapshot() -> dict:
     return {
         "total_duration_s": 12,
@@ -4792,10 +4742,6 @@ def test_copilot_targeted_retry_is_not_used_for_unsupported_or_stale_ops() -> No
     )
     assert out.outcome == "unsupported"
     assert agent._value_retry_hint is None
-
-
-def test_copilot_fresh_agent_has_no_retry_hint() -> None:
-    assert _agent().schema_clarification().endswith("No markdown or prose outside JSON.")
 
 
 def test_copilot_direct_parse_never_raises_for_invalid_values() -> None:

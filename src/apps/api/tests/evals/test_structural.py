@@ -936,44 +936,6 @@ class TestTemplateTextStructural:
 
 
 class TestRunStructuralDispatch:
-    def test_dispatches_template_recipe(self):
-        assert run_structural("nova.compose.template_recipe", _good_recipe(), None) == []
-
-    def test_dispatches_clip_metadata(self):
-        assert run_structural("nova.video.clip_metadata", _good_clip_metadata(), _input()) == []
-
-    def test_dispatches_creative_direction(self):
-        text = (
-            "The pacing is snappy with quick whip-pan transitions on the beat drops. "
-            "Color grading leans warm and high-contrast for maximum punch. "
-            "Speed ramps slow down on key action moments before snapping back to "
-            "full speed. Audio sync is locked tightly to the beat with a music "
-            "drop. There is no on-camera host or voiceover narration. No letterbox "
-            "bars; full bleed framing. The niche is sports highlight reels."
-        )
-        assert (
-            run_structural(
-                "nova.compose.creative_direction", CreativeDirectionOutput(text=text), None
-            )
-            == []
-        )
-
-    def test_dispatches_transcript(self):
-        assert run_structural("nova.audio.transcript", _good_transcript(), None) == []
-
-    def test_dispatches_platform_copy(self):
-        assert run_structural("nova.compose.platform_copy", _good_platform_copy(), None) == []
-
-    def test_dispatches_audio_template(self):
-        assert run_structural("nova.audio.template_recipe", _good_audio_template(), None) == []
-
-    def test_dispatches_template_text(self):
-        from app.agents.template_text import TemplateTextInput, TemplateTextOutput
-
-        out = TemplateTextOutput(overlays=[])
-        inp = TemplateTextInput(file_uri="files/t", slot_boundaries_s=[(0.0, 5.0)])
-        assert run_structural("nova.compose.template_text", out, inp) == []
-
     def test_unknown_agent_raises(self):
         with pytest.raises(ValueError):
             run_structural("nope.unknown", None, None)

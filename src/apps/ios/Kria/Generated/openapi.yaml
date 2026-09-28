@@ -127,6 +127,29 @@
             "minimum": 0,
             "title": "Expected Thread Revision",
             "type": "integer"
+          },
+          "speech_cleanup_analysis_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Speech Cleanup Analysis Id",
+            "type": "string"
+          },
+          "speech_cleanup_aware": {
+            "default": false,
+            "title": "Speech Cleanup Aware",
+            "type": "boolean"
+          },
+          "speech_cleanup_choice": {
+            "default": null,
+            "enum": [
+              "clean",
+              "keep_original",
+              "create_without_cleanup"
+            ],
+            "nullable": true,
+            "title": "Speech Cleanup Choice",
+            "type": "string"
           }
         },
         "required": [
@@ -642,6 +665,83 @@
           }
         },
         "title": "CarouselMomentEditRequest",
+        "type": "object"
+      },
+      "ClipCapture": {
+        "additionalProperties": false,
+        "description": "Optional filming context for one original. Every part may be absent.",
+        "properties": {
+          "capture_time": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Capture Time",
+            "type": "string"
+          },
+          "coarse_location": {
+            "$ref": "#/components/schemas/CoarseLocation",
+            "default": null,
+            "nullable": true
+          },
+          "place": {
+            "$ref": "#/components/schemas/ClipPlace",
+            "default": null,
+            "nullable": true
+          }
+        },
+        "title": "ClipCapture",
+        "type": "object"
+      },
+      "ClipPlace": {
+        "additionalProperties": false,
+        "description": "Reverse-geocoded on the phone (CLGeocoder): neighbourhood, city, country.",
+        "properties": {
+          "country": {
+            "default": null,
+            "maxLength": 80,
+            "nullable": true,
+            "title": "Country",
+            "type": "string"
+          },
+          "locality": {
+            "default": null,
+            "maxLength": 80,
+            "nullable": true,
+            "title": "Locality",
+            "type": "string"
+          },
+          "sub_locality": {
+            "default": null,
+            "maxLength": 80,
+            "nullable": true,
+            "title": "Sub Locality",
+            "type": "string"
+          }
+        },
+        "title": "ClipPlace",
+        "type": "object"
+      },
+      "CoarseLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "lat": {
+            "maximum": 90,
+            "minimum": -90,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180,
+            "minimum": -180,
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon"
+        ],
+        "title": "CoarseLocation",
         "type": "object"
       },
       "CreateBody": {
@@ -3893,6 +3993,18 @@
       "MediaInput": {
         "additionalProperties": false,
         "properties": {
+          "capture_time": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Capture Time",
+            "type": "string"
+          },
+          "coarse_location": {
+            "$ref": "#/components/schemas/CoarseLocation",
+            "default": null,
+            "nullable": true
+          },
           "content_type": {
             "default": null,
             "maxLength": 100,
@@ -3928,6 +4040,11 @@
             "minLength": 1,
             "title": "Media Id",
             "type": "string"
+          },
+          "place": {
+            "$ref": "#/components/schemas/ClipPlace",
+            "default": null,
+            "nullable": true
           }
         },
         "required": [
@@ -4458,6 +4575,11 @@
             "minimum": 0,
             "title": "Byte Count",
             "type": "integer"
+          },
+          "capture": {
+            "$ref": "#/components/schemas/ClipCapture",
+            "default": null,
+            "nullable": true
           },
           "duration_s": {
             "exclusiveMinimum": true,

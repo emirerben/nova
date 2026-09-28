@@ -66,6 +66,24 @@ PHONE_SUBTITLED_EDITOR_LANES_FIELD = "_phone_subtitled_editor_lanes_v1"
 _SFX_CATALOG_PREFIX = "sound-effects/{catalog_id}/"
 
 
+def placeholder_sfx_path(catalog_id: str) -> str:
+    """The prefix-valid stand-in `sections_from_lanes` writes for a sound
+    effect whose real catalog audio object it doesn't know. NOT a storage
+    object: signing it for playback 404s."""
+    return _SFX_CATALOG_PREFIX.format(catalog_id=catalog_id) + catalog_id
+
+
+def is_catalog_sfx_path(catalog_id: str, path: object) -> bool:
+    """True when ``path`` can be ``catalog_id``'s real catalog audio object
+    (`SoundEffect.audio_gcs_path`, always under `sound-effects/{catalog_id}/`)
+    rather than missing or the `placeholder_sfx_path` stand-in."""
+    return (
+        isinstance(path, str)
+        and path.startswith(_SFX_CATALOG_PREFIX.format(catalog_id=catalog_id))
+        and path != placeholder_sfx_path(catalog_id)
+    )
+
+
 def is_phone_subtitled_editor_variant(variant: dict) -> bool:
     """True for a phone-rendered `subtitled` (Talking to camera) variant."""
     return (
@@ -198,12 +216,12 @@ def sections_from_lanes(
             # module docstring), so the exact original object name isn't
             # recoverable from a pinned recipe alone. This synthetic path
             # only needs to satisfy the `sound-effects/{catalog_id}/` prefix
-            # contract `validate_sfx_gcs_path` checks -- a real signed
-            # playback URL is a `_native_editor_assets` concern, and a probe
-            # against a path that doesn't resolve to a real object just
-            # drops that one preview row rather than breaking the projection.
-            "src_gcs_path": paths.get(catalog_id)
-            or _SFX_CATALOG_PREFIX.format(catalog_id=catalog_id) + catalog_id,
+            # contract `validate_sfx_gcs_path` checks -- it is NOT a storage
+            # object, so the real catalog path is resolved at Save
+            # (`_compile_subtitled_editor_commit`) and on read
+            # (`generative_jobs._phone_subtitled_sfx_paths`) before anything
+            # signs it for playback.
+            "src_gcs_path": paths.get(catalog_id) or placeholder_sfx_path(catalog_id),
             "at_s": request.at_s,
             "gain": request.volume,
             "duration_s": resolved.duration_s,

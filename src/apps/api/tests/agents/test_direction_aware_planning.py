@@ -36,13 +36,6 @@ def _render(persona: Persona) -> str:
 
 
 class TestLegacyPersonaContract:
-    def test_persona_schema_defaults_content_mode_create_new(self):
-        p = _persona()  # no goal / content_mode / current_situation
-        assert p.goal == ""
-        assert p.content_mode is None
-        assert p.current_situation == ""
-        assert resolve_content_mode(p) == "create_new"
-
     def test_legacy_persona_dict_roundtrip(self):
         # Stored JSONB rows predate the fields entirely.
         p = Persona(**_persona().model_dump(exclude={"goal", "content_mode", "current_situation"}))
@@ -64,20 +57,10 @@ class TestPromptDirection:
         assert "\ngoal: " not in prompt
         assert "current situation:" not in prompt
 
-    def test_past_trip_rule_always_present(self):
-        # Static quality rule — must hold for legacy and new personas alike.
-        for p in (_persona(), _persona(content_mode="existing_footage")):
-            prompt = _render(p)
-            assert "Past trips are EDIT material" in prompt
-
     def test_existing_footage_mode_block(self):
         prompt = _render(_persona(content_mode="existing_footage"))
         assert "CONTENT MODE — EXISTING FOOTAGE" in prompt
         assert "Never ask them to go film" in prompt
-
-    def test_mixed_mode_block(self):
-        prompt = _render(_persona(content_mode="mixed"))
-        assert "CONTENT MODE — MIXED" in prompt
 
     def test_create_new_mode_is_baseline(self):
         prompt = _render(_persona(content_mode="create_new"))

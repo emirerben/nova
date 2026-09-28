@@ -725,16 +725,6 @@ class TestInputsWhitespaceStrip:
         )
         assert req.inputs["location"] == ""
 
-    def test_empty_inputs_dict_passes(self):
-        from app.routes.template_jobs import CreateTemplateJobRequest
-
-        req = CreateTemplateJobRequest(
-            template_id="t",
-            clip_gcs_paths=["gcs/a.mp4"],
-            inputs={},
-        )
-        assert req.inputs == {}
-
 
 class TestInputsControlCharScrubbing:
     """Pydantic validator drops invisible/bidi-override characters at the

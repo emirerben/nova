@@ -2,6 +2,7 @@
 """Conservative UI grouping and verification of actual XCTest result coverage."""
 
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -10,8 +11,15 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path(__file__).with_name("ui-test-groups.json")
-# Median seconds per UI test on GitHub's macos-15 runners; balances main shards.
+# Median seconds per UI test on GitHub's macos-15 runners; sizes and balances shards.
 DURATIONS = Path(__file__).with_name("ui-test-durations.json")
+# Each extra native leg repeats ~7 minutes of setup and compilation, so a
+# selection splits only when one leg would run more than this much recorded UI
+# time: main's full suite gets three legs, an editor-touching PR two.
+SHARD_TARGET_SECONDS = 15 * 60
+# Main (three legs) plus one two-leg PR fit the account's five concurrent
+# macOS runners. ios.yml must define a matrix for every count up to this one.
+MAX_SHARDS = 3
 FEATURES = ("creation", "projects", "editor")
 FOCUSED = tuple(f"smoke,{group}" for group in FEATURES)
 UI_TEST_ROOT = "src/apps/ios/Tests/KriaUITests/"
@@ -331,36 +339,50 @@ def parse_shard(spec):
     return int(match.group(1)), int(match.group(2))
 
 
+def weights(tests, durations=None):
+    """Recorded seconds per test; tests without a recorded duration weigh the median."""
+    if durations is None:
+        durations = json.loads(DURATIONS.read_text()) if DURATIONS.exists() else {}
+    known = sorted(float(value) for value in durations.values())
+    default = known[len(known) // 2] if known else 30.0
+    return {test: float(durations.get(test, default)) for test in tests}
+
+
+def shard_count(value, root=ROOT, durations=None):
+    """Native legs for an executed selection: one per SHARD_TARGET_SECONDS of
+    recorded UI time, at most MAX_SHARDS and never more legs than tests."""
+    tests = expected_tests(value, root)
+    estimate = sum(weights(tests, durations).values())
+    return max(1, min(MAX_SHARDS, len(tests), math.ceil(estimate / SHARD_TARGET_SECONDS)))
+
+
 def shard_tests(tests, spec, durations=None):
     """This shard's part of a deterministic, duration-balanced partition.
 
     Every shard computes the same partition from the same checkout, so the
     shards are disjoint and their union is exactly `tests`. Longest tests are
-    placed first into the least-loaded shard; tests without a recorded
-    duration weigh the median, so new tests still spread out evenly.
+    placed first into the least-loaded shard, so new tests still spread out
+    evenly. An empty part is an error: it would verify vacuously.
     """
     index, count = parse_shard(spec)
-    if durations is None:
-        durations = json.loads(DURATIONS.read_text()) if DURATIONS.exists() else {}
-    known = sorted(float(value) for value in durations.values())
-    default = known[len(known) // 2] if known else 30.0
-    weight = {test: float(durations.get(test, default)) for test in tests}
+    weight = weights(tests, durations)
     loads, members = [0.0] * count, [[] for _ in range(count)]
     for test in sorted(tests, key=lambda test: (-weight[test], test)):
         target = min(range(count), key=lambda shard: (loads[shard], shard))
         loads[target] += weight[test]
         members[target].append(test)
+    if not members[index - 1]:
+        raise ValueError(f"UI shard {spec} selects no tests")
     return set(members[index - 1])
 
 
 def main():
     command, value = sys.argv[1:3]
     expected = expected_tests(value)
-    # Main runs split the full suite across Macs; each shard checks its part.
+    # Long selections (main's full suite, an editor PR's group) split across
+    # Macs; each shard runs and verifies exactly its part.
     shard = os.environ.get("KRIA_IOS_UI_SHARD", "")
     if shard:
-        if value != "full":
-            raise ValueError("Only the full UI suite can be sharded")
         expected = shard_tests(expected, shard)
     if command == "args":
         if value == "full" and not shard:

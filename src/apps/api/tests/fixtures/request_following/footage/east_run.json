@@ -1,0 +1,72 @@
+{
+  "footage_id": "east_run",
+  "description": "Creator's 20k run along the Bosphorus, Arnavutkoy to Eminonu. 11 phone clips. Captured read-only from prod plan item a55956c7 (KRI-185). No capture_time / place facts exist for these clips: the system had none. route_rank is a hand-labelled estimate and must be confirmed with the creator.",
+  "clips": [
+    {
+      "clip_id": "A45CC3D7",
+      "duration_s": 3.7,
+      "subject": "cruise ship and distant city skyline",
+      "route_rank": null
+    },
+    {
+      "clip_id": "C2DC7139",
+      "duration_s": 5.067,
+      "subject": "Bosphorus Strait with boats and bridge",
+      "route_rank": 3
+    },
+    {
+      "clip_id": "C16175FA",
+      "duration_s": 3.433,
+      "subject": "Galata Tower and Istanbul skyline",
+      "route_rank": 6
+    },
+    {
+      "clip_id": "68785DA1",
+      "duration_s": 3.333,
+      "subject": "clock tower",
+      "route_rank": 5
+    },
+    {
+      "clip_id": "3EF8F2C3",
+      "duration_s": 3.3,
+      "subject": "yellow city bus",
+      "route_rank": null
+    },
+    {
+      "clip_id": "5DE280D6",
+      "duration_s": 3.367,
+      "subject": "ornate palace gate",
+      "route_rank": 4
+    },
+    {
+      "clip_id": "09177B10",
+      "duration_s": 2.067,
+      "subject": "waterfront promenade and yachts",
+      "route_rank": 1
+    },
+    {
+      "clip_id": "8471A428",
+      "duration_s": 1.867,
+      "subject": "large boat",
+      "route_rank": null
+    },
+    {
+      "clip_id": "DF575ECA",
+      "duration_s": 2.467,
+      "subject": "sea and distant shore",
+      "route_rank": 2
+    },
+    {
+      "clip_id": "44C7A897",
+      "duration_s": 3.2,
+      "subject": "body of water",
+      "route_rank": null
+    },
+    {
+      "clip_id": "976434A9",
+      "duration_s": 2.6,
+      "subject": "residential hillside view",
+      "route_rank": null
+    }
+  ]
+}

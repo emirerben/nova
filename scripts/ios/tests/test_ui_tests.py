@@ -199,6 +199,49 @@ class UISelectionTests(unittest.TestCase):
         for invalid in ("", "0/3", "4/3", "1/0", "a/b", "1/10", "1-3"):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 ui.shard_tests(inventory, invalid)
+        # An empty part would verify vacuously, so it is an error instead.
+        with self.assertRaises(ValueError):
+            ui.shard_tests(set(sorted(inventory)[:2]), "3/3")
+
+    def test_focused_selections_partition_exactly_like_the_full_suite(self):
+        rename = "ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+        for value in ("smoke", *ui.FOCUSED, f"smoke,editor,{rename}"):
+            expected = ui.expected_tests(value)
+            for count in range(1, ui.MAX_SHARDS + 1):
+                parts = [
+                    ui.shard_tests(expected, f"{i}/{count}") for i in range(1, count + 1)
+                ]
+                with self.subTest(value=value, count=count):
+                    self.assertEqual(set().union(*parts), expected)
+                    self.assertEqual(sum(len(part) for part in parts), len(expected))
+
+    def test_shard_count_splits_long_selections_only(self):
+        # The recorded durations size today's selections: the smoke tripwire
+        # and the short feature groups keep one leg, an editor PR splits, and
+        # main's full suite uses every leg the workflow defines.
+        self.assertEqual(ui.shard_count("smoke"), 1)
+        self.assertEqual(ui.shard_count("smoke,projects"), 1)
+        self.assertGreater(ui.shard_count("smoke,editor"), 1)
+        self.assertEqual(ui.shard_count("full"), ui.MAX_SHARDS)
+        # One leg per SHARD_TARGET_SECONDS of recorded time, clamped.
+        smoke = sorted(ui.expected_tests("smoke"))
+        target = ui.SHARD_TARGET_SECONDS
+        for seconds, legs in (
+            (target, 1),
+            (target + 1, 2),
+            (2 * target + 1, min(3, ui.MAX_SHARDS)),
+            (100 * target, ui.MAX_SHARDS),
+        ):
+            durations = {test: seconds / len(smoke) for test in smoke}
+            with self.subTest(seconds=seconds):
+                self.assertEqual(ui.shard_count("smoke", durations=durations), legs)
+        # Never more legs than tests: every leg must have a non-empty part.
+        pair = set(smoke[:2])
+        durations = {test: 100.0 * target for test in pair}
+        with patch.object(ui, "expected_tests", return_value=pair):
+            self.assertEqual(ui.shard_count("smoke", durations=durations), 2)
+        with self.assertRaises(ValueError):
+            ui.shard_count("none")
 
     def test_changed_tests_maps_lines_inside_test_methods_only(self):
         path = "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift"

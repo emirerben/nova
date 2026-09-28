@@ -545,21 +545,34 @@ def test_dispatch_snapshots_only_explicit_speech_cleanup_contracts(
     assert mock_build.call_args.kwargs["creator_request"] == "x" * 2000
 
 
-# --- KRI-118 L1 item 1: clean speech must never be accepted on phone -------
+# --- KRI-118 L1 item 1: clean speech must never be APPLIED on phone --------
+#
+# KRI-205 narrowed this: `preflight_enabled_for_source` now schedules and
+# offers the cleanup decision for a phone (analysis-proxy) source same as a
+# cloud one, since detection only needs audio. This refusal is the half of
+# the invariant that's still true -- applying `choice == "clean"` needs the
+# real, full-resolution video to cut frames, which a phone-rendered project
+# never uploads -- and it's now the everyday outcome for that choice on
+# phone, not just a defense against a stale/forged request.
 
 
-def test_speech_cleanup_dispatch_snapshot_refuses_clean_on_phone_sourced_item() -> None:
-    """`choice == "clean"` against an item whose ACTIVE narration source is an
-    analysis proxy is refused with a typed reason, before any DB row is even
-    read -- the original audio bytes never reach the server on a phone
-    project, so speech cleanup can never actually run there. This gates on
-    the resolved source, not the item's raw clip paths -- a phone item's
-    recorded voiceover (the active source when `audio_mode == "voiceover"`)
-    is a normal, fully uploaded file even though its video clips are
-    proxies (see `test_..._recorded_voiceover_source_is_unaffected` below)."""
+def test_speech_cleanup_dispatch_snapshot_refuses_clean_on_multi_clip_phone_sourced_item() -> None:
+    """`choice == "clean"` against a SELF-NARRATED item with 2+ clips whose
+    ACTIVE narration source is an analysis proxy is still refused with a
+    typed reason, before any DB row is even read -- that shape routes to the
+    montage/`self_narration_multi_clip` phone family, which has no
+    timeline-reshaping primitive at all (unlike the single-clip "Talking to
+    camera" shape -- see
+    `test_..._allows_clean_on_single_clip_phone_sourced_item` below, now that
+    `_run_phone_subtitled_job` applies a CutPlan directly against the
+    analysis proxy). This gates on the resolved source, not the item's raw
+    clip paths -- a phone item's recorded voiceover (the active source when
+    `audio_mode == "voiceover"`) is a normal, fully uploaded file even though
+    its video clips are proxies (see
+    `test_..._recorded_voiceover_source_is_unaffected` below)."""
     from app.tasks.content_plan_build import DispatchResult, _speech_cleanup_dispatch_snapshot
 
-    item = SimpleNamespace(id=uuid.uuid4(), clip_gcs_paths=["irrelevant"])
+    item = SimpleNamespace(id=uuid.uuid4(), clip_gcs_paths=["irrelevant-1", "irrelevant-2"])
     with patch(
         "app.services.plan_item_media.resolve_item_narration",
         return_value=SimpleNamespace(
@@ -575,6 +588,37 @@ def test_speech_cleanup_dispatch_snapshot_refuses_clean_on_phone_sourced_item() 
 
     assert isinstance(result, DispatchResult)
     assert result.outcome == "speech_cleanup_unavailable_on_phone"
+
+
+def test_speech_cleanup_dispatch_snapshot_allows_clean_on_single_clip_phone_sourced_item() -> None:
+    """`choice == "clean"` against a single-clip phone-sourced item (Talking
+    to camera, or self-narration with exactly one clip) is NO LONGER phone-
+    gated: `_run_phone_subtitled_job` applies a CutPlan directly against the
+    analysis proxy (`compile_phone_subtitled_plan`'s `cut_plan` param), so
+    this falls through to the normal (unaffected) analysis-row validation --
+    same as the recorded-voiceover case below."""
+    from app.tasks.content_plan_build import DispatchResult, _speech_cleanup_dispatch_snapshot
+
+    item = SimpleNamespace(id=uuid.uuid4(), clip_gcs_paths=["users/u/plan/i/proxy.mp4"])
+    session = MagicMock()
+    session.get.return_value = None
+    with patch(
+        "app.services.plan_item_media.resolve_item_narration",
+        return_value=SimpleNamespace(
+            source=SimpleNamespace(
+                storage_path="users/u/plan/i/analysis-proxy-source.mp4",
+                source_policy_fingerprint="fp",
+            )
+        ),
+    ):
+        result = _speech_cleanup_dispatch_snapshot(
+            session, item, analysis_id=str(uuid.uuid4()), choice="clean"
+        )
+
+    # No matching analysis row (`session.get` returns None) -> the generic
+    # conflict, never the phone-specific reason this test guards against.
+    assert isinstance(result, DispatchResult)
+    assert result.outcome == "speech_cleanup_analysis_conflict"
 
 
 def test_speech_cleanup_dispatch_snapshot_recorded_voiceover_source_is_unaffected() -> None:
@@ -636,18 +680,33 @@ def test_dispatch_item_render_refuses_clean_choice_before_minting_a_job(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """End-to-end: a Generate request carrying `speech_cleanup_choice="clean"`
-    for a phone-sourced item is refused by `_dispatch_item_render` itself,
-    before `build_generative_job`/`enqueue_orchestrator_sync` ever run.
+    for a MULTI-CLIP self-narrated phone-sourced item is refused by
+    `_dispatch_item_render` itself, before `build_generative_job`/
+    `enqueue_orchestrator_sync` ever run -- that shape has no phone
+    timeline-reshaping primitive (routes to the montage/
+    `self_narration_multi_clip` family), unlike the single-clip "Talking to
+    camera" shape `_run_phone_subtitled_job` now applies a CutPlan against
+    directly (see `tests/tasks/test_phone_subtitled_narrated_dispatch.py`'s
+    `cut_plan`-carrying tests).
 
-    Uses `subtitled` (talking-to-camera): its active narration source IS the
-    clip's own embedded audio, so an analysis-proxy clip path genuinely makes
-    the resolved source an analysis proxy too -- unlike a plain montage item
-    (which has no narration source at all) or a voiceover item (whose active
-    source is the separately uploaded, non-proxy voiceover file)."""
+    Uses `narrated_ready` self-narration (no recorded voiceover) with TWO
+    embedded clips: `resolve_active_narration_source` only resolves a
+    multi-clip `subtitled`-declared item's source to `None`
+    (``ambiguous_embedded_source``), which would bypass this refusal
+    entirely rather than exercise it -- self-narration across 2+ clips is
+    the shape that genuinely reaches this gate with a real
+    `embedded_spine`/analysis-proxy source (`speech_coverage`-based spine
+    selection), unlike a plain montage item (no narration source at all) or
+    a voiceover item (whose active source is the separately uploaded,
+    non-proxy voiceover file)."""
     from app.config import settings
 
     item = _cleanup_dispatch_item()
-    item.clip_gcs_paths = ["users/u/plan/i/analysis-proxy-source.mp4"]
+    item.edit_format = "narrated_ready"
+    item.clip_gcs_paths = [
+        "users/u/plan/i/analysis-proxy-source.mp4",
+        "users/u/plan/i/analysis-proxy-source-2.mp4",
+    ]
     item.clip_assignments = [
         {
             "media_id": "registered-spine",
@@ -655,7 +714,16 @@ def test_dispatch_item_render_refuses_clean_choice_before_minting_a_job(
             "storage_generation": "generation-17",
             "duration_s": 12.0,
             "has_audio": True,
-        }
+            "speech_coverage": 0.9,
+        },
+        {
+            "media_id": "registered-spine-2",
+            "gcs_path": item.clip_gcs_paths[1],
+            "storage_generation": "generation-18",
+            "duration_s": 8.0,
+            "has_audio": True,
+            "speech_coverage": 0.2,
+        },
     ]
     plan = SimpleNamespace(
         id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0

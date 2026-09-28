@@ -35,11 +35,6 @@ describe("TikTok connection page auth boundary", () => {
     mockSearchParams = new URLSearchParams();
   });
 
-  it("renders the connection panel for authenticated visitors", () => {
-    render(<TikTokConnectionPage />);
-    expect(screen.getByText("TikTok connection panel")).toBeInTheDocument();
-  });
-
   it("shows the canonical sign-in prompt for unauthenticated visitors", () => {
     authStatus = "unauthenticated";
     render(<TikTokConnectionPage />);

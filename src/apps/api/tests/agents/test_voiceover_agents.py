@@ -25,7 +25,6 @@ from app.agents.voiceover_script_writer import (
     split_script_lines,
 )
 from app.schemas.voiceover_script import (
-    VoiceoverScript,
     estimate_read_time_s,
     target_word_count,
 )
@@ -151,19 +150,6 @@ def test_read_time_and_target_word_helpers() -> None:
     assert target_word_count(30) == 69  # 30 * 2.3
     assert estimate_read_time_s(" ".join(["w"] * 69)) == 30
     assert estimate_read_time_s("") == 1  # floor
-
-
-def test_voiceover_script_validates() -> None:
-    s = VoiceoverScript(
-        version=1,
-        text=_SCRIPT_30S,
-        read_time_s=estimate_read_time_s(_SCRIPT_30S),
-        brief="morning routine",
-        lines=split_script_lines(_SCRIPT_30S),
-    )
-    assert s.version == 1
-    assert s.source == "generated"
-    assert s.footage_summary is None
 
 
 # ── heuristic fallbacks (no-Gemini localhost path) ──────────────────────────────

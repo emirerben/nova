@@ -1,11 +1,4 @@
-from app.pipeline import lyric_injector
 from app.pipeline.lyric_injector import inject_lyric_overlays
-
-
-def test_line_defaults_locked() -> None:
-    assert lyric_injector._LINE_POST_DWELL_S == 1.0
-    assert lyric_injector._LINE_HOLD_TO_NEXT_THRESHOLD_MS == 500
-    assert lyric_injector._MIN_LINE_VISIBLE_S == 0.20
 
 
 def test_line_style_default_text_size_and_position() -> None:
@@ -20,7 +13,6 @@ def test_line_style_default_text_size_and_position() -> None:
     }
     cache = {
         "source": "lrclib_synced+whisper",
-
         "lines": [
             {
                 "text": "I hope I make it outta here (let's go! Yeah)",
@@ -28,7 +20,7 @@ def test_line_style_default_text_size_and_position() -> None:
                 "end_s": 3.5,
                 "words": [],
             }
-        ]
+        ],
     }
     out = inject_lyric_overlays(recipe, cache, 0.0, 6.0, {"enabled": True, "style": "line"})
     overlays = out["slots"][0]["text_overlays"]
@@ -48,10 +40,9 @@ def test_line_style_respects_caller_overrides() -> None:
     }
     cache = {
         "source": "lrclib_synced+whisper",
-
         "lines": [
             {"text": "Tuned", "start_s": 0.5, "end_s": 1.5, "words": []},
-        ]
+        ],
     }
     out = inject_lyric_overlays(
         recipe,

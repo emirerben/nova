@@ -18,6 +18,41 @@
           "minimum": 0,
           "title": "Expected Thread Revision",
           "type": "integer"
+        },
+        "speech_cleanup_analysis_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Speech Cleanup Analysis Id"
+        },
+        "speech_cleanup_aware": {
+          "default": false,
+          "title": "Speech Cleanup Aware",
+          "type": "boolean"
+        },
+        "speech_cleanup_choice": {
+          "anyOf": [
+            {
+              "enum": [
+                "clean",
+                "keep_original",
+                "create_without_cleanup"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Speech Cleanup Choice"
         }
       },
       "required": [

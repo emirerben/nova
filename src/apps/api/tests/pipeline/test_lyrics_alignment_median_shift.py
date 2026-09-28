@@ -26,9 +26,6 @@ from __future__ import annotations
 import pytest
 
 from app.pipeline.lyrics_alignment import (
-    _MULTILINE_MATCHED_COUNT_THRESHOLD,
-    _MULTILINE_MIN_APPLY_SHIFT_S,
-    _MULTILINE_MIN_ELIGIBLE_LINES,
     _REANCHOR_NEXT_LINE_SAFETY_S,
     AlignedLine,
     align_with_line_anchors,
@@ -364,53 +361,9 @@ class TestDefensiveBails:
 # ────────────────────────────────────────────────────────────────────────────
 
 
-class TestConstants:
-    """Lock the user-chosen thresholds so a future drive-by edit can't
-    silently widen / tighten them without test failure."""
-
-    def test_min_eligible_lines_is_3(self) -> None:
-        assert _MULTILINE_MIN_ELIGIBLE_LINES == 3
-
-    def test_min_apply_shift_is_0_2(self) -> None:
-        assert _MULTILINE_MIN_APPLY_SHIFT_S == pytest.approx(0.2)
-
-    def test_max_mad_is_0_22(self) -> None:
-        from app.pipeline.lyrics_alignment import (  # noqa: PLC0415
-            _MULTILINE_MAX_MAD_S,
-        )
-
-        assert _MULTILINE_MAX_MAD_S == pytest.approx(0.22)
-
-    def test_inlier_k_is_1_5(self) -> None:
-        from app.pipeline.lyrics_alignment import (  # noqa: PLC0415
-            _MULTILINE_INLIER_K,
-        )
-
-        assert _MULTILINE_INLIER_K == pytest.approx(1.5)
-
-    def test_min_inliers_is_3(self) -> None:
-        from app.pipeline.lyrics_alignment import (  # noqa: PLC0415
-            _MULTILINE_MIN_INLIERS,
-        )
-
-        assert _MULTILINE_MIN_INLIERS == 3
-
-    def test_matched_count_threshold_is_2(self) -> None:
-        assert _MULTILINE_MATCHED_COUNT_THRESHOLD == 2
-
-
 # ────────────────────────────────────────────────────────────────────────────
 # Cache-bust contract
 # ────────────────────────────────────────────────────────────────────────────
-
-
-class TestPromptVersionBump:
-    """Lock the prompt_version that invalidates stale cached lyric blobs."""
-
-    def test_lyrics_extraction_prompt_version_bumped(self) -> None:
-        from app.agents.lyrics import LyricsExtractionAgent
-
-        assert LyricsExtractionAgent.spec.prompt_version == "2026-06-06.boundary-sync-decoy-prefix"
 
 
 # ────────────────────────────────────────────────────────────────────────────

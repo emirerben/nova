@@ -94,6 +94,109 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.deviceRenderCallCount, 2, "A generation refresh must resolve its current device recipe again")
     }
 
+    /// Job 385e3b13: a phone Talking edit with photo cards opened to a black
+    /// editor. The server keeps no timeline slots for it, so the preview had
+    /// no video track, yet the cards made the recipe valid. The source clip now
+    /// plays, locked, under the cards and captions.
+    func testPhoneTalkingEditPreviewsItsSourceVideoAsALockedClip() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true)
+
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertEqual(session.timelineClips.count, 1)
+        XCTAssertEqual(session.timelineClips.first?.sourceClipIndex, 0)
+        XCTAssertEqual(session.timelineClips.first?.start, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(session.timelineClips.first?.end), 0)
+        XCTAssertFalse(session.canEditTimeline)
+        XCTAssertFalse(session.hasUnsavedChanges, "The source clip is server state, never a user edit to Save")
+    }
+
+    /// Cards and sounds closed (their rollout flag off): the server sends no
+    /// lanes, so a live preview would drop what the finished MP4 shows. The
+    /// editor keeps playing the finished MP4.
+    func testPhoneTalkingEditWithClosedLanesKeepsTheFinishedMP4() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: false)
+
+        XCTAssertTrue(session.timelineClips.isEmpty)
+        guard case .failed = session.sourcePreviewState else {
+            return XCTFail("No video track must stay invalid so the finished MP4 plays")
+        }
+    }
+
+    /// Lanes closed, yet the edit still carries a persisted card. The card
+    /// alone made the recipe valid, so the editor played it over a black
+    /// canvas. With no video track it keeps playing the finished MP4.
+    func testPhoneTalkingEditWithClosedLanesAndACardKeepsTheFinishedMP4() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: false, card: true)
+
+        XCTAssertEqual(session.document.mediaOverlays.map(\.id), ["card"])
+        XCTAssertTrue(session.timelineClips.isEmpty)
+        guard case .failed(let message) = session.sourcePreviewState else {
+            return XCTFail("A card over no video track must not become the live preview (state: \(session.sourcePreviewState))")
+        }
+        XCTAssertEqual(message, NativeEditorSession.sourcePreviewMessage(for: NativeEditorRenderError.missingVideoTrack))
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        XCTAssertNil(session.displayedSourcePreviewRecipe)
+    }
+
+    private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy) {
+        let threadID = UUID(), jobID = UUID()
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), to: input)
+        defer { try? FileManager.default.removeItem(at: input) }
+        let asset = try await AssetImportCoordinator(project: project).importAsset(from: input)
+        try SourceAssetStore(project: project).bind(mediaID: "source", original: asset)
+        let descriptor = OriginalMediaDescriptor(sha256: try XCTUnwrap(asset.fingerprint).hex, byteCount: try XCTUnwrap(asset.fingerprint).byteCount,
+            durationS: 1, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true)
+        var nativeAssets: [NativeEditorAsset] = []
+        if card {
+            // Seed the preview cache the editor's resolver reads, so the card
+            // resolves without a download.
+            let cache = NativePreviewAssetCache(project: project, jobID: jobID)
+            let remote = try XCTUnwrap(URL(string: "https://storage.example/card.png"))
+            let download = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+            try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 96, height: 160)).image { context in
+                UIColor.orange.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 96, height: 160))
+            }.pngData()).write(to: download)
+            var image = try await NativeDownloadedMedia.importAsset(from: download, sourceURL: remote,
+                response: URLResponse(url: remote, mimeType: "image/png", expectedContentLength: -1, textEncodingName: nil), project: cache.project)
+            image.naturalSize = MediaSize(width: 96, height: 160)
+            try cache.store(image, for: "media:generation-1:card-media")
+            nativeAssets = [NativeEditorAsset(id: "card", kind: "media_overlay", mediaID: "card-media", sourceURL: remote, preserveAlpha: nil)]
+        }
+
+        var variant: [String: JSONValue] = [
+            "variant_id": .string("variant"),
+            "render_generation_id": .string("generation-1"),
+            "render_status": .string("ready"),
+            "render_destination": .string("device"),
+            "resolved_archetype": .string("subtitled"),
+            "output_url": .string("file:///tmp/kria-editor-test.mp4"),
+            "editor_capabilities": .object(["timeline": .bool(false), "text_elements": .bool(false), "mix": .bool(false),
+                "overlays": .bool(lanesEditable), "sfx": .bool(lanesEditable)]),
+            "caption_cues": .array([.object(["text": .string("Number three"), "start_s": .number(0.2), "end_s": .number(0.9)])]),
+        ]
+        if card {
+            variant["media_overlays"] = .array([.object(["id": .string("card"), "kind": .string("image"), "start_s": .number(0.2),
+                "end_s": .number(0.8), "x_frac": .number(0.5), "y_frac": .number(0.3), "scale": .number(0.35), "z": .number(1)])])
+        }
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant
+        )
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: .init(mediaID: "source",
+            sourceURL: nil, original: descriptor, localRequired: true))], baseGeneration: "generation-1", nativeAssets: nativeAssets)
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(
+            phase: "published", request: deviceRenderRequest(jobID: jobID, revision: 1, digest: "a"), publishedGeneration: "generation-1"
+        )
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        return (session, fake)
+    }
+
     func testDeviceTimelineDurationUsesShorterOriginalAndKeepsEOFMargin() throws {
         XCTAssertEqual(try XCTUnwrap(NativeEditorSession.deviceTimelineDuration(proxyDuration: 2.2, localDuration: 2.0, minimum: 0.1)),
                        1.95, accuracy: 0.0001)
@@ -798,6 +901,127 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.loadState, .idle)
         XCTAssertNotNil(session.player, "The cached URL still seeds the player so playback can start the instant it's confirmed")
         XCTAssertFalse(session.canDisplayCurrentPlayer, "An unconfirmed cached seed must not display — it may already be stale")
+    }
+
+    // MARK: KRI-200 — a play tap must never be a silent no-op
+
+    private func waitUntil(timeout: Duration = .seconds(5), _ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        return condition()
+    }
+
+    private static func failedStateMessage(_ session: NativeEditorSession) -> String? {
+        if case .failed(let message) = session.sourcePreviewState { message } else { nil }
+    }
+
+    /// A finished render that cannot load used to leave a player that ignored `play()`: the icon flipped
+    /// straight back and nothing said why. With nobody to refresh the link it must say so.
+    func testUnplayableFinishedRenderSurfacesAMessageInsteadOfADeadPlayButton() async {
+        let missing = URL(fileURLWithPath: "/tmp/kria-missing-\(UUID().uuidString).mp4")
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: missing)
+        let settled = await waitUntil { Self.failedStateMessage(session) != nil }
+        XCTAssertTrue(settled, "a failed item must surface, not sit silently paused")
+        XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+    }
+
+    /// The failed finished render gets exactly one fresh link, the failure is reported with its AVFoundation
+    /// identity, and the recovered player plays.
+    func testFailedFinishedRenderRefreshesItsLinkOnceReportsAndRecovers() async throws {
+        let jobID = UUID()
+        let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var variant = Self.variant(duration: 2, generation: "g1")
+        variant["output_url"] = .string("file:///tmp/kria-missing-\(UUID().uuidString).mp4")
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant)
+        fake.playbackURLResult = good
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+
+        let recovered = await waitUntil { (session.player?.currentItem?.asset as? AVURLAsset)?.url == good }
+        XCTAssertTrue(recovered, "the refreshed link replaces the failed item")
+        XCTAssertEqual(fake.playbackURLCallCount, 1, "one refresh, not a retry loop")
+        let reported = await waitUntil { !fake.playbackFailureReports.isEmpty }
+        XCTAssertTrue(reported)
+        let report = try XCTUnwrap(fake.playbackFailureReports.first)
+        XCTAssertEqual(report.playerKind, .finished)
+        XCTAssertEqual(report.errorDomain, AVFoundationErrorDomain)
+        XCTAssertEqual(fake.playbackFailureReports.count, 1, "one report per failed item")
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+        session.pausePlayback()
+    }
+
+    /// The editable live composition failing must hand over to the finished render, and the tap that
+    /// triggered it must not be lost.
+    func testLiveItemFailureFallsBackToTheFinishedRenderAndKeepsThePlayTap() async throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: url)
+        let finished = try XCTUnwrap(session.player)
+        await session.prepareFixtureSourcePreview(url: url)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let live = try XCTUnwrap(session.player)
+        XCTAssertFalse(live === finished)
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+
+        session.handlePlayerItemFailure(try XCTUnwrap(live.currentItem), error: NSError(domain: AVFoundationErrorDomain, code: -11800))
+
+        XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.liveItem))
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        XCTAssertTrue(session.isPlaying, "the play tap carries over to the finished render")
+        session.pausePlayback()
+    }
+
+    /// While the editable preview builds against a render that predates the document, there is nothing
+    /// displayable. The tap is remembered and plays the moment a player can be shown.
+    func testPlayTapDuringPreparationPlaysOnceThePreviewSettles() async throws {
+        let session = try await Self.preparingSession()
+        XCTAssertEqual(session.session.sourcePreviewState, .preparing)
+        XCTAssertFalse(session.session.canDisplayCurrentPlayer)
+        session.session.togglePlayback()
+        XCTAssertFalse(session.session.isPlaying, "nothing to show yet")
+        session.spy.resumeSourcePool()
+        _ = await session.loading.value
+        let playing = await waitUntil { session.session.isPlaying }
+        XCTAssertTrue(playing, "the remembered tap starts playback once a player can be displayed")
+        session.session.pausePlayback()
+    }
+
+    func testPauseCancelsARememberedPlayTap() async throws {
+        let session = try await Self.preparingSession()
+        session.session.togglePlayback()
+        session.session.pausePlayback()
+        session.spy.resumeSourcePool()
+        _ = await session.loading.value
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(session.session.isPlaying)
+    }
+
+    private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>) {
+        let jobID = UUID()
+        let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var stale = variant(duration: 2, generation: "g1")
+        stale["output_url"] = .string(good.absoluteString)
+        stale["render_status"] = .string("rendering")  // the render predates the loaded document → not displayable
+        let spy = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: stale)
+        spy.suspendNextSourcePool = true
+        let session = NativeEditorSession()
+        let loading = Task { @MainActor in await session.load(api: spy, threadID: UUID()) }
+        for _ in 0..<200 where !spy.sourcePoolIsSuspended { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertTrue(spy.sourcePoolIsSuspended)
+        return (session, spy, loading)
     }
 
     func testNeedsReloadIsTrueBeforeAnyLoadAndFalseAfterMatchingRevision() async {
@@ -3013,8 +3237,16 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { throw APIError.unsupported }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { throw APIError.unsupported }
-    func playbackURL(jobID: UUID) async throws -> URL { throw APIError.unsupported }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws { throw APIError.unsupported }
+    var playbackURLResult: URL?
+    var playbackURLCallCount = 0
+    var playbackFailureReports: [PlaybackFailureReport] = []
+    func playbackURL(jobID: UUID) async throws -> URL {
+        playbackURLCallCount += 1
+        guard let playbackURLResult else { throw APIError.unsupported }
+        return playbackURLResult
+    }
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { playbackFailureReports.append(report) }
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse {
         deviceRenderCallCount += 1
         guard let deviceRenderResponse else { throw APIError.unsupported }

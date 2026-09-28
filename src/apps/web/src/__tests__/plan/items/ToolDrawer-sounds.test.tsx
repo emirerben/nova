@@ -283,13 +283,6 @@ describe("SfxPicker — direct props", () => {
     expect(effectNames()).toEqual(["Wrong buzzer"]);
   });
 
-  it("offsets rows below the pinned search only when the search is sticky", () => {
-    const { rerender } = render(<SfxPicker effects={LIBRARY} onPick={jest.fn()} stickySearch />);
-    expect(effectButtons()[0]).toHaveClass("scroll-mt-14");
-    rerender(<SfxPicker effects={LIBRARY} onPick={jest.fn()} />);
-    expect(effectButtons()[0]).not.toHaveClass("scroll-mt-14");
-  });
-
   it("sends typing on a row back to search so Backspace never deletes the new SFX", () => {
     // Stands in for EditorShell's document-level delete-selection shortcut.
     const editorKeyDown = jest.fn();

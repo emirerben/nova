@@ -133,14 +133,25 @@ protocol KriaAPIClient: Sendable {
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws
+    /// `speechCleanupAware` must always be sent `true` from this client build --
+    /// it tells the server this decision understands the `speech_cleanup_*` 409
+    /// codes and the `speech_cleanup` thread projection, so gating the decision
+    /// on them is safe. `speechCleanupAnalysisID`/`speechCleanupChoice` are only
+    /// meaningful on "approve" ("clean" / "keep_original" / "create_without_cleanup")
+    /// and are encoded absent, never null, when nil.
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws
     func playbackURL(jobID: UUID) async throws -> URL
+    /// KRI-200: best-effort report of an editor player item that failed on this phone.
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation
     func cancelUpload(reservationID: UUID) async throws
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
+    /// KRI-189: the same attach, plus when/where the clip was filmed. `capture` is nil when the user turned
+    /// the setting off or nothing could be read; a client that does not implement this drops it.
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
     /// Append a newly-uploaded clip/photo to a generative job's shared footage
     /// pool (`job.all_candidates["clip_paths"]`), minting the `clip_index` the
     /// editor then references in a new timeline slot. See `reserveUpload` for
@@ -166,7 +177,11 @@ extension KriaAPIClient {
     func requestAccountDeletion() async throws -> AccountDeletionRequest { throw APIError.unsupported }
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
+        try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID)
+    }
 
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse { throw APIError.unsupported }
     func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget { throw APIError.unsupported }
@@ -886,8 +901,11 @@ struct KriaAPI: KriaAPIClient {
     }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/draft/undo", method: "POST", bodyData: try JSONEncoder().encode(DraftUndoRequest(expectedRevision: expectedRevision)), decode: DraftSnapshot.self) }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)", method: "GET", bodyData: nil, decode: ApprovalSnapshot.self) }
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint)), decode: ApprovalResponse.self) }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice)), decode: ApprovalResponse.self) }
     func playbackURL(jobID: UUID) async throws -> URL { let response = try await request(path: "me/jobs/\(jobID.uuidString)/playback-url", method: "GET", bodyData: nil, decode: PlaybackResponse.self); guard let url = URL(string: response.videoURL) else { throw APIError.invalidResponse }; return url }
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws {
+        _ = try await request(path: "me/jobs/\(jobID.uuidString)/playback-diagnostics", method: "POST", bodyData: try JSONEncoder().encode(report), decode: EmptyProjectResponse.self)
+    }
     func currentUser() async throws -> MobileUser { try await request(path: "auth/mobile/me", method: "GET", bodyData: nil, decode: MobileUser.self) }
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe { try await request(path: "me/jobs/\(jobID.uuidString)/edit-recipe", method: "GET", query: variantID.map { [URLQueryItem(name: "variant_id", value: $0)] } ?? [], bodyData: nil, decode: EditRecipe.self) }
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation { try await request(path: "generative-jobs/upload-url", method: "POST", bodyData: try JSONEncoder().encode(UploadReservationRequest(filename: filename, contentType: contentType, fileSizeBytes: size, purpose: purpose)), decode: UploadReservation.self) }
@@ -920,7 +938,12 @@ struct KriaAPI: KriaAPIClient {
         return reservation
     }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
-        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: contentType.hasPrefix("audio/") ? "audio" : "video", filename: filename, contentType: contentType)
+        try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil)
+    }
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
+        let kind = contentType.hasPrefix("audio/") ? "audio" : "video"
+        // Filming context belongs to footage; a voiceover never carries it.
+        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: kind, filename: filename, contentType: contentType, capture: kind == "video" ? capture : nil)
         let body = ProjectMediaAttachmentRequest(media: [media], clientEventID: clientEventID, expectedRevision: expectedRevision)
         return try await request(path: "creation-threads/\(threadID.uuidString)/media", method: "POST", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
     }
@@ -989,7 +1012,14 @@ struct KriaAPI: KriaAPIClient {
             #endif
             if detail == "Content plan is unavailable" { throw APIError.contentPlanUnavailable }
             if detail == "Video is not ready to open in the editor." { throw APIError.editorNotReady }
-            throw APIError.conflict(detail: ConflictDetail(detail))
+            // runtime-v2 routes (`kria_runtime.py`, e.g. the approval decision
+            // endpoint) answer a conflict with `KriaProblem`'s own envelope --
+            // `{"problem": {"code", "message", "recovery", ...}}` -- instead of
+            // the legacy `{"detail": "..."}` string `decodeDetail` reads above.
+            // Surface that machine code too, so a caller can distinguish e.g.
+            // `speech_cleanup_pending` from an ordinary revision conflict.
+            let problem = Self.decodeProblem(from: data)
+            throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message, code: problem?.code))
         }
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 422, path.hasSuffix("/editor-commit") {
@@ -1053,6 +1083,14 @@ struct KriaAPI: KriaAPIClient {
     private static func decodeDetail(from data: Data) -> String? {
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         return body["detail"] as? String
+    }
+    /// Decodes the runtime-v2 `KriaProblemOut` envelope (`{"problem": {"code",
+    /// "message", ...}}`). Nil when the body isn't shaped that way, e.g. the
+    /// legacy `{"detail": "..."}` string every other route still sends.
+    private static func decodeProblem(from data: Data) -> (code: String?, message: String?)? {
+        guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let problem = body["problem"] as? [String: Any] else { return nil }
+        return (problem["code"] as? String, problem["message"] as? String)
     }
 }
 enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
@@ -1200,6 +1238,22 @@ private struct LibraryPosterRequest: Encodable {
     let brokenJobIDs: [UUID]
     enum CodingKeys: String, CodingKey { case jobIDs = "job_ids"; case brokenJobIDs = "broken_job_ids" }
 }
+/// Identity of a failed editor player item: numeric AVFoundation codes and domains only, never URLs or error text.
+struct PlaybackFailureReport: Encodable, Equatable, Sendable {
+    enum PlayerKind: String, Encodable, Sendable { case live, finished }
+    let playerKind: PlayerKind
+    let errorDomain: String
+    let errorCode: Int
+    let underlyingDomain: String?
+    let underlyingCode: Int?
+    let sourceState: String
+    let appBuild: String?
+    enum CodingKeys: String, CodingKey {
+        case playerKind = "player_kind", errorDomain = "error_domain", errorCode = "error_code"
+        case underlyingDomain = "underlying_domain", underlyingCode = "underlying_code"
+        case sourceState = "source_state", appBuild = "app_build"
+    }
+}
 private struct PlaybackResponse: Decodable { let videoURL: String; enum CodingKeys: String, CodingKey { case videoURL = "video_url" } }
 private struct ApprovalResponse: Decodable {}
 private struct RevokeResponse: Decodable { let revoked: Bool? }
@@ -1216,14 +1270,43 @@ private enum ServerDateCoding {
 }
 private struct SubmitTurnRequest: Encodable { let message: String; let clientEventID: String; let expectedThreadRevision: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision" } }
 private struct CreationActionRequest: Encodable { let action: String; let payload: [String: JSONValue]; let clientActionID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case action, payload; case clientActionID = "client_action_id"; case expectedRevision = "expected_revision" } }
-private struct ApprovalDecisionRequest: Encodable { let expectedThreadRevision: Int; let expectedDraftRevision: Int; let fingerprint: String; enum CodingKeys: String, CodingKey { case expectedThreadRevision = "expected_thread_revision"; case expectedDraftRevision = "expected_draft_revision"; case fingerprint = "expected_approval_fingerprint" } }
+private struct ApprovalDecisionRequest: Encodable {
+    let expectedThreadRevision: Int
+    let expectedDraftRevision: Int
+    let fingerprint: String
+    let speechCleanupAware: Bool
+    let speechCleanupAnalysisID: String?
+    let speechCleanupChoice: String?
+    enum CodingKeys: String, CodingKey {
+        case expectedThreadRevision = "expected_thread_revision"
+        case expectedDraftRevision = "expected_draft_revision"
+        case fingerprint = "expected_approval_fingerprint"
+        case speechCleanupAware = "speech_cleanup_aware"
+        case speechCleanupAnalysisID = "speech_cleanup_analysis_id"
+        case speechCleanupChoice = "speech_cleanup_choice"
+    }
+}
 private struct UploadCancellation: Decodable { let reservationID: String; let status: String; enum CodingKeys: String, CodingKey { case status; case reservationID = "reservation_id" } }
 private struct UploadReservationRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let purpose: UploadPurpose?; enum CodingKeys: String, CodingKey { case filename, purpose; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes" } }
 private struct AddClipRequestBody: Encodable { let gcsPath: String; enum CodingKeys: String, CodingKey { case gcsPath = "gcs_path" } }
 private struct ProjectUploadReservationRequest: Encodable { let files: [ProjectUploadFileRequest] }
 private struct ProjectUploadFileRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let clientUploadID: String; var uploadContract: ProjectMediaUploadContract? = nil; enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id" } }
-private struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
-private struct ProjectMediaInput: Encodable { let mediaID: String; let gcsPath: String; let kind: String; let filename: String; let contentType: String; enum CodingKeys: String, CodingKey { case kind, filename; case mediaID = "media_id"; case gcsPath = "gcs_path"; case contentType = "content_type" } }
+struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
+/// One attached media item. The three optional filming-context fields (KRI-189) are omitted from the JSON
+/// entirely when absent, so a clip without them encodes exactly as before.
+struct ProjectMediaInput: Encodable {
+    let mediaID: String; let gcsPath: String; let kind: String; let filename: String; let contentType: String
+    var captureTime: String?; var coarseLocation: CoarseLocationWire?; var place: ClipPlaceWire?
+    init(mediaID: String, gcsPath: String, kind: String, filename: String, contentType: String, capture: ClipCaptureWire? = nil) {
+        self.mediaID = mediaID; self.gcsPath = gcsPath; self.kind = kind; self.filename = filename; self.contentType = contentType
+        captureTime = capture?.captureTime; coarseLocation = capture?.coarseLocation; place = capture?.place
+    }
+    enum CodingKeys: String, CodingKey {
+        case kind, filename, place
+        case mediaID = "media_id"; case gcsPath = "gcs_path"; case contentType = "content_type"
+        case captureTime = "capture_time"; case coarseLocation = "coarse_location"
+    }
+}
 private struct CreateThreadRequest: Encodable { let message: String?; let clientEventID: String; let runtimeVersion: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case runtimeVersion = "runtime_version" } }
 private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let snapshot: [String: JSONValue]; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case snapshot } }
 private struct DraftUndoRequest: Encodable { let expectedRevision: Int; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision" } }
@@ -1243,6 +1326,10 @@ enum APIError: Error, LocalizedError, Equatable {
     static let conflict = APIError.conflict(detail: ConflictDetail(nil))
     /// The server's human-readable reason for a conflict, if it sent one.
     var conflictDetail: String? { if case let .conflict(detail) = self { detail.message } else { nil } }
+    /// The runtime-v2 `KriaProblem.code` for this conflict, if the server sent
+    /// that envelope (e.g. `speech_cleanup_pending` from the approval decision
+    /// endpoint). Nil for the legacy `{"detail": "..."}` string shape.
+    var conflictCode: String? { if case let .conflict(detail) = self { detail.code } else { nil } }
     /// The server's human-readable reason for a non-2xx failure, if it sent
     /// one. Additive: most call sites still only care about `status`.
     var requestFailureDetail: String? { if case let .requestFailed(_, detail) = self { detail.message } else { nil } }
@@ -1279,13 +1366,17 @@ struct RequestFailureDetail: Equatable, Sendable, CustomStringConvertible {
 /// the detail is context for the UI and never changes which conflict checks match.
 struct ConflictDetail: Equatable, Sendable, CustomStringConvertible {
     let message: String?
-    init(_ message: String?) {
+    /// The runtime-v2 `KriaProblem.code`, when the server sent that envelope
+    /// instead of the legacy `detail` string. See `decodeProblem`.
+    let code: String?
+    init(_ message: String?, code: String? = nil) {
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.message = trimmed?.isEmpty == false ? trimmed : nil
+        self.code = code
     }
     static func == (_: ConflictDetail, _: ConflictDetail) -> Bool { true }
     /// Diagnostics print errors with `String(describing:)`; keep server text out of them.
-    var description: String { message == nil ? "none" : "present" }
+    var description: String { message == nil && code == nil ? "none" : "present" }
 }
 
 /// Where a failed request broke. Copy may blame the connection only when no

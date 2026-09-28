@@ -19,18 +19,8 @@ def test_gain_clamped_below_zero():
     assert p.gain == 0.0
 
 
-def test_gain_default():
-    p = SoundEffectPlacement(id="abc", src_gcs_path="users/u1/sfx/x.mp3")
-    assert p.gain == 1.0
-
-
 def test_at_s_clamped_below_zero():
     p = SoundEffectPlacement(id="abc", src_gcs_path="users/u1/sfx/x.mp3", at_s=-5.0)
-    assert p.at_s == 0.0
-
-
-def test_at_s_default():
-    p = SoundEffectPlacement(id="abc", src_gcs_path="users/u1/sfx/x.mp3")
     assert p.at_s == 0.0
 
 

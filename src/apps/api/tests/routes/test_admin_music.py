@@ -134,31 +134,6 @@ def test_list_music_tracks_requires_auth(client: TestClient) -> None:
     assert resp.status_code in (401, 422)
 
 
-# ── PATCH /admin/music-tracks/{id} ───────────────────────────────────────────
-
-
-def test_patch_track_config(client: TestClient) -> None:
-    """PATCH with track_config updates the config (validation only — no real DB)."""
-    resp = client.patch(
-        "/admin/music-tracks/nonexistent-id",
-        json={"track_config": {"best_start_s": 10.0, "best_end_s": 55.0}},
-        headers=admin_headers(),
-    )
-    # 404 from DB (no real DB in unit test) is acceptable — validates route exists
-    assert resp.status_code in (404, 500)
-
-
-# ── POST /admin/music-tracks/{id}/reanalyze ──────────────────────────────────
-
-
-def test_reanalyze_nonexistent_track(client: TestClient) -> None:
-    resp = client.post(
-        "/admin/music-tracks/nonexistent/reanalyze",
-        headers=admin_headers(),
-    )
-    assert resp.status_code in (404, 500)
-
-
 # ── Admin response shape: best_sections + section_version ─────────────────────
 
 

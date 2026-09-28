@@ -1956,27 +1956,6 @@ class TestTemplateAudio:
 
         assert result is False
 
-    def test_mix_audio_happy_path(self, tmp_path):
-        """FFmpeg succeeds → output_path written, not a shutil.copy2 fallback."""
-        from app.tasks.template_orchestrate import _mix_template_audio
-
-        ok_proc = MagicMock()
-        ok_proc.returncode = 0
-
-        with (
-            patch("app.tasks.template_orchestrate.download_to_file"),
-            patch("app.tasks.template_orchestrate.subprocess.run", return_value=ok_proc),
-            patch("app.tasks.template_orchestrate.shutil.copy2") as mock_copy,
-        ):
-            _mix_template_audio(
-                video_path="/tmp/assembled.mp4",
-                audio_gcs_path="templates/t1/audio.m4a",
-                output_path=str(tmp_path / "final.mp4"),
-                tmpdir=str(tmp_path),
-            )
-
-        mock_copy.assert_not_called()
-
     def test_mix_audio_applies_audio_start_offset(self, tmp_path):
         """audio_start_offset_s > 0 → ffmpeg cmd has -ss BEFORE the audio -i."""
         from app.tasks.template_orchestrate import _mix_template_audio

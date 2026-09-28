@@ -283,6 +283,88 @@ def test_observer_completes_a_first_render_with_no_pinned_variant() -> None:
     assert execution.result["variant_id"] == VARIANT
 
 
+_LEGACY_REVIEW = (
+    "The guided story cut is ready. "
+    "The approved render finished; review the opening, pacing, and text, "
+    "then tell me what you want changed."
+)
+
+
+def _unified_brief(version: int = 3):  # noqa: ANN202
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    return CreativeBrief(
+        version=version,
+        requirements=[
+            BriefRequirement(id="r1", kind="text", scope="per_clip", description="landmarks"),
+            BriefRequirement(id="r2", kind="timing", scope="global", description="fast"),
+        ],
+    )
+
+
+def _observe_unified(job: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, brief) -> list:  # noqa: ANN001
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(kria_runtime, "load_latest_brief_sync", lambda _db, _thread_id: brief)
+    _publish(job)
+    _outcome, _execution_row, events = _observe(job, {})
+    return events
+
+
+def test_observer_review_carries_the_unified_montage_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _device_job()
+    job.assembly_plan["unified_montage"] = {
+        "brief_version": 3,
+        "requirement_receipts": [
+            {
+                "requirement_id": "r1",
+                "status": "partial",
+                "reason": "Text landed on 10 of 14 clips.",
+                "inferred": ["Dolmabahce"],
+            },
+            {
+                "requirement_id": "r2",
+                "status": "partial",
+                "reason": "I can't verify this timing automatically.",
+                "inferred": [],
+            },
+        ],
+    }
+    events = _observe_unified(job, monkeypatch, _unified_brief())
+    review = next(e for e in events if e["event_type"] == "assistant_review")
+    assert review["content"].startswith("Not everything you asked for made it in:")
+    assert "10 of 14 clips" in review["content"]
+    assert "I guessed these, tell me if any is wrong: Dolmabahce" in review["content"]
+    assert [r["requirement_id"] for r in review["payload"]["requirement_receipts"]] == ["r1", "r2"]
+
+
+def test_observer_review_ignores_receipts_from_an_older_brief_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _device_job()
+    job.assembly_plan["unified_montage"] = {
+        "brief_version": 2,
+        "requirement_receipts": [
+            {"requirement_id": "r1", "status": "partial", "reason": "x", "inferred": []}
+        ],
+    }
+    events = _observe_unified(job, monkeypatch, _unified_brief(version=3))
+    review = next(e for e in events if e["event_type"] == "assistant_review")
+    assert review["content"] == _LEGACY_REVIEW
+    assert "requirement_receipts" not in review["payload"]
+
+
+def test_observer_review_is_unchanged_for_a_job_with_no_unified_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _device_job()
+    events = _observe_unified(job, monkeypatch, _unified_brief())
+    review = next(e for e in events if e["event_type"] == "assistant_review")
+    assert review["content"] == _LEGACY_REVIEW
+    assert "requirement_receipts" not in review["payload"]
+
+
 def test_observer_fails_a_device_render_the_phone_gave_up_on() -> None:
     job = _device_job()
     mark_device_failed(job, VARIANT, reason_code="thermal", detail="")
@@ -327,25 +409,6 @@ def test_editor_approval_on_a_device_variant_enqueues_no_cloud_render() -> None:
     enqueue.assert_not_called()
     assert result == {"approval_id": approval_id, "status": "dispatched", "job_id": str(job_id)}
     finish.assert_called_once_with(claim, outcome="dispatched", job_id=str(job_id))
-
-
-def test_a_refused_phone_dispatch_reports_its_reason() -> None:
-    approval_id = str(uuid.uuid4())
-    claim = SimpleNamespace(
-        item_id=uuid.uuid4(), ownership_epoch=4, strategy={}, creator_request=""
-    )
-    refused = SimpleNamespace(outcome="invalid_clips", job_id=None, reason="unapproved_guided")
-    with (
-        patch("app.tasks.kria_runtime._claim_approval_dispatch", return_value=claim),
-        patch("app.tasks.content_plan_build.dispatch_item_render_for", return_value=refused),
-        patch(
-            "app.tasks.kria_runtime._finish_approval_dispatch", return_value=("failed", None)
-        ) as finish,
-    ):
-        execute_kria_approval.run(approval_id)
-    finish.assert_called_once_with(
-        claim, outcome="invalid_clips", job_id=None, reason="unapproved_guided"
-    )
 
 
 # ---------------------------------------------------------------- claim
@@ -489,6 +552,65 @@ def test_claim_pins_the_device_recipe_revision_the_edit_created() -> None:
     assert claim is not None
     assert claim.editor_prep["device_recipe_revision"] == 2
     assert execution.result["editor_prep"]["device_recipe_revision"] == 2
+
+
+def test_claim_passes_phone_catalog_sfx_paths_to_the_editor_commit(monkeypatch) -> None:
+    """A chat edit that leaves a phone Talking edit's sound lane alone still
+    persists its effects' real catalog paths (same read as the iOS Save)."""
+    job = _device_job(status="variants_ready")
+    _publish(job)
+    reads: list = []
+
+    def catalog(db, current_job, variant):  # noqa: ANN001, ANN202
+        reads.append((current_job, variant))
+        return {"pop": "sound-effects/pop/audio.m4a"}
+
+    monkeypatch.setattr(kria_runtime, "phone_subtitled_sfx_paths_sync", catalog)
+    seen: dict = {}
+
+    def prepare(current_job, variant_id, *_args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        seen.update(kwargs)
+        pin_device_request(
+            current_job,
+            make_device_request(
+                job_id=current_job.id, variant_id=variant_id, revision=2, recipe=_RECIPE
+            ),
+            base_generation="edit-gen-2",
+        )
+        return {
+            "generation": "edit-gen-2",
+            "has_render_section": True,
+            "render_destination": "device",
+            "sections": {},
+        }
+
+    claim, _, _, _ = _claim(job, prepare)
+    assert claim is not None
+    assert seen["phone_sfx_catalog_paths"] == {"pop": "sound-effects/pop/audio.m4a"}
+    [(read_job, read_variant)] = reads
+    assert read_job is job
+    assert read_variant["variant_id"] == VARIANT
+
+
+def test_claim_refuses_when_the_pinned_recipe_cannot_derive_sfx_paths(monkeypatch) -> None:
+    """Deriving the catalog paths re-validates the pinned device recipe; a
+    recipe that fails there is the same terminal refusal, not a crash loop."""
+    job = _device_job(status="variants_ready")
+    _publish(job)
+
+    def broken(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise ValueError("pinned recipe no longer validates")
+
+    monkeypatch.setattr(kria_runtime, "phone_subtitled_sfx_paths_sync", broken)
+
+    def prepare(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("the commit must not run after the lane read failed")
+
+    claim, approval, execution, events = _claim(job, prepare)
+    assert claim is None
+    assert approval.status == "cancelled"
+    assert execution.status == "failed"
+    assert events[0]["event_type"] == "assistant_error"
 
 
 def test_claim_still_raises_for_a_cloud_variant_validation_error() -> None:

@@ -2126,3 +2126,80 @@ def test_labels_draw_below_genuine_sequence_blocks_like_cloud():
         layer_id for layer_id, overlay in cloud if overlay["role"] != "generative_sequence"
     ] + [layer_id for layer_id, overlay in cloud if overlay["role"] == "generative_sequence"]
     assert phone_order == cloud_order
+
+
+def test_a_label_ending_at_the_nominal_end_survives_float_noise_in_the_summed_timeline():
+    """KRI-190 device test (job 5df2e3ec): the millisecond-rounded cuts sum to
+    23.531 + 1.467 == 24.997999999999998, just under a label that ends at the plan's
+    24.998, and `EditRecipeV2` rejected the recipe with "text layer exceeds the timeline"."""
+    plan, (binding,) = fixture()
+    cuts = [
+        1.333,
+        1.333,
+        2.233,
+        1.7,
+        2.233,
+        2.0,
+        1.9,
+        2.333,
+        1.9,
+        1.833,
+        1.433,
+        1.833,
+        1.467,
+        1.467,
+    ]
+    starts, cursor = [], 0.0
+    for cut in cuts:
+        starts.append(round(cursor, 3))
+        cursor += cut
+    ends = [round(start + cut, 3) for start, cut in zip(starts, cuts, strict=True)]
+    assert ends[-1] == 24.998
+    payload = plan.model_dump(mode="json")
+    payload["approved_duration_s"] = payload["resolved_duration_s"] = ends[-1]
+    payload["story_timeline"] = [
+        {
+            **payload["story_timeline"][0],
+            "moment_id": f"cut-{i}",
+            "beat_id": f"cut-{i}",
+            "source_start_s": 0,
+            "source_end_s": cut,
+            "output_start_s": start,
+            "output_end_s": end,
+            "duration_s": cut,
+        }
+        for i, (start, end, cut) in enumerate(zip(starts, ends, cuts, strict=True))
+    ]
+    payload["beat_windows"] = [
+        {
+            "beat_id": f"cut-{i}",
+            "approved_duration_s": cut,
+            "resolved_duration_s": cut,
+            "start_s": start,
+            "end_s": end,
+        }
+        for i, (start, end, cut) in enumerate(zip(starts, ends, cuts, strict=True))
+    ]
+    payload["text_elements"] = [
+        TextElement(
+            id=f"clip-label-{i}",
+            text=f"Place {i}",
+            start_s=start,
+            end_s=end,
+            role="generative_intro",
+            position="custom",
+            x_frac=0.5,
+            y_frac=0.78,
+            size_px=58,
+            effect="static",
+        ).model_dump(mode="json", exclude_none=True)
+        for i, (start, end) in enumerate(zip(starts, ends, strict=True))
+    ]
+    recipe = compile_phone_guided_plan(GuidedStoryExecutionPlan.model_validate(payload), (binding,))
+
+    # The premise: the recipe really does report a hair less than the plan's end.
+    assert recipe.duration < ends[-1]
+    assert all(layer.end <= recipe.duration for layer in recipe.text_layers)
+    # Only the overshoot moves, and only by float noise; every other layer is untouched.
+    assert recipe.text_layers[-1].end == pytest.approx(ends[-1], abs=1e-9)
+    assert [layer.end for layer in recipe.text_layers[:-1]] == ends[:-1]

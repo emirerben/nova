@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -223,6 +224,60 @@ def _finish_trace(
         events=events,
         receipts=receipts,
         response=response,
+    )
+
+
+class KriaReplayThreadTrace(BaseModel):
+    """Ordered traces of a multi-turn thread plus the snapshot the next turn would see."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str
+    traces: list[KriaReplayTrace]
+    final_snapshot: dict[str, Any]
+
+
+def replay_thread(
+    thread_id: str,
+    fixtures: Sequence[KriaReplayFixture],
+    *,
+    registry: KriaToolRegistry = KRIA_TOOLS,
+) -> KriaReplayThreadTrace:
+    """Replay several turns of ONE thread, carrying state from turn to turn.
+
+    Each turn is still the single-turn `replay_fixture` (so every turn goes through the
+    same plan -> tool -> observe path). What this adds is continuity:
+
+    * a turn's snapshot is the previous turn's carried snapshot overlaid with its own
+      `snapshot` keys (a later turn only states what changed);
+    * `snapshot["conversation"]` accumulates `{role, content}` for every user message
+      and assistant reply so far, so a later turn can read what was already said;
+    * the thread revision may never move backwards between turns.
+    """
+
+    carried: dict[str, Any] = {}
+    conversation: list[dict[str, str]] = []
+    traces: list[KriaReplayTrace] = []
+    last_revision = 0
+    for index, fixture in enumerate(fixtures):
+        if fixture.current_thread_revision < last_revision:
+            raise ValueError(
+                f"turn {index} ({fixture.fixture_id}) moves the thread revision backwards"
+            )
+        last_revision = fixture.current_thread_revision
+        carried = {**carried, **fixture.snapshot, "conversation": list(conversation)}
+        turn = fixture.model_copy(update={"snapshot": carried})
+        trace = replay_fixture(turn, registry=registry)
+        traces.append(trace)
+        conversation = [
+            *conversation,
+            {"role": "user", "content": fixture.user_message},
+            {"role": "assistant", "content": trace.response.message},
+        ]
+    return KriaReplayThreadTrace(
+        thread_id=thread_id,
+        traces=traces,
+        final_snapshot={**carried, "conversation": conversation},
     )
 
 

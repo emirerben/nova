@@ -1076,6 +1076,9 @@ def resolve_creator_image_media_ref(
 
 # Readable alias for callers that build rather than resolve a manifest.
 build_creator_manifest = resolve_creator_manifest
+# Public name for the Creative Brief checks (KRI-188), which must judge reaction
+# beats exactly as approval will keep them.
+repair_creator_reaction_beats = _repair_creator_reaction_beats
 
 
 __all__ = [
@@ -1096,6 +1099,7 @@ __all__ = [
     "compile_strategy_to_plan",
     "effective_render_program",
     "normalize_creator_strategy_media",
+    "repair_creator_reaction_beats",
     "resolve_creator_image_media_ref",
     "resolve_creator_manifest",
     "resolve_creator_sfx_catalog_ref",

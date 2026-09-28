@@ -16,7 +16,7 @@ final class PrivacyManifestTests: XCTestCase {
         XCTAssertTrue(reasons["NSPrivacyAccessedAPICategoryDiskSpace"]?.contains("E174.1") == true)
         let collected = try XCTUnwrap(plist["NSPrivacyCollectedDataTypes"] as? [[String: Any]])
         let categories = Set(collected.compactMap { $0["NSPrivacyCollectedDataType"] as? String })
-        for kind in ["Name", "EmailAddress", "UserID", "PhotosorVideos", "AudioData", "OtherUserContent", "ProductInteraction"] {
+        for kind in ["Name", "EmailAddress", "UserID", "PhotosorVideos", "AudioData", "OtherUserContent", "ProductInteraction", "CoarseLocation"] {
             XCTAssertTrue(categories.contains("NSPrivacyCollectedDataType" + kind), "Missing account-backed \(kind) declaration")
         }
         for category in collected {

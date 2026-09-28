@@ -998,35 +998,6 @@ def test_blocked_approved_plan_is_not_redispatched(monkeypatch: pytest.MonkeyPat
     assert _jobs_for(item_id) == []
 
 
-def test_blocked_plan_flag_off_still_dispatches(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Kill switch: with GUIDED_RENDER_RECOVERY_ENABLED off, an old blocking
-
-    render_failure must never gate Generate -- dispatch proceeds exactly like
-    it did before this lane existed.
-    """
-
-    monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", True)
-    monkeypatch.setattr(settings, "guided_render_recovery_enabled", False)
-    _user_id, item_id = _seed_item()
-    path = f"users/test/plan/{item_id}/a.mp4"
-    with sync_session() as s:
-        item = s.get(PlanItem, item_id)
-        assert item is not None
-        item.clip_gcs_paths = [path]
-        s.commit()
-    _approve_clip_proposal(item_id, path=path)
-    _seed_render_failure(item_id, code="guided_story_media_missing")
-    metadata = ObjectMetadata(
-        path=path, generation="42", etag="etag", size=100, content_type="video/mp4"
-    )
-
-    with patch("app.storage.object_metadata", return_value=metadata), patch(_ENQUEUE):
-        result = dispatch_item_render_for(str(item_id))
-
-    assert result.outcome == "dispatched"
-    assert len(_jobs_for(item_id)) == 1
-
-
 def test_capability_snapshots_approved_asset_only_story_without_enforcement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

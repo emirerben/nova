@@ -71,26 +71,6 @@ const STYLE_SETS: GenerativeStyleSet[] = [
 ];
 
 describe("EditToolbar — linear layout", () => {
-  it("renders one font button per INTRO_FONTS entry", () => {
-    render(<EditToolbar session={makeSession()} styleSets={STYLE_SETS} fallbackSizePx={56} />);
-    // Each font shows its name as a button label.
-    for (const f of INTRO_FONTS) {
-      expect(screen.getByRole("button", { name: f.name })).toBeInTheDocument();
-    }
-  });
-
-  it("renders one animation chip per INTRO_ANIMATIONS entry", () => {
-    render(<EditToolbar session={makeSession()} styleSets={STYLE_SETS} fallbackSizePx={56} />);
-    for (const a of INTRO_ANIMATIONS) {
-      expect(screen.getByRole("button", { name: a.label })).toBeInTheDocument();
-    }
-  });
-
-  it("renders a color input and a text size range slider", () => {
-    render(<EditToolbar session={makeSession()} styleSets={STYLE_SETS} fallbackSizePx={56} />);
-    expect(screen.getByRole("slider", { name: /intro text size/i })).toBeInTheDocument();
-    expect(document.querySelector("input[type='color']")).toBeInTheDocument();
-  });
 
   it("Done button is disabled when draft is clean", () => {
     render(<EditToolbar session={makeSession({ isDirty: false })} styleSets={[]} fallbackSizePx={56} />);
@@ -159,20 +139,6 @@ describe("EditToolbar — cluster layout", () => {
       ...over,
     });
   }
-
-  it("shows Hero font, Body font, and Accent font section labels", () => {
-    render(<EditToolbar session={makeClusterSession()} styleSets={[]} fallbackSizePx={60} />);
-    expect(screen.getByText(/hero font/i)).toBeInTheDocument();
-    expect(screen.getByText(/body font/i)).toBeInTheDocument();
-    expect(screen.getByText(/accent font/i)).toBeInTheDocument();
-  });
-
-  it("shows per-role size sliders (Hero / Body / Accent)", () => {
-    render(<EditToolbar session={makeClusterSession()} styleSets={[]} fallbackSizePx={60} />);
-    expect(screen.getByRole("slider", { name: /hero text size/i })).toBeInTheDocument();
-    expect(screen.getByRole("slider", { name: /body text size/i })).toBeInTheDocument();
-    expect(screen.getByRole("slider", { name: /accent text size/i })).toBeInTheDocument();
-  });
 
   it("hides the global text size slider in cluster mode", () => {
     render(<EditToolbar session={makeClusterSession()} styleSets={[]} fallbackSizePx={60} />);

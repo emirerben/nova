@@ -16,7 +16,6 @@ import pytest
 from app.agents.scene_matcher import SceneMatcherAgent, SceneMatcherInput
 from app.agents.smart_edit_planner import SmartPlannerAsset
 from app.config import settings
-from app.smart_edit import planner as planner_mod
 from app.smart_edit.planner import (
     _merge_hint_chapters,
     _run_scene_matcher,
@@ -664,14 +663,6 @@ def test_run_scene_matcher_agent_failure_fails_open(monkeypatch) -> None:
 
     assert hints is None
     assert receipt == {"status": "failed_open", "error_class": "RuntimeError"}
-
-
-def test_planner_module_exports_scene_hint_surface() -> None:
-    # The render path and future callers rely on these names existing.
-    assert hasattr(planner_mod, "_run_scene_matcher")
-    assert hasattr(planner_mod, "_SceneHints")
-    with pytest.raises(TypeError):
-        _SceneHints()  # frozen dataclass with required fields
 
 
 # ── emphasis spans: fail-soft parsing (plan 011, Feature A) ───────────────────

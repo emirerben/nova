@@ -39,10 +39,6 @@ def test_storyboard_parse_is_grounded_to_known_words_and_clips() -> None:
     ]
 
 
-def test_storyboard_prompt_version_is_pinned() -> None:
-    assert NarratedStoryboardAgent.spec.prompt_version == "2026-09-06.4"
-
-
 def test_storyboard_source_window_is_clamped_to_owned_clip() -> None:
     output = NarratedStoryboardAgent(None).parse(
         '{"matches":[{"segment_id":"seg_0","clip_id":"clip_0","source_start_s":99}],"overlays":[]}',

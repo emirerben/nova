@@ -336,14 +336,6 @@ async def test_detect_retakes_rejects_malformed_input(mock_client) -> None:
         await detect_retakes(words, "en", client=mock_client)
 
 
-def test_spec_shape() -> None:
-    spec = RetakeDetectorAgent.spec
-    assert spec.name == "nova.audio.retake_detector"
-    assert spec.prompt_id == "retake_detector"
-    assert spec.prompt_version == "2"
-    assert RetakeDetectorAgent(None).required_fields() == ["retakes"]  # type: ignore[arg-type]
-
-
 def test_word_index_model_bounds() -> None:
     with pytest.raises(ValidationError):
         IndexedWord(i=-1, text="x", start_s=0.0, end_s=0.1)

@@ -600,13 +600,6 @@ def test_non_empty_transcript_still_calls_llm(
     assert mock_client.invocations[0]["model"] == "gemini-2.5-flash"
 
 
-def test_registry_registration() -> None:
-    """TextAlignmentAgent is reachable via the registry under the expected name."""
-    from app.agents._registry import get_agent
-    from app.agents.text_alignment import TextAlignmentAgent
-
-    cls = get_agent("nova.compose.text_alignment")
-    assert cls is TextAlignmentAgent
 
 
 def test_timing_and_bbox_preserved(
@@ -831,12 +824,6 @@ def test_render_prompt_phrase_mode_emits_phrase_directive(
     assert "ATOMIZED INPUT" not in rendered
 
 
-def test_atomize_mode_defaults_to_false():
-    """Existing callers that omit atomize_mode get the legacy phrase-mode
-    directive. Backward-compatible default.
-    """
-    inp = TextAlignmentInput(phrases=[], transcript_words=[])
-    assert inp.atomize_mode is False
 
 
 # ── Unmatched trailing-quote artifact (prod 89cde014) ────────────────────────

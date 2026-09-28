@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
@@ -52,10 +52,14 @@ from app.models import (
 from app.routes.creator_agent import get_creator_session
 from app.tasks.content_plan_build import DispatchResult
 from app.tasks.kria_runtime import (
+    _claim,
     _claim_approval_dispatch,
+    _complete_response_turn,
     _observe_dispatched_execution,
+    _plan_with_live_agent,
     execute_kria_approval,
     prune_kria_drafts,
+    reconcile_kria_turns,
     run_kria_turn,
 )
 
@@ -340,6 +344,221 @@ def test_partial_unique_index_allows_only_one_active_turn_per_thread() -> None:
         assert active_count == 1
 
 
+def test_live_planner_session_survives_consecutive_task_event_loops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every `run_kria_turn` plans inside its own `asyncio.run` loop, and an
+    asyncpg connection belongs to the loop that opened it. The second turn a
+    Celery child planned used to check out the first turn's pooled connection
+    and die on "attached to a different loop" (prod turn 932db9f6, 2026-09-24).
+    """
+
+    async def _planned(db, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+        assert await db.scalar(text("select 1")) == 1
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(mode="respond", turn_value="question", response="ok"),
+            manifest_hash="manifest",
+            context_hash="context",
+        )
+
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _planned)
+    snapshot = {
+        "thread_id": str(uuid.uuid4()),
+        "item_id": str(uuid.uuid4()),
+        "creator_id": str(uuid.uuid4()),
+    }
+    for _turn in range(2):
+        planned = asyncio.run(
+            _plan_with_live_agent(
+                snapshot,
+                "Plan this edit",
+                turn_id=uuid.uuid4(),
+                lease_owner="celery-child",
+                lease_epoch=1,
+            )
+        )
+        assert planned.plan.response == "ok"
+
+
+# The reconciler sweeps the 50 oldest recoverable turns. Seeding the turn under
+# test far in the past keeps it inside that window however many rows earlier
+# tests left behind in this shared database.
+_SWEPT_FIRST = datetime(2000, 1, 1, tzinfo=UTC)
+
+
+def _seed_user_turn(
+    thread_id: uuid.UUID,
+    session_id: uuid.UUID,
+    *,
+    content: str,
+    status: str,
+    created_at: datetime | None = None,
+) -> uuid.UUID:
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id)
+        assert thread is not None
+        thread.revision = int(thread.revision) + 1
+        sequence = db.scalar(
+            select(func.max(CreationThreadEvent.sequence)).where(
+                CreationThreadEvent.thread_id == thread_id
+            )
+        )
+        event = CreationThreadEvent(
+            thread_id=thread_id,
+            sequence=int(sequence) + 1,
+            revision=thread.revision,
+            role="user",
+            event_type="user_message",
+            content=content,
+        )
+        db.add(event)
+        db.flush()
+        turn = CreatorAgentTurn(
+            thread_id=thread_id,
+            session_id=session_id,
+            source_event_id=event.id,
+            client_event_id=f"turn-{uuid.uuid4().hex}",
+            request_digest=f"digest-{uuid.uuid4().hex}",
+            status=status,
+            **({"created_at": created_at} if created_at is not None else {}),
+        )
+        db.add(turn)
+        db.commit()
+        return turn.id
+
+
+def _lapse_lease(turn_id: uuid.UUID) -> None:
+    """The run holding the lease is gone (killed at the task time limit, lost
+    worker), so its heartbeat stopped and the lease ran out."""
+    with sync_session() as db:
+        db.execute(
+            update(CreatorAgentTurn)
+            .where(CreatorAgentTurn.id == turn_id)
+            .values(lease_expires_at=func.now() - timedelta(seconds=1))
+        )
+        db.commit()
+
+
+def _record_publishes(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Capture broker publishes and keep the reconciler off other tests' rows."""
+    published: list[list[str]] = []
+    monkeypatch.setattr(run_kria_turn, "apply_async", lambda **kw: published.append(kw["args"]))
+    monkeypatch.setattr(execute_kria_approval, "apply_async", lambda **_kw: None)
+    monkeypatch.setattr(
+        "app.tasks.kria_runtime._observe_dispatched_execution",
+        lambda _execution_id: ("dispatched", None),
+    )
+    return published
+
+
+@pytest.mark.parametrize("recovered_by", ["reconciler", "redelivered_task"])
+def test_turn_abandoned_three_times_fails_and_promotes_its_successor(
+    monkeypatch: pytest.MonkeyPatch,
+    recovered_by: str,
+) -> None:
+    """A turn whose runs keep ending without a result is not planned a fourth
+    time: every run can pay for a Main Creator call, and the reconciler would
+    republish it forever while the creator's next message waits behind it."""
+    _user_id, thread_id, session_id = _seed_runtime_project()
+    stuck_id = _seed_user_turn(
+        thread_id,
+        session_id,
+        content="Top 3 players, pop up each photo",
+        status="pending",
+        created_at=_SWEPT_FIRST,
+    )
+    queued_id = _seed_user_turn(thread_id, session_id, content="Add a ding", status="queued")
+    published = _record_publishes(monkeypatch)
+
+    def _never_plan(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("a turn out of claims must not be planned again")
+
+    for attempt in range(1, 4):
+        # Claims 2 and 3 recover a lapsed lease: via the reconciler's reset, or
+        # directly when a redelivered task reaches the row first.
+        claimed = _claim(stuck_id, f"worker-{attempt}")
+        assert isinstance(claimed, tuple)
+        assert claimed[2] == attempt
+        _lapse_lease(stuck_id)
+        if recovered_by == "reconciler":
+            reconcile_kria_turns.run()
+
+    published.clear()
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _never_plan)
+    assert run_kria_turn.run(str(stuck_id)) == {"turn_id": str(stuck_id), "status": "failed"}
+
+    with sync_session() as db:
+        stuck = db.get(CreatorAgentTurn, stuck_id)
+        assert stuck is not None
+        assert stuck.status == "failed"
+        assert stuck.abandoned_claims == 3
+        assert stuck.lease_epoch == 3
+        assert stuck.lease_owner is None
+        assert stuck.lease_expires_at is None
+        assert stuck.error == {
+            "code": "runtime_turn_claims_exhausted",
+            "retryable": True,
+            "recovery": "retry",
+        }
+        event = db.get(CreationThreadEvent, stuck.observed_event_id)
+        assert event is not None
+        assert event.event_type == "assistant_error"
+        assert event.content.startswith("I couldn't finish that step")
+        assert event.payload["code"] == "runtime_turn_claims_exhausted"
+        queued = db.get(CreatorAgentTurn, queued_id)
+        assert queued is not None
+        assert queued.status == "pending"
+    assert published == [[str(queued_id)]]
+
+
+def test_turn_requeued_past_the_cap_and_stamped_while_waiting_is_still_claimed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither a requeue after a thread-revision conflict (media attached while
+    Kria planned) nor the reconciler's backoff stamp on a pending row waiting in
+    a backed-up agent-control queue is an abandoned run, although the first
+    bumps `lease_epoch` and the second sets `lease_expires_at`."""
+    _user_id, thread_id, session_id = _seed_runtime_project()
+    turn_id = _seed_user_turn(
+        thread_id, session_id, content="Plan this edit", status="pending", created_at=_SWEPT_FIRST
+    )
+    _record_publishes(monkeypatch)
+    plan = KriaTurnPlan(mode="respond", turn_value="question", response="Which moment matters?")
+
+    for attempt in range(1, 6):
+        claimed = _claim(turn_id, f"worker-{attempt}")
+        assert isinstance(claimed, tuple)
+        with sync_session() as db:
+            thread = db.get(CreationThread, thread_id)
+            assert thread is not None
+            thread.revision = int(thread.revision) + 1
+            db.commit()
+        completion = _complete_response_turn(
+            turn_id,
+            lease_owner=f"worker-{attempt}",
+            lease_epoch=claimed[2],
+            claimed_thread_revision=claimed[3],
+            plan=plan,
+        )
+        assert completion.requeue_turn_id == str(turn_id)
+        reconcile_kria_turns.run()
+        with sync_session() as db:
+            turn = db.get(CreatorAgentTurn, turn_id)
+            assert turn is not None
+            assert turn.status == "pending"
+            assert turn.lease_expires_at is not None
+
+    claimed = _claim(turn_id, "worker-6")
+
+    assert isinstance(claimed, tuple)
+    assert claimed[2] == 6
+    with sync_session() as db:
+        turn = db.get(CreatorAgentTurn, turn_id)
+        assert turn is not None
+        assert turn.status == "planning"
+        assert turn.abandoned_claims == 0
+
+
 @pytest.mark.asyncio
 async def test_live_planner_strategy_creates_draft_and_separate_pinned_approval(
     monkeypatch: pytest.MonkeyPatch,
@@ -552,6 +771,411 @@ async def test_live_planner_strategy_creates_draft_and_separate_pinned_approval(
             ]
             assert terminal_events[0].payload["receipt_ids"] == [str(execution_id)]
             assert terminal_events[0].payload["render_generation_id"] == "generation-1"
+    finally:
+        await async_engine.dispose()
+
+
+def _seed_narration_ready_project() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+    """A project whose strategy draft resolves a REAL enforce-mode narration source.
+
+    ``audio_strategy="voiceover"`` with a recorded voiceover already on the
+    item resolves an active ``voiceover`` narration source once
+    `mutate_plan_item_media` sets `edit_format="narrated"` /
+    `audio_mode="voiceover"` at approval time -- exactly the KRI-205 phone
+    cohort scenario (a Talking/Narrated item with a narration source), just
+    with a plain (non-proxy) storage path so it also exercises the ordinary
+    cloud cohort path.
+    """
+
+    user_id = uuid.uuid4()
+    persona_id = uuid.uuid4()
+    plan_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    thread_id = uuid.uuid4()
+    with sync_session() as db:
+        db.add(User(id=user_id, email=f"{user_id}@test.local"))
+        db.flush()
+        db.add(
+            Persona(
+                id=persona_id,
+                user_id=user_id,
+                persona_status="ready",
+                persona={"content_mode": "travel", "tone": "direct"},
+            )
+        )
+        db.flush()
+        db.add(ContentPlan(id=plan_id, user_id=user_id, persona_id=persona_id))
+        db.flush()
+        db.add(
+            PlanItem(
+                id=item_id,
+                content_plan_id=plan_id,
+                position=1,
+                idea="A matcha-making diary",
+                item_status="awaiting_clips",
+                voiceover_gcs_path="users/private/matcha-voiceover.wav",
+                voiceover_generation="voiceover-generation-1",
+                voiceover_duration_s=30.0,
+            )
+        )
+        db.flush()
+        db.add(CreatorAgentSession(id=session_id, creator_id=user_id, plan_item_id=item_id))
+        db.flush()
+        db.add(
+            CreationThread(
+                id=thread_id,
+                creator_id=user_id,
+                runtime_version=2,
+                content_plan_id=plan_id,
+                active_plan_item_id=item_id,
+                active_creator_agent_session_id=session_id,
+                title="Matcha diary",
+                revision=2,
+                status="active",
+            )
+        )
+        db.commit()
+    return user_id, thread_id, session_id, item_id
+
+
+@pytest.mark.asyncio
+async def test_strategy_approval_gates_on_speech_cleanup_then_dispatch_receives_the_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-205 full path: approve (aware, no choice) -> 409 ask_user, approval
+    stays pending, a real analysis is scheduled and committed; mark it ready
+    with findings; approve again (aware, choice=keep_original) -> approved,
+    stashed on the execution; claim reads the stash back; dispatch receives
+    the exact `speech_cleanup_analysis_id`/`speech_cleanup_choice` kwargs.
+    """
+    from app.models import SpeechCleanupAnalysis
+
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    user_id, thread_id, session_id, item_id = _seed_narration_ready_project()
+    body = SubmitTurnBody(
+        message="Make the matcha update feel personal, narrated over the footage",
+        client_event_id=f"cleanup-{uuid.uuid4().hex}",
+        expected_thread_revision=2,
+    )
+    strategy_plan = adapt_creator_action(
+        ProposeStrategy(
+            kind="propose_strategy",
+            strategy=CreativeStrategy(
+                direction="guided_story",
+                edit_format="narrated",
+                audio_strategy="voiceover",
+                pacing="fast",
+                render_program="guided",
+                selected_media_ids=[],
+                rationale="Narrate over the whisk and packed order.",
+            ),
+            summary="Narrate over the whisk and the packed order.",
+        )
+    )
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=strategy_plan,
+            manifest_hash="c" * 64,
+            context_hash="d" * 64,
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+
+    try:
+        async with AsyncSessionLocal() as db:
+            accepted, _ = await submit_turn(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                body=body,
+            )
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result == {"turn_id": accepted.turn_id, "status": "awaiting_approval"}
+
+        with sync_session() as db:
+            turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+            approval = db.execute(
+                select(CreatorAgentApproval).where(CreatorAgentApproval.turn_id == turn.id)
+            ).scalar_one()
+            approval_id = approval.id
+            approval_token = approval_fingerprint(approval)
+            thread_revision = db.get(CreationThread, thread_id).revision
+            draft_revision = approval.draft_revision
+
+        # --- 1) aware, no choice: refused, approval stays pending, a real
+        # analysis row is scheduled and committed under enforce mode. ---
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(RuntimeFailure) as failure:
+                await decide_approval(
+                    db,
+                    thread_id=thread_id,
+                    approval_id=approval_id,
+                    creator_id=user_id,
+                    decision="approve",
+                    body=ApprovalDecisionBody(
+                        expected_thread_revision=thread_revision,
+                        expected_draft_revision=draft_revision,
+                        expected_approval_fingerprint=approval_token,
+                        speech_cleanup_aware=True,
+                    ),
+                )
+        assert failure.value.status_code == 409
+        assert failure.value.phase == "approval"
+        assert failure.value.recovery == "ask_user"
+        # No analysis existed before this very call (it schedules its own), so
+        # an aware client submitting no id is correctly told the identity is
+        # new -- exactly the same code v1's fence returns for that case.
+        assert failure.value.code == "speech_cleanup_analysis_changed"
+
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            assert approval.status == "pending"
+            item = db.get(PlanItem, item_id)
+            assert item.edit_format == "narrated"
+            assert item.audio_mode == "voiceover"
+            analysis = db.execute(
+                select(SpeechCleanupAnalysis).where(
+                    SpeechCleanupAnalysis.plan_item_id == item_id,
+                    SpeechCleanupAnalysis.superseded_at.is_(None),
+                )
+            ).scalar_one()
+            assert analysis.status == "queued"
+            # --- Simulate the worker finishing the check with findings. ---
+            analysis.status = "ready"
+            analysis.candidate_count = 2
+            db.commit()
+            analysis_id = analysis.id
+
+        # --- 2) aware, valid choice: approved; the choice is stashed on the
+        # render execution for the claim to read back. The first attempt
+        # never flipped approval/draft/thread state, so the SAME precomputed
+        # pins are still valid -- this is a genuine retry of one approval. ---
+        async with AsyncSessionLocal() as db:
+            decision, successor_id = await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="approve",
+                body=ApprovalDecisionBody(
+                    expected_thread_revision=thread_revision,
+                    expected_draft_revision=draft_revision,
+                    expected_approval_fingerprint=approval_token,
+                    speech_cleanup_aware=True,
+                    speech_cleanup_analysis_id=analysis_id,
+                    speech_cleanup_choice="keep_original",
+                ),
+            )
+        assert decision.status == "approved"
+        assert successor_id is None
+
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            assert approval.status == "consumed" or approval.status == "approved"
+            execution = db.execute(
+                select(CreatorAgentExecution).where(
+                    CreatorAgentExecution.id == uuid.UUID(approval.execution_ids[0])
+                )
+            ).scalar_one()
+            assert execution.result["speech_cleanup"] == {
+                "analysis_id": str(analysis_id),
+                "choice": "keep_original",
+            }
+
+        # --- 3) the claim reads the stash back and dispatch receives it. ---
+        captured: dict[str, object] = {}
+
+        def _fake_dispatch(*args, **kwargs):  # noqa: ANN002, ANN003
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            with sync_session() as db:
+                item = db.get(PlanItem, item_id, with_for_update=True)
+                assert item is not None
+                job = Job(
+                    user_id=user_id,
+                    status="queued",
+                    mode="generative",
+                    raw_storage_path="",
+                    selected_platforms=["tiktok"],
+                    content_plan_item_id=item.id,
+                    content_plan_ownership_epoch=0,
+                    assembly_plan={"variants": []},
+                )
+                db.add(job)
+                db.flush()
+                item.current_job_id = job.id
+                db.commit()
+                return DispatchResult("dispatched", job_id=str(job.id))
+
+        monkeypatch.setattr(
+            "app.tasks.content_plan_build.dispatch_item_render_for",
+            _fake_dispatch,
+        )
+        dispatched = await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+        assert dispatched["status"] == "dispatched"
+        assert captured["kwargs"]["speech_cleanup_analysis_id"] == str(analysis_id)
+        assert captured["kwargs"]["speech_cleanup_choice"] == "keep_original"
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_denying_a_speech_cleanup_gated_strategy_restores_the_rejected_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A "Change direction" deny after a 409 must not strand the item.
+
+    approve(aware, no choice) -> 409, commits `edit_format="narrated"` /
+    `audio_mode="voiceover"` and schedules a real analysis, approval stays
+    pending -> deny -- the PlanItem must be restored to its PRE-strategy
+    values (here, the untouched column defaults) and the analysis this
+    rejected direction scheduled must be superseded, not left dangling.
+    """
+    from app.models import SpeechCleanupAnalysis
+
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    user_id, thread_id, session_id, item_id = _seed_narration_ready_project()
+    body = SubmitTurnBody(
+        message="Make the matcha update feel personal, narrated over the footage",
+        client_event_id=f"cleanup-deny-{uuid.uuid4().hex}",
+        expected_thread_revision=2,
+    )
+    strategy_plan = adapt_creator_action(
+        ProposeStrategy(
+            kind="propose_strategy",
+            strategy=CreativeStrategy(
+                direction="guided_story",
+                edit_format="narrated",
+                audio_strategy="voiceover",
+                pacing="fast",
+                render_program="guided",
+                selected_media_ids=[],
+                rationale="Narrate over the whisk and packed order.",
+            ),
+            summary="Narrate over the whisk and the packed order.",
+        )
+    )
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=strategy_plan,
+            manifest_hash="e" * 64,
+            context_hash="f" * 64,
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+
+    try:
+        with sync_session() as db:
+            original_item = db.get(PlanItem, item_id)
+            original_edit_format = original_item.edit_format
+            original_audio_mode = original_item.audio_mode
+            original_caption_style = original_item.voiceover_caption_style
+            original_user_edited = original_item.user_edited
+
+        async with AsyncSessionLocal() as db:
+            accepted, _ = await submit_turn(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                body=body,
+            )
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result == {"turn_id": accepted.turn_id, "status": "awaiting_approval"}
+
+        with sync_session() as db:
+            turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+            approval = db.execute(
+                select(CreatorAgentApproval).where(CreatorAgentApproval.turn_id == turn.id)
+            ).scalar_one()
+            approval_id = approval.id
+            approval_token = approval_fingerprint(approval)
+            thread_revision = db.get(CreationThread, thread_id).revision
+            draft_revision = approval.draft_revision
+
+        # --- 1) aware, no choice: refused; commits the strategy's media
+        # mutation and schedules a real analysis, approval stays pending. ---
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(RuntimeFailure):
+                await decide_approval(
+                    db,
+                    thread_id=thread_id,
+                    approval_id=approval_id,
+                    creator_id=user_id,
+                    decision="approve",
+                    body=ApprovalDecisionBody(
+                        expected_thread_revision=thread_revision,
+                        expected_draft_revision=draft_revision,
+                        expected_approval_fingerprint=approval_token,
+                        speech_cleanup_aware=True,
+                    ),
+                )
+
+        with sync_session() as db:
+            item = db.get(PlanItem, item_id)
+            assert item.edit_format == "narrated"
+            assert item.audio_mode == "voiceover"
+            mutated_analysis = db.execute(
+                select(SpeechCleanupAnalysis).where(
+                    SpeechCleanupAnalysis.plan_item_id == item_id,
+                    SpeechCleanupAnalysis.superseded_at.is_(None),
+                )
+            ).scalar_one()
+            assert mutated_analysis.status == "queued"
+
+        # --- 2) "Change direction": deny the SAME approval (its pins never
+        # changed, so the original precomputed fingerprint is still valid). ---
+        async with AsyncSessionLocal() as db:
+            decision, successor_id = await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="deny",
+                body=ApprovalDecisionBody(
+                    expected_thread_revision=thread_revision,
+                    expected_draft_revision=draft_revision,
+                    expected_approval_fingerprint=approval_token,
+                ),
+            )
+        assert decision.status == "denied"
+
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+            assert approval.status == "denied"
+            assert turn.status == "completed"
+
+            item = db.get(PlanItem, item_id)
+            assert item.edit_format == original_edit_format
+            assert item.audio_mode == original_audio_mode
+            assert item.voiceover_caption_style == original_caption_style
+            assert item.user_edited == original_user_edited
+
+            # The rejected direction's analysis must not dangle as "current".
+            still_current = db.execute(
+                select(SpeechCleanupAnalysis).where(
+                    SpeechCleanupAnalysis.plan_item_id == item_id,
+                    SpeechCleanupAnalysis.superseded_at.is_(None),
+                )
+            ).scalar_one_or_none()
+            assert still_current is None
+            superseded = db.get(SpeechCleanupAnalysis, mutated_analysis.id)
+            assert superseded.superseded_at is not None
+
+            execution = db.execute(
+                select(CreatorAgentExecution).where(
+                    CreatorAgentExecution.id == uuid.UUID(approval.execution_ids[0])
+                )
+            ).scalar_one()
+            assert "strategy_media_before" not in (execution.result or {})
+        assert successor_id is None
     finally:
         await async_engine.dispose()
 

@@ -1583,6 +1583,10 @@ class CreatorAgentTurn(Base):
     lease_owner: Mapped[str | None] = mapped_column(Text, nullable=True)
     lease_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     lease_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # Runs that ended without a result (planning lease expired: task killed at
+    # its time limit, worker lost). Unlike ``lease_epoch``, a requeue after a
+    # thread-revision conflict does not count.
+    abandoned_claims: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -1600,6 +1604,7 @@ class CreatorAgentTurn(Base):
             name="ck_creator_agent_turns_status",
         ),
         CheckConstraint("lease_epoch >= 0", name="ck_creator_agent_turns_lease_epoch"),
+        CheckConstraint("abandoned_claims >= 0", name="ck_creator_agent_turns_abandoned_claims"),
         UniqueConstraint("thread_id", "client_event_id", name="uq_creator_agent_turns_client_id"),
         UniqueConstraint("source_event_id", name="uq_creator_agent_turns_source_event"),
         Index("idx_creator_agent_turns_thread_created", "thread_id", "created_at", "id"),

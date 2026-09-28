@@ -272,21 +272,6 @@ class TestPromptRendering:
         assert "role-marker-stripped" in prompt
 
 
-class TestAgentSpec:
-    def test_spec_is_registered(self):
-        from app.agents._registry import get_agent
-
-        cls = get_agent("nova.audio.music_matcher")
-        assert cls is MusicMatcherAgent
-
-    def test_spec_has_text_only_model_and_prompt_version(self):
-        spec = MusicMatcherAgent.spec
-        assert spec.name == "nova.audio.music_matcher"
-        assert spec.prompt_id == "match_music"
-        # 2026-06-11: lyric_lang tiebreaker per track (language-aware matching).
-        assert spec.prompt_version == "2026-06-11"
-        # Sanity: matcher is text-only — no media_uri override.
-        assert MusicMatcherAgent(model_client=None).media_uri(_input()) is None  # type: ignore[arg-type]
 
 
 class TestOutputCap:

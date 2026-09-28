@@ -33,11 +33,6 @@ PLIST = REPO_ROOT / "infra" / "launchd" / "com.nova.dev-loop.plist"
 bash = pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 
 
-def test_new_files_exist() -> None:
-    for path in (WRAPPER, INSTALLER, PLIST):
-        assert path.is_file(), f"missing {path}"
-
-
 def test_plist_parses_and_points_at_wrapper() -> None:
     with PLIST.open("rb") as fh:
         data = plistlib.load(fh)

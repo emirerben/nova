@@ -15,7 +15,6 @@ import pytest
 
 from app.pipeline.custom_effects import (
     ALLOWED_FILTERS,
-    EFFECT_COST_CEILING,
     FILTER_COST_WEIGHTS,
     FILTER_PARAM_SPECS,
     FILTERS_WITHOUT_TIMELINE_ENABLE,
@@ -589,17 +588,6 @@ def test_estimate_cost_is_nonnegative_for_zero_duration():
     assert estimate_cost(spec, duration_s=0.0) >= 0.0
 
 
-def test_estimate_cost_ceiling_is_a_positive_finite_constant():
-    assert EFFECT_COST_CEILING > 0
-    assert math.isfinite(EFFECT_COST_CEILING)
-
-
 # ---------------------------------------------------------------------------
 # Config flag
 # ---------------------------------------------------------------------------
-
-
-def test_custom_effects_enabled_defaults_to_false():
-    from app.config import Settings
-
-    assert Settings.model_fields["custom_effects_enabled"].default is False

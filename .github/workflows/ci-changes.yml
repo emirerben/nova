@@ -13,6 +13,8 @@ on:
         value: ${{ jobs.select.outputs.ios_ui_groups }}
       ios_ui:
         value: ${{ jobs.select.outputs.ios_ui }}
+      ios_ui_shards:
+        value: ${{ jobs.select.outputs.ios_ui_shards }}
 
 jobs:
   select:
@@ -23,6 +25,7 @@ jobs:
       ios: ${{ steps.select.outputs.ios }}
       ios_ui: ${{ steps.select.outputs.ios_ui }}
       ios_ui_groups: ${{ steps.select.outputs.ios_ui_groups }}
+      ios_ui_shards: ${{ steps.select.outputs.ios_ui_shards }}
     steps:
       - uses: actions/checkout@v4
         with:

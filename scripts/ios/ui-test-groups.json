@@ -40,6 +40,7 @@
     ],
     "editor": [
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
+      "KriaUITests/EditorUITests/testTextTabListsEveryTextBlockAndOpensOneForEditing",
       "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface",
       "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock",
       "KriaUITests/EditorUITests/testNativeEditorPlaysTheRenderedAssetThroughItsRealEndAndReplays",
@@ -120,6 +121,7 @@
     "src/apps/ios/Kria/Core/NativeEditorDocument.swift": "editor",
     "src/apps/ios/Kria/Core/NativeFontCatalog.swift": "editor",
     "src/apps/ios/Kria/Core/NativeEditorInteraction.swift": "editor",
+    "src/apps/ios/Kria/Core/NativeEditorTextBlocks.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorView.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorMediaViews.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorInspectors.swift": "editor",

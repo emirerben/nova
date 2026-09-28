@@ -119,14 +119,6 @@ def test_prompt_tr_branch_includes_agglutinative_hint():
     assert "agglutinative" in text
 
 
-def test_language_defaults_to_en():
-    inp = OverlayFormatMatcherInput(
-        clip_set_summary="x",
-        hero_clip=ClipSummary(clip_id="c1", duration_s=4.0, subject="x", hook_score=5.0),
-    )
-    assert inp.language == "en"
-
-
 # -- layout (linear | cluster) -------------------------------------------------
 
 

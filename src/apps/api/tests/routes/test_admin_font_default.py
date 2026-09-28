@@ -209,9 +209,6 @@ class TestMigrationStaticLink:
         )
         return latest_allowlist
 
-    def test_admin_font_override_is_allowed(self):
-        assert "admin_font_override" in self._latest_trigger_allowlist()
-
     def test_route_trigger_value_matches_migration(self):
         """Every literal `trigger="<value>"` written by app/routes/admin.py
         must be in the latest CHECK constraint's allowlist."""

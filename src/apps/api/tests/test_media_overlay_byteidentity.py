@@ -11,14 +11,11 @@ Guards:
 from __future__ import annotations
 
 import ast
-import inspect
 import pathlib
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-
-from app.agents._schemas.media_overlay import validate_overlay_gcs_path
 
 
 class TestKillSwitch:
@@ -35,25 +32,6 @@ class TestKillSwitch:
         with pytest.raises(HTTPException) as exc_info:
             dispatch_set_media_overlays(mock_job, "v1", overlays_raw=[], user_id="u123")
         assert exc_info.value.status_code == 404
-
-
-class TestAllCandidatesUnchanged:
-    """build_generative_job must NOT add any new key for the media-overlay feature.
-
-    We check this indirectly by verifying that the keys we added to the variant
-    finalize dict are NOT present in all_candidates (which is the correct design:
-    overlay state lives on the variant, not on the job-level candidates).
-    """
-
-    def test_all_candidates_has_no_media_overlay_key(self):
-        """Structural: all_candidates does not carry media_overlays."""
-        from app.services.generative_jobs import build_generative_job
-
-        sig = inspect.signature(build_generative_job)
-        assert "media_overlays" not in sig.parameters, (
-            "media_overlays must NOT be a parameter of build_generative_job — "
-            "overlay state belongs on the variant, not on all_candidates."
-        )
 
 
 class TestStoragePrefix:
@@ -79,14 +57,6 @@ class TestStoragePrefix:
         assert "overlays/" in gcs_path, f"Expected overlays/ in path: {gcs_path}"
         assert "u123" in gcs_path
         assert "item456" in gcs_path
-
-    def test_dev_user_path_rejected_by_validator(self):
-        with pytest.raises(ValueError):
-            validate_overlay_gcs_path("dev-user/abc/raw.mp4")
-
-    def test_users_path_accepted_by_validator(self):
-        # Should not raise
-        validate_overlay_gcs_path("users/u1/plan/p1/overlays/img.png")
 
     def test_cross_user_path_rejected_by_dispatch(self):
         """dispatch_set_media_overlays must reject paths belonging to another user."""

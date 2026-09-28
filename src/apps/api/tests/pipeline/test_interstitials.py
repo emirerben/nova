@@ -3,8 +3,6 @@
 from unittest.mock import MagicMock, patch  # noqa: I001
 
 from app.pipeline.interstitials import (
-    MIN_CURTAIN_ANIMATE_S,
-    _CURTAIN_MAX_RATIO,
     _classify_single_segment,
     classify_black_segment_type,
 )
@@ -15,10 +13,7 @@ from app.pipeline.interstitials import (
 
 def _signalstats_stderr(yavg: float) -> bytes:
     """Build fake FFmpeg stderr containing a signalstats YAVG line."""
-    return (
-        f"[Parsed_signalstats_1 @ 0x1234] YAVG:{yavg:.1f} "
-        f"YMIN:0 YMAX:255\n"
-    ).encode()
+    return (f"[Parsed_signalstats_1 @ 0x1234] YAVG:{yavg:.1f} YMIN:0 YMAX:255\n").encode()
 
 
 # ── classify_black_segment_type ──────────────────────────────────────────────
@@ -37,16 +32,29 @@ class TestClassifyBlackSegmentType:
         lum_sequence = {
             # (timestamp_index, band) → luminance
             # Early frames: all bands bright
-            (0, "top"): 200.0, (0, "middle"): 200.0, (0, "bottom"): 200.0,
-            (1, "top"): 180.0, (1, "middle"): 195.0, (1, "bottom"): 175.0,
-            (2, "top"): 140.0, (2, "middle"): 190.0, (2, "bottom"): 135.0,
+            (0, "top"): 200.0,
+            (0, "middle"): 200.0,
+            (0, "bottom"): 200.0,
+            (1, "top"): 180.0,
+            (1, "middle"): 195.0,
+            (1, "bottom"): 175.0,
+            (2, "top"): 140.0,
+            (2, "middle"): 190.0,
+            (2, "bottom"): 135.0,
             # Later frames: edges dark, middle still bright
-            (3, "top"): 80.0, (3, "middle"): 185.0, (3, "bottom"): 75.0,
-            (4, "top"): 30.0, (4, "middle"): 170.0, (4, "bottom"): 25.0,
-            (5, "top"): 5.0, (5, "middle"): 150.0, (5, "bottom"): 3.0,
+            (3, "top"): 80.0,
+            (3, "middle"): 185.0,
+            (3, "bottom"): 75.0,
+            (4, "top"): 30.0,
+            (4, "middle"): 170.0,
+            (4, "bottom"): 25.0,
+            (5, "top"): 5.0,
+            (5, "middle"): 150.0,
+            (5, "bottom"): 3.0,
         }
 
         call_count = [0]
+
         def side_effect(video_path, timestamp, band):
             idx = call_count[0] // 3  # 3 bands per frame
             key = (idx, band)
@@ -65,15 +73,28 @@ class TestClassifyBlackSegmentType:
     def test_fade_pattern_detected(self, mock_lum):
         """All bands darken uniformly → fade-black-hold."""
         lum_sequence = {
-            (0, "top"): 200.0, (0, "middle"): 200.0, (0, "bottom"): 200.0,
-            (1, "top"): 170.0, (1, "middle"): 170.0, (1, "bottom"): 170.0,
-            (2, "top"): 130.0, (2, "middle"): 130.0, (2, "bottom"): 130.0,
-            (3, "top"): 90.0, (3, "middle"): 90.0, (3, "bottom"): 90.0,
-            (4, "top"): 50.0, (4, "middle"): 50.0, (4, "bottom"): 50.0,
-            (5, "top"): 10.0, (5, "middle"): 10.0, (5, "bottom"): 10.0,
+            (0, "top"): 200.0,
+            (0, "middle"): 200.0,
+            (0, "bottom"): 200.0,
+            (1, "top"): 170.0,
+            (1, "middle"): 170.0,
+            (1, "bottom"): 170.0,
+            (2, "top"): 130.0,
+            (2, "middle"): 130.0,
+            (2, "bottom"): 130.0,
+            (3, "top"): 90.0,
+            (3, "middle"): 90.0,
+            (3, "bottom"): 90.0,
+            (4, "top"): 50.0,
+            (4, "middle"): 50.0,
+            (4, "bottom"): 50.0,
+            (5, "top"): 10.0,
+            (5, "middle"): 10.0,
+            (5, "bottom"): 10.0,
         }
 
         call_count = [0]
+
         def side_effect(video_path, timestamp, band):
             idx = call_count[0] // 3
             key = (idx, band)
@@ -164,6 +185,7 @@ class TestClassifySingleSegment:
     @patch("app.pipeline.interstitials._sample_frame_bands")
     def test_edges_near_zero_middle_bright(self, mock_bands):
         """Edge case: edges fully black, middle still bright → curtain-close."""
+
         # Return uniform brightness for early frames, then bar pattern
         def side_effect(video_path, timestamp):
             if timestamp < 11.7:
@@ -199,6 +221,7 @@ class TestDetectBlackSegmentsThresholds:
         )
 
         from app.pipeline.interstitials import detect_black_segments
+
         detect_black_segments("/fake/video.mp4")
 
         cmd = mock_run.call_args[0][0]
@@ -212,12 +235,6 @@ class TestDetectBlackSegmentsThresholds:
 
 
 class TestCurtainMinAnimateS:
-    def test_min_curtain_constant(self):
-        assert MIN_CURTAIN_ANIMATE_S == 4.0
-
-    def test_curtain_max_ratio_constant(self):
-        assert _CURTAIN_MAX_RATIO == 0.6
-
     def test_curtain_slots_skipped_in_collect(self):
         """Curtain-close slots are skipped in _collect_absolute_overlays.
 
@@ -233,21 +250,26 @@ class TestCurtainMinAnimateS:
         step.slot = {
             "position": 1,
             "target_duration_s": 10.0,
-            "text_overlays": [{
-                "role": "label",
-                "start_s": 0.0,
-                "end_s": 10.0,
-                "position": "center",
-                "effect": "font-cycle",
-                "sample_text": "PERU",
-            }],
+            "text_overlays": [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 10.0,
+                    "position": "center",
+                    "effect": "font-cycle",
+                    "sample_text": "PERU",
+                }
+            ],
         }
 
         interstitial_map = {
             1: {"type": "curtain-close", "animate_s": 0.3, "hold_s": 1.0},
         }
         result = _collect_absolute_overlays(
-            [step], [10.0], None, "Peru",
+            [step],
+            [10.0],
+            None,
+            "Peru",
             interstitial_map=interstitial_map,
         )
         # Curtain-close slot overlays are pre-burned, so none collected here
@@ -263,19 +285,24 @@ class TestCurtainMinAnimateS:
         step.slot = {
             "position": 1,
             "target_duration_s": 8.0,
-            "text_overlays": [{
-                "role": "label",
-                "start_s": 0.0,
-                "end_s": 8.0,
-                "position": "center",
-                "effect": "fade-in",
-                "sample_text": "Welcome to",
-            }],
+            "text_overlays": [
+                {
+                    "role": "label",
+                    "start_s": 0.0,
+                    "end_s": 8.0,
+                    "position": "center",
+                    "effect": "fade-in",
+                    "sample_text": "Welcome to",
+                }
+            ],
         }
 
         # No interstitial → overlays collected normally
         result = _collect_absolute_overlays(
-            [step], [8.0], None, "",
+            [step],
+            [8.0],
+            None,
+            "",
             interstitial_map={},
         )
         assert len(result) == 1

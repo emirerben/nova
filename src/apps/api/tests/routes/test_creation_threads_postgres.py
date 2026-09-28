@@ -352,7 +352,9 @@ async def test_delete_thread_removes_project_job_learning_rows_and_preserves_unr
             ("edit_interaction_receipts", "edit_interaction_receipts_append_only"),
         }
         response = await delete_thread(
-            request=Request({"type": "http", "method": "DELETE", "path": "/creation-threads"}),
+            request=Request(
+                {"type": "http", "method": "DELETE", "path": "/creation-threads", "headers": []}
+            ),
             thread_id=str(seeded_projects.target_thread_id),
             user=user,
             db=db,

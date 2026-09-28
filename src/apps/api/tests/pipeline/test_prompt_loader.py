@@ -9,12 +9,6 @@ class TestLoadPrompt:
     def setup_method(self):
         clear_cache()
 
-    def test_load_existing_prompt_file(self):
-        """Loading a known prompt returns non-empty content from disk."""
-        result = load_prompt("analyze_template_pass1")
-        assert len(result) > 50
-        assert "editing style" in result
-
     def test_fallback_on_missing_file(self):
         """A prompt name with no file and no inline default returns empty string."""
         result = load_prompt("totally_nonexistent_prompt_xyz")
@@ -49,13 +43,3 @@ class TestLoadPrompt:
         r1 = load_prompt("analyze_template_pass1")
         r2 = load_prompt("analyze_template_pass1")
         assert r1 == r2
-
-    def test_schema_file_loads(self):
-        """The shared schema file loads and contains key fields."""
-        result = load_prompt("analyze_template_schema")
-        assert "shot_count" in result
-        assert "creative_direction" in result
-        assert "transition_in" in result
-        assert "color_hint" in result
-        assert "speed_factor" in result
-        assert "sync_style" in result

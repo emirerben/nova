@@ -1,0 +1,85 @@
+{
+  "fixture_id": "trip_route_order",
+  "provenance": "authored",
+  "footage": "trip",
+  "description": "Clips follow the route travelled (route_rank), not attachment order.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Follow our route, from the balloons in Göreme down to the underground city in Kaymaklı.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "route",
+      "kind": "order",
+      "scope": "global",
+      "request_type": "order_route",
+      "checker": "order_by_key",
+      "params": {
+        "key": "route_rank"
+      },
+      "source": "Follow our route, from the balloons in Göreme down to the underground city in Kaymaklı.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "T1",
+          "start_s": 0.0,
+          "end_s": 4.0
+        },
+        {
+          "clip_id": "T2",
+          "start_s": 4.0,
+          "end_s": 7.0
+        },
+        {
+          "clip_id": "T3",
+          "start_s": 7.0,
+          "end_s": 10.5
+        },
+        {
+          "clip_id": "T4",
+          "start_s": 10.5,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "T5",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "T6",
+          "start_s": 17.0,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "T7",
+          "start_s": 19.5,
+          "end_s": 22.5
+        },
+        {
+          "clip_id": "T8",
+          "start_s": 22.5,
+          "end_s": 25.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Cappadocia route",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 25.5
+    },
+    "reply": "Cut the clips along your route, balloons first and the underground city near the end."
+  }
+}

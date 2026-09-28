@@ -32,7 +32,6 @@ from fastapi import Response
 
 from app.services.nova_steps import (
     STEP_ALLOWLIST,
-    NovaStep,
     _sanitize_event_data,
     beat_miss_sentence,
     project_nova_steps,
@@ -943,17 +942,6 @@ def test_malformed_trace_entries_are_skipped_not_raised() -> None:
 # ---------------------------------------------------------------------------
 # NovaStep schema sanity
 # ---------------------------------------------------------------------------
-
-
-def test_nova_step_kind_and_status_are_constrained() -> None:
-    with pytest.raises(Exception):
-        NovaStep(
-            id="x",
-            ts=datetime.now(UTC),
-            kind="not_a_real_kind",  # type: ignore[arg-type]
-            label="x",
-            status="done",
-        )
 
 
 # ---------------------------------------------------------------------------

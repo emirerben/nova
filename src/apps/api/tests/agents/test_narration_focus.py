@@ -60,10 +60,6 @@ def test_prompt_forbids_identity_matching() -> None:
     assert "frame-0" in prompt
 
 
-def test_prompt_version_is_pinned() -> None:
-    assert NarrationFocusAgent.spec.prompt_version == "2026-09-07.3"
-
-
 def test_single_primary_player_allows_background_people() -> None:
     output = NarrationFocusAgent(None).parse(
         '{"focus":"single_subject","primary_subject_count":1,'

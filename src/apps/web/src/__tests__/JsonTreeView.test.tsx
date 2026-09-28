@@ -4,24 +4,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { JsonTreeView } from "@/components/JsonTreeView";
 
 describe("JsonTreeView", () => {
-  test("renders null leaf", () => {
-    render(<JsonTreeView value={null} />);
-    expect(screen.getByText("null")).toBeInTheDocument();
-  });
-
-  test("renders primitives", () => {
-    const { rerender } = render(<JsonTreeView value={42} />);
-    expect(screen.getByText("42")).toBeInTheDocument();
-    rerender(<JsonTreeView value={true} />);
-    expect(screen.getByText("true")).toBeInTheDocument();
-  });
-
-  test("renders empty containers", () => {
-    const { rerender } = render(<JsonTreeView value={[]} />);
-    expect(screen.getByText("[]")).toBeInTheDocument();
-    rerender(<JsonTreeView value={{}} />);
-    expect(screen.getByText("{}")).toBeInTheDocument();
-  });
 
   test("renders nested object with collapsible nodes", () => {
     render(

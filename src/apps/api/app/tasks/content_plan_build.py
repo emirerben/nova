@@ -912,13 +912,29 @@ def _speech_cleanup_dispatch_snapshot(
         # voiceover (when audio_mode == "voiceover") is a normal, fully
         # uploaded audio file, never an analysis proxy, even though this
         # same item's VIDEO clips are proxies; only the source cleanup would
-        # actually touch matters here. `preflight_enabled_for_source`
-        # already stops such a source from ever being scheduled (no
-        # analysis row -> no offered choice), but a stale/forged client
-        # request could still submit `choice == "clean"` against a row that
-        # predates the item becoming phone-sourced -- refuse explicitly
-        # here, before any Job row exists.
-        if resolution.source is not None and is_analysis_proxy_path(resolution.source.storage_path):
+        # actually touch matters here. Since KRI-205, `preflight_enabled_for_source`
+        # deliberately DOES schedule analysis and offer this choice for a
+        # phone (analysis-proxy) source -- detection only needs the proxy's
+        # audio, which is already a faithful full copy.
+        #
+        # Applying "clean" against the ACTIVE VIDEO source (a proxy) used to
+        # be refused outright: it requires cutting real video frames, and a
+        # phone-rendered project never uploads the full-resolution video.
+        # `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan`'s
+        # `cut_plan` param now lets `_run_phone_subtitled_job` apply a
+        # CutPlan's keep segments directly against the analysis proxy itself
+        # (no full-resolution video needed -- the proxy IS what renders), but
+        # ONLY for the single-clip "Talking to camera" shape that compiler
+        # requires. A self-narrated item still carrying 2+ clips routes to
+        # the montage/self_narration_multi_clip phone family instead, which
+        # has no timeline-reshaping primitive at all, so THAT shape keeps the
+        # refusal (surfaced to the creator as
+        # `speech_cleanup_unavailable_on_phone`, not a generic failure).
+        if (
+            resolution.source is not None
+            and is_analysis_proxy_path(resolution.source.storage_path)
+            and len(item.clip_gcs_paths or []) != 1
+        ):
             return DispatchResult("speech_cleanup_unavailable_on_phone")
     try:
         identifier = uuid.UUID(str(analysis_id))
@@ -1562,7 +1578,6 @@ def _dispatch_item_render(
             resolution.source.source_policy_fingerprint,
             mode=settings.speech_cleanup_preflight_mode,
             rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
-            storage_path=resolution.source.storage_path,
         ):
             return DispatchResult("speech_cleanup_analysis_conflict")
     if speech_cleanup_analysis_id is not None or speech_cleanup_choice is not None:

@@ -71,6 +71,7 @@ from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
 from app.routes.admin import _require_admin
 from app.routes.plan_items import derive_item_status
 from app.schemas.edit_proposal import parse_edit_proposal
+from app.services.kria_trace import find_thread_link
 
 router = APIRouter()
 
@@ -238,6 +239,10 @@ class PlanItemDebugResponse(BaseModel):
     # the top-level key names, which are schema field names, not content.
     edit_proposal_unparseable: bool = False
     edit_proposal_raw_keys: list[str] | None = None
+    # Additive correlation to the creation thread that owns this item (chat
+    # flows only), so an operator can go item -> /admin/creation-threads/{id}/...
+    thread_id: str | None = None
+    runtime_version: int | None = None
 
 
 class ProposalTraceResponse(BaseModel):
@@ -521,6 +526,7 @@ async def get_plan_item_debug(
         edit_proposal_raw_keys = sorted(item.edit_proposal.keys())
 
     scheduled_date = getattr(item, "scheduled_date", None)
+    thread_link = await find_thread_link(db, plan_item_id=item.id)
 
     return PlanItemDebugResponse(
         item=ItemCorePayload(
@@ -574,6 +580,8 @@ async def get_plan_item_debug(
         edit_proposal=edit_proposal_payload,
         edit_proposal_unparseable=edit_proposal_unparseable,
         edit_proposal_raw_keys=edit_proposal_raw_keys,
+        thread_id=thread_link[0] if thread_link else None,
+        runtime_version=thread_link[1] if thread_link else None,
     )
 
 

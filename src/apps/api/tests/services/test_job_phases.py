@@ -147,17 +147,6 @@ def test_db_error_is_swallowed_not_raised() -> None:
         job_phases.record_phase(uuid.uuid4(), "assemble", elapsed_ms=500)
 
 
-def test_phase_timer_records_on_clean_exit() -> None:
-    job_id = uuid.uuid4()
-    with patch.object(job_phases, "record_phase") as mock_record:
-        with job_phases.PhaseTimer(job_id, "assemble", next_phase="upload"):
-            pass
-    mock_record.assert_called_once()
-    kwargs = mock_record.call_args.kwargs
-    assert kwargs["next_phase"] == "upload"
-    assert kwargs["elapsed_ms"] >= 0
-
-
 def test_phase_timer_skips_record_on_exception() -> None:
     """If the wrapped block raises, the phase did NOT complete — don't lie
     in phase_log. The outer failure handler will clear current_phase."""

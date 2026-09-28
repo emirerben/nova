@@ -1,0 +1,1484 @@
+{
+  "fixture_id": "east_run",
+  "provenance": "prod_capture",
+  "footage": "east_run",
+  "description": "KRI-185 as it happened (plan item a55956c7, thread bf8459ae): brief typed after the first render, three chat turns on render 1, a re-plan that dropped the brief (phone montage, render 2), the brief again, then a style rule.",
+  "turns": [
+    {
+      "turn_id": "t0-suggest",
+      "user_message": "Suggest an edit.",
+      "engine": "recorded",
+      "recorded": {
+        "plan_after": {
+          "clips": [
+            {
+              "clip_id": "C2DC7139",
+              "start_s": 0.0,
+              "end_s": 4.0
+            },
+            {
+              "clip_id": "C16175FA",
+              "start_s": 3.867,
+              "end_s": 7.3
+            },
+            {
+              "clip_id": "5DE280D6",
+              "start_s": 7.167,
+              "end_s": 10.533
+            },
+            {
+              "clip_id": "68785DA1",
+              "start_s": 10.4,
+              "end_s": 13.733
+            },
+            {
+              "clip_id": "09177B10",
+              "start_s": 13.6,
+              "end_s": 15.667
+            },
+            {
+              "clip_id": "DF575ECA",
+              "start_s": 15.533,
+              "end_s": 18.0
+            }
+          ],
+          "texts": [
+            {
+              "id": "guided-title",
+              "role": "title",
+              "text": "Bosphorus Grandeur",
+              "start_s": 0.0,
+              "end_s": 3.2,
+              "font_family": "Fraunces"
+            },
+            {
+              "id": "guided-thought-chapter-1",
+              "role": "label",
+              "text": "Views of the Bosphorus Strait and distant Istanbul skyline.",
+              "start_s": 0.0,
+              "end_s": 7.167,
+              "font_family": "DM Sans"
+            },
+            {
+              "id": "guided-thought-chapter-2",
+              "role": "label",
+              "text": "Discover the grand palace gate and historic clock tower.",
+              "start_s": 7.167,
+              "end_s": 13.6,
+              "font_family": "DM Sans"
+            },
+            {
+              "id": "guided-thought-chapter-3",
+              "role": "label",
+              "text": "Enjoy relaxing views from the water and the sunny marina.",
+              "start_s": 13.6,
+              "end_s": 18.0,
+              "font_family": "DM Sans"
+            }
+          ],
+          "total_duration_s": 19.6
+        },
+        "reply": null
+      }
+    },
+    {
+      "turn_id": "t1-brief",
+      "user_message": "This was a 20k run I completed today. Do an edit highlighting the landmarks and locations of each spot. Do it fast paced but leave enough time for the users to read where it was from. I ran from Arnavutkoy to Eminonu",
+      "engine": "v1_copilot",
+      "copilot": {
+        "agent_input": {
+          "utterance": "This was a 20k run I completed today. Do an edit highlighting the landmarks and locations of each spot. Do it fast paced but leave enough time for the users to read where it was from. I ran from Arnavutkoy to Eminonu",
+          "prior_turns": [],
+          "variant_snapshot": {
+            "slots": [],
+            "text_bars": [
+              {
+                "id": "guided-title",
+                "role": "generative_intro",
+                "text": "Bosphorus Grandeur",
+                "color": "#FFF8F0",
+                "end_s": 3.2,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.16,
+                "size_px": 104.0,
+                "start_s": 0.0,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "Fraunces",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              },
+              {
+                "id": "guided-thought-chapter-1",
+                "role": "generative_intro",
+                "text": "Views of the Bosphorus Strait and distant Istanbul skyline.",
+                "color": "#FFF8F0",
+                "end_s": 7.166666666666667,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.8,
+                "size_px": 60.0,
+                "start_s": 0.0,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "DM Sans",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              },
+              {
+                "id": "guided-thought-chapter-2",
+                "role": "generative_intro",
+                "text": "Discover the grand palace gate and historic clock tower.",
+                "color": "#FFF8F0",
+                "end_s": 13.6,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.8,
+                "size_px": 60.0,
+                "start_s": 7.167,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "DM Sans",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              },
+              {
+                "id": "guided-thought-chapter-3",
+                "role": "generative_intro",
+                "text": "Enjoy relaxing views from the water and the sunny marina.",
+                "color": "#FFF8F0",
+                "end_s": 18.0,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.8,
+                "size_px": 60.0,
+                "start_s": 13.6,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "DM Sans",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              }
+            ],
+            "source_pool": [
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "0",
+                "clip_index": 0,
+                "duration_s": null,
+                "generation": "72046b2c5985"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "1",
+                "clip_index": 1,
+                "duration_s": null,
+                "generation": "28d5725276cd"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "2",
+                "clip_index": 2,
+                "duration_s": null,
+                "generation": "2fefde55eca8"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "3",
+                "clip_index": 3,
+                "duration_s": null,
+                "generation": "614eaa6b160c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "4",
+                "clip_index": 4,
+                "duration_s": null,
+                "generation": "4a728df2777c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "5",
+                "clip_index": 5,
+                "duration_s": null,
+                "generation": "6c865363a667"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "6",
+                "clip_index": 6,
+                "duration_s": null,
+                "generation": "2433318cb11a"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "7",
+                "clip_index": 7,
+                "duration_s": null,
+                "generation": "0cd9c49acd99"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "8",
+                "clip_index": 8,
+                "duration_s": null,
+                "generation": "3c784ce2845d"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "9",
+                "clip_index": 9,
+                "duration_s": null,
+                "generation": "dae8146cfd5c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "10",
+                "clip_index": 10,
+                "duration_s": null,
+                "generation": "561600ac2595"
+              }
+            ],
+            "editor_limits": {
+              "max_timeline_slots": 120
+            },
+            "max_duration_s": 120,
+            "base_generation": "3f555b10-9ef9-416a-9afd-aad26f95b69f",
+            "guided_revision": {
+              "state_hash": "f27d4a43cea9df2258016a9ce21672a73f45e03c3f39a2c36048a541a6a4adf7",
+              "base_generation": "3f555b10-9ef9-416a-9afd-aad26f95b69f",
+              "revision_number": 1
+            },
+            "text_appearance": {
+              "targets": [
+                {
+                  "id": "guided-title",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "fd39a884f4b28571",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                },
+                {
+                  "id": "guided-thought-chapter-1",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "4caa54310da28cf7",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                },
+                {
+                  "id": "guided-thought-chapter-2",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "2edd81518fbcf1c9",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                },
+                {
+                  "id": "guided-thought-chapter-3",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "9aa8216eb496dfa1",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                }
+              ],
+              "version": 1,
+              "caption_cues_editable": false
+            },
+            "total_duration_s": 19.6,
+            "allowed_op_families": [
+              "clip",
+              "text",
+              "title",
+              "transition"
+            ],
+            "remaining_duration_s": 100.4,
+            "has_narrated_captions": false,
+            "text_appearance_version": 1
+          }
+        },
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_title\",\n      \"title\": \"20k Run: Arnavutköy to Eminönü\"\n    },\n    {\n      \"op\": \"edit_text\",\n      \"bar_index\": 0,\n      \"text\": \"20k run from arnavutköy to eminönü\"\n    },\n    {\n      \"op\": \"edit_text\",\n      \"bar_index\": 1,\n      \"text\": \"Arnavutköy waterfront & Bosphorus views\"\n    },\n    {\n      \"op\": \"edit_text\",\n      \"bar_index\": 2,\n      \"text\": \"Dolmabahçe Palace & Historic Clock Tower\"\n    },\n    {\n      \"op\": \"edit_text\",\n      \"bar_index\": 3,\n      \"text\": \"Eminönü finish line & harbor skyline\"\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"Updated your title and text bars to highlight the landmark locations from your 20k run from Arnavutköy to Eminönü.\",\n  \"suggestions\": [\n    \"Adjust text timings\",\n    \"Change font style\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": []\n}",
+        "prompt_version": "2026-09-19-v45",
+        "recorded_at": "2026-09-24T13:40:14.546804Z"
+      }
+    },
+    {
+      "turn_id": "t2-recreate",
+      "user_message": "Create the video again based on my prompt",
+      "engine": "v1_copilot",
+      "copilot": {
+        "agent_input": {
+          "utterance": "Create the video again based on my prompt",
+          "prior_turns": [],
+          "variant_snapshot": {
+            "slots": [],
+            "text_bars": [
+              {
+                "id": "guided-title",
+                "role": "generative_intro",
+                "text": "20k run from arnavutköy to eminönü",
+                "color": "#FFF8F0",
+                "end_s": 3.2,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.16,
+                "size_px": 104.0,
+                "start_s": 0.0,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "Fraunces",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              },
+              {
+                "id": "guided-thought-chapter-1",
+                "role": "generative_intro",
+                "text": "Arnavutköy waterfront & Bosphorus views",
+                "color": "#FFF8F0",
+                "end_s": 7.166666666666667,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.8,
+                "size_px": 60.0,
+                "start_s": 0.0,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "DM Sans",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              },
+              {
+                "id": "guided-thought-chapter-2",
+                "role": "generative_intro",
+                "text": "Dolmabahçe Palace & Historic Clock Tower",
+                "color": "#FFF8F0",
+                "end_s": 13.6,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.8,
+                "size_px": 60.0,
+                "start_s": 7.167,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "DM Sans",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              },
+              {
+                "id": "guided-thought-chapter-3",
+                "role": "generative_intro",
+                "text": "Eminönü finish line & harbor skyline",
+                "color": "#FFF8F0",
+                "end_s": 18.0,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.8,
+                "size_px": 60.0,
+                "start_s": 13.6,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "DM Sans",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              }
+            ],
+            "source_pool": [
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "0",
+                "clip_index": 0,
+                "duration_s": null,
+                "generation": "72046b2c5985"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "1",
+                "clip_index": 1,
+                "duration_s": null,
+                "generation": "28d5725276cd"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "2",
+                "clip_index": 2,
+                "duration_s": null,
+                "generation": "2fefde55eca8"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "3",
+                "clip_index": 3,
+                "duration_s": null,
+                "generation": "614eaa6b160c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "4",
+                "clip_index": 4,
+                "duration_s": null,
+                "generation": "4a728df2777c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "5",
+                "clip_index": 5,
+                "duration_s": null,
+                "generation": "6c865363a667"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "6",
+                "clip_index": 6,
+                "duration_s": null,
+                "generation": "2433318cb11a"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "7",
+                "clip_index": 7,
+                "duration_s": null,
+                "generation": "0cd9c49acd99"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "8",
+                "clip_index": 8,
+                "duration_s": null,
+                "generation": "3c784ce2845d"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "9",
+                "clip_index": 9,
+                "duration_s": null,
+                "generation": "dae8146cfd5c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "10",
+                "clip_index": 10,
+                "duration_s": null,
+                "generation": "561600ac2595"
+              }
+            ],
+            "editor_limits": {
+              "max_timeline_slots": 120
+            },
+            "max_duration_s": 120,
+            "base_generation": "cb1e7e8a-d1cd-4e54-9ba9-5c962b6cda11",
+            "guided_revision": {
+              "state_hash": "bcdd74b604a1895435a428a5b1aca039848204d39f7fe7248f6f1a3f25b60f7e",
+              "base_generation": "cb1e7e8a-d1cd-4e54-9ba9-5c962b6cda11",
+              "revision_number": 2
+            },
+            "text_appearance": {
+              "targets": [
+                {
+                  "id": "guided-title",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "500c596d22b39cd1",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                },
+                {
+                  "id": "guided-thought-chapter-1",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "d7ac16d03019f10e",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                },
+                {
+                  "id": "guided-thought-chapter-2",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "c6c60ffa1ad9b628",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                },
+                {
+                  "id": "guided-thought-chapter-3",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "94b74c53703c4fca",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                }
+              ],
+              "version": 1,
+              "caption_cues_editable": false
+            },
+            "total_duration_s": 19.6,
+            "allowed_op_families": [
+              "clip",
+              "text",
+              "title",
+              "transition"
+            ],
+            "remaining_duration_s": 100.4,
+            "has_narrated_captions": false,
+            "text_appearance_version": 1
+          }
+        },
+        "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"I can't recreate or regenerate the entire video from scratch here. You can edit the text, clip timing, title, and transitions, or start a new project from the prompt page.\",\n  \"suggestions\": [\n    \"Change title\",\n    \"Edit text style\",\n    \"Trim clip timing\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": []\n}",
+        "prompt_version": "2026-09-19-v45",
+        "recorded_at": "2026-09-24T13:41:09.896713Z"
+      }
+    },
+    {
+      "turn_id": "t3-keep15",
+      "user_message": "Keep 15 seconds and include everything with faster pacing",
+      "engine": "v1_copilot",
+      "copilot": {
+        "agent_input": {
+          "utterance": "Keep 15 seconds and include everything with faster pacing",
+          "prior_turns": [],
+          "variant_snapshot": {
+            "slots": [],
+            "text_bars": [
+              {
+                "id": "guided-title",
+                "role": "generative_intro",
+                "text": "20k run from arnavutköy to eminönü",
+                "color": "#FFF8F0",
+                "end_s": 3.2,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.16,
+                "size_px": 104.0,
+                "start_s": 0.0,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "Fraunces",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              },
+              {
+                "id": "guided-thought-chapter-1",
+                "role": "generative_intro",
+                "text": "Arnavutköy waterfront & Bosphorus views",
+                "color": "#FFF8F0",
+                "end_s": 7.166666666666667,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.8,
+                "size_px": 60.0,
+                "start_s": 0.0,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "DM Sans",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              },
+              {
+                "id": "guided-thought-chapter-2",
+                "role": "generative_intro",
+                "text": "Dolmabahçe Palace & Historic Clock Tower",
+                "color": "#FFF8F0",
+                "end_s": 13.6,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.8,
+                "size_px": 60.0,
+                "start_s": 7.167,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "DM Sans",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              },
+              {
+                "id": "guided-thought-chapter-3",
+                "role": "generative_intro",
+                "text": "Eminönü finish line & harbor skyline",
+                "color": "#FFF8F0",
+                "end_s": 18.0,
+                "effect": "fade-in",
+                "x_frac": 0.5,
+                "y_frac": 0.8,
+                "size_px": 60.0,
+                "start_s": 13.6,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "DM Sans",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              }
+            ],
+            "source_pool": [
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "0",
+                "clip_index": 0,
+                "duration_s": null,
+                "generation": "72046b2c5985"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "1",
+                "clip_index": 1,
+                "duration_s": null,
+                "generation": "28d5725276cd"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "2",
+                "clip_index": 2,
+                "duration_s": null,
+                "generation": "2fefde55eca8"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "3",
+                "clip_index": 3,
+                "duration_s": null,
+                "generation": "614eaa6b160c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "4",
+                "clip_index": 4,
+                "duration_s": null,
+                "generation": "4a728df2777c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "5",
+                "clip_index": 5,
+                "duration_s": null,
+                "generation": "6c865363a667"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "6",
+                "clip_index": 6,
+                "duration_s": null,
+                "generation": "2433318cb11a"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "7",
+                "clip_index": 7,
+                "duration_s": null,
+                "generation": "0cd9c49acd99"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "8",
+                "clip_index": 8,
+                "duration_s": null,
+                "generation": "3c784ce2845d"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "9",
+                "clip_index": 9,
+                "duration_s": null,
+                "generation": "dae8146cfd5c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "10",
+                "clip_index": 10,
+                "duration_s": null,
+                "generation": "561600ac2595"
+              }
+            ],
+            "editor_limits": {
+              "max_timeline_slots": 120
+            },
+            "max_duration_s": 120,
+            "base_generation": "cb1e7e8a-d1cd-4e54-9ba9-5c962b6cda11",
+            "guided_revision": {
+              "state_hash": "bcdd74b604a1895435a428a5b1aca039848204d39f7fe7248f6f1a3f25b60f7e",
+              "base_generation": "cb1e7e8a-d1cd-4e54-9ba9-5c962b6cda11",
+              "revision_number": 2
+            },
+            "text_appearance": {
+              "targets": [
+                {
+                  "id": "guided-title",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "500c596d22b39cd1",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                },
+                {
+                  "id": "guided-thought-chapter-1",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "d7ac16d03019f10e",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                },
+                {
+                  "id": "guided-thought-chapter-2",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "c6c60ffa1ad9b628",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                },
+                {
+                  "id": "guided-thought-chapter-3",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "94b74c53703c4fca",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                }
+              ],
+              "version": 1,
+              "caption_cues_editable": false
+            },
+            "total_duration_s": 19.6,
+            "allowed_op_families": [
+              "clip",
+              "text",
+              "title",
+              "transition"
+            ],
+            "remaining_duration_s": 100.4,
+            "has_narrated_captions": false,
+            "text_appearance_version": 1
+          }
+        },
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_edit_direction\",\n      \"revision_number\": 2,\n      \"base_generation\": \"cb1e7e8a-d1cd-4e54-9ba9-5c962b6cda11\",\n      \"direction\": \"fast_montage\",\n      \"hard_cuts\": true,\n      \"minimal_text\": true\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"Updating your story direction to a 15-second fast-paced montage with hard cuts and minimal text.\",\n  \"suggestions\": [\n    \"Keep 15 seconds\",\n    \"Undo direction change\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": []\n}",
+        "prompt_version": "2026-09-19-v45",
+        "recorded_at": "2026-09-24T13:44:36.667398Z"
+      }
+    },
+    {
+      "turn_id": "t4-replan",
+      "user_message": "[re-plan approved; the message text is not exposed by the admin API]",
+      "engine": "recorded",
+      "recorded": {
+        "plan_after": {
+          "clips": [
+            {
+              "clip_id": "C2DC7139",
+              "start_s": 0.0,
+              "end_s": 1.1
+            },
+            {
+              "clip_id": "C16175FA",
+              "start_s": 1.1,
+              "end_s": 2.2
+            },
+            {
+              "clip_id": "A45CC3D7",
+              "start_s": 2.2,
+              "end_s": 3.3
+            },
+            {
+              "clip_id": "DF575ECA",
+              "start_s": 3.3,
+              "end_s": 4.4
+            },
+            {
+              "clip_id": "44C7A897",
+              "start_s": 4.4,
+              "end_s": 5.5
+            },
+            {
+              "clip_id": "68785DA1",
+              "start_s": 5.5,
+              "end_s": 6.9
+            },
+            {
+              "clip_id": "5DE280D6",
+              "start_s": 6.9,
+              "end_s": 8.3
+            },
+            {
+              "clip_id": "976434A9",
+              "start_s": 8.3,
+              "end_s": 9.7
+            },
+            {
+              "clip_id": "3EF8F2C3",
+              "start_s": 9.7,
+              "end_s": 11.067
+            },
+            {
+              "clip_id": "09177B10",
+              "start_s": 11.067,
+              "end_s": 13.133
+            },
+            {
+              "clip_id": "8471A428",
+              "start_s": 13.133,
+              "end_s": 15.0
+            }
+          ],
+          "texts": [
+            {
+              "id": "guided-title",
+              "role": "title",
+              "text": "Istanbul Fast Montage",
+              "start_s": 0.0,
+              "end_s": 2.2,
+              "font_family": "Fraunces"
+            }
+          ],
+          "total_duration_s": 16.6
+        },
+        "reply": null
+      }
+    },
+    {
+      "turn_id": "t5-brief-again",
+      "user_message": "This was a 20k run I completed today. Do an edit highlighting the landmarks and locations of each spot. Do it fast paced but leave enough time for the users to read where it was from. I ran from Arnavutkoy to Eminonu",
+      "engine": "v1_copilot",
+      "copilot": {
+        "agent_input": {
+          "utterance": "This was a 20k run I completed today. Do an edit highlighting the landmarks and locations of each spot. Do it fast paced but leave enough time for the users to read where it was from. I ran from Arnavutkoy to Eminonu",
+          "prior_turns": [],
+          "variant_snapshot": {
+            "slots": [],
+            "text_bars": [
+              {
+                "id": "guided-title",
+                "role": "generative_intro",
+                "text": "Istanbul Fast Montage",
+                "color": "#FFF8F0",
+                "end_s": 2.2,
+                "effect": "static",
+                "x_frac": 0.5,
+                "y_frac": 0.16,
+                "size_px": 92.0,
+                "start_s": 0.0,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "Fraunces",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              }
+            ],
+            "source_pool": [
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "0",
+                "clip_index": 0,
+                "duration_s": null,
+                "generation": "72046b2c5985"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "1",
+                "clip_index": 1,
+                "duration_s": null,
+                "generation": "28d5725276cd"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "2",
+                "clip_index": 2,
+                "duration_s": null,
+                "generation": "2fefde55eca8"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "3",
+                "clip_index": 3,
+                "duration_s": null,
+                "generation": "614eaa6b160c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "4",
+                "clip_index": 4,
+                "duration_s": null,
+                "generation": "4a728df2777c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "5",
+                "clip_index": 5,
+                "duration_s": null,
+                "generation": "6c865363a667"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "6",
+                "clip_index": 6,
+                "duration_s": null,
+                "generation": "2433318cb11a"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "7",
+                "clip_index": 7,
+                "duration_s": null,
+                "generation": "0cd9c49acd99"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "8",
+                "clip_index": 8,
+                "duration_s": null,
+                "generation": "3c784ce2845d"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "9",
+                "clip_index": 9,
+                "duration_s": null,
+                "generation": "dae8146cfd5c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "10",
+                "clip_index": 10,
+                "duration_s": null,
+                "generation": "561600ac2595"
+              }
+            ],
+            "editor_limits": {
+              "max_timeline_slots": 120
+            },
+            "max_duration_s": 120,
+            "base_generation": "2c6f41e4-fefe-46a8-8528-c63681e769f4",
+            "guided_revision": {
+              "state_hash": "ff24384d4e73709cf03592e98c1a2b03bfa263dbd73e84718bcdb16ef086b3b9",
+              "base_generation": "2c6f41e4-fefe-46a8-8528-c63681e769f4",
+              "revision_number": 1
+            },
+            "text_appearance": {
+              "targets": [
+                {
+                  "id": "guided-title",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "423852e0a0f25b0f",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                }
+              ],
+              "version": 1,
+              "caption_cues_editable": false
+            },
+            "total_duration_s": 16.6,
+            "allowed_op_families": [
+              "clip",
+              "text",
+              "title",
+              "transition"
+            ],
+            "remaining_duration_s": 103.4,
+            "has_narrated_captions": false,
+            "text_appearance_version": 1
+          }
+        },
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"edit_text\",\n      \"bar_index\": 0,\n      \"text\": \"20k run from arnavutkoy to eminonu\"\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"Updated the main title text to highlight your 20k run route from Arnavutkoy to Eminonu.\",\n  \"suggestions\": [\n    \"Make title font bold\",\n    \"Change title duration\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": []\n}",
+        "prompt_version": "2026-09-19-v45",
+        "recorded_at": "2026-09-24T13:47:22.491190Z"
+      },
+      "addresses": [
+        "labels-per-clip",
+        "route-order",
+        "fast-paced",
+        "time-to-read"
+      ]
+    },
+    {
+      "turn_id": "t6-no-fraunces",
+      "user_message": "Never use fraunces again in my edits",
+      "engine": "v1_copilot",
+      "copilot": {
+        "agent_input": {
+          "utterance": "Never use fraunces again in my edits",
+          "prior_turns": [],
+          "variant_snapshot": {
+            "slots": [],
+            "text_bars": [
+              {
+                "id": "guided-title",
+                "role": "generative_intro",
+                "text": "20k run from arnavutkoy to eminonu",
+                "color": "#FFF8F0",
+                "end_s": 2.2,
+                "effect": "static",
+                "x_frac": 0.5,
+                "y_frac": 0.16,
+                "size_px": 92.0,
+                "start_s": 0.0,
+                "position": "custom",
+                "alignment": "center",
+                "font_family": "Fraunces",
+                "rotation_deg": null,
+                "stroke_width": 0.0,
+                "shadow_enabled": true,
+                "highlight_color": "#D9FF70"
+              }
+            ],
+            "source_pool": [
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "0",
+                "clip_index": 0,
+                "duration_s": null,
+                "generation": "72046b2c5985"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "1",
+                "clip_index": 1,
+                "duration_s": null,
+                "generation": "28d5725276cd"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "2",
+                "clip_index": 2,
+                "duration_s": null,
+                "generation": "2fefde55eca8"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "3",
+                "clip_index": 3,
+                "duration_s": null,
+                "generation": "614eaa6b160c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "4",
+                "clip_index": 4,
+                "duration_s": null,
+                "generation": "4a728df2777c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "5",
+                "clip_index": 5,
+                "duration_s": null,
+                "generation": "6c865363a667"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "6",
+                "clip_index": 6,
+                "duration_s": null,
+                "generation": "2433318cb11a"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "7",
+                "clip_index": 7,
+                "duration_s": null,
+                "generation": "0cd9c49acd99"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "8",
+                "clip_index": 8,
+                "duration_s": null,
+                "generation": "3c784ce2845d"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "9",
+                "clip_index": 9,
+                "duration_s": null,
+                "generation": "dae8146cfd5c"
+              },
+              {
+                "kind": "video",
+                "used": false,
+                "ready": true,
+                "media_id": "10",
+                "clip_index": 10,
+                "duration_s": null,
+                "generation": "561600ac2595"
+              }
+            ],
+            "editor_limits": {
+              "max_timeline_slots": 120
+            },
+            "max_duration_s": 120,
+            "base_generation": "f7e07142-2dcd-42fd-a965-542a0e35156b",
+            "guided_revision": {
+              "state_hash": "8b98a44fcc6345c2485c67bf234aa342b1142ee455581305471240c35fd85d70",
+              "base_generation": "f7e07142-2dcd-42fd-a965-542a0e35156b",
+              "revision_number": 2
+            },
+            "text_appearance": {
+              "targets": [
+                {
+                  "id": "guided-title",
+                  "kind": "text",
+                  "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": true
+                  },
+                  "identity": "5c21c59b3122d55a",
+                  "supported_fields": [
+                    "stroke_width",
+                    "shadow_enabled"
+                  ]
+                }
+              ],
+              "version": 1,
+              "caption_cues_editable": false
+            },
+            "total_duration_s": 16.6,
+            "allowed_op_families": [
+              "clip",
+              "text",
+              "title",
+              "transition"
+            ],
+            "remaining_duration_s": 103.4,
+            "has_narrated_captions": false,
+            "text_appearance_version": 1
+          }
+        },
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_text_style\",\n      \"bar_index\": 0,\n      \"patch\": {\n        \"font_family\": \"Inter\"\n      }\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"Switched text bar 0 from Fraunces to Inter.\",\n  \"suggestions\": [\n    \"Change font to Playfair Display\",\n    \"Change font to TikTok Sans\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": []\n}",
+        "prompt_version": "2026-09-19-v45",
+        "recorded_at": "2026-09-24T14:46:42.773446Z"
+      }
+    }
+  ],
+  "requirements": [
+    {
+      "id": "facts-in-edit",
+      "kind": "text",
+      "scope": "global",
+      "request_type": "creator_facts",
+      "checker": "text_contains",
+      "params": {
+        "terms": [
+          "20k",
+          "Arnavutköy",
+          "Eminönü"
+        ],
+        "scope": "any"
+      },
+      "source": "This was a 20k run ... I ran from Arnavutkoy to Eminonu",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "labels-per-clip",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_described",
+      "checker": "label_coverage",
+      "params": {
+        "min_frac": 1.0
+      },
+      "source": "Do an edit highlighting the landmarks and locations of each spot.",
+      "introduced_in_turn": 1,
+      "claim_terms": [
+        "everything else is unchanged"
+      ]
+    },
+    {
+      "id": "route-order",
+      "kind": "order",
+      "scope": "global",
+      "request_type": "order_route",
+      "checker": "order_by_key",
+      "params": {
+        "key": "route_rank"
+      },
+      "source": "I ran from Arnavutkoy to Eminonu (clips follow the route)",
+      "introduced_in_turn": 1,
+      "claim_terms": [
+        "everything else is unchanged"
+      ]
+    },
+    {
+      "id": "fast-paced",
+      "kind": "timing",
+      "scope": "global",
+      "request_type": "pacing",
+      "checker": "pacing_max_avg_clip",
+      "params": {
+        "max_avg_clip_s": 2.5
+      },
+      "source": "Do it fast paced",
+      "introduced_in_turn": 1,
+      "claim_terms": [
+        "everything else is unchanged"
+      ]
+    },
+    {
+      "id": "time-to-read",
+      "kind": "timing",
+      "scope": "per_clip",
+      "request_type": "readability",
+      "checker": "readability",
+      "params": {},
+      "source": "leave enough time for the users to read where it was from",
+      "introduced_in_turn": 1,
+      "claim_terms": [
+        "everything else is unchanged"
+      ]
+    },
+    {
+      "id": "redo-from-prompt",
+      "kind": "select",
+      "scope": "global",
+      "request_type": "restructure",
+      "checker": "restructure_changed",
+      "params": {},
+      "source": "Create the video again based on my prompt",
+      "introduced_in_turn": 2
+    },
+    {
+      "id": "keep-15s",
+      "kind": "timing",
+      "scope": "global",
+      "request_type": "duration",
+      "checker": "duration_within",
+      "params": {
+        "target_s": 15.0,
+        "tol_frac": 0.1
+      },
+      "source": "Keep 15 seconds",
+      "introduced_in_turn": 3
+    },
+    {
+      "id": "use-every-clip",
+      "kind": "select",
+      "scope": "global",
+      "request_type": "selection",
+      "checker": "select_include",
+      "params": {
+        "all": true
+      },
+      "source": "include everything",
+      "introduced_in_turn": 3
+    },
+    {
+      "id": "no-fraunces",
+      "kind": "style",
+      "scope": "global",
+      "request_type": "style",
+      "checker": "font_forbidden",
+      "params": {
+        "fonts": [
+          "Fraunces"
+        ]
+      },
+      "source": "Never use fraunces again in my edits",
+      "introduced_in_turn": 6
+    }
+  ],
+  "baseline": {
+    "facts-in-edit": "met",
+    "labels-per-clip": "unmet",
+    "route-order": "unmet",
+    "fast-paced": "met",
+    "time-to-read": "unmet",
+    "redo-from-prompt": "unmet",
+    "keep-15s": "partial",
+    "use-every-clip": "met",
+    "no-fraunces": "met"
+  }
+}

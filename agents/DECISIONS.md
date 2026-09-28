@@ -2491,3 +2491,124 @@ that doesn't touch git, so nothing forced fly.toml to be revisited when prod's r
 changed. There's no automated check tying `min_machines_running` to the live scale count;
 that drift is now findable only by reading this entry or noticing another `[[services]]`
 comment says "single-replica" while `fly scale show` says otherwise.
+
+## [2026-09-24] CLAUDE.md flag detail moved out to stay under the 38k budget (KRI-185)
+
+CLAUDE.md hit 38,000/38,000 chars while KRI-185 lanes each needed a flag line. The eight longest env-var lines were shortened to invariants + guard names; their full original text is preserved verbatim below.
+
+- `EDITORIAL_SEQUENCE_ENABLED` — defaults to `true`. Editorial (cluster) variants with audible, coherent original speech render the transcript-synced typographic sequence (`phrase_sequence.py` + `SequenceEmphasisAgent` + `EDITORIAL_STYLE`); otherwise RHYTHM MODE paces an agent-authored quote (`SequenceQuoteWriterAgent`; agent failure ⇒ static cluster, never heuristic). `false` ⇒ legacy single static cluster, byte-identical. Guards: `tests/tasks/test_generative_build_sequence.py`. Apply: `fly secrets set EDITORIAL_SEQUENCE_ENABLED=false --app nova-video` + `fly machine restart <id>`.
+
+- `SOUND_EFFECTS_ENABLED` / `MEDIA_OVERLAYS_ENABLED` — both default **`false`**. Gate the SFX-lane and overlay-lane write/render routes in `routes/plan_items.py` (404 when off); public `GET /sound-effects` stays ungated (picker loads). Caption archetypes (subtitled/narrated) carry both lanes; every caption reburn re-applies persisted lanes (`docs/pipelines/generative.md`). **Dual-flag trap:** frontend lanes use the `NEXT_PUBLIC_` twins (Vercel); frontend on + backend off ⇒ saves 404. Keep Fly + Vercel in sync. Apply: `fly secrets set SOUND_EFFECTS_ENABLED=true --app nova-video` + `fly machine restart <id>` (api + worker).
+
+- `FULLSCREEN_CUTAWAYS_ENABLED` — defaults **`false`**. Gates the AI fullscreen branch (`build_suggestions` slot `"full"` → `display_mode="fullscreen"` cover-crop takeover). Dual-flag with `NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED` (Vercel; gates the MANUAL promote affordances): **Fly first, then Vercel** — new web + OLD api silently bakes manual fullscreen as pip. Render rollback = `MEDIA_OVERLAYS_ENABLED`. Guards: `tests/test_overlay_fullscreen_rules.py`, dual preset pins in `tests/test_media_overlay_command.py`. Narrative: agents/DECISIONS.md "Kill-switch incidents"; plans/009.
+
+- `SUBTITLED_TEXT_LANE_ENABLED` — defaults **`false`**. Styled-text lane on subtitled variants: text burns (Skia) onto the caption-free base FIRST, captions LAST via `_compose_subtitled_final`; every fast-reburn mints a NEW GCS key + deletes the old (CDN staleness). Dual-flag with `NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED` (Vercel). Fly first, then Vercel. Apply: `fly secrets set SUBTITLED_TEXT_LANE_ENABLED=true --app nova-video` + `fly machine restart <id>` (api + worker). Internals: `docs/pipelines/generative.md`.
+
+- `SUBTITLED_ARCHETYPE_ENABLED` — **ON in prod** (code default `false`). Gates the subtitled single-clip edit style (talk-to-camera clip → auto-language captions, editable, sentence-per-cue; TR/EN). Off ⇒ montage. Dual-flag with `NEXT_PUBLIC_SUBTITLED_ENABLED` (Vercel, also ON) — build-time inlined, so a change needs a `vercel --prod` rebuild. Companions: `SUBTITLED_CAPTION_CORRECTION_ENABLED` (default `true`) + `CAPTION_CORRECTION_MODEL` (default `gpt-4o`). Rollback: `fly secrets set SUBTITLED_ARCHETYPE_ENABLED=false` (api + worker) + `vercel env rm NEXT_PUBLIC_SUBTITLED_ENABLED production` + `vercel --prod`.
+
+- `NARRATED_SELF_NARRATION_ENABLED` — defaults **`false`**. Narrated items generate WITHOUT a recorded voiceover when the footage's own audio carries the voice: 1 clip → `subtitled` (captions), 2+ → `talking_head` (speech spine); no speech → montage + reason persisted on `assembly_plan["archetype_fallback"]` (item-page banner). SOLE gate — deliberately bypasses the two archetype flags above. Dual-flag `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED` (Vercel); flip Fly first. Voiceover, when recorded, still wins (narrated archetype unchanged). Guards: flag-off pins in `tests/tasks/test_generative_dispatch.py`.
+
+- `POSTER_ONDEMAND_REPAIR_ENABLED` / `POSTER_REPAIR_QUEUE` — default **`false`** / `celery`. `POST /me/jobs/posters/refresh` stops being a pure re-signer and enqueues `tasks.repair_job_poster` (`app/tasks/poster_repair.py`) to mint a missing library poster; off is byte-identical. **Set the queue FIRST** — the task downloads a full MP4 + runs ffmpeg, so prod needs `autoplace-jobs` (2GB), never the 1GB `light`/Beat machine. Guards: `tests/tasks/test_poster_repair.py`, `tests/routes/test_me_jobs.py`. Narrative + apply order: agents/DECISIONS.md "Storage retention incidents".
+
+- `SILENCE_CUT_ENABLED` / `RETAKE_CUT_ENABLED` — default `false`; speech paths only, fail-open. Removal-cap lever `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED` (default `1.0`) + `DETECTOR_VERSION` are in the policy fingerprint — a flip retires analyses, re-consents, reshuffles cohorts. **"cleanup cut a word" is a guard bug, not this lever** — use the kill switch. Full narrative + triage: `docs/runbooks/chat-speech-cleanup-rollout.md`. Pins `test_silence_cut*.py` (`TestRuleZeroCannotCutRealSpeech`); plans/010/019/021.
+
+## [2026-09-24] One montage plan: phone montage compiles through the guided fast-montage format (KRI-190)
+
+Context. A v2 phone approval reaches the worker with no `guided_edit`, so the plain
+phone-montage lane ran. It rejected every portrait-canvas job at the item's default
+`landscape_fit="fit"` (job 94c4c865, `phone_plan_unsupported`), ignored the brief, and
+could not take a chat text edit.
+
+Decision. Behind `MONTAGE_UNIFIED_PLAN_ENABLED`, build the guided plan in the worker
+deterministically (`app/pipeline/unified_montage.py`) and reuse `_run_phone_guided_job`,
+instead of running the item-locked `draft_edit_proposal` Celery flow (LLM planner,
+async approval, second Job mint) inside the render worker. The planner reuses
+`FastMontageCut`, `EditProposalSnapshot`, the strict compiler and the P3 capture
+ordering; the new logic is only order/label/reading-time/title. Per-clip text is a new
+snapshot field (`clip_labels`) rather than `montage_text_bindings` because bindings cap
+at 12 sources, are suppressed by an opening title, and `shot_labels` are ignored for
+fast montage.
+
+Consequences. Readable text beats a requested length; an ungrounded label is dropped
+and the receipt says partial. A montage with nothing to title with is titled with the
+`Montage` (never a model-authored hook, never unrequested place text). The unified
+`guided_edit` carries no minted `generation_attempt_id`: a v2 session that dispatched
+without a proposal has none, and the render projection drops a job whose attempt id
+differs. Deliberate deviation from the wave-2 amendment: the planner is a new
+deterministic one rather than `draft_edit_proposal` (item-locked, async Celery flow).
+Behaviour change vs the plain lane: no matched music bed, beat-snap or hero intro; the
+render keeps source audio only. Fraunces lacks
+"→", so the planner selects a font that covers every string. Old lane deletion is a
+follow-up after a device visual comparison.
+
+## [2026-09-25] Draft-time receipts defer to the unified montage planner; a country alone is not a place (KRI-190)
+
+Context. The first simulator and phone runs of the unified montage both rendered well, but the
+chat showed "Not everything you asked for made it in: Couldn't: the name of the place as text
+(None of the 14 clips got its own text in this draft)" before the render, and it stayed on
+screen after the video had 14 labels. The strategy draft is checked by
+`plan_facts_from_strategy`, which has no per-clip text, order or timing, because the unified
+planner writes those at render time. The render's own `assistant_review` already carries the
+true receipts and the "I guessed these, tell me if any is wrong" list. Separately, two clips were
+captioned "Türkiye": a geocode that found nothing finer than the country became a place fact.
+
+Decision. (1) `requirements_to_check_at_draft` leaves `text`, `order` and `timing` out of the
+draft-time check when the render will go through the unified planner, so the draft reply is the
+plain summary. The test (`defers_to_unified_montage`) mirrors the worker's fork, not the item
+row: some clip is a phone analysis proxy, the account is enrolled, `montage_unified_plan_for`,
+a montage-family format, and `audio_strategy` is `original_audio` or `licensed_music`
+(approval sends anything else down the voiceover lane, which builds no render receipts, so it
+must still be judged at draft time; an absent strategy also is). `audio`/`style`/`select` are
+still judged at draft time and every flag-off path is unchanged. (2) `capture_facts` no longer
+emits a place fact for a country alone (no `sub_locality` and no `locality`). It is decided
+there, where the parts are still separate, so a city-state whose locality shares its country's
+name ("Singapore") keeps its label; the planner's `_place_label` is unchanged.
+
+Consequences. The only receipts the creator sees for a unified montage are the render's. A clip
+whose only place was a country now goes through the existing unlabelled-clip handling (dropped,
+receipt says partial). Facts already stored on earlier threads still hold the country-only place
+until those clips are re-attached. If the render's brief version changes after planning, its
+receipts are discarded (`_unified_montage_review`), which now leaves nothing at all for the
+deferred kinds; that needs a brief update between plan and review and is rare.
+
+## [2026-09-25] Speech cleanup's phone gate narrows to apply-only (KRI-205)
+
+Context. Talking-to-camera (`subtitled`/`talking_head`) never showed the speech cleanup
+question or check on iPhone. `preflight_enabled_for_source` (KRI-118 L1 item 1) refused to
+even schedule a `SpeechCleanupAnalysis` whenever the resolved narration source's storage path
+was a phone `analysis-proxy-*` object, on the premise that "speech cleanup needs the real
+audio, and a phone project never uploads it." That premise only ever held for *applying* a
+cut: the detector (`analyze_speech_cleanup`) reads nothing but a downmixed 16kHz mono WAV, and
+an iOS analysis-proxy's audio track is already a faithful, full-duration copy of the original
+(`MediaSourceContract.analysisProxy` rejects a duration/audio-presence mismatch before upload;
+`_run_phone_subtitled_job` already trusts this exact file for word-level Whisper caption
+transcription in production). So the one iOS journey whose narration source is always an
+embedded, phone-proxied clip — Talking-to-camera — could never enter the cohort, while a
+Narrated item with a fully-uploaded recorded voiceover could.
+
+Decision. `preflight_enabled_for_source` no longer takes a `storage_path`/no longer branches on
+source type at all — a phone source is scheduled, projected as `applicable`, and enforced on
+generate exactly like a cloud one. The other half of KRI-118 is untouched and now carries the
+whole invariant on its own: `content_plan_build._speech_cleanup_dispatch_snapshot` still refuses
+`choice == "clean"` outright whenever the active source is an analysis proxy, because applying a
+cut on an embedded-spine source means re-encoding real video frames
+(`generative_build.py`'s `reframe_and_export` cut path), and a phone-rendered project never
+uploads the full-resolution video — only its audio, via the proxy. That refusal is no longer a
+defense against a stale/forged request; it is the first-class, expected outcome the very first
+time a phone Talking-to-camera creator taps "Clean up speech and create". Both clients already
+had a graceful path for it before this shipped: iOS's `nonRetryablePhoneGateErrorCodes` already
+listed `speech_cleanup_unavailable_on_phone` and renders the server's own sentence instead of a
+generic error, and web's generic mutation-failure copy ("I couldn't start that video. Your
+project and speech choice are safe—try again.") is safe, non-crashy, and leaves the decision
+card's "Keep original speech" option live to retry with. Neither needed a code change.
+
+Consequences. A phone Talking-to-camera creator now sees real findings and can pick "Keep
+original speech" to proceed, or "Clean up speech" to learn (via the existing message) that it
+can't run on iPhone yet and fall back to the same card. No cut is ever actually applied for a
+phone-sourced item — that remains a real, separate gap: applying one would need either a new
+on-device frame-accurate trim in `KriaMediaEngine` (there is none today) or uploading the
+full-resolution video, which would break the "phone renders stay on device" rule this project
+already treats as non-negotiable. That's tracked as a distinct follow-up, not attempted here.
+Self-narration phone journeys (narrated format, no separate voiceover, multi-clip embedded
+audio) go through the identical `embedded_spine` path and get the same benefit/limit, though
+KRI-205 was reported specifically for Talking-to-camera.

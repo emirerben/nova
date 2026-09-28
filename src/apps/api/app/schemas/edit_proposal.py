@@ -177,6 +177,24 @@ class MontageTextBinding(BaseModel):
     text: str = Field(min_length=1, max_length=120)
 
 
+# KRI-190: per-clip text on a fast montage. One label per source clip, shown
+# for the whole of that clip's cut (which is at least ``min_display_s`` long
+# whenever the source is). Only ever grounded text: a clip with no fact and no
+# creator words simply has no entry, and the receipt says so.
+ClipLabelProvenance = Literal["creator", "brief", "fact"]
+
+
+class ClipLabel(BaseModel):
+    media_id: str = Field(min_length=1, max_length=100)
+    text: str = Field(min_length=1, max_length=120)
+    provenance: ClipLabelProvenance
+    # Which fact kind grounded it ("landmark", "place", ...) when provenance is
+    # "fact"; a landmark is a model guess and must stay correctable.
+    fact_kind: str | None = Field(default=None, max_length=40)
+    inferred: bool = False
+    min_display_s: float = Field(gt=0, le=10)
+
+
 class MontageAudioPlan(BaseModel):
     """Generic audio intent for a source-aware montage timeline."""
 
@@ -972,6 +990,14 @@ class EditProposalSnapshot(BaseModel):
     fast_cuts: list[FastMontageCut] | None = Field(default=None, min_length=1, max_length=80)
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_text_bindings: list[MontageTextBinding] = Field(default_factory=list, max_length=12)
+    # KRI-190: per-clip text lane of a fast montage. None (every snapshot before
+    # this field existed) is omitted, so stored snapshots and approval hashes
+    # stay byte-identical.
+    clip_labels: list[ClipLabel] | None = Field(
+        default=None,
+        max_length=MAX_EDIT_PROPOSAL_MEDIA,
+        exclude_if=lambda value: value is None,
+    )
     montage_audio: MontageAudioPlan | None = None
     video_reuse_policy: VideoReusePolicy | None = Field(
         default=None,
@@ -1153,6 +1179,14 @@ class EditProposalSnapshot(BaseModel):
             raise ValueError("montage text bindings must use unique source IDs")
         if not set(text_ids) <= known:
             raise ValueError("montage text binding references unknown media")
+        if self.clip_labels is not None:
+            if self.direction != "fast_montage" or not self.fast_cuts:
+                raise ValueError("clip labels are only valid for fast montage cuts")
+            label_ids = [label.media_id for label in self.clip_labels]
+            if len(label_ids) != len(set(label_ids)):
+                raise ValueError("clip labels must use unique source IDs")
+            if not set(label_ids) <= known:
+                raise ValueError("clip label references unknown media")
         if self.montage_audio is not None:
             audio_ids = set(self.montage_audio.source_media_ids)
             if not audio_ids <= known:
@@ -1498,6 +1532,11 @@ class EditProposal(BaseModel):
     planner_fallback: ProposalPlannerFallback | None = None
     # Private pre-render diagnostics, separate from the immutable approval.
     planning_diagnostics: dict | None = Field(default=None, exclude_if=lambda value: value is None)
+    # KRI-189: how the draft's clip order was decided when capture time was used or
+    # unavailable: {"ordering_basis": "capture_time"|"attachment",
+    # "ordering_fallback_clip_ids": [media ids ordered by upload position]}. Plan
+    # receipts read it; absent unless CLIP_FACTS ordering ran.
+    ordering: dict | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class MediaRefResponse(MediaRef):

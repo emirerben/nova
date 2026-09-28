@@ -2,6 +2,156 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.0.0] - 2026-09-28
+
+### Added
+- feat(web): launch video-led Kria landing hero (#1262) <!-- release-pr: 1262 -->
+
+## [0.76.232.0] - 2026-09-28
+
+### Changed
+- feat(ios): ask the speech-cleanup question on the runtime-v2 approval card (#1261) <!-- release-pr: 1261 -->
+
+## [0.76.231.0] - 2026-09-28
+
+### Changed
+- fix(kria): ask the speech-cleanup question in runtime v2 and apply it on the phone (#1260) <!-- release-pr: 1260 -->
+
+## [0.76.230.0] - 2026-09-25
+
+### Changed
+- feat(ios): list every on-screen text block in the editor's Text tab (KRI-185) (#1250) <!-- release-pr: 1250 -->
+
+## [0.76.229.0] - 2026-09-25
+
+### Changed
+- fix(speech-cleanup): show cleanup question for Talking-to-camera on phone (KRI-205) (#1253) <!-- release-pr: 1253 -->
+
+## [0.76.228.0] - 2026-09-25
+
+### Changed
+- fix(ios): clamp overlapping caption_cues before burning captions (KRI-202) (#1252) <!-- release-pr: 1252 -->
+
+## [0.76.227.0] - 2026-09-25
+
+### Changed
+- fix(web): make guided-story captions reachable in the Captions drawer (KRI-201) (#1251) <!-- release-pr: 1251 -->
+
+## [0.76.226.0] - 2026-09-25
+
+### Changed
+- fix(kria): verify reaction beats and whole-take asks in brief receipts (#1249) <!-- release-pr: 1249 -->
+
+## [0.76.225.0] - 2026-09-25
+
+### Changed
+- fix(ios): editor play never silently does nothing when the player item fails (KRI-200) (#1248) <!-- release-pr: 1248 -->
+
+## [0.76.224.0] - 2026-09-25
+
+### Fixed
+- fix(ios): burn Talking captions once, not as cue and mirrored text element (#1245) <!-- release-pr: 1245 -->
+
+## [0.76.223.0] - 2026-09-25
+
+### Changed
+- fix(montage): defer draft-time receipts to the unified planner; a country alone is not a place (KRI-190) (#1247) <!-- release-pr: 1247 -->
+
+## [0.76.222.0] - 2026-09-25
+
+### Changed
+- fix(phone): snap float-noise text overshoot so unified montage recipes validate (KRI-190) (#1246) <!-- release-pr: 1246 -->
+
+## [0.76.221.0] - 2026-09-25
+
+### Changed
+- chore(tests): prune low-signal unit tests + add testing rules (KRI-198) (#1232) <!-- release-pr: 1232 -->
+
+## [0.76.220.0] - 2026-09-25
+
+### Changed
+- feat(kria): one montage plan, guided fast montage with per-clip text (KRI-190) (#1236) <!-- release-pr: 1236 -->
+
+## [0.76.219.0] - 2026-09-25
+
+### Changed
+- feat(admin): creation-thread events/turns routes + thread_id on job/item debug (KRI-185) (#1233) <!-- release-pr: 1233 -->
+
+## [0.76.218.0] - 2026-09-24
+
+### Fixed
+- fix(kria): give a runtime-v2 thread's session the plan's ownership epoch (#1244) <!-- release-pr: 1244 -->
+
+## [0.76.217.0] - 2026-09-24
+
+### Changed
+- test(ios): smoke drawer-close check no longer times out mid-query (#1242) <!-- release-pr: 1242 -->
+
+## [0.76.216.0] - 2026-09-24
+
+### Fixed
+- fix(kria): fail a runtime-v2 turn after three abandoned runs (re-land of #1241) (#1243) <!-- release-pr: 1243 -->
+
+## [0.76.215.0] - 2026-09-24
+
+### Fixed
+- fix(kria): fix the two causes of "I couldn't finish that step" on runtime-v2 turns (#1238) <!-- release-pr: 1238 -->
+
+## [0.76.214.0] - 2026-09-24
+
+### Changed
+- perf(ios-ci): shard editor-touching PR UI runs across two legs (KRI-168) (#1237) <!-- release-pr: 1237 -->
+
+## [0.76.213.0] - 2026-09-24
+
+### Changed
+- fix(deps): pin SQLAlchemy below 2.1 so fresh installs keep psycopg2 (#1239) <!-- release-pr: 1239 -->
+
+## [0.76.212.0] - 2026-09-24
+
+### Fixed
+- fix(web): keep far-future Undo receipts from expiring after 1 ms (#1240) <!-- release-pr: 1240 -->
+
+## [0.76.211.0] - 2026-09-24
+
+### Changed
+- fix(ios): editor preview never plays cards over an empty video track (#1235) <!-- release-pr: 1235 -->
+
+## [0.76.210.0] - 2026-09-24
+
+### Changed
+- fix(phone): Talking editor keeps real SFX paths and rolls back to the MP4 (#1234) <!-- release-pr: 1234 -->
+
+## [0.76.209.0] - 2026-09-24
+
+### Changed
+- fix(ios): phone Talking edits preview their video instead of a black canvas (#1226) <!-- release-pr: 1226 -->
+
+## [0.76.208.0] - 2026-09-24
+
+### Changed
+- docs: free CLAUDE.md budget for KRI-185 waves 2-3 (36,198/38,000) (#1231) <!-- release-pr: 1231 -->
+
+## [0.76.207.0] - 2026-09-24
+
+### Changed
+- test(evals): request-following eval harness + East Run baseline (KRI-192) (#1229) <!-- release-pr: 1229 -->
+
+## [0.76.206.0] - 2026-09-24
+
+### Changed
+- feat(clip-facts): capture time, place and best-guess landmark per clip, with provenance (KRI-189) (#1225) <!-- release-pr: 1225 -->
+
+## [0.76.205.0] - 2026-09-24
+
+### Changed
+- fix(api): proxy-aware rate-limit key by default behind Fly (KRI-195) (#1227) <!-- release-pr: 1227 -->
+
+## [0.76.204.0] - 2026-09-24
+
+### Changed
+- fix(uploads): log rejection reasons and surface attach/PUT failures per clip (KRI-194) (#1223) <!-- release-pr: 1223 -->
+
 ## [0.76.203.0] - 2026-09-24
 
 ### Changed

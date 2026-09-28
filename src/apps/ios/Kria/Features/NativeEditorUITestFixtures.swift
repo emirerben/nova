@@ -16,6 +16,7 @@ enum NativeEditorUITestFixtures {
         case stress = "stress-71"
         case unknown = "unknown-sections"
         case autoScrollExtend = "autoscroll-extend"
+        case guidedText = "guided-text"
     }
 
     struct Fixture: Sendable {
@@ -44,6 +45,7 @@ enum NativeEditorUITestFixtures {
         case .stress: stress
         case .unknown: unknownSections
         case .autoScrollExtend: autoScrollExtend
+        case .guidedText: guidedText
         }
     }
 
@@ -108,6 +110,36 @@ enum NativeEditorUITestFixtures {
                             textRecord(second, start: 1.5, end: 3, z: 1),
                         ]),
                      ])
+    }()
+
+    /// A unified montage's text lane (KRI-185): the title and a label per clip, plus
+    /// a caption, a removed label and the creator's own text. The Text tab lists
+    /// the title, both labels and the creator's text, in that order.
+    static let guidedText: EditorDraft = {
+        let clips = [clip(4, start: 0, duration: 2), clip(5, start: 2, duration: 2)]
+        func record(_ id: String, _ text: String, _ start: Double, _ end: Double, y: Double,
+                    extra: [String: JSONValue] = [:]) -> JSONValue {
+            var value: [String: JSONValue] = [
+                "id": .string(id), "text": .string(text), "start_s": .number(start), "end_s": .number(end),
+                "x_frac": .number(0.5), "y_frac": .number(y), "font_family": .string("Inter"),
+                "size_px": .number(58), "z": .number(1),
+            ]
+            value.merge(extra) { _, new in new }
+            return .object(value)
+        }
+        return draft(clips: clips, text: [], captions: false, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "text_elements": .array([
+                record("clip-label-unified-cut-2", "Dolmabahçe Palace", 2, 4, y: 0.78),
+                record("clip-label-unified-cut-1", "Galata Tower", 0, 2, y: 0.78),
+                record("guided-title", "20K Run · Arnavutkoy → Eminonu", 0, 2.2, y: 0.16),
+                record("creator-note", "My note", 1, 3, y: 0.5),
+                record("caption-1", "Spoken words", 0.5, 1.5, y: 0.85,
+                       extra: ["source_params": .object(["source": .string("caption_cue")])]),
+                record("clip-label-unified-cut-3", "Removed label", 3, 4, y: 0.78,
+                       extra: ["removed": .bool(true)]),
+            ]),
+        ], rootExtras: ["editor_capabilities": .object(["text_elements": .bool(true), "timeline": .bool(true)])])
     }()
 
     static let boundary: EditorDraft = {

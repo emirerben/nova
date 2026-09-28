@@ -62,7 +62,7 @@ timed() {
 
 run_ui() {
   local groups="$1" arguments label="$1"
-  # KRIA_IOS_UI_SHARD=i/n runs one part of the full suite; ui_tests.py applies
+  # KRIA_IOS_UI_SHARD=i/n runs one part of the selection; ui_tests.py applies
   # it to both the -only-testing filters and the verified coverage.
   [[ -n "${KRIA_IOS_UI_SHARD:-}" ]] && label="$groups, shard $KRIA_IOS_UI_SHARD"
   arguments="$(python3 "$REPO_ROOT/scripts/ios/ui_tests.py" args "$groups")" || return $?
@@ -241,8 +241,9 @@ timed "Simulator wait after compilation" wait "$BOOT_PID"
 trap - EXIT
 
 # Keep UI execution serial: cloned parallel runners can miss drawer controls.
-# Main's extra UI shards still compile every bundle but leave the unit phase to
-# shard 1 on the same commit; the workflow gate requires every shard to pass.
+# Extra UI shards (main, long PR subsets) still compile every bundle but leave
+# the unit phase to shard 1 on the same commit; the workflow gate requires every
+# shard to pass.
 if [[ "$MODE" == "prepare-ui" && "${KRIA_IOS_UNIT_TESTS:-1}" == "0" ]]; then
   echo "Unit execution skipped: another shard runs it for this commit" | tee "$RESULT_DIR/unit.log"
 else

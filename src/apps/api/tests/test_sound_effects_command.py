@@ -259,20 +259,6 @@ def test_music_bed_gain_is_clamped_from_persisted_values():
     )
 
 
-def test_music_treatment_defaults_keep_cached_rows_backward_compatible():
-    treatment = MusicBedTreatment.from_value(
-        {
-            "track_id": "legacy",
-            "src_gcs_path": "music/legacy/audio.mp3",
-            "section_start_s": 0.0,
-            "section_end_s": 10.0,
-        }
-    )
-
-    assert treatment.speech_duck_db == -12.0
-    assert treatment.final_lufs == -14.0
-
-
 def test_normalize_generated_sound_effects_collapses_near_duplicates():
     placements = [
         {

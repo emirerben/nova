@@ -1,0 +1,736 @@
+.page {
+  --life-ink: #0c0c0e;
+  --life-paper: #ffffff;
+  --life-lime: #d7ff90;
+  --life-navy: #00274c;
+  --life-butter: #fff0a6;
+  color: var(--life-ink);
+  background: var(--life-paper);
+}
+
+.heroScroll {
+  position: relative;
+  height: 230svh;
+  background: var(--life-paper);
+}
+
+.hero {
+  position: sticky;
+  top: 0;
+  min-height: min(900px, 100svh);
+  height: 100svh;
+  overflow: hidden;
+  color: var(--life-navy);
+  background: var(--life-paper);
+  isolation: isolate;
+}
+
+.heroActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.primaryAction {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 22px;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--life-navy);
+  background: #ffffff;
+  text-decoration: none;
+  transition:
+    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .primaryAction:hover {
+    opacity: 0.8;
+  }
+}
+
+.primaryAction:focus-visible,
+.playbackControl:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: 3px;
+}
+
+.playbackControl {
+  position: absolute;
+  right: 24px;
+  bottom: 20px;
+  z-index: 4;
+  display: flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  border-radius: 999px;
+  color: #ffffff;
+  background: rgba(0, 20, 40, 0.32);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+}
+
+.playbackControl svg {
+  width: 18px;
+  height: 18px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.videoMorph {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  transform-origin: center;
+  will-change: clip-path, opacity, transform;
+}
+
+.videoMorph::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: rgba(0, 20, 40, 0.18);
+}
+
+.videoMorph .heroVideo {
+  position: static;
+  z-index: auto;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.logoVideoLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  opacity: 0;
+  transform-origin: center;
+  will-change: opacity, transform;
+}
+
+.logoVideoViewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.logoVideo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.wordmark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  width: min(68vw, 74svh, 660px);
+  aspect-ratio: 97.4 / 42.8;
+  height: auto;
+  pointer-events: none;
+  opacity: 1;
+  mix-blend-mode: normal;
+  transform: translate(-50%, -50%);
+  overflow: visible;
+}
+
+.wordmarkLetter {
+  fill: transparent;
+  fill-opacity: 1;
+  stroke: transparent;
+  stroke-width: 16;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 4000;
+  stroke-dashoffset: 4000;
+  paint-order: stroke fill;
+  opacity: 1;
+  animation-duration: 5s;
+  animation-timing-function: linear;
+  animation-iteration-count: 1;
+  animation-fill-mode: both;
+  animation-play-state: paused;
+}
+
+.wordmarkK {
+  animation-name: wordmark-write-k;
+}
+
+.wordmarkR {
+  animation-name: wordmark-write-r;
+}
+
+.wordmarkI {
+  animation-name: wordmark-write-i;
+}
+
+.wordmarkA {
+  animation-name: wordmark-write-a;
+}
+
+.heroPayoff {
+  position: absolute;
+  right: 72px;
+  bottom: 22px;
+  left: 72px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0s linear 360ms;
+}
+
+.heroScroll[data-payoff-visible="true"] .heroPayoff {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+
+.heroScroll[data-timeline-ready="true"][data-playing="true"] .wordmarkLetter {
+  animation-play-state: running;
+}
+
+.heroScroll[data-morphing="true"] .heroPayoff {
+  transition: none;
+}
+
+.productStory {
+  width: min(1440px, calc(100% - 64px));
+  padding: clamp(120px, 13vw, 184px) 0 clamp(132px, 14vw, 200px);
+  margin: 0 auto;
+}
+
+.productStoryHeader {
+  margin: 0 auto clamp(80px, 8vw, 116px);
+  text-align: center;
+}
+
+.productStoryHeader h2 {
+  margin: 0;
+  font-size: clamp(54px, 6vw, 86px);
+  line-height: 0.96;
+  font-weight: 540;
+  letter-spacing: -0.058em;
+  text-wrap: balance;
+}
+
+.journey {
+  display: grid;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.journeyDemo {
+  display: grid;
+  min-height: min(760px, calc(100svh - 64px));
+  grid-template-columns: minmax(260px, 0.34fr) minmax(0, 0.66fr);
+  gap: clamp(52px, 6.5vw, 96px);
+  align-items: center;
+}
+
+.journeyCopyPanel {
+  display: grid;
+  min-height: 360px;
+  align-content: center;
+}
+
+.journeyStep {
+  grid-area: 1 / 1;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 320ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 560ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.journeyStep[data-active="true"] {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.stepNumber {
+  margin: 0 0 22px;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 680;
+  letter-spacing: 0.12em;
+  color: #71717a;
+}
+
+.stepCopy {
+  max-width: 380px;
+}
+
+.stepCopy h3 {
+  margin: 0;
+  font-size: clamp(34px, 3.2vw, 48px);
+  line-height: 1.04;
+  font-weight: 560;
+  letter-spacing: -0.046em;
+  text-wrap: balance;
+}
+
+.stepCopy > p:last-child {
+  margin: 26px 0 0;
+  font-size: 18px;
+  line-height: 1.55;
+  color: #3f3f46;
+}
+
+.productComposition {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  aspect-ratio: 8 / 5;
+  border: 1px solid #e4e4e7;
+  border-radius: 22px;
+  background: #f4f7f8;
+  box-shadow: 0 32px 96px rgb(0 39 76 / 12%);
+}
+
+.productDemoVideo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.demoSpeed {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  padding: 8px 11px;
+  border: 1px solid rgb(255 255 255 / 34%);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 620;
+  letter-spacing: 0.02em;
+  color: #ffffff;
+  background: rgb(0 39 76 / 76%);
+  backdrop-filter: blur(12px);
+}
+
+.demoPlayback {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgb(255 255 255 / 34%);
+  border-radius: 50%;
+  color: #ffffff;
+  background: rgb(0 39 76 / 76%);
+  backdrop-filter: blur(12px);
+}
+
+.demoPlayback:hover {
+  color: #ffffff;
+  background: rgb(0 39 76 / 90%);
+}
+
+.demoPlayback svg {
+  width: 16px;
+  height: 16px;
+}
+
+.journeyProgress {
+  display: flex;
+  gap: 8px;
+  margin-top: 38px;
+}
+
+.journeyProgress span {
+  width: 28px;
+  height: 2px;
+  background: #d4d4d8;
+  transform: scaleX(0.38);
+  transform-origin: left;
+  transition:
+    background-color 240ms ease,
+    transform 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.journeyProgress span[data-active="true"] {
+  background: var(--life-navy);
+  transform: scaleX(1);
+}
+
+.closingSection {
+  display: flex;
+  min-height: 440px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 24px;
+  text-align: center;
+  color: #ffffff;
+  background: var(--life-ink);
+}
+
+.closingMark {
+  width: 52px;
+  color: var(--life-lime);
+}
+
+.closingSection p {
+  max-width: 880px;
+  margin: 28px 0 0;
+  font-size: clamp(42px, 5.5vw, 76px);
+  line-height: 0.98;
+  font-weight: 560;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+
+.footer {
+  display: flex;
+  min-height: 92px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px max(24px, calc((100vw - 1240px) / 2));
+  font-size: 13px;
+  color: #71717a;
+  background: #ffffff;
+}
+
+.footer p {
+  margin: 0;
+}
+
+.footer nav {
+  display: flex;
+  gap: 22px;
+}
+
+.footer a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+
+@keyframes wordmark-write-k {
+  0%,
+  16% {
+    fill: transparent;
+    stroke: transparent;
+    stroke-dashoffset: 4000;
+  }
+  16.01% {
+    stroke: #ffffff;
+  }
+  32% {
+    fill: transparent;
+    stroke: #ffffff;
+    stroke-dashoffset: 0;
+  }
+  36%,
+  100% {
+    fill: #ffffff;
+    stroke: transparent;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes wordmark-write-r {
+  0%,
+  22% {
+    fill: transparent;
+    stroke: transparent;
+    stroke-dashoffset: 4000;
+  }
+  22.01% {
+    stroke: #ffffff;
+  }
+  38% {
+    fill: transparent;
+    stroke: #ffffff;
+    stroke-dashoffset: 0;
+  }
+  42%,
+  100% {
+    fill: #ffffff;
+    stroke: transparent;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes wordmark-write-i {
+  0%,
+  28% {
+    fill: transparent;
+    stroke: transparent;
+    stroke-dashoffset: 4000;
+  }
+  28.01% {
+    stroke: #ffffff;
+  }
+  44% {
+    fill: transparent;
+    stroke: #ffffff;
+    stroke-dashoffset: 0;
+  }
+  48%,
+  100% {
+    fill: #ffffff;
+    stroke: transparent;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes wordmark-write-a {
+  0%,
+  34% {
+    fill: transparent;
+    stroke: transparent;
+    stroke-dashoffset: 4000;
+  }
+  34.01% {
+    stroke: #ffffff;
+  }
+  50% {
+    fill: transparent;
+    stroke: #ffffff;
+    stroke-dashoffset: 0;
+  }
+  54%,
+  100% {
+    fill: #ffffff;
+    stroke: transparent;
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (max-width: 840px) {
+  .journeyDemo {
+    grid-template-columns: 1fr;
+    gap: 44px;
+  }
+
+  .journeyCopyPanel {
+    min-height: 270px;
+  }
+
+  .stepCopy {
+    max-width: 610px;
+  }
+
+  .heroPayoff {
+    right: 76px;
+    bottom: 16px;
+    left: 24px;
+  }
+}
+
+@media (max-width: 640px) {
+  .heroScroll {
+    height: 210svh;
+  }
+
+  .hero {
+    min-height: 100svh;
+  }
+
+  .wordmark {
+    width: min(88vw, 64svh);
+  }
+
+  .heroPayoff {
+    right: 72px;
+    bottom: 16px;
+    left: 16px;
+  }
+
+  .heroActions {
+    gap: 8px;
+  }
+
+  .primaryAction {
+    min-height: 44px;
+    padding: 0 14px;
+    font-size: 13px;
+  }
+
+  .playbackControl {
+    right: 18px;
+    bottom: 16px;
+  }
+
+  .productStory {
+    width: min(calc(100% - 32px), 1440px);
+    padding: 92px 0 112px;
+  }
+
+  .productStoryHeader {
+    margin-bottom: 88px;
+  }
+
+  .productStoryHeader h2 {
+    font-size: clamp(46px, 13vw, 60px);
+  }
+
+  .stepCopy > p:last-child {
+    font-size: 16px;
+  }
+
+  .journey {
+    min-height: 250px;
+  }
+
+  .stepCopy h3 {
+    font-size: clamp(34px, 10vw, 46px);
+  }
+
+  .productComposition {
+    aspect-ratio: 8 / 5;
+    border-radius: 16px;
+  }
+
+  .closingSection {
+    min-height: 380px;
+  }
+
+  .footer {
+    min-height: 120px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 18px;
+    padding: 28px 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heroScroll {
+    height: 100svh;
+  }
+
+  .videoMorph {
+    opacity: 0 !important;
+  }
+
+  .logoVideoLayer {
+    opacity: 1 !important;
+    transform: scale(1) !important;
+  }
+
+  .wordmark {
+    opacity: 0 !important;
+  }
+
+  .wordmarkLetter {
+    fill: #ffffff;
+    stroke: transparent;
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+
+  .heroPayoff {
+    visibility: visible !important;
+    opacity: 1 !important;
+    animation: none;
+    transform: none;
+  }
+
+  .primaryAction {
+    color: #ffffff;
+    background: var(--life-navy);
+  }
+
+  .playbackControl {
+    display: none;
+  }
+
+  .journeyDemo {
+    min-height: 0;
+    align-items: start;
+  }
+
+  .journeyCopyPanel,
+  .journey {
+    min-height: 0;
+  }
+
+  .journey {
+    gap: 40px;
+  }
+
+  .journeyStep {
+    grid-area: auto;
+    pointer-events: auto;
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .journeyProgress,
+  .demoPlayback {
+    display: none;
+  }
+}
+
+.heroScroll[data-static="true"] {
+  height: 100svh;
+}
+
+.heroScroll[data-static="true"] .videoMorph {
+  clip-path: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+.heroScroll[data-static="true"] .logoVideoLayer {
+  opacity: 0 !important;
+}
+
+.heroScroll[data-static="true"] .wordmark {
+  opacity: 1 !important;
+}
+
+.heroScroll[data-static="true"] .wordmarkLetter {
+  fill: #ffffff;
+  stroke: transparent;
+  stroke-dashoffset: 0;
+  animation: none;
+}

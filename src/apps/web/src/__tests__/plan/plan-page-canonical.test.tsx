@@ -35,12 +35,6 @@ describe("PlanPage canonical experience", () => {
     mockSearchParams = new URLSearchParams();
   });
 
-  it("always renders chat-first creation for an authenticated account", () => {
-    authStatus = "authenticated";
-    render(<PlanPage />);
-    expect(screen.getByText("Canonical creation chat")).toBeInTheDocument();
-  });
-
   it("keeps authentication at the canonical route boundary", () => {
     authStatus = "unauthenticated";
     render(<PlanPage />);

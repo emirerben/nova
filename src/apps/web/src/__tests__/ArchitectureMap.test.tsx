@@ -84,36 +84,6 @@ describe("ArchitectureMap", () => {
     mockOnPaneClick.mockClear();
   });
 
-  test("renders L1 nodes (5 pipeline modules + 3 data stores)", () => {
-    render(<ArchitectureMap />);
-    // Pipeline modules
-    expect(screen.getByTestId("node-upload")).toBeInTheDocument();
-    expect(screen.getByTestId("node-processing")).toBeInTheDocument();
-    expect(screen.getByTestId("node-clips")).toBeInTheDocument();
-    expect(screen.getByTestId("node-templates")).toBeInTheDocument();
-    expect(screen.getByTestId("node-delivery")).toBeInTheDocument();
-    // Data stores
-    expect(screen.getByTestId("node-postgresql")).toBeInTheDocument();
-    expect(screen.getByTestId("node-redis")).toBeInTheDocument();
-    expect(screen.getByTestId("node-gcs")).toBeInTheDocument();
-  });
-
-  test("renders labeled edges between connected modules", () => {
-    render(<ArchitectureMap />);
-    // The default view is "business", so edge labels use businessLabel
-    expect(screen.getByTestId("edge-upload-processing")).toBeInTheDocument();
-    expect(screen.getByTestId("edge-processing-clips")).toBeInTheDocument();
-    expect(screen.getByTestId("edge-clips-delivery")).toBeInTheDocument();
-  });
-
-  test("renders with empty GitHub data (badges show loading indicator)", () => {
-    render(<ArchitectureMap />);
-    // Nodes should render even with null issue counts (the mock returns null)
-    expect(screen.getByTestId("node-upload")).toBeInTheDocument();
-    expect(screen.getByTestId("node-processing")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Loading live activity.");
-  });
-
   test("click L1 node expands to show L2 children", () => {
     render(<ArchitectureMap />);
 

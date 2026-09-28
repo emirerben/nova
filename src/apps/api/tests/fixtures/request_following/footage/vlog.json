@@ -1,0 +1,102 @@
+{
+  "footage_id": "vlog",
+  "description": "A Saturday reset day. Eight clips attached out of filming order.",
+  "clips": [
+    {
+      "clip_id": "V6",
+      "duration_s": 3.5,
+      "subject": "cooking pasta",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-19T19:00:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "V1",
+      "duration_s": 2.0,
+      "subject": "waking up",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-19T08:00:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "V8",
+      "duration_s": 3.0,
+      "subject": "night walk",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-19T22:30:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "V3",
+      "duration_s": 2.0,
+      "subject": "laundry",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-19T10:15:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "V5",
+      "duration_s": 3.0,
+      "subject": "gym session",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-19T16:00:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "V2",
+      "duration_s": 3.0,
+      "subject": "cleaning the flat",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-19T09:30:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "V7",
+      "duration_s": 2.5,
+      "subject": "journaling",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-19T21:30:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    },
+    {
+      "clip_id": "V4",
+      "duration_s": 3.5,
+      "subject": "grocery run",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-19T12:00:00+03:00",
+          "provenance": "exif"
+        }
+      ]
+    }
+  ]
+}

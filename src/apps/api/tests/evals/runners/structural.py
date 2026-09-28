@@ -52,6 +52,7 @@ from app.agents.intro_writer import (
     IntroWriterOutput,
     slop_structural_failures,
 )
+from app.agents.landmark_guess import LandmarkGuessInput, LandmarkGuessOutput
 from app.agents.main_creator import MainCreatorInput, MainCreatorOutput
 from app.agents.music_matcher import MusicMatcherInput, MusicMatcherOutput
 from app.agents.narrated_storyboard import (
@@ -1285,6 +1286,23 @@ def check_clip_question(
         failures.append(f"answer {output.answer!r} exceeds 3 words")
     if not output.answer and output.confidence != 0.0:
         failures.append("empty (unknown) answer carries non-zero confidence")
+    if output.confidence < 0.0 or output.confidence > 1.0:
+        failures.append(f"confidence={output.confidence} outside [0, 1]")
+    return failures
+
+
+def check_landmark_guess(
+    output: LandmarkGuessOutput,
+    input: LandmarkGuessInput,  # noqa: A002 — unused, kept for the dispatcher's uniform signature
+) -> list[str]:
+    """Structural floor for nova.video.landmark_guess (KRI-189)."""
+    failures: list[str] = []
+    if output.name and len(output.name.split()) > 6:
+        failures.append(f"name {output.name!r} exceeds 6 words")
+    if not output.name and output.confidence != 0.0:
+        failures.append("empty (unknown) name carries non-zero confidence")
+    if output.name and not output.evidence:
+        failures.append("named landmark has no evidence")
     if output.confidence < 0.0 or output.confidence > 1.0:
         failures.append(f"confidence={output.confidence} outside [0, 1]")
     return failures
@@ -3039,6 +3057,8 @@ def run_structural(
         return check_clip_intent_planner(output, input)
     if agent_name == "nova.video.clip_question":
         return check_clip_question(output, input)
+    if agent_name == "nova.video.landmark_guess":
+        return check_landmark_guess(output, input)
     if agent_name == "nova.video.clip_router":
         return check_clip_router(output, input)
     if agent_name == "nova.video.shot_ranker":

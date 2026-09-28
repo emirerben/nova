@@ -157,6 +157,7 @@ struct ProjectMediaUploadContract: Codable, Sendable, Equatable {
         let reduced = AVURLAsset(url: proxy)
         guard let sourceTrack = try await source.loadTracks(withMediaType: .video).first,
               let proxyTrack = try await reduced.loadTracks(withMediaType: .video).first else {
+            Logger(subsystem: "com.kria.app", category: "uploads").error("proxy contract rejected: missing video track")
             throw MediaSourceContractError.missingVideoTrack
         }
         let sourceSize = try await sourceTrack.load(.naturalSize)
@@ -170,9 +171,11 @@ struct ProjectMediaUploadContract: Codable, Sendable, Equatable {
         let orientation = (Int((atan2(sourceTransform.b, sourceTransform.a) * 180 / .pi).rounded()) % 360 + 360) % 360
         guard sourceDuration.isFinite, duration.isFinite, sourceDuration > 0,
               abs(sourceDuration - duration) <= 0.1 else {
+            Logger(subsystem: "com.kria.app", category: "uploads").error("proxy contract rejected: duration mismatch original=\(sourceDuration, privacy: .public) proxy=\(duration, privacy: .public)")
             throw MediaSourceContractError.durationMismatch
         }
         guard sourceHasAudio == proxyHasAudio else {
+            Logger(subsystem: "com.kria.app", category: "uploads").error("proxy contract rejected: audio presence mismatch original=\(sourceHasAudio, privacy: .public) proxy=\(proxyHasAudio, privacy: .public)")
             throw MediaSourceContractError.audioPresenceMismatch
         }
         let reportedFrameRate = try Self.validateProxyGeometry(size: size, measuredFrameRate: frameRate, orientation: orientation)
@@ -215,6 +218,8 @@ struct ProjectMediaUploadContract: Codable, Sendable, Equatable {
     static func validateSupportedContainer(_ url: URL) throws {
         guard let type = UTType(filenameExtension: url.pathExtension.lowercased()),
               type.conforms(to: .mpeg4Movie) || type.conforms(to: .quickTimeMovie) else {
+            // The extension alone, never the filename or path.
+            Logger(subsystem: "com.kria.app", category: "uploads").error("proxy contract rejected: unsupported container .\(url.pathExtension.lowercased(), privacy: .public)")
             throw MediaSourceContractError.unsupportedContainer
         }
     }

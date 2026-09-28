@@ -136,6 +136,8 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "ClipRequestResolverAgent",
     ),
     ("nova.video.clip_question", "app.agents.clip_question", "ClipQuestionAgent"),
+    # KRI-189: best-guess landmark for a clip from frames + place (provenance: inferred).
+    ("nova.video.landmark_guess", "app.agents.landmark_guess", "LandmarkGuessAgent"),
 )
 
 

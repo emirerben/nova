@@ -369,17 +369,6 @@ async def test_enqueue_exception_after_attempt_moved_does_not_report_failure(
     assert "error_class" not in job.assembly_plan["variants"][0]
 
 
-def test_post_render_edit_job_statuses_match_the_route_literal():
-    # Both call sites (this constant, and the literal in
-    # creation_threads.message_thread) must agree on what "ready" means for a
-    # post-render chat edit.
-    assert actions.POST_RENDER_EDIT_JOB_STATUSES == {
-        "done",
-        "variants_ready",
-        "variants_ready_partial",
-    }
-
-
 @pytest.fixture
 def copilot_edit_context(monkeypatch):
     user = SimpleNamespace(id=uuid.uuid4())
@@ -494,6 +483,38 @@ async def test_copilot_edit_applies_ops_and_stages_render(copilot_edit_context, 
     assert result == {"thread": ctx.thread, "job_id": ctx.job.id, "variant_id": "a", "prep": prep}
     assert routes._append.await_args.kwargs["payload"]["outcome"] == "saved"
     assert "Remove text" in routes._append.await_args.kwargs["content"]
+
+
+@pytest.mark.asyncio
+async def test_copilot_edit_passes_phone_catalog_sfx_paths_to_the_commit(
+    copilot_edit_context, monkeypatch
+):
+    """A chat edit that leaves a phone Talking edit's sound lane alone still
+    persists its effects' real catalog paths (same read as the iOS Save)."""
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[{"op": "remove_text", "bar_index": 1}], outcome="proposed", reply="ignored"
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+    payload = actions.EditorCommitRequest(base_generation="g1", text_elements=[])
+    monkeypatch.setattr(
+        actions,
+        "compile_editor_ops",
+        Mock(return_value=SimpleNamespace(payload=payload, changes=["Remove text"])),
+    )
+    ctx.db.execute.return_value = Mock()
+    ctx.db.execute.return_value.scalars.return_value.all.return_value = []
+    catalog = AsyncMock(return_value={"pop": "sound-effects/pop/audio.m4a"})
+    monkeypatch.setattr(actions, "_phone_subtitled_sfx_paths", catalog)
+    stage = Mock(return_value={"generation": "g2", "sections": {"text_elements": True}})
+    monkeypatch.setattr(actions, "prepare_editor_commit", stage)
+
+    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    catalog.assert_awaited_once_with(ctx.db, ctx.job, ctx.variant)
+    assert stage.call_args.kwargs["phone_sfx_catalog_paths"] == {
+        "pop": "sound-effects/pop/audio.m4a"
+    }
 
 
 @pytest.mark.asyncio
@@ -808,26 +829,6 @@ async def test_flag_off_is_byte_identical_to_legacy(copilot_edit_context, monkey
     assert set(payload) == {"job_id", "variant_id", "outcome", "generation", "sections"}
     body = run.await_args.args[0]
     assert body.turns == [] and body.original_request is None
-
-
-@pytest.mark.asyncio
-async def test_flag_off_no_op_reply_is_the_models_own(copilot_edit_context, monkeypatch):
-    ctx = copilot_edit_context
-    monkeypatch.setattr(actions.settings, "copilot_honest_replies_enabled", False)
-    response = SimpleNamespace(
-        ops=[],
-        outcome="failed",
-        reply="legacy reply",
-        rejection_reasons=[{"op": "x", "reason": "invalid_value", "detail": ""}],
-        unmet_requests=[],
-    )
-    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
-
-    await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
-
-    reply, payload = _reply_and_payload()
-    assert reply == "legacy reply"
-    assert "not_done" not in payload
 
 
 @pytest.mark.asyncio

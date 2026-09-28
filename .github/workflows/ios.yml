@@ -29,14 +29,16 @@ jobs:
     # stable, fail-closed required check. Contracts are portable, so running
     # them on Ubuntu leaves the macOS runner for the native build sooner.
     #
-    # PRs keep one native leg. Main and manual runs split the serial full UI
-    # suite (~35 minutes) across three native legs (KRI-168). Each leg builds
-    # from the warm cache in parallel, which beats building once and then
-    # handing products to the shards. Shard 1 also runs the unit tests and
-    # saves the cache.
+    # The selector sizes the native legs from the recorded duration of the UI
+    # tests this run executes (ui_tests.shard_count): main's full suite (~40
+    # minutes) splits across three legs (KRI-168), an editor-touching PR's
+    # subset (~26 minutes) across two, and anything shorter keeps one unsharded
+    # leg with the plain check name. Each leg builds from the warm cache in
+    # parallel, which beats building once and then handing products to the
+    # shards. Shard 1 also runs the unit tests and saves the cache.
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(github.event_name == 'pull_request' && '{"include":[{"lane":"native","runner":"macos-15"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || '{"include":[{"lane":"native","runner":"macos-15","shard":"1/3"},{"lane":"native","runner":"macos-15","shard":"2/3"},{"lane":"native","runner":"macos-15","shard":"3/3"},{"lane":"contracts","runner":"ubuntu-latest"}]}') }}
+      matrix: ${{ fromJSON(needs.changes.outputs.ios_ui_shards == '3' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/3"},{"lane":"native","runner":"macos-15","shard":"2/3"},{"lane":"native","runner":"macos-15","shard":"3/3"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '2' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/2"},{"lane":"native","runner":"macos-15","shard":"2/2"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || '{"include":[{"lane":"native","runner":"macos-15"},{"lane":"contracts","runner":"ubuntu-latest"}]}') }}
     runs-on: ${{ matrix.runner }}
     # Green native runs on main took 31-54 minutes (median 42) in September
     # 2026 as one serial job. See KRI-168 in docs/runbooks/ios-development.md.
@@ -123,7 +125,7 @@ jobs:
           # native UI coverage runs after merge and on manual regressions.
           KRIA_IOS_TEST_MODE: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.ios_ui == 'true') && 'prepare-ui' || 'unit' }}
           KRIA_RESTORE_INPUT_TIMES: "1"
-          # UI shards 2 and 3 compile every bundle but leave unit tests to shard 1.
+          # Later UI shards compile every bundle but leave unit tests to shard 1.
           KRIA_IOS_UNIT_TESTS: ${{ (!matrix.shard || startsWith(matrix.shard, '1/')) && '1' || '0' }}
         run: bash scripts/ios/verify.sh
       # Save a usable build as soon as compilation/unit tests pass. In particular,
@@ -145,14 +147,15 @@ jobs:
             src/apps/ios/.derived-data/CompilationCache.noindex
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
       - name: Native UI tests (reuse compiled build)
-        # main and workflow_dispatch run the fail-closed full regression, one
-        # duration-balanced shard per leg; each leg verifies its exact part and
-        # the job fails unless every leg passes. A PR that touches native UI
-        # inputs runs a bounded pre-merge subset: smoke plus the affected
-        # feature group and/or the changed test methods, or smoke alone when
-        # the selector wants full coverage (shared, unmapped, or multi-group
-        # changes). The smoke group walks creation to a ready cut, which a
-        # green build/unit PR once broke for every later merge (#1088).
+        # main and workflow_dispatch run the fail-closed full regression. A PR
+        # that touches native UI inputs runs a bounded pre-merge subset: smoke
+        # plus the affected feature group and/or the changed test methods, or
+        # smoke alone when the selector wants full coverage (shared, unmapped,
+        # or multi-group changes). The smoke group walks creation to a ready
+        # cut, which a green build/unit PR once broke for every later merge
+        # (#1088). On a sharded run each leg runs one duration-balanced part of
+        # that selection and verifies exactly it; the job fails unless every
+        # leg passes.
         if: matrix.lane == 'native' && (github.event_name != 'pull_request' || needs.changes.outputs.ios_ui == 'true')
         env:
           KRIA_IOS_TEST_MODE: ui
@@ -170,20 +173,21 @@ jobs:
         if: always() && matrix.lane == 'native'
         uses: actions/upload-artifact@v4
         with:
-          # Shard legs need distinct names; job-index 0, 1, 2 are shards 1/3, 2/3, 3/3.
+          # Shard legs need distinct names; job-index i is shard i+1 (native legs come first).
           name: ${{ matrix.shard && format('ios-native-test-diagnostics-shard-{0}', strategy.job-index) || 'ios-native-test-diagnostics' }}
           path: test-results/ios/
           retention-days: 7
           if-no-files-found: ignore
       - name: Report deferred PR UI regression
-        if: matrix.lane == 'native' && github.event_name == 'pull_request'
+        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/')) && github.event_name == 'pull_request'
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           ## Full native UI regression deferred
 
           This required PR check ran the build and unit-test gate, plus a
           bounded native UI subset when the PR touches native UI inputs (smoke
-          and the affected feature group, or smoke alone for shared changes).
+          and the affected feature group, or smoke alone for shared changes;
+          long subsets split across native legs).
           The complete serial native UI suite runs fail-closed on the
           subsequent `main` push and can also be run with `workflow_dispatch`.
           EOF

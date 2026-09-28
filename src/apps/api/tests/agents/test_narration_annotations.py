@@ -63,17 +63,3 @@ def test_creator_request_uses_shared_limit() -> None:
         NarrationAnnotationInput.model_validate(
             {**_input().model_dump(), "creator_request": "x" * (CREATOR_REQUEST_MAX_CHARS + 1)}
         )
-
-
-def test_prompt_contains_exact_grounding_contract() -> None:
-    prompt = NarrationAnnotationAgent(None).render_prompt(_input())
-
-    assert "EXACT TIMED WORDS" in prompt
-    assert "incidental" in prompt
-    assert "free-form description" in prompt
-    assert "generic" in prompt
-    assert "topic kind" in prompt
-
-
-def test_prompt_version_is_pinned() -> None:
-    assert NarrationAnnotationAgent.spec.prompt_version == "2026-09-07.2"

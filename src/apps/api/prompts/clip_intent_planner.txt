@@ -23,7 +23,7 @@ Return every distinct requested operation as one of:
   deferred narration-source labels: do not invent their text or treat them as
   footage facts.
 - group: chapter/membership grouping
-- order: membership moved first or last
+- order: membership moved first or last$order_by_note
 - include: membership explicitly included
 - caption: one chapter caption. If the creator supplied exact caption words,
   put those exact words in creator_text. Otherwise caption_attribute says what

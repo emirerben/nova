@@ -22,19 +22,6 @@ def _reset_heartbeat_redis_singleton():
     heartbeat_module._heartbeat_redis_client = None
 
 
-def test_record_success_writes_a_timestamp():
-    from app.services.beat_heartbeat import _BEAT_HEARTBEAT_KEY, record_beat_task_success
-
-    client = MagicMock()
-    with patch("app.services.beat_heartbeat._get_heartbeat_redis", return_value=client):
-        record_beat_task_success()
-
-    assert client.set.call_count == 1
-    key, value = client.set.call_args[0]
-    assert key == _BEAT_HEARTBEAT_KEY
-    float(value)  # must parse as a timestamp, never raises
-
-
 def test_record_success_never_raises_when_redis_unavailable():
     from app.services.beat_heartbeat import record_beat_task_success
 

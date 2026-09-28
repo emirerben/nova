@@ -37,9 +37,6 @@ class TestComputeTranscriptHash:
     def test_sensitive_to_duration(self):
         assert compute_transcript_hash(_WORDS, 30.0) != compute_transcript_hash(_WORDS, 31.0)
 
-    def test_len32(self):
-        assert len(compute_transcript_hash(_WORDS, 30.0)) == 32
-
 
 class TestWordsFromVariant:
     def test_reads_transcript_key(self):

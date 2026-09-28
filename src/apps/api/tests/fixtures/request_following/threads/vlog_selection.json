@@ -1,0 +1,96 @@
+{
+  "fixture_id": "vlog_selection",
+  "provenance": "authored",
+  "footage": "vlog",
+  "description": "One clip excluded by name, one required by name.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Skip the laundry, but the gym has to be in.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "skip-laundry",
+      "kind": "select",
+      "scope": "global",
+      "request_type": "selection",
+      "checker": "select_exclude",
+      "params": {
+        "clip_ids": [
+          "V3"
+        ]
+      },
+      "source": "Skip the laundry, but the gym has to be in.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "keep-gym",
+      "kind": "select",
+      "scope": "global",
+      "request_type": "selection",
+      "checker": "select_include",
+      "params": {
+        "clip_ids": [
+          "V5"
+        ]
+      },
+      "source": "Skip the laundry, but the gym has to be in.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "V1",
+          "start_s": 0.0,
+          "end_s": 2.0
+        },
+        {
+          "clip_id": "V2",
+          "start_s": 2.0,
+          "end_s": 5.0
+        },
+        {
+          "clip_id": "V4",
+          "start_s": 5.0,
+          "end_s": 8.5
+        },
+        {
+          "clip_id": "V5",
+          "start_s": 8.5,
+          "end_s": 11.5
+        },
+        {
+          "clip_id": "V6",
+          "start_s": 11.5,
+          "end_s": 15.0
+        },
+        {
+          "clip_id": "V7",
+          "start_s": 15.0,
+          "end_s": 17.5
+        },
+        {
+          "clip_id": "V8",
+          "start_s": 17.5,
+          "end_s": 20.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Saturday reset",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 20.5
+    },
+    "reply": "Left out the laundry and kept the gym."
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "fixture_id": "trip_described_title_facts",
+  "provenance": "authored",
+  "footage": "trip",
+  "description": "Described title that must carry the place and the duration the creator gave.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Two days in Cappadocia, cave hotel and balloons. Give it a title that says where and how long.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "title-place",
+      "kind": "text",
+      "scope": "title",
+      "request_type": "title_described",
+      "checker": "text_contains",
+      "params": {
+        "terms": [
+          "Cappadocia"
+        ],
+        "scope": "title"
+      },
+      "source": "Two days in Cappadocia, cave hotel and balloons. Give it a title that says where and how long.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "title-length",
+      "kind": "text",
+      "scope": "title",
+      "request_type": "creator_facts",
+      "checker": "text_contains",
+      "params": {
+        "terms": [
+          "2 days"
+        ],
+        "scope": "title"
+      },
+      "source": "Two days in Cappadocia, cave hotel and balloons. Give it a title that says where and how long.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "T1",
+          "start_s": 0.0,
+          "end_s": 4.0
+        },
+        {
+          "clip_id": "T2",
+          "start_s": 4.0,
+          "end_s": 7.0
+        },
+        {
+          "clip_id": "T3",
+          "start_s": 7.0,
+          "end_s": 10.5
+        },
+        {
+          "clip_id": "T4",
+          "start_s": 10.5,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "T5",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "T6",
+          "start_s": 17.0,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "T7",
+          "start_s": 19.5,
+          "end_s": 22.5
+        },
+        {
+          "clip_id": "T8",
+          "start_s": 22.5,
+          "end_s": 25.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "2 Days in Cappadocia",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 25.5
+    },
+    "reply": "Titled it \"2 Days in Cappadocia\"."
+  }
+}
