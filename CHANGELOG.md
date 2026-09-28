@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.232.0] - 2026-09-28
+
+### Changed
+- feat(ios): ask the speech-cleanup question on the runtime-v2 approval card (#1261) <!-- release-pr: 1261 -->
+
 ## [0.76.231.0] - 2026-09-28
 
 ### Changed
