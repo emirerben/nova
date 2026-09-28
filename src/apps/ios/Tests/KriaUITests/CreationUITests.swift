@@ -225,14 +225,19 @@ final class CreationUITests: XCTestCase {
         confirm.tap()
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
 
-        // One chip per requirement, named from the brief.
+        // One chip per requirement, named from the brief. The chips wait for the brief before they
+        // show, so there is no bare-"Done" phase; still wait on the label rather than assume timing.
         let met = app.buttons["requirement-chip-req-labels"]
         let partial = app.buttons["requirement-chip-req-order"]
         let couldNot = app.buttons["requirement-chip-req-drone"]
         XCTAssertTrue(met.waitForExistence(timeout: 10))
-        XCTAssertEqual(met.label, "Done: Label each clip with its place")
-        XCTAssertEqual(partial.label, "Partly done: Follow the pier-to-lighthouse route")
-        XCTAssertEqual(couldNot.label, "Couldn’t do: End on a drone shot")
+        func waitForLabel(_ element: XCUIElement, _ label: String) {
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label), object: element)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed, "\(element.identifier) label: \(element.label)")
+        }
+        waitForLabel(met, "Done: Label each clip with its place")
+        waitForLabel(partial, "Partly done: Follow the pier-to-lighthouse route")
+        waitForLabel(couldNot, "Couldn’t do: End on a drone shot")
 
         // A chip explains itself when tapped. The transcript is still settling to the bottom as the
         // ready stage arrives, so let the chip stop moving first or the tap lands on its neighbour.
@@ -244,12 +249,17 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(reason.label.contains("I kept filming order"))
 
         // The guess that knows its clip says which; the plain one doesn't invent a number.
-        let guessed = app.buttons["guessed-name-3"]
+        let guessed = app.buttons["guessed-name-0"]
         XCTAssertTrue(guessed.waitForExistence(timeout: 3))
         XCTAssertEqual(guessed.label, "I guessed Harbor Point for clip 4")
-        XCTAssertTrue(app.buttons["guessed-name-Old Lighthouse"].exists)
+        let plain = app.buttons["guessed-name-1"]
+        XCTAssertTrue(plain.exists)
+        XCTAssertEqual(plain.label, "I guessed Old Lighthouse")
 
-        // One tap: the correction is started, the keyboard is up, only the right name is left to type.
+        // One tap: the correction is started, the keyboard is up, and the bare stub alone is not
+        // yet sendable (ChatSubmission.isBareCorrectionStub, unit-tested directly in
+        // RequirementChipsTests since Send here is also gated by unrelated in-flight chat state
+        // that this fixture doesn't settle).
         scrollIntoView(guessed, in: app)
         guessed.tap()
         let composer = app.textFields["Message Kria"]
@@ -257,6 +267,22 @@ final class CreationUITests: XCTestCase {
             predicate: NSPredicate(format: "value == %@", "Clip 4 isn't Harbor Point, it's "), object: composer)
         XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 5), .completed)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let send = app.buttons["chat-send-message"]
+        XCTAssertFalse(send.isEnabled, "A bare correction stub is not a message")
+
+        // Typing the name updates the draft, and a second tap adds to it instead of replacing it.
+        composer.typeText("Besiktas")
+        // Dismiss the keyboard before scrolling again: it shrinks the conversation's visible band enough
+        // that the next guess can sit entirely underneath it, out of any swipe's reach. The header's tap
+        // gesture only clears focus, so the draft (and its appended correction) survives.
+        app.staticTexts["workspace-project-title"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
+        scrollIntoView(plain, in: app)
+        plain.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let appended = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Clip 4 isn't Harbor Point, it's Besiktas\nThat isn't Old Lighthouse, it's "), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [appended], timeout: 5), .completed)
     }
 
     func testClipsOnlySubmissionUsesSuggestAnEdit() {
@@ -593,16 +619,25 @@ final class CreationUITests: XCTestCase {
     }
 
     /// The transcript settles at the bottom (the ready card), which can leave earlier rows under the
-    /// header. Drag the conversation until the element is really tappable, then let it stop moving.
+    /// header, and the composer's keyboard shrinks the usable viewport further once it is up. Drag the
+    /// conversation in whichever direction is actually needed until the element is really tappable, then
+    /// let it stop moving.
     private func scrollIntoView(_ element: XCUIElement, in app: XCUIApplication) {
         let conversation = app.descendants(matching: .any)["Conversation history"].firstMatch
-        // A row scrolled under the header still reports itself hittable but the header takes the
-        // tap, so "on screen" means inside the conversation's own frame, not merely hittable.
+        // A row scrolled under the header (or the keyboard) still reports itself hittable but something
+        // else takes the tap, so "on screen" means inside the conversation's own current frame.
         func inViewport() -> Bool {
             element.frame.minY >= conversation.frame.minY + 8 && element.frame.maxY <= conversation.frame.maxY - 8
         }
-        for _ in 0..<8 where !inViewport() {
-            conversation.swipeDown(velocity: .slow)
+        for _ in 0..<10 where !inViewport() {
+            // Above the visible band: bring earlier content down. Below it (including "hidden behind
+            // the keyboard"): bring later content up. `swipeDown()`/`swipeUp()` name the drag gesture,
+            // which moves the content the opposite way from the reveal it produces.
+            if element.frame.minY < conversation.frame.minY {
+                conversation.swipeDown(velocity: .slow)
+            } else {
+                conversation.swipeUp(velocity: .slow)
+            }
         }
         var last = element.frame
         var stableSince = Date()

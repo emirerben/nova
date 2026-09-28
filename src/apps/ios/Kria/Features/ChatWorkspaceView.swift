@@ -273,6 +273,8 @@ private struct CreationWorkspaceView: View {
     @State private var prompt = ""
     /// KRI-207: requirement names for the receipt chips; loaded once a reply carries receipts.
     @State private var briefRequirements: [String: CreativeBriefRequirement] = [:]
+    /// The brief loaded (or, after one retry, definitively failed): chips can show their final titles.
+    @State private var briefSettled = false
     @State private var events: [ThreadEvent] = []
     @State private var initialConversationLoaded = false
     @State private var pendingMessages: [ChatPendingMessage] = []
@@ -445,9 +447,11 @@ private struct CreationWorkspaceView: View {
             ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } },
                            responseStartedAt: responsePresentation.startTime(for: message.id),
                            requirements: briefRequirements,
+                           briefSettled: briefSettled,
                            onCorrectGuess: { label in
-                               // One tap: the sentence is started, the keyboard is up, the creator only types the name.
-                               prompt = label.correctionPrompt
+                               // One tap: the sentence is started (after whatever the creator already
+                               // typed), the keyboard is up, and only the right name is left to type.
+                               prompt = label.correctionDraft(appendingTo: prompt)
                                composerFocused = true
                            })
                 .id(entry.id)
@@ -621,9 +625,18 @@ private struct CreationWorkspaceView: View {
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$failures) { uploadFailures = $0 }
         .task(id: latestReceiptEventID) {
-            guard latestReceiptEventID != nil,
-                  let brief = try? await model.api.creationBrief(threadID: project.id) else { return }
-            briefRequirements = brief.requirementsByID
+            guard latestReceiptEventID != nil else { return }
+            // One retry, then settle either way: a failed fetch leaves neutral titles, not bare chips
+            // that wait forever. Titles already learned are kept, so an older reply keeps its wording
+            // when a newer brief drops that requirement.
+            var brief = try? await model.api.creationBrief(threadID: project.id)
+            if brief == nil, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                brief = try? await model.api.creationBrief(threadID: project.id)
+            }
+            guard !Task.isCancelled else { return }
+            if let brief { briefRequirements.merge(brief.requirementsByID) { _, new in new } }
+            briefSettled = true
         }
         .onReceive(model.uploads.$previewVersion) { previewVersion = $0 }
         .onReceive(model.uploads.$progress) { uploadProgress = $0 }
@@ -874,6 +887,7 @@ private struct CreationWorkspaceView: View {
         // Generic creator runtime has no slide proposal/create tools.
         guard selectedFormat != .slides else { return }
         guard !isSending, !isActing, !isThinking,
+              !ChatSubmission.isBareCorrectionStub(submittedMessage ?? prompt),
               let message = ChatSubmission.message(
                 text: submittedMessage ?? prompt, readyMediaCount: readyMediaCount,
                 pendingUploadCount: pendingUploadCount, hasUploadFailures: hasUploadFailures

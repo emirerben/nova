@@ -74,7 +74,8 @@ struct RequirementReceiptItem: Equatable, Sendable {
             return InferredLabel(
                 text: text,
                 mediaID: label["media_id"]?.stringValue,
-                clipIndex: label["clip_index"]?.numberValue.map { Int($0) }
+                // A fractional, negative or out-of-range number is no clip: drop the number, keep the name.
+                clipIndex: label["clip_index"]?.numberValue.flatMap { Int(exactly: $0) }.flatMap { $0 >= 0 ? $0 : nil }
             )
         }
         // A server without `inferred_labels` still sends the plain names: show them without a clip number.
@@ -89,17 +90,29 @@ struct RequirementReceiptItem: Equatable, Sendable {
     }
 }
 
-struct CreativeBriefRequirement: Decodable, Equatable, Sendable, Identifiable {
+struct CreativeBriefRequirement: Equatable, Sendable, Identifiable {
     let id: String
-    let kind: String
-    let scope: String
+    let kind: String?
+    let scope: String?
     let literal: String?
     let description: String?
 
-    /// The creator-facing words for one chip: what they asked for, shortest form first.
-    var chipTitle: String {
+    init(id: String, kind: String? = nil, scope: String? = nil, literal: String? = nil, description: String? = nil) {
+        self.id = id; self.kind = kind; self.scope = scope; self.literal = literal; self.description = description
+    }
+
+    /// `nil` without an id; every other field is optional so one odd requirement never costs the rest.
+    init?(json: JSONValue) {
+        guard case .object(let object) = json, let id = object["id"]?.stringValue, !id.isEmpty else { return nil }
+        self.init(id: id, kind: object["kind"]?.stringValue, scope: object["scope"]?.stringValue,
+                  literal: object["literal"]?.stringValue, description: object["description"]?.stringValue)
+    }
+
+    /// The creator-facing words for one chip: what they asked for, shortest form first. Nil when the
+    /// brief carries no words for it (the chip then falls back to a neutral title).
+    var chipTitle: String? {
         [description, literal, scope].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first { !$0.isEmpty } ?? scope
+            .first { !$0.isEmpty }
     }
 }
 
@@ -118,11 +131,17 @@ struct CreativeBrief: Decodable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        threadID = try container.decode(String.self, forKey: .threadID)
-        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 0
-        requirements = try container.decodeIfPresent([CreativeBriefRequirement].self, forKey: .requirements) ?? []
-        receipts = (try container.decodeIfPresent([JSONValue].self, forKey: .receipts) ?? [])
+        threadID = (try? container.decodeIfPresent(String.self, forKey: .threadID)) ?? ""
+        version = (try? container.decodeIfPresent(Int.self, forKey: .version)) ?? 0
+        // Element by element: a requirement or receipt this build can't read is skipped, never fatal.
+        requirements = ((try? container.decodeIfPresent([JSONValue].self, forKey: .requirements)) ?? [])
+            .compactMap(CreativeBriefRequirement.init(json:))
+        receipts = ((try? container.decodeIfPresent([JSONValue].self, forKey: .receipts)) ?? [])
             .compactMap(RequirementReceiptItem.init(json:))
+    }
+
+    init(threadID: String = "", version: Int = 0, requirements: [CreativeBriefRequirement] = [], receipts: [RequirementReceiptItem] = []) {
+        self.threadID = threadID; self.version = version; self.requirements = requirements; self.receipts = receipts
     }
 
     var requirementsByID: [String: CreativeBriefRequirement] {
@@ -135,9 +154,18 @@ struct CreativeBrief: Decodable, Equatable, Sendable {
 struct RequirementChipsView: View {
     let receipts: [RequirementReceiptItem]
     let requirements: [String: CreativeBriefRequirement]
+    /// False until the brief has loaded (or its fetch has definitively failed). Chips wait for it so
+    /// they never flash a bare "Done" and then relabel themselves.
+    let titlesReady: Bool
     /// Nil where correcting isn't possible (no composer): the guessed-names row is then omitted.
     let correct: ((InferredLabel) -> Void)?
     @State private var expandedID: String?
+
+    /// One chip per requirement id, first receipt wins (a duplicate id would collide in the list).
+    private var uniqueReceipts: [RequirementReceiptItem] {
+        var seen = Set<String>()
+        return receipts.filter { seen.insert($0.requirementID).inserted }
+    }
 
     private var guessedNames: [InferredLabel] {
         var seen = Set<String>()
@@ -147,28 +175,30 @@ struct RequirementChipsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(receipts, id: \.requirementID) { receipt in
-                RequirementChip(
-                    receipt: receipt,
-                    title: requirements[receipt.requirementID]?.chipTitle,
-                    isExpanded: expandedID == receipt.requirementID,
-                    toggle: { expandedID = expandedID == receipt.requirementID ? nil : receipt.requirementID }
-                )
+        if titlesReady {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(uniqueReceipts.enumerated()), id: \.element.requirementID) { offset, receipt in
+                    RequirementChip(
+                        receipt: receipt,
+                        title: requirements[receipt.requirementID]?.chipTitle ?? "Request \(offset + 1)",
+                        isExpanded: expandedID == receipt.requirementID,
+                        toggle: { expandedID = expandedID == receipt.requirementID ? nil : receipt.requirementID }
+                    )
+                }
+                if let correct, !guessedNames.isEmpty {
+                    GuessedNamesRow(labels: guessedNames, correct: correct)
+                }
             }
-            if let correct, !guessedNames.isEmpty {
-                GuessedNamesRow(labels: guessedNames, correct: correct)
-            }
+            .padding(.top, 2)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("requirement-chips")
         }
-        .padding(.top, 2)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("requirement-chips")
     }
 }
 
 private struct RequirementChip: View {
     let receipt: RequirementReceiptItem
-    let title: String?
+    let title: String
     let isExpanded: Bool
     let toggle: () -> Void
 
@@ -180,7 +210,7 @@ private struct RequirementChip: View {
         }
     }
 
-    private var label: String { title ?? receipt.outcome.word }
+    private var label: String { title }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -224,7 +254,7 @@ private struct GuessedNamesRow: View {
             Text("Guessed names")
                 .font(KriaFont.body(12).weight(.semibold))
                 .foregroundStyle(KriaColor.zinc)
-            ForEach(labels) { label in
+            ForEach(Array(labels.enumerated()), id: \.offset) { offset, label in
                 Button { correct(label) } label: {
                     HStack(spacing: 6) {
                         Text(label.guessSentence)
@@ -240,10 +270,27 @@ private struct GuessedNamesRow: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Starts a correction in the message box")
-                .accessibilityIdentifier("guessed-name-\(label.clipIndex.map(String.init) ?? label.text)")
+                .accessibilityIdentifier("guessed-name-\(offset)")
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("guessed-names")
+    }
+}
+
+extension ChatSubmission {
+    /// True while the message is only the opening of a guessed-name correction ("Clip 4 isn't X, it's ")
+    /// with nothing after it: the creator is mid-sentence, so that is not yet something to send.
+    static func isBareCorrectionStub(_ text: String) -> Bool {
+        let last = text.split(whereSeparator: \.isNewline).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        return last.range(of: #"^(Clip [0-9]+|That) isn't .+, it's$"#, options: .regularExpression) != nil
+    }
+}
+
+extension InferredLabel {
+    /// Adds the correction opening to what the creator already typed instead of replacing it.
+    func correctionDraft(appendingTo draft: String) -> String {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? correctionPrompt : draft.trimmingCharacters(in: .newlines) + "\n" + correctionPrompt
     }
 }
