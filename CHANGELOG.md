@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.0.0] - 2026-09-28
+
+### Added
+- feat(web): launch video-led Kria landing hero (#1262) <!-- release-pr: 1262 -->
+
 ## [0.76.232.0] - 2026-09-28
 
 ### Changed
