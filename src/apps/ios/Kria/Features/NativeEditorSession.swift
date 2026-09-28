@@ -3188,6 +3188,13 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) { $0.captionMeta[key] = value ?? .null }
     }
     var canEditCaptionAppearance: Bool { canEditCaptions && canEdit("caption_editor_style") }
+    /// Line-level caption edits (text/timing of individual cues) are gated by
+    /// the `caption_cues` capability specifically (KRI-216) — a phone
+    /// subtitled variant can have cues editable while style/settings
+    /// (`caption_meta`) stay locked, or vice versa. Falls back to the
+    /// coarse `canEditCaptions` when the server hasn't sent a `caption_cues`
+    /// key (older servers, or the guided-story text-lane path).
+    var canEditCaptionLines: Bool { canEditSection(.captions) }
 
     func setCaptionAppearance(key: String, value: JSONValue) {
         guard canEditCaptionAppearance else { return }
@@ -3870,6 +3877,13 @@ struct NativeEditorTemporaryVideo {
         case .motionScenes: return ["motion_scenes", "lanes.motion_scenes"]
         case .cameraEffects: return ["camera_effects", "lanes.camera_effects"]
         case .carouselMoment: return ["carousel_moment", "carousel"]
+        // KRI-216: line edits (caption_cues) and style/settings (caption_meta)
+        // are separate server capabilities — `.captions` must prefer
+        // `caption_cues` over the coarser legacy `captions` key so a phone
+        // variant with cues editable but meta locked (or vice versa) gates
+        // correctly. `.captionMeta`'s rawValue already equals `caption_meta`.
+        case .captions: return ["caption_cues", "captions"]
+        case .captionMeta: return ["caption_meta", "captions"]
         default: return [section.rawValue, sectionCapabilityKey(section)]
         }
     }
@@ -4328,6 +4342,16 @@ struct NativeEditorTemporaryVideo {
     private static func array(_ value: JSONValue?) -> [JSONValue] { if case let .array(value) = value { value } else { [] } }
     private static func number(_ value: JSONValue?) -> Double? { if case let .number(value) = value { value } else { nil } }
     private static func bool(_ value: JSONValue?) -> Bool? { if case let .bool(value) = value { value } else { nil } }
+    /// Reads an `editor_capabilities` entry that may arrive as a bare bool
+    /// (legacy) or as `{"editable": Bool, "reason": String?}` (KRI-216).
+    /// Returns nil when the key itself is absent, so callers can distinguish
+    /// "server didn't send this capability" from "server sent it as false".
+    private static func capabilityEditable(_ value: JSONValue?) -> Bool? {
+        guard let value else { return nil }
+        if let flag = bool(value) { return flag }
+        if let object = object(value) { return bool(object["editable"]) ?? false }
+        return nil
+    }
     private static func roundToMotionFrame(_ value: TimeInterval) -> TimeInterval {
         (value * 30).rounded() / 30
     }
@@ -4402,8 +4426,22 @@ struct NativeEditorTemporaryVideo {
         // never see them, so fall back to `text_elements` — the backend has
         // no dedicated "captions" capability key; a caption-tagged element
         // is only ever mutable through the same permission as ordinary text.
+        // Always OR'd in below, independent of the explicit-key branch, since
+        // no server ever emits a dedicated capability for this lane.
         let textLaneCaptions = canEditText && document.textElements.contains(where: \.isCaption)
-        canEditCaptions = cueNativeCaptions || textLaneCaptions
+        // KRI-216: phone (`render_destination == "device"`) renders never have
+        // `base_video_path`, so the legacy allowlist above always reads them
+        // as not caption-editable even when the server's `caption_cues`/
+        // `caption_meta` keys say otherwise. Prefer those explicit per-lane
+        // capabilities when the server sends them; only fall back to the
+        // base_video_path heuristic for older servers that omit both keys.
+        let explicitCaptionCues = Self.capabilityEditable(capabilities?["caption_cues"])
+        let explicitCaptionMeta = Self.capabilityEditable(capabilities?["caption_meta"])
+        if explicitCaptionCues != nil || explicitCaptionMeta != nil {
+            canEditCaptions = (explicitCaptionCues ?? false) || (explicitCaptionMeta ?? false) || textLaneCaptions
+        } else {
+            canEditCaptions = cueNativeCaptions || textLaneCaptions
+        }
         canEditMix = capabilities?["mix"] == .bool(true) && draft.music != nil
     }
 

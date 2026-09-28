@@ -5738,6 +5738,9 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         # _arm leaves carousel_effects_enabled at its default (False).
         "carousel": False,
         "carousel_reason": "Carousel effects are disabled",
+        # KRI-216: montage (no resolved_archetype) is not a caption archetype.
+        "caption_cues": {"editable": False, "reason": "unsupported_archetype"},
+        "caption_meta": {"editable": False, "reason": "unsupported_archetype"},
     }
 
 

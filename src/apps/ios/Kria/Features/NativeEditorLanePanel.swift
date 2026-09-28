@@ -98,14 +98,20 @@ struct NativeCaptionPanel: View {
         }) {
             VStack(spacing: 8) {
                 switch tab {
-                case .edit: transcript
+                // KRI-216: each tab is gated by its own server capability
+                // (caption_cues for line edits, caption_meta for style and
+                // settings) rather than the coarse canEditCaptions, so a
+                // phone variant with only one lane editable doesn't show
+                // Save-refusing controls as enabled — or block a lane that
+                // IS editable just because the other one isn't.
+                case .edit: transcript.disabled(!session.canEditCaptionLines)
                 case .style: style
                 case .settings: settings
                 }
                 if !session.canEditCaptions {
                     Text("Captions aren’t available for this edit.").foregroundStyle(KriaColor.mutedInk)
                 }
-            }.disabled(!session.canEditCaptions)
+            }
         }
         .onChange(of: editingCueID) { old, new in
             if old != nil { session.endTransaction() }
@@ -223,14 +229,17 @@ struct NativeCaptionPanel: View {
             NativeEditorMenuRow(title: "Show captions", value: meta["enabled"] != .bool(false) ? "On" : "Off") {
                 Button("On") { session.setCaptionEnabled(true) }
                 Button("Off") { session.setCaptionEnabled(false) }
-            }.accessibilityIdentifier("native-editor-caption-visible")
+            }.disabled(!session.canEditCaptionAppearance)
+                .accessibilityIdentifier("native-editor-caption-visible")
             NativeEditorMenuRow(title: "Highlight spoken word", value: highlightsWords ? "On" : "Off") {
                 Button("On") { session.setCaptionAppearance(key: "highlight_spoken_word", value: .bool(true)) }
                 Button("Off") { session.setCaptionAppearance(key: "highlight_spoken_word", value: .bool(false)) }
             }.disabled(!session.canEditCaptionAppearance)
                 .accessibilityIdentifier("native-editor-caption-highlight")
             if highlightsWords {
-                ColorPicker("Highlight color", selection: color("highlight_color", fallback: "#C5F82A"), supportsOpacity: false).frame(minHeight: 44)
+                ColorPicker("Highlight color", selection: color("highlight_color", fallback: "#C5F82A"), supportsOpacity: false)
+                    .disabled(!session.canEditCaptionAppearance)
+                    .frame(minHeight: 44)
             }
             Text("Applies to all captions in this edit.\nEdit individual lines in Edit captions.")
                 .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)

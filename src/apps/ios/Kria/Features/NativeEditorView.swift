@@ -755,7 +755,10 @@ private struct NativeKriaInspector: View {
                 NativeProposalCard(title: "Make speech easier to follow", detail: "Turn on captions so the cut still works without sound.", actionTitle: session.draft.captions.enabled ? "Captions on" : "Turn on captions") {
                     if !session.draft.captions.enabled { session.toggleCaptions() }
                 }
-                .disabled(!session.canEditCaptions)
+                // toggleCaptions() writes caption_meta ("enabled"), so this is
+                // gated by the meta capability (KRI-216), not the coarse
+                // canEditCaptions, which can be true from cues alone.
+                .disabled(!session.canEditCaptionAppearance)
                 NativeDocumentInspector(session: session)
             }
             .padding(24)
@@ -860,8 +863,11 @@ private struct NativeCaptionsInspector: View {
     var body: some View {
         Form {
             Section {
+                // toggleCaptions()/setCaptionStyle() both write caption_meta,
+                // so these are gated by the meta capability (KRI-216) rather
+                // than the coarse canEditCaptions.
                 Toggle("Captions", isOn: Binding(get: { session.draft.captions.enabled }, set: { _ in session.toggleCaptions() }))
-                    .disabled(!session.canEditCaptions)
+                    .disabled(!session.canEditCaptionAppearance)
                     .accessibilityIdentifier("native-editor-captions-toggle")
             } footer: {
                 Text("Captions stay synchronized to the cut. Toggle them on to preview the readable version.")
@@ -870,10 +876,10 @@ private struct NativeCaptionsInspector: View {
                 Picker("Caption style", selection: $style) { ForEach(styles, id: \.self, content: Text.init) }
                     .pickerStyle(.menu)
                     .onChange(of: style) { _, newValue in session.setCaptionStyle(newValue.lowercased()) }
-                    .disabled(!session.canEditCaptions)
+                    .disabled(!session.canEditCaptionAppearance)
                     .accessibilityIdentifier("native-editor-caption-style")
             }
-            if !session.canEditCaptions {
+            if !session.canEditCaptionAppearance {
                 Section { Label("This video has no caption-safe render base, so caption changes are unavailable.", systemImage: "lock") }
             }
         }
