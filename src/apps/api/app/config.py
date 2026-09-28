@@ -528,6 +528,11 @@ class Settings(BaseSettings):
     # Preflight downloads/transcription must never queue behind video renders or
     # run on the small maintenance machine.
     speech_cleanup_analysis_queue: str = "speech-analysis"
+    # When the plan item carries no Gemini clip transcript (Kria v2 never saves
+    # one), the preflight worker asks Gemini to transcribe the narration's first
+    # 30 s so whisper's detected language is still cross-checked before the cut
+    # plan is built. Best-effort; False skips the call (item transcript only).
+    speech_cleanup_gemini_reference_enabled: bool = True
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or

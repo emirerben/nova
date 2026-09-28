@@ -214,10 +214,12 @@ class SpeechCleanupAnalysisInput(_FrozenModel):
     max_removal_frac_required: float = Field(default=1.0, gt=0, le=1, allow_inf_nan=False)
     retake_spans: tuple[tuple[int, int], ...] = ()
     forced_removals: tuple[SpeechCleanupRemovalInput, ...] = ()
-    # Gemini's transcript of the same clip (its clip_metadata analysis), when it
-    # has landed. An independent listener for whisper's language detection — see
-    # `_crosschecked_transcript`. Never cut evidence itself.
+    # Gemini's transcript of the same narration: the clip's clip_metadata
+    # analysis when it has landed, else the worker's own transcript of the
+    # opening (``reference_source``). An independent listener for whisper's
+    # language detection — see `_crosschecked_transcript`. Never cut evidence itself.
     reference_transcript: str | None = None
+    reference_source: Literal["clip_analysis", "gemini_audio"] | None = None
 
     @model_validator(mode="after")
     def validate_window_and_spans(self) -> SpeechCleanupAnalysisInput:
@@ -586,6 +588,8 @@ def _crosschecked_transcript(
         "reference_language": infer_language_from_text(reference),
         "applied": False,
     }
+    if analysis_input.reference_source is not None:
+        receipt["reference_source"] = analysis_input.reference_source
     if heard_language is None:
         return transcript, receipt
     retranscribed = transcribe(

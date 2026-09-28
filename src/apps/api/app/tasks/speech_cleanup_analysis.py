@@ -6,7 +6,9 @@ The analysis task intentionally owns only orchestration and media acquisition:
 
 It never downloads or hashes the source video. FFmpeg receives a short-lived URL
 for the generation captured at media registration and decodes only the persisted
-renderer window into a disposable 16 kHz mono artifact.
+renderer window into a disposable 16 kHz mono artifact. When the plan item has no
+Gemini clip transcript, the artifact's opening is also sent to Gemini as a second
+opinion on whisper's detected language (`_gemini_reference_transcript`).
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
 from app.database import sync_session
-from app.models import PlanItem, SpeechCleanupAnalysis
+from app.models import ContentPlan, PlanItem, SpeechCleanupAnalysis
 from app.pipeline.caption_language import crosscheck_detected_language
 from app.pipeline.speech_cleanup_analysis import (
     SpeechCleanupAnalysisInput,
@@ -74,6 +76,10 @@ SPEECH_CLEANUP_DURATION_TOLERANCE_S = 0.25
 SPEECH_CLEANUP_RECONCILE_SOFT_LIMIT_S = 20
 SPEECH_CLEANUP_RECONCILE_HARD_LIMIT_S = 25
 SPEECH_CLEANUP_PUBLISH_RETRY_S = 30
+# Gemini second opinion (`_gemini_reference_transcript`). whisper detects its
+# language from the opening 30 s window, so that is all Gemini needs to hear.
+SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S = 30.0
+SPEECH_CLEANUP_GEMINI_ACTIVE_TIMEOUT_S = 20
 
 _PROGRAMMING_ERRORS = (
     AssertionError,
@@ -102,6 +108,10 @@ class _ClaimedWork:
     # Gemini's transcript of the same clip bytes, when its analysis had landed
     # at claim time (see `_reference_transcript`).
     reference_transcript: str | None = None
+    # A worker-side Gemini call is attributed to the plan's owner, like the
+    # creator's other background analysis.
+    plan_item_id: uuid.UUID | None = None
+    creator_id: str | None = None
 
     @property
     def duration_s(self) -> float:
@@ -124,6 +134,12 @@ def _reference_transcript(db: Any, row: SpeechCleanupAnalysis) -> str | None:
         storage_path=row.source_storage_path,
         generation=row.source_generation,
     )
+
+
+def _plan_owner_id(db: Any, row: SpeechCleanupAnalysis) -> str | None:
+    item = db.get(PlanItem, row.plan_item_id)
+    plan = db.get(ContentPlan, item.content_plan_id) if item is not None else None
+    return str(plan.user_id) if plan is not None else None
 
 
 def _claim_work(analysis_id: str) -> _ClaimedWork | None:
@@ -150,6 +166,8 @@ def _claim_work(analysis_id: str) -> _ClaimedWork | None:
                 source_kind=str(getattr(row, "source_kind", "unknown") or "unknown"),
                 queued_at=getattr(row, "created_at", None),
                 reference_transcript=_reference_transcript(db, row),
+                plan_item_id=row.plan_item_id,
+                creator_id=_plan_owner_id(db, row),
             )
         else:
             work = _ClaimedWork(
@@ -163,6 +181,8 @@ def _claim_work(analysis_id: str) -> _ClaimedWork | None:
                 source_kind=str(getattr(row, "source_kind", "unknown") or "unknown"),
                 queued_at=getattr(row, "created_at", None),
                 reference_transcript=_reference_transcript(db, row),
+                plan_item_id=row.plan_item_id,
+                creator_id=_plan_owner_id(db, row),
             )
         db.commit()
         return work
@@ -370,16 +390,129 @@ def _late_reference_transcript(work: _ClaimedWork) -> str | None:
     return reference
 
 
-def _run_engine(work: _ClaimedWork, local_audio_path: Path) -> SpeechCleanupAnalysisResult:
-    result = _run_engine_once(
-        work, local_audio_path, reference_transcript=work.reference_transcript
+def _write_reference_sample(local_audio_path: Path, sample_path: Path) -> bool:
+    """Copy the artifact's opening seconds; False when it holds no audio frames."""
+
+    with wave.open(str(local_audio_path), "rb") as artifact:
+        params = artifact.getparams()
+        frames = artifact.readframes(
+            int(SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S * artifact.getframerate())
+        )
+    if not frames:
+        return False
+    with wave.open(str(sample_path), "wb") as sample:
+        sample.setparams(params)
+        sample.writeframes(frames)
+    return True
+
+
+def _upload_reference_sample(sample_path: Path) -> Any:
+    """Upload once and wait briefly for the file to become ACTIVE.
+
+    The shared upload helpers retry 503s for ~99 s. On this single-slot lane an
+    optional second opinion must fail in seconds instead of holding every queued
+    analysis behind a Gemini outage.
+    """
+
+    from google.genai import types as genai_types  # type: ignore[import]  # noqa: PLC0415
+
+    from app.pipeline.agents.gemini_analyzer import _get_client  # noqa: PLC0415
+
+    client = _get_client()
+    file_ref = client.files.upload(
+        file=str(sample_path),
+        config=genai_types.UploadFileConfig(mime_type="audio/wav"),
     )
-    if work.reference_transcript is not None or work.source_kind != "embedded_spine":
+    deadline = time.monotonic() + SPEECH_CLEANUP_GEMINI_ACTIVE_TIMEOUT_S
+    while True:
+        state = file_ref.state.name if hasattr(file_ref.state, "name") else str(file_ref.state)
+        if state == "ACTIVE":
+            return file_ref
+        if state == "FAILED":
+            raise RuntimeError("gemini reference sample failed processing")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("gemini reference sample never became active")
+        time.sleep(1)
+        file_ref = client.files.get(name=file_ref.name)
+
+
+def _transcribe_reference_sample(work: _ClaimedWork, local_audio_path: Path) -> str | None:
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import RunContext  # noqa: PLC0415
+    from app.agents.transcript import TranscriptAgent, TranscriptInput  # noqa: PLC0415
+
+    sample_path = local_audio_path.with_name("reference-sample.wav")
+    if not _write_reference_sample(local_audio_path, sample_path):
+        return None
+    file_ref = _upload_reference_sample(sample_path)
+    output = TranscriptAgent(default_client()).run(
+        TranscriptInput(file_uri=file_ref.uri, file_mime="audio/wav"),
+        ctx=RunContext(
+            plan_item_id=str(work.plan_item_id) if work.plan_item_id is not None else None,
+            creator_id=work.creator_id,
+            request_id=f"speech-cleanup-reference:{work.claim.analysis_id}",
+            usage_purpose="optional_background",
+        ),
+    )
+    return " ".join(output.full_text.split()) or None
+
+
+def _gemini_reference_transcript(work: _ClaimedWork, local_audio_path: Path) -> str | None:
+    """Gemini's own transcript of the narration's opening, for the language cross-check.
+
+    Kria v2 never saves Gemini's clip analysis on the plan item, so without this
+    its preflights had no second opinion on whisper's detected language. A
+    recorded voiceover never has an item transcript either. Best-effort: any
+    failure keeps the single-listener analysis.
+    """
+
+    if not settings.speech_cleanup_gemini_reference_enabled:
+        return None
+    started_at = time.monotonic()
+    try:
+        reference = _transcribe_reference_sample(work, local_audio_path)
+    except SoftTimeLimitExceeded:
+        raise
+    except Exception as exc:  # noqa: BLE001 - an optional second opinion never fails the run
+        log.warning(
+            "speech_cleanup_analysis.gemini_reference_unavailable",
+            analysis_id=str(work.claim.analysis_id),
+            source_kind=work.source_kind,
+            error_class=type(exc).__name__,
+        )
+        return None
+    log.info(
+        "speech_cleanup_analysis.gemini_reference",
+        analysis_id=str(work.claim.analysis_id),
+        source_kind=work.source_kind,
+        found=reference is not None,
+        run_duration_ms=max(0, int(round((time.monotonic() - started_at) * 1000))),
+    )
+    return reference
+
+
+def _run_engine(work: _ClaimedWork, local_audio_path: Path) -> SpeechCleanupAnalysisResult:
+    reference, reference_source = work.reference_transcript, "clip_analysis"
+    if reference is None:
+        reference = _gemini_reference_transcript(work, local_audio_path)
+        reference_source = "gemini_audio"
+    result = _run_engine_once(
+        work,
+        local_audio_path,
+        reference_transcript=reference,
+        reference_source=reference_source if reference is not None else None,
+    )
+    if reference is not None or work.source_kind != "embedded_spine":
         return result
-    reference = _late_reference_transcript(work)
-    if crosscheck_detected_language(result.language, reference_text=reference) is None:
+    late_reference = _late_reference_transcript(work)
+    if crosscheck_detected_language(result.language, reference_text=late_reference) is None:
         return result
-    return _run_engine_once(work, local_audio_path, reference_transcript=reference)
+    return _run_engine_once(
+        work,
+        local_audio_path,
+        reference_transcript=late_reference,
+        reference_source="clip_analysis",
+    )
 
 
 def _run_engine_once(
@@ -387,6 +520,7 @@ def _run_engine_once(
     local_audio_path: Path,
     *,
     reference_transcript: str | None,
+    reference_source: str | None = None,
 ) -> SpeechCleanupAnalysisResult:
     analysis_input = SpeechCleanupAnalysisInput(
         source_fingerprint=work.claim.source_policy_fingerprint,
@@ -400,6 +534,7 @@ def _run_engine_once(
         over_budget_policy=SPEECH_CLEANUP_OVER_BUDGET_POLICY,
         max_removal_frac_required=settings.speech_cleanup_max_removal_frac_required,
         reference_transcript=reference_transcript,
+        reference_source=reference_source,
     )
     try:
         return run_speech_cleanup_engine(analysis_input)

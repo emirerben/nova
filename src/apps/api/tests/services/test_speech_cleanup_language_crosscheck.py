@@ -8,7 +8,9 @@ filler/pause decisions made on that translation cut the wrong audio, so:
      clearly disagree (``analyze_speech_cleanup`` + ``reference_transcript``);
   2. the scheduler redoes a settled, undecided run that had no reference once
      Gemini's transcript lands and contradicts it — never revoking a decision,
-     never repeating a run that already had a reference.
+     never repeating a run that already had a reference;
+  3. when the plan item carries no Gemini transcript at all (every Kria v2
+     project), the worker asks Gemini for one itself.
 
 The worker adapter's reads live in ``tests/tasks/test_speech_cleanup_analysis.py``.
 """
@@ -17,11 +19,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
+from app.kria.media_sources import is_analysis_proxy_path
 from app.pipeline.speech_cleanup_analysis import (
     SpeechCleanupAnalysisInput,
     analyze_speech_cleanup,
@@ -31,9 +35,11 @@ from app.services.active_narration_source import (
     ActiveNarrationResolution,
     ActiveNarrationSource,
 )
+from app.services.plan_item_media import current_detector_policy, resolve_item_narration
 from app.services.speech_cleanup_preflight import (
     SPEECH_CLEANUP_ENGINE_VERSION,
     SPEECH_CLEANUP_PAYLOAD_VERSION,
+    ClaimedSpeechCleanupAnalysis,
     ensure_current_analysis_async,
     ensure_current_analysis_sync,
     reference_transcript_for_source,
@@ -91,18 +97,24 @@ def _transcript(words: list[Word], language: str) -> SimpleNamespace:
     return SimpleNamespace(words=words, language=language, low_confidence=False)
 
 
-def _analyze(transcribe: Mock, *, reference: str | None):
+def _engine(transcribe: Mock):
     from app.services.clip_speech import SilenceDetectionResult
 
-    return analyze_speech_cleanup(
+    return lambda analysis_input: analyze_speech_cleanup(
+        analysis_input,
+        transcribe_fn=transcribe,
+        silence_detect_fn=lambda *_a, **_k: SilenceDetectionResult(spans=SILENCES, status="ok"),
+    )
+
+
+def _analyze(transcribe: Mock, *, reference: str | None):
+    return _engine(transcribe)(
         SpeechCleanupAnalysisInput(
             source_fingerprint="f" * 64,
             local_media_path="narration.wav",
             duration_s=DURATION_S,
             reference_transcript=reference,
-        ),
-        transcribe_fn=transcribe,
-        silence_detect_fn=lambda *_a, **_k: SilenceDetectionResult(spans=SILENCES, status="ok"),
+        )
     )
 
 
@@ -411,3 +423,120 @@ def test_reactivated_historical_evidence_is_redone_when_misheard(monkeypatch) ->
     assert historical.engine_version == SPEECH_CLEANUP_ENGINE_VERSION
     assert historical.detector_version == DETECTOR_VERSION
     assert historical.analysis_payload_version == SPEECH_CLEANUP_PAYLOAD_VERSION
+
+
+# ── 3. phone Talking on Kria v2: the worker's own Gemini reference ──────────
+#
+# Kria v2 never saves Gemini's clip analysis on the plan item (prod, 2026-09-28:
+# no runtime-v2 item had one), so the lookup above finds nothing and the worker
+# asks Gemini itself. A single-clip phone Talking edit applies this cut on the
+# iPhone, so a translated transcript would cut the creator's real words.
+
+PHONE_PROXY_PATH = "users/u/creation-threads/t/analysis-proxy-clip-1.mp4"
+
+
+def _phone_talking_item() -> SimpleNamespace:
+    """One analysis-proxy clip, exactly as the creation-thread attach leaves it."""
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        clip_gcs_paths=[PHONE_PROXY_PATH],
+        clip_assignments=[
+            {
+                "gcs_path": PHONE_PROXY_PATH,
+                "media_id": "clip-1",
+                "kind": "video",
+                "shot_id": None,
+                "storage_generation": CLIP_GENERATION,
+                "duration_s": DURATION_S,
+                "has_audio": True,
+                "manifest_identity": "clip-1",
+                "upload_contract": {"purpose": "analysis_proxy"},
+            }
+        ],
+        edit_format="subtitled",
+        audio_mode="original",
+        voiceover_gcs_path=None,
+        speech_cleanup_enabled=False,
+        speech_cleanup_notice=None,
+    )
+
+
+def _phone_source(item: SimpleNamespace) -> ActiveNarrationSource:
+    source = resolve_item_narration(item, detector_policy=current_detector_policy()).source
+    assert source is not None and source.source_kind == "embedded_spine"
+    assert is_analysis_proxy_path(source.storage_path)
+    return source
+
+
+def test_phone_talking_cut_is_built_on_what_was_said(monkeypatch) -> None:
+    from app.tasks import speech_cleanup_analysis as worker
+
+    item = _phone_talking_item()
+    source = _phone_source(item)
+    assert (
+        reference_transcript_for_source(
+            item, storage_path=source.storage_path, generation=source.generation
+        )
+        is None
+    )
+    transcribe = _transcribe_by_language(
+        {
+            None: _transcript(_translated_words(), "tr"),
+            "en": _transcript(_english_words(), "en"),
+        }
+    )
+    monkeypatch.setattr(worker, "run_speech_cleanup_engine", _engine(transcribe))
+    monkeypatch.setattr(worker.settings, "speech_cleanup_gemini_reference_enabled", True)
+    monkeypatch.setattr(worker, "_transcribe_reference_sample", lambda _work, _path: GEMINI_EN)
+    work = worker._ClaimedWork(
+        claim=ClaimedSpeechCleanupAnalysis(
+            analysis_id=uuid.uuid4(),
+            attempt_token="attempt-1",
+            source_policy_fingerprint=source.source_policy_fingerprint,
+        ),
+        source_storage_path=source.storage_path,
+        source_generation=source.generation,
+        window_start_s=0.0,
+        window_end_s=DURATION_S,
+        engine_version=SPEECH_CLEANUP_ENGINE_VERSION,
+        detector_version=DETECTOR_VERSION,
+        source_kind=source.source_kind,
+    )
+
+    result = worker._run_engine(work, Path("narration.wav"))
+
+    assert result.language == "en"
+    assert _filler_findings(result)  # the real "um," that the translation dropped
+    assert result.diagnostics["language_crosscheck"] == {
+        "whisper_language": "tr",
+        "reference_language": "en",
+        "applied": True,
+        "reference_source": "gemini_audio",
+    }
+
+
+def test_phone_clean_confirmed_during_a_language_redo_asks_again(monkeypatch) -> None:
+    """A phone clip that DOES carry Gemini's analysis (the v1 flow) can be redone
+    by the scheduler. A "clean" confirmed meanwhile must not cut from the reset
+    row: dispatch answers with the conflict Kria turns into "Tap Refresh project"."""
+    from app.tasks.content_plan_build import DispatchResult, _speech_cleanup_dispatch_snapshot
+
+    item = _phone_talking_item()
+    item.clip_assignments[0]["generation"] = CLIP_GENERATION
+    item.clip_assignments[0]["analysis"] = _assignment(GEMINI_EN)["analysis"]
+    source = _phone_source(item)
+    row = _settled(source, language="tr", status="ready")
+
+    intent = _ensure_sync(monkeypatch, row, item, source)
+    assert intent is not None and intent.created is True
+    assert row.status == "queued"
+
+    session = MagicMock()
+    session.get.return_value = row
+    result = _speech_cleanup_dispatch_snapshot(
+        session, item, analysis_id=str(row.id), choice="clean"
+    )
+
+    assert isinstance(result, DispatchResult)
+    assert result.outcome == "speech_cleanup_analysis_conflict"
+    assert row.decision is None
