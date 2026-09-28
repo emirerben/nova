@@ -61,40 +61,21 @@ struct WorkspaceHeader: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            WorkspaceTopRow(
+                title: project.workspaceTitle,
+                titleIdentifier: "workspace-project-title",
+                titleHidden: projectsDrawerOpen
+            ) {
                 Button(action: openProjects) { KriaIcon(.menu).frame(width: 44, height: 44).kriaFloatingSurface(Circle()) }
                     .accessibilityLabel(projectsDrawerOpen ? "Close projects" : "Open projects")
                     .accessibilityIdentifier("workspace-menu-toggle")
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    Text(project.workspaceTitle)
-                        .font(KriaFont.body(15).weight(.semibold))
-                        .lineLimit(1)
-                        .padding(.horizontal, 16).frame(height: 44)
-                        .kriaFloatingSurface(Capsule())
-                        .accessibilityIdentifier("workspace-project-title")
-                        .accessibilityHidden(projectsDrawerOpen)
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity)
+            } trailing: {
                 ProjectActionsMenu(project: project, floating: true)
                     .accessibilityHidden(projectsDrawerOpen)
                     .allowsHitTesting(!projectsDrawerOpen)
             }
-            .padding(.horizontal, 16).frame(minHeight: 64)
             if showsEditorSwitch {
-                HStack(spacing: 4) {
-                    Text("Chat").font(KriaFont.body(13).weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        // White (not the pale selection blue, which vanishes on the
-                        // frosted capsule), lifted with a faint shadow.
-                        .background(KriaColor.paper, in: Capsule())
-                        .shadow(color: KriaColor.ink.opacity(0.10), radius: 3, y: 1)
-                        .accessibilityAddTraits(.isSelected)
-                    Button("Editor", action: openEditor).font(KriaFont.body(13).weight(.medium))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }.padding(4).kriaFloatingSurface(Capsule())
-                    .padding(.horizontal, 16).padding(.bottom, 8)
+                WorkspaceModeSwitch(selected: .chat, onEditor: openEditor)
                     .accessibilityHidden(projectsDrawerOpen)
                     .allowsHitTesting(!projectsDrawerOpen)
             }

@@ -36,26 +36,31 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
     }
 }
 
+/// The editor's header while it is still loading (or failed to open): the same
+/// floating header as the loaded editor, so it doesn't jump when the editor appears.
 struct NativeEditorTopBar: View {
+    let title: String
     let onBack: () -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
-            Button(action: onBack) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(KriaColor.ink)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+        VStack(spacing: 0) {
+            WorkspaceTopRow(title: title) {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(KriaColor.ink)
+                        .frame(width: 44, height: 44)
+                        .kriaFloatingSurface(Circle())
+                }
+                .accessibilityLabel("Back to chat")
+                .accessibilityIdentifier("native-editor-back")
+            } trailing: {
+                Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
             }
-            .accessibilityLabel("Back to chat")
-            .accessibilityIdentifier("native-editor-back")
-            Spacer()
+            WorkspaceModeSwitch(selected: .editor, onChat: onBack, chatIdentifier: "native-editor-chat-tab")
         }
-        .padding(.leading, 4)
-        .padding(.trailing, 8)
-        .frame(height: 44)
-        .background(KriaColor.paper)
+        .buttonStyle(.plain)
+        .foregroundStyle(KriaColor.ink)
     }
 }
 

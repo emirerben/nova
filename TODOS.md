@@ -54,6 +54,26 @@ does pass. Not caused by KRI-197 (reproduced without those changes).
 `KRIA_CHAT_LONG_HISTORY` (the Montage card sits at the composer's top edge),
 and make the test wait for the transcript to settle before tapping.
 
+### `testTextReturnAndDeleteKeepCanvasLinesAligned` fails on `main` locally
+**Priority:** P3
+**What:** Confirmed failing 4/4 (my branch) and 2/2 on fresh `origin/main`
+(commit c17f89a60), local iPhone 17 Pro / iOS 26.5 simulator. Not caused by
+KRI-197 (reproduced without those changes and before the Chat/Editor
+switch-transition work).
+**Acceptance:** Investigate why the multiline-to-single-line canvas height
+assertion fails on this simulator/OS combo; fix or adjust the assertion.
+
+### Editor Chat/Editor switch-transition: no UI-test fixture opens it from chat
+**Priority:** P3
+**What:** The new `WorkspaceCrossfade` (Chat -> Editor cross-dissolve, shared
+`WorkspaceTopRow`/`WorkspaceModeSwitch` header) was verified with a temporary,
+never-committed UI test that forced `showsEditorSwitch: true`; no permanent UI
+test exercises tapping "Editor" from chat or "Chat" from the editor header.
+**Acceptance:** Add a UI test (behind a fixture that reaches `currentProject.status
+== .ready`, or a forced-switch env var) asserting: `Editor` tap shows
+`native-editor-chat-tab`; that tap returns to the chat header's `Editor`
+segment; no intermediate blank/black frame during the crossfade.
+
 ## SFX picker search — deferred follow-ups (2026-09-24)
 
 The web editor's Sounds drawer and legacy SFX lane gained search + category

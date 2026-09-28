@@ -258,6 +258,22 @@ never changes frames or hit testing.
   sheets (chat editor conversation, slide-post assistant); the slide-post sheet
   is now scrollable, scrolls "Apply proposal" into view when a proposal
   arrives, and keeps a VoiceOver "Kria" label on its container.
+- **Chat/Editor is a switch, not a page:** tapping "Editor" used to
+  `fullScreenCover` the editor as a page sliding up from the bottom. The chat
+  and editor headers now share `WorkspaceTopRow` + `WorkspaceModeSwitch`
+  (`DesignSystem/FloatingSurface.swift`) — same floating leading button, title
+  capsule, trailing controls, and Chat/Editor pill in the same place, at the
+  same 94pt total header height (44 top row + 44 switch row + 6pt bottom
+  padding: the editor's original header height, load-bearing for
+  `NativeEditorInspectorUITests`/`NativeCaptionVisualUITests`, which assert
+  panel/canvas geometry against it). `NativeEditorTopBar` (the editor's
+  loading/failed state) uses the same shared pieces so the header doesn't jump
+  when the editor finishes loading. The selected switch segment is white with a
+  faint shadow, not the pale selection blue, which vanished on the frosted
+  capsule. The editor is presented via `WorkspaceCrossfade`
+  (`fullScreenCover` + `.presentationBackground(.clear)`, animations disabled
+  on the `showsResult` toggle, an internal `visible` opacity fade instead) so
+  switching feels like a tab change, not a new page.
 
 Geometry traps when the scroll view runs beneath insets (learned the hard way):
 - `ScrollGeometry.containerSize` EXCLUDES the content insets; `visibleRect` is

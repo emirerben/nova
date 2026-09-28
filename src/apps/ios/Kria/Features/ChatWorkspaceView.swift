@@ -483,6 +483,19 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// Presents the editor with no slide-up animation; `WorkspaceCrossfade` fades it in.
+    private func openEditor() {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { showsResult = true }
+    }
+
+    private func dismissEditor() {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { showsResult = false }
+    }
+
     private func openAttachments() {
         guard canAttachMedia else { return }
         scrollRequest += 1
@@ -614,14 +627,18 @@ private struct CreationWorkspaceView: View {
                 .presentationDetents([.medium, .large])
         }
         .fullScreenCover(isPresented: $showsResult) {
-            NativeEditorView(
-                project: currentProject,
-                sharedSession: editorSession,
-                conversationAcceptedID: conversationAcceptedID,
-                conversation: { AnyView(editorConversation) },
-                onBack: { showsResult = false }
-            )
+            // Chat <-> Editor is a switch, not a page rising from the bottom: the
+            // editor cross-dissolves over the chat (see `WorkspaceCrossfade`).
+            WorkspaceCrossfade(dismiss: { dismissEditor() }) { close in
+                NativeEditorView(
+                    project: currentProject,
+                    sharedSession: editorSession,
+                    conversationAcceptedID: conversationAcceptedID,
+                    conversation: { AnyView(editorConversation) },
+                    onBack: close
+                )
                 .environmentObject(model)
+            }
         }
     }
 
@@ -644,7 +661,7 @@ private struct CreationWorkspaceView: View {
                 // confirmation card is showing on top of it.
                 showsEditorSwitch: currentProject.status == .ready,
                 openProjects: openProjects,
-                openEditor: { showsResult = true },
+                openEditor: openEditor,
                 openAccount: openAccount
             )
             .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
@@ -741,7 +758,7 @@ private struct CreationWorkspaceView: View {
             // cut (see `WorkspaceStage.resolve`); confirming it is a choice,
             // not something the old cut's reachability should be sacrificed for.
             if currentProject.status == .ready {
-                Button("Open current cut", action: { showsResult = true })
+                Button("Open current cut", action: openEditor)
                     .buttonStyle(CanonicalSecondaryButtonStyle())
                     .disabled(isActing)
                     .accessibilityIdentifier("open-current-cut")
@@ -763,7 +780,7 @@ private struct CreationWorkspaceView: View {
         case .ready:
             ReadyStage(
                 project: currentProject,
-                openEditor: { showsResult = true },
+                openEditor: openEditor,
                 suggest: { prompt = $0 }
             )
             .id("ready")

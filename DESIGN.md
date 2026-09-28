@@ -549,8 +549,11 @@ thin 6pt band at the bottom edge. Text below the header block stays crisp. Only
 the chat gets this; other scroll surfaces keep their normal clip. The chat header and composer float over the transcript as frosted
 capsules (`kriaFloatingSurface`) and the transcript runs full-bleed beneath
 them, so text scrolls and fades under both instead of ending at an opaque bar.
-The Kria AI sheets carry no visible "Kria" title. See the KRI-197 section of
-the iOS development runbook.
+The Kria AI sheets carry no visible "Kria" title. Chat and Editor are a
+switch, not a page rising from the bottom: both share the same floating header
+(`WorkspaceTopRow` + `WorkspaceModeSwitch`, white selected segment) and the
+editor cross-dissolves in (`WorkspaceCrossfade`) instead of sliding up. See the
+KRI-197 section of the iOS development runbook.
 
 ### iOS wordmark asset
 
