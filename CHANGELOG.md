@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.1.0] - 2026-09-28
+
+### Changed
+- fix(kria): let v2 phone Talking renders dispatch past the enforce cleanup guard (#1259) <!-- release-pr: 1259 -->
+
 ## [0.77.0.0] - 2026-09-28
 
 ### Added
