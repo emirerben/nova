@@ -1818,3 +1818,21 @@ lane is deleted.
 **Rollback.** `fly secrets set MONTAGE_UNIFIED_PLAN_ENABLED=false
 MONTAGE_UNIFIED_PLAN_USER_IDS= --app nova-video` + restart the worker. New jobs use
 the plain lane again; a job already planned keeps its pinned guided plan.
+
+**Visuals in the montage (KRI-217).** Ready Visuals-pool photos (and Visuals
+videos) are spread between the clips and drawn by the device like any guided
+story's photos (`stillImages` / `visualVideos` must stay verified). Triage a v2
+montage reply with `python3 scripts/admin.py --prod GET
+/admin/creation-threads/<ID>/events`; the `assistant_render_failed` payload's
+`dispatch_outcome` names the gate:
+
+- `visuals_processing` ("A photo or video you added to Visuals is still being
+  prepared."): a creator Visual is `uploaded`/`queued`/`analyzing`. Refresh
+  project once it is `ready` (`/admin/plan-items/<item>/debug` → `pool_assets`).
+- `guided_edit_bypass_unsafe` ("I can't put your Visuals into this montage
+  yet."): the lane is clip-only (a cloud-rendered account, or
+  `MONTAGE_UNIFIED_PLAN_*` off for the account) or the phone cannot draw that
+  kind. Removing the Visuals and refreshing renders the videos.
+
+An abandoned upload reservation (`preparing`, reaped after about 30 minutes) or a
+`failed` Visual never blocks a v2 montage and never reaches the plan.

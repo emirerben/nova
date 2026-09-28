@@ -22,7 +22,12 @@ What it decides, and only this:
   lasts a default fast-cut length;
 * title: the creator's confirmed title, else a title written from brief facts
   ("20K Run · Arnavutköy → Eminönü"). Text stays NFC; nothing is folded to
-  ASCII. A montage never takes its title from a Gemini setting.
+  ASCII. A montage never takes its title from a Gemini setting;
+* Visuals (KRI-217): the item's ready Visuals-pool photos and videos are spread
+  evenly between the clips (the montage always opens on a clip) and keep their
+  upload order. A photo holds for a fast-cut length, never longer than a beat of
+  attention. Runtime v2 has no guided proposal to place them, so without this
+  every phone montage with a photo was refused at dispatch.
 
 The output is an ordinary ``EditProposalSnapshot`` (direction ``fast_montage``
 with exact ``fast_cuts`` and ``clip_labels``), so the strict guided compiler,
@@ -60,6 +65,12 @@ READING_MIN_S = 1.2
 READING_MAX_S = 3.0
 # An unlabelled cut keeps the classic fast-montage length.
 DEFAULT_CUT_S = 1.2
+# A photo has no source length of its own: it holds like a cut and never longer
+# than a beat of attention, even when a stated length leaves time to fill.
+STILL_MAX_S = READING_MAX_S
+# The strict snapshot's shortest video cut (``EditProposalSnapshot``). A clip
+# shorter than this is valid only shown whole.
+MIN_VIDEO_CUT_S = 0.4
 MIN_TOTAL_S = 3.0
 # Model- and fact-derived labels stay short; the creator's own words are never cut
 # (``ClipLabel`` allows 120).
@@ -90,7 +101,12 @@ def _cap_label(text: str, provenance: str) -> str:
 
 @dataclass(frozen=True)
 class UnifiedClip:
-    """One phone-bound clip, in attachment order."""
+    """One phone-bound clip, in attachment order, or one Visuals-pool item.
+
+    A Visual (``lane="asset"``) is a ready ``PlanItemAsset``: ``media_id`` is its
+    row id (what the phone binder pins), ``proxy_path`` its pool path, and
+    ``duration_s`` is ignored for a photo.
+    """
 
     media_id: str
     proxy_path: str
@@ -104,6 +120,20 @@ class UnifiedClip:
     # account has no clip-facts access.
     facts: tuple[Mapping[str, Any], ...] = ()
     capture_time: datetime | None = None
+    lane: str = "clip"
+    kind: str = "video"
+    # The creator manifest's id (``asset-<uuid>`` for a Visual), which brief
+    # scopes and resolved clip intents use. None means ``media_id``.
+    manifest_id: str | None = None
+    # A Visual's stored aspect; a clip's comes from its width and height.
+    aspect: float | None = None
+    source_filename: str = ""
+    user_context: str = ""
+    content_hash: str | None = None
+
+    @property
+    def ref_id(self) -> str:
+        return self.manifest_id or self.media_id
 
 
 @dataclass(frozen=True)
@@ -258,9 +288,13 @@ class UnifiedMontagePlan:
     duration_s: float
     brief_version: int | None
     wants_per_clip_text: bool
+    # The Visuals-pool ids among ``clip_ids`` (KRI-217), in plan order.
+    visual_ids: list[str] = field(default_factory=list)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
+        # Only a montage with Visuals names them: every earlier record stays as is.
+        visuals = {"visual_ids": list(self.visual_ids)} if self.visual_ids else {}
         return {
             "version": 1,
             "brief_version": self.brief_version,
@@ -283,6 +317,7 @@ class UnifiedMontagePlan:
             "short_label_clip_ids": list(self.short_label_clip_ids),
             "ordering_basis": self.ordering_basis,
             "ordering_fallback_clip_ids": list(self.ordering_fallback_clip_ids),
+            **visuals,
         }
 
     def guided_edit(self, *, generation_attempt_id: str | None = None) -> dict[str, Any]:
@@ -358,6 +393,8 @@ def _shrink(frames: list[int], labelled: Sequence[bool], total: int, target: int
 
 
 def _capacity_frames(clip: UnifiedClip) -> int:
+    if clip.kind == "image":
+        return int(round(STILL_MAX_S * FPS))
     return max(1, int(math.floor((float(clip.duration_s) + 0.001) * FPS + 1e-6)))
 
 
@@ -438,6 +475,40 @@ def _order(
     )
 
 
+def _scatter(clips: Sequence[UnifiedClip], visuals: Sequence[UnifiedClip]) -> list[UnifiedClip]:
+    """Spread ``visuals`` evenly between ``clips``; the first cut stays a clip.
+
+    Visual ``j`` of ``m`` goes after ``round((j + 1) * n / (m + 1))`` of the
+    ``n`` clips (at least one), so 6 clips and 2 photos read C C P C C P C C.
+    """
+    n, m = len(clips), len(visuals)
+    after = [max(1, int(math.floor((j + 1) * n / (m + 1) + 0.5))) for j in range(m)]
+    merged: list[UnifiedClip] = []
+    pending = list(zip(after, visuals, strict=True))
+    for index, clip in enumerate(clips, start=1):
+        merged.append(clip)
+        while pending and pending[0][0] <= index:
+            merged.append(pending.pop(0)[1])
+    merged.extend(visual for _slot, visual in pending)
+    return merged
+
+
+def selected_visual_ids(strategy: Mapping[str, Any] | None) -> frozenset[str] | None:
+    """Manifest ids of the media an explicit ``selected`` scope names, else None.
+
+    None means every ready Visual. The guided strategy leaves
+    ``selected_media_ids`` empty when it takes everything
+    (``normalize_creator_strategy_media``), so only a non-empty explicit subset
+    narrows the Visuals a unified montage places.
+    """
+    if not isinstance(strategy, Mapping) or strategy.get("media_scope") != "selected":
+        return None
+    ids = strategy.get("selected_media_ids")
+    if not isinstance(ids, list) or not ids:
+        return None
+    return frozenset(str(media_id) for media_id in ids)
+
+
 def plan_unified_montage(
     clips: Sequence[UnifiedClip],
     view: BriefView | None = None,
@@ -446,25 +517,35 @@ def plan_unified_montage(
     clip_intents_enabled: bool = False,
     font_covers: Callable[[str, str], bool] | None = None,
     creator_order: Sequence[int] = (),
+    visuals: Sequence[UnifiedClip] = (),
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
     ``strategy`` is the serialized Main Creator ``CreativeStrategy`` the job was
     approved with. Only its creator-confirmed copy is read: ``opening_title``,
-    ``closing_title``, ``shot_labels``, ``font_family``, ``text_color`` and, when
-    ``clip_intents_enabled``, the server-verified ``resolved_clip_intents``.
-    ``creator_order`` is the server-pinned order of the previous timeline
-    (indices into ``clips``); see ``_order``. ``font_covers(family, text)`` says
-    whether a bundled font has a glyph for every character of ``text`` (see
-    ``skia_font_covers``); without it the default typography is used as is.
+    ``closing_title``, ``shot_labels``, ``font_family``, ``text_color``,
+    ``image_layout`` and, when ``clip_intents_enabled``, the server-verified
+    ``resolved_clip_intents``. ``creator_order`` is the server-pinned order of
+    the previous timeline (indices into ``clips``); see ``_order``.
+    ``font_covers(family, text)`` says whether a bundled font has a glyph for
+    every character of ``text`` (see ``skia_font_covers``); without it the
+    default typography is used as is. ``visuals`` are the item's ready
+    Visuals-pool items (``lane="asset"``) in upload order; see ``_scatter``.
     """
     view = view or BriefView()
     strategy = strategy or {}
     if not clips:
         raise ValueError("a montage needs at least one clip")
-    if len({clip.media_id for clip in clips}) != len(clips):
+    if any(visual.lane != "asset" for visual in visuals):
+        raise ValueError("montage visuals must come from the Visuals pool")
+    if len({clip.media_id for clip in (*clips, *visuals)}) != len(clips) + len(visuals):
         raise ValueError("montage clips must have unique media identities")
     ordered, basis, fallback_ids = _order(clips, view, creator_order)
+    ordered = _scatter(ordered, visuals)
+    if view.order_by_capture:
+        # Visuals carry no capture time: they keep their spread slot, and the
+        # receipt says their place is not the filmed order.
+        fallback_ids = [*fallback_ids, *(v.media_id for v in visuals if v.capture_time is None)]
 
     # ── labels ───────────────────────────────────────────────────────────────
     labels_requested = bool(
@@ -481,12 +562,12 @@ def plan_unified_montage(
     dropped: list[str] = []
     for index, clip in enumerate(ordered):
         chosen: tuple[str, str, str | None, bool] | None = None  # text, provenance, kind, inferred
-        if clip.media_id in view.clip_literals:
-            chosen = (view.clip_literals[clip.media_id], "creator", None, False)
+        if clip.ref_id in view.clip_literals:
+            chosen = (view.clip_literals[clip.ref_id], "creator", None, False)
         elif index < len(positional):
             chosen = (positional[index], "creator", None, False)
-        elif clip.media_id in intent_labels:
-            text, creator_text = intent_labels[clip.media_id]
+        elif clip.ref_id in intent_labels:
+            text, creator_text = intent_labels[clip.ref_id]
             chosen = (text, "creator" if creator_text else "fact", None, not creator_text)
         elif view.wants_per_clip_text:
             fact = _fact_label(clip)
@@ -567,11 +648,18 @@ def plan_unified_montage(
     refs: list[MediaRef] = []
     for index, (clip, frames) in enumerate(zip(ordered, wanted, strict=True)):
         duration = frames / FPS
-        start = _window_start_s(clip, duration)
-        end = round(start + duration, 3)
-        if end > clip.duration_s + 0.001:
-            start = round(max(0.0, clip.duration_s - duration), 3)
+        if clip.kind == "image":
+            start, end = 0.0, round(duration, 3)
+        elif clip.duration_s < MIN_VIDEO_CUT_S:
+            # Whole frames stop a fraction of a frame short of a 0.298s clip,
+            # which the snapshot refuses: a clip this short is shown whole.
+            start, end = 0.0, math.floor(clip.duration_s * 1000) / 1000
+        else:
+            start = _window_start_s(clip, duration)
             end = round(start + duration, 3)
+            if end > clip.duration_s + 0.001:
+                start = round(max(0.0, clip.duration_s - duration), 3)
+                end = round(start + duration, 3)
         cuts.append(
             FastMontageCut(
                 cut_id=f"unified-cut-{index + 1}",
@@ -584,20 +672,23 @@ def plan_unified_montage(
                 beat_align=False,
             )
         )
-        aspect = None
+        aspect = clip.aspect
         if clip.width and clip.height:
             swapped = clip.orientation_degrees in (90, 270)
             aspect = (clip.height / clip.width) if swapped else (clip.width / clip.height)
         refs.append(
             MediaRef(
-                lane="clip",
+                lane=clip.lane,  # type: ignore[arg-type]
                 media_id=clip.media_id,
                 gcs_path=clip.proxy_path,
                 generation=clip.generation,
-                kind="video",
-                duration_s=clip.duration_s,
+                kind=clip.kind,  # type: ignore[arg-type]
+                duration_s=clip.duration_s if clip.kind == "video" else None,
                 aspect=aspect,
                 analysis=dict(clip.analysis) if isinstance(clip.analysis, Mapping) else {},
+                source_filename=clip.source_filename,
+                user_context=clip.user_context,
+                content_hash=clip.content_hash,
             )
         )
     total_s = round(sum(cut.output_duration_s for cut in cuts), 3)
@@ -605,6 +696,13 @@ def plan_unified_montage(
     snapshot_kwargs: dict[str, Any] = {}
     if closing:
         snapshot_kwargs["closing_title"] = closing
+    image_layout = strategy.get("image_layout")
+    if image_layout in ("fullscreen", "supporting_card") and any(
+        clip.kind == "image" for clip in ordered
+    ):
+        # The creator's own "don't crop my photos" choice; otherwise a photo
+        # cut takes the fast montage's fullscreen cover crop.
+        snapshot_kwargs["image_layout"] = image_layout
     hold = strategy.get("opening_title_duration_s")
     if isinstance(hold, (int, float)) and not isinstance(hold, bool):
         snapshot_kwargs["opening_title_duration_s"] = hold
@@ -652,6 +750,7 @@ def plan_unified_montage(
         duration_s=total_s,
         brief_version=view.version,
         wants_per_clip_text=labels_requested,
+        visual_ids=[clip.media_id for clip in ordered if clip.lane == "asset"],
     )
 
 
@@ -766,6 +865,7 @@ __all__ = [
     "brief_view",
     "min_display_s",
     "plan_unified_montage",
+    "selected_visual_ids",
     "skia_font_covers",
     "title_from_facts",
 ]
