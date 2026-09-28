@@ -27,8 +27,9 @@ jest.mock("next-auth/react", () => ({
 
 import Header from "@/components/Header";
 
-function renderWithPathname(pathname: string) {
+function renderWithPathname(pathname: string, search = "") {
   mockPathname = pathname;
+  window.history.replaceState({}, "", `${pathname}${search ? `?${search}` : ""}`);
   return render(<Header />);
 }
 
@@ -39,15 +40,18 @@ describe("Header — isLight predicate", () => {
     useSession.mockReturnValue({ data: null, status: "unauthenticated" });
   });
 
-  it("test_header_light_on_landing: / is light, borderless, and leaves actions to the story", () => {
+  it("hides the global header on the main landing page", () => {
     const { container } = renderWithPathname("/");
-    const header = container.querySelector("header");
-    expect(header!.className).toContain("bg-[#ffffff]");
-    expect(header!.className).not.toContain("border-b");
-    expect(screen.queryByRole("link", { name: /create my first edit/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /sign in/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Terms" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Privacy" })).not.toBeInTheDocument();
+    expect(container.querySelector("header")).not.toBeInTheDocument();
+  });
+
+  it("keeps the light header on the scroll-comparison query", async () => {
+    const { container } = renderWithPathname("/", "mode=scroll");
+    await waitFor(() => {
+      const header = container.querySelector("header");
+      expect(header).toBeInTheDocument();
+      expect(header!.className).toContain("bg-[#ffffff]");
+    });
   });
 
   it("test_header_light_on_auto_story: /auto-story is light and borderless", () => {
