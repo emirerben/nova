@@ -988,12 +988,18 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let second = app.buttons["native-editor-timeline-text-00000000-0000-4000-8000-000000000101"].firstMatch
         XCTAssertEqual(text.frame.midY, second.frame.midY, accuracy: 1)
         let originalTiming = text.value as? String ?? ""
+        let original = timingSeconds(originalTiming)
+        let pointsPerSecond = text.frame.width / max(0.1, (original?.end ?? 1.5) - (original?.start ?? 0))
         let start = text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.6, thenDragTo: start.withOffset(CGVector(dx: 35, dy: 0)))
         waitForStableRowRelation(text, second) { abs($0) > 30 }
         XCTAssertGreaterThan(abs(text.frame.midY - second.frame.midY), 30)
         let timing = text.value as? String ?? ""
         XCTAssertFalse(timing.hasPrefix("00:00.0 to"), timing)
+        // The block follows the finger's whole travel. The move used to drop
+        // the travel before the drag's first sample; on a busy runner this
+        // 70ms drag arrived as one sample and the block never moved.
+        XCTAssertEqual(timingSeconds(timing)?.start ?? -1, 35 / pointsPerSecond, accuracy: 0.1, timing)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-text-panel"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-trim-trailing"].firstMatch.exists)
         let timeline = app.descendants(matching: .any)["native-editor-lane-scroll"].firstMatch
@@ -1006,9 +1012,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
         reverse.press(forDuration: 0.05, thenDragTo: reverse.withOffset(CGVector(dx: 70, dy: 0)))
         XCTAssertEqual(time.value as? String, beforeSwipe)
         let moveBack = text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        // Synthetic drags lose part of their translation on a busy simulator.
-        // A -40pt reverse once left the text at 0.09s, still overlapping its
-        // neighbour, so two rows were correct. Overshoot: the move clamps at 0.
+        // Overshoot: the move clamps at 0, so the block lands exactly on its
+        // original timing instead of depending on the forward move's distance.
         moveBack.press(forDuration: 0.6, thenDragTo: moveBack.withOffset(CGVector(dx: -120, dy: 0)))
         waitForStableRowRelation(text, second) { abs($0) <= 1 }
         XCTAssertEqual(
@@ -1200,6 +1205,17 @@ final class NativeEditorInspectorUITests: XCTestCase {
             start.press(forDuration: 0.05, thenDragTo: end, withVelocity: 40, thenHoldForDuration: 0.1)
         }
         XCTFail("Could not reveal \(element.identifier) above the tool rail")
+    }
+
+    /// Start and end seconds of a timeline bar's value, e.g.
+    /// "00:00.7 to 00:02.2, selected".
+    private func timingSeconds(_ value: String) -> (start: Double, end: Double)? {
+        let stamps = (value.split(separator: ",").first ?? "").components(separatedBy: " to ").compactMap { stamp -> Double? in
+            let parts = stamp.split(separator: ":")
+            guard parts.count == 2, let minutes = Double(parts[0]), let seconds = Double(parts[1]) else { return nil }
+            return minutes * 60 + seconds
+        }
+        return stamps.count == 2 ? (stamps[0], stamps[1]) : nil
     }
 
     /// Lanes repack synchronously when a timing drag ends, so this only gives
