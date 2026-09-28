@@ -722,9 +722,15 @@ private struct CreationWorkspaceView: View {
                 DirectionStage(
                     approval: approval,
                     format: selectedFormat,
+                    speechCleanup: fullThread?.speechCleanup,
                     isBusy: isActing || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
-                    decide: decide
+                    decide: decide,
+                    retrySpeechCheck: { analysisID in
+                        var payload: [String: JSONValue] = [:]
+                        if let analysisID { payload["speech_cleanup_analysis_id"] = .string(analysisID) }
+                        performAction("retry_speech_cleanup", payload: payload)
+                    }
                 )
                 .id("approval-\(approval.id)")
             } else if let thread = fullThread {
@@ -1049,7 +1055,8 @@ private struct CreationWorkspaceView: View {
             do {
                 let changed = try await refreshDelta()
                 await refreshDeviceRender()
-                delay = changed || isSending || isActing || currentProject.status == .rendering || fullThread?.preparationIsActive == true
+                delay = changed || isSending || isActing || currentProject.status == .rendering
+                    || fullThread?.preparationIsActive == true || speechCleanupIsChecking
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
             } catch is CancellationError {
                 return
@@ -1063,6 +1070,14 @@ private struct CreationWorkspaceView: View {
             }
             try? await Task.sleep(nanoseconds: delay)
         }
+    }
+
+    /// True while the v2 approval card's speech-check analysis is queued,
+    /// running, or not yet created -- keeps `pollUntilDismissed`'s fast 1s
+    /// cadence instead of backing off to 8s, so "Checking speech…" resolves
+    /// promptly whether it started from the approval or from a fresh 409.
+    private var speechCleanupIsChecking: Bool {
+        SpeechCleanupOffer.resolve(fullThread?.speechCleanup).offer == .checking
     }
 
     private var deviceRenderKey: DeviceRenderKey? {
@@ -1241,7 +1256,12 @@ private struct CreationWorkspaceView: View {
         }
     }
 
-    private func decide(_ decision: String) {
+    /// `cleanupChoice`/`analysisID` carry the speech-cleanup offer's answer on
+    /// "approve" ("clean" / "keep_original" / "create_without_cleanup"); both
+    /// are nil for "deny" and for a thread with no cleanup offer. This build
+    /// always sends `speech_cleanup_aware: true` so the server can safely gate
+    /// the decision on the `speech_cleanup_*` conflict codes below.
+    private func decide(_ decision: String, cleanupChoice: String? = nil, analysisID: String? = nil) {
         guard !isActing, pendingUploadCount == 0,
               let approval, approval.expiresAt > .now,
               let identifier = UUID(uuidString: approval.approvalID),
@@ -1258,8 +1278,19 @@ private struct CreationWorkspaceView: View {
                     decision: decision,
                     expectedThreadRevision: threadRevision,
                     expectedDraftRevision: draftRevision,
-                    fingerprint: approval.approvalFingerprint
+                    fingerprint: approval.approvalFingerprint,
+                    speechCleanupAware: true,
+                    speechCleanupAnalysisID: analysisID,
+                    speechCleanupChoice: cleanupChoice
                 )
+            } catch let error as APIError where error == .conflict && speechCleanupConflictCodes.contains(error.conflictCode ?? "") {
+                // The approval stays PENDING with the same id/fingerprint --
+                // this isn't a failure, just a stale or not-yet-ready cleanup
+                // offer. Refresh so `fullThread.speechCleanup` picks up the
+                // latest analysis/outcome and the same card re-renders with
+                // it, instead of a generic "couldn't record that" toast.
+                await refreshNow()
+                return
             } catch {
                 await refreshNow()
                 failure = ChatFailure("Kria couldn’t record that decision.", error: error)
