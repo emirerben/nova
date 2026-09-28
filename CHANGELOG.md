@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.231.0] - 2026-09-28
+
+### Changed
+- fix(kria): ask the speech-cleanup question in runtime v2 and apply it on the phone (#1260) <!-- release-pr: 1260 -->
+
 ## [0.76.230.0] - 2026-09-25
 
 ### Changed
