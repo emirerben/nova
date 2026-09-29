@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.13.0] - 2026-09-29
+
+### Fixed
+- fix(kria): iOS montage with photos renders instead of "couldn't start the render" (KRI-217) (#1265) <!-- release-pr: 1265 -->
+
 ## [0.77.12.0] - 2026-09-29
 
 ### Changed
