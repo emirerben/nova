@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.14.0] - 2026-09-29
+
+### Changed
+- fix(kria): unchecked brief asks no longer read "Partly" (#1272) <!-- release-pr: 1272 -->
+
 ## [0.77.13.0] - 2026-09-29
 
 ### Fixed
