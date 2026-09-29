@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.12.0] - 2026-09-29
+
+### Changed
+- fix(speech-cleanup): preflight cuts from what was said, not whisper's translation (#1228) <!-- release-pr: 1228 -->
+
 ## [0.77.11.0] - 2026-09-29
 
 ### Changed
