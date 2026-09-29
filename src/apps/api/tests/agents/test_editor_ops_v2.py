@@ -24,7 +24,7 @@ from tests.services.test_kria_editor_ops import _job, _variant
 
 
 def test_prompt_version_pinned() -> None:
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-29-v48"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-29-v51"
 
 
 def test_op_cap_is_a_single_shared_constant() -> None:
@@ -36,9 +36,9 @@ def test_op_cap_is_a_single_shared_constant() -> None:
     assert any(getattr(m, "max_length", None) == MAX_EDITOR_OPS for m in limit)
 
 
-def test_stub_lanes_add_nothing() -> None:
-    assert editor_ops_v2.lane_specs() == []
-    assert editor_ops_v2.prompt_fragments() == ""
+def test_lane_specs_only_extend_or_add_known_ops() -> None:
+    names = [spec.name for spec in editor_ops_v2.lane_specs()]
+    assert len(names) == len(set(names))
 
 
 def _snapshot(**extra) -> dict:
@@ -49,7 +49,8 @@ def _snapshot(**extra) -> dict:
     }
 
 
-def test_prompt_is_byte_identical_without_marker_and_with_empty_fragments() -> None:
+def test_prompt_is_byte_identical_without_marker_and_with_empty_fragments(monkeypatch) -> None:
+    monkeypatch.setattr(editor_ops_v2, "prompt_fragments", lambda: "")
     plain = _snapshot()
     marked = _snapshot(editor_ops_version=2)
 

@@ -1,0 +1,56 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-29-v51",
+  "input": {
+    "utterance": "make the background music bed much quieter",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "editor_ops_version": 2,
+      "allowed_op_families": [
+        "music"
+      ],
+      "has_narrated_captions": false,
+      "text_bars": [],
+      "slots": [
+        {
+          "output_start_s": 0,
+          "output_end_s": 8,
+          "duration_s": 8
+        }
+      ],
+      "total_duration_s": 8,
+      "music": {
+        "swappable": false,
+        "removable": true,
+        "current_track_id": "track-1",
+        "current_track_title": "Beat",
+        "candidates": []
+      },
+      "mix": {
+        "music_level": 0.6,
+        "background_music": {
+          "track_id": "track-1",
+          "gain_db": -18.0
+        }
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_mix\", \"music_gain_db\": -30}], \"confidence\": 0.9, \"reply\": \"Turned the music bed down.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "set_mix",
+        "music_gain_db": -30.0
+      }
+    ],
+    "confidence": 0.9,
+    "reply": "Turned the music bed down.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "music_bed_gain"
+  }
+}
