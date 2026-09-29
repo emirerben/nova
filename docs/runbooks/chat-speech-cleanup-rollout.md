@@ -141,6 +141,37 @@ time and `inflight_contracts_preserved=true` in the evidence. If any observation
 unknown, leave the rollout at the prior stage (or off/0) and investigate; unknown is
 never treated as healthy.
 
+### Accented speech: whisper's language vs Gemini's
+
+whisper-1 auto-detects the language from audio alone and misreads accented speech
+(Turkish-accented English -> `tr`), then writes a TRANSLATION, so fillers and word
+timings come from text nobody said. Preflight cross-checks its detection against an
+independent Gemini transcript and, on a clear EN/TR disagreement, re-transcribes in
+the language Gemini heard before building the cut plan. The reference comes from:
+
+- **The plan item**: the clip assignment's `analysis.transcript` (exact generation
+  only). Only the v1 flows save one (creator preparation, guided edit proposals).
+  - Present at claim, or landed mid-run: the worker cross-checks before persisting.
+  - Lands after a settled, undecided run: the next preflight schedule logs
+    `speech_cleanup_analysis.language_redo` and re-queues the same row. A creator
+    decision is never revoked; a run that already had a reference is never repeated.
+- **The worker**, when the item has none: every Kria v2 project (v2 only runs
+  Gemini inside the render job) and every recorded voiceover. It sends the
+  narration's first 30 s (whisper detects its language from the same opening) to
+  `nova.audio.transcript`: one upload attempt, a 20 s wait for ACTIVE, billed to the
+  plan owner as `optional_background`. Logs `speech_cleanup_analysis.gemini_reference`
+  (`found`, `run_duration_ms`) or `speech_cleanup_analysis.gemini_reference_unavailable`
+  (`error_class`); any failure keeps the single-listener analysis.
+
+Evidence: the private payload's `diagnostics.language_crosscheck` (`whisper_language`,
+`reference_language`, `applied`, `reference_source`: `clip_analysis` | `gemini_audio`);
+absent means that run had no reference.
+
+Kill switch: `SPEECH_CLEANUP_GEMINI_REFERENCE_ENABLED=false` + worker restart skips
+the worker's Gemini call; the plan-item path keeps working. Neither path changes the
+fingerprint, so nothing reshuffles cohorts or consent, and extra whisper work happens
+only on a disagreement.
+
 ## Local verification
 
 ```bash
