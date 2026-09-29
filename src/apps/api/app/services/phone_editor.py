@@ -18,6 +18,7 @@ from app.pipeline.guided_story import (
     compile_guided_runtime_plan,
     song_reference_variant_fields,
 )
+from app.pipeline.phone_captions import caption_look_from_variant
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, lane_names
@@ -55,13 +56,16 @@ log = structlog.get_logger()
 PHONE_EDITOR_PLAN_FIELD = "_phone_editor_plan_v1"
 
 # The only native-editor sections a phone `subtitled` (Talking to camera)
-# variant honours today (KRI-182 step 1). Everything else the generic
-# `_prepare_editor_commit` validators already accepted for this archetype on
-# cloud (`visual_blocks`, `motion_scenes`, `camera_effects`, `timeline`,
-# `mix`, `music`, `orientation`, `caption_meta`, `text_elements`, ...) stays
-# CLOSED on a device variant -- the phone subtitled compiler has no lane for
-# any of them, and Save must never silently apply one it can't recompile.
-_SUBTITLED_EDITOR_SECTIONS = frozenset({"sound_effects", "media_overlays", "caption_cues"})
+# variant honours today (KRI-182 step 1; `caption_cues`/`caption_meta` added
+# KRI-216). Everything else the generic `_prepare_editor_commit` validators
+# already accepted for this archetype on cloud (`visual_blocks`,
+# `motion_scenes`, `camera_effects`, `timeline`, `mix`, `music`,
+# `orientation`, `text_elements`, ...) stays CLOSED on a device variant -- the
+# phone subtitled compiler has no lane for any of them, and Save must never
+# silently apply one it can't recompile.
+_SUBTITLED_EDITOR_SECTIONS = frozenset(
+    {"sound_effects", "media_overlays", "caption_cues", "caption_meta"}
+)
 
 
 class _StagedJob:
@@ -282,6 +286,21 @@ def _compile_subtitled_editor_commit(
     if caption_cues is None:
         caption_cues = variant.get("caption_cues") or []
     caption_style = variant.get("voiceover_caption_style") or "sentence"
+    caption_look = caption_look_from_variant(variant)
+
+    # KRI-216: reconstruct the previously pinned speech-cleanup cut (if any)
+    # from the worker-pinned recipe's own main-track clips, so a Save never
+    # silently recompiles the full uncut clip underneath cues/lanes that are
+    # already expressed in CUT-timeline coordinates (the pre-KRI-216 bug --
+    # every editor Save on a cleaned-up variant desynced captions/lanes from
+    # the video). An uncut variant's main track is a single full-duration
+    # clip, so this reproduces `keep_segments=None`'s own default byte-for-
+    # byte -- no branch on "was this cut" needed.
+    keep_segments = (
+        _previous_keep_segments(previous.recipe, bindings[0].render_asset().id)
+        if isinstance(previous.recipe, EditRecipeV2)
+        else None
+    )
 
     recipe = compile_phone_subtitled_plan(
         bindings,
@@ -290,6 +309,8 @@ def _compile_subtitled_editor_commit(
         visuals=visuals,
         lanes=lanes,
         duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
+        keep_segments=keep_segments,
+        caption_look=caption_look,
     )
     duck_receipt = sfx_duck_receipt(lanes, recipe)
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays))
@@ -361,3 +382,33 @@ def _compile_subtitled_editor_commit(
             row[SFX_DUCK_RECEIPT_FIELD] = duck_receipt
         else:
             row.pop(SFX_DUCK_RECEIPT_FIELD, None)
+
+
+def _previous_keep_segments(
+    recipe: EditRecipeV2, speaker_asset_id: str
+) -> list[tuple[float, float]] | None:
+    """Reconstruct `compile_phone_subtitled_plan`'s own ``keep_segments`` input
+    from a previously pinned subtitled recipe's main (``"subtitled"``) video
+    track -- the inverse of that function's ``keep_segments`` ->
+    one-`TimelineClip`-per-kept-segment projection.
+
+    Only clips over ``speaker_asset_id`` (the speaker binding's own asset)
+    count -- the SAME track can also carry a muted ending clip
+    (`_compile_ending_clip`) appended right after the speaker segments, over
+    a DIFFERENT (Visuals-pool) asset; that clip is never part of the cut and
+    must not be read back as a kept segment. Clips are ordered by
+    ``timeline_start`` (the same order they were originally appended in).
+
+    Returns ``None`` when the track is missing or carries no speaker clip at
+    all -- defensive only; every real pinned subtitled recipe has one.
+    """
+    main_track = next((track for track in recipe.tracks if track.id == "subtitled"), None)
+    if main_track is None:
+        return None
+    speaker_clips = sorted(
+        (clip for clip in main_track.clips if clip.source_asset_id == speaker_asset_id),
+        key=lambda clip: clip.timeline_start,
+    )
+    if not speaker_clips:
+        return None
+    return [(clip.source_start, clip.source_start + clip.source_duration) for clip in speaker_clips]
