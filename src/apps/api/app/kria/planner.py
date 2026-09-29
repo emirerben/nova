@@ -237,6 +237,9 @@ class _EditorTarget:
     job_id: uuid.UUID
     snapshot: dict
     conversation: list[dict]
+    # The projected variant the snapshot was built from (plain JSON copy). Only
+    # the dev harness (`app.cli.kria_ask`) reads it, to dry-run the compiler.
+    variant: dict | None = None
 
 
 async def _copilot_clip_context(
@@ -342,7 +345,9 @@ async def _load_editor_target(
     conversation = [
         {"role": row.role, "content": str(row.content)[:1000]} for row in rows if row.content
     ]
-    return _EditorTarget(job_id=job.id, snapshot=snapshot, conversation=conversation)
+    return _EditorTarget(
+        job_id=job.id, snapshot=snapshot, conversation=conversation, variant=variant
+    )
 
 
 async def _plan_editor_revision(
