@@ -1876,7 +1876,8 @@ final class NativeEditorSessionTests: XCTestCase {
 
         await session.load(project: project, api: fake)
 
-        XCTAssertEqual(fake.draftCallCount, 0, "ready projects must not depend on the rollout-gated runtime draft")
+        XCTAssertLessThanOrEqual(fake.draftCallCount, 1, "the runtime draft is best-effort (staging only); its failure must never block opening")
+        XCTAssertEqual(session.loadState, .loaded)
         XCTAssertEqual(fake.projectCallCount, 1, "URL-free project-list summaries must hydrate before editor loading")
         XCTAssertNil(fake.openedJobID, "creation projects already own a plan item and must not be promoted again")
         XCTAssertEqual(fake.editorVariantsCallCount, 1, "the job status is authoritative when project projections omit variant identity")

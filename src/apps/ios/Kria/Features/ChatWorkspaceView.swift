@@ -922,7 +922,9 @@ private struct CreationWorkspaceView: View {
         failure = nil
         confirmationConflict = nil
         defer { isSending = false }
-        if editorSession.hasUnsavedChanges {
+        // Edits staged from a chat draft already live in the server's draft head;
+        // committing them here would render on every send. Only real local edits flush.
+        if editorSession.hasUnsavedChanges, !editorSession.hasOnlyChatStagedChanges {
             await editorSession.save()
             guard !editorSession.hasUnsavedChanges else {
                 failure = ChatFailure("Your message is still here. Save or resolve your editor changes before sending it.")

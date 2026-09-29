@@ -218,4 +218,72 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
     }
+
+    private func openedProject(_ snapshot: DraftSnapshot, draftError: APIError? = nil) async -> (NativeEditorSession, EditorCommitSpy) {
+        let fake = EditorCommitSpy(draftSnapshot: snapshot, draftError: draftError, authoritativeVariant: Self.variant(),
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2",
+                sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: true, mix: true),
+                revisionNumber: 4, revisionHash: "r4", expectedDuration: nil))
+        let project = ProjectSummary(id: UUID(), title: "Chat", status: .ready, updatedAt: .now, posterURL: nil,
+            outputVariantID: "initial", runtimeVersion: 2, activeJobID: UUID(uuidString: Self.jobID), activePlanItemID: "item")
+        let session = NativeEditorSession(project: project)
+        await session.load(project: project, api: fake)
+        return (session, fake)
+    }
+
+    func testOpenPathStagesAnExistingChatDraftAndSurvivesDraftFetchFailure() async throws {
+        let (session, _) = await openedProject(Self.chatSnapshot(shape: .flatOnly))
+        XCTAssertEqual(session.dirtySections, [.timeline, .text, .mix, .music])
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+        XCTAssertEqual(session.timelineClips.count, 2)
+        let (failed, _) = await openedProject(Self.chatSnapshot(shape: .flatOnly), draftError: .conflict)
+        XCTAssertEqual(failed.loadState, .loaded)
+        XCTAssertFalse(failed.hasUnsavedChanges)
+        let (stale, _) = await openedProject(Self.chatSnapshot(base: "g0", shape: .flatOnly))
+        XCTAssertFalse(stale.hasUnsavedChanges)
+    }
+
+    func testReturningToALoadedEditorStagesTheLatestDraft() async throws {
+        let (session, fake) = await openedProject(Self.bootstrapSnapshot())
+        XCTAssertFalse(session.hasUnsavedChanges)
+        fake.draftSnapshot = Self.chatSnapshot(shape: .flatOnly)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+    }
+
+    func testChatStagedEditsAloneNeedNoFlushButLocalEditsDo() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot(shape: .flatOnly))
+        XCTAssertTrue(session.hasOnlyChatStagedChanges, "send must not commit/render chat-staged edits")
+        XCTAssertEqual(fake.commitCount, 0)
+        session.setClipTiming(clipID: "s1", durationS: 1.1)
+        XCTAssertFalse(session.hasOnlyChatStagedChanges, "a manual edit restores the flush")
+        session.undo()
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+    }
+
+    func testNewerCumulativeChatDraftReplacesTheStagedOneWithoutConflict() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot(shape: .flatOnly))
+        fake.draftSnapshot = Self.chatSnapshot(revision: 4, textOnly: true, shape: .flatOnly)
+        await session.synchronizePromptRevision()
+        XCTAssertNotEqual(session.saveState, .conflict)
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+        // Same revision again is a no-op that keeps the staged edit.
+        await session.synchronizePromptRevision()
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+    }
+
+    func testSaveCommitsChatAndManualLanesThenTheStaleDraftIsIgnored() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot(shape: .flatOnly))
+        session.setClipTiming(clipID: "s1", durationS: 1.1)
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 1)
+        XCTAssertNotNil(fake.lastRequest?.textElements)
+        XCTAssertNotNil(fake.lastRequest?.timelineSlots)
+        XCTAssertTrue(fake.lastRequest?.removeMusic ?? false)
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        await session.synchronizePromptRevision()
+        XCTAssertFalse(session.isDirty(.text) || session.isDirty(.timeline), "draft based on g1 is stale after the commit")
+    }
 }

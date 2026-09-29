@@ -628,7 +628,11 @@ struct NativeEditorView: View {
         #endif
         session.useDeviceRendering(model.deviceRenders)
         session.useMediaUploads(model.uploads)
-        guard session.needsReload(for: project) else { return }
+        guard session.needsReload(for: project) else {
+            // Already loaded: a chat draft may have landed while this tab was hidden.
+            if project.runtimeVersion == 2 { await session.synchronizePromptRevision() }
+            return
+        }
         if let libraryJobID {
             await session.load(libraryJobID: libraryJobID, api: model.api)
         } else {
