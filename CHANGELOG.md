@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.7.0] - 2026-09-29
+
+### Changed
+- feat(ios): requirement receipt chips and guessed-name corrections in chat (KRI-207) (#1258) <!-- release-pr: 1258 -->
+
 ## [0.77.6.0] - 2026-09-29
 
 ### Changed
