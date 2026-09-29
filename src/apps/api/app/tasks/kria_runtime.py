@@ -63,6 +63,7 @@ from app.routes.generative_jobs import (
 )
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
+    KriaEditorOpError,
     compile_editor_ops,
     merge_editor_draft,
     project_editor_draft,
@@ -1184,13 +1185,37 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     brief_updates=planned.brief_updates,
                 )
             else:
-                completion = _complete_draft_turn(
-                    identifier,
-                    lease_owner=lease_owner,
-                    lease_epoch=lease_epoch,
-                    claimed_thread_revision=claimed_thread_revision,
-                    planned=planned,
-                )
+                try:
+                    completion = _complete_draft_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        planned=planned,
+                    )
+                except KriaEditorOpError as exc:
+                    # KRI-219: an op the recipe cannot represent (e.g. speed on a
+                    # device recipe) is a limit to explain, not a runtime crash.
+                    # The draft transaction rolled back; reply with the reason.
+                    log.info("kria_editor_op_unsupported", turn_id=turn_id, error=str(exc)[:200])
+                    planned = replace(
+                        planned,
+                        plan=KriaTurnPlan(
+                            mode="respond",
+                            turn_value="recovery",
+                            response=(
+                                f"I can't do that on this edit: {str(exc).strip().rstrip('.')}. "
+                                "Nothing was changed."
+                            ),
+                        ),
+                    )
+                    completion = _complete_response_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        plan=planned.plan,
+                    )
             if not completion.committed:
                 if completion.requeue_turn_id is not None:
                     run_kria_turn.apply_async(

@@ -99,6 +99,8 @@ class PlanFacts:
     # `clip_ids` filled from what the turn actually changed), so per-clip text can be
     # judged for real instead of "can't verify".
     has_clip_structure: bool = False
+    # True when an editor payload carries restyled/edited on-screen text elements.
+    editor_text_edited: bool = False
     # The strategy's edit format, and how many video clips it renders (None when
     # the footage list was not available to count).
     edit_format: str | None = None
@@ -338,6 +340,32 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
     )
 
 
+def _editor_payload_duration(payload: Mapping[str, Any]) -> float | None:
+    """Output length implied by the payload's timeline slots, or None when unprovable.
+
+    Only exact-second slots count (beat-sized slots need the audio grid) and a
+    speed change divides the window. Crossfade overlap is ignored, which the
+    tolerance absorbs.
+    """
+    slots = payload.get("timeline_slots") if isinstance(payload, Mapping) else None
+    if not isinstance(slots, list) or not slots:
+        return None
+    total = 0.0
+    for slot in slots:
+        if not isinstance(slot, Mapping):
+            return None
+        if slot.get("removed"):
+            continue
+        duration = slot.get("duration_s")
+        if not isinstance(duration, (int, float)) or duration <= 0:
+            return None
+        rate = slot.get("playback_rate")
+        total += float(duration) / (
+            float(rate) if isinstance(rate, (int, float)) and rate > 0 else 1.0
+        )
+    return total or None
+
+
 def plan_facts_from_editor_payload(
     payload: Mapping[str, Any] | None,
     text_diff: Iterable[Mapping[str, Any]] | None = None,
@@ -374,6 +402,12 @@ def plan_facts_from_editor_payload(
         elif entry.get("role") == "title":
             title = entry["after"]
     return PlanFacts(
+        duration_s=_editor_payload_duration(payload),
+        editor_text_edited=bool(
+            isinstance(payload, Mapping)
+            and isinstance(payload.get("text_elements"), list)
+            and payload.get("text_elements")
+        ),
         texts=tuple(strings),
         editor=True,
         has_clip_structure=bool(per_clip),
@@ -576,7 +610,7 @@ def _route_reversed_reason(req: BriefRequirement, facts: PlanFacts) -> str | Non
 def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
     if not facts.ordering_basis:
-        return _receipt(req, "partial", "I can't confirm the order this draft uses.")
+        return _receipt(req, _unverified(facts), "I can't confirm the order this draft uses.")
     basis = facts.ordering_basis
     reversed_reason = _route_reversed_reason(req, facts)
     if reversed_reason is not None:
@@ -828,14 +862,35 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     return _receipt(req, status, "; ".join(problems) + ".")
 
 
+def _unverified(facts: PlanFacts) -> str:
+    """An editor turn that applied cleanly is not a failure just because its effect
+    can't be re-measured from the payload: neutral `unchecked`, never `partial`."""
+    return "unchecked" if facts.editor else "partial"
+
+
+_TEXT_STYLE_RE = re.compile(
+    r"\b(text|label|caption|title|font|bold|italic|colou?r|size|shadow|outline|stroke|"
+    r"uppercase|lowercase|yellow|red|blue|green|white|black|pink|orange|purple|renk|yaz[i\u0131])",
+    re.IGNORECASE,
+)
+
+
+def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    # Compiled editor ops only exist when they changed a text element, so a text-style
+    # ask with edited elements in the payload is proven; anything else is unchecked.
+    if facts.editor and facts.editor_text_edited and _TEXT_STYLE_RE.search(_req_text(req)):
+        return _receipt(req, "met", None)
+    return _receipt(req, _unverified(facts), "I can't verify this one automatically yet.")
+
+
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if _wants_whole_take(req):
         return _check_whole_take(req, facts)
     target = req.facts.get("duration_s")
     if not isinstance(target, (int, float)) or target <= 0:
-        return _receipt(req, "partial", "I can't verify this timing automatically.")
+        return _receipt(req, _unverified(facts), "I can't verify this timing automatically.")
     if facts.duration_s is None:
-        return _receipt(req, "partial", "I can't confirm this draft's length yet.")
+        return _receipt(req, _unverified(facts), "I can't confirm this draft's length yet.")
     if abs(facts.duration_s - float(target)) <= DURATION_TOLERANCE * float(target):
         return _receipt(req, "met", None)
     # The edit's own length is what is compared: the phone adds its outro after the edit,
@@ -906,9 +961,11 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_order(req, facts)
     elif req.kind == "timing":
         return _check_timing(req, facts)
+    elif req.kind == "style" and facts.editor:
+        return _check_style(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _wants_closing(req)):
         return _check_reaction_beats(req, facts)
-    return _receipt(req, "partial", "I can't verify this one automatically yet.")
+    return _receipt(req, _unverified(facts), "I can't verify this one automatically yet.")
 
 
 # KRI-190: requirement kinds the unified montage planner settles at render time. Its

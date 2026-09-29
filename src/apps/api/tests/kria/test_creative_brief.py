@@ -154,6 +154,53 @@ def test_router_table(reqs, shape, message, expected) -> None:  # noqa: ANN001
     assert route_requirements(reqs, shape, message=message) == expected
 
 
+CAN_EDIT = CurrentPlanShape(has_render=True, has_per_clip_text_lane=True, can_edit_timeline=True)
+
+
+@pytest.mark.parametrize(
+    ("reqs", "shape", "message", "expected"),
+    [
+        # explicit move / positional removal -> editor ops when the clip family is open
+        ([_upd("order", "global")], CAN_EDIT, "move the Galata shot to the start", "editor_ops"),
+        ([_upd("select", "global")], CAN_EDIT, "remove clip 4", "editor_ops"),
+        ([_upd("select", "clip:c4")], CAN_EDIT, "drop that one", "editor_ops"),
+        ([_upd("select", "global", facts={"index": 4})], CAN_EDIT, "x", "editor_ops"),
+        # ...but never when clip ops are withheld (default / False)
+        ([_upd("order", "global")], WITH_LANE, "move the Galata shot to the start", "replan"),
+        (
+            [_upd("select", "global")],
+            CurrentPlanShape(True, True, None, False),
+            "remove clip 4",
+            "replan",
+        ),
+        # semantic selection / basis ordering / mixed kinds / redo stay with the planner
+        ([_upd("select", "global")], CAN_EDIT, "only keep the funniest clips", "replan"),
+        (
+            [_upd("order", "global", facts={"key": "capture_time"})],
+            CAN_EDIT,
+            "order by when I filmed",
+            "replan",
+        ),
+        (
+            [_upd("order", "global"), _upd("timing", "global")],
+            CAN_EDIT,
+            "move a to the start",
+            "replan",
+        ),
+        ([_upd("order", "global")], CAN_EDIT, "do it again based on my prompt", "replan"),
+    ],
+)
+def test_router_structural_asks_follow_timeline_capability(reqs, shape, message, expected) -> None:  # noqa: ANN001
+    assert route_requirements(reqs, shape, message=message) == expected
+
+
+def test_plan_shape_reads_clip_family_from_snapshot() -> None:
+    on = plan_shape_from_editor_snapshot({"text_bars": [], "allowed_op_families": ["text", "clip"]})
+    off = plan_shape_from_editor_snapshot({"text_bars": [], "allowed_op_families": ["text"]})
+    assert on.can_edit_timeline is True
+    assert off.can_edit_timeline is False
+
+
 @pytest.mark.parametrize(
     "message",
     [
@@ -901,3 +948,41 @@ def test_main_creator_scope_recognisers_ignore_model_authored_brief_text() -> No
 
     assert run(brief_enabled=True) == "selected"
     assert run() == "all"  # brief off: legacy behaviour is untouched
+
+
+# --------------------------------------------- KRI-219 editor-turn receipts
+
+
+def test_editor_restyle_is_met_when_text_elements_were_edited() -> None:
+    req = _req("style", "global", description="make all the labels yellow")
+    facts = plan_facts_from_editor_payload({"text_elements": [{"id": "a", "color": "#FFD400"}]})
+    assert check_requirement(req, facts).status == "met"
+    # Nothing edited: unverifiable, neutral, never partial.
+    assert (
+        check_requirement(req, plan_facts_from_editor_payload({"title": "x"})).status == "unchecked"
+    )
+
+
+def test_editor_duration_met_when_slots_sum_to_target() -> None:
+    req = _req("timing", "global", facts={"duration_s": 20})
+    slots = [{"duration_s": 5.0, "clip_index": i, "in_s": 0} for i in range(4)]
+    assert (
+        check_requirement(req, plan_facts_from_editor_payload({"timeline_slots": slots})).status
+        == "met"
+    )
+    slots[0]["removed"] = True
+    assert (
+        check_requirement(req, plan_facts_from_editor_payload({"timeline_slots": slots})).status
+        == "partial"
+    )
+    # Unprovable length on an editor turn is neutral, on a strategy draft still partial.
+    assert (
+        check_requirement(req, plan_facts_from_editor_payload({"title": "x"})).status == "unchecked"
+    )
+    assert check_requirement(req, PlanFacts()).status == "partial"
+
+
+def test_editor_order_and_select_are_unchecked_not_partial() -> None:
+    facts = plan_facts_from_editor_payload({"timeline_slots": []})
+    assert check_requirement(_req("order", "global"), facts).status == "unchecked"
+    assert check_requirement(_req("select", "global"), facts).status == "unchecked"

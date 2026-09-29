@@ -879,6 +879,49 @@ def test_worker_republishes_a_turn_requeued_after_snapshot_drift() -> None:
     publish.assert_called_once_with(args=[turn_id], task_id=turn_id, queue="agent-control")
 
 
+def test_editor_op_compile_error_becomes_an_honest_reply_not_a_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.kria.planner import PlannedKriaTurn
+    from app.services.kria_editor_ops import KriaEditorOpError
+
+    turn_id = str(uuid.uuid4())
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    planned = PlannedKriaTurn(
+        plan=_draft_plan(render_dependencies=["draft"]),
+        manifest_hash="m",
+        context_hash="c",
+    )
+
+    async def _plan(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+        return planned
+
+    with (
+        patch(
+            "app.tasks.kria_runtime._claim",
+            return_value=({"item_id": str(uuid.uuid4())}, "speed up clip 2", 3, 8),
+        ),
+        patch("app.tasks.kria_runtime._plan_with_live_agent", _plan),
+        patch("app.tasks.kria_runtime._useful_plan", side_effect=lambda p, **_k: p),
+        patch(
+            "app.tasks.kria_runtime._complete_draft_turn",
+            side_effect=KriaEditorOpError("Speed changes are not available for this edit"),
+        ),
+        patch(
+            "app.tasks.kria_runtime._complete_response_turn",
+            return_value=_Completion(committed=True),
+        ) as respond,
+        patch("app.tasks.kria_runtime._fail_turn") as fail,
+    ):
+        result = run_kria_turn.run(turn_id)
+
+    assert result["status"] == "completed"
+    fail.assert_not_called()
+    plan = respond.call_args.kwargs["plan"]
+    assert plan.mode == "respond"
+    assert "Speed changes are not available for this edit" in plan.response
+
+
 def test_draft_only_tool_group_is_valid_without_render_authority() -> None:
     from app.kria.planner import adapt_editor_action
 

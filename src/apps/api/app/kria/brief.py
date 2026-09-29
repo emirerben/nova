@@ -242,6 +242,10 @@ class CurrentPlanShape:
     # server-only `label_each_clip` capability (clip facts on the snapshot).
     # None = same as `has_per_clip_text_lane` (callers that never distinguish).
     can_fill_per_clip_text: bool | None = None
+    # KRI-219: the editor can reorder/remove clips on this variant (its snapshot
+    # advertises the `clip` op family). None/False = today's behaviour: order and
+    # select requirements always re-plan.
+    can_edit_timeline: bool | None = None
 
 
 _PER_CLIP_LANE_ROLES = {"shot_label", "clip_label", "per_clip", "label"}
@@ -307,7 +311,53 @@ def plan_shape_from_editor_snapshot(snapshot: Mapping[str, Any] | None) -> Curre
         has_render=True,
         has_per_clip_text_lane=legacy_lane or label_bars,
         can_fill_per_clip_text=legacy_lane or snapshot.get("label_facts") is True,
+        can_edit_timeline="clip" in (snapshot.get("allowed_op_families") or []),
     )
+
+
+# Positional/explicit clip moves and removals an editor op can express. Semantic
+# selection ("only the funniest clips") and basis-driven ordering ("by when I
+# filmed them") are NOT matched: those need the planner.
+_MOVE_MESSAGE = re.compile(
+    r"\b(move|swap|put|place|shift|bring|send|reorder)\b.{0,80}"
+    r"\b(start|beginning|begin|first|last|end|before|after|front|back|position|spot|second|third)\b"
+)
+_REMOVE_MESSAGE = re.compile(
+    r"\b(remove|delete|drop|cut|get rid of|take out)\b.{0,20}"
+    r"\b(clip|shot|video|segment|scene)\s*(#|no\.?\s*)?\d+\b"
+    r"|\b(remove|delete|drop|cut|get rid of|take out)\b.{0,20}\b(the\s+)?"
+    r"(first|last|second|third|fourth|fifth)\s+(clip|shot|video|segment|scene)\b"
+)
+_POSITIONAL_FACT_KEYS = {
+    "index",
+    "indices",
+    "position",
+    "positions",
+    "clip_index",
+    "clip_number",
+    "clip_numbers",
+}
+
+
+def _structural_reqs_editable(
+    reqs: list[BriefRequirement | BriefUpdate], message: str | None
+) -> bool:
+    """True when every order/select requirement is an explicit clip move/removal."""
+    text = _fold_for_redo(message or "")
+    for req in reqs:
+        if req.kind == "order":
+            if not req.facts.get("key") or _MOVE_MESSAGE.search(text):
+                continue
+            return False
+        if req.kind == "select":
+            if (
+                req.scope.startswith("clip:")
+                or _POSITIONAL_FACT_KEYS & set(req.facts)
+                or _REMOVE_MESSAGE.search(text)
+            ):
+                continue
+            return False
+    return True
 
 
 def route_requirements(
@@ -326,7 +376,13 @@ def route_requirements(
         return "editor_ops"
     kinds = {req.kind for req in reqs}
     if kinds & {"order", "select"}:
-        return "replan"
+        if not (
+            current_plan.can_edit_timeline
+            and kinds <= {"order", "select"}
+            and _structural_reqs_editable(reqs, message)
+        ):
+            return "replan"
+        return "editor_ops"
     if len(kinds) > 1:
         return "replan"
     per_clip_text = any(
