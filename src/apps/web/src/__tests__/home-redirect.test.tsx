@@ -16,8 +16,22 @@ jest.mock("next/navigation", () => ({
   redirect: jest.fn(),
 }));
 
-// KriaEditStory uses browser media and animation APIs. Stub it so this server-page
-// test stays focused on authentication and the landing composition boundary.
+// Landing components use browser media and animation APIs. Stub them so this
+// server-page test stays focused on authentication and route composition.
+const mockLifeLanding = jest.fn(() => (
+  <section aria-label="Kria landing page">
+    <h1>More life. Less editing.</h1>
+    <a href="/plan">Create a video</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+  </section>
+));
+
+jest.mock("@/components/KriaLifeLanding", () => ({
+  __esModule: true,
+  default: () => mockLifeLanding(),
+}));
+
 const mockStory = jest.fn(({ mode }: { mode?: string }) => (
   <section
     aria-label="How Kria turns your footage into a finished video"
@@ -62,7 +76,7 @@ describe("HomePage", () => {
     expect(mockRedirect).toHaveBeenCalledWith("/plan");
   });
 
-  it("renders the automatic landing story by default", async () => {
+  it("renders the video-led landing page by default", async () => {
     mockGetServerSession.mockResolvedValue(null);
 
     const { default: HomePage } = await import("../app/page");
@@ -77,10 +91,9 @@ describe("HomePage", () => {
       "href",
       "/plan",
     );
-    expect(
-      screen.getByLabelText("How Kria turns your footage into a finished video"),
-    ).toHaveAttribute("data-mode", "auto");
-    expect(mockStory).toHaveBeenCalledWith({ mode: "auto" });
+    expect(screen.getByLabelText("Kria landing page")).toBeInTheDocument();
+    expect(mockLifeLanding).toHaveBeenCalledTimes(1);
+    expect(mockStory).not.toHaveBeenCalled();
     expect(screen.queryByText(/how your agent works/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/it learns about you/i)).not.toBeInTheDocument();
   });
@@ -95,5 +108,17 @@ describe("HomePage", () => {
       screen.getByLabelText("How Kria turns your footage into a finished video"),
     ).toHaveAttribute("data-mode", "scroll");
     expect(mockStory).toHaveBeenCalledWith({ mode: "scroll" });
+    expect(mockLifeLanding).not.toHaveBeenCalled();
+  });
+
+  it("uses the video landing for a non-exact mode query", async () => {
+    mockGetServerSession.mockResolvedValue(null);
+
+    const { default: HomePage } = await import("../app/page");
+    render(await HomePage({ searchParams: { mode: ["scroll", "other"] } }));
+
+    expect(screen.getByLabelText("Kria landing page")).toBeInTheDocument();
+    expect(mockLifeLanding).toHaveBeenCalledTimes(1);
+    expect(mockStory).not.toHaveBeenCalled();
   });
 });

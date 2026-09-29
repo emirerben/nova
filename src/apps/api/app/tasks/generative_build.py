@@ -83,7 +83,7 @@ from app.pipeline.speech_cleanup_apply import (
     apply_speech_cleanup_to_audio,
     hydrate_job_speech_cleanup_snapshot,
 )
-from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
+from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S, NarrationTrack
 from app.schemas.montage_preset import (
     DEFAULT_MONTAGE_PRESET,
     MASONRY_MONTAGE_PRESET,
@@ -4746,28 +4746,6 @@ def _run_phone_unified_montage_job(
         return copy.deepcopy(current)
 
 
-def _phone_speech_cleanup_contract_guard(snapshot: dict) -> None:
-    """Fail closed instead of silently skipping a REQUIRED cleanup contract.
-
-    Neither `_run_phone_subtitled_job` nor `_run_phone_narrated_job` run
-    silence-cut/speech-cleanup at all (no timeline-reshaping primitive on the
-    phone engine, matching the montage-family phone compiler's own documented
-    divergence) -- fine for `off_v1`/`legacy_auto` (the item never asked for
-    cleanup, or historical jobs tolerate best-effort), but silently skipping
-    it for `required_v1` (the creator explicitly opted in, and the item's own
-    contract now REQUIRES a cleaned render) would ship uncut footage that
-    contradicts what the creator approved. `content_plan_build._dispatch_item_
-    render` persists `speech_cleanup_contract` onto the phone snapshot
-    (`job.assembly_plan`) exactly like it does for the cloud path.
-    """
-    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
-
-    if str(snapshot.get("speech_cleanup_contract") or "legacy_auto") == "required_v1":
-        raise UnsupportedPhonePlan(
-            "phone rendering does not support this item's required speech-cleanup contract"
-        )
-
-
 def _run_phone_subtitled_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -4786,8 +4764,11 @@ def _run_phone_subtitled_job(
     sources, single pinned device revision, redelivery idempotency) but skips
     its text-agent/music-matcher/archetype-spec prework entirely -- subtitled
     is the LEAN cloud path (`_render_subtitled_variant`): one clip, its own
-    audio, transcribed into editable captions. No silence-cut/speech-cleanup
-    runs on the phone path at all (see `_phone_speech_cleanup_contract_guard`).
+    audio, transcribed into editable captions. `required_v1` applies the
+    accepted CutPlan as hard cuts on the main video track -- see the
+    `cleanup_required` branch below and
+    `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan`'s
+    `cut_plan` param.
 
     KRI-174 Phase 1: when `settings.phone_subtitled_media_lanes_enabled`, a
     server-owned `_phone_subtitled_lanes_v1` request on the snapshot
@@ -4809,13 +4790,20 @@ def _run_phone_subtitled_job(
     )
     from app.pipeline.captions import build_plain_cues, resplit_cues_into_sentences  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
         SFX_DUCK_RECEIPT_FIELD,
         compile_phone_subtitled_plan,
         sfx_duck_receipt,
     )
     from app.pipeline.probe import probe_video  # noqa: PLC0415
-    from app.pipeline.transcribe import transcribe_whisper_cached  # noqa: PLC0415
+    from app.pipeline.silence_cut import (  # noqa: PLC0415
+        CutPlan,
+        is_filler_token,
+        plan_summary,
+        remap_words,
+    )
+    from app.pipeline.transcribe import Word, transcribe_whisper_cached  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
         pin_device_request,
@@ -4914,7 +4902,12 @@ def _run_phone_subtitled_job(
     if len(clip_paths_gcs) != 1:
         raise ValueError("Phone rendering requires exactly one clip path")
 
-    _phone_speech_cleanup_contract_guard(snapshot)
+    # `required_v1` now HAS a native phone application here (a single
+    # embedded-spine clip is exactly the shape `compile_phone_subtitled_plan`'s
+    # `cut_plan` param reshapes) -- the snapshot is hydrated once `probe`
+    # exists, further down; this only normalizes the contract token.
+    speech_cleanup_contract = str(snapshot.get("speech_cleanup_contract") or "legacy_auto")
+    cleanup_required = speech_cleanup_contract == "required_v1"
 
     language: str = all_candidates.get("language") or "en"
     # KRI-177: same explicit override contract as the cloud subtitled render —
@@ -5104,6 +5097,42 @@ def _run_phone_subtitled_job(
                     "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
                 )
 
+            # `required_v1`: bind the immutable preflight snapshot to THIS
+            # exact clip/window before trusting its CutPlan/words for
+            # anything -- mirrors `_render_subtitled_variant`'s
+            # `active_snapshot.require_source(kind="embedded_spine", ...)`
+            # fencing. A mismatch (stale snapshot, replaced clip, wrong
+            # window) fails the WHOLE job as `speech_cleanup_failed`
+            # (`SpeechCleanupFailure` bubbles past this function's own
+            # exception handling, see the dispatch fork above) rather than
+            # silently shipping an uncut render a creator explicitly
+            # consented to cut.
+            speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None
+            cut_plan: CutPlan | None = None
+            speech_cleanup_outcome_context: dict[str, Any] | None = None
+            if cleanup_required:
+                try:
+                    speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(
+                        snapshot
+                    ).require_source(
+                        kind="embedded_spine",
+                        storage_path=gcs_path,
+                        window_start_s=0.0,
+                        window_duration_s=float(probe.duration_s),
+                    )
+                except SpeechCleanupSnapshotError as exc:
+                    raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
+                cut_plan = speech_cleanup_snapshot.cut_plan
+                if not cut_plan.keep_segments or all(
+                    end <= start for start, end in cut_plan.keep_segments
+                ):
+                    raise SpeechCleanupFailure(
+                        "apply_failed", "speech cleanup removed the entire clip"
+                    )
+                speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
+                    analysis_view="full_clip"
+                )
+
             # KRI-177: auto-detect the SPOKEN language unless the creator
             # explicitly asked for a specific caption language (already parsed +
             # validated into `caption_language_req` above) — never the plan/job
@@ -5126,86 +5155,154 @@ def _run_phone_subtitled_job(
                     _beats if isinstance(_beats, list) else [],
                     _closing if isinstance(_closing, dict) else None,
                 )
-            transcript = transcribe_whisper_cached(
-                clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
-            )
-            if caption_language_req is None:
-                # whisper-1 misdetects accented speech (Turkish-accented English
-                # -> "tr") and then writes a translation, so the captions and every
-                # spoken trigger go wrong. Gemini's transcript of the same clip is
-                # an independent listener: on a clear disagreement, transcribe
-                # again in the language Gemini actually heard.
-                clip_meta = next((m for m in clip_metas if str(m.clip_id) == str(clip_id)), None)
-                heard_lang = crosscheck_detected_language(
-                    transcript.language, reference_text=getattr(clip_meta, "transcript", None)
+
+            if cleanup_required:
+                # Reuse the preflight analysis's own verbatim words -- the
+                # SAME transcription the CutPlan was computed from, never a
+                # second Whisper call -- so the cut and the captions can
+                # never disagree about a word's timing (mirrors
+                # `_render_subtitled_variant`'s cloud `required_v1` path,
+                # `sc_entry = active_snapshot.legacy_analysis_entry(...)`).
+                # No Gemini caption-language crosscheck/retranscribe here
+                # (that safety net needs a second live Whisper call in
+                # another language, which would re-open the very
+                # double-transcription this branch exists to avoid) --
+                # `speech_cleanup_snapshot.analysis.language` is the sole
+                # detected-language signal.
+                assert speech_cleanup_snapshot is not None and cut_plan is not None  # noqa: S101
+                words = speech_cleanup_snapshot.source_words()
+                detected_lang, _lang_source = resolve_spoken_caption_language(
+                    speech_cleanup_snapshot.analysis.language,
+                    transcript_text=" ".join(word.text for word in words),
+                    fallback=language,
                 )
-                if heard_lang is not None:
-                    retranscribed = transcribe_whisper_cached(
-                        clip_path, language=heard_lang, verbatim_prompt=vocabulary_prompt
-                    )
+                if _lang_source != SOURCE_DETECTED:
                     record_pipeline_event(
                         "captions",
-                        "caption_language_crosscheck",
+                        "caption_language_fallback",
                         {
                             "variant_id": "subtitled",
-                            "whisper_language": transcript.language,
-                            "reference_language": heard_lang,
-                            "applied": bool(retranscribed.words),
+                            "source": _lang_source,
+                            "language": detected_lang,
+                            "job_language": language,
                         },
                     )
-                    if retranscribed.words:
-                        transcript = retranscribed
-            _spoken_lang, _lang_source = resolve_spoken_caption_language(
-                transcript.language,
-                transcript_text=getattr(transcript, "full_text", None),
-                fallback=language,
-            )
-            if _lang_source != SOURCE_DETECTED:
-                record_pipeline_event(
-                    "captions",
-                    "caption_language_fallback",
-                    {
-                        "variant_id": "subtitled",
-                        "source": _lang_source,
-                        "language": _spoken_lang,
-                        "job_language": language,
-                    },
-                )
-                log.warning(
-                    "caption_language_fallback",
-                    job_id=job_id,
-                    variant_id="subtitled",
-                    source=_lang_source,
-                    language=_spoken_lang,
-                    job_language=language,
-                )
-            if caption_language_req is not None:
-                record_pipeline_event(
-                    "captions",
-                    "caption_language_requested",
-                    {
-                        "variant_id": "subtitled",
-                        "requested": caption_language_req,
-                        "spoken": _spoken_lang,
-                    },
-                )
-                detected_lang = caption_language_req
-            else:
-                detected_lang = _spoken_lang
-            if media_lanes_enabled:
-                # Captured before caption correction touches the cues built
-                # from these same words -- the persisted receipt is exactly
-                # what Whisper heard, never the LLM-corrected spelling.
-                raw_words = [
-                    {
-                        "text": word.text,
-                        "start_s": word.start_s,
-                        "end_s": word.end_s,
-                        "confidence": word.confidence,
-                    }
-                    for word in transcript.words
+                    log.warning(
+                        "caption_language_fallback",
+                        job_id=job_id,
+                        variant_id="subtitled",
+                        source=_lang_source,
+                        language=detected_lang,
+                        job_language=language,
+                    )
+                if media_lanes_enabled:
+                    # Original (uncut) clip time -- grounding samples frames
+                    # from `clip_path`, the ORIGINAL clip, at these exact
+                    # timestamps, so this transcript must stay in the SAME
+                    # timeline that clip plays. Never remapped.
+                    raw_words = [
+                        {
+                            "text": word.text,
+                            "start_s": word.start_s,
+                            "end_s": word.end_s,
+                            "confidence": word.confidence,
+                        }
+                        for word in words
+                    ]
+                cut_words = [
+                    Word(
+                        text=item["text"],
+                        start_s=item["start_s"],
+                        end_s=item["end_s"],
+                        confidence=1.0,
+                    )
+                    for item in remap_words(words, cut_plan)
+                    if not is_filler_token(item["text"])
                 ]
-            cues = build_plain_cues(transcript.words, attach_words=True)
+                cues = build_plain_cues(cut_words, attach_words=True)
+            else:
+                transcript = transcribe_whisper_cached(
+                    clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
+                )
+                if caption_language_req is None:
+                    # whisper-1 misdetects accented speech (Turkish-accented English
+                    # -> "tr") and then writes a translation, so the captions and every
+                    # spoken trigger go wrong. Gemini's transcript of the same clip is
+                    # an independent listener: on a clear disagreement, transcribe
+                    # again in the language Gemini actually heard.
+                    clip_meta = next(
+                        (m for m in clip_metas if str(m.clip_id) == str(clip_id)), None
+                    )
+                    heard_lang = crosscheck_detected_language(
+                        transcript.language, reference_text=getattr(clip_meta, "transcript", None)
+                    )
+                    if heard_lang is not None:
+                        retranscribed = transcribe_whisper_cached(
+                            clip_path, language=heard_lang, verbatim_prompt=vocabulary_prompt
+                        )
+                        record_pipeline_event(
+                            "captions",
+                            "caption_language_crosscheck",
+                            {
+                                "variant_id": "subtitled",
+                                "whisper_language": transcript.language,
+                                "reference_language": heard_lang,
+                                "applied": bool(retranscribed.words),
+                            },
+                        )
+                        if retranscribed.words:
+                            transcript = retranscribed
+                _spoken_lang, _lang_source = resolve_spoken_caption_language(
+                    transcript.language,
+                    transcript_text=getattr(transcript, "full_text", None),
+                    fallback=language,
+                )
+                if _lang_source != SOURCE_DETECTED:
+                    record_pipeline_event(
+                        "captions",
+                        "caption_language_fallback",
+                        {
+                            "variant_id": "subtitled",
+                            "source": _lang_source,
+                            "language": _spoken_lang,
+                            "job_language": language,
+                        },
+                    )
+                    log.warning(
+                        "caption_language_fallback",
+                        job_id=job_id,
+                        variant_id="subtitled",
+                        source=_lang_source,
+                        language=_spoken_lang,
+                        job_language=language,
+                    )
+                if caption_language_req is not None:
+                    record_pipeline_event(
+                        "captions",
+                        "caption_language_requested",
+                        {
+                            "variant_id": "subtitled",
+                            "requested": caption_language_req,
+                            "spoken": _spoken_lang,
+                        },
+                    )
+                    detected_lang = caption_language_req
+                else:
+                    detected_lang = _spoken_lang
+                if media_lanes_enabled:
+                    # Captured before caption correction touches the cues built
+                    # from these same words -- the persisted receipt is exactly
+                    # what Whisper heard, never the LLM-corrected spelling.
+                    raw_words = [
+                        {
+                            "text": word.text,
+                            "start_s": word.start_s,
+                            "end_s": word.end_s,
+                            "confidence": word.confidence,
+                        }
+                        for word in transcript.words
+                    ]
+                cues = build_plain_cues(transcript.words, attach_words=True)
             cues = correct_caption_cues(
                 cues,
                 detected_lang,
@@ -5218,7 +5315,7 @@ def _run_phone_subtitled_job(
             sfx_duck: dict | None = None
             if not media_lanes_enabled:
                 recipe = compile_phone_subtitled_plan(
-                    bindings, caption_cues=cues, caption_style=caption_style
+                    bindings, caption_cues=cues, caption_style=caption_style, cut_plan=cut_plan
                 )
             else:
                 raw_lane_request = snapshot.get(PHONE_SUBTITLED_LANES_FIELD)
@@ -5512,6 +5609,35 @@ def _run_phone_subtitled_job(
                         ending_clip=ending_clip,
                     )
 
+                if cut_plan is not None and lanes is not None:
+                    # Every lane above was resolved (grounded or
+                    # hand-authored) against the ORIGINAL source-clip
+                    # timeline -- grounding samples frames from `clip_path`
+                    # at those exact timestamps. Only NOW, once every
+                    # window is final, does it move onto the CUT timeline
+                    # the compiled recipe actually plays.
+                    id_to_media = {card.id: card.media_id for card in lanes.overlays}
+                    lanes, cut_dropped_card_ids = remap_lanes_for_cut(lanes, cut_plan)
+                    if cut_dropped_card_ids:
+                        demoted_media_ids = grounded_media_ids & {
+                            id_to_media[card_id]
+                            for card_id in cut_dropped_card_ids
+                            if card_id in id_to_media
+                        }
+                        if demoted_media_ids and overlay_receipt is not None:
+                            overlay_receipt = _demote_grounded_receipt(
+                                overlay_receipt, demoted_media_ids, "speech_cleanup_cut"
+                            )
+                        demoted_beat_card_ids = cut_dropped_card_ids & {
+                            card.id for card in beat_cards
+                        }
+                        if demoted_beat_card_ids and beat_receipt is not None:
+                            beat_receipt = _demote_beat_receipt(
+                                beat_receipt,
+                                card_ids=demoted_beat_card_ids,
+                                reason="speech_cleanup_cut",
+                            )
+
                 recipe = None
                 attempts_remaining = 3
                 while True:
@@ -5523,6 +5649,7 @@ def _run_phone_subtitled_job(
                             visuals=visuals,
                             lanes=lanes,
                             duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
+                            cut_plan=cut_plan,
                         )
                         sfx_duck = sfx_duck_receipt(lanes, recipe)
                         break
@@ -5712,6 +5839,18 @@ def _run_phone_subtitled_job(
             new_entry["phone_overlay_receipt"] = overlay_receipt
         if beats_enabled:
             new_entry["phone_beat_receipt"] = beat_receipt
+        if cut_plan is not None:
+            # Admin/debug parity with the cloud `required_v1` render
+            # (`base["silence_cut"]`/`base["silence_cut_outcome"]`), and the
+            # source `_speech_cleanup_outcome_context` the device-export
+            # completion route (`app.routes.device_render.
+            # _device_speech_cleanup_outcome`) reads to publish the public
+            # "applied"/"checked_no_change" receipt once the device uploads.
+            new_entry["silence_cut"] = plan_summary(
+                cut_plan, original_duration_s=float(probe.duration_s)
+            )
+            new_entry["silence_cut_outcome"] = "applied" if cut_plan.removed else "no_change"
+            new_entry["_speech_cleanup_outcome_context"] = speech_cleanup_outcome_context
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:
@@ -5728,6 +5867,62 @@ def _run_phone_subtitled_job(
         job.error_detail = None
         job.failure_reason = None
         db.commit()
+
+
+def _phone_narrated_cleaned_narration(job_id: str, snapshot: dict) -> NarrationTrack:
+    """Apply this Job's accepted CutPlan to the item's CURRENT recorded
+    voiceover and return the cleaned derivative.
+
+    Reuses `app.services.guided_speech_cleanup.build_cleaned_narration` --
+    the SAME content-addressed cut-and-upload machinery the guided-story
+    creation flow already pins a cleaned `NarrationTrack` with -- so a phone
+    narrated render and a guided-story phone render draw from one cleaning
+    implementation. Re-reads the owning `PlanItem`'s CURRENT
+    `voiceover_gcs_path`/`voiceover_generation`/`voiceover_duration_s` fresh
+    (never trusting the caller's stale `all_candidates` snapshot), mirroring
+    `_resolve_phone_voiceover_bed`'s own re-read for the same reason: a
+    concurrent edit could have replaced or cleared the voiceover since
+    dispatch. Raises `SpeechCleanupFailure` (never a bare
+    `GuidedSpeechCleanupError`) so a cleaning failure fails the whole job
+    through the SAME path as every other required-cleanup mismatch
+    (`_run_generative_job`'s outer ``except SpeechCleanupFailure``).
+    """
+    from app.models import PlanItem  # noqa: PLC0415
+    from app.services.guided_speech_cleanup import (  # noqa: PLC0415
+        SPEECH_CLEANUP_UNAVAILABLE,
+        GuidedSpeechCleanupError,
+        build_cleaned_narration,
+    )
+
+    private = snapshot.get("_speech_cleanup_internal")
+    payload = private.get("preflight_snapshot") if isinstance(private, dict) else None
+    if not isinstance(payload, dict):
+        raise SpeechCleanupFailure("snapshot_mismatch", "missing required snapshot")
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        item_id = job.content_plan_item_id if job is not None else None
+        item = db.get(PlanItem, item_id) if item_id is not None else None
+        if (
+            item is None
+            or getattr(item, "audio_mode", None) != "voiceover"
+            or not item.voiceover_gcs_path
+            or not item.voiceover_generation
+            or not item.voiceover_duration_s
+            or float(item.voiceover_duration_s) <= 0
+        ):
+            raise SpeechCleanupFailure("snapshot_mismatch", "recorded voiceover unavailable")
+        raw = NarrationTrack(
+            gcs_path=str(item.voiceover_gcs_path),
+            generation=str(item.voiceover_generation),
+            duration_s=float(item.voiceover_duration_s),
+        )
+        owner_id = job.user_id
+        owner_item_id = item.id
+    try:
+        return build_cleaned_narration(raw, payload, owner_id=owner_id, item_id=owner_item_id)
+    except GuidedSpeechCleanupError as exc:
+        reason = "apply_failed" if exc.code == SPEECH_CLEANUP_UNAVAILABLE else "snapshot_mismatch"
+        raise SpeechCleanupFailure(reason, exc.message) from exc
 
 
 def _run_phone_narrated_job(
@@ -5747,12 +5942,18 @@ def _run_phone_narrated_job(
     (`_narrated_storyboard_plan`) -- clip assignment stays in script/guide
     order, exactly like `_narrated_clip_assignments`/the auto-segment
     fallback already do before that agent's advisory re-ranking would apply.
-    No silence-cut/speech-cleanup runs on the phone path (see
-    `_phone_speech_cleanup_contract_guard`); this is normally a no-op for a
-    voiceover item regardless (`capability_for_item` marks cleanup
-    unavailable -- `replacement_voiceover` -- for any item carrying one, so a
-    voiceover item's contract is always `off_v1` in practice), checked
-    anyway as defense in depth.
+
+    `required_v1` (the creator confirmed "Clean up speech" for the recorded
+    voiceover): applies the accepted CutPlan to the raw voiceover through
+    `app.services.guided_speech_cleanup.build_cleaned_narration` -- the SAME
+    content-addressed cut-and-upload machinery the guided-story creation
+    flow already pins a cleaned `NarrationTrack` with -- and points every
+    downstream step (`_resolve_phone_voiceover_bed`, transcription, step
+    timing) at that cleaned derivative instead of the raw recording. No
+    separate video-timeline remap is needed: every step boundary here is
+    computed FROM the voiceover's own (now-shorter) transcript/duration, so
+    feeding it the cleaned words/duration alone re-derives correctly
+    proportioned clip windows.
     """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
@@ -5771,7 +5972,7 @@ def _run_phone_narrated_job(
         compile_phone_narrated_plan,
     )
     from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
-    from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
+    from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
         pin_device_request,
@@ -5819,7 +6020,8 @@ def _run_phone_narrated_job(
         # checked this exact combination via `phone_render_supported_formats()`.
         raise ValueError("Phone rendering does not yet support voiceover edits")
 
-    _phone_speech_cleanup_contract_guard(snapshot)
+    speech_cleanup_contract = str(snapshot.get("speech_cleanup_contract") or "legacy_auto")
+    cleanup_required = speech_cleanup_contract == "required_v1"
 
     clip_paths_gcs: list[str] = list(all_candidates.get("clip_paths") or [])
     if not clip_paths_gcs:
@@ -5832,7 +6034,38 @@ def _run_phone_narrated_job(
     )
     language: str = all_candidates.get("language") or "en"
 
-    narration = _resolve_phone_voiceover_bed(job_id, voiceover_gcs_path)
+    # `required_v1`: the recorded voiceover is a normal, fully uploaded audio
+    # file (never an analysis proxy -- see `content_plan_build.py`'s dispatch
+    # gate), so cleanup here is the SAME "cut a real file" operation the
+    # guided-story creation flow already performs. Bind the snapshot to it
+    # BEFORE touching either the raw or the cleaned bytes: a mismatch
+    # (replaced voiceover, stale snapshot) must fail the whole job rather
+    # than silently render the raw recording.
+    speech_cleanup_outcome_context: dict[str, Any] | None = None
+    cleaned_narration: NarrationTrack | None = None
+    effective_voiceover_gcs_path = voiceover_gcs_path
+    if cleanup_required:
+        try:
+            speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(snapshot).require_source(
+                kind="voiceover", storage_path=voiceover_gcs_path
+            )
+        except SpeechCleanupSnapshotError as exc:
+            raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
+        if not speech_cleanup_snapshot.cut_plan.keep_segments or all(
+            end <= start for start, end in speech_cleanup_snapshot.cut_plan.keep_segments
+        ):
+            raise SpeechCleanupFailure(
+                "apply_failed", "speech cleanup removed the entire voiceover"
+            )
+        speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
+            analysis_view="full_clip"
+        )
+        cleaned_narration = _phone_narrated_cleaned_narration(job_id, snapshot)
+        effective_voiceover_gcs_path = cleaned_narration.gcs_path
+
+    narration = _resolve_phone_voiceover_bed(
+        job_id, effective_voiceover_gcs_path, narration=cleaned_narration
+    )
     if narration is None:
         raise UnsupportedPhonePlan(
             "recorded voiceover is no longer available for phone rendering",
@@ -5848,8 +6081,34 @@ def _run_phone_narrated_job(
             clip_id_to_gcs = ingest["clip_id_to_gcs"]
 
             voiceover_local = os.path.join(tmpdir, "narrated_voiceover")
-            download_to_file(voiceover_gcs_path, voiceover_local)
-            transcript = transcribe_whisper(voiceover_local, model=settings.narrated_whisper_model)
+            download_to_file(effective_voiceover_gcs_path, voiceover_local)
+            if cleaned_narration is not None:
+                # The cleaned derivative's words are ALREADY the exact
+                # accepted CutPlan applied to the raw transcript (`app.
+                # services.guided_speech_cleanup.build_cleaned_narration`
+                # calls `HydratedSpeechCleanupSnapshot.transcript(apply_cut=
+                # True)` internally) -- never re-transcribe the cleaned WAV,
+                # for the same reason the subtitled phone path never
+                # re-transcribes: a second ASR pass on already-cut audio
+                # could disagree with the exact words the cut was proven
+                # against.
+                transcript = Transcript(
+                    words=[
+                        Word(
+                            text=word.text,
+                            start_s=word.start_s,
+                            end_s=word.end_s,
+                            confidence=word.confidence,
+                        )
+                        for word in cleaned_narration.words
+                    ],
+                    full_text=" ".join(word.text for word in cleaned_narration.words),
+                    language=cleaned_narration.language or "",
+                )
+            else:
+                transcript = transcribe_whisper(
+                    voiceover_local, model=settings.narrated_whisper_model
+                )
 
             narrative_order = _resolve_narrative_order(
                 narrative_shot_count, clip_id_to_gcs, job_id=job_id, strict=False
@@ -6059,6 +6318,17 @@ def _run_phone_narrated_job(
             "voiceover_bed_level": bed_level,
             "ok": False,
         }
+        if cleaned_narration is not None:
+            # Admin/debug parity with the cloud `required_v1` narrated
+            # render, and the source `_speech_cleanup_outcome_context` the
+            # device-export completion route (`app.routes.device_render.
+            # _device_speech_cleanup_outcome`) reads to publish the public
+            # "applied"/"checked_no_change" receipt once the device uploads.
+            new_entry["silence_cut"] = speech_cleanup_snapshot.summary()
+            new_entry["silence_cut_outcome"] = (
+                "applied" if speech_cleanup_snapshot.cut_plan.removed else "no_change"
+            )
+            new_entry["_speech_cleanup_outcome_context"] = speech_cleanup_outcome_context
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:

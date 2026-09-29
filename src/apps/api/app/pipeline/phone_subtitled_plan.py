@@ -55,6 +55,7 @@ from app.pipeline.phone_subtitled_lanes import (
     SubtitledOverlayCard,
     _lane_error,
 )
+from app.pipeline.silence_cut import CutPlan
 from app.services.phone_sources import (
     PhoneSourceBinding,
     PhoneVisualBinding,
@@ -107,6 +108,7 @@ def compile_phone_subtitled_plan(
     visuals: tuple[PhoneVisualBinding, ...] = (),
     lanes: PhoneSubtitledLanes | None = None,
     duck_sfx_under_speech: bool = False,
+    cut_plan: CutPlan | None = None,
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
 
@@ -165,6 +167,23 @@ def compile_phone_subtitled_plan(
     so the recipe needs no new field or capability; ``False`` is
     byte-identical to the pre-duck output.
 
+    ``cut_plan`` (optional, a required-speech-cleanup `CutPlan` already
+    validated against this exact clip -- see
+    `app.tasks.generative_build._run_phone_subtitled_job`) applies its
+    ``keep_segments`` as HARD CUTS on the main video track: one
+    `TimelineClip` per kept segment, back to back on the timeline, instead
+    of the single full-duration clip. No `Transition`/crossfade joins them --
+    `TimelineClip` has no per-clip audio-only fade, so a crossfade between
+    two cuts of the SAME speaker audio would blend two unrelated words into
+    each other, which is worse than a hard cut's click. ``caption_cues`` and
+    every ``lanes`` window MUST already be expressed in CUT-timeline
+    coordinates when ``cut_plan`` is passed (the caller remaps them --
+    `app.pipeline.phone_captions.remap_cues`,
+    `app.pipeline.phone_subtitled_lanes.remap_lanes_for_cut`); this function
+    only reshapes the video/audio timeline itself. A ``cut_plan`` with no
+    removals (``cut_plan.removed`` empty -- a no-op or bailed-out plan) is
+    equivalent to passing ``None``.
+
     Rejects (all `UnsupportedPhonePlan`, fail-closed):
       - zero or more than one binding.
       - a non-video source (no probed width/height).
@@ -200,7 +219,16 @@ def compile_phone_subtitled_plan(
         )
 
     duration_s = float(original.duration_s)
-    speaker_end = duration_s
+    # A cut plan with no removals (no-op or safety-bailed-out) renders the
+    # single full-duration clip exactly like `cut_plan=None` -- this is the
+    # ONLY branch point `cut_plan` introduces; every line below it is shared.
+    keep_segments = (
+        [(float(start), float(end)) for start, end in cut_plan.keep_segments]
+        if cut_plan is not None and cut_plan.removed
+        else [(0.0, duration_s)]
+    )
+    if not keep_segments or all(end <= start for start, end in keep_segments):
+        raise UnsupportedPhonePlan("speech cleanup removed the entire clip")
     asset = binding.render_asset()
     assets: dict[str, MediaAsset] = {
         asset.id: MediaAsset(
@@ -216,16 +244,24 @@ def compile_phone_subtitled_plan(
         )
     }
     manifest: dict[str, object] = {asset.id: asset}
-    main_clips = [
-        TimelineClip(
-            id="clip-0",
-            source_asset_id=asset.id,
-            source_start=0.0,
-            source_duration=duration_s,
-            timeline_start=0.0,
-            rate=1.0,
+    main_clips: list[TimelineClip] = []
+    cursor = 0.0
+    for index, (seg_start, seg_end) in enumerate(keep_segments):
+        seg_duration = seg_end - seg_start
+        if seg_duration <= 0:
+            continue
+        main_clips.append(
+            TimelineClip(
+                id=f"clip-{index}",
+                source_asset_id=asset.id,
+                source_start=seg_start,
+                source_duration=seg_duration,
+                timeline_start=cursor,
+                rate=1.0,
+            )
         )
-    ]
+        cursor += seg_duration
+    speaker_end = cursor
 
     try:
         layers = compile_caption_layers(
@@ -233,7 +269,7 @@ def compile_phone_subtitled_plan(
             canvas_width=_STORY_CANVAS.width,
             canvas_height=_STORY_CANVAS.height,
             style=caption_style,
-            timeline_duration_s=duration_s,
+            timeline_duration_s=speaker_end,
         )
     except UnsupportedPhonePlan:
         raise

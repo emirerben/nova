@@ -583,13 +583,25 @@ final class NativeEditorInspectorUITests: XCTestCase {
             XCTAssertTrue(handle.waitForExistence(timeout: 5), tool)
             XCTAssertTrue(panel.waitForExistence(timeout: 5), tool)
             XCTAssertTrue(handle.isHittable, tool)
+            // KRI-185: Edit text focuses its field, and a text panel being typed
+            // into starts the preview at its 120pt typing height, only 40pt above
+            // its 80pt floor (NativeEditorLayoutMetrics.typingPreviewHeight and
+            // .minPreviewHeight). There the drag must reach the floor; elsewhere
+            // it shrinks the preview by more than 40pt.
+            let typing = tool == "text-edit"
+            if typing { XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), tool) }
             let originalHeight = preview.frame.height
+            if typing { XCTAssertEqual(originalHeight, 120, accuracy: 1, tool) }
             let originalHeaderY = header.frame.minY
             let originalPanelHeight = panel.frame.height
             let originalBottom = panel.frame.maxY
             let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -100)))
-            XCTAssertLessThan(preview.frame.height, originalHeight - 40, tool)
+            if typing {
+                XCTAssertEqual(preview.frame.height, 80, accuracy: 1, tool)
+            } else {
+                XCTAssertLessThan(preview.frame.height, originalHeight - 40, tool)
+            }
             XCTAssertEqual(header.frame.minY, originalHeaderY, accuracy: 2, tool)
             // KRI-170: the panel is independent of the preview — it never
             // shrinks, and its bottom edge stays put.

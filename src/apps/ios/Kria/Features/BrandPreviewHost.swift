@@ -39,7 +39,7 @@ struct BrandPreviewHost: View {
                         VStack(alignment: .leading, spacing: 20) {
                             switch state {
                             case "footage": FootageStage(format: .montage, mediaCount: 2, maximumClipCount: 10, uploads: [], progress: [:], addFootage: {}, changeFormat: {})
-                            case "direction": DirectionStage(approval: approval, format: .montage, isBusy: false, decide: { _ in })
+                            case "direction": DirectionStage(approval: approval, format: .montage, isBusy: false, decide: { _, _, _ in }, retrySpeechCheck: { _ in })
                             case "rendering": RenderingStage()
                             case "phone-rendering": DeviceRenderStatusCard(presentation: DeviceRenderPresentation(phase: .rendering), retry: {}, stop: {})
                             case "phone-sync": DeviceRenderStatusCard(presentation: DeviceRenderPresentation(phase: .localReady,

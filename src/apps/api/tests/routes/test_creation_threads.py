@@ -342,7 +342,15 @@ async def test_legacy_mutation_routes_cannot_take_authority_over_runtime_v2(
 
 @pytest.mark.parametrize(
     "action",
-    ["select_format", "select_edit_format", "remove_media", "select_variant"],
+    [
+        "select_format",
+        "select_edit_format",
+        "remove_media",
+        "select_variant",
+        # KRI-205: re-queues the source speech-cleanup analysis -- source
+        # configuration, not render authority.
+        "retry_speech_cleanup",
+    ],
 )
 def test_runtime_v2_shares_only_non_agent_source_configuration_actions(action: str) -> None:
     _require_runtime_v1_mutation(SimpleNamespace(runtime_version=2), action=action)

@@ -8,6 +8,7 @@ Job dispatcher.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -15,10 +16,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.api_schemas import (
     ApprovalDecisionBody,
     ApprovalDecisionOut,
@@ -38,17 +41,29 @@ from app.kria.contracts import (
 )
 from app.kria.language import is_help_question, is_status_question
 from app.models import (
+    ContentPlan,
     CreationThread,
     CreationThreadEvent,
     CreatorAgentApproval,
+    CreatorAgentExecution,
     CreatorAgentSession,
     CreatorAgentTurn,
     CreatorEditDraft,
+    PlanItem,
 )
 from app.services.creation_thread_titles import (
     matches_conversation_revision,
     prepare_message_title,
 )
+from app.services.speech_cleanup_decision import (
+    SPEECH_CLEANUP_CONFLICT_COPY,
+    SpeechCleanupDecisionConflict,
+    evaluate_enforce_mode_decision,
+    legacy_default_decision,
+    resolve_next_audio_mode,
+)
+
+log = structlog.get_logger()
 
 
 @dataclass
@@ -68,7 +83,17 @@ def request_digest(body: SubmitTurnBody) -> str:
 
 
 def approval_fingerprint(approval: CreatorAgentApproval) -> str:
-    """Hash immutable server-authored pins; this is a stale fence, not auth."""
+    """Hash immutable server-authored pins; this is a stale fence, not auth.
+
+    ``expires_at`` is normalized to UTC before formatting: asyncpg always
+    returns a UTC-aware ``timestamptz`` regardless of the session's
+    ``TimeZone`` GUC, while psycopg2 (the sync engine Celery tasks use to
+    mint an approval) renders it in whatever timezone that GUC is set to.
+    Both represent the identical instant, but ``.isoformat()`` on the two
+    would otherwise disagree whenever the server's default timezone isn't
+    UTC, hashing the SAME approval into two different fingerprints purely
+    because of which driver read it -- not a real staleness.
+    """
 
     pins = {
         "approval_id": str(approval.id),
@@ -80,7 +105,7 @@ def approval_fingerprint(approval: CreatorAgentApproval) -> str:
         "target_generation_id": approval.target_generation_id,
         "target_manifest_hash": approval.target_manifest_hash,
         "target_ownership_epoch": approval.target_ownership_epoch,
-        "expires_at": approval.expires_at.isoformat(),
+        "expires_at": approval.expires_at.astimezone(UTC).isoformat(),
     }
     canonical = json.dumps(pins, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -572,6 +597,357 @@ async def _promote_queued_successor(db: AsyncSession, *, thread_id: uuid.UUID) -
     return str(successor.id)
 
 
+def _parse_draft_document(snapshot_json: dict[str, Any] | None) -> Any | None:
+    """Best-effort parse; a malformed/legacy row is simply not a strategy draft."""
+
+    if not isinstance(snapshot_json, dict):
+        return None
+    # Lazy: `app.kria.drafts` imports from this module, so a top-level import
+    # here would be circular.
+    from app.kria.drafts import KriaDraftDocument  # noqa: PLC0415
+
+    try:
+        return KriaDraftDocument.model_validate(snapshot_json)
+    except ValueError:
+        return None
+
+
+async def _lock_strategy_plan_item(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    creator_id: uuid.UUID,
+) -> PlanItem | None:
+    """Lock ContentPlan -> PlanItem ahead of Session, mirroring the claim task.
+
+    Two unlocked reads discover the identity to lock (a session's
+    ``plan_item_id`` and an item's ``content_plan_id`` are both immutable
+    foreign keys), then both rows are re-read ``FOR UPDATE`` in canonical
+    order. Returns ``None`` for any missing/foreign row -- the caller treats
+    that exactly like "not a strategy approval" and lets the existing
+    validation chain surface whatever is actually wrong.
+    """
+
+    session_peek = (
+        await db.execute(select(CreatorAgentSession).where(CreatorAgentSession.id == session_id))
+    ).scalar_one_or_none()
+    if session_peek is None or session_peek.plan_item_id is None:
+        return None
+    item_peek = (
+        await db.execute(select(PlanItem).where(PlanItem.id == session_peek.plan_item_id))
+    ).scalar_one_or_none()
+    if item_peek is None:
+        return None
+    plan_row = (
+        await db.execute(
+            select(ContentPlan)
+            .where(
+                ContentPlan.id == item_peek.content_plan_id,
+                ContentPlan.user_id == creator_id,
+            )
+            .with_for_update(**CONTENT_PLAN_LOCK)
+        )
+    ).scalar_one_or_none()
+    if plan_row is None:
+        return None
+    return (
+        await db.execute(select(PlanItem).where(PlanItem.id == item_peek.id).with_for_update())
+    ).scalar_one_or_none()
+
+
+_STRATEGY_MEDIA_SNAPSHOT_FIELDS = (
+    "edit_format",
+    "audio_mode",
+    "voiceover_caption_style",
+    "user_edited",
+)
+
+
+def _snapshot_plan_item_media_fields(item: PlanItem) -> dict[str, Any]:
+    """The pre-mutation values `_apply_strategy_approval_media` is about to change.
+
+    Captured once per approval (never overwritten by a retry) so a later deny
+    or expiry can restore the creator's actual media state -- otherwise a
+    committed-but-never-approved mutation (e.g. a speech-cleanup 409 that left
+    the approval pending) would strand the item on a direction the creator
+    then rejected.
+    """
+
+    return {field: getattr(item, field) for field in _STRATEGY_MEDIA_SNAPSHOT_FIELDS}
+
+
+def _clear_strategy_media_snapshot(execution: CreatorAgentExecution | None) -> None:
+    """Drop a consumed/superseded snapshot. Safe to call when none exists."""
+
+    if execution is None or not isinstance(execution.result, dict):
+        return
+    if "strategy_media_before" not in execution.result:
+        return
+    execution.result = {
+        key: value for key, value in execution.result.items() if key != "strategy_media_before"
+    }
+
+
+async def _restore_strategy_approval_media(
+    db: AsyncSession,
+    *,
+    item: PlanItem,
+    snapshot: dict[str, Any],
+) -> uuid.UUID | None:
+    """Undo `_apply_strategy_approval_media`'s mutation for a denied/expired approval.
+
+    Restores exactly the fields that call changed, then re-runs the same
+    supersede/reschedule an ordinary mutation runs: the creator's actual media
+    identity may resolve a different (or no) active narration source once
+    restored, and that source's analysis is a completely separate concern
+    from whatever the rejected strategy needed checked.
+    """
+
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        mutate_plan_item_media,
+    )
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        mutation_current_analysis_async,
+        schedule_item_preflight_async,
+    )
+
+    edit_format = snapshot.get("edit_format")
+    audio_mode = snapshot.get("audio_mode")
+    if not isinstance(edit_format, str) or not isinstance(audio_mode, str):
+        # A malformed/legacy snapshot must never crash a deny -- worst case,
+        # the item keeps the rejected format and a human notices in review.
+        return None
+    current_cleanup_for_mutation = await mutation_current_analysis_async(
+        db, item.id, for_update=True
+    )
+    mutate_plan_item_media(
+        item,
+        detector_policy=current_detector_policy(),
+        edit_format=edit_format,
+        audio_mode=audio_mode,
+        current_analysis=current_cleanup_for_mutation,
+    )
+    item.voiceover_caption_style = snapshot.get("voiceover_caption_style")
+    item.user_edited = bool(snapshot.get("user_edited", False))
+    return await schedule_item_preflight_async(db, item)
+
+
+async def _restore_strategy_media_snapshot_if_present(
+    db: AsyncSession,
+    *,
+    item: PlanItem | None,
+    execution: CreatorAgentExecution | None,
+) -> uuid.UUID | None:
+    """Reverse a strategy draft's committed media mutation, if one is pending reversal.
+
+    Used by both the deny path and the lazy expiry check -- an approval that
+    will never be approved must not leave the PlanItem on a direction the
+    creator never confirmed.
+    """
+
+    if item is None or execution is None or not isinstance(execution.result, dict):
+        return None
+    snapshot = execution.result.get("strategy_media_before")
+    if not isinstance(snapshot, dict):
+        return None
+    preflight_analysis_id = await _restore_strategy_approval_media(db, item=item, snapshot=snapshot)
+    _clear_strategy_media_snapshot(execution)
+    return preflight_analysis_id
+
+
+@dataclass(frozen=True)
+class _StrategyApprovalMedia:
+    """What `_apply_strategy_approval_media` learned, for the caller to persist.
+
+    ``preflight_analysis_id`` is set whenever this call scheduled a genuinely
+    NEW current analysis (not a reused/historical row) -- the caller must
+    publish it (enqueue the actual analysis work) once its own transaction,
+    which contains this row's INSERT, has committed. A conflict path commits
+    and publishes for itself instead (see `_commit_and_publish` below) and
+    raises rather than returning, so it never reaches here.
+    """
+
+    speech_cleanup_stash: dict[str, Any] | None
+    preflight_analysis_id: uuid.UUID | None
+
+
+async def _apply_strategy_approval_media(
+    db: AsyncSession,
+    *,
+    thread: CreationThread,
+    item: PlanItem,
+    strategy_payload: dict[str, Any],
+    body: ApprovalDecisionBody,
+    execution: CreatorAgentExecution | None,
+) -> _StrategyApprovalMedia:
+    """Apply a strategy draft's media targets, then gate on speech cleanup.
+
+    Runs the exact media mutation `_claim_approval_dispatch` runs today, just
+    earlier -- at approval time, under the PlanItem lock `decide_approval`
+    already took for a strategy draft -- so the claim's later, identical call
+    becomes a no-op (unchanged source -> unchanged fingerprint -> nothing to
+    supersede or reschedule). Returns the stash to persist on the render
+    execution's ``result["speech_cleanup"]`` for the claim to read back; both
+    fields are ``None`` when there is nothing to gate (voiceover still
+    required -- left to the claim exactly like before this change -- mode
+    isn't "enforce", or this source isn't in the enforce cohort).
+
+    May raise `RuntimeFailure` (phase="approval", recovery="ask_user") after
+    committing the media mutation and any newly scheduled preflight analysis,
+    so the check this refusal is waiting on has actually been scheduled.
+    """
+
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+
+    strategy = CreativeStrategy.model_validate(strategy_payload)
+    next_audio_mode = resolve_next_audio_mode(strategy, item)
+    if next_audio_mode is None:
+        # voiceover_required: leave the failure and its copy to the claim,
+        # which still runs this same derivation against the (unmutated) item.
+        return _StrategyApprovalMedia(None, None)
+
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        mutate_plan_item_media,
+        publish_preflight_after_commit,
+        resolve_item_narration,
+    )
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        current_analysis_async,
+        mutation_current_analysis_async,
+        preflight_enabled_for_source,
+        schedule_item_preflight_async,
+    )
+
+    # Snapshot exactly once per approval (a retry after a 409 must not
+    # overwrite it with the already-mutated, rejected-strategy values) so a
+    # later deny or expiry can restore the creator's actual media state.
+    if execution is not None and not (
+        isinstance(execution.result, dict) and "strategy_media_before" in execution.result
+    ):
+        execution.result = {
+            **(execution.result or {}),
+            "strategy_media_before": _snapshot_plan_item_media_fields(item),
+        }
+
+    current_cleanup_for_mutation = await mutation_current_analysis_async(
+        db, item.id, for_update=True
+    )
+    mutate_plan_item_media(
+        item,
+        detector_policy=current_detector_policy(),
+        edit_format=strategy.edit_format,
+        audio_mode=next_audio_mode,
+        current_analysis=current_cleanup_for_mutation,
+    )
+    preflight_analysis_id = await schedule_item_preflight_async(db, item)
+    caption_style = {
+        "clean": "sentence",
+        "editorial": "sentence",
+        "kinetic": "word",
+        "karaoke": "word",
+    }.get(strategy.caption_style)
+    if caption_style:
+        item.voiceover_caption_style = caption_style
+    elif strategy.caption_style == "none":
+        item.voiceover_caption_style = None
+    item.user_edited = True
+
+    if settings.speech_cleanup_preflight_mode != "enforce":
+        _clear_strategy_media_snapshot(execution)
+        return _StrategyApprovalMedia(None, preflight_analysis_id)
+    resolution = resolve_item_narration(item, detector_policy=current_detector_policy())
+    enforced_for_source = bool(
+        resolution.source
+        and preflight_enabled_for_source(
+            resolution.source.source_policy_fingerprint,
+            mode=settings.speech_cleanup_preflight_mode,
+            rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+        )
+    )
+    if not enforced_for_source:
+        _clear_strategy_media_snapshot(execution)
+        return _StrategyApprovalMedia(None, preflight_analysis_id)
+
+    async def _commit_and_publish(extra_analysis_id: uuid.UUID | None) -> None:
+        await db.commit()
+        if preflight_analysis_id is not None:
+            await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id)
+        if extra_analysis_id is not None:
+            await asyncio.to_thread(publish_preflight_after_commit, extra_analysis_id)
+
+    if not body.speech_cleanup_aware:
+        current_cleanup = await current_analysis_async(db, item.id)
+        legacy = legacy_default_decision(current_cleanup)
+        log.info(
+            "kria_speech_cleanup_legacy_default",
+            item_id=str(item.id),
+            analysis_id=str(legacy.analysis_id) if legacy.analysis_id else None,
+            choice=legacy.choice,
+        )
+        _clear_strategy_media_snapshot(execution)
+        return _StrategyApprovalMedia(
+            {
+                "analysis_id": str(legacy.analysis_id) if legacy.analysis_id else None,
+                "choice": legacy.choice,
+            },
+            preflight_analysis_id,
+        )
+
+    if body.speech_cleanup_choice == "create_without_cleanup":
+        # The unchecked bypass: same shape as v1's dedicated `action ==
+        # "create_without_cleanup"` route branch, folded into this one call
+        # since runtime-v2 has no separate action verb.
+        current_cleanup = await current_analysis_async(db, item.id, for_update=True)
+        if (
+            current_cleanup is None
+            or body.speech_cleanup_analysis_id is None
+            or current_cleanup.id != body.speech_cleanup_analysis_id
+            or current_cleanup.status not in {"queued", "running", "failed"}
+        ):
+            await _commit_and_publish(None)
+            raise RuntimeFailure(
+                409,
+                "speech_cleanup_analysis_changed",
+                SPEECH_CLEANUP_CONFLICT_COPY["speech_cleanup_analysis_changed"],
+                phase="approval",
+                recovery="ask_user",
+                current_revision=int(thread.revision),
+            )
+        _clear_strategy_media_snapshot(execution)
+        return _StrategyApprovalMedia(
+            {"analysis_id": str(current_cleanup.id), "choice": "create_without_cleanup"},
+            preflight_analysis_id,
+        )
+
+    result = await evaluate_enforce_mode_decision(
+        db,
+        item,
+        cleanup_analysis_id=body.speech_cleanup_analysis_id,
+        cleanup_choice=body.speech_cleanup_choice,
+        resolution=resolution,
+    )
+    if isinstance(result, SpeechCleanupDecisionConflict):
+        await _commit_and_publish(result.refreshed_analysis_id)
+        raise RuntimeFailure(
+            409,
+            result.code,
+            SPEECH_CLEANUP_CONFLICT_COPY[result.code],
+            phase="approval",
+            recovery="ask_user",
+            current_revision=int(thread.revision),
+        )
+    _clear_strategy_media_snapshot(execution)
+    return _StrategyApprovalMedia(
+        {
+            "analysis_id": str(result.analysis_id) if result.analysis_id else None,
+            "choice": result.choice,
+        },
+        preflight_analysis_id,
+    )
+
+
 async def decide_approval(
     db: AsyncSession,
     *,
@@ -602,6 +978,68 @@ async def decide_approval(
             phase="approval",
             recovery="refresh_replan",
         )
+    # KRI-205: a strategy draft's approval is also the first (and, on a phone
+    # narration source, only) chance to apply its media targets and gate on
+    # the enforce-mode speech-cleanup question -- `_claim_approval_dispatch`
+    # otherwise runs too late (dispatch has already 409'd the whole render).
+    # That needs PlanItem/ContentPlan locked ahead of Session in canonical
+    # order (Plan -> PlanItem -> Job -> Session -> Turn -> Draft -> Approval ->
+    # Execution -> Thread), so peek the draft's `kind` here, unlocked -- a
+    # draft's kind never changes after mint (a new direction is always a new
+    # draft row), so this cannot race the authoritative re-read below.
+    document_peek = (
+        _parse_draft_document(
+            getattr(
+                (
+                    await db.execute(
+                        select(CreatorEditDraft).where(CreatorEditDraft.id == approval_ref.draft_id)
+                    )
+                ).scalar_one_or_none(),
+                "snapshot_json",
+                None,
+            )
+        )
+        if decision == "approve"
+        else None
+    )
+    is_strategy_approval = bool(
+        document_peek is not None and document_peek.kind == "strategy" and document_peek.strategy
+    )
+    # A deny (or, further below, a lazy expiry) must reverse an already
+    # -committed strategy media mutation, if this approval's render execution
+    # is carrying one -- discovered the same unlocked-peek way, from the same
+    # immutable `execution_ids[0]` FK. `is_strategy_approval` alone would miss
+    # this: it only reflects the CURRENT decision's draft kind, not whether a
+    # PRIOR attempt on this exact approval already mutated the item.
+    deny_restore_pending = False
+    if decision == "deny":
+        try:
+            execution_id_peek = uuid.UUID(
+                str((getattr(approval_ref, "execution_ids", None) or [None])[0])
+            )
+        except (TypeError, ValueError, IndexError):
+            execution_id_peek = None
+        if execution_id_peek is not None:
+            execution_peek = (
+                await db.execute(
+                    select(CreatorAgentExecution).where(
+                        CreatorAgentExecution.id == execution_id_peek
+                    )
+                )
+            ).scalar_one_or_none()
+            deny_restore_pending = bool(
+                execution_peek is not None
+                and isinstance(execution_peek.result, dict)
+                and "strategy_media_before" in execution_peek.result
+            )
+    needs_plan_item_lock = is_strategy_approval or deny_restore_pending
+    plan_item = (
+        await _lock_strategy_plan_item(
+            db, session_id=approval_ref.session_id, creator_id=creator_id
+        )
+        if needs_plan_item_lock
+        else None
+    )
     session = (
         await db.execute(
             select(CreatorAgentSession)
@@ -660,6 +1098,22 @@ async def decide_approval(
             .with_for_update()
         )
     ).scalar_one_or_none()
+    execution: CreatorAgentExecution | None = None
+    if needs_plan_item_lock:
+        try:
+            execution_id = uuid.UUID(
+                str((getattr(approval_ref, "execution_ids", None) or [None])[0])
+            )
+        except (TypeError, ValueError, IndexError):
+            execution_id = None
+        if execution_id is not None:
+            execution = (
+                await db.execute(
+                    select(CreatorAgentExecution)
+                    .where(CreatorAgentExecution.id == execution_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
     if approval is None or draft is None:
         raise RuntimeFailure(
@@ -723,7 +1177,16 @@ async def decide_approval(
         )
     if approval.expires_at <= now:
         approval.status = "expired"
+        # An expired approval can never be approved either -- reverse any
+        # strategy media mutation still pending reversal, exactly like deny.
+        expiry_preflight_analysis_id = await _restore_strategy_media_snapshot_if_present(
+            db, item=plan_item, execution=execution
+        )
         await db.commit()
+        if expiry_preflight_analysis_id is not None:
+            from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+            await asyncio.to_thread(publish_preflight_after_commit, expiry_preflight_analysis_id)
         raise RuntimeFailure(
             409,
             "approval_expired",
@@ -751,6 +1214,32 @@ async def decide_approval(
             current_revision=int(thread.revision),
         )
 
+    strategy_media: _StrategyApprovalMedia | None = None
+    preflight_analysis_id_to_publish: uuid.UUID | None = None
+    if is_strategy_approval and decision == "approve" and plan_item is not None:
+        strategy_media = await _apply_strategy_approval_media(
+            db,
+            thread=thread,
+            item=plan_item,
+            strategy_payload=document_peek.strategy,
+            body=body,
+            execution=execution,
+        )
+        if strategy_media.speech_cleanup_stash is not None and execution is not None:
+            execution.result = {
+                **(execution.result or {}),
+                "speech_cleanup": strategy_media.speech_cleanup_stash,
+            }
+        preflight_analysis_id_to_publish = strategy_media.preflight_analysis_id
+    elif decision == "deny":
+        # This deny is final for this approval (it can never be decided
+        # again), so any strategy media mutation a prior approve attempt
+        # already committed must be reversed now, before the item is left on
+        # a direction the creator just rejected.
+        preflight_analysis_id_to_publish = await _restore_strategy_media_snapshot_if_present(
+            db, item=plan_item, execution=execution
+        )
+
     approval.status = "approved" if decision == "approve" else "denied"
     if decision == "deny":
         turn.status = "completed"
@@ -771,19 +1260,27 @@ async def decide_approval(
     )
     del event
     await db.commit()
+    if preflight_analysis_id_to_publish is not None:
+        from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+        await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id_to_publish)
+    # Capture before `_promote_queued_successor`: on the common "nothing
+    # queued" path it calls `db.rollback()`, which expires every ORM object
+    # in this session regardless of `expire_on_commit` (that flag only
+    # governs post-*commit* behavior) -- reading these attributes afterward
+    # would silently need a new (unawaited) round trip and crash with
+    # `MissingGreenlet` in this async session.
+    response = ApprovalDecisionOut(
+        approval_id=str(approval.id),
+        turn_id=str(approval.turn_id),
+        status=approval.status,
+        thread_revision=int(thread.revision),
+        render_dispatched=False,
+    )
     successor_id = (
         await _promote_queued_successor(db, thread_id=thread.id) if decision == "deny" else None
     )
-    return (
-        ApprovalDecisionOut(
-            approval_id=str(approval.id),
-            turn_id=str(approval.turn_id),
-            status=approval.status,
-            thread_revision=int(thread.revision),
-            render_dispatched=False,
-        ),
-        successor_id,
-    )
+    return response, successor_id
 
 
 async def read_approval(
