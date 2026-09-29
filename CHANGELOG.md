@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.4.0] - 2026-09-29
+
+### Changed
+- feat(kria): copilot sees clips, facts and brief; one-op bulk fonts (KRI-191, KRI-203) (#1255) <!-- release-pr: 1255 -->
+
 ## [0.77.3.0] - 2026-09-29
 
 ### Changed
