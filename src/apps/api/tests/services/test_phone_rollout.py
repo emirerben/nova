@@ -552,9 +552,9 @@ def test_narration_audio_requires_the_capability_to_be_verified(monkeypatch):
     phone_render_verified_features, same gating pattern as stillImages/
     visualVideos -- follow how those are gated (see docs/reviews/kri-29
     /capability-matrix.md's "narrationAudio" row)."""
-    from app.pipeline.phone_montage_plan import compile_phone_montage_plan
-    from tests.pipeline.test_phone_montage_plan import _narration
-    from tests.pipeline.test_phone_montage_plan import fixture as montage_fixture
+    from app.pipeline.phone_voiceover_montage_plan import compile_phone_voiceover_montage_plan
+    from tests.pipeline.test_phone_voiceover_montage_plan import _narration
+    from tests.pipeline.test_phone_voiceover_montage_plan import fixture as montage_fixture
 
     decision, bindings = montage_fixture(
         voiceover_gcs_path="voiceover-uploads/direct/u/i/voice.m4a",
@@ -562,7 +562,9 @@ def test_narration_audio_requires_the_capability_to_be_verified(monkeypatch):
         mix=1.0,
     )
     narration = _narration()
-    recipe = compile_phone_montage_plan(decision, bindings, music=None, narration=narration)
+    recipe = compile_phone_voiceover_montage_plan(
+        decision, bindings, music=None, narration=narration
+    )
     assert "narrationAudio" in recipe.required_capabilities
 
     monkeypatch.setattr(

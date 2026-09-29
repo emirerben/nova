@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.11.0] - 2026-09-29
+
+### Changed
+- refactor(phone): voiceover-only montage writer; unified planner for every other montage (KRI-220) (#1269) <!-- release-pr: 1269 -->
+
+## [0.77.10.0] - 2026-09-29
+
+### Changed
+- fix(evals): edit_copilot v48 phone-restyle regression + KRI-221 live rerun (#1270) <!-- release-pr: 1270 -->
+
+## [0.77.9.0] - 2026-09-29
+
+### Changed
+- fix(ios): settle chat thinking regardless of which fetch delivered the reply (KRI-222) (#1268) <!-- release-pr: 1268 -->
+
+## [0.77.8.0] - 2026-09-29
+
+### Changed
+- feat(web): make the landing wordmark living glass (#1267) <!-- release-pr: 1267 -->
+
 ## [0.77.7.0] - 2026-09-29
 
 ### Changed

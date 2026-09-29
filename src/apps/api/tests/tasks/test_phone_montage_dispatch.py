@@ -10,7 +10,7 @@ import pytest
 from app.services.device_render import device_status
 from app.services.phone_sources import PHONE_SOURCES_FIELD
 from app.tasks import generative_build as gb
-from tests.pipeline.test_phone_montage_plan import _binding
+from tests.pipeline.test_phone_voiceover_montage_plan import _binding
 from tests.tasks.test_generative_build import _Meta, _track
 
 
@@ -44,7 +44,26 @@ def _patch_decide_phase(monkeypatch, *, steps):
     monkeypatch.setattr(to, "_enrich_slots_with_energy", lambda slots, beats: slots, raising=False)
 
 
-def setup(monkeypatch, *, edit_format="montage", archetype="montage", track=None, spec=None):
+def _fake_narration_bed(_job_id, voiceover_gcs_path):
+    if not voiceover_gcs_path:
+        return None
+    from app.kria.render_assets import RenderFingerprint
+    from app.pipeline.phone_recipe_shared import PhoneNarrationBed
+
+    return PhoneNarrationBed(
+        plan_item_id="item-1",
+        generation="9",
+        fingerprint=RenderFingerprint(sha256="d" * 64, byte_count=999),
+        duration_s=20.0,
+    )
+
+
+_VOICEOVER_PATH = "voiceover-uploads/direct/u/i/voice.m4a"
+
+
+def setup(monkeypatch, *, edit_format="montage", archetype="voiceover", track=None, spec=None):
+    """KRI-220: this module covers the VOICEOVER montage writer only, so the default
+    fixture is a recorded-voiceover montage (flag on, narrationAudio verified)."""
     import app.pipeline.agents.gemini_analyzer as ga
     import app.pipeline.text_overlay_skia as skia_mod
     import app.storage as storage
@@ -74,6 +93,7 @@ def setup(monkeypatch, *, edit_format="montage", archetype="montage", track=None
     all_candidates = {
         "clip_paths": ["phone-proxies/c0.mp4", "phone-proxies/c1.mp4"],
         "edit_format": edit_format,
+        "voiceover_gcs_path": _VOICEOVER_PATH,
     }
     job = SimpleNamespace(
         id=uuid.uuid4(),
@@ -113,9 +133,12 @@ def setup(monkeypatch, *, edit_format="montage", archetype="montage", track=None
         gb, "_resolve_archetype", lambda *a, **k: (archetype, None, None), raising=False
     )
     resolved_spec = spec or {
-        "variant_id": "original_text",
+        "variant_id": "voiceover_only",
         "text_mode": "none",
         "track": track,
+        "archetype": "voiceover",
+        "voiceover_gcs_path": _VOICEOVER_PATH,
+        "mix": 1.0,
     }
     monkeypatch.setattr(gb, "_specs_for_archetype", lambda *a, **k: [resolved_spec], raising=False)
 
@@ -139,8 +162,20 @@ def setup(monkeypatch, *, edit_format="montage", archetype="montage", track=None
     monkeypatch.setattr(
         gb.settings,
         "phone_render_verified_features",
-        ["basicComposition", "local1080Export", "crossfade", "audioMix", "musicBed"],
+        [
+            "basicComposition",
+            "local1080Export",
+            "crossfade",
+            "audioMix",
+            "musicBed",
+            "narrationAudio",
+        ],
     )
+    monkeypatch.setattr(gb.settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", _fake_narration_bed, raising=False)
+    # The REAL decide phase downloads the voiceover to size the footage montage.
+    monkeypatch.setattr("app.storage.download_to_file", lambda *a, **k: None)
+    monkeypatch.setattr("app.tasks.template_orchestrate._probe_duration", lambda *a, **k: 20.0)
 
     def _boom(*a, **k):
         raise AssertionError("phone montage decide phase must not touch media processing")
@@ -160,11 +195,11 @@ def test_pins_device_record_and_variant_without_assembling(monkeypatch):
     gb._run_generative_job(str(job.id))
 
     assert job.status == "awaiting_device"
-    status = device_status(job, "original_text")
-    assert status.request.identity.variant_id == "original_text"
+    status = device_status(job, "voiceover_only")
+    assert status.request.identity.variant_id == "voiceover_only"
     assert status.request.recipe.duration == pytest.approx(7.7)
     variant = job.assembly_plan["variants"][0]
-    assert variant["variant_id"] == "original_text"
+    assert variant["variant_id"] == "voiceover_only"
     assert variant["rank"] == 1
     assert variant["render_status"] == "awaiting_device"
     assert variant["render_destination"] == "device"
@@ -177,22 +212,33 @@ def test_pins_device_record_and_variant_without_assembling(monkeypatch):
 def test_redelivery_with_same_generation_is_a_no_op(monkeypatch):
     job, snapshot, session, _bindings, _cloud = setup(monkeypatch)
     gb._run_generative_job(str(job.id))
-    first_request = device_status(job, "original_text").request
+    first_request = device_status(job, "voiceover_only").request
 
     reingest = Mock(side_effect=AssertionError("redelivery must not re-run ingest"))
     monkeypatch.setattr(gb, "_ingest_clips", reingest, raising=False)
-    gb._run_phone_montage_job(
+    gb._run_phone_voiceover_montage_job(
         str(job.id), copy.deepcopy(job.assembly_plan), job.all_candidates, ownership_epoch=3
     )
-    assert device_status(job, "original_text").request == first_request
+    assert device_status(job, "voiceover_only").request == first_request
     reingest.assert_not_called()
 
 
 def test_ownership_epoch_mismatch_bails_before_publishing(monkeypatch):
     job, snapshot, session, _bindings, _cloud = setup(monkeypatch)
     monkeypatch.setattr(gb, "_lock_owned_entry_job", lambda *args: (job, 99))
-    gb._run_phone_montage_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    gb._run_phone_voiceover_montage_job(
+        str(job.id), snapshot, job.all_candidates, ownership_epoch=3
+    )
     assert "_device_render_v1" not in job.assembly_plan
+    session.commit.assert_not_called()
+
+
+def test_the_voiceover_writer_fails_closed_without_a_recorded_voiceover(monkeypatch):
+    """KRI-220: a montage with no voiceover is the unified planner's, never this lane's."""
+    job, snapshot, session, _bindings, _cloud = setup(monkeypatch)
+    candidates = {k: v for k, v in job.all_candidates.items() if k != "voiceover_gcs_path"}
+    with pytest.raises(ValueError, match="requires a recorded voiceover"):
+        gb._run_phone_voiceover_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
     session.commit.assert_not_called()
 
 
@@ -203,22 +249,8 @@ def test_voiceover_job_is_rejected_while_narration_flag_is_off(monkeypatch):
     monkeypatch.setattr(gb.settings, "phone_narration_rendering_enabled", False)
     candidates = {**job.all_candidates, "voiceover_gcs_path": "users/u/voice.m4a"}
     with pytest.raises(ValueError, match="voiceover"):
-        gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+        gb._run_phone_voiceover_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
     session.commit.assert_not_called()
-
-
-def _fake_narration_bed(_job_id, voiceover_gcs_path):
-    if not voiceover_gcs_path:
-        return None
-    from app.kria.render_assets import RenderFingerprint
-    from app.pipeline.phone_recipe_shared import PhoneNarrationBed
-
-    return PhoneNarrationBed(
-        plan_item_id="item-1",
-        generation="9",
-        fingerprint=RenderFingerprint(sha256="d" * 64, byte_count=999),
-        duration_s=20.0,
-    )
 
 
 def test_voiceover_job_dispatches_when_flag_and_capability_verified(monkeypatch):
@@ -259,7 +291,7 @@ def test_voiceover_job_dispatches_when_flag_and_capability_verified(monkeypatch)
     monkeypatch.setattr("app.storage.download_to_file", lambda *a, **k: None)
     monkeypatch.setattr("app.tasks.template_orchestrate._probe_duration", lambda *a, **k: 20.0)
 
-    gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+    gb._run_phone_voiceover_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
 
     assert job.status == "awaiting_device"
     variant = job.assembly_plan["variants"][0]
@@ -289,13 +321,17 @@ def test_voiceover_job_rejects_when_capability_not_verified(monkeypatch):
     )
     candidates = {**job.all_candidates, "voiceover_gcs_path": voiceover_path}
     monkeypatch.setattr(gb.settings, "phone_narration_rendering_enabled", True)
-    # narrationAudio deliberately absent from the verified feature list.
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        ["basicComposition", "local1080Export", "crossfade", "audioMix", "musicBed"],
+    )  # narrationAudio deliberately absent from the verified feature list.
     monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", _fake_narration_bed, raising=False)
     monkeypatch.setattr("app.storage.download_to_file", lambda *a, **k: None)
     monkeypatch.setattr("app.tasks.template_orchestrate._probe_duration", lambda *a, **k: 20.0)
 
     with pytest.raises(ValueError, match="capability"):
-        gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+        gb._run_phone_voiceover_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
     session.commit.assert_not_called()
     cloud.assert_not_called()
 
@@ -320,23 +356,29 @@ def test_narrated_archetype_still_rejected_on_the_phone(monkeypatch):
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 
     with pytest.raises(UnsupportedPhonePlan, match="cannot render archetype"):
-        gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+        gb._run_phone_voiceover_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
     session.commit.assert_not_called()
     cloud.assert_not_called()
 
 
 def test_deferred_specs_are_recorded_and_not_lost(monkeypatch):
     track = _track("track1")
+    voice = {
+        "text_mode": "none",
+        "archetype": "voiceover",
+        "voiceover_gcs_path": _VOICEOVER_PATH,
+        "mix": 1.0,
+    }
     specs = [
-        {"variant_id": "song_text", "text_mode": "none", "track": track},
-        {"variant_id": "original_text", "text_mode": "none", "track": None},
+        {"variant_id": "voiceover_music", "track": track, **voice},
+        {"variant_id": "voiceover_only", "track": None, **voice},
     ]
     job, snapshot, session, _bindings, _cloud = setup(monkeypatch, track=track)
     monkeypatch.setattr(gb, "_specs_for_archetype", lambda *a, **k: specs, raising=False)
     gb._run_generative_job(str(job.id))
 
-    assert job.assembly_plan["variants"][0]["variant_id"] == "song_text"
-    assert job.assembly_plan["phone_deferred_variants"] == ["original_text"]
+    assert job.assembly_plan["variants"][0]["variant_id"] == "voiceover_music"
+    assert job.assembly_plan["phone_deferred_variants"] == ["voiceover_only"]
 
 
 def test_per_variant_upsert_replaces_awaiting_and_refuses_ready(monkeypatch):
@@ -347,28 +389,30 @@ def test_per_variant_upsert_replaces_awaiting_and_refuses_ready(monkeypatch):
     # A second, later generation may replace an awaiting entry in place.
     job.assembly_plan["creator_generation_id"] = "generation-2"
     job.assembly_plan[PHONE_SOURCES_FIELD] = snapshot[PHONE_SOURCES_FIELD]
-    del job.assembly_plan["_device_render_v1"]["original_text"]
+    del job.assembly_plan["_device_render_v1"]["voiceover_only"]
     new_snapshot = copy.deepcopy(job.assembly_plan)
-    gb._run_phone_montage_job(str(job.id), new_snapshot, job.all_candidates, ownership_epoch=3)
+    gb._run_phone_voiceover_montage_job(
+        str(job.id), new_snapshot, job.all_candidates, ownership_epoch=3
+    )
     assert len(job.assembly_plan["variants"]) == 1
     assert job.assembly_plan["variants"][0]["render_generation_id"] == "generation-2"
 
     # A ready entry must never be silently replaced.
     job.assembly_plan["variants"][0]["render_status"] = "ready"
     job.assembly_plan["creator_generation_id"] = "generation-3"
-    del job.assembly_plan["_device_render_v1"]["original_text"]
+    del job.assembly_plan["_device_render_v1"]["voiceover_only"]
     newer_snapshot = copy.deepcopy(job.assembly_plan)
     with pytest.raises(ValueError, match="ready"):
-        gb._run_phone_montage_job(
+        gb._run_phone_voiceover_montage_job(
             str(job.id), newer_snapshot, job.all_candidates, ownership_epoch=3
         )
 
 
-def test_dispatcher_routes_montage_and_guided_snapshots_to_their_own_runner(monkeypatch):
+def test_dispatcher_routes_voiceover_montage_and_guided_snapshots_to_their_own_runner(monkeypatch):
     job, snapshot, session, _bindings, _cloud = setup(monkeypatch)
     montage_runner = Mock()
     guided_runner = Mock()
-    monkeypatch.setattr(gb, "_run_phone_montage_job", montage_runner)
+    monkeypatch.setattr(gb, "_run_phone_voiceover_montage_job", montage_runner)
     monkeypatch.setattr(gb, "_run_phone_guided_job", guided_runner)
 
     gb._run_generative_job(str(job.id))
@@ -432,7 +476,7 @@ def test_voiceover_with_matched_track_falls_back_to_voiceover_only_without_music
         ],
     )
 
-    gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+    gb._run_phone_voiceover_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
 
     variant = job.assembly_plan["variants"][0]
     assert variant["variant_id"] == "voiceover_only"
@@ -457,7 +501,7 @@ def test_voiceover_with_matched_track_keeps_voiceover_music_when_music_bed_verif
         ],
     )
 
-    gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+    gb._run_phone_voiceover_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
 
     variant = job.assembly_plan["variants"][0]
     assert variant["variant_id"] == "voiceover_music"

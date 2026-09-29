@@ -149,6 +149,8 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transform: scale(var(--logo-video-scale, 1.035));
+  transform-origin: center;
 }
 
 .wordmark {
@@ -163,6 +165,165 @@
   opacity: 1;
   mix-blend-mode: normal;
   transform: translate(-50%, -50%);
+  overflow: visible;
+}
+
+.glassWordmark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  width: min(68vw, 74svh, 660px);
+  aspect-ratio: 97.4 / 42.8;
+  overflow: visible;
+  pointer-events: none;
+  opacity: 0;
+  filter:
+    drop-shadow(0 0 1.2px rgb(0 37 74 / 90%))
+    drop-shadow(-1px -1px 0 rgb(255 255 255 / 78%))
+    drop-shadow(2px 3px 1px rgb(0 24 52 / 62%))
+    drop-shadow(0 12px 20px rgb(0 18 38 / 28%));
+  transform: translate(-50%, -50%) scale(0.992);
+  will-change: opacity, transform;
+}
+
+.glassDefinitions {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.glassLetter {
+  --letter-float-positive: 1px;
+  --letter-float-negative: -1px;
+  --letter-float-positive-2: 2px;
+  --letter-float-negative-2: -2px;
+
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+
+.glassLetterK {
+  clip-path: inset(-30% 66% -30% -20%);
+  transform-origin: 17% 52%;
+}
+
+.glassLetterR {
+  clip-path: inset(-30% 42% -30% 27%);
+  transform-origin: 44% 57%;
+}
+
+.glassLetterI {
+  clip-path: inset(-30% 28% -30% 54%);
+  transform-origin: 63% 48%;
+}
+
+.glassLetterA {
+  clip-path: inset(-30% -20% -30% 67%);
+  transform-origin: 84% 54%;
+}
+
+.glassLetter > span {
+  position: absolute;
+  inset: 0;
+  display: block;
+  -webkit-mask: url("/landing/life/kria-wordmark-white-outlined.svg") center / contain
+    no-repeat;
+  mask: url("/landing/life/kria-wordmark-white-outlined.svg") center / contain no-repeat;
+}
+
+.logoMaskLetter {
+  --letter-float-positive: var(--logo-mask-float-positive, 0.15px);
+  --letter-float-negative: var(--logo-mask-float-negative, -0.15px);
+  --letter-float-positive-2: var(--logo-mask-float-positive-2, 0.3px);
+  --letter-float-negative-2: var(--logo-mask-float-negative-2, -0.3px);
+
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.glassContour {
+  background:
+    linear-gradient(
+      145deg,
+      rgb(255 255 255 / 10%) 0%,
+      rgb(219 242 255 / 5%) 44%,
+      rgb(83 145 190 / 7%) 72%,
+      rgb(0 36 72 / 10%) 100%
+    );
+}
+
+.glassDepth {
+  background:
+    linear-gradient(
+      148deg,
+      transparent 0%,
+      transparent 54%,
+      rgb(0 35 70 / 8%) 70%,
+      rgb(0 28 58 / 18%) 100%
+    );
+  transform: translate(1.5px, 2px);
+}
+
+.glassCore {
+  background:
+    linear-gradient(
+      148deg,
+      rgb(255 255 255 / 10%) 0%,
+      rgb(229 246 255 / 1%) 34%,
+      rgb(109 171 214 / 2%) 68%,
+      rgb(255 255 255 / 7%) 100%
+    );
+  transform: translate(-0.7px, -0.9px);
+}
+
+.glassGlint {
+  background:
+    radial-gradient(
+      ellipse 5% 42% at 7% 30%,
+      rgb(255 255 255 / 94%) 0%,
+      rgb(239 250 255 / 62%) 26%,
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse 4% 32% at 35% 43%,
+      rgb(255 255 255 / 78%) 0%,
+      rgb(232 248 255 / 38%) 30%,
+      transparent 74%
+    ),
+    radial-gradient(
+      ellipse 4% 30% at 55% 37%,
+      rgb(255 255 255 / 74%) 0%,
+      rgb(232 248 255 / 34%) 30%,
+      transparent 74%
+    ),
+    radial-gradient(
+      ellipse 15% 8% at 76% 17%,
+      rgb(255 255 255 / 84%) 0%,
+      rgb(223 244 255 / 38%) 42%,
+      transparent 78%
+    ),
+    linear-gradient(
+      154deg,
+      rgb(255 255 255 / 72%) 0%,
+      transparent 16%,
+      transparent 74%,
+      rgb(172 216 246 / 34%) 100%
+    );
+  mix-blend-mode: screen;
+  opacity: 0.92;
+  transform: translate(-1px, -1.2px);
+}
+
+.glassLighting {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
   overflow: visible;
 }
 
@@ -227,6 +388,79 @@
 
 .heroScroll[data-timeline-ready="true"][data-playing="true"] .wordmarkLetter {
   animation-play-state: running;
+}
+
+.heroScroll[data-stage="wordmark"] .glassWordmark {
+  animation: glass-build 2100ms linear both;
+  animation-play-state: paused;
+}
+
+.heroScroll[data-stage="wordmark"] .logoVideoLayer {
+  animation: glass-core-build 2100ms linear both;
+  animation-play-state: paused;
+}
+
+.heroScroll[data-stage="wordmark"][data-playing="true"] .glassWordmark,
+.heroScroll[data-stage="wordmark"][data-playing="true"] .logoVideoLayer {
+  animation-play-state: running;
+}
+
+.heroScroll[data-stage="complete"] .glassWordmark {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.heroScroll[data-stage="complete"] .logoVideoLayer {
+  opacity: 1;
+}
+
+.heroScroll[data-stage="complete"] .wordmark {
+  opacity: 0;
+}
+
+.heroScroll[data-stage="complete"] .letterFloatK {
+  animation: letter-float-k 8s cubic-bezier(0.77, 0, 0.175, 1) -1s infinite both;
+}
+
+.heroScroll[data-stage="complete"] .letterFloatR {
+  animation: letter-float-r 8s cubic-bezier(0.77, 0, 0.175, 1) -3s infinite both;
+}
+
+.heroScroll[data-stage="complete"] .letterFloatI {
+  animation: letter-float-i 8s cubic-bezier(0.77, 0, 0.175, 1) -5s infinite both;
+}
+
+.heroScroll[data-stage="complete"] .letterFloatA {
+  animation: letter-float-a 8s cubic-bezier(0.77, 0, 0.175, 1) -7s infinite both;
+}
+
+.heroScroll[data-stage="complete"][data-playing="false"] .logoMaskLetter,
+.heroScroll[data-stage="complete"][data-playing="false"] .glassLetter {
+  animation-play-state: paused;
+}
+
+@supports (animation-timeline: scroll()) {
+  .heroScroll[data-scroll-driver="native"] .videoMorph {
+    animation: landing-full-morph 1s linear both;
+    animation-timeline: scroll(root block);
+    will-change: opacity, transform;
+  }
+
+  .heroScroll[data-scroll-driver="native"][data-stage="complete"] .glassWordmark {
+    animation: landing-glass-scroll 1s linear both;
+    animation-timeline: scroll(root block);
+  }
+
+  .heroScroll[data-scroll-driver="native"][data-stage="complete"] .logoVideo {
+    animation: landing-logo-refraction 1s linear both;
+    animation-timeline: scroll(root block);
+  }
+
+  .heroScroll[data-scroll-driver="native"] .playbackControl,
+  .heroScroll[data-scroll-driver="native"][data-payoff-visible="true"] .heroPayoff {
+    animation: landing-chrome-scroll 1s linear both;
+    animation-timeline: scroll(root block);
+  }
 }
 
 .heroScroll[data-morphing="true"] .heroPayoff {
@@ -459,17 +693,17 @@
     stroke-dashoffset: 4000;
   }
   16.01% {
-    stroke: #ffffff;
+    stroke: rgb(211 239 255 / 92%);
   }
   32% {
     fill: transparent;
-    stroke: #ffffff;
+    stroke: rgb(211 239 255 / 92%);
     stroke-dashoffset: 0;
   }
   36%,
   100% {
-    fill: #ffffff;
-    stroke: transparent;
+    fill: transparent;
+    stroke: rgb(211 239 255 / 72%);
     stroke-dashoffset: 0;
   }
 }
@@ -482,17 +716,17 @@
     stroke-dashoffset: 4000;
   }
   22.01% {
-    stroke: #ffffff;
+    stroke: rgb(211 239 255 / 92%);
   }
   38% {
     fill: transparent;
-    stroke: #ffffff;
+    stroke: rgb(211 239 255 / 92%);
     stroke-dashoffset: 0;
   }
   42%,
   100% {
-    fill: #ffffff;
-    stroke: transparent;
+    fill: transparent;
+    stroke: rgb(211 239 255 / 72%);
     stroke-dashoffset: 0;
   }
 }
@@ -505,17 +739,17 @@
     stroke-dashoffset: 4000;
   }
   28.01% {
-    stroke: #ffffff;
+    stroke: rgb(211 239 255 / 92%);
   }
   44% {
     fill: transparent;
-    stroke: #ffffff;
+    stroke: rgb(211 239 255 / 92%);
     stroke-dashoffset: 0;
   }
   48%,
   100% {
-    fill: #ffffff;
-    stroke: transparent;
+    fill: transparent;
+    stroke: rgb(211 239 255 / 72%);
     stroke-dashoffset: 0;
   }
 }
@@ -528,18 +762,179 @@
     stroke-dashoffset: 4000;
   }
   34.01% {
-    stroke: #ffffff;
+    stroke: rgb(211 239 255 / 92%);
   }
   50% {
     fill: transparent;
-    stroke: #ffffff;
+    stroke: rgb(211 239 255 / 92%);
     stroke-dashoffset: 0;
   }
   54%,
   100% {
-    fill: #ffffff;
-    stroke: transparent;
+    fill: transparent;
+    stroke: rgb(211 239 255 / 72%);
     stroke-dashoffset: 0;
+  }
+}
+
+@keyframes glass-build {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes glass-core-build {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes landing-full-morph {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  10% {
+    opacity: 1;
+    transform: scale(0.9961);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(0.982);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(0.9504);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(0.8816);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(0.7074);
+  }
+  60% {
+    opacity: 0.3864;
+    transform: scale(0.5333);
+  }
+  70% {
+    opacity: 0.1067;
+    transform: scale(0.4646);
+  }
+  74% {
+    opacity: 0.0436;
+    transform: scale(0.45);
+  }
+  78%,
+  100% {
+    opacity: 0;
+    transform: scale(0.45);
+  }
+}
+
+@keyframes landing-glass-scroll {
+  0%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes landing-logo-refraction {
+  0%,
+  34% {
+    transform: scale(1.035);
+  }
+  40% {
+    transform: scale(1.0314);
+  }
+  42% {
+    transform: scale(1.0297);
+  }
+  50% {
+    transform: scale(1.0184);
+  }
+  60% {
+    transform: scale(1.0054);
+  }
+  70% {
+    transform: scale(1.0002);
+  }
+  71%,
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes letter-float-k {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  35% {
+    transform: translate(var(--letter-float-negative), var(--letter-float-negative-2));
+  }
+  68% {
+    transform: translate(var(--letter-float-positive), var(--letter-float-positive));
+  }
+}
+
+@keyframes letter-float-r {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  32% {
+    transform: translate(var(--letter-float-positive), var(--letter-float-negative));
+  }
+  72% {
+    transform: translate(var(--letter-float-negative), var(--letter-float-positive-2));
+  }
+}
+
+@keyframes letter-float-i {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  38% {
+    transform: translate(var(--letter-float-positive), var(--letter-float-negative-2));
+  }
+  74% {
+    transform: translate(var(--letter-float-negative), var(--letter-float-positive));
+  }
+}
+
+@keyframes letter-float-a {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  30% {
+    transform: translate(var(--letter-float-negative), var(--letter-float-positive));
+  }
+  70% {
+    transform: translate(var(--letter-float-positive), var(--letter-float-negative-2));
+  }
+}
+
+@keyframes landing-chrome-scroll {
+  0% {
+    visibility: visible;
+    opacity: 1;
+  }
+  42%,
+  100% {
+    visibility: hidden;
+    opacity: 0;
   }
 }
 
@@ -574,6 +969,10 @@
   }
 
   .wordmark {
+    width: min(88vw, 64svh);
+  }
+
+  .glassWordmark {
     width: min(88vw, 64svh);
   }
 
@@ -659,6 +1058,19 @@
     opacity: 0 !important;
   }
 
+  .glassWordmark {
+    opacity: 1 !important;
+    transform: translate(-50%, -50%) scale(1) !important;
+    animation: none !important;
+    transition: none;
+  }
+
+  .logoMaskLetter,
+  .glassLetter {
+    animation: none !important;
+    transform: none !important;
+  }
+
   .wordmarkLetter {
     fill: #ffffff;
     stroke: transparent;
@@ -710,6 +1122,36 @@
   }
 }
 
+@media (prefers-reduced-transparency: reduce) {
+  .glassCore {
+    background: rgb(255 255 255 / 94%);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .glassDepth,
+  .glassGlint {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .glassWordmark {
+    filter: none;
+  }
+
+  .glassCore {
+    background: CanvasText;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .glassDepth,
+  .glassGlint {
+    display: none;
+  }
+}
+
 .heroScroll[data-static="true"] {
   height: 100svh;
 }
@@ -722,6 +1164,10 @@
 
 .heroScroll[data-static="true"] .logoVideoLayer {
   opacity: 0 !important;
+}
+
+.heroScroll[data-static="true"] .glassWordmark {
+  display: none;
 }
 
 .heroScroll[data-static="true"] .wordmark {

@@ -2157,7 +2157,6 @@ def _run_generative_job_impl(
             if ownership_epoch is not None:
                 _CONTENT_PLAN_FENCE.set((str(job.id), ownership_epoch))
             phone_snapshot = copy.deepcopy(job.assembly_plan)
-            phone_user_id = job.user_id
             # Planning uses its own short transactions. Release the entry locks
             # before invoking it, then recheck the owner/generation at publication.
             db.commit()
@@ -2182,12 +2181,19 @@ def _run_generative_job_impl(
                 elif declared_format not in phone_render_supported_formats():
                     raise ValueError("No phone renderer is registered for this edit")
                 elif declared_format in GUIDED_EDIT_FORMATS:
-                    if settings.montage_unified_plan_for(phone_user_id) and not (
-                        has_voiceover_candidate
-                    ):
-                        # KRI-190: one montage plan. The guided plan format
-                        # renders per-clip text, honours reading time and has a
-                        # phone editor; the plain lane below is the flag-off path.
+                    if has_voiceover_candidate:
+                        # KRI-220: the voiceover montage writer is the ONLY phone
+                        # writer for a montage with a recorded voice (voice + music
+                        # mix, trim-to-voice and the intro hook are not in the
+                        # unified planner yet). See agents/DECISIONS.md "Two montage
+                        # writers by design".
+                        _run_phone_voiceover_montage_job(
+                            job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
+                        )
+                    else:
+                        # KRI-190/KRI-220: one montage plan, always. The guided plan
+                        # format renders per-clip text, honours reading time and has
+                        # a phone editor. No flag: every non-voiceover montage.
                         unified_snapshot = _run_phone_unified_montage_job(
                             job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
                         )
@@ -2195,10 +2201,6 @@ def _run_generative_job_impl(
                             _run_phone_guided_job(
                                 job_id, unified_snapshot, ownership_epoch=ownership_epoch
                             )
-                    else:
-                        _run_phone_montage_job(
-                            job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
-                        )
                 elif declared_format == "subtitled" or (
                     declared_format in NARRATED_EDIT_FORMATS and not has_voiceover_candidate
                 ):
@@ -4089,20 +4091,21 @@ def _resolve_phone_voiceover_bed(
     )
 
 
-def _run_phone_montage_job(
+def _run_phone_voiceover_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
-    """Decisions-only montage-family phone compile. Never enters a media renderer.
+    """Decisions-only phone compile for a montage-family VOICEOVER edit (KRI-220).
+    Never enters a media renderer.
 
     Mirrors `_run_phone_guided_job`'s fences (immutable generation, bound
     sources, single pinned device revision), but drives the SAME ingest/text/
     music/archetype prework `_run_generative_job_impl` uses for the cloud
     montage-family path (this function lives in the same module so it can
     call those helpers directly), then hands the top-ranked decided spec to
-    `compile_phone_montage_plan`. Only montage/day_vlog/single_hero without a
-    voiceover reach here -- `content_plan_build.py`'s dispatch-time gate
-    already checked `PHONE_RENDER_SUPPORTED_FORMATS`, but a voiceover can
-    still be attached to any edit_format independently of that gate, so it is
+    `compile_phone_voiceover_montage_plan`. Only montage/day_vlog/single_hero WITH a
+    recorded voiceover reach here (the dispatcher forks on it); a missing
+    voiceover fails closed. `content_plan_build.py`'s dispatch-time gate
+    already checked `PHONE_RENDER_SUPPORTED_FORMATS`, and the voiceover is
     rechecked here. `all_candidates` is passed by the caller (the same value
     it already read under its own owning-job lock, before releasing it to
     plan) rather than re-fetched here -- a second `Job` read would either
@@ -4119,7 +4122,9 @@ def _run_phone_montage_job(
     """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
-    from app.pipeline.phone_montage_plan import compile_phone_montage_plan  # noqa: PLC0415
+    from app.pipeline.phone_voiceover_montage_plan import (  # noqa: PLC0415
+        compile_phone_voiceover_montage_plan,
+    )
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
         pin_device_request,
@@ -4155,12 +4160,14 @@ def _run_phone_montage_job(
     if not clip_paths_gcs:
         raise ValueError("Phone rendering requires clip paths")
     has_voiceover = bool(all_candidates.get("voiceover_gcs_path"))
+    if not has_voiceover:
+        raise ValueError("The voiceover montage writer requires a recorded voiceover")
     # KRI-132: the dispatch gate (`content_plan_build._dispatch_item_render`)
     # already fails closed before a Job is even minted when the flag is off
     # or narrationAudio isn't verified -- this is defense-in-depth against a
     # job queued before the flag flipped, or a redelivered/stale message.
     # Flag off: byte-identical to pre-KRI-132 (unconditional reject).
-    if has_voiceover and not settings.phone_narration_rendering_enabled:
+    if not settings.phone_narration_rendering_enabled:
         raise ValueError("Phone rendering does not yet support voiceover edits")
     edit_format = coerce_edit_format(all_candidates.get("edit_format"))
     if edit_format not in GUIDED_EDIT_FORMATS:
@@ -4245,7 +4252,7 @@ def _run_phone_montage_job(
             footage_type_bias: list[str] = list(
                 (user_style.get("footage_type_bias") or []) if user_style else []
             )
-            voiceover_gcs_path = all_candidates.get("voiceover_gcs_path") if has_voiceover else None
+            voiceover_gcs_path = all_candidates.get("voiceover_gcs_path")
             archetype, _spine, _fallback_reason = _resolve_archetype(
                 edit_format,
                 clip_metas,
@@ -4260,18 +4267,13 @@ def _run_phone_montage_job(
             )
             # `_resolve_archetype` returns "voiceover" (never "narrated") for
             # any montage-family edit_format with a recorded voiceover --
-            # see its docstring. A local allowlist, NOT a widening of
-            # `GUIDED_EDIT_FORMATS`/`PHONE_RENDER_SUPPORTED_FORMATS`: those
-            # stay the declared-edit_format vocabulary; "voiceover" is a
-            # RESOLVED archetype that only this phone worker needs to accept.
-            # `narrated`/`narrated_*` archetypes are impossible here (the
-            # dispatch gate only ever reaches this worker for a declared
-            # montage/day_vlog/single_hero edit_format) but are never added
-            # to this allowlist regardless -- side-chain-ducked original-audio
-            # beds stay cloud-only.
-            if archetype not in (GUIDED_EDIT_FORMATS | {"voiceover"}):
+            # see its docstring. KRI-220: this writer accepts ONLY that
+            # resolved archetype; anything else (including `narrated*`, whose
+            # side-chain-ducked original-audio beds stay cloud-only) fails
+            # closed rather than entering the wrong compiler.
+            if archetype != "voiceover":
                 raise UnsupportedPhonePlan(
-                    f"phone montage compiler cannot render archetype={archetype!r}"
+                    f"phone voiceover montage compiler cannot render archetype={archetype!r}"
                 )
 
             # KRI-118 L1 item 2: for the "voiceover" archetype under the
@@ -4287,11 +4289,7 @@ def _run_phone_montage_job(
             # phone job renders the same `voiceover_only` variant the
             # verified-capability case would fall back to when no track
             # matches at all, rather than failing outright.
-            if (
-                archetype == "voiceover"
-                and best_track is not None
-                and "musicBed" not in settings.phone_render_verified_features
-            ):
+            if best_track is not None and "musicBed" not in settings.phone_render_verified_features:
                 log.info(
                     "phone_montage.music_bed_unverified_fallback",
                     job_id=job_id,
@@ -4360,7 +4358,7 @@ def _run_phone_montage_job(
             narration = _resolve_phone_voiceover_bed(
                 job_id, decision.extras.get("voiceover_gcs_path")
             )
-            recipe = compile_phone_montage_plan(
+            recipe = compile_phone_voiceover_montage_plan(
                 decision, bindings, music=music, narration=narration
             )
 
@@ -4595,9 +4593,9 @@ def _run_phone_unified_montage_job(
 ) -> dict | None:
     """KRI-190: plan a phone montage in the guided plan format and pin it.
 
-    Replaces `_run_phone_montage_job` when `MONTAGE_UNIFIED_PLAN_ENABLED` is on
-    for the account. Builds a deterministic guided fast-montage snapshot from the
-    attachment order, the P3 clip facts and the P2 Creative Brief
+    The phone writer for every non-voiceover montage (KRI-220: no flag; voiceover
+    montages go to `_run_phone_voiceover_montage_job`). Builds a deterministic guided
+    fast-montage snapshot from the attachment order, the P3 clip facts and the P2 Creative Brief
     (`app.pipeline.unified_montage`), persists it as the job's immutable
     `guided_edit` (plus a small `unified_montage` receipt record with the
     requirement receipts), and returns the updated snapshot. The caller then
@@ -4760,7 +4758,7 @@ def _run_phone_subtitled_job(
     before proceeding, since the dispatch gate cannot run that analysis
     itself.
 
-    Mirrors `_run_phone_montage_job`'s fences (immutable generation, bound
+    Mirrors `_run_phone_voiceover_montage_job`'s fences (immutable generation, bound
     sources, single pinned device revision, redelivery idempotency) but skips
     its text-agent/music-matcher/archetype-spec prework entirely -- subtitled
     is the LEAN cloud path (`_render_subtitled_variant`): one clip, its own

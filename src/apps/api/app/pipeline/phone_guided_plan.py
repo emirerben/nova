@@ -608,7 +608,7 @@ def compile_phone_guided_plan(
             duration=narration.duration_s,
         )
         # Bound to the timeline this recipe actually compiled (mirrors
-        # `compile_phone_montage_plan`'s `total_duration_s` clamp): an
+        # `compile_phone_voiceover_montage_plan`'s `total_duration_s` clamp): an
         # on-device refit can shrink `compiled_duration` below the plan's
         # nominal `resolved_duration_s`, and the audio must never outlast the
         # video track it plays under.
