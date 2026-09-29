@@ -271,6 +271,8 @@ def test_receipts_say_what_was_met_and_what_was_partial(harness):
     assert receipts["r1"]["inferred"], "guessed landmarks must be listed for correction"
     assert receipts["r4"]["status"] == "met"
     assert receipts["r3"]["status"] == "met"
+    # "Fast but readable" has no number to check: nothing judged it, so no receipt.
+    assert "r2" not in receipts
 
 
 def test_without_capture_times_the_order_stays_attachment_and_says_so(harness):

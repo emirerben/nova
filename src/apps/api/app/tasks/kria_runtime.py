@@ -30,6 +30,7 @@ from app.kria.brief import (
 )
 from app.kria.brief_checks import (
     build_receipts,
+    is_judged,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
     reply_from_receipts,
@@ -2133,7 +2134,8 @@ def _unified_montage_review(
         except ValueError:
             continue
     live = {req.id: req for req in brief.live()}
-    receipts = [receipt for receipt in receipts if receipt.requirement_id in live]
+    # A record planned before unjudged receipts were dropped can still carry some.
+    receipts = [r for r in receipts if is_judged(live.get(r.requirement_id), r)]
     if not receipts:
         return default_text, []
     checked = CreativeBrief(

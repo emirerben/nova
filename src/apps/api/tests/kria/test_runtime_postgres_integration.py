@@ -2118,6 +2118,76 @@ async def test_brief_read_service_returns_requirements_and_newest_receipts(
 
 
 @pytest.mark.asyncio
+async def test_brief_read_skips_stored_receipts_that_judged_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Events written before unjudged receipts were dropped still hold "can't verify"
+    results. They never become a requirement's outcome: "add captions" stays open,
+    and an older judged receipt behind a newer unjudged one still counts."""
+    from app.kria.brief import BriefRequirement
+    from app.kria.runtime import read_creative_brief
+
+    user_id, thread_id, _session_id = _seed_runtime_project()
+    requirements = [
+        BriefRequirement(id="r1", kind="text", scope="title", literal="Hi"),
+        BriefRequirement(id="r2", kind="style", scope="global", description="add captions"),
+        BriefRequirement(
+            id="r3", kind="style", scope="global", description="pop up X when I say Y"
+        ),
+    ]
+    cant_verify = "I can't verify this one automatically yet."
+    older = [{"requirement_id": "r3", "status": "met", "reason": None, "inferred": []}]
+    newer = [
+        {"requirement_id": "r1", "status": "met", "reason": None, "inferred": []},
+        {"requirement_id": "r2", "status": "partial", "reason": cant_verify, "inferred": []},
+        {
+            "requirement_id": "r3",
+            "status": "partial",
+            "reason": "I can't check the pop-ins on this draft yet.",
+            "inferred": [],
+        },
+    ]
+    with sync_session() as db:
+        db.add(
+            CreativeBriefVersion(
+                thread_id=thread_id,
+                version=1,
+                requirements=[req.model_dump(mode="json") for req in requirements],
+                source_turn_id=None,
+            )
+        )
+        thread = db.get(CreationThread, thread_id)
+        assert thread is not None
+        thread.revision = 4
+        for sequence, receipts in ((2, older), (3, newer)):
+            db.add(
+                CreationThreadEvent(
+                    thread_id=thread_id,
+                    sequence=sequence,
+                    revision=sequence + 1,
+                    role="assistant",
+                    event_type="draft_applied",
+                    content="Drafted.",
+                    payload={"requirement_receipts": receipts},
+                )
+            )
+        db.commit()
+
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    try:
+        async with AsyncSessionLocal() as db:
+            brief = await read_creative_brief(db, thread_id=thread_id, creator_id=user_id)
+        assert {(r.id, r.status) for r in brief.requirements} == {
+            ("r1", "met"),
+            ("r2", "open"),
+            ("r3", "met"),
+        }
+        assert sorted(r.requirement_id for r in brief.requirement_receipts) == ["r1", "r3"]
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_editor_ops_turn_receipts_cover_only_this_turns_requirements(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2231,10 +2301,11 @@ async def test_editor_ops_turn_receipts_cover_only_this_turns_requirements(
             ).scalar_one()
             receipts = {r["requirement_id"]: r for r in event.payload["requirement_receipts"]}
             content = event.content
-        assert set(receipts) == {"r2", "r3"}  # r1 is from an earlier turn
+        # r1 is from an earlier turn; r3 (per-clip text with no exact words) can't
+        # be checked on an editor edit, so it gets no receipt rather than "Partly".
+        assert set(receipts) == {"r2"}
         assert receipts["r2"]["status"] == "met"
-        assert receipts["r3"]["status"] == "partial"  # can't verify is not "Couldn't"
-        assert "Couldn't" not in content
-        assert "Done:" in content and "Partly:" in content
+        assert "Couldn't" not in content and "Partly" not in content
+        assert content == 'Retitled the hook.\n- Done: "Fresh matcha, finally"'
     finally:
         await async_engine.dispose()

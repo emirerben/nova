@@ -135,11 +135,20 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   (`ordering_basis` / `ordering_fallback_clip_ids` when present), duration
   within +/-10%, literal text (whole-word, Turkish-aware match). `clip:<id>`
   is checked against that clip only; editor payloads carry no per-clip
-  structure, so per-clip text on an editor edit is `partial` ("can't verify"),
-  never `not_possible`. A requirement with no checker is `partial`, and that
-  neutral "can't verify" never flips the reply to a failure: the model's
-  summary is dropped only when a requirement a checker actually judged is not
-  met. `KriaObservedTurnResponse.requirement_receipts` is reserved for the
+  structure, so per-clip text on an editor edit is judged only by its exact
+  words (missing from the edit is `partial`, never `not_possible`). A
+  requirement nothing could judge gets no receipt and no reply line: no
+  checker (e.g. "add captions" or "make it warm"), or a neutral reason when the
+  facts were missing (beats without a manifest, a strategy draft's clip order,
+  which drafts never record, an editor edit's length or per-clip text with no
+  exact words). It stays `open` in the brief, so an unchecked ask never reads
+  "Partly". The model's summary is dropped only when
+  a requirement a checker actually judged is not met. Unjudged receipts stored
+  before this rule are skipped wherever stored receipts are read (`is_judged`:
+  the reply, the unified montage review, and `GET /brief`). `open` therefore
+  means "nothing has judged this", not "a check is pending": a requirement with
+  no checker stays `open` for good, so clients must not show it as in progress.
+  `KriaObservedTurnResponse.requirement_receipts` is reserved for the
   observed-turn projection; today receipts ride on the `draft_applied` event
   payload and `GET /creation-threads/{id}/brief` returns the current
   brief with the newest receipt per requirement (empty when the flag is off).

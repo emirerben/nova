@@ -336,7 +336,9 @@ def test_observer_review_carries_the_unified_montage_receipts(
     assert review["content"].startswith("Not everything you asked for made it in:")
     assert "10 of 14 clips" in review["content"]
     assert "I guessed these, tell me if any is wrong: Dolmabahce" in review["content"]
-    assert [r["requirement_id"] for r in review["payload"]["requirement_receipts"]] == ["r1", "r2"]
+    # r2's stored "can't verify" judged nothing: no line, and not carried forward.
+    assert "fast" not in review["content"]
+    assert [r["requirement_id"] for r in review["payload"]["requirement_receipts"]] == ["r1"]
 
 
 def test_observer_review_ignores_receipts_from_an_older_brief_version(
