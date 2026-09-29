@@ -233,16 +233,29 @@ struct EditorDocument: Equatable, Sendable {
 
     /// Captions regardless of persisted representation: `caption_cues` for
     /// narrated/subtitled, `caption_cue`-marked text elements for guided_story
-    /// (KRI-110). The two are mutually exclusive on a real variant — one
-    /// renderer writes one or the other, never both — so this is a union, not
-    /// a merge. Deliberately does not replace `captionCues` itself, which
-    /// other call sites (e.g. `documentCaptionsEnabled`'s fallback) rely on
-    /// as narrow and cue-native only.
+    /// (KRI-110). Narrated/subtitled documents carry both, because the API
+    /// mirrors every cue into a caption-tagged text element (see
+    /// `isCaptionCueMirror`), so the cues win whenever there are any.
+    /// Deliberately does not replace `captionCues` itself, which other call
+    /// sites (e.g. `documentCaptionsEnabled`'s fallback) rely on as narrow and
+    /// cue-native only.
     var captionUnits: [EditorCaptionCue] {
         if !captionCues.isEmpty { return captionCues }
         return textElements.filter(\.isCaption)
             .sorted { ($0.startS, $0.id) < ($1.startS, $1.id) }
             .map { EditorCaptionCue(id: $0.id, startS: $0.startS, endS: $0.endS, text: $0.text, raw: $0.raw) }
+    }
+
+    /// A caption-tagged text element that only repeats a `caption_cues` row.
+    /// The API projects every cue of a narrated/subtitled variant into
+    /// `text_elements` as well (`_base_text_elements_for_variant`, CAPTION
+    /// path), and the cue is the caption the editor edits and the compiler
+    /// burns. The mirror must not become a second copy anywhere: the timeline
+    /// drops it and the render compiler skips it, so the two stay in step.
+    /// Guided-story captions have no cues and are never mirrors. The editor
+    /// cannot add or delete cues, so this stays stable for a whole session.
+    func isCaptionCueMirror(_ element: EditorTextElement) -> Bool {
+        element.isCaption && !captionCues.isEmpty
     }
 
     /// The original root is retained as an AST-like JSON envelope. This is

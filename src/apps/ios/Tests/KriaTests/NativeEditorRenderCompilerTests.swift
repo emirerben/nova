@@ -266,6 +266,21 @@ import KriaMediaEngine
         XCTAssertEqual(recipe.textLayers.first?.id, "caption-cue-dup", "the surviving layer must come from the cue-native path")
     }
 
+    // The session's timeline has no item for a mirrored caption, and the
+    // compiler throws on any text element it reaches without one. Compiling
+    // the session's own document and items proves the two skip the same
+    // elements; each sentence still burns once, from its cue.
+    func testTalkingDocumentCompilesAgainstTheSessionTimeline() throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.talkingCaptions)
+        let clipIndex = try XCTUnwrap(session.timelineClips.first?.sourceClipIndex)
+        let source = ResolvedEditorSource(clipIndex: clipIndex, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: session.document, clips: session.timelineClips,
+            items: session.timelineItems, sources: [clipIndex: source]).recipe
+        XCTAssertEqual(recipe.textLayers.map(\.id), session.document.captionCues.map { "caption-\($0.id)" })
+    }
+
     // KRI-202: talk-to-camera (subtitled) documents can reach the client with
     // two caption_cues rows whose windows overlap (the cloud's own de-overlap
     // guard, phone_captions._prepare_cues, runs on a compiled copy the native
