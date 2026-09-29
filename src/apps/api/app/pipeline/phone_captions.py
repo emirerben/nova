@@ -7,7 +7,7 @@ same way the cloud renderer does
 (`app.tasks.generative_build._render_subtitled_variant` for subtitled;
 `assemble_narrated` for narrated) and both need those SAME cues expressed as
 native `PortableTextLayer`s instead of an ASS file. See
-`app.pipeline.phone_montage_plan` / `app.pipeline.phone_guided_plan` for the
+`app.pipeline.phone_voiceover_montage_plan` / `app.pipeline.phone_guided_plan` for the
 sibling phone compilers this module mirrors in structure, style, and
 fail-closed error handling.
 
@@ -156,7 +156,7 @@ def caption_font_assets(layers: list[PortableTextLayer]) -> dict[str, RenderAsse
     `asset_manifest`. Callers assembling the full recipe (e.g.
     `phone_subtitled_plan.compile_phone_subtitled_plan`) call this right
     after `compile_caption_layers` and merge the result into their
-    `assets`/`asset_manifest` dicts, exactly as `phone_montage_plan.py` and
+    `assets`/`asset_manifest` dicts, exactly as `phone_voiceover_montage_plan.py` and
     `phone_guided_plan.py` do with the font asset `compile_text_overlay`
     returns directly.
 

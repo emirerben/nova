@@ -1,0 +1,329 @@
+{
+  "fixture_id": "vlog_change_all_fonts",
+  "provenance": "authored",
+  "footage": "vlog",
+  "description": "\"Change all fonts\" on a rendered edit: every one of the 9 text lanes, in one edit, without re-planning the clips.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Make a Saturday reset vlog with a caption on every clip.",
+      "engine": "recorded"
+    },
+    {
+      "turn_id": "t1",
+      "user_message": "Change all fonts to Montserrat.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "captioned",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_described",
+      "checker": "label_coverage",
+      "params": {
+        "min_frac": 1.0
+      },
+      "source": "Make a Saturday reset vlog with a caption on every clip.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "all-montserrat",
+      "kind": "style",
+      "scope": "global",
+      "request_type": "style",
+      "checker": "font_all_equal",
+      "params": {
+        "font": "Montserrat"
+      },
+      "source": "Change all fonts to Montserrat.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "no-replan",
+      "kind": "style",
+      "scope": "global",
+      "request_type": "style",
+      "checker": "clips_unchanged",
+      "params": {},
+      "source": "Change all fonts to Montserrat.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "reply-not-a-replan",
+      "kind": "style",
+      "scope": "global",
+      "request_type": "style",
+      "checker": "reply_states",
+      "params": {
+        "all_of": [
+          "Montserrat"
+        ],
+        "none_of": [
+          "re-?plan",
+          "regenerat"
+        ]
+      },
+      "source": "Change all fonts to Montserrat.",
+      "introduced_in_turn": 1
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "V1",
+          "start_s": 0.0,
+          "end_s": 2.0
+        },
+        {
+          "clip_id": "V2",
+          "start_s": 2.0,
+          "end_s": 5.0
+        },
+        {
+          "clip_id": "V3",
+          "start_s": 5.0,
+          "end_s": 7.0
+        },
+        {
+          "clip_id": "V4",
+          "start_s": 7.0,
+          "end_s": 10.5
+        },
+        {
+          "clip_id": "V5",
+          "start_s": 10.5,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "V6",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "V7",
+          "start_s": 17.0,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "V8",
+          "start_s": 19.5,
+          "end_s": 22.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Saturday reset",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Montserrat"
+        },
+        {
+          "id": "label-0",
+          "role": "label",
+          "text": "Waking up",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Montserrat",
+          "clip_id": "V1"
+        },
+        {
+          "id": "label-1",
+          "role": "label",
+          "text": "Cleaning the flat",
+          "start_s": 2.0,
+          "end_s": 5.0,
+          "font_family": "Montserrat",
+          "clip_id": "V2"
+        },
+        {
+          "id": "label-2",
+          "role": "label",
+          "text": "Laundry",
+          "start_s": 5.0,
+          "end_s": 7.0,
+          "font_family": "Montserrat",
+          "clip_id": "V3"
+        },
+        {
+          "id": "label-3",
+          "role": "label",
+          "text": "Grocery run",
+          "start_s": 7.0,
+          "end_s": 10.5,
+          "font_family": "Montserrat",
+          "clip_id": "V4"
+        },
+        {
+          "id": "label-4",
+          "role": "label",
+          "text": "Gym session",
+          "start_s": 10.5,
+          "end_s": 13.5,
+          "font_family": "Montserrat",
+          "clip_id": "V5"
+        },
+        {
+          "id": "label-5",
+          "role": "label",
+          "text": "Cooking pasta",
+          "start_s": 13.5,
+          "end_s": 17.0,
+          "font_family": "Montserrat",
+          "clip_id": "V6"
+        },
+        {
+          "id": "label-6",
+          "role": "label",
+          "text": "Journaling",
+          "start_s": 17.0,
+          "end_s": 19.5,
+          "font_family": "Montserrat",
+          "clip_id": "V7"
+        },
+        {
+          "id": "label-7",
+          "role": "label",
+          "text": "Night walk",
+          "start_s": 19.5,
+          "end_s": 22.5,
+          "font_family": "Montserrat",
+          "clip_id": "V8"
+        }
+      ],
+      "total_duration_s": 22.5
+    },
+    "reply": "Set all 9 text elements to Montserrat.",
+    "plan_before": {
+      "clips": [
+        {
+          "clip_id": "V1",
+          "start_s": 0.0,
+          "end_s": 2.0
+        },
+        {
+          "clip_id": "V2",
+          "start_s": 2.0,
+          "end_s": 5.0
+        },
+        {
+          "clip_id": "V3",
+          "start_s": 5.0,
+          "end_s": 7.0
+        },
+        {
+          "clip_id": "V4",
+          "start_s": 7.0,
+          "end_s": 10.5
+        },
+        {
+          "clip_id": "V5",
+          "start_s": 10.5,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "V6",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "V7",
+          "start_s": 17.0,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "V8",
+          "start_s": 19.5,
+          "end_s": 22.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Saturday reset",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        },
+        {
+          "id": "label-0",
+          "role": "label",
+          "text": "Waking up",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter",
+          "clip_id": "V1"
+        },
+        {
+          "id": "label-1",
+          "role": "label",
+          "text": "Cleaning the flat",
+          "start_s": 2.0,
+          "end_s": 5.0,
+          "font_family": "Inter",
+          "clip_id": "V2"
+        },
+        {
+          "id": "label-2",
+          "role": "label",
+          "text": "Laundry",
+          "start_s": 5.0,
+          "end_s": 7.0,
+          "font_family": "Inter",
+          "clip_id": "V3"
+        },
+        {
+          "id": "label-3",
+          "role": "label",
+          "text": "Grocery run",
+          "start_s": 7.0,
+          "end_s": 10.5,
+          "font_family": "Inter",
+          "clip_id": "V4"
+        },
+        {
+          "id": "label-4",
+          "role": "label",
+          "text": "Gym session",
+          "start_s": 10.5,
+          "end_s": 13.5,
+          "font_family": "Inter",
+          "clip_id": "V5"
+        },
+        {
+          "id": "label-5",
+          "role": "label",
+          "text": "Cooking pasta",
+          "start_s": 13.5,
+          "end_s": 17.0,
+          "font_family": "Inter",
+          "clip_id": "V6"
+        },
+        {
+          "id": "label-6",
+          "role": "label",
+          "text": "Journaling",
+          "start_s": 17.0,
+          "end_s": 19.5,
+          "font_family": "Inter",
+          "clip_id": "V7"
+        },
+        {
+          "id": "label-7",
+          "role": "label",
+          "text": "Night walk",
+          "start_s": 19.5,
+          "end_s": 22.5,
+          "font_family": "Inter",
+          "clip_id": "V8"
+        }
+      ],
+      "total_duration_s": 22.5
+    }
+  }
+}

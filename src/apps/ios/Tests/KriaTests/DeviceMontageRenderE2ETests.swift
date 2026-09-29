@@ -9,8 +9,8 @@ import KriaMediaEngine
 private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
 
 /// KRI-132 end-to-end proof, opt-in: renders recipes compiled by the server's
-/// SECOND phone compiler -- `app.pipeline.phone_montage_plan
-/// .compile_phone_montage_plan`, for the montage/day_vlog/single_hero
+/// SECOND phone compiler -- `app.pipeline.phone_voiceover_montage_plan
+/// .compile_phone_voiceover_montage_plan`, for the montage/day_vlog/single_hero
 /// generative-edit archetypes -- through the production device resolver and
 /// exporter on the simulator. Sibling of `DevicePhotoRenderE2ETests`
 /// (KRI-121), which only ever exercises the guided compiler
@@ -32,7 +32,7 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
 ///                     (KRI-132; basicComposition/audioMix/narrationAudio).
 ///
 /// `day_vlog`/`single_hero` are deliberately NOT separate cases: read
-/// `app/pipeline/phone_montage_plan.py` in full -- `compile_phone_montage_plan`
+/// `app/pipeline/phone_voiceover_montage_plan.py` in full -- `compile_phone_voiceover_montage_plan`
 /// never references `resolved_archetype` or `edit_format` anywhere. Archetype
 /// only steers what the upstream matcher/decision phase selects as
 /// `assembly_steps` BEFORE this compiler ever sees them; the compiler itself
@@ -41,7 +41,7 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
 /// new branch. See the script's module docstring for the full writeup.
 ///
 /// Three more cases exercise the OTHER two KRI-132 phone compilers, neither
-/// of which goes through `compile_phone_montage_plan`:
+/// of which goes through `compile_phone_voiceover_montage_plan`:
 ///   - `subtitled_sentence`/`subtitled_word` -- `app.pipeline
 ///     .phone_subtitled_plan.compile_phone_subtitled_plan` ("Talking to
 ///     camera"): one portrait clip, its own audio, sentence (`pop-in`) or
@@ -118,7 +118,11 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         )
         let verified = try XCTUnwrap(meta["verified_features"] as? [String])
         let cases = try XCTUnwrap(meta["cases"] as? [String: Any])
-        let caseMeta = try XCTUnwrap(cases[caseID] as? [String: Any])
+        // KRI-220: the voiceover-less cases (cuts_text/music/crossfade) are retired from the
+        // fixture -- `compile_phone_voiceover_montage_plan` now writes voiceover montages only.
+        guard let caseMeta = cases[caseID] as? [String: Any] else {
+            throw XCTSkip("\(caseID) is not in e2e.json (retired by KRI-220)")
+        }
 
         let statusFile = try XCTUnwrap(caseMeta["status_file"] as? String)
         let status = try JSONDecoder().decode(

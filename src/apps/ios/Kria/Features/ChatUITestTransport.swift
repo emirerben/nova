@@ -103,6 +103,7 @@ private final class CreationChatFixture: @unchecked Sendable {
         if parts.first == "plan-items" { return response(["assets": [], "max_assets": 10]) }
         guard parts.count >= 2, var thread = threads[parts[1]] else { return response(["detail": "Fixture route missing"], status: 404) }
         let id = parts[1]
+        if parts.count == 3, parts[2] == "brief" { return response(Self.fixtureBrief(threadID: id)) }
         var state = thread["state"] as? [String: Any] ?? [:]
         var events = thread["events"] as? [[String: Any]] ?? []
         var revision = thread["revision"] as? Int ?? 0
@@ -205,6 +206,11 @@ private final class CreationChatFixture: @unchecked Sendable {
                 thread["job"] = ["id": id, "status": "ready", "variants": [["variant_id": "original_text", "render_status": "ready", "output_url": "https://fixture.invalid/result.mp4"]]]
                 renders[id] = nil
                 append("generation_ready")
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_BRIEF"] == "1" {
+                    // What the server sends after a render: the reply plus one receipt per requirement.
+                    append("assistant_review", text: "The cut is ready. I did most of what you asked; one thing needs your call.",
+                           payload: ["turn_id": id, "turn_value": "review", "requirement_receipts": Self.fixtureReceipts])
+                }
             }
         }
         thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
@@ -216,6 +222,28 @@ private final class CreationChatFixture: @unchecked Sendable {
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }
         return response(thread)
     }
+    /// KRI-207 fixture (`KRIA_CHAT_FIXTURE_BRIEF=1`): invented names, one receipt of every kind. The
+    /// first guess carries its clip; the second only the plain `inferred` string an older server sends.
+    private static var fixtureReceipts: [[String: Any]] { [
+        ["requirement_id": "req-labels", "status": "met", "reason": "Every clip has its own place name.",
+         "inferred": ["Harbor Point"],
+         "inferred_labels": [["text": "Harbor Point", "media_id": "fixture-clip", "clip_index": 3]]],
+        ["requirement_id": "req-order", "status": "partial",
+         "reason": "Your clips were filmed from the lighthouse to the pier, the reverse of the route you gave. I kept filming order; tell me if you want your route order instead.",
+         "inferred": ["Old Lighthouse"]],
+        ["requirement_id": "req-drone", "status": "not_possible", "reason": "None of your clips is aerial footage."],
+    ] }
+
+    private static func fixtureBrief(threadID: String) -> [String: Any] {
+        ["thread_id": threadID, "version": 1,
+         "requirements": [
+            ["id": "req-labels", "kind": "text", "scope": "per_clip", "description": "Label each clip with its place", "status": "met"],
+            ["id": "req-order", "kind": "order", "scope": "route", "description": "Follow the pier-to-lighthouse route", "status": "partial"],
+            ["id": "req-drone", "kind": "select", "scope": "clip", "description": "End on a drone shot", "status": "not_possible"],
+         ],
+         "requirement_receipts": fixtureReceipts]
+    }
+
     /// Slide fixture is explicitly test-only; production exercises the real
     /// proposal, versioned save, and version-approved dispatch endpoints.
     private func slideResponse(_ request: URLRequest, itemID: String, parts: [String], body: [String: Any]) -> (Int, Data) {

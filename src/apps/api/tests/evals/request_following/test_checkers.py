@@ -305,3 +305,142 @@ def test_unknown_checker_and_unknown_order_key_fail_loudly():
         _check(_req("nope"), _plan(["a"]))
     with pytest.raises(ValueError, match="unknown order key"):
         _check(_req("order_by_key", {"key": "vibes"}, kind="order"), _plan(["a", "b"]), _FOOT)
+
+
+# ── P6b: receipts, dedupe, corrections, bulk fonts ───────────────────────────
+
+
+def _labelled(*pairs: tuple[str, str], font: str | None = "Inter") -> FinalPlan:
+    """Clips in order, each 2s, each with a label bound to its clip."""
+    plan = _plan([c for c, _ in pairs])
+    texts = [
+        PlanText(
+            id=f"l{i}",
+            role="label",
+            text=text,
+            start_s=i * 2.0,
+            end_s=i * 2.0 + 2.0,
+            clip_id=clip,
+            font_family=font,
+        )
+        for i, (clip, text) in enumerate(pairs)
+        if text
+    ]
+    return plan.model_copy(update={"texts": texts})
+
+
+def test_label_no_consecutive_repeat_compares_with_the_previous_kept_label():
+    req = _req("label_no_consecutive_repeat", request_type="label_described")
+    assert (
+        _check(
+            req, _labelled(("a", "Tern Lighthouse"), ("b", "Old Pier"), ("c", "Tern Lighthouse"))
+        )[0]
+        == "met"
+    )
+    # An unlabelled clip between two equal labels does not hide the repeat.
+    assert _check(req, _labelled(("a", "Pier"), ("b", ""), ("c", "pier")))[0] != "met"
+    status, reason = _check(
+        req, _labelled(("a", "Pier"), ("b", "Pier"), ("c", "Pier"), ("d", "Fort"))
+    )
+    assert status == "partial" and "2 label(s)" in reason
+    assert _check(req, _plan(["a"]))[0] == "unmet"
+
+
+def test_label_no_consecutive_repeat_folds_case_and_diacritics():
+    req = _req("label_no_consecutive_repeat", request_type="label_described")
+    assert _check(req, _labelled(("a", "Kadıköy"), ("b", "KADIKOY")))[0] != "met"
+
+
+def test_text_avoids_flags_mixed_language_and_is_vacuous_without_text():
+    req = _req(
+        "text_avoids",
+        {"terms": ["Castle", "Valley"], "scope": "labels"},
+        request_type="label_described",
+    )
+    assert _check(req, _labelled(("a", "Uçhisar Kalesi")))[0] == "met"
+    assert _check(req, _plan(["a"]))[0] == "met"
+    status, reason = _check(req, _labelled(("a", "Uçhisar Castle Kalesi")))
+    assert status == "partial" and "Castle" in reason
+    assert _check(req, _labelled(("a", "Castle Valley")))[0] == "unmet"
+
+
+def test_labels_none_rejects_an_invented_label():
+    req = _req("labels_none", request_type="label_described")
+    assert _check(req, _plan(["a", "b"], texts=[_title("Five-a-side")]))[0] == "met"
+    status, reason = _check(req, _labelled(("a", "Somewhere nice")))
+    assert status == "unmet" and "made up" in reason
+
+
+def test_font_all_equal_needs_every_lane_and_can_be_scoped_to_roles():
+    plan = _labelled(("a", "One"), ("b", "Two"), font="Montserrat").model_copy(
+        update={
+            "texts": [
+                *_labelled(("a", "One"), ("b", "Two"), font="Montserrat").texts,
+                PlanText(id="t", role="title", text="T", start_s=0, end_s=2, font_family="Inter"),
+            ]
+        }
+    )
+    every = _req("font_all_equal", {"font": "montserrat"}, request_type="style")
+    assert _check(every, plan)[0] == "partial"  # the title still says Inter
+    labels = _req(
+        "font_all_equal", {"font": "Montserrat", "roles": ["label"]}, request_type="style"
+    )
+    assert _check(labels, plan)[0] == "met"
+    titles = _req(
+        "font_all_equal", {"font": "Montserrat", "roles": ["title"]}, request_type="style"
+    )
+    assert _check(titles, plan)[0] == "unmet"
+    assert _check(every, _plan(["a"]))[0] == "unmet"  # nothing to restyle is not a pass
+
+
+def test_clips_unchanged_is_an_event_check_against_the_previous_edit():
+    req = _req("clips_unchanged", request_type="style")
+    before = _plan(["a", "b"])
+    assert _check(req, before, previous=before)[0] == "met"
+    assert _check(req, _plan(["b", "a"]), previous=before)[0] == "unmet"
+    assert _check(req, before)[0] == "unmet"
+
+
+def test_label_single_change_allows_only_the_named_label_to_move():
+    req = _req(
+        "label_single_change",
+        {"clip_id": "b", "text": "Fort Halden"},
+        request_type="label_exact",
+    )
+    before = _labelled(("a", "Pier"), ("b", "Watchtower"), ("c", "Beach"))
+    assert (
+        _check(
+            req, _labelled(("a", "Pier"), ("b", "Fort Halden"), ("c", "Beach")), previous=before
+        )[0]
+        == "met"
+    )
+    status, reason = _check(
+        req, _labelled(("a", "Harbour"), ("b", "Fort Halden"), ("c", "Beach")), previous=before
+    )
+    assert status == "partial" and "a" in reason
+    assert _check(req, before, previous=before)[0] == "unmet"
+    assert _check(req, before)[0] == "unmet"
+
+
+def test_reply_states_reads_the_reply_not_the_edit():
+    req = _req(
+        "reply_states",
+        {"all_of": ["reverse", "route order"], "none_of": ["re-?plan"]},
+        request_type="order_route",
+    )
+    plan = _plan(["a"])
+    full = "Filmed in the reverse of your route. Tell me if you want route order."
+    assert run_checker(req, plan, _footage(), None, full)[0] == "met"
+    assert run_checker(req, plan, _footage(), None, "It is the reverse.")[0] == "partial"
+    assert run_checker(req, plan, _footage(), None, "Done.")[0] == "unmet"
+    assert run_checker(req, plan, _footage(), None, None)[0] == "unmet"
+    assert run_checker(req, plan, _footage(), None, full + " I had to re-plan.")[0] == "unmet"
+    only_negative = _req("reply_states", {"none_of": ["reverse"]}, request_type="order_route")
+    assert run_checker(only_negative, plan, _footage(), None, None)[0] == "met"
+    assert run_checker(only_negative, plan, _footage(), None, "the reverse")[0] == "unmet"
+
+
+def test_every_registered_checker_id_is_unique_across_plan_and_reply_registries():
+    from .checkers import CHECKERS, REPLY_CHECKERS
+
+    assert not set(CHECKERS) & set(REPLY_CHECKERS)

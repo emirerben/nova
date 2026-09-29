@@ -1,0 +1,143 @@
+{
+  "fixture_id": "trip_landmark_labels_english",
+  "provenance": "authored",
+  "footage": "trip",
+  "description": "English brief: names come back in English, no Turkish generic words mixed in.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Label the landmarks in each clip.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "english-names",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_described",
+      "checker": "label_mentions",
+      "params": {
+        "clips": {
+          "T3": [
+            "Uçhisar Castle"
+          ],
+          "T4": [
+            "Love Valley"
+          ],
+          "T5": [
+            "Rose Valley"
+          ],
+          "T7": [
+            "Kaymaklı Underground City"
+          ]
+        }
+      },
+      "source": "Label the landmarks in each clip.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "no-turkish-mix",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_described",
+      "checker": "text_avoids",
+      "params": {
+        "terms": [
+          "Kalesi",
+          "Vadisi",
+          "Yeraltı"
+        ],
+        "scope": "labels"
+      },
+      "source": "Label the landmarks in each clip.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "T1",
+          "start_s": 0.0,
+          "end_s": 4.0
+        },
+        {
+          "clip_id": "T2",
+          "start_s": 4.0,
+          "end_s": 7.0
+        },
+        {
+          "clip_id": "T3",
+          "start_s": 7.0,
+          "end_s": 10.5
+        },
+        {
+          "clip_id": "T4",
+          "start_s": 10.5,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "T5",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "T6",
+          "start_s": 17.0,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "T7",
+          "start_s": 19.5,
+          "end_s": 22.5
+        },
+        {
+          "clip_id": "T8",
+          "start_s": 22.5,
+          "end_s": 25.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "label-2",
+          "role": "label",
+          "text": "Uçhisar Castle",
+          "start_s": 7.0,
+          "end_s": 10.5,
+          "font_family": "Inter",
+          "clip_id": "T3"
+        },
+        {
+          "id": "label-3",
+          "role": "label",
+          "text": "Love Valley",
+          "start_s": 10.5,
+          "end_s": 13.5,
+          "font_family": "Inter",
+          "clip_id": "T4"
+        },
+        {
+          "id": "label-4",
+          "role": "label",
+          "text": "Rose Valley",
+          "start_s": 13.5,
+          "end_s": 17.0,
+          "font_family": "Inter",
+          "clip_id": "T5"
+        },
+        {
+          "id": "label-6",
+          "role": "label",
+          "text": "Kaymaklı Underground City",
+          "start_s": 19.5,
+          "end_s": 22.5,
+          "font_family": "Inter",
+          "clip_id": "T7"
+        }
+      ],
+      "total_duration_s": 25.5
+    },
+    "reply": "Labelled the four landmarks."
+  }
+}

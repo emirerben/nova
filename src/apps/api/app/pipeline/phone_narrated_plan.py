@@ -1,7 +1,7 @@
 """Project a decided "narrated" walkthrough generative variant into a native
 device render program (KRI-132).
 
-Companion to `app.pipeline.phone_montage_plan.compile_phone_montage_plan` for
+Companion to `app.pipeline.phone_voiceover_montage_plan.compile_phone_voiceover_montage_plan` for
 the ``narrated`` / ``narrated_planned`` / ``narrated_ready`` archetypes.
 Exactly like the other phone compilers, no media is downloaded or rendered in
 this module -- it only projects an already-decided plan (step-to-clip
@@ -37,7 +37,7 @@ Short-clip retiming (schema support confirmed)
 ------------------------------------------------
 
 `TimelineClip.rate` (`app/kria/recipes.py`) already exists and is already
-load-bearing: `compile_phone_montage_plan` sets it from
+load-bearing: `compile_phone_voiceover_montage_plan` sets it from
 `GenerativeAssemblyStepDecision.rate` and adds the `variableSpeed` capability
 whenever any clip's rate isn't 1. This IS a legitimate retime field (a
 rate < 1.0 plays a clip slower, stretching its output beyond its source
@@ -61,7 +61,7 @@ probe).
 Landscape footage policy
 ------------------------
 
-`compile_phone_montage_plan` never rejects a landscape clip outright -- it
+`compile_phone_voiceover_montage_plan` never rejects a landscape clip outright -- it
 only rejects the "letterboxed" (`fit`) landscape presentation, accepting
 "fill" (center-crop) for any source orientation; golden-hour color grading is
 the only lane that additionally demands an exact-canvas, unrotated source.
@@ -87,7 +87,7 @@ supplied (an empty-caption narrated render is not an error -- mirrors the
 generative pipeline's "best-effort" stance on intro text) and then calls that
 module's companion `caption_font_assets(layers)` helper -- its own documented
 contract for callers assembling a full recipe -- to resolve + register every
-referenced font as a manifest asset, exactly like `phone_montage_plan.py` and
+referenced font as a manifest asset, exactly like `phone_voiceover_montage_plan.py` and
 `phone_guided_plan.py` already do with the font asset `compile_text_overlay`
 returns directly.
 
@@ -100,7 +100,7 @@ narration plays, rises in pauses), loudnorm, and a 0.5s voice fade-out. The
 phone engine has no ducking/loudnorm/ramp primitive at all -- only a flat,
 constant `AudioMixRecipe.original_volume` for the whole timeline and a flat
 per-clip `volume` on the narration track. Exactly mirroring
-`compile_phone_montage_plan`'s already-shipped approximation for its own
+`compile_phone_voiceover_montage_plan`'s already-shipped approximation for its own
 voiceover case: a single constant attenuated footage-bed gain under a
 full-volume voice is the accepted v1 approximation (no ducking, no
 loudnorm, no fade). ``mix`` here uses the SAME convention
@@ -132,7 +132,12 @@ from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest, VoiceoverRenderAsset
 from app.pipeline.canvas import canvas_for_orientation
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
-from app.pipeline.phone_recipe_shared import TIMING_ROUNDING_TOLERANCE_S, PhoneNarrationBed
+from app.pipeline.phone_recipe_shared import (
+    TIMING_ROUNDING_TOLERANCE_S,
+    PhoneNarrationBed,
+    snap_text_overshoot,
+    timeline_end_s,
+)
 from app.services.phone_sources import PhoneSourceBinding
 
 # Mirrors `app.pipeline.narrated_assembler._MIN_USABLE_S` / `_EOF_GUARD_S` --
@@ -150,7 +155,7 @@ class NarratedPhoneStep(BaseModel):
     see the module docstring's "Step-timing contract").
 
     ``media_id`` matches a `PhoneSourceBinding.media_id`, exactly like
-    `phone_montage_plan`'s ``clip_id_to_media_id`` indirection (the assignment
+    `phone_voiceover_montage_plan`'s ``clip_id_to_media_id`` indirection (the assignment
     step and the binding are resolved by identity, not by trusting a client-
     supplied path). ``source_start_s`` is the clip's own in-point (mirrors
     `app.pipeline.narrated_assembler.NarratedClip.source_start_s`); the
@@ -272,7 +277,7 @@ def compile_phone_narrated_plan(
     ``steps`` must already be in narration-timeline order and tile
     ``[0, voiceover_duration_s]`` contiguously (see "Step-timing contract").
     ``narration`` is the same `PhoneNarrationBed` receipt
-    `compile_phone_montage_plan` takes -- built by
+    `compile_phone_voiceover_montage_plan` takes -- built by
     `_resolve_phone_voiceover_bed`. ``mix`` follows
     `GenerativeVariantDecision.mix`'s convention (see "Audio mix
     approximation" in the module docstring).
@@ -406,6 +411,11 @@ def compile_phone_narrated_plan(
         narration_asset_id=narration_asset.id,
         original_volume=footage_bed_gain,
     )
+    # A caption that ends at the voiceover's nominal end can overshoot the recipe's own
+    # duration by float noise (a slowed-down clip's `usable / (usable / target)` lands
+    # 1 ULP short, and the narration bed may be a millisecond shorter): `EditRecipeV2`
+    # rejects `layer.end > duration` strictly (KRI-209, same class as KRI-190).
+    snap_text_overshoot(layers, timeline_end_s(clip for track in tracks for clip in track.clips))
 
     required_capabilities = (
         {"basicComposition", "local1080Export", "narrationAudio", "audioMix"}
