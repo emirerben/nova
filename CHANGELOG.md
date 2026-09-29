@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.8.0] - 2026-09-29
+
+### Changed
+- feat(web): make the landing wordmark living glass (#1267) <!-- release-pr: 1267 -->
+
 ## [0.77.7.0] - 2026-09-29
 
 ### Changed
