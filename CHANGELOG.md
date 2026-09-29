@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.16.0] - 2026-09-29
+
+### Changed
+- fix(phone): edit and restyle captions on iPhone-rendered Talking edits (KRI-216) (#1264) <!-- release-pr: 1264 -->
+
 ## [0.77.15.0] - 2026-09-29
 
 ### Changed
