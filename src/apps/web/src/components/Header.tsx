@@ -35,7 +35,15 @@ export default function Header() {
     pathname === "/dev-qa/chat-first-creation" ||
     (isChatFirstPlanPath(pathname) && status !== "unauthenticated");
   const isLanding = pathname === "/" || pathname === "/auto-story";
+  const [isScrollComparison, setIsScrollComparison] = useState(false);
   const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    setIsScrollComparison(
+      pathname === "/" &&
+        new URLSearchParams(window.location.search).get("mode") === "scroll",
+    );
+  }, [pathname]);
 
   useEffect(() => {
     if (isAdmin) return;
@@ -57,6 +65,7 @@ export default function Header() {
 
   if (isAdmin) return null;
   if (isChatFirstWorkspace) return null;
+  if (pathname === "/" && !isScrollComparison) return null;
 
   // Light surfaces: landing variants + all plan pages (incl. /plan/items) + library + TikTok + generative
   // + the static legal pages (cream canvas, would clash with the dark sticky header).

@@ -517,6 +517,15 @@ private actor RetryGate {
         XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .superseded), "Newer edit available")
     }
 
+    /// KRI-211: retrying can't conjure originals that are on another device, so the attention state hides
+    /// Try again then. A finished local render that only needs syncing keeps its retry.
+    func testMissingOriginalsHidesRetryOnlyForNeedsAttention() {
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: "export_failed", originalsMissing: true))
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: nil, originalsMissing: true))
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: "export_failed", originalsMissing: false))
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .localReady, reasonCode: nil, originalsMissing: true))
+    }
+
     /// KRI-132 journey fix: `unsupported_recipe` is structural (the compiled
     /// recipe itself is outside what this renderer can produce), so a blind
     /// "Try again" is hidden and the copy says what to do instead. Every

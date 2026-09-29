@@ -217,6 +217,11 @@ def test_edit_copilot_eval(
                 for target in inventory
                 if ("category" not in selector or target["kind"] == selector["category"])
                 and ("target_ids" not in selector or target["id"] in selector["target_ids"])
+                and (
+                    "group" not in selector
+                    or target.get("group")
+                    == {"titles": "title", "labels": "label"}[selector["group"]]
+                )
             ]
             assert set(op["target_ids"]) == {target["id"] for target in targets}
             assert len(op["target_ids"]) == len(targets)

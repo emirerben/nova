@@ -747,6 +747,7 @@ async def test_approve_records_consent_but_never_dispatches_render() -> None:
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),
@@ -801,6 +802,7 @@ async def test_approve_rejects_changed_draft_head() -> None:
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),
@@ -847,6 +849,7 @@ async def test_approve_rejects_changed_session_pin() -> None:
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),
@@ -950,6 +953,7 @@ async def test_approval_expiry_is_persisted_before_rejection() -> None:
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),
@@ -993,6 +997,7 @@ async def test_approval_rejects_mismatched_fingerprint_without_mutation() -> Non
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),
@@ -1043,6 +1048,7 @@ async def test_approval_rejects_non_pending_record_without_replaying_decision() 
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),
+                _Result(scalar=draft),
                 _Result(scalar=session),
                 _Result(scalar=turn),
                 _Result(scalar=draft),
@@ -1581,6 +1587,12 @@ def test_live_planner_failure_is_projected_as_a_retryable_turn_failure(
         code="runtime_turn_failed",
         lease_owner=lease_owner,
         lease_epoch=3,
+        # KRI-203: the failure carries its class + truncated message so an
+        # operator can diagnose it from the admin turns/events reads.
+        detail={
+            "error_class": "RuntimeError",
+            "error_message": "Kria could not produce a reliable editorial plan",
+        },
     )
     assert events == [
         "engine-0 created",
@@ -1654,3 +1666,17 @@ async def test_first_inert_prompt_also_reserves_title_generation():
     assert thread.title == "What can you do?"
     assert thread.state["title_generation"] == "pending"
     db.commit.assert_awaited_once()
+
+
+def test_failure_detail_is_a_bounded_single_line_summary() -> None:
+    from app.tasks.kria_runtime import _failure_detail
+
+    class KriaEditorOpError(ValueError):
+        pass
+
+    detail = _failure_detail(KriaEditorOpError("A draft may contain\nat most eight " + "x" * 400))
+
+    assert detail["error_class"] == "KriaEditorOpError"
+    assert "\n" not in detail["error_message"]
+    assert len(detail["error_message"]) == 200
+    assert detail["error_message"].startswith("A draft may contain at most eight")

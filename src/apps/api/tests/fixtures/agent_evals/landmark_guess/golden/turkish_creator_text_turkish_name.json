@@ -1,0 +1,23 @@
+{
+  "agent": "nova.video.landmark_guess",
+  "prompt_version": "2026-09-25.1",
+  "input": {
+    "file_uri": "clips/devtest-1778504452/clip_00.mp4",
+    "file_mime": "video/mp4",
+    "place": "Sarıyer, İstanbul, Türkiye",
+    "lat": 41.09,
+    "lon": 29.06,
+    "creator_text": "Arnavutköy'den Eminönü'ne bir koşu, sabah yola çıktım"
+  },
+  "raw_text": "{\"name\": \"Rumeli Hisarı\", \"confidence\": 0.8, \"evidence\": \"medieval fortress towers on the Bosphorus shore\"}",
+  "output": {
+    "name": "Rumeli Hisarı",
+    "confidence": 0.8,
+    "evidence": "medieval fortress towers on the Bosphorus shore"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "The creator wrote in Turkish, so the name is the Turkish one (KRI-210: one language per edit, following the creator).",
+    "live_note": "Replay uses raw_text; live is structural only. The live pass for prompt 2026-09-25.1 runs in the KRI-212 eval lane."
+  }
+}

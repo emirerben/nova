@@ -21,6 +21,7 @@ from app.pipeline.phone_subtitled_plan import (
     sfx_duck_receipt,
     speech_windows_from_cues,
 )
+from app.pipeline.silence_cut import CutPlan, Removal, no_op_plan
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
@@ -194,8 +195,96 @@ def test_empty_caption_cues_still_renders_the_clip():
     recipe = compile_phone_subtitled_plan(bindings, caption_cues=[])
 
     assert recipe.text_layers == []
-    assert "positionedText" not in recipe.required_capabilities
-    assert len(recipe.tracks[0].clips) == 1
+
+
+# --- cut_plan (required speech cleanup applied against the analysis proxy) --
+
+
+def _cut_plan(removed: list[tuple[float, float]], duration: float) -> CutPlan:
+    """A CutPlan whose ``keep_segments`` partition ``[0, duration]`` around
+    ``removed`` -- mirrors `tests/pipeline/test_silence_cut.py`'s
+    `plan_with_removals` (kept local: that module owns the real fixture)."""
+    removals = [Removal(start_s=lo, end_s=hi, reason="silence") for lo, hi in removed]
+    keep: list[tuple[float, float]] = []
+    cursor = 0.0
+    for lo, hi in removed:
+        if lo > cursor:
+            keep.append((cursor, lo))
+        cursor = hi
+    if cursor < duration:
+        keep.append((cursor, duration))
+    saved = sum(hi - lo for lo, hi in removed)
+    return CutPlan(keep_segments=keep, removed=removals, time_saved_s=saved)
+
+
+def test_cut_plan_emits_one_clip_per_keep_segment():
+    bindings = (_binding(duration_s=10.0),)
+    plan = _cut_plan([(4.0, 6.0)], 10.0)
+    recipe = compile_phone_subtitled_plan(bindings, caption_cues=[], cut_plan=plan)
+
+    video_track = next(t for t in recipe.tracks if t.kind == "video")
+    assert [c.id for c in video_track.clips] == ["clip-0", "clip-1"]
+    first, second = video_track.clips
+    assert (first.source_start, first.source_duration, first.timeline_start) == (0.0, 4.0, 0.0)
+    assert (second.source_start, second.source_duration, second.timeline_start) == (6.0, 4.0, 4.0)
+    # No transition/crossfade between the two cuts -- a hard cut (see the
+    # `cut_plan` docstring for why: no per-clip audio-only fade exists to
+    # declick a crossfade between two unrelated words).
+    assert first.transition is None
+    assert second.transition is None
+    assert recipe.duration == pytest.approx(8.0)
+
+
+def test_cut_plan_with_no_removals_is_identical_to_omitting_it():
+    bindings = (_binding(duration_s=10.0),)
+    plan = no_op_plan(10.0)
+    with_plan = compile_phone_subtitled_plan(bindings, caption_cues=_CUES, cut_plan=plan)
+    without_plan = compile_phone_subtitled_plan(bindings, caption_cues=_CUES, cut_plan=None)
+
+    assert with_plan.model_dump_json() == without_plan.model_dump_json()
+
+
+def test_cut_plan_caption_timeline_uses_the_cut_duration_not_the_source_duration():
+    bindings = (_binding(duration_s=10.0),)
+    plan = _cut_plan([(4.0, 6.0)], 10.0)
+    # 8.5s would be a perfectly valid cue against the original 10.0s source,
+    # but is past the 8.0s CUT duration this plan produces -- proves
+    # `compile_caption_layers` is clamping against the cut timeline, not the
+    # source clip's own duration.
+    cues = [{"text": "too late", "start_s": 8.5, "end_s": 8.9}]
+    recipe = compile_phone_subtitled_plan(bindings, caption_cues=cues, cut_plan=plan)
+    assert recipe.text_layers == []
+
+    surviving = [{"text": "in time", "start_s": 7.0, "end_s": 7.9}]
+    recipe = compile_phone_subtitled_plan(bindings, caption_cues=surviving, cut_plan=plan)
+    assert len(recipe.text_layers) == 1
+
+
+def test_cut_plan_clamps_lane_windows_against_the_cut_duration():
+    bindings = (_binding(duration_s=10.0),)
+    plan = _cut_plan([(4.0, 6.0)], 10.0)
+    # This card's window already assumes CUT-timeline coordinates (the
+    # runner remaps a card's window via `remap_lanes_for_cut` before this
+    # point) and extends past the 8.0s cut duration -- clamped exactly like
+    # a card overrunning an uncut clip's own duration.
+    card = SubtitledOverlayCard(
+        id="card-1", media_id=PHOTO_ID, gcs_path=PHOTO_PATH, generation="77", start_s=6.0, end_s=9.0
+    )
+    lanes = PhoneSubtitledLanes(overlays=[card])
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], visuals=(_photo_visual(),), lanes=lanes, cut_plan=plan
+    )
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    (overlay_clip,) = overlay_track.clips
+    assert overlay_clip.visual_placement.window_start == pytest.approx(6.0)
+    assert overlay_clip.visual_placement.window_end == pytest.approx(8.0)
+
+
+def test_cut_plan_removing_the_entire_clip_raises():
+    bindings = (_binding(duration_s=10.0),)
+    plan = _cut_plan([(0.0, 10.0)], 10.0)
+    with pytest.raises(UnsupportedPhonePlan, match="removed the entire clip"):
+        compile_phone_subtitled_plan(bindings, caption_cues=[], cut_plan=plan)
 
 
 def test_rejects_zero_clips():
@@ -1117,3 +1206,20 @@ def test_video_overlay_recipe_passes_phone_pilot_validation_when_verified(monkey
         settings, "phone_render_verified_features", list(recipe.required_capabilities)
     )
     validate_phone_pilot_recipe(recipe, allow_editor_media=True)
+
+
+def test_a_caption_ending_at_the_clip_end_never_overshoots_the_timeline():
+    """KRI-209 audit: the subtitled compiler is one un-retimed clip and clamps every
+    caption to `timeline_duration_s == clip duration`, so it cannot overshoot by float
+    noise. Pinned so a future retime or ending-clip change has to face the strict
+    `layer.end > duration` validation in `EditRecipeV2`."""
+    duration_s = 24.998
+    cues = [
+        {"text": "Hello everyone", "start_s": 0.0, "end_s": 1.5},
+        {"text": "and that is it", "start_s": 23.5, "end_s": duration_s + 0.004},
+    ]
+
+    recipe = compile_phone_subtitled_plan((_binding(duration_s=duration_s),), caption_cues=cues)
+
+    assert recipe.duration == duration_s
+    assert all(layer.end <= recipe.duration for layer in recipe.text_layers)

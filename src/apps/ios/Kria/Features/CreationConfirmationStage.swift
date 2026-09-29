@@ -8,7 +8,7 @@ struct CreationConfirmationConflict: Equatable {
     static let changedMessage = "This project changed. Review the latest options and try again."
     static let missingReasonMessage = "This direction is out of date. Refresh it before creating the video."
     /// Actions the card sends through the Creator confirmation controller.
-    static let confirmationActions: Set<String> = ["generate", "retry", "create_without_cleanup"]
+    static let confirmationActions: Set<String> = ["generate", "retry", "create_without_cleanup", "retry_speech_cleanup"]
     /// Revision and idempotency fences. The refresh after every conflict resolves them.
     private static let resolvedByRefresh: Set<String> = ["Creation thread changed", "Creator plan changed", "Idempotency key reused"]
     /// Reasons that clear on their own, so the same create button works afterwards.
@@ -70,12 +70,19 @@ extension CreationThread {
     /// `assistant_error` chat event (KRI-132) -- `_creator_agent_projection`
     /// doesn't expose `CreatorAgentSession.last_error` directly, so this reads
     /// it off the event log the client already has. Nil for a thread with no
-    /// such event, or an older event shaped before the code was added.
+    /// such event, or an older event shaped before the code was added. Also
+    /// considers `assistant_render_failed` (and its `agent_` alias): a v2
+    /// dispatch-time failure after approval arrives that way, carrying the
+    /// same `code`/`recovery` shape, so a speech-cleanup dispatch failure
+    /// (`recovery: "ask_user"`) is visible here too -- see `FailedStage`.
+    private static let assistantFailureEventTypes: Set<String> = [
+        "assistant_error", "agent_assistant_error", "assistant_render_failed", "agent_assistant_render_failed",
+    ]
     var lastAssistantErrorCode: String? {
-        events.last(where: { $0.eventType == "assistant_error" })?.payload?["code"]?.stringValue
+        events.last(where: { Self.assistantFailureEventTypes.contains($0.eventType) })?.payload?["code"]?.stringValue
     }
     var lastAssistantErrorMessage: String? {
-        events.last(where: { $0.eventType == "assistant_error" })?.payload?["message"]?.stringValue
+        events.last(where: { Self.assistantFailureEventTypes.contains($0.eventType) })?.payload?["message"]?.stringValue
     }
 }
 
@@ -99,6 +106,27 @@ extension CreationThread {
 let nonRetryablePhoneGateErrorCodes: Set<String> = [
     "phone_not_enrolled", "phone_plan_unapproved", "phone_format_unavailable", "phone_voiceover_unavailable",
     "strategy_invalid", "phone_self_narration_multi_clip", "speech_cleanup_unavailable_on_phone",
+]
+
+/// True for `nonRetryablePhoneGateErrorCodes`. A runtime-v2 speech-cleanup
+/// dispatch refusal deliberately stays retryable: it arrives as an
+/// `assistant_render_failed` event (`code: render_dispatch_failed`,
+/// `recovery: ask_user`), and the failed card's "Refresh project" asks Kria
+/// for a fresh draft whose new approval runs the cleanup choice again -- the
+/// exact recovery the server's copy points at. See `FailedStage`.
+func isNonRetryableFailureCode(_ code: String?) -> Bool {
+    guard let code else { return false }
+    return nonRetryablePhoneGateErrorCodes.contains(code)
+}
+
+/// The runtime-v2 `KriaProblem.code`s the approval decision endpoint answers
+/// with when the approval must stay pending for a speech-cleanup reason (the
+/// creator hasn't chosen yet, the analysis just changed, etc.) rather than a
+/// genuine failure. The approval id/fingerprint remain valid -- refresh the
+/// thread and re-render the same card instead of showing a failure toast.
+let speechCleanupConflictCodes: Set<String> = [
+    "speech_cleanup_pending", "speech_cleanup_choice_required", "speech_cleanup_failed",
+    "speech_cleanup_choice_not_allowed", "speech_cleanup_analysis_changed",
 ]
 
 /// KRI-118 item 2: `day_vlog`/`single_hero` still report `edit_format:
@@ -150,7 +178,7 @@ struct CreationConfirmationStage: View {
     /// retrying without changing the project (a different format, a voiceover
     /// removed, re-enrolling) fails the exact same way.
     private var isNonRetryablePhoneGateFailure: Bool {
-        isFailure && thread.lastAssistantErrorCode.map(nonRetryablePhoneGateErrorCodes.contains) == true
+        isFailure && isNonRetryableFailureCode(thread.lastAssistantErrorCode)
     }
 
     private var storyShapeLabel: String? { storyShapeSubtitle(creatorAgent: thread.creatorAgent) }
@@ -188,7 +216,11 @@ struct CreationConfirmationStage: View {
             if let conflict { conflictNotice(conflict) }
             if hasCleanup {
                 if let identifier = analysis["id"]?.stringValue { cleanupActions(identifier: identifier) }
-                else { ProgressView("Preparing the speech check…") }
+                else {
+                    ProgressView("Preparing the speech check…")
+                    Button("Create without cleanup") { action("create_without_cleanup", [:]) }
+                        .buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
+                }
             } else {
                 retryOrCreateButton(payload: [:])
             }
@@ -269,32 +301,19 @@ struct CreationConfirmationStage: View {
                 Button("Create without cleanup") { action("create_without_cleanup", payload) }
                     .buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
             } else if cleanup["requires_choice"]?.booleanValue == true {
-                Text("Choose whether to remove the detected pauses and retakes.")
-                Button {
-                    action("generate", payload.merging(["speech_cleanup_choice": .string("clean")]) { _, new in new })
-                } label: {
-                    Text("Clean up speech and create")
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.vertical, 12)
-                }
-                .buttonStyle(CanonicalPrimaryButtonStyle())
-                .disabled(isBusy || !hasVideo)
-                Button {
-                    action("generate", payload.merging(["speech_cleanup_choice": .string("keep_original")]) { _, new in new })
-                } label: {
-                    Text("Keep original speech and create")
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.vertical, 12)
-                }
-                .buttonStyle(CanonicalSecondaryButtonStyle())
-                .disabled(isBusy || !hasVideo)
+                SpeechCleanupChoiceButtons(
+                    stats: SpeechCleanupStats(analysis: analysis),
+                    isDisabled: isBusy || !hasVideo,
+                    clean: { action("generate", payload.merging(["speech_cleanup_choice": .string("clean")]) { _, new in new }) },
+                    keepOriginal: { action("generate", payload.merging(["speech_cleanup_choice": .string("keep_original")]) { _, new in new }) }
+                )
             } else {
                 retryOrCreateButton(payload: payload)
             }
         default:
             Text("The speech check is unavailable. Reopen the project to refresh it.")
+                .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            Button("Retry speech check") { action("retry_speech_cleanup", payload) }.disabled(isBusy)
         }
     }
 }

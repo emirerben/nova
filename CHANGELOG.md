@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.5.0] - 2026-09-29
+
+### Changed
+- feat(ios): originals-missing editor state, failed attach never blocks Send, flaky text test (KRI-211, KRI-213) (#1256) <!-- release-pr: 1256 -->
+
+## [0.77.4.0] - 2026-09-29
+
+### Changed
+- feat(kria): copilot sees clips, facts and brief; one-op bulk fonts (KRI-191, KRI-203) (#1255) <!-- release-pr: 1255 -->
+
+## [0.77.3.0] - 2026-09-29
+
+### Changed
+- feat(kria): route-direction, label and title receipts, narrated float-noise snap (KRI-208/209/210) (#1254) <!-- release-pr: 1254 -->
+
+## [0.77.2.0] - 2026-09-28
+
+### Changed
+- test(ios): expect Edit text's 120pt typing preview in the resize test (KRI-185) (#1263) <!-- release-pr: 1263 -->
+
+## [0.77.1.0] - 2026-09-28
+
+### Changed
+- fix(kria): let v2 phone Talking renders dispatch past the enforce cleanup guard (#1259) <!-- release-pr: 1259 -->
+
+## [0.77.0.0] - 2026-09-28
+
+### Added
+- feat(web): launch video-led Kria landing hero (#1262) <!-- release-pr: 1262 -->
+
+## [0.76.232.0] - 2026-09-28
+
+### Changed
+- feat(ios): ask the speech-cleanup question on the runtime-v2 approval card (#1261) <!-- release-pr: 1261 -->
+
+## [0.76.231.0] - 2026-09-28
+
+### Changed
+- fix(kria): ask the speech-cleanup question in runtime v2 and apply it on the phone (#1260) <!-- release-pr: 1260 -->
+
 ## [0.76.230.0] - 2026-09-25
 
 ### Changed

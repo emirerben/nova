@@ -662,7 +662,7 @@ struct CreationThreadView: View {
         guard let approval, let identifier = UUID(uuidString: approval.approvalID), let draftRevision = approval.draftRevision else { return }
         Task {
             do {
-                try await model.api.decideApproval(threadID: project.id, approvalID: identifier, decision: decision, expectedThreadRevision: threadRevision, expectedDraftRevision: draftRevision, fingerprint: approval.approvalFingerprint)
+                try await model.api.decideApproval(threadID: project.id, approvalID: identifier, decision: decision, expectedThreadRevision: threadRevision, expectedDraftRevision: draftRevision, fingerprint: approval.approvalFingerprint, speechCleanupAware: true, speechCleanupAnalysisID: nil, speechCleanupChoice: nil)
                 self.approval = nil
                 try await refreshDelta()
             } catch { errorMessage = error.localizedDescription }

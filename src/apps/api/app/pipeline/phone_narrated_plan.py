@@ -132,7 +132,12 @@ from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest, VoiceoverRenderAsset
 from app.pipeline.canvas import canvas_for_orientation
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
-from app.pipeline.phone_recipe_shared import TIMING_ROUNDING_TOLERANCE_S, PhoneNarrationBed
+from app.pipeline.phone_recipe_shared import (
+    TIMING_ROUNDING_TOLERANCE_S,
+    PhoneNarrationBed,
+    snap_text_overshoot,
+    timeline_end_s,
+)
 from app.services.phone_sources import PhoneSourceBinding
 
 # Mirrors `app.pipeline.narrated_assembler._MIN_USABLE_S` / `_EOF_GUARD_S` --
@@ -406,6 +411,11 @@ def compile_phone_narrated_plan(
         narration_asset_id=narration_asset.id,
         original_volume=footage_bed_gain,
     )
+    # A caption that ends at the voiceover's nominal end can overshoot the recipe's own
+    # duration by float noise (a slowed-down clip's `usable / (usable / target)` lands
+    # 1 ULP short, and the narration bed may be a millisecond shorter): `EditRecipeV2`
+    # rejects `layer.end > duration` strictly (KRI-209, same class as KRI-190).
+    snap_text_overshoot(layers, timeline_end_s(clip for track in tracks for clip in track.clips))
 
     required_capabilities = (
         {"basicComposition", "local1080Export", "narrationAudio", "audioMix"}

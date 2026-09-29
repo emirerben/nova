@@ -109,6 +109,8 @@ class _ApprovalDispatchClaim:
     target_generation_id: str | None
     creator_request: str
     preflight_analysis_id: uuid.UUID | None = None
+    speech_cleanup_analysis_id: uuid.UUID | None = None
+    speech_cleanup_choice: str | None = None
 
 
 def _snapshot(thread: CreationThread) -> dict[str, Any]:
@@ -1001,11 +1003,20 @@ def _project_retryable_failure(
     thread: CreationThread,
     *,
     code: str,
+    detail: dict[str, str] | None = None,
 ) -> None:
-    """Fail a locked turn and tell the creator to retry; the caller commits."""
+    """Fail a locked turn and tell the creator to retry; the caller commits.
+
+    ``detail`` (``error_class`` + a truncated ``error_message``) makes an
+    otherwise opaque ``runtime_turn_failed`` diagnosable (KRI-203: the
+    2026-09-25 failure carried only the code). The full detail lives on
+    ``turn.error``, which only admin routes read. The ``assistant_error`` event
+    payload is returned unfiltered to the creator's app, so it gets the class
+    name only (see ``_event_failure_detail``). Creator-facing copy is unchanged.
+    """
 
     turn.status = "failed"
-    turn.error = {"code": code, "retryable": True, "recovery": "retry"}
+    turn.error = {"code": code, "retryable": True, "recovery": "retry", **(detail or {})}
     turn.completed_at = datetime.now(UTC)
     turn.lease_owner = None
     turn.lease_expires_at = None
@@ -1026,6 +1037,7 @@ def _project_retryable_failure(
             # Planning failed before a tool execution receipt existed.
             # Keep this empty rather than inventing a receipt identity.
             "receipt_ids": [],
+            **_event_failure_detail(detail),
         },
     )
     turn.observed_event_id = event.id
@@ -1064,12 +1076,37 @@ def _fail_exhausted_turn(
     return _ClaimsExhausted(str(successor.id) if successor is not None else None)
 
 
+_FAILURE_MESSAGE_CHARS = 200
+
+
+# Only these exceptions carry a message written for humans (no SQL, paths, URLs or
+# provider bodies), so only their message may reach the creator-visible event.
+_EVENT_SAFE_MESSAGE_CLASSES = frozenset({"KriaEditorOpError"})
+
+
+def _event_failure_detail(detail: dict[str, str] | None) -> dict[str, str]:
+    """The slice of a failure detail that may go on a creator-visible event."""
+    if not detail:
+        return {}
+    out = {"error_class": detail["error_class"]} if detail.get("error_class") else {}
+    if detail.get("error_class") in _EVENT_SAFE_MESSAGE_CLASSES and detail.get("error_message"):
+        out["error_message"] = detail["error_message"]
+    return out
+
+
+def _failure_detail(exc: BaseException) -> dict[str, str]:
+    """Bounded, single-line error summary safe to persist on a turn/event."""
+    message = " ".join(str(exc).split())[:_FAILURE_MESSAGE_CHARS]
+    return {"error_class": type(exc).__name__, "error_message": message}
+
+
 def _fail_turn(
     turn_id: uuid.UUID,
     *,
     code: str,
     lease_owner: str,
     lease_epoch: int,
+    detail: dict[str, str] | None = None,
 ) -> str | None:
     try:
         with sync_session() as db:
@@ -1090,7 +1127,7 @@ def _fail_turn(
             ).scalar_one_or_none()
             if thread is None:
                 return None
-            _project_retryable_failure(db, turn, thread, code=code)
+            _project_retryable_failure(db, turn, thread, code=code, detail=detail)
             db.commit()
         return _promote_queued_successor_sync(thread_id)
     except Exception:  # noqa: BLE001 - preserve the original task exception
@@ -1244,12 +1281,21 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     error_class=type(exc).__name__,
                 )
         return {"turn_id": turn_id, "status": "completed"}
-    except Exception:  # noqa: BLE001 - failure is projected before Celery records it
+    except Exception as exc:  # noqa: BLE001 - failure is projected before Celery records it
+        # The failure was invisible for weeks: no log line, no error detail
+        # (KRI-203). Record the class + a truncated message on the turn/event
+        # and log the traceback before re-raising.
+        log.exception(
+            "kria_turn_failed",
+            turn_id=turn_id,
+            error_class=type(exc).__name__,
+        )
         successor_turn_id = _fail_turn(
             identifier,
             code="runtime_turn_failed",
             lease_owner=lease_owner,
             lease_epoch=lease_epoch,
+            detail=_failure_detail(exc),
         )
         if successor_turn_id is not None:
             run_kria_turn.apply_async(
@@ -1462,10 +1508,15 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
         strategy_payload: dict[str, Any] | None = None
         editor_prep: dict[str, Any] | None = None
         preflight_analysis_id: uuid.UUID | None = None
+        speech_cleanup_analysis_id: uuid.UUID | None = None
+        speech_cleanup_choice: str | None = None
         target_variant_id = approval.target_variant_id
         target_generation_id = approval.target_generation_id
         if document.kind == "strategy":
             from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+            from app.services.speech_cleanup_decision import (  # noqa: PLC0415
+                resolve_next_audio_mode,
+            )
 
             strategy = CreativeStrategy.model_validate(document.strategy)
             strategy_payload = strategy.model_dump(mode="json", exclude_none=True)
@@ -1475,13 +1526,8 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             target_variant_id = None
             target_generation_id = None
             execution.target_variant_id = None
-            if strategy.audio_strategy == "original_audio":
-                next_audio_mode = "original"
-            elif strategy.audio_strategy == "licensed_music":
-                next_audio_mode = "kria"
-            elif item.voiceover_gcs_path:
-                next_audio_mode = "voiceover"
-            else:
+            next_audio_mode = resolve_next_audio_mode(strategy, item)
+            if next_audio_mode is None:
                 approval.status = "cancelled"
                 execution.status = "failed"
                 execution.error = {
@@ -1538,6 +1584,21 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             elif strategy.caption_style == "none":
                 item.voiceover_caption_style = None
             item.user_edited = True
+            # KRI-205: `decide_approval` stashed the speech-cleanup decision it
+            # (or its legacy default) already validated at approval time --
+            # read it back rather than asking the creator again here. Absent
+            # for a thread that predates the stash, an editor-kind draft, or a
+            # cohort/mode this item was never in; `dispatch_item_render_for`
+            # treats both `None`s exactly like today's no-decision call.
+            stash = (execution.result or {}).get("speech_cleanup")
+            if isinstance(stash, dict):
+                try:
+                    speech_cleanup_analysis_id = (
+                        uuid.UUID(str(stash["analysis_id"])) if stash.get("analysis_id") else None
+                    )
+                except (TypeError, ValueError):
+                    speech_cleanup_analysis_id = None
+                speech_cleanup_choice = stash.get("choice")
         else:
             if current_job is None or not approval.target_variant_id:
                 return None
@@ -1668,6 +1729,8 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             target_generation_id=target_generation_id,
             creator_request=dispatch_request,
             preflight_analysis_id=preflight_analysis_id,
+            speech_cleanup_analysis_id=speech_cleanup_analysis_id,
+            speech_cleanup_choice=speech_cleanup_choice,
         )
 
 
@@ -1763,6 +1826,36 @@ def _phone_gate_refusal_copy(reason: str) -> str:
     message = PHONE_GATE_MESSAGES.get(reason, (None, None))[1]
     lead = message or "That kind of edit isn't available for iPhone renders yet."
     return f"{lead} Tell me what you'd like to change and I'll try a different approach."
+
+
+# KRI-205: every `DispatchResult("speech_cleanup_*")` outcome
+# `dispatch_item_render_for` can return (grep `content_plan_build.py` for
+# `DispatchResult("speech_cleanup`) -- the decision `decide_approval` stashed
+# (or the claim's own re-derived mutation) no longer matches what dispatch
+# re-validates under its own fresh lock. This is never the generic "retry"
+# dead loop this whole feature exists to close: the creator must approve
+# again to answer the question, not resend the exact same request.
+_SPEECH_CLEANUP_DISPATCH_REFUSALS: dict[str, str] = {
+    # An approval is single-use, so each copy points at the failed card's
+    # "Refresh project" button: it asks Kria for a fresh draft, whose new
+    # approval runs the speech-cleanup gate against the current analysis.
+    "speech_cleanup_analysis_conflict": (
+        "The speech check changed before I could start. Tap Refresh project and "
+        "I'll set it up again so you can choose how to handle the pauses."
+    ),
+    "speech_cleanup_recovery_conflict": (
+        "The speech check changed before I could start. Tap Refresh project and "
+        "I'll set it up again so you can choose how to handle the pauses."
+    ),
+    "speech_cleanup_unavailable": (
+        "The speech check isn't available for this video yet. Tap Refresh project "
+        "and I'll render it without cleanup."
+    ),
+    "speech_cleanup_unavailable_on_phone": (
+        "Cleaning up speech isn't available for this iPhone edit yet. Tap Refresh "
+        "project and choose to keep the original speech."
+    ),
+}
 
 
 def _finish_approval_dispatch(
@@ -1879,14 +1972,17 @@ def _finish_approval_dispatch(
             db.commit()
             return "outcome_unknown", _promote_queued_successor_sync(thread.id)
 
+        speech_cleanup_refusal = _SPEECH_CLEANUP_DISPATCH_REFUSALS.get(outcome)
+        never_retry = speech_cleanup_refusal is not None or bool(reason)
         execution.status = "failed"
         execution.error = {
             "code": "render_dispatch_failed",
             "outcome": outcome,
-            "retryable": outcome == "publish_failed" and not reason,
-            # A phone-gate refusal (`reason`) refuses identically every time,
-            # so it must not send the creator into a retry loop.
-            "recovery": "ask_user" if reason else "retry",
+            "retryable": outcome == "publish_failed" and not never_retry,
+            # A phone-gate refusal (`reason`) or a speech-cleanup conflict
+            # refuses identically every time, so neither may send the creator
+            # into a retry loop -- both need a fresh approval instead.
+            "recovery": "ask_user" if never_retry else "retry",
             **({"reason": reason} if reason else {}),
         }
         execution.completed_at = now
@@ -1901,9 +1997,9 @@ def _finish_approval_dispatch(
             role="assistant",
             event_type="assistant_render_failed",
             content=(
-                _phone_gate_refusal_copy(reason)
-                if reason
-                else (
+                speech_cleanup_refusal
+                or (_phone_gate_refusal_copy(reason) if reason else None)
+                or (
                     "I couldn't start the render. Your draft is still saved, "
                     "so you can retry without repeating the edit."
                 )
@@ -1916,7 +2012,7 @@ def _finish_approval_dispatch(
                 "status": "failed",
                 "code": "render_dispatch_failed",
                 "dispatch_outcome": outcome,
-                "recovery": "ask_user" if reason else "retry",
+                "recovery": "ask_user" if never_retry else "retry",
             },
         )
         db.commit()
@@ -1997,8 +2093,20 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
             # path; the flag inside dispatch decides whether it may proceed to
             # the device montage compiler. Non-phone accounts ignore it.
             allow_phone_unapproved_montage=True,
+            # Runtime-v2 has no creator choice surface for the speech-cleanup
+            # card v1's chat route offers, so an undecided phone (analysis
+            # proxy) narration source dispatches without cleanup instead of
+            # refusing under the enforce guard (see the docstring on
+            # `_dispatch_item_render` in content_plan_build.py).
+            phone_speech_cleanup_unattended=True,
             creator_strategy=claim.strategy,
             creator_request=claim.creator_request,
+            speech_cleanup_analysis_id=(
+                str(claim.speech_cleanup_analysis_id)
+                if claim.speech_cleanup_analysis_id is not None
+                else None
+            ),
+            speech_cleanup_choice=claim.speech_cleanup_choice,
         )
         outcome = result.outcome
         result_job_id = result.job_id
