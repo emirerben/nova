@@ -143,6 +143,11 @@ def _honest_outcome(
         return outcome, "I couldn't build a valid draft change for that request. Try again."
     if reply and not _claims_success(reply):
         return outcome, reply
+    # A request that matched nothing must say so, not claim the draft already
+    # reflects it: the agent attaches the real reason as an unmet request.
+    unmet = next((u.get("reason") for u in output.unmet_requests if u.get("reason")), None)
+    if unmet:
+        return outcome, unmet
     return outcome, "That change is already reflected in the draft."
 
 

@@ -8,6 +8,7 @@ selector = {"group":"title"|"labels"|"free"|"all", "contains":"...", "equals":".
 - set_texts_timing: {"op":"set_texts_timing","selector":{...},"start_s":0,"end_s":3} or "shift_s":-0.5 (moves matches, keeps their duration).
 - add_text also takes optional style_from ("title"|"labels"|a bar id: copy that bar's look), patch (as above), position (top|middle|bottom|top_left|...), animation_phases, clip_id (<media_id>: makes it that clip's label; style_from defaults to labels). Set style_from:"title" so new text matches the video unless the creator asked for a specific style. "At the end" = start about 2s before TOTAL DURATION.
 - A selector that matches nothing becomes a clarification; do not guess ids. Never split a bulk ask into one op per bar.
+- When the ask NAMES specific text ("all X labels", "labels that say X", "the X one"), X MUST be in the selector as contains (or equals). Never widen it to the whole group or pick other texts: if no visible text contains X, emit no op and reply that nothing contains X.
 Examples:
 "make all Arnavutköy labels just say Arnavutköy" -> [{"op":"rewrite_text","selector":{"group":"labels","contains":"Arnavutköy"},"text":"Arnavutköy"}]
 "Arnavutköy etiketleri sadece Arnavutköy yazsın" -> same op as above.
@@ -19,3 +20,4 @@ Examples:
 "add 'see you soon' at the end in the title's style" (total 24s) -> [{"op":"add_text","text":"see you soon","start_s":22,"end_s":24,"style_from":"title"}]
 "label clip 3 'the bridge'" (CLIP SLOTS index 2 has no label) -> [{"op":"add_text","text":"the bridge","start_s":<slot output start>,"end_s":<slot output end>,"clip_id":"<that slot's media_id>"}]
 "call clip 2 Karaköy" (clip 2 already has a label) -> [{"op":"rewrite_text","selector":{"clip_indexes":[1]},"text":"Karaköy"}]
+"make all Çankaya labels just say Çankaya" (no visible text contains Çankaya) -> [] with reply "No label mentions Çankaya." (never rewrite other labels)
