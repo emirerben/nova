@@ -3,8 +3,9 @@
 
 export type CreativeBriefRequirementOut = { "id": string; "kind": "text" | "order" | "select" | "timing" | "audio" | "style"; "scope": string; "literal"?: string | null; "description"?: string | null; "status": "open" | "met" | "partial" | "not_possible" | "superseded"; };
 export type DeltaEvent = { "id": string; "client_event_id"?: string | null; "sequence": number; "revision": number; "role": "user" | "assistant" | "system"; "event_type": string; "content"?: string | null; "payload"?: Record<string, unknown> | null; "created_at": string; };
+export type InferredLabel = { "text": string; "media_id"?: string | null; "clip_index"?: number | null; };
 export type KriaProblem = { "code": string; "phase": "accept" | "plan" | "policy" | "tool" | "approval" | "dispatch" | "observe"; "message": string; "retryable"?: boolean; "recovery"?: "retry" | "refresh_replan" | "ask_user" | "manual" | "none"; "trace_id": string; "current_revision"?: number | null; "target"?: Record<string, string>; };
-export type RequirementReceipt = { "requirement_id": string; "status": "met" | "partial" | "not_possible"; "reason"?: string | null; "inferred"?: Array<string>; };
+export type RequirementReceipt = { "requirement_id": string; "status": "met" | "partial" | "not_possible"; "reason"?: string | null; "inferred"?: Array<string>; "inferred_labels"?: Array<InferredLabel>; };
 export type SubmitTurnBody = { "message": string; "client_event_id": string; "expected_thread_revision": number; };
 export type TurnAccepted = { "turn_id": string; "thread_revision": number; "status": "pending" | "queued" | "planning" | "executing" | "awaiting_approval" | "observing" | "completed" | "failed" | "cancelled" | "superseded"; "replayed"?: boolean; };
 export type TurnCancelBody = { "expected_thread_revision": number; };

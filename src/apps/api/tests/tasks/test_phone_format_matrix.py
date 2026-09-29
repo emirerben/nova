@@ -106,7 +106,7 @@ def test_phone_render_supported_formats_matches_table() -> None:
 def test_worker_rejects_voiceover_while_narration_flag_is_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With the narration rollout flag off, `_run_phone_montage_job` still
+    """With the narration rollout flag off, `_run_phone_voiceover_montage_job` still
     refuses a voiceover on its own -- defense in depth behind the dispatch
     gate's `voiceover_unavailable` refusal."""
 
@@ -116,30 +116,30 @@ def test_worker_rejects_voiceover_while_narration_flag_is_off(
     monkeypatch.setattr(gb.settings, "phone_narration_rendering_enabled", False)
     candidates = {**job.all_candidates, "voiceover_gcs_path": "users/u/voice.m4a"}
     with pytest.raises(ValueError, match="voiceover"):
-        gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+        gb._run_phone_voiceover_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
 
 
 def test_worker_rejects_non_guided_format_directly(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`_run_phone_montage_job`'s docstring says only montage/day_vlog/
-    single_hero without a voiceover ever reach it -- `content_plan_build`'s
+    """`_run_phone_voiceover_montage_job`'s docstring says only montage/day_vlog/
+    single_hero WITH a voiceover ever reach it -- `content_plan_build`'s
     dispatch gate is what's supposed to guarantee that. This pins the
     worker's OWN defense-in-depth check
     (`edit_format not in GUIDED_EDIT_FORMATS`,
     app/tasks/generative_build.py:3908-3910) directly, the same way
     `test_ownership_epoch_mismatch_bails_before_publishing` in
-    test_phone_montage_dispatch.py already calls `_run_phone_montage_job`
+    test_phone_montage_dispatch.py already calls `_run_phone_voiceover_montage_job`
     directly for a different fence. No existing test covered this branch --
     in normal operation the dispatch gate and the worker's own
     `coerce_edit_format(...) in PHONE_RENDER_SUPPORTED_FORMATS` fork
     (app/tasks/generative_build.py:2174-2182) both filter this out before
-    `_run_phone_montage_job` is even called, so this check is presently
+    `_run_phone_voiceover_montage_job` is even called, so this check is presently
     unreachable except by calling the function directly as this test does.
     """
 
     job, snapshot, _session, _bindings, _cloud = _phone_montage_setup(monkeypatch)
     candidates = {**job.all_candidates, "edit_format": "subtitled"}
     with pytest.raises(ValueError, match="No phone renderer is registered"):
-        gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+        gb._run_phone_voiceover_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
 
 
 # --- planner (chat) choosing an unsupported format on a phone account ------

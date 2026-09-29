@@ -1,0 +1,118 @@
+{
+  "fixture_id": "harbor_title_from_brief",
+  "provenance": "authored",
+  "footage": "harbor_run",
+  "description": "No exact title asked for: a title written from the brief counts, and the reply says it came from the creator's own words.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Make a video of my 14k harbour run from Kestrel Point to Old Mill Pier and give it a title.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "title-has-the-run",
+      "kind": "text",
+      "scope": "title",
+      "request_type": "title_described",
+      "checker": "text_contains",
+      "params": {
+        "terms": [
+          "14k"
+        ],
+        "scope": "title"
+      },
+      "source": "Make a video of my 14k harbour run from Kestrel Point to Old Mill Pier and give it a title.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "title-has-the-route",
+      "kind": "text",
+      "scope": "title",
+      "request_type": "creator_facts",
+      "checker": "text_contains",
+      "params": {
+        "terms": [
+          "Kestrel Point",
+          "Old Mill Pier"
+        ],
+        "scope": "title"
+      },
+      "source": "Make a video of my 14k harbour run from Kestrel Point to Old Mill Pier and give it a title.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "receipt-names-the-source",
+      "kind": "text",
+      "scope": "title",
+      "request_type": "title_described",
+      "checker": "reply_states",
+      "params": {
+        "all_of": [
+          "from (what you|your)"
+        ]
+      },
+      "source": "Make a video of my 14k harbour run from Kestrel Point to Old Mill Pier and give it a title.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "H1",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "clip_id": "H2",
+          "start_s": 3.0,
+          "end_s": 5.5
+        },
+        {
+          "clip_id": "H3",
+          "start_s": 5.5,
+          "end_s": 9.0
+        },
+        {
+          "clip_id": "H4",
+          "start_s": 9.0,
+          "end_s": 11.5
+        },
+        {
+          "clip_id": "H5",
+          "start_s": 11.5,
+          "end_s": 14.5
+        },
+        {
+          "clip_id": "H6",
+          "start_s": 14.5,
+          "end_s": 16.5
+        },
+        {
+          "clip_id": "H7",
+          "start_s": 16.5,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "H8",
+          "start_s": 19.5,
+          "end_s": 23.0
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "14k harbour run: Kestrel Point to Old Mill Pier",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 23.0
+    },
+    "reply": "Titled it \"14k harbour run: Kestrel Point to Old Mill Pier\" from what you told me."
+  }
+}

@@ -89,6 +89,22 @@ BrandTail = Literal["none", "standard"]
 BRAND_TAIL_SECONDS: dict[str, float] = {"none": 0.0, "standard": 1.6}
 
 
+def finished_durations(recipe_duration_s: float, brand_tail: str = "none") -> dict[str, float]:
+    """The lengths a finished device render is stored with.
+
+    ``duration_s`` is the FILE: the edit plus the phone-appended outro. The plan and the
+    recipe describe the edit only, so ``edit_duration_s`` is what any plan-vs-render
+    comparison must use and ``brand_tail_s`` says how much of the file is outro: a 28.0s
+    plan is a 29.6s file, not a 1.6s overrun (KRI-210).
+    """
+    tail = BRAND_TAIL_SECONDS[brand_tail]
+    return {
+        "duration_s": recipe_duration_s + tail,
+        "edit_duration_s": recipe_duration_s,
+        "brand_tail_s": tail,
+    }
+
+
 class DeviceExportReservationBody(_DeviceModel):
     identity: DeviceRenderIdentity
     attempt_id: uuid.UUID

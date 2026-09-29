@@ -163,9 +163,11 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
 
 ## One montage plan (KRI-190)
 
-Behind `MONTAGE_UNIFIED_PLAN_ENABLED` (or a `MONTAGE_UNIFIED_PLAN_USER_IDS`
-allowlist entry; comma-separated or JSON, same shape as the brief allowlist); off
-is byte-identical. Code: `app/pipeline/unified_montage.py` (pure planner),
+Always on (KRI-220 removed `MONTAGE_UNIFIED_PLAN_ENABLED` and its user allowlist; it
+had been ON in prod): every non-voiceover phone montage goes through this planner.
+A montage WITH a recorded voiceover keeps its own writer,
+`_run_phone_voiceover_montage_job` (see agents/DECISIONS.md "Two montage writers by
+design"). Code: `app/pipeline/unified_montage.py` (pure planner),
 `_run_phone_unified_montage_job` in `app/tasks/generative_build.py` (worker),
 `_unified_montage_review` in `app/tasks/kria_runtime.py` (reply).
 
@@ -176,7 +178,7 @@ item's default `landscape_fit="fit"` (`phone_plan_unsupported: letterboxed lands
 fit ...`, job 94c4c865). It also 422'd every chat text edit (`unsupported_phone_edit`)
 because it never wrote a `guided_story_execution_plan`.
 
-**What happens with the flag on.** In `_run_generative_job_impl`, a phone job in the
+**What happens.** In `_run_generative_job_impl`, a phone job in the
 montage family (`GUIDED_EDIT_FORMATS`), no recorded voiceover, no `guided_edit`,
 plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
 
@@ -223,8 +225,8 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
 
 **Not covered / known gaps.** The worker plans from the thread's *latest* brief, not
 the approved version (a redelivery before the plan is pinned can pick up a newer
-one; receipts are dropped from the reply when `brief_version` differs). With the
-flag on, a phone montage renders source audio only (no matched music bed, beat-snap
+one; receipts are dropped from the reply when `brief_version` differs). A
+unified phone montage renders source audio only (no matched music bed, beat-snap
 or hero intro). A single clip under 3s fails as "too short to make a montage".
 
 **Snapshot lane.** `EditProposalSnapshot.clip_labels` (omitted when `None`, so
@@ -236,8 +238,8 @@ recipe schema but the guided compiler, like every guided plan, emits positioned
 
 **Receipts.** The worker computes receipts from what it put in the plan
 (`brief_checks.plan_facts_from_unified_montage`: clip ids, labels, inferred labels,
-title, total length, ordering basis, too-short labels) and stores them on
-`unified_montage.requirement_receipts`. When the render is ready the observer's
+title, total length, ordering basis, too-short labels) and stores the judged ones
+(`is_judged`) on `unified_montage.requirement_receipts`. When the render is ready the observer's
 `assistant_review` event is composed from them (`reply_from_receipts`) and carries
 `requirement_receipts`; with the brief off or no record it is the unchanged default
 review.
@@ -245,16 +247,17 @@ review.
 **Planner prompt.** `main_creator` v39 always records route/distance/activity
 `facts` and an `order` requirement when the creator names a sequence.
 
-**Not in this change.** Deleting `compile_phone_montage_plan` and its intro-only
-lane follows once a human has compared the new renders on a device. Cloud
-(non-phone) montage is untouched.
+**Two writers by design (KRI-220).** The old plain writer is not deleted: it is
+narrowed and renamed `compile_phone_voiceover_montage_plan`, and handles ONLY
+montages with a recorded voiceover (voice + optional low music bed, trim-to-footage,
+intro hook), which the unified planner cannot express yet. Cloud (non-phone) montage
+is untouched.
 
 Guards: `tests/pipeline/test_unified_montage.py`,
-`tests/tasks/test_unified_montage_dispatch.py` (the East Run repro, flag-off pins,
-chat edit), `tests/kria/test_unified_montage_receipts.py`,
+`tests/tasks/test_unified_montage_dispatch.py` (the East Run repro, no-flag routing,
+voiceover-lane exclusion, chat edit), `tests/kria/test_unified_montage_receipts.py`,
 `tests/evals/test_main_creator_evals.py::kri190_route_facts_and_order`.
-Rollback: `fly secrets set MONTAGE_UNIFIED_PLAN_ENABLED=false MONTAGE_UNIFIED_PLAN_USER_IDS=
---app nova-video` + restart the worker; in-flight jobs keep their pinned plan.
+There is no flag to roll back; revert the PR. In-flight jobs keep their pinned plan.
 
 ## Render consent
 
