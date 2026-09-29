@@ -903,8 +903,21 @@ def project_editor_draft(
                 for row in payload["timeline_slots"]
             ]
         }
-    if payload.get("mix") is not None:
-        projected["mix"] = payload["mix"].get("music_level")
+    # KRI-219: full-replacement lanes (same wire shape the snapshot/compile read)
+    # so a turn-2 add/patch/remove indexes the turn-1 draft, not the pre-draft list.
+    for key in ("sound_effects", "camera_effects"):
+        if payload.get(key) is not None:
+            projected[key] = copy.deepcopy(payload[key])
+    mix = payload.get("mix")
+    if isinstance(mix, dict):
+        if mix.get("music_level") is not None:
+            projected["mix"] = mix["music_level"]
+        if mix.get("original_level") is not None:
+            projected["original_audio_level"] = mix["original_level"]
+    bed = payload.get("background_music")
+    if isinstance(bed, dict) and isinstance(projected.get("smart_music_treatment"), dict):
+        if bed.get("gain_db") is not None:
+            projected["smart_music_treatment"]["gain_db"] = bed["gain_db"]
     if payload.get("remove_music"):
         projected["music_track_id"] = None
     for key, value in (payload.get("caption_meta") or {}).items():
