@@ -180,6 +180,7 @@ def seed(email: str, *, guided: bool = False) -> dict[str, str]:
         db.add(session)
         db.flush()
         job_id: str | None = None
+        media_state: list[dict] = []
         if guided:
             plan_json, variant, paths, assignments = _guided_fixture(user.id)
             job = Job(
@@ -202,6 +203,21 @@ def seed(email: str, *, guided: bool = False) -> dict[str, str]:
             session.target_variant_id = variant["variant_id"]
             session.target_generation_id = variant["render_generation_id"]
             job_id = str(job.id)
+            # A real attached project mirrors its clips as opaque media entries on
+            # thread.state (paths stay on the PlanItem). Without them runtime v2's
+            # project.inspect reports "needs footage" and never reaches the planner.
+            for i, path in enumerate(paths):
+                mid = f"seed-media-{i + 1}"
+                media_state.append(
+                    {
+                        "media_id": mid,
+                        "kind": "video",
+                        "filename": f"clip-{i + 1}.mp4",
+                        "content_type": "video/mp4",
+                        "size_bytes": 1,
+                        "duration_s": 5.0,
+                    }
+                )
         thread = CreationThread(
             creator_id=user.id,
             runtime_version=2,
@@ -210,7 +226,11 @@ def seed(email: str, *, guided: bool = False) -> dict[str, str]:
             active_creator_agent_session_id=session.id,
             title="Kria local guided story" if guided else "Kria local matcha update",
             revision=1,
-            state={"edit_format": "montage", "media": [], "media_count": 0},
+            state={
+                "edit_format": "montage",
+                "media": media_state,
+                "media_count": len(media_state),
+            },
         )
         db.add(thread)
         db.flush()
