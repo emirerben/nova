@@ -51,14 +51,14 @@ struct WorkspaceModeSwitch: View {
             segment("Editor", isSelected: selected == .editor, action: onEditor, identifier: nil)
         }
         .padding(4).kriaFloatingSurface(Capsule())
-        .padding(.horizontal, 16).padding(.bottom, 6)
+        .padding(.horizontal, 16)
+        .padding(.top, 8) // breathing room below the title row, above the pill
+        .padding(.bottom, 6)
     }
 
     @ViewBuilder
     private func segment(_ title: String, isSelected: Bool, action: @escaping () -> Void, identifier: String?) -> some View {
-        // 36pt segments in a 44pt capsule keep the whole header at 94pt, the height
-        // the editor's layout (and its UI tests) were built around; the hit area
-        // extends back out to 44pt.
+        // 36pt segments in a 44pt capsule; the hit area extends back out to 44pt.
         let label = Text(title)
             .font(KriaFont.body(13).weight(isSelected ? .semibold : .medium))
             .frame(maxWidth: .infinity, minHeight: 36)
@@ -76,9 +76,10 @@ struct WorkspaceModeSwitch: View {
 }
 
 /// The floating top row shared by the chat header and the editor header: a
-/// leading circle button, a centered title capsule, and trailing controls. Same
-/// height and insets in both, so the header doesn't move when switching modes.
-/// Row (44) + switch (44) + 6 below = 94pt, the editor header's original height.
+/// leading circle button, a centered title, and trailing controls. Same height
+/// and insets in both, so the header doesn't move when switching modes.
+/// Plain text, not a pill: only the leading/trailing icons and the Chat/Editor
+/// switch below are actionable, so only those get a floating-capsule surface.
 struct WorkspaceTopRow<Leading: View, Trailing: View>: View {
     let title: String
     var titleIdentifier: String?
@@ -89,18 +90,12 @@ struct WorkspaceTopRow<Leading: View, Trailing: View>: View {
     var body: some View {
         HStack(spacing: 8) {
             leading
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                Text(title)
-                    .font(KriaFont.body(15).weight(.semibold))
-                    .lineLimit(1)
-                    .padding(.horizontal, 16).frame(height: 44)
-                    .kriaFloatingSurface(Capsule())
-                    .accessibilityIdentifier(titleIdentifier ?? "workspace-title")
-                    .accessibilityHidden(titleHidden)
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity)
+            Text(title)
+                .font(KriaFont.body(15).weight(.semibold))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier(titleIdentifier ?? "workspace-title")
+                .accessibilityHidden(titleHidden)
             trailing
         }
         .padding(.horizontal, 16).frame(minHeight: 44)
