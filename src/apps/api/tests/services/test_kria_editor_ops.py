@@ -241,7 +241,7 @@ def test_reviewed_speech_cut_is_a_separate_revision_fenced_draft() -> None:
     ("ops", "message"),
     [
         ([], "No safe draft change"),
-        ([{"op": "set_title", "title": "New title"}] * 9, "at most eight"),
+        ([{"op": "set_title", "title": "New title"}] * 17, "at most 16"),
         ([{"op": "edit_text", "bar_index": True, "text": "New hook"}], "Text changed"),
         (
             [{"op": "patch_text_style", "bar_index": 0, "patch": {"unsupported": 1}}],

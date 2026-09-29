@@ -21,6 +21,7 @@ from typing import Any, ClassVar, Literal
 import structlog
 from pydantic import BaseModel, Field
 
+from app.agents import editor_ops_v2 as _v2
 from app.agents._runtime import Agent, AgentSpec, RefusalError, RunContext, SchemaError
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.agents.music_matcher import _sanitize_text
@@ -36,7 +37,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-25-v47"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-29-v48"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2955,7 +2956,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         return ["intent", "reply"]
 
     def render_prompt(self, input: EditCopilotInput) -> str:  # noqa: A002
-        return load_prompt(
+        prompt = load_prompt(
             "edit_copilot",
             utterance=(
                 _clean_component_data(input.utterance)
@@ -2971,6 +2972,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             custom_effect_catalog=_custom_effect_catalog(),
             max_ops=_MAX_OPS,
         )
+        return _with_v2_fragments(prompt, input.variant_snapshot)
 
     def parse(self, raw_text: str, input: EditCopilotInput) -> EditCopilotOutput:  # noqa: A002
         try:
@@ -3353,6 +3355,18 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         return self.schema_clarification()
 
 
+def _with_v2_fragments(prompt: str, snapshot: object) -> str:
+    """Append lane prompt fragments ONLY for v2 (server-built) snapshots.
+
+    Marker-less snapshots (web drawer) and empty fragments return `prompt`
+    unchanged, byte for byte.
+    """
+    if not _v2.is_v2_snapshot(snapshot):
+        return prompt
+    fragments = _v2.prompt_fragments()
+    return f"{prompt}\n\n{fragments}" if fragments else prompt
+
+
 def _coerce_confidence(value: object) -> float:
     try:
         confidence = float(value)
@@ -3473,6 +3487,10 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
     # allowed_op_families would otherwise default the op to allowed.
     if name == "apply_custom_effect" and not settings.custom_effects_enabled:
         return False
+    if name in _v2.REGISTRY.new_ops and not _v2.is_v2_snapshot(snapshot):
+        # KRI-219 v2 ops exist only for server-built (Kria) snapshots; the web
+        # drawer never sets `editor_ops_version`, so it can never see them.
+        return False
     raw_allowed = snapshot.get("allowed_op_families") if isinstance(snapshot, dict) else None
     if name in _CLIP_LABEL_OPS and not (
         isinstance(snapshot, dict)
@@ -3541,6 +3559,8 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         aliases = {"motion", "creator_blocks", "blocks"}
     elif name in _HISTORY_OPS:
         aliases = {"history", "undo", "repeat"}
+    elif name in _v2.REGISTRY.new_ops:
+        aliases = set(_v2.REGISTRY.families[name])
     else:
         aliases = {"clip", "clips", "timeline"}
     return bool(allowed & aliases)
@@ -3919,6 +3939,10 @@ def _coerce_payload(
     state: _ParseState,
 ) -> dict | None:
     out = dict(payload)
+
+    v2_coerce = _v2.REGISTRY.coerce.get(name)
+    if v2_coerce is not None:
+        return v2_coerce(name, out, snapshot, state)
 
     if name == "remove_visual_media":
         targets = out.get("target_ids")
@@ -5043,7 +5067,8 @@ def editor_operation_contract(snapshot: dict) -> str:
         for name, example in _DIRECTOR_OPERATION_EXAMPLES
         if _family_allowed(name, snapshot)
     ]
-    return "\n".join(examples) if examples else "(no instant draft operations available)"
+    out = "\n".join(examples) if examples else "(no instant draft operations available)"
+    return _with_v2_fragments(out, snapshot)
 
 
 def format_editor_snapshot(snapshot: dict) -> str:
@@ -5060,3 +5085,8 @@ def parse_editor_operation(
 
 def editor_snapshot_list(snapshot: dict, keys: Iterable[str]) -> list:
     return _snapshot_list(snapshot, keys)
+
+
+# KRI-219: merge lane-owned v2 op specs into the parser tables above. Must stay
+# the LAST statement so every table and helper the lanes reference is defined.
+_v2.merge_into_parser(_VALID_OPS, _OP_REQUIRED, _OP_FIELDS)

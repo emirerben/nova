@@ -194,7 +194,7 @@ def adapt_editor_action(
     if not ops:
         return KriaTurnPlan(mode="respond", turn_value="question", response=reply)
     # "Change all fonts" arrives as one op per bar; merge identical per-bar style
-    # patches so a many-bar edit fits the eight-op tool bound instead of failing
+    # patches so a many-bar edit fits the MAX_EDITOR_OPS tool bound instead of failing
     # the whole turn (KRI-203).
     ops = coalesce_text_style_ops(ops)
     if len(ops) > MAX_EDITOR_OPS:

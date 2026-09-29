@@ -1674,9 +1674,9 @@ def test_failure_detail_is_a_bounded_single_line_summary() -> None:
     class KriaEditorOpError(ValueError):
         pass
 
-    detail = _failure_detail(KriaEditorOpError("A draft may contain\nat most eight " + "x" * 400))
+    detail = _failure_detail(KriaEditorOpError("A draft may contain\nat most 16 " + "x" * 400))
 
     assert detail["error_class"] == "KriaEditorOpError"
     assert "\n" not in detail["error_message"]
     assert len(detail["error_message"]) == 200
-    assert detail["error_message"].startswith("A draft may contain at most eight")
+    assert detail["error_message"].startswith("A draft may contain at most 16")

@@ -13,7 +13,8 @@ import copy
 import hashlib
 import json
 import uuid
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -34,6 +35,7 @@ from app.routes.generative_jobs import (
 )
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.services.clip_facts import assignment_facts, facts_for_prompt
+from app.services.editor_limits import MAX_EDITOR_OPS
 
 _IMAGE_SUFFIXES = {".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"}
 _PORTABLE_FAMILIES = {
@@ -717,6 +719,10 @@ def build_editor_snapshot(
             for row in variant.get("speech_cut_candidates") or []
             if isinstance(row, dict) and row.get("status") == "pending"
         ]
+    # KRI-219: server-built snapshots ONLY (the web drawer builds its own in
+    # snapshot.ts and never carries this). Unlocks v2 ops + their prompt
+    # fragments in EditCopilot; see app/agents/editor_ops_v2.
+    snapshot["editor_ops_version"] = 2
     return snapshot
 
 
@@ -808,9 +814,6 @@ def merge_editor_draft(previous: dict[str, Any], current: dict[str, Any]) -> dic
     return merged
 
 
-# One draft bundle holds at most this many operations (`ApplyEditorOpsArguments`
-# enforces the same bound at the tool boundary).
-MAX_EDITOR_OPS = 8
 _MAX_CLIP_LABELS = 80  # fast_cuts allows 80 cuts
 _LABEL_DEFAULTS = {
     "role": "generative_intro",
@@ -974,6 +977,457 @@ def coalesce_text_style_ops(ops: list[dict]) -> list[dict]:
     return merged
 
 
+@dataclass
+class _DraftState:
+    """Mutable working state one compile pass threads through op handlers.
+
+    Handlers mutate this in place (and may REASSIGN text / slots);
+    compile_editor_ops builds the commit request from it at the end.
+    changed names the lanes that reach the payload ("text", "timeline",
+    "captions", "caption_meta", "mix", "music", "title", "camera_effects",
+    "sound_effects", "visual_media").
+    """
+
+    job: Any
+    variant: dict[str, Any]
+    text: list[dict[str, Any]]
+    # `bar_index` always addresses the TEXT BARS list the model was shown
+    # (`build_editor_snapshot`), never the list as it shrinks mid-bundle. The
+    # web drawer resolves the same way (`textSnapAt` + DELETE_BAR by id);
+    # popping in place made "remove bars 1-4" delete bars 1, 3 and 5 and then
+    # reject bar 4 as out of range (2026-09-19 phone chat-edit incident).
+    text_bars: list[dict[str, Any]]
+    captions: list[dict[str, Any]]
+    camera_effects: list[dict[str, Any]]
+    sound_effects: list[dict[str, Any]]
+    slots: list[dict[str, Any]]
+    base_generation: Any
+    removed_text_bars: set[int] = field(default_factory=set)
+    changed: set[str] = field(default_factory=set)
+    changes: list[str] = field(default_factory=list)
+    caption_patch: dict[str, Any] = field(default_factory=dict)
+    mix_level: float | None = None
+    remove_music: bool = False
+    music_track_id: str | None = None
+    title: str | None = None
+    visual_blocks: list[dict[str, Any]] | None = None
+
+    def text_bar(self, index: object) -> dict[str, Any]:
+        row = self.text_bars[_require_index(self.text_bars, index, "Text")]
+        if id(row) in self.removed_text_bars:
+            raise KriaEditorOpError("Text changed before this edit could be drafted")
+        return row
+
+
+OpHandler = Callable[[_DraftState, dict[str, Any]], None]
+
+
+def _op_remove_visual_media(state: _DraftState, op: dict[str, Any]) -> None:
+    targets = op.get("target_ids")
+    if (
+        not isinstance(targets, list)
+        or not targets
+        or len(targets) > 100
+        or any(not isinstance(value, str) or not value for value in targets)
+        or len(set(targets)) != len(targets)
+    ):
+        raise KriaEditorOpError("Visual media removal requires unique existing target IDs")
+    allowed = {row["id"] for row in _removable_visual_media(state.job, state.variant)}
+    current = (
+        state.visual_blocks
+        if state.visual_blocks is not None
+        else _visual_media_rows(state.job, state.variant)
+    )
+    present = {row.get("id") for row in current if isinstance(row, dict)}
+    if not set(targets).issubset(allowed & present):
+        raise KriaEditorOpError("The selected visual media is no longer removable")
+    state.visual_blocks = [row for row in current if row.get("id") not in set(targets)]
+    state.changed.add("visual_media")
+
+
+def _op_edit_text(state: _DraftState, op: dict[str, Any]) -> None:
+    state.text_bar(op.get("bar_index"))["text"] = str(op["text"])
+    state.changed.add("text")
+
+
+def _op_patch_text_style(state: _DraftState, op: dict[str, Any]) -> None:
+    indexes = op.get("bar_indexes")
+    if not isinstance(indexes, list) or not indexes:
+        indexes = [op.get("bar_index")]
+    patch = {
+        key: value
+        for key, value in dict(op.get("patch") or {}).items()
+        if key in _TEXT_STYLE_FIELDS
+    }
+    if not patch:
+        raise KriaEditorOpError("No portable text style fields were supplied")
+    for index in indexes:
+        state.text_bar(index).update(patch)
+    state.changed.add("text")
+
+
+def _op_set_text_timing(state: _DraftState, op: dict[str, Any]) -> None:
+    state.text_bar(op.get("bar_index")).update(
+        {key: op[key] for key in ("start_s", "end_s") if key in op}
+    )
+    state.changed.add("text")
+
+
+def _op_add_text(state: _DraftState, op: dict[str, Any]) -> None:
+    state.text.append(
+        {
+            "id": f"kria-{uuid.uuid4().hex}",
+            "text": str(op["text"]),
+            "start_s": float(op["start_s"]),
+            "end_s": float(op["end_s"]),
+            "role": "generative_intro",
+            "font_family": "Playfair Display",
+            "size_px": 72,
+            "color": "#FFFFFF",
+            "effect": "static",
+            "alignment": "center",
+            "position": "middle",
+        }
+    )
+    state.changed.add("text")
+
+
+def _op_remove_text(state: _DraftState, op: dict[str, Any]) -> None:
+    state.removed_text_bars.add(id(state.text_bar(op.get("bar_index"))))
+    state.text = [row for row in state.text if id(row) not in state.removed_text_bars]
+    state.changed.add("text")
+
+
+def _op_label_each_clip(state: _DraftState, op: dict[str, Any]) -> None:
+    _apply_clip_labels(op, state.text, state.slots, state.removed_text_bars)
+    state.changed.add("text")
+
+
+def _op_patch_text_appearance(state: _DraftState, op: dict[str, Any]) -> None:
+    patch = {
+        key: value
+        for key, value in dict(op.get("patch") or {}).items()
+        if key in _TEXT_APPEARANCE_FIELDS
+    }
+    targets = list(op.get("target_ids") or [])
+    if not patch or not targets:
+        raise KriaEditorOpError("No text appearance change was supplied")
+    if "font_family" in patch and patch["font_family"] not in _ALLOWED_FONTS:
+        raise KriaEditorOpError("That font is not available")
+    live = {row.get("id"): row for row in state.text if isinstance(row.get("id"), str)}
+    for target_id in targets:
+        row = live.get(target_id)
+        if row is None or id(row) in state.removed_text_bars:
+            raise KriaEditorOpError("Text changed before this edit could be drafted")
+        row.update(patch)
+    state.changed.add("text")
+
+
+def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
+    name = str(op.get("op") or "")
+    index = _require_index(state.slots, op.get("slot_index"), "Timeline")
+    row = state.slots[index]
+    if name == "set_clip_duration":
+        row["duration_beats"] = None
+        row["duration_s"] = float(op["duration_s"])
+    elif name == "set_clip_in":
+        row["in_s"] = float(op["in_s"])
+    elif name == "trim_clip_start":
+        amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
+        row["in_s"] = float(row.get("in_s") or 0.0) + amount
+        row["duration_beats"] = None
+        row["duration_s"] = _slot_duration(row) - amount
+    else:
+        row["look_preset"] = op["look_preset"]
+        row["look_adjustments"] = None
+    state.changed.add("timeline")
+
+
+def _op_trim_output_start(state: _DraftState, op: dict[str, Any]) -> None:
+    remaining = float(op["start_s"])
+    if remaining <= 0:
+        raise KriaEditorOpError("The requested output trim has no effect")
+    for row in state.slots:
+        if row.get("removed"):
+            continue
+        duration = _slot_duration(row)
+        if remaining >= duration - 0.1:
+            row["removed"] = True
+            remaining -= duration
+            continue
+        if remaining > 0:
+            row["in_s"] = float(row.get("in_s") or 0.0) + remaining
+            row["duration_beats"] = None
+            row["duration_s"] = duration - remaining
+            remaining = 0
+        break
+    if not any(not row.get("removed") for row in state.slots):
+        raise KriaEditorOpError("The trim would remove the whole video")
+    state.changed.add("timeline")
+
+
+def _op_reorder_clip(state: _DraftState, op: dict[str, Any]) -> None:
+    source = _require_index(state.slots, op.get("from_index"), "Timeline")
+    target = _require_index(state.slots, op.get("to_index"), "Timeline")
+    row = state.slots.pop(source)
+    state.slots.insert(target, row)
+    state.changed.add("timeline")
+
+
+def _op_remove_clip(state: _DraftState, op: dict[str, Any]) -> None:
+    index = _require_index(state.slots, op.get("slot_index"), "Timeline")
+    if sum(not row.get("removed") for row in state.slots) <= 1:
+        raise KriaEditorOpError("The final clip cannot be removed")
+    state.slots[index]["removed"] = True
+    state.changed.add("timeline")
+
+
+def _op_split_clip(state: _DraftState, op: dict[str, Any]) -> None:
+    index = _require_index(state.slots, op.get("slot_index"), "Timeline")
+    row = state.slots[index]
+    duration = _slot_duration(row)
+    split_at = float(op["at_s"])
+    output_start = float(row.get("output_start_s") or 0.0)
+    local = split_at - output_start if split_at > duration else split_at
+    if local < 0.1 or local > duration - 0.1:
+        raise KriaEditorOpError("The split point is outside the clip")
+    left = {**row, "duration_beats": None, "duration_s": local}
+    right = {
+        **row,
+        "slot_id": None,
+        "parent_segment_id": row.get("slot_id"),
+        "in_s": float(row.get("in_s") or 0.0) + local,
+        "duration_beats": None,
+        "duration_s": duration - local,
+    }
+    state.slots[index : index + 1] = [left, right]
+    state.changed.add("timeline")
+
+
+def _op_set_transition(state: _DraftState, op: dict[str, Any]) -> None:
+    active = [index for index, row in enumerate(state.slots) if not row.get("removed")]
+    boundary = _require_index(active[:-1], op.get("boundary_index"), "Transition")
+    row = state.slots[active[boundary]]
+    row["transition_after"] = op["transition"]
+    row["transition_duration_s"] = (
+        None if op["transition"] == "cut" else float(op.get("duration_s") or 0.3)
+    )
+    state.changed.add("timeline")
+
+
+def _op_add_unused_sources(state: _DraftState, op: dict[str, Any]) -> None:
+    selector = op.get("selector") or {}
+    wanted = str(selector.get("media_kind") or "all")
+    paths = list((state.job.all_candidates or {}).get("clip_paths") or [])
+    used = {int(row.get("clip_index")) for row in state.slots if not row.get("removed")}
+    durations = {
+        int(row["clip_index"]): float(row["source_duration_s"])
+        for row in _variant_slots(state.variant, state.job)
+        if row.get("clip_index") is not None and row.get("source_duration_s") is not None
+    }
+    for index, path in enumerate(paths):
+        kind = _path_kind(path)
+        if index in used or (wanted != "all" and wanted != kind):
+            continue
+        state.slots.append(
+            {
+                "slot_id": None,
+                "clip_index": index,
+                "in_s": 0.0,
+                "duration_beats": None,
+                "duration_s": 3.0 if kind == "image" else min(3.0, durations.get(index, 3.0)),
+                "removed": False,
+                "transition_after": "cut",
+                "look_preset": "none",
+            }
+        )
+    state.changed.add("timeline")
+
+
+def _op_set_media_duration(state: _DraftState, op: dict[str, Any]) -> None:
+    name = str(op.get("op") or "")
+    selector = op.get("selector") or {}
+    wanted = str(selector.get("media_kind") or "image")
+    paths = list((state.job.all_candidates or {}).get("clip_paths") or [])
+    selected = [
+        index
+        for index, row in enumerate(state.slots)
+        if not row.get("removed")
+        and int(row.get("clip_index")) < len(paths)
+        and (wanted == "all" or _path_kind(paths[int(row.get("clip_index"))]) == wanted)
+    ]
+    if name == "set_media_duration":
+        for index in selected:
+            state.slots[index]["duration_beats"] = None
+            state.slots[index]["duration_s"] = float(op["duration_s"])
+    elif selected:
+        first = selected[0]
+        selected_rows = [state.slots[index] for index in selected]
+        state.slots = [row for index, row in enumerate(state.slots) if index not in set(selected)]
+        state.slots[first:first] = selected_rows
+    state.changed.add("timeline")
+
+
+def _op_edit_caption(state: _DraftState, op: dict[str, Any]) -> None:
+    index = _require_index(state.captions, op.get("cue_index"), "Caption")
+    state.captions[index]["text"] = str(op["text"])
+    state.changed.add("captions")
+
+
+def _op_replace_caption_text(state: _DraftState, op: dict[str, Any]) -> None:
+    find = str(op["find"])
+    replace = str(op["replace"])
+    replaced = 0
+    for row in state.captions:
+        current = str(row.get("text") or "")
+        updated = current.replace(find, replace)
+        if updated != current:
+            row["text"] = updated
+            replaced += 1
+    if not replaced:
+        raise KriaEditorOpError(f'No captions contain "{find}"')
+    state.changed.add("captions")
+
+
+def _op_set_caption_timing(state: _DraftState, op: dict[str, Any]) -> None:
+    name = str(op.get("op") or "")
+    index = _require_index(state.captions, op.get("cue_index"), "Caption")
+    if name == "set_caption_timing":
+        state.captions[index].update({key: op[key] for key in ("start_s", "end_s") if key in op})
+    else:
+        state.captions[index]["smart_emphasis"] = bool(op["emphasis"])
+        if not op["emphasis"]:
+            state.captions[index]["smart_style"] = None
+    state.changed.add("captions")
+
+
+def _op_set_caption_meta(state: _DraftState, op: dict[str, Any]) -> None:
+    state.caption_patch.update(dict(op.get("patch") or {}))
+    state.changed.add("caption_meta")
+
+
+def _op_set_mix(state: _DraftState, op: dict[str, Any]) -> None:
+    state.mix_level = float(op["music_level"])
+    state.changed.add("mix")
+
+
+def _op_remove_music(state: _DraftState, op: dict[str, Any]) -> None:
+    state.remove_music = True
+    state.changed.add("music")
+
+
+def _op_swap_music(state: _DraftState, op: dict[str, Any]) -> None:
+    state.music_track_id = str(op["track_id"])
+    state.changed.add("music")
+
+
+def _op_set_title(state: _DraftState, op: dict[str, Any]) -> None:
+    state.title = str(op["title"])
+    state.changed.add("title")
+
+
+def _op_add_camera_effect(state: _DraftState, op: dict[str, Any]) -> None:
+    easing = resolve_easing(op.get("easing"))
+    state.camera_effects.append(
+        {
+            "id": f"kria-{uuid.uuid4().hex}",
+            "start_s": float(op["start_s"]),
+            "end_s": float(op["end_s"]),
+            "intensity": float(op.get("intensity", easing_bounds(easing).default_intensity)),
+            "easing": easing,
+            "effect_group_id": op.get("effect_bundle_id"),
+        }
+    )
+    state.changed.add("camera_effects")
+
+
+def _op_patch_camera_effect(state: _DraftState, op: dict[str, Any]) -> None:
+    name = str(op.get("op") or "")
+    index = _require_index(state.camera_effects, op.get("camera_effect_index"), "Camera effect")
+    if name == "remove_camera_effect":
+        state.camera_effects.pop(index)
+    else:
+        patch = {
+            key: value
+            for key, value in dict(op).items()
+            if key in {"start_s", "end_s", "intensity", "easing"}
+        }
+        if "easing" in patch:
+            patch["easing"] = resolve_easing(patch["easing"])
+        if not patch:
+            raise KriaEditorOpError("No portable camera effect field was supplied")
+        state.camera_effects[index].update(patch)
+    state.changed.add("camera_effects")
+
+
+def _op_patch_sfx(state: _DraftState, op: dict[str, Any]) -> None:
+    name = str(op.get("op") or "")
+    index = _require_index(state.sound_effects, op.get("sfx_index"), "Sound effect")
+    if name == "remove_sfx":
+        state.sound_effects.pop(index)
+    else:
+        patch = {key: value for key, value in dict(op).items() if key in {"at_s", "gain"}}
+        if not patch:
+            raise KriaEditorOpError("No portable sound effect field was supplied")
+        state.sound_effects[index].update(patch)
+    state.changed.add("sound_effects")
+
+
+_OP_HANDLERS: dict[str, OpHandler] = {
+    "remove_visual_media": _op_remove_visual_media,
+    "edit_text": _op_edit_text,
+    "patch_text_style": _op_patch_text_style,
+    "set_text_timing": _op_set_text_timing,
+    "add_text": _op_add_text,
+    "remove_text": _op_remove_text,
+    "label_each_clip": _op_label_each_clip,
+    "patch_text_appearance": _op_patch_text_appearance,
+    "set_clip_duration": _op_set_clip_duration,
+    "set_clip_in": _op_set_clip_duration,
+    "trim_clip_start": _op_set_clip_duration,
+    "set_look_preset": _op_set_clip_duration,
+    "trim_output_start": _op_trim_output_start,
+    "reorder_clip": _op_reorder_clip,
+    "remove_clip": _op_remove_clip,
+    "split_clip": _op_split_clip,
+    "set_transition": _op_set_transition,
+    "add_unused_sources": _op_add_unused_sources,
+    "set_media_duration": _op_set_media_duration,
+    "stack_images": _op_set_media_duration,
+    "edit_caption": _op_edit_caption,
+    "replace_caption_text": _op_replace_caption_text,
+    "set_caption_timing": _op_set_caption_timing,
+    "set_caption_emphasis": _op_set_caption_timing,
+    "set_caption_meta": _op_set_caption_meta,
+    "set_mix": _op_set_mix,
+    "remove_music": _op_remove_music,
+    "swap_music": _op_swap_music,
+    "set_title": _op_set_title,
+    "add_camera_effect": _op_add_camera_effect,
+    "patch_camera_effect": _op_patch_camera_effect,
+    "remove_camera_effect": _op_patch_camera_effect,
+    "patch_sfx": _op_patch_sfx,
+    "remove_sfx": _op_patch_sfx,
+}
+
+
+def register_handler(name: str, fn: OpHandler, *, replace: bool = False) -> None:
+    """Register a compile handler for op `name` (lane modules call this).
+
+    Raises on a duplicate name unless `replace` is true, so two lanes can
+    never silently shadow each other.
+    """
+    if name in _OP_HANDLERS and not replace:
+        raise ValueError(f"editor op handler already registered: {name}")
+    _OP_HANDLERS[name] = fn
+
+
+def _load_lane_handlers() -> None:
+    from app.agents.editor_ops_v2 import register_all_handlers  # noqa: PLC0415
+
+    register_all_handlers()
+
+
 def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> CompiledEditorDraft:
     """Compile one all-or-nothing portable operation bundle.
 
@@ -982,11 +1436,12 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
     bounds, and bundle effects against the authoritative in-memory variant.
     """
 
+    _load_lane_handlers()
     if not ops:
         raise KriaEditorOpError("No safe draft change was produced")
     ops = coalesce_text_style_ops(ops)
     if len(ops) > MAX_EDITOR_OPS:
-        raise KriaEditorOpError("A draft may contain at most eight editor operations")
+        raise KriaEditorOpError(f"A draft may contain at most {MAX_EDITOR_OPS} editor operations")
     if any(op.get("op") == "apply_speech_cut_candidate" for op in ops):
         if len(ops) != 1:
             raise KriaEditorOpError("A reviewed speech cut must be rendered on its own")
@@ -1017,367 +1472,62 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
     text = copy.deepcopy(
         [row for row in variant.get("text_elements") or [] if isinstance(row, dict)]
     )
-    # `bar_index` always addresses the TEXT BARS list the model was shown
-    # (`build_editor_snapshot`), never the list as it shrinks mid-bundle. The
-    # web drawer resolves the same way (`textSnapAt` + DELETE_BAR by id);
-    # popping in place made "remove bars 1-4" delete bars 1, 3 and 5 and then
-    # reject bar 4 as out of range (2026-09-19 phone chat-edit incident).
-    text_bars = list(text)
-    removed_text_bars: set[int] = set()
-
-    def _text_bar(index: object) -> dict[str, Any]:
-        row = text_bars[_require_index(text_bars, index, "Text")]
-        if id(row) in removed_text_bars:
-            raise KriaEditorOpError("Text changed before this edit could be drafted")
-        return row
-
-    captions = copy.deepcopy(
-        [row for row in variant.get("caption_cues") or [] if isinstance(row, dict)]
+    state = _DraftState(
+        job=job,
+        variant=variant,
+        text=text,
+        text_bars=list(text),
+        captions=copy.deepcopy(
+            [row for row in variant.get("caption_cues") or [] if isinstance(row, dict)]
+        ),
+        camera_effects=copy.deepcopy(
+            [row for row in variant.get("camera_effects") or [] if isinstance(row, dict)]
+        ),
+        sound_effects=copy.deepcopy(
+            [row for row in variant.get("sound_effects") or [] if isinstance(row, dict)]
+        ),
+        slots=_variant_slots(variant, job),
+        base_generation=variant_render_baseline(variant),
     )
-    camera_effects = copy.deepcopy(
-        [row for row in variant.get("camera_effects") or [] if isinstance(row, dict)]
-    )
-    sound_effects = copy.deepcopy(
-        [row for row in variant.get("sound_effects") or [] if isinstance(row, dict)]
-    )
-    slots = _variant_slots(variant, job)
-    base_generation = variant_render_baseline(variant)
-    changed: set[str] = set()
-    changes: list[str] = []
-    caption_patch: dict[str, Any] = {}
-    mix_level: float | None = None
-    remove_music = False
-    music_track_id: str | None = None
-    title: str | None = None
-    visual_blocks: list[dict[str, Any]] | None = None
 
     for op in ops:
         name = str(op.get("op") or "")
-        if name == "remove_visual_media":
-            targets = op.get("target_ids")
-            if (
-                not isinstance(targets, list)
-                or not targets
-                or len(targets) > 100
-                or any(not isinstance(value, str) or not value for value in targets)
-                or len(set(targets)) != len(targets)
-            ):
-                raise KriaEditorOpError("Visual media removal requires unique existing target IDs")
-            allowed = {row["id"] for row in _removable_visual_media(job, variant)}
-            current = (
-                visual_blocks if visual_blocks is not None else _visual_media_rows(job, variant)
-            )
-            present = {row.get("id") for row in current if isinstance(row, dict)}
-            if not set(targets).issubset(allowed & present):
-                raise KriaEditorOpError("The selected visual media is no longer removable")
-            visual_blocks = [row for row in current if row.get("id") not in set(targets)]
-            changed.add("visual_media")
-        elif name == "edit_text":
-            _text_bar(op.get("bar_index"))["text"] = str(op["text"])
-            changed.add("text")
-        elif name == "patch_text_style":
-            indexes = op.get("bar_indexes")
-            if not isinstance(indexes, list) or not indexes:
-                indexes = [op.get("bar_index")]
-            patch = {
-                key: value
-                for key, value in dict(op.get("patch") or {}).items()
-                if key in _TEXT_STYLE_FIELDS
-            }
-            if not patch:
-                raise KriaEditorOpError("No portable text style fields were supplied")
-            for index in indexes:
-                _text_bar(index).update(patch)
-            changed.add("text")
-        elif name == "set_text_timing":
-            _text_bar(op.get("bar_index")).update(
-                {key: op[key] for key in ("start_s", "end_s") if key in op}
-            )
-            changed.add("text")
-        elif name == "add_text":
-            text.append(
-                {
-                    "id": f"kria-{uuid.uuid4().hex}",
-                    "text": str(op["text"]),
-                    "start_s": float(op["start_s"]),
-                    "end_s": float(op["end_s"]),
-                    "role": "generative_intro",
-                    "font_family": "Playfair Display",
-                    "size_px": 72,
-                    "color": "#FFFFFF",
-                    "effect": "static",
-                    "alignment": "center",
-                    "position": "middle",
-                }
-            )
-            changed.add("text")
-        elif name == "remove_text":
-            removed_text_bars.add(id(_text_bar(op.get("bar_index"))))
-            text = [row for row in text if id(row) not in removed_text_bars]
-            changed.add("text")
-        elif name == "label_each_clip":
-            _apply_clip_labels(op, text, slots, removed_text_bars)
-            changed.add("text")
-        elif name == "patch_text_appearance":
-            patch = {
-                key: value
-                for key, value in dict(op.get("patch") or {}).items()
-                if key in _TEXT_APPEARANCE_FIELDS
-            }
-            targets = list(op.get("target_ids") or [])
-            if not patch or not targets:
-                raise KriaEditorOpError("No text appearance change was supplied")
-            if "font_family" in patch and patch["font_family"] not in _ALLOWED_FONTS:
-                raise KriaEditorOpError("That font is not available")
-            live = {row.get("id"): row for row in text if isinstance(row.get("id"), str)}
-            for target_id in targets:
-                row = live.get(target_id)
-                if row is None or id(row) in removed_text_bars:
-                    raise KriaEditorOpError("Text changed before this edit could be drafted")
-                row.update(patch)
-            changed.add("text")
-        elif name in {"set_clip_duration", "set_clip_in", "trim_clip_start", "set_look_preset"}:
-            index = _require_index(slots, op.get("slot_index"), "Timeline")
-            row = slots[index]
-            if name == "set_clip_duration":
-                row["duration_beats"] = None
-                row["duration_s"] = float(op["duration_s"])
-            elif name == "set_clip_in":
-                row["in_s"] = float(op["in_s"])
-            elif name == "trim_clip_start":
-                amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
-                row["in_s"] = float(row.get("in_s") or 0.0) + amount
-                row["duration_beats"] = None
-                row["duration_s"] = _slot_duration(row) - amount
-            else:
-                row["look_preset"] = op["look_preset"]
-                row["look_adjustments"] = None
-            changed.add("timeline")
-        elif name == "trim_output_start":
-            remaining = float(op["start_s"])
-            if remaining <= 0:
-                raise KriaEditorOpError("The requested output trim has no effect")
-            for row in slots:
-                if row.get("removed"):
-                    continue
-                duration = _slot_duration(row)
-                if remaining >= duration - 0.1:
-                    row["removed"] = True
-                    remaining -= duration
-                    continue
-                if remaining > 0:
-                    row["in_s"] = float(row.get("in_s") or 0.0) + remaining
-                    row["duration_beats"] = None
-                    row["duration_s"] = duration - remaining
-                    remaining = 0
-                break
-            if not any(not row.get("removed") for row in slots):
-                raise KriaEditorOpError("The trim would remove the whole video")
-            changed.add("timeline")
-        elif name == "reorder_clip":
-            source = _require_index(slots, op.get("from_index"), "Timeline")
-            target = _require_index(slots, op.get("to_index"), "Timeline")
-            row = slots.pop(source)
-            slots.insert(target, row)
-            changed.add("timeline")
-        elif name == "remove_clip":
-            index = _require_index(slots, op.get("slot_index"), "Timeline")
-            if sum(not row.get("removed") for row in slots) <= 1:
-                raise KriaEditorOpError("The final clip cannot be removed")
-            slots[index]["removed"] = True
-            changed.add("timeline")
-        elif name == "split_clip":
-            index = _require_index(slots, op.get("slot_index"), "Timeline")
-            row = slots[index]
-            duration = _slot_duration(row)
-            split_at = float(op["at_s"])
-            output_start = float(row.get("output_start_s") or 0.0)
-            local = split_at - output_start if split_at > duration else split_at
-            if local < 0.1 or local > duration - 0.1:
-                raise KriaEditorOpError("The split point is outside the clip")
-            left = {**row, "duration_beats": None, "duration_s": local}
-            right = {
-                **row,
-                "slot_id": None,
-                "parent_segment_id": row.get("slot_id"),
-                "in_s": float(row.get("in_s") or 0.0) + local,
-                "duration_beats": None,
-                "duration_s": duration - local,
-            }
-            slots[index : index + 1] = [left, right]
-            changed.add("timeline")
-        elif name == "set_transition":
-            active = [index for index, row in enumerate(slots) if not row.get("removed")]
-            boundary = _require_index(active[:-1], op.get("boundary_index"), "Transition")
-            row = slots[active[boundary]]
-            row["transition_after"] = op["transition"]
-            row["transition_duration_s"] = (
-                None if op["transition"] == "cut" else float(op.get("duration_s") or 0.3)
-            )
-            changed.add("timeline")
-        elif name == "add_unused_sources":
-            selector = op.get("selector") or {}
-            wanted = str(selector.get("media_kind") or "all")
-            paths = list((job.all_candidates or {}).get("clip_paths") or [])
-            used = {int(row.get("clip_index")) for row in slots if not row.get("removed")}
-            durations = {
-                int(row["clip_index"]): float(row["source_duration_s"])
-                for row in _variant_slots(variant, job)
-                if row.get("clip_index") is not None and row.get("source_duration_s") is not None
-            }
-            for index, path in enumerate(paths):
-                kind = _path_kind(path)
-                if index in used or (wanted != "all" and wanted != kind):
-                    continue
-                slots.append(
-                    {
-                        "slot_id": None,
-                        "clip_index": index,
-                        "in_s": 0.0,
-                        "duration_beats": None,
-                        "duration_s": 3.0
-                        if kind == "image"
-                        else min(3.0, durations.get(index, 3.0)),
-                        "removed": False,
-                        "transition_after": "cut",
-                        "look_preset": "none",
-                    }
-                )
-            changed.add("timeline")
-        elif name in {"set_media_duration", "stack_images"}:
-            selector = op.get("selector") or {}
-            wanted = str(selector.get("media_kind") or "image")
-            paths = list((job.all_candidates or {}).get("clip_paths") or [])
-            selected = [
-                index
-                for index, row in enumerate(slots)
-                if not row.get("removed")
-                and int(row.get("clip_index")) < len(paths)
-                and (wanted == "all" or _path_kind(paths[int(row.get("clip_index"))]) == wanted)
-            ]
-            if name == "set_media_duration":
-                for index in selected:
-                    slots[index]["duration_beats"] = None
-                    slots[index]["duration_s"] = float(op["duration_s"])
-            elif selected:
-                first = selected[0]
-                selected_rows = [slots[index] for index in selected]
-                slots = [row for index, row in enumerate(slots) if index not in set(selected)]
-                slots[first:first] = selected_rows
-            changed.add("timeline")
-        elif name == "edit_caption":
-            index = _require_index(captions, op.get("cue_index"), "Caption")
-            captions[index]["text"] = str(op["text"])
-            changed.add("captions")
-        elif name == "replace_caption_text":
-            find = str(op["find"])
-            replace = str(op["replace"])
-            replaced = 0
-            for row in captions:
-                current = str(row.get("text") or "")
-                updated = current.replace(find, replace)
-                if updated != current:
-                    row["text"] = updated
-                    replaced += 1
-            if not replaced:
-                raise KriaEditorOpError(f'No captions contain "{find}"')
-            changed.add("captions")
-        elif name in {"set_caption_timing", "set_caption_emphasis"}:
-            index = _require_index(captions, op.get("cue_index"), "Caption")
-            if name == "set_caption_timing":
-                captions[index].update({key: op[key] for key in ("start_s", "end_s") if key in op})
-            else:
-                captions[index]["smart_emphasis"] = bool(op["emphasis"])
-                if not op["emphasis"]:
-                    captions[index]["smart_style"] = None
-            changed.add("captions")
-        elif name == "set_caption_meta":
-            caption_patch.update(dict(op.get("patch") or {}))
-            changed.add("caption_meta")
-        elif name == "set_mix":
-            mix_level = float(op["music_level"])
-            changed.add("mix")
-        elif name == "remove_music":
-            remove_music = True
-            changed.add("music")
-        elif name == "swap_music":
-            music_track_id = str(op["track_id"])
-            changed.add("music")
-        elif name == "set_title":
-            title = str(op["title"])
-            changed.add("title")
-        elif name == "add_camera_effect":
-            easing = resolve_easing(op.get("easing"))
-            camera_effects.append(
-                {
-                    "id": f"kria-{uuid.uuid4().hex}",
-                    "start_s": float(op["start_s"]),
-                    "end_s": float(op["end_s"]),
-                    "intensity": float(
-                        op.get("intensity", easing_bounds(easing).default_intensity)
-                    ),
-                    "easing": easing,
-                    "effect_group_id": op.get("effect_bundle_id"),
-                }
-            )
-            changed.add("camera_effects")
-        elif name in {"patch_camera_effect", "remove_camera_effect"}:
-            index = _require_index(camera_effects, op.get("camera_effect_index"), "Camera effect")
-            if name == "remove_camera_effect":
-                camera_effects.pop(index)
-            else:
-                patch = {
-                    key: value
-                    for key, value in dict(op).items()
-                    if key in {"start_s", "end_s", "intensity", "easing"}
-                }
-                if "easing" in patch:
-                    patch["easing"] = resolve_easing(patch["easing"])
-                if not patch:
-                    raise KriaEditorOpError("No portable camera effect field was supplied")
-                camera_effects[index].update(patch)
-            changed.add("camera_effects")
-        elif name in {"patch_sfx", "remove_sfx"}:
-            index = _require_index(sound_effects, op.get("sfx_index"), "Sound effect")
-            if name == "remove_sfx":
-                sound_effects.pop(index)
-            else:
-                patch = {key: value for key, value in dict(op).items() if key in {"at_s", "gain"}}
-                if not patch:
-                    raise KriaEditorOpError("No portable sound effect field was supplied")
-                sound_effects[index].update(patch)
-            changed.add("sound_effects")
-        else:
+        handler = _OP_HANDLERS.get(name)
+        if handler is None:
             raise KriaEditorOpError(f"{name or 'Unknown operation'} is not portable to Kria yet")
-        changes.append(_summary(op))
+        handler(state, op)
+        state.changes.append(_summary(op))
 
+    changed = state.changed
     guided = _guided_v2_revision(job, variant)
     request = EditorCommitRequest(
         guided_revision_number=int(guided["revision_number"]) if guided is not None else None,
-        visual_blocks=visual_blocks,
-        base_generation=base_generation,
-        text_elements=text if "text" in changed else None,
-        caption_cues=captions if "captions" in changed else None,
+        visual_blocks=state.visual_blocks,
+        base_generation=state.base_generation,
+        text_elements=state.text if "text" in changed else None,
+        caption_cues=state.captions if "captions" in changed else None,
         caption_meta=(
-            EditorCommitCaptionMeta(**caption_patch) if "caption_meta" in changed else None
+            EditorCommitCaptionMeta(**state.caption_patch) if "caption_meta" in changed else None
         ),
-        timeline_slots=_timeline_models(slots) if "timeline" in changed else None,
-        mix=EditorCommitMix(music_level=mix_level) if "mix" in changed else None,
-        music_track_id=music_track_id,
-        remove_music=remove_music,
-        title=title,
-        camera_effects=camera_effects if "camera_effects" in changed else None,
-        sound_effects=sound_effects if "sound_effects" in changed else None,
+        timeline_slots=_timeline_models(state.slots) if "timeline" in changed else None,
+        mix=EditorCommitMix(music_level=state.mix_level) if "mix" in changed else None,
+        music_track_id=state.music_track_id,
+        remove_music=state.remove_music,
+        title=state.title,
+        camera_effects=state.camera_effects if "camera_effects" in changed else None,
+        sound_effects=state.sound_effects if "sound_effects" in changed else None,
     )
-    return CompiledEditorDraft(payload=request, changes=list(dict.fromkeys(changes))[:3])
+    return CompiledEditorDraft(payload=request, changes=list(dict.fromkeys(state.changes))[:3])
 
 
 __all__ = [
     "MAX_EDITOR_OPS",
+    "OpHandler",
     "CompiledEditorDraft",
     "KriaEditorOpError",
     "build_editor_snapshot",
     "clip_facts_by_media_id",
     "coalesce_text_style_ops",
     "compile_editor_ops",
+    "register_handler",
 ]

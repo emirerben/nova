@@ -427,7 +427,7 @@ def test_unknown_font_is_rejected_by_the_appearance_lane(monkeypatch) -> None:
 
 
 def test_per_bar_font_ops_no_longer_exceed_the_bundle_cap() -> None:
-    """The exact 2026-09-25 failure: thirteen patch_text_style ops -> 'at most eight'."""
+    """The exact 2026-09-25 failure: 13 patch_text_style ops -> 'at most eight'"""
     job, variant = _thirteen_bars()
     ops = [
         {"op": "patch_text_style", "bar_index": i, "patch": {"font_family": "Montserrat"}}
@@ -512,8 +512,9 @@ def test_planner_merges_per_bar_font_ops_so_the_tool_bound_is_not_hit() -> None:
 
 def test_planner_answers_an_oversized_bundle_instead_of_failing_the_turn() -> None:
     from app.kria.planner import adapt_editor_action
+    from app.services.editor_limits import MAX_EDITOR_OPS
 
-    ops = [{"op": "remove_text", "bar_index": i} for i in range(9)]
+    ops = [{"op": "remove_text", "bar_index": i} for i in range(MAX_EDITOR_OPS + 1)]
     plan = adapt_editor_action(reply="Removed them.", ops=ops)
 
     assert plan.mode == "respond"
