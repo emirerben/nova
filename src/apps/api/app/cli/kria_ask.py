@@ -429,6 +429,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("ask", nargs="?", help="what the creator would type")
     parser.add_argument("--thread", required=True, type=uuid.UUID, help="local thread id")
     parser.add_argument("--commit", action="store_true", help="run a REAL turn (writes)")
+    parser.add_argument(
+        "--yes-storage",
+        action="store_true",
+        help="with --commit: acknowledge that a non-local STORAGE_PROVIDER may be written",
+    )
     parser.add_argument("--battery", type=Path, help="YAML of {ask, expect_ops, expect_error?}")
     parser.add_argument(
         "--record", metavar="NAME", help="write tests/fixtures/kria_turns/NAME.json"
@@ -450,6 +455,27 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
+_LOCAL_REDIS_HOSTS = {"localhost", "127.0.0.1", "::1", "redis"}
+
+
+def require_safe_commit_environment(settings: Any, *, yes_storage: bool) -> None:
+    """--commit writes: the DB is guarded elsewhere; also fence Redis + object storage."""
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    host = urlparse(str(settings.redis_url or "")).hostname
+    if host not in _LOCAL_REDIS_HOSTS:
+        raise SystemExit(f"Refusing --commit against non-local REDIS_URL host {host!r}")
+    provider = str(settings.storage_provider or "").lower()
+    if provider != "local":
+        print(
+            f"WARNING: STORAGE_PROVIDER={provider!r} bucket={settings.storage_bucket!r}: "
+            "a real turn may write objects there.",
+            file=sys.stderr,
+        )
+        if not yes_storage:
+            raise SystemExit("Refusing --commit on non-local storage without --yes-storage")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     from app.cli.kria_dev import require_local_database  # noqa: PLC0415
@@ -468,6 +494,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if all(v.passed for v in verdicts) else 1
 
     if args.commit:
+        require_safe_commit_environment(settings, yes_storage=args.yes_storage)
         print(json.dumps(asyncio.run(commit_turn(args.thread, args.ask)), indent=2, default=str))
         return 0
 

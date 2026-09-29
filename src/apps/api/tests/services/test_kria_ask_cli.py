@@ -227,3 +227,42 @@ def test_seed_guided_fixture_is_guided_native_with_repeated_places(monkeypatch) 
     assert "music" not in snapshot["allowed_op_families"]
     assert any("added when the creator posts" in n for n in snapshot["audio_notes"])
     assert any("footage's own sound" in n for n in snapshot["audio_notes"])
+
+
+def _commit_env(monkeypatch, *, redis: str, provider: str) -> None:
+    monkeypatch.setattr(
+        "app.config.settings.database_url", "postgresql://u:p@localhost:5432/nova_dev"
+    )
+    monkeypatch.setattr("app.config.settings.redis_url", redis)
+    monkeypatch.setattr("app.config.settings.storage_provider", provider)
+    monkeypatch.setattr("app.config.settings.storage_bucket", "some-bucket")
+
+
+def test_commit_refuses_non_local_redis(monkeypatch) -> None:
+    _commit_env(monkeypatch, redis="redis://prod-redis.example.com:6379", provider="local")
+    with pytest.raises(SystemExit, match="REDIS_URL"):
+        kria_ask.main(["--thread", THREAD, "--commit", "hello"])
+
+
+def test_commit_needs_yes_storage_for_non_local_storage(monkeypatch) -> None:
+    _commit_env(monkeypatch, redis="redis://localhost:6379", provider="gcs")
+    with pytest.raises(SystemExit, match="--yes-storage"):
+        kria_ask.main(["--thread", THREAD, "--commit", "hello"])
+
+
+def test_commit_proceeds_with_yes_storage_and_dry_run_is_unrestricted(monkeypatch) -> None:
+    _commit_env(monkeypatch, redis="redis://localhost:6379", provider="gcs")
+
+    async def fake_commit(_thread, _ask):
+        return {"ok": True}
+
+    monkeypatch.setattr(kria_ask, "commit_turn", fake_commit)
+    assert kria_ask.main(["--thread", THREAD, "--commit", "--yes-storage", "hello"]) == 0
+    # Dry-run is read-only: a prod-ish redis/storage does not block it.
+    _commit_env(monkeypatch, redis="redis://prod-redis.example.com:6379", provider="gcs")
+
+    async def fake_dry(_thread, _turns, _ask):
+        return kria_ask.AskResult(ask="hello")
+
+    monkeypatch.setattr(kria_ask, "_dry", fake_dry)
+    assert kria_ask.main(["--thread", THREAD, "hello"]) == 0
