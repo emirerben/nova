@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.3.0] - 2026-09-29
+
+### Changed
+- feat(kria): route-direction, label and title receipts, narrated float-noise snap (KRI-208/209/210) (#1254) <!-- release-pr: 1254 -->
+
 ## [0.77.2.0] - 2026-09-28
 
 ### Changed
