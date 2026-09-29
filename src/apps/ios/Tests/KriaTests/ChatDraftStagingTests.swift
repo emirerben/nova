@@ -27,16 +27,20 @@ final class ChatDraftStagingTests: XCTestCase {
         ]
     }
 
+    /// `.flatOnly`: first chat edit on a non-editor head (no nested `sections`).
+    /// `.staleSections`: `sections` present but holding OLD lane values.
+    enum Shape { case nested, flatOnly, staleSections }
+
     /// Chat draft in the server's real shape: flat commit-shaped keys for the
     /// lanes chat touched + the nested `sections` overlaid with the same state.
-    private static func chatPayload(base: String = "g1", textOnly: Bool = false) -> [String: JSONValue] {
+    private static func chatPayload(base: String = "g1", textOnly: Bool = false, shape: Shape = .nested) -> [String: JSONValue] {
         func wire(_ id: String, _ index: Double, _ duration: Double, removed: Bool = false) -> JSONValue {
             .object(["slot_id": .string(id), "clip_index": .number(index), "in_s": .number(0), "duration_s": .number(duration),
                      "removed": .bool(removed), "look_preset": .string("none"), "transition_after": .string("cut")])
         }
         let slots: [JSONValue] = [wire("s3", 2, 2), wire("s1", 0, 1.5), wire("s2", 1, 2, removed: true)]
-        let text: JSONValue = .array([.object(["id": .string("t1"), "text": .string("changed"), "start_s": .number(0), "end_s": .number(2),
-                                               "role": .string("generative_intro"), "x_frac": .number(0.5), "y_frac": .number(0.2),
+        let text: JSONValue = .array([.object(["id": .string("t1"), "text": .string("changed"), "start_s": .number(0), "end_s": .number(3600),
+                                               "role": .string("generative_intro"), "effect": .string("karaoke-line"), "x_frac": .number(0.5), "y_frac": .number(0.2),
                                                "color": .null, "glow_color": .null])])
         let mix: JSONValue = .object(["music_level": .number(0.3)])
         var payload: [String: JSONValue] = [
@@ -45,21 +49,31 @@ final class ChatDraftStagingTests: XCTestCase {
                 "text_elements": text,
             ]),
         ]
+        if shape == .flatOnly {
+            payload["sections"] = nil
+            payload["copilot_receipt_ids"] = .array([]); payload["retry_guided_revision"] = .bool(false)
+            payload["guided_revision_number"] = .number(2)
+        }
         if !textOnly {
             payload["timeline_slots"] = .array(slots); payload["mix"] = mix; payload["remove_music"] = .bool(true)
             payload["sections"] = .object([
                 "timeline_slots": .array(slots), "text_elements": text, "mix": mix, "music_track_id": .null,
                 "music_window": .object(["start_s": .number(1), "alignment": .string("preserve_cuts")]),
             ])
+            if shape == .flatOnly { payload["sections"] = nil }
+            if shape == .staleSections {
+                payload["sections"] = .object(["text_elements": .array([.object(["id": .string("t1"), "text": .string("OLD")])]),
+                                               "mix": .object(["music_level": .number(0.9)])])
+            }
         }
         return payload
     }
 
-    private static func chatSnapshot(base: String = "g1", revision: Int = 3, textOnly: Bool = false) -> DraftSnapshot {
+    private static func chatSnapshot(base: String = "g1", revision: Int = 3, textOnly: Bool = false, shape: Shape = .nested) -> DraftSnapshot {
         DraftSnapshot(draftID: "d\(revision)", itemID: "item", variantKey: "initial", draftRevision: revision,
             snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: base,
             snapshot: ["kind": .string("editor"), "schema_version": .number(2), "edit_format": .string("montage"),
-                       "editor_payload": .object(chatPayload(base: base, textOnly: textOnly))], canUndo: true, createdAt: .now)
+                       "editor_payload": .object(chatPayload(base: base, textOnly: textOnly, shape: shape))], canUndo: true, createdAt: .now)
     }
 
     private static func bootstrapSnapshot() -> DraftSnapshot {
@@ -170,6 +184,38 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertNotEqual(session.saveState, .conflict)
         XCTAssertEqual(session.dirtySections, [.timeline, .text])
         XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, local)
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+    }
+
+    func testFlatOnlyAndStaleSectionsDraftsStageLikeNestedOnes() async throws {
+        for shape in [Shape.flatOnly, .staleSections] {
+            let (session, fake) = await loaded(Self.chatSnapshot(shape: shape))
+            XCTAssertEqual(session.dirtySections, [.timeline, .text, .mix, .music], "\(shape)")
+            XCTAssertEqual(session.document.clips.compactMap(\.id), ["s3", "s1"])
+            XCTAssertEqual(session.document.clips.last?.durationS, 1.5)
+            XCTAssertEqual(session.document.tombstones.compactMap(\.id), ["s2"])
+            XCTAssertEqual(session.document.textElements.first?.text, "changed")
+            XCTAssertEqual(session.document.textElements.first?.endS, 3600)
+            XCTAssertEqual(session.document.mix["music_level"], .number(0.3))
+            XCTAssertNil(session.document.music)
+            XCTAssertEqual(session.timelineClips.count, 2)
+            XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.raw["source_duration_s"], .number(6))
+            await session.save()
+            XCTAssertNotNil(fake.lastRequest?.textElements)
+            XCTAssertTrue(fake.lastRequest?.removeMusic ?? false)
+            let (other, _) = await loaded(Self.chatSnapshot(shape: shape))
+            other.undo()
+            XCTAssertFalse(other.hasUnsavedChanges)
+        }
+    }
+
+    func testFlatOnlyStaleGenerationIgnoredAndArrivalAfterOpenStages() async throws {
+        let (stale, _) = await loaded(Self.chatSnapshot(base: "g0", shape: .flatOnly))
+        XCTAssertFalse(stale.hasUnsavedChanges)
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        fake.draftSnapshot = Self.chatSnapshot(shape: .flatOnly)
+        await session.synchronizePromptRevision()
+        XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
     }
 }

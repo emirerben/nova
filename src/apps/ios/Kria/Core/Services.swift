@@ -1746,8 +1746,12 @@ extension DraftSnapshot {
         if let appliedRevision, draftRevision <= appliedRevision { return nil }
         guard let draftPayload = Self.object(snapshot["editor_payload"]),
               let draftBase = draftPayload["base_generation"]?.stringValue, !draftBase.isEmpty,
-              draftBase == variant["render_generation_id"]?.stringValue,
-              let draftSections = Self.object(draftPayload["sections"]) else { return nil }
+              draftBase == variant["render_generation_id"]?.stringValue else { return nil }
+        // The flat keys are the complete compiled lane values; `sections` may be
+        // absent (first chat edit on a non-editor head) or stale for a lane, so
+        // the flat value wins and `sections` only fills lanes it does not carry.
+        let draftSections = Self.object(draftPayload["sections"]) ?? [:]
+        func draftValue(_ key: String) -> JSONValue? { draftPayload[key] ?? draftSections[key] }
         var payload = Self.object(base["editor_payload"]) ?? [:]
         let baseSections = Self.object(payload["sections"]) ?? [:]
         var sections = baseSections
@@ -1755,12 +1759,12 @@ extension DraftSnapshot {
         for lane in Self.stagedLaneKeys where draftPayload[lane.key] != nil && !changed.contains(lane.section) {
             var candidate = sections
             if lane.section == .timeline {
-                guard let merged = Self.mergedTimeline(draft: Self.array(draftSections["timeline_slots"]), base: Self.array(baseSections["timeline_slots"])) else { continue }
+                guard let merged = Self.mergedTimeline(draft: Self.array(draftValue("timeline_slots")), base: Self.array(baseSections["timeline_slots"])) else { continue }
                 candidate["timeline_slots"] = .array(merged)
             } else {
                 for key in lane.sectionKeys {
                     if key == "music_track_id", draftPayload["remove_music"] == .bool(true) { candidate[key] = .null }
-                    else if let value = draftSections[key] { candidate[key] = value }
+                    else if let value = draftValue(key) { candidate[key] = value }
                 }
             }
             let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(baseSections[$0]) }
