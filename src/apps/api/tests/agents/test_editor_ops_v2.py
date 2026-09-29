@@ -24,7 +24,7 @@ from tests.services.test_kria_editor_ops import _job, _variant
 
 
 def test_prompt_version_pinned() -> None:
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-29-v48"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-29-v49"
 
 
 def test_op_cap_is_a_single_shared_constant() -> None:
@@ -36,9 +36,11 @@ def test_op_cap_is_a_single_shared_constant() -> None:
     assert any(getattr(m, "max_length", None) == MAX_EDITOR_OPS for m in limit)
 
 
-def test_stub_lanes_add_nothing() -> None:
-    assert editor_ops_v2.lane_specs() == []
-    assert editor_ops_v2.prompt_fragments() == ""
+def test_lane_specs_are_wellformed() -> None:
+    specs = editor_ops_v2.lane_specs()
+    new = [s.name for s in specs if s.coerce is not None]
+    assert len(new) == len(set(new)), "two lanes declared the same new op"
+    assert all(s.family for s in specs if s.coerce is not None)
 
 
 def _snapshot(**extra) -> dict:
@@ -49,7 +51,8 @@ def _snapshot(**extra) -> dict:
     }
 
 
-def test_prompt_is_byte_identical_without_marker_and_with_empty_fragments() -> None:
+def test_prompt_is_byte_identical_without_marker_and_with_empty_fragments(monkeypatch) -> None:
+    monkeypatch.setattr(editor_ops_v2, "prompt_fragments", lambda: "")
     plain = _snapshot()
     marked = _snapshot(editor_ops_version=2)
 
@@ -104,7 +107,7 @@ def test_merge_gates_v2_ops_on_marker_and_extends_existing(monkeypatch) -> None:
 
     specs = [
         OpSpec(
-            name="remove_texts",
+            name="zz_new_op",
             required=frozenset({"selector"}),
             fields=frozenset({"selector"}),
             family=frozenset({"text"}),
@@ -115,14 +118,14 @@ def test_merge_gates_v2_ops_on_marker_and_extends_existing(monkeypatch) -> None:
     monkeypatch.setattr(editor_ops_v2, "lane_specs", lambda: specs)
     merge_into_parser(valid, required, fields)
 
-    assert "remove_texts" in valid and required["remove_texts"] == {"selector"}
+    assert "zz_new_op" in valid and required["zz_new_op"] == {"selector"}
     assert fields["set_mix"] >= {"music_level", "original_level"}
-    raw = {"op": "remove_texts", "selector": {"group": "labels"}}
-    assert not _family_allowed("remove_texts", _snapshot())
-    assert _family_allowed("remove_texts", _snapshot(editor_ops_version=2))
+    raw = {"op": "zz_new_op", "selector": {"group": "labels"}}
+    assert not _family_allowed("zz_new_op", _snapshot())
+    assert _family_allowed("zz_new_op", _snapshot(editor_ops_version=2))
     assert _parse_op(raw, _snapshot(), _ParseState(0.9)) is None
     parsed = _parse_op(raw, _snapshot(editor_ops_version=2), _ParseState(0.9))
-    assert parsed == {"op": "remove_texts", "selector": {"group": "labels"}}
+    assert parsed == {"op": "zz_new_op", "selector": {"group": "labels"}}
     assert is_v2_snapshot({"editor_ops_version": 2})
     assert not is_v2_snapshot({"editor_ops_version": True + 0})
 
@@ -146,18 +149,18 @@ def test_register_handler_dispatch_duplicate_and_unregistered(monkeypatch) -> No
     job = _job(variant)
 
     with pytest.raises(KriaEditorOpError, match="not portable to Kria yet"):
-        compile_editor_ops(job, variant, [{"op": "rewrite_text"}])
+        compile_editor_ops(job, variant, [{"op": "zz_test_op"}])
 
     def handler(state, op):  # noqa: ANN001, ANN202
         state.text[0]["text"] = "handled"
         state.changed.add("text")
 
-    ops_mod.register_handler("rewrite_text", handler)
-    compiled = compile_editor_ops(job, variant, [{"op": "rewrite_text"}])
+    ops_mod.register_handler("zz_test_op", handler)
+    compiled = compile_editor_ops(job, variant, [{"op": "zz_test_op"}])
     assert compiled.payload.text_elements[0]["text"] == "handled"
     with pytest.raises(ValueError):
-        ops_mod.register_handler("rewrite_text", handler)
-    ops_mod.register_handler("rewrite_text", handler, replace=True)
+        ops_mod.register_handler("zz_test_op", handler)
+    ops_mod.register_handler("zz_test_op", handler, replace=True)
 
 
 def test_built_in_ops_all_have_handlers() -> None:

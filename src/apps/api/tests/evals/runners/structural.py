@@ -1983,6 +1983,10 @@ def check_edit_copilot(output: Any) -> list[str]:
         "undo_last_edit",
         "repeat_last_edit",
     }
+    # KRI-219: lane-registered v2 ops (server-built snapshots only).
+    from app.agents import editor_ops_v2 as _v2  # noqa: PLC0415
+
+    valid_ops = valid_ops | set(_v2.REGISTRY.new_ops)
     failures: list[str] = []
 
     if output.intent not in valid_intents:
@@ -2156,6 +2160,11 @@ _EDITOR_OPS_COMPILABLE_NAMES = frozenset(
         "remove_music",
         "swap_music",
         "set_title",
+        # KRI-219 Lane A (text selector ops).
+        "rewrite_text",
+        "patch_text",
+        "remove_texts",
+        "set_texts_timing",
     }
 )
 
@@ -2181,6 +2190,11 @@ _EDITOR_OPS_NO_TIMELINE_NAMES = frozenset(
         "remove_music",
         "swap_music",
         "set_title",
+        # KRI-219 Lane A (text selector ops).
+        "rewrite_text",
+        "patch_text",
+        "remove_texts",
+        "set_texts_timing",
     }
 )
 

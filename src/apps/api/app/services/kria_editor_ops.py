@@ -78,6 +78,9 @@ class KriaEditorOpError(ValueError):
 class CompiledEditorDraft:
     payload: EditorCommitRequest | dict[str, Any]
     changes: list[str]
+    # KRI-218: [{id, clip_id|None, role, before|None, after|None}] for every text
+    # whose wording changed / was added / was removed (receipts read this).
+    text_diff: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _variant_slots(variant: dict[str, Any], job: Any = None) -> list[dict[str, Any]]:
@@ -570,6 +573,8 @@ def build_editor_snapshot(
                 }
             },
             **_bar_clip_link(row, label_links),
+            # Tombstoned generated text: selector ops must not match it.
+            **({"removed": True} if row.get("removed") else {}),
         }
         for row in variant.get("text_elements") or []
         if isinstance(row, dict)
@@ -1011,6 +1016,9 @@ class _DraftState:
     music_track_id: str | None = None
     title: str | None = None
     visual_blocks: list[dict[str, Any]] | None = None
+    # A handler may set this to replace the generic "Op name" change summary
+    # (e.g. "Rewrite 5 texts"); compile_editor_ops consumes and clears it.
+    summary: str | None = None
 
     def text_bar(self, index: object) -> dict[str, Any]:
         row = self.text_bars[_require_index(self.text_bars, index, "Text")]
@@ -1074,6 +1082,12 @@ def _op_set_text_timing(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_add_text(state: _DraftState, op: dict[str, Any]) -> None:
+    if any(key in op for key in ("style_from", "patch", "clip_id")):
+        # KRI-219 v2 extension (style copy / patch / clip-linked label).
+        from app.services.kria_editor_ops_text import add_text_v2  # noqa: PLC0415
+
+        add_text_v2(state, op)
+        return
     state.text.append(
         {
             "id": f"kria-{uuid.uuid4().hex}",
@@ -1496,7 +1510,8 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         if handler is None:
             raise KriaEditorOpError(f"{name or 'Unknown operation'} is not portable to Kria yet")
         handler(state, op)
-        state.changes.append(_summary(op))
+        state.changes.append(state.summary or _summary(op))
+        state.summary = None
 
     changed = state.changed
     guided = _guided_v2_revision(job, variant)
@@ -1517,7 +1532,16 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         camera_effects=state.camera_effects if "camera_effects" in changed else None,
         sound_effects=state.sound_effects if "sound_effects" in changed else None,
     )
-    return CompiledEditorDraft(payload=request, changes=list(dict.fromkeys(state.changes))[:3])
+    text_diff: list[dict[str, Any]] = []
+    if "text" in changed:
+        from app.services.kria_editor_ops_text import compute_text_diff  # noqa: PLC0415
+
+        text_diff = compute_text_diff(job, variant, state.text)
+    return CompiledEditorDraft(
+        payload=request,
+        changes=list(dict.fromkeys(state.changes))[:3],
+        text_diff=text_diff,
+    )
 
 
 __all__ = [
