@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from app.agents import editor_ops_v2 as _v2
 from app.agents._runtime import Agent, AgentSpec, RefusalError, RunContext, SchemaError
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
+from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
@@ -37,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-29-v48"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-29-v49"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1959,6 +1960,9 @@ class _ParseState:
         # the model could fix on a second try (see `_value_retry_hint`).
         self.current_raw: dict[str, Any] | None = None
         self.invalid_raw_ops: list[dict[str, Any]] = []
+        # KRI-219: a v2 selector op that matched nothing sets this; parse() turns
+        # it into an honest clarification (never a silent no-op).
+        self.selector_clarification: str | None = None
 
     def invalid_value(self) -> None:
         self.invalid_value_seen = True
@@ -3179,6 +3183,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             pending_actions=capacity_pending_seed,
             utterance=input.utterance,
         )
+        if capacity_reply is None and state.selector_clarification:
+            capacity_reply = state.selector_clarification
         capacity_pending_actions: list[dict[str, Any]] = []
         capacity_context: dict[str, Any] | None = None
         if capacity_reply is not None:
@@ -4037,6 +4043,11 @@ def _coerce_payload(
             state.invalid_value()
             return None
         out["text"] = text
+
+    if name == "add_text" and any(key in out for key in _v2_text.ADD_TEXT_EXTRAS):
+        out = _v2_text.coerce_add_text_extras(out, snapshot, state)
+        if out is None:
+            return None
 
     if name == "replace_caption_text":
         captions = snapshot.get("captions")

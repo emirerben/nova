@@ -233,7 +233,7 @@ async def dry_run_on_target(
     conversation: list[dict[str, str]],
     ask: str,
     copilot: CopilotFn | None = None,
-    receipts_fn: Callable[[dict[str, Any] | None], list[dict[str, Any]]] | None = None,
+    receipts_fn: Callable[..., list[dict[str, Any]]] | None = None,
 ) -> AskResult:
     """Copilot -> parser -> compile for one ask. Pure with respect to storage."""
     from app.routes._copilot import CopilotTurnBody, run_copilot_turn  # noqa: PLC0415
@@ -281,7 +281,7 @@ async def dry_run_on_target(
     if after_slots is not None:
         result.slot_diff = diff_slots(_variant_slots(variant, job), after_slots)
     if receipts_fn is not None:
-        result.receipts = receipts_fn(dumped)
+        result.receipts = receipts_fn(dumped, compiled.text_diff)
     return result
 
 
@@ -324,8 +324,10 @@ async def load_context(db: Any, thread_id: uuid.UUID) -> ThreadContext:
     )
 
 
-def make_receipts_fn(brief: Any | None) -> Callable[[dict[str, Any] | None], list[dict[str, Any]]]:
-    def receipts(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+def make_receipts_fn(brief: Any | None) -> Callable[..., list[dict[str, Any]]]:
+    def receipts(
+        payload: dict[str, Any] | None, text_diff: list[dict[str, Any]] | None = None
+    ) -> list[dict[str, Any]]:
         if brief is None:
             return []
         from app.kria.brief_checks import (  # noqa: PLC0415
@@ -338,7 +340,7 @@ def make_receipts_fn(brief: Any | None) -> Callable[[dict[str, Any] | None], lis
         checked = list(brief.live())
         if not checked:
             return []
-        facts = plan_facts_from_editor_payload(payload)
+        facts = plan_facts_from_editor_payload(payload, text_diff)
         return [r.model_dump(mode="json") for r in build_receipts(checked, facts)]
 
     return receipts

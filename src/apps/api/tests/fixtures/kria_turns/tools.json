@@ -342,7 +342,8 @@
               "enum": [
                 "met",
                 "partial",
-                "not_possible"
+                "not_possible",
+                "unchecked"
               ],
               "title": "Status",
               "type": "string"

@@ -433,6 +433,7 @@ def _complete_draft_turn(
                     if isinstance(compiled.payload, EditorCommitRequest)
                     else compiled.payload
                 ),
+                editor_text_diff=compiled.text_diff or None,
                 changes=changes,
             )
             snapshot, snapshot_hash = canonical_snapshot(document)
@@ -471,7 +472,9 @@ def _complete_draft_turn(
                 else:
                     # Editor operations verify only the requirements stated in
                     # this very turn, against literal text in the editor payload.
-                    facts = plan_facts_from_editor_payload(document.editor_payload)
+                    facts = plan_facts_from_editor_payload(
+                        document.editor_payload, document.editor_text_diff
+                    )
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
                 if checked:
                     receipts = build_receipts(checked, facts)
