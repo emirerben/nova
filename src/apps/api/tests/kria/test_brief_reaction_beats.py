@@ -311,12 +311,11 @@ def test_food_prompt_reply_has_no_partly_lines_and_keeps_the_summary() -> None:
 
 
 def test_unknown_facts_stay_neutral_in_the_reply() -> None:
-    # No manifest: nothing verified, so no failure header and the summary stays.
+    # No manifest: nothing verified, so no receipts, no "Partly" lines, just the summary.
     brief = CreativeBrief(version=1, requirements=[_POPINS, _WHOLE_TAKE])
     receipts = build_receipts(brief.live(), plan_facts_from_strategy(_strategy(_FOOD_BEATS)))
-    assert [r.status for r in receipts] == ["partial", "partial"]
-    reply = reply_from_receipts(brief, receipts, summary="Drafted.")
-    assert reply.startswith("Drafted.\n")
+    assert receipts == []
+    assert reply_from_receipts(brief, receipts, summary="Drafted.") == "Drafted."
 
 
 def test_real_misses_turn_the_reply_into_a_failure_notice_within_the_cap() -> None:

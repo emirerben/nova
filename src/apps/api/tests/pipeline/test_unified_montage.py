@@ -24,6 +24,7 @@ from app.pipeline.unified_montage import (
     brief_view,
     min_display_s,
     plan_unified_montage,
+    selected_visual_ids,
     skia_font_covers,
     title_from_facts,
 )
@@ -493,3 +494,223 @@ def test_a_landmark_still_labels_a_clip_whose_place_is_only_a_country():
 def test_city_and_country_is_a_label_and_the_country_part_is_never_used():
     plan = plan_unified_montage([clip(0, place="İstanbul, Türkiye")], labels_view())
     assert (plan.snapshot.clip_labels or [])[0].text == "İstanbul"
+
+
+# ── KRI-217: Visuals-pool photos and videos ──────────────────────────────────
+
+
+def visual(index: int, *, kind: str = "image", duration: float = 0.0) -> UnifiedClip:
+    row_id = f"00000000-0000-4000-8000-{index:012d}"
+    return UnifiedClip(
+        media_id=row_id,
+        proxy_path=f"users/u/plan/i/pool/p{index}.{'jpg' if kind == 'image' else 'mp4'}",
+        generation="9",
+        duration_s=duration,
+        lane="asset",
+        kind=kind,
+        manifest_id=f"asset-{row_id}",
+        aspect=4 / 3,
+        source_filename=f"IMG_{index}.jpeg",
+    )
+
+
+def _pattern(plan) -> str:  # noqa: ANN001
+    return "".join(
+        "P" if cut.media_id in plan.visual_ids else "C" for cut in plan.snapshot.fast_cuts
+    )
+
+
+def test_photos_are_spread_between_the_clips_and_keep_their_pool_identity():
+    clips = [clip(i) for i in range(6)]
+    photos = [visual(1), visual(2)]
+    plan = plan_unified_montage(clips, visuals=photos)
+
+    order = [cut.media_id for cut in plan.snapshot.fast_cuts]
+    assert order == ["c0", "c1", photos[0].media_id, "c2", "c3", photos[1].media_id, "c4", "c5"]
+    assert plan.visual_ids == [photos[0].media_id, photos[1].media_id]
+    assert plan.record()["clip_ids"] == order
+    assert plan.record()["visual_ids"] == plan.visual_ids
+    ref = next(ref for ref in plan.snapshot.media if ref.media_id == photos[0].media_id)
+    assert (ref.lane, ref.kind, ref.duration_s) == ("asset", "image", None)
+    assert (ref.gcs_path, ref.generation) == (photos[0].proxy_path, "9")
+    assert ref.aspect == pytest.approx(4 / 3)
+    assert ref.source_filename == "IMG_1.jpeg"
+
+
+@pytest.mark.parametrize(
+    ("clips_n", "photos_n", "pattern"),
+    [(6, 2, "CCPCCPCC"), (6, 1, "CCCPCCC"), (1, 2, "CPP"), (2, 3, "CPPCP")],
+)
+def test_the_montage_always_opens_on_a_clip(clips_n, photos_n, pattern):
+    plan = plan_unified_montage(
+        [clip(i) for i in range(clips_n)], visuals=[visual(j) for j in range(photos_n)]
+    )
+    assert _pattern(plan) == pattern
+    assert plan.snapshot.fast_cuts[0].role == "hook"
+
+
+def test_a_montage_with_photos_compiles_to_pool_still_moments():
+    clips = [clip(i) for i in range(4)]
+    photos = [visual(1), visual(2)]
+    plan = plan_unified_montage(clips, visuals=photos)
+
+    snapshot = EditProposalSnapshot.model_validate(plan.snapshot.model_dump(mode="json"))
+    validate_proposal_compiles(snapshot)
+    guided = plan.guided_edit()
+    compiled = compile_execution_plan(guided, track=None)
+    assert validate_execution_plan(compiled, guided) == compiled
+    stills = [moment for moment in compiled["story_timeline"] if moment["lane"] == "asset"]
+    assert [moment["media_id"] for moment in stills] == [photo.media_id for photo in photos]
+    assert all(moment["kind"] == "image" for moment in stills)
+    assert all(moment["layout"] == "fullscreen" for moment in stills)
+    identities = {row["media_id"]: row for row in guided["media_identities"]}
+    assert identities[photos[0].media_id]["lane"] == "asset"
+    assert identities[photos[0].media_id]["kind"] == "image"
+
+
+def test_a_photo_holds_like_a_cut_and_never_past_a_beat_of_attention():
+    photo = visual(1)
+    default = plan_unified_montage([clip(i) for i in range(3)], visuals=[photo])
+    cut = next(cut for cut in default.snapshot.fast_cuts if cut.media_id == photo.media_id)
+    assert cut.output_duration_s == pytest.approx(1.2)
+
+    # A stated length with little footage grows the photo only to its cap.
+    stretched = plan_unified_montage(
+        [clip(0, duration=2.0)], visuals=[photo], strategy={"target_duration_s": 30}
+    )
+    cut = next(cut for cut in stretched.snapshot.fast_cuts if cut.media_id == photo.media_id)
+    assert (cut.source_start_s, cut.source_end_s) == (0.0, 3.0)
+    assert cut.output_duration_s == pytest.approx(3.0)
+
+
+def test_a_visuals_video_is_cut_from_its_own_length():
+    video = visual(3, kind="video", duration=2.0)
+    plan = plan_unified_montage([clip(0)], visuals=[video], strategy={"target_duration_s": 30})
+
+    ref = next(ref for ref in plan.snapshot.media if ref.media_id == video.media_id)
+    assert (ref.lane, ref.kind, ref.duration_s) == ("asset", "video", 2.0)
+    cut = next(cut for cut in plan.snapshot.fast_cuts if cut.media_id == video.media_id)
+    assert cut.source_end_s <= 2.0 + 1e-6
+    compile_execution_plan(plan.guided_edit(), track=None)
+
+
+def test_a_creator_literal_for_a_photo_uses_its_manifest_id():
+    photo = visual(1)
+    plan = plan_unified_montage(
+        [clip(0), clip(1)],
+        BriefView(wants_per_clip_text=True, clip_literals={photo.manifest_id: "Class of 2016"}),
+        visuals=[photo],
+    )
+    labels = {label.media_id: label.text for label in plan.snapshot.clip_labels or []}
+    assert labels[photo.media_id] == "Class of 2016"
+
+
+def test_per_clip_text_reports_an_unlabelled_photo_honestly():
+    photo = visual(1)
+    brief = CreativeBrief(
+        version=1,
+        requirements=[BriefRequirement(id="r1", kind="text", scope="per_clip", description="x")],
+    )
+    plan = plan_unified_montage(
+        [clip(0, landmark="Galata"), clip(1, landmark="Bebek")], brief_view(brief), visuals=[photo]
+    )
+    assert photo.media_id in plan.dropped_label_clip_ids
+    receipt = build_receipts(brief.live(), plan_facts_from_unified_montage(plan.record()))[0]
+    assert receipt.status == "partial"
+
+
+def test_a_filmed_order_brief_reports_photos_as_not_in_filmed_order():
+    photo = visual(1)
+    plan = plan_unified_montage(
+        [clip(0, minutes=5), clip(1, minutes=1)], BriefView(order_by_capture=True), visuals=[photo]
+    )
+    assert plan.ordering_basis == "capture_time"
+    assert [cut.media_id for cut in plan.snapshot.fast_cuts] == ["c1", photo.media_id, "c0"]
+    assert photo.media_id in plan.ordering_fallback_clip_ids
+
+
+def test_the_creators_uncropped_photo_choice_is_kept_only_with_a_photo():
+    plan = plan_unified_montage(
+        [clip(0)], visuals=[visual(1)], strategy={"image_layout": "supporting_card"}
+    )
+    assert plan.snapshot.image_layout == "supporting_card"
+    compiled = compile_execution_plan(plan.guided_edit(), track=None)
+    still = next(moment for moment in compiled["story_timeline"] if moment["lane"] == "asset")
+    assert still["layout"] == "supporting_card"
+
+    clips_only = plan_unified_montage(
+        [clip(0), clip(1)], strategy={"image_layout": "supporting_card"}
+    )
+    assert clips_only.snapshot.image_layout is None
+
+
+def test_a_montage_without_visuals_records_exactly_as_before():
+    plan = plan_unified_montage([clip(0), clip(1)])
+    assert plan.visual_ids == []
+    assert "visual_ids" not in plan.record()
+    assert all(ref.lane == "clip" for ref in plan.snapshot.media)
+
+
+def test_visuals_must_come_from_the_pool_and_be_unique():
+    with pytest.raises(ValueError, match="Visuals pool"):
+        plan_unified_montage([clip(0)], visuals=[clip(1)])
+    with pytest.raises(ValueError, match="unique"):
+        plan_unified_montage([clip(0)], visuals=[visual(1), visual(1)])
+
+
+@pytest.mark.parametrize(
+    ("strategy", "expected"),
+    [
+        (None, None),
+        ({"media_scope": "all", "selected_media_ids": ["asset-x"]}, None),
+        ({"media_scope": "selected", "selected_media_ids": []}, None),
+        ({"media_scope": "selected"}, None),
+        (
+            {"media_scope": "selected", "selected_media_ids": ["c0", "asset-x"]},
+            frozenset({"c0", "asset-x"}),
+        ),
+    ],
+)
+def test_only_an_explicit_selection_narrows_the_visuals(strategy, expected):
+    assert selected_visual_ids(strategy) == expected
+
+
+@pytest.mark.parametrize("duration", [0.298, 0.2983333, 0.21, 0.35])
+def test_a_clip_shorter_than_any_cut_is_shown_whole(duration):
+    """A 0.3s iPhone clip (thread 6BF1213E) failed the strict snapshot: whole
+    frames stopped a fraction of a frame short of the clip."""
+    plan = plan_unified_montage([clip(0), clip(1, duration=duration), clip(2)])
+
+    cut = next(cut for cut in plan.snapshot.fast_cuts if cut.media_id == "c1")
+    assert cut.source_start_s == 0.0
+    assert duration - 0.001 <= cut.source_end_s <= duration
+    compiled = compile_execution_plan(plan.guided_edit(), track=None)
+    assert validate_execution_plan(compiled, plan.guided_edit()) == compiled
+
+
+def test_the_reported_reunion_thread_plans_and_compiles():
+    """Thread 6BF1213E as prod saw it: six iPhone videos (one of them 0.3s),
+    two ready Visuals photos, a 15s fast montage."""
+    durations = [18.943, 16.472, 3.235, 4.235, 0.298, 8.705]
+    videos = [
+        UnifiedClip(
+            media_id=f"analysis-proxy-ios-{index}.mp4",
+            proxy_path=f"users/u/creation-threads/t/analysis-proxy-ios-{index}.mp4",
+            generation="1",
+            duration_s=duration,
+            width=1920,
+            height=1080,
+            orientation_degrees=90,
+        )
+        for index, duration in enumerate(durations)
+    ]
+    photos = [visual(1), visual(2)]
+    plan = plan_unified_montage(videos, strategy={"target_duration_s": 15}, visuals=photos)
+
+    assert plan.duration_s == pytest.approx(15.0, abs=0.05)
+    assert _pattern(plan) == "CCPCCPCC"
+    compiled = compile_execution_plan(plan.guided_edit(), track=None)
+    assert validate_execution_plan(compiled, plan.guided_edit()) == compiled
+    kinds = [(moment["lane"], moment["kind"]) for moment in compiled["story_timeline"]]
+    assert kinds.count(("asset", "image")) == 2
+    assert kinds.count(("clip", "video")) == 6

@@ -168,6 +168,8 @@ def harness(monkeypatch):
         monkeypatch.setattr(
             gb, "_load_unified_montage_inputs", lambda _job_id: (user_id, assignments, brief)
         )
+        # KRI-217: no Visuals unless a test adds them.
+        monkeypatch.setattr(gb, "_load_unified_montage_visuals", lambda *_a, **_k: [])
 
         def fake_guided_plan(_job_id, guided):
             plan = compile_execution_plan(guided, track=None)
@@ -280,6 +282,8 @@ def test_receipts_say_what_was_met_and_what_was_partial(harness):
     assert "I kept filming order" in receipts["r4"]["reason"]
     assert job.assembly_plan["unified_montage"]["ordering_basis"] == "capture_time"
     assert receipts["r3"]["status"] == "met"
+    # "Fast but readable" has no number to check: nothing judged it, so no receipt.
+    assert "r2" not in receipts
 
 
 def test_without_capture_times_the_order_stays_attachment_and_says_so(harness):
@@ -701,3 +705,117 @@ def test_a_failed_facts_checkpoint_never_fails_the_render(monkeypatch):
     session = _checkpoint_harness(monkeypatch, item)
     session.execute.side_effect = RuntimeError("db down")
     gb._checkpoint_unified_facts(JOB, _enriched(), None)
+
+
+# ── KRI-217: Visuals photos in the unified phone montage ─────────────────────
+
+
+def _photos(job, count: int = 2) -> list:
+    from app.pipeline.unified_montage import UnifiedClip
+
+    photos = []
+    for index in range(count):
+        row_id = str(uuid.uuid4())
+        photos.append(
+            UnifiedClip(
+                media_id=row_id,
+                proxy_path=f"users/{job.user_id}/plan/{job.content_plan_item_id}/pool/p{index}.jpg",
+                generation="17",
+                duration_s=0.0,
+                lane="asset",
+                kind="image",
+                manifest_id=f"asset-{row_id}",
+                aspect=4 / 3,
+            )
+        )
+    return photos
+
+
+def test_ready_photos_reach_the_phone_recipe(harness, monkeypatch):
+    """Thread 6BF1213E: videos plus Visuals photos render on the phone, photos included."""
+    import json
+
+    from app.services import phone_visuals
+    from app.services.phone_sources import PhoneVisualBinding
+    from tests._prod_profile import PROD_VERIFIED_FEATURES
+
+    job, *_ = harness(brief=None)
+    monkeypatch.setattr(gb.settings, "phone_render_verified_features", list(PROD_VERIFIED_FEATURES))
+    photos = _photos(job)
+    monkeypatch.setattr(gb, "_load_unified_montage_visuals", lambda *_a, **_k: photos)
+    timeline_visuals: list[set[str]] = []
+
+    def bind(_open, *, job_id, story_timeline, kinds):  # noqa: ANN001, ANN202
+        assert "image" in kinds
+        timeline_visuals.append(
+            {moment.media_id for moment in story_timeline if moment.lane == "asset"}
+        )
+        return tuple(
+            PhoneVisualBinding(
+                media_id=photo.media_id,
+                gcs_path=photo.proxy_path,
+                generation=photo.generation,
+                sha256="b" * 64,
+                byte_count=2048,
+                kind="image",
+            )
+            for photo in photos
+        )
+
+    monkeypatch.setattr(phone_visuals, "bind_phone_visuals", bind)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    record = job.assembly_plan["unified_montage"]
+    assert record["visual_ids"] == [photo.media_id for photo in photos]
+    order = record["clip_ids"]
+    assert order[0] == "clip-0", "the montage opens on a clip"
+    assert timeline_visuals == [{photo.media_id for photo in photos}]
+    recipe = json.dumps(device_status(job, "guided_story").request.recipe.model_dump(mode="json"))
+    for photo in photos:
+        assert photo.media_id in recipe
+
+
+def test_a_photo_the_phone_cannot_draw_fails_instead_of_being_dropped(harness, monkeypatch):
+    job, snapshot, *_ = harness(brief=None)  # the harness verifies no stillImages
+    monkeypatch.setattr(gb, "_load_unified_montage_visuals", lambda *_a, **_k: _photos(job, 1))
+
+    with pytest.raises(UnsupportedPhonePlan):
+        gb._run_phone_unified_montage_job(
+            str(job.id), snapshot, job.all_candidates, ownership_epoch=3
+        )
+
+
+def test_the_worker_narrows_visuals_to_an_explicit_selection(harness, monkeypatch):
+    job, snapshot, *_ = harness(brief=None)
+    job.all_candidates["creator_strategy"] = {
+        **job.all_candidates["creator_strategy"],
+        "media_scope": "selected",
+        "selected_media_ids": ["clip-0", "asset-x"],
+    }
+    calls: list = []
+
+    def load(_job_id, *, selected):  # noqa: ANN001, ANN202
+        calls.append(selected)
+        return []
+
+    monkeypatch.setattr(gb, "_load_unified_montage_visuals", load)
+    gb._run_phone_unified_montage_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert calls == [frozenset({"clip-0", "asset-x"})]
+
+
+def test_a_clip_shorter_than_any_cut_reaches_the_phone_recipe(harness):
+    """Thread 6BF1213E carried a 0.3s iPhone clip: it plays whole on the phone."""
+    job, *_ = harness(brief=None)
+    job.assembly_plan[PHONE_SOURCES_FIELD][4]["original"]["duration_s"] = 0.29833333333333334
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    plan = GuidedStoryExecutionPlan.model_validate(job.assembly_plan["guided_story_execution_plan"])
+    short = next(moment for moment in plan.story_timeline if moment.media_id == "clip-4")
+    assert short.source_start_s == 0.0
+    assert 0.297 <= short.source_end_s <= 0.29834
+    assert device_status(job, "guided_story").request.recipe is not None

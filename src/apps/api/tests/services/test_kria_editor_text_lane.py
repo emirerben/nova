@@ -194,19 +194,17 @@ def test_exact_text_requirement_is_partial_when_a_clip_does_not_read_exactly() -
     assert "1 of 2" in (receipt.reason or "")
 
 
-def test_per_clip_receipt_without_structure_is_unchecked_not_a_failure() -> None:
+def test_per_clip_receipt_without_structure_and_missed_literal_is_partial() -> None:
     requirement = BriefRequirement(
         id="r1", kind="text", scope="per_clip", literal="Zeta", description="label each clip"
     )
     facts = plan_facts_from_editor_payload({"text_elements": [{"text": "Alpha"}]})
     receipt = build_receipts([requirement], facts)[0]
-    assert receipt.status == "unchecked"
-    reply = reply_from_receipts(
-        CreativeBrief(version=1, requirements=[requirement]),
-        [receipt],
-        summary="Done.",
-    )
-    assert reply.startswith("Done.") and "Not everything" not in reply
+    # A genuinely missing exact word is a real miss and is reported.
+    assert receipt.status == "partial"
+    # With no literal there is nothing to judge: no receipt, no failure notice.
+    vague = BriefRequirement(id="r2", kind="text", scope="per_clip", description="label clips")
+    assert build_receipts([vague], facts) == []
     # A literal that IS on screen stays met on the structure-less path.
     ok = plan_facts_from_editor_payload({"text_elements": [{"text": "Zeta"}]})
     assert build_receipts([requirement], ok)[0].status == "met"

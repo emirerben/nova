@@ -130,8 +130,7 @@ class RequirementReceipt(_KriaModel):
     """
 
     requirement_id: str = Field(min_length=1, max_length=24)
-    # `unchecked` (KRI-218): nothing to compare the request against; never a failure.
-    status: Literal["met", "partial", "not_possible", "unchecked"]
+    status: Literal["met", "partial", "not_possible"]
     reason: str | None = Field(default=None, max_length=300)
     inferred: list[str] = Field(default_factory=list, max_length=24)
     inferred_labels: list[InferredLabel] = Field(default_factory=list, max_length=24)

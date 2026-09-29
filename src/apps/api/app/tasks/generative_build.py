@@ -4588,6 +4588,70 @@ def _landmark_creator_text(view: Any, first_message: str) -> str:
     return " ".join(" ".join(str(part).split()) for part in parts if part)[:400]
 
 
+def _load_unified_montage_visuals(job_id: str, *, selected: frozenset[str] | None) -> list:
+    """The ready Visuals a unified montage places (KRI-217), in upload order.
+
+    The rows the dispatch gate cleared: this item's and its owner's, not a dedupe
+    receipt, registered before the job was minted (a later upload was not part of
+    the approved draft), and narrowed to an explicit ``selected`` scope. A row
+    with no stored generation gets the object's current one pinned, as the
+    guided proposal's ``_pool_refs`` does, so the phone binder's exact
+    generation recheck matches it.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app import storage  # noqa: PLC0415
+    from app.models import PlanItemAsset  # noqa: PLC0415
+    from app.pipeline.unified_montage import UnifiedClip  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None or job.content_plan_item_id is None:
+            return []
+        rows = [
+            row
+            for row in db.execute(
+                select(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == job.content_plan_item_id,
+                    PlanItemAsset.user_id == job.user_id,
+                    PlanItemAsset.status == "ready",
+                    PlanItemAsset.deduplicated_to_asset_id.is_(None),
+                    PlanItemAsset.created_at <= job.created_at,
+                )
+                .order_by(PlanItemAsset.created_at, PlanItemAsset.id)
+            ).scalars()
+            if selected is None or f"asset-{row.id}" in selected
+        ]
+        missing_generation = [row for row in rows if not row.gcs_generation]
+        for row in missing_generation:
+            row.gcs_generation = str(storage.object_metadata(row.gcs_path).generation)
+        if missing_generation:
+            db.commit()
+        visuals = []
+        for row in rows:
+            kind = "image" if row.kind == "image" else "video"
+            if kind == "video" and not (row.duration_s and row.duration_s > 0):
+                raise ValueError("a Visuals video has no measured length")
+            visuals.append(
+                UnifiedClip(
+                    media_id=str(row.id),
+                    proxy_path=row.gcs_path,
+                    generation=str(row.gcs_generation),
+                    duration_s=float(row.duration_s or 0.0),
+                    analysis=dict(row.analysis or {}),
+                    lane="asset",
+                    kind=kind,
+                    manifest_id=f"asset-{row.id}",
+                    aspect=float(row.aspect) if row.aspect else None,
+                    source_filename=row.source_filename or "",
+                    user_context=row.user_context or "",
+                    content_hash=row.content_hash,
+                )
+            )
+    return visuals
+
+
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> dict | None:
@@ -4600,7 +4664,9 @@ def _run_phone_unified_montage_job(
     `guided_edit` (plus a small `unified_montage` receipt record with the
     requirement receipts), and returns the updated snapshot. The caller then
     compiles it through `_run_phone_guided_job`, so the guided validators, the
-    guided phone compiler and the guided phone editor apply unchanged.
+    guided phone compiler and the guided phone editor apply unchanged. The
+    item's ready Visuals join the plan (KRI-217) and bind there like any
+    approved guided story's photos.
 
     Returns None when a fence says this delivery must not publish (cancelled,
     superseded owner/generation/sources). Never enters a media renderer.
@@ -4610,6 +4676,7 @@ def _run_phone_unified_montage_job(
         UnifiedClip,
         brief_view,
         plan_unified_montage,
+        selected_visual_ids,
         skia_font_covers,
     )
     from app.services.clip_facts import (  # noqa: PLC0415
@@ -4619,6 +4686,7 @@ def _run_phone_unified_montage_job(
         facts_for_prompt,
     )
     from app.services.device_render import DEVICE_RENDER_FIELD  # noqa: PLC0415
+    from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
     from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
@@ -4649,6 +4717,18 @@ def _run_phone_unified_montage_job(
     by_assignment_path = {str(row.get("gcs_path")): row for row in assignments}
     facts_on = settings.clip_facts_for(user_id)
     strategy = all_candidates.get("creator_strategy") or {}
+    visuals = _load_unified_montage_visuals(
+        job_id, selected=selected_visual_ids(strategy if isinstance(strategy, dict) else None)
+    )
+    drawable = phone_drawable_visual_kinds()
+    for visual in visuals:
+        if visual.kind not in drawable:
+            # The dispatch gate refused this shape; a feature withdrawn since then
+            # must fail visibly, never render the montage without the Visual.
+            raise UnsupportedPhonePlan(
+                "phone rendering cannot draw this project's Visuals yet",
+                capability="stillImages" if visual.kind == "image" else "visualVideos",
+            )
 
     with pipeline_trace_for(job_id):
         entries = [dict(by_assignment_path.get(path) or {}) for path in clip_paths]
@@ -4705,6 +4785,7 @@ def _run_phone_unified_montage_job(
                 for value in all_candidates.get("creator_clip_order") or []
                 if isinstance(value, int) and not isinstance(value, bool)
             ],
+            visuals=visuals,
         )
     record = plan.record()
     if brief is not None and brief.live():

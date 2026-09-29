@@ -43,6 +43,7 @@ from app.kria.brief_checks import (
     PlanFacts,
     build_receipts,
     check_requirement,
+    is_judged,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
     reply_from_receipts,
@@ -360,12 +361,68 @@ def test_reply_never_claims_an_unmet_requirement() -> None:
         [_upd("text", "per_clip"), _upd("order", "global", facts={"key": "capture_time"})],
         source_turn_id="t",
     )
-    receipts = build_receipts(brief.live(), PlanFacts(clip_ids=_CLIPS))
+    facts = PlanFacts(clip_ids=_CLIPS, ordering_basis="attachment")
+    receipts = build_receipts(brief.live(), facts)
     reply = reply_from_receipts(brief, receipts, summary="I rebuilt the whole edit around you.")
     assert "rebuilt the whole edit" not in reply  # the model summary is dropped
     assert reply.startswith("Not everything you asked for made it in")
     assert "Couldn't:" in reply and "Partly:" in reply
     assert len(reply) <= 1200
+
+
+def test_checks_missing_their_facts_get_no_receipt() -> None:
+    # A strategy draft never records its clip order, and an editor payload has no
+    # length or per-clip structure: those checks can't tell, so no "Partly" line.
+    order = apply_updates(
+        None, [_upd("order", "global", facts={"key": "capture_time"})], source_turn_id="t"
+    )
+    draft = plan_facts_from_strategy({"edit_format": "montage"}, clip_ids=_CLIPS)
+    assert build_receipts(order.live(), draft) == []
+    rule = apply_updates(
+        None, [_upd("order", "global", facts={"key": "alphabetical"})], source_turn_id="t"
+    )
+    assert build_receipts(rule.live(), PlanFacts(ordering_basis="capture_time")) == []
+    brief = apply_updates(
+        None,
+        [
+            _upd("timing", "global", facts={"duration_s": 20}),
+            _upd("text", "per_clip", description="the place on each clip"),
+        ],
+        source_turn_id="t",
+    )
+    receipts = build_receipts(brief.live(), plan_facts_from_editor_payload({"title": "Hi"}))
+    assert receipts == []
+    assert reply_from_receipts(brief, receipts, summary="Retitled.") == "Retitled."
+
+
+_ORDER = _req("order", "global", facts={"key": "capture_time"})
+
+
+@pytest.mark.parametrize(
+    ("req", "reason", "judged"),
+    [
+        (None, "x", False),
+        (_req("style", "global", description="make it warm"), "Anything.", False),
+        (_ORDER, "I can't confirm the order this draft uses.", False),
+        (_ORDER, None, True),
+        (_ORDER, "This draft is ordered by attachment, not the order you asked for.", True),
+    ],
+)
+def test_is_judged_needs_a_checker_and_a_real_outcome(req, reason, judged) -> None:  # noqa: ANN001
+    status = "partial" if reason else "met"
+    receipt = RequirementReceipt(requirement_id="r1", status=status, reason=reason)
+    assert is_judged(req, receipt) is judged
+
+
+def test_an_exact_per_clip_text_missing_from_an_editor_edit_is_still_reported() -> None:
+    brief = apply_updates(None, [_upd("text", "per_clip", literal="Day 1")], source_turn_id="t")
+    editor = plan_facts_from_editor_payload({"bars": [{"text": "Day 2"}]})
+    receipts = build_receipts(brief.live(), editor)
+    assert [(r.status, r.reason) for r in receipts] == [
+        ("partial", "That exact text isn't in this edit.")
+    ]
+    found = plan_facts_from_editor_payload({"bars": [{"text": "Day 1"}]})
+    assert [r.status for r in build_receipts(brief.live(), found)] == ["met"]
 
 
 def test_reply_keeps_summary_only_when_everything_is_met() -> None:
@@ -857,7 +914,8 @@ def test_clip_scoped_text_checks_only_that_clip() -> None:
 def test_editor_payload_facts_never_report_per_clip_text_as_not_possible() -> None:
     facts = plan_facts_from_editor_payload({"text_elements": [{"text": "Galata"}]})
     assert check_requirement(_req("text", "clip:c1", literal="Galata"), facts).status == "met"
-    assert check_requirement(_req("text", "per_clip"), facts).status == "unchecked"
+    req = _req("text", "per_clip")
+    assert not is_judged(req, check_requirement(req, facts))
 
 
 def test_positional_shot_labels_count_as_per_clip_text() -> None:
@@ -891,16 +949,96 @@ def test_unverifiable_requirements_do_not_turn_a_good_reply_into_a_failure() -> 
         source_turn_id="t",
     )
     receipts = build_receipts(brief.live(), PlanFacts(title="Hi"))
-    assert [r.status for r in receipts] == ["met", "partial"]
+    # "make it yellow" has no checker: no receipt, so no "Partly" line either.
+    assert [r.status for r in receipts] == ["met"]
     reply = reply_from_receipts(brief, receipts, summary="Yellow title applied.")
-    assert reply.startswith("Yellow title applied.")
-    assert "Not everything" not in reply
+    assert reply == 'Yellow title applied.\n- Done: x ("Hi")'
     # A checked failure still flips the header and drops the summary.
     bad = apply_updates(None, [_upd("text", "title", literal="Nope")], source_turn_id="t")
     bad_reply = reply_from_receipts(
         bad, build_receipts(bad.live(), PlanFacts(title="Hi")), summary="All done!"
     )
     assert bad_reply.startswith("Not everything") and "All done" not in bad_reply
+
+
+# Prod, 2026-09-28 (thread cb25fd93): "Add captions" on a phone Talking edit read
+# "- Partly: add captions (I can't verify this one automatically yet)" under a
+# summary saying the captions were added. The ask has no checker.
+_TALKING_STRATEGY = {
+    "edit_format": "subtitled",
+    "caption_style": "editorial",
+    "audio_strategy": "original_audio",
+    "media_scope": "selected",
+    "selected_media_ids": ["analysis-proxy-ios-talk.mp4"],
+    "target_duration_s": 16.5,
+}
+
+
+@pytest.mark.parametrize("kind", ["style", "text"])
+def test_an_unchecked_ask_gets_no_receipt_and_no_partly_line(kind: str) -> None:
+    brief = apply_updates(
+        None, [_upd(kind, "global", description="add captions")], source_turn_id="t"
+    )
+    summary = "I'll keep the original audio and add editorial-style captions over your footage."
+    receipts = build_receipts(brief.live(), plan_facts_from_strategy(_TALKING_STRATEGY))
+    assert receipts == []
+    assert reply_from_receipts(brief, receipts, summary=summary) == summary
+
+
+def test_a_persisted_cant_verify_receipt_gets_no_line() -> None:
+    # Unified montage records written before the change still carry such receipts.
+    brief = apply_updates(
+        None, [_upd("style", "global", description="add captions")], source_turn_id="t"
+    )
+    legacy = RequirementReceipt(
+        requirement_id=brief.live()[0].id,
+        status="partial",
+        reason="I can't verify this one automatically yet.",
+    )
+    assert reply_from_receipts(brief, [legacy], summary="Drafted.") == "Drafted."
+
+
+@pytest.mark.parametrize("summary", [None, "", "   "])
+def test_reply_is_empty_when_nothing_was_judged_and_there_is_no_summary(summary) -> None:  # noqa: ANN001
+    brief = apply_updates(
+        None, [_upd("style", "global", description="make it yellow")], source_turn_id="t"
+    )
+    receipts = build_receipts(brief.live(), PlanFacts())
+    assert receipts == []
+    assert reply_from_receipts(brief, receipts, summary=summary) == ""
+
+
+def test_reply_has_no_leading_blank_line_when_summary_is_absent() -> None:
+    brief = apply_updates(None, [_upd("text", "title", literal="Hi")], source_turn_id="t")
+    receipts = build_receipts(brief.live(), PlanFacts(title="Hi"))
+    assert reply_from_receipts(brief, receipts, summary=None) == '- Done: x ("Hi")'
+
+
+def test_a_receipt_for_an_unknown_requirement_gets_no_line() -> None:
+    brief = apply_updates(None, [_upd("text", "title", literal="Hi")], source_turn_id="t")
+    ghost = RequirementReceipt(requirement_id="r99", status="not_possible", reason="x")
+    assert reply_from_receipts(brief, [ghost], summary="Drafted.") == "Drafted."
+
+
+@pytest.mark.parametrize(
+    "requirements",
+    [[], [BriefRequirement(id="r1", kind="order", scope="global", status="superseded")]],
+    ids=["no-requirements", "only-a-superseded-requirement"],
+)
+def test_build_receipts_is_empty_with_no_live_requirements(requirements) -> None:  # noqa: ANN001
+    assert build_receipts(requirements, PlanFacts()) == []
+
+
+def test_long_replies_are_truncated_at_the_cap() -> None:
+    reqs = [_req("order", "global", id=f"r{i}", description="X" * 150) for i in range(1, 5)]
+    brief = CreativeBrief(version=1, requirements=reqs)
+    receipts = [
+        RequirementReceipt(requirement_id=req.id, status="partial", reason="Y" * 200)
+        for req in reqs
+    ]
+    reply = reply_from_receipts(brief, receipts, summary="Drafted.")
+    assert reply.startswith("Not everything you asked for made it in:\n")
+    assert len(reply) <= 1200 and reply.endswith("…")
 
 
 def test_main_creator_scope_recognisers_ignore_model_authored_brief_text() -> None:
@@ -957,10 +1095,9 @@ def test_editor_restyle_is_met_when_text_elements_were_edited() -> None:
     req = _req("style", "global", description="make all the labels yellow")
     facts = plan_facts_from_editor_payload({"text_elements": [{"id": "a", "color": "#FFD400"}]})
     assert check_requirement(req, facts).status == "met"
-    # Nothing edited: unverifiable, neutral, never partial.
-    assert (
-        check_requirement(req, plan_facts_from_editor_payload({"title": "x"})).status == "unchecked"
-    )
+    # Nothing edited: nothing was judged, so no receipt and no "Partly".
+    unproven = check_requirement(req, plan_facts_from_editor_payload({"title": "x"}))
+    assert not is_judged(req, unproven)
 
 
 def test_editor_duration_met_when_slots_sum_to_target() -> None:
@@ -975,14 +1112,14 @@ def test_editor_duration_met_when_slots_sum_to_target() -> None:
         check_requirement(req, plan_facts_from_editor_payload({"timeline_slots": slots})).status
         == "partial"
     )
-    # Unprovable length on an editor turn is neutral, on a strategy draft still partial.
-    assert (
-        check_requirement(req, plan_facts_from_editor_payload({"title": "x"})).status == "unchecked"
-    )
-    assert check_requirement(req, PlanFacts()).status == "partial"
+    # Unprovable length is unjudged (no receipt), on an editor turn or a strategy draft.
+    unproven = check_requirement(req, plan_facts_from_editor_payload({"title": "x"}))
+    assert not is_judged(req, unproven)
+    assert not is_judged(req, check_requirement(req, PlanFacts()))
 
 
-def test_editor_order_and_select_are_unchecked_not_partial() -> None:
+def test_editor_order_and_select_are_unjudged_not_partial() -> None:
     facts = plan_facts_from_editor_payload({"timeline_slots": []})
-    assert check_requirement(_req("order", "global"), facts).status == "unchecked"
-    assert check_requirement(_req("select", "global"), facts).status == "unchecked"
+    for kind in ("order", "select"):
+        req = _req(kind, "global")
+        assert not is_judged(req, check_requirement(req, facts))

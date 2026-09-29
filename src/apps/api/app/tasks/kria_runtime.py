@@ -30,6 +30,7 @@ from app.kria.brief import (
 )
 from app.kria.brief_checks import (
     build_receipts,
+    is_judged,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
     reply_from_receipts,
@@ -1885,6 +1886,22 @@ _SPEECH_CLEANUP_DISPATCH_REFUSALS: dict[str, str] = {
     ),
 }
 
+# KRI-217: the project's Visuals block this render. Resending the same approval
+# refuses the same way, so these are never the generic "retry" copy either.
+_VISUALS_DISPATCH_REFUSALS: dict[str, str] = {
+    # The montage lane this edit renders on cannot place Visuals (a cloud
+    # runtime-v2 montage, or a Visual kind the phone cannot draw yet).
+    "guided_edit_bypass_unsafe": (
+        "I can't put your Visuals into this montage yet, so I didn't start the "
+        "render. Remove them from Visuals, then tap Refresh project and I'll make "
+        "it from your videos."
+    ),
+    "visuals_processing": (
+        "A photo or video you added to Visuals is still being prepared. Give it a "
+        "moment, then tap Refresh project and I'll start the render."
+    ),
+}
+
 
 def _finish_approval_dispatch(
     claim: _ApprovalDispatchClaim,
@@ -2000,16 +2017,18 @@ def _finish_approval_dispatch(
             db.commit()
             return "outcome_unknown", _promote_queued_successor_sync(thread.id)
 
-        speech_cleanup_refusal = _SPEECH_CLEANUP_DISPATCH_REFUSALS.get(outcome)
-        never_retry = speech_cleanup_refusal is not None or bool(reason)
+        refusal_copy = _SPEECH_CLEANUP_DISPATCH_REFUSALS.get(
+            outcome
+        ) or _VISUALS_DISPATCH_REFUSALS.get(outcome)
+        never_retry = refusal_copy is not None or bool(reason)
         execution.status = "failed"
         execution.error = {
             "code": "render_dispatch_failed",
             "outcome": outcome,
             "retryable": outcome == "publish_failed" and not never_retry,
-            # A phone-gate refusal (`reason`) or a speech-cleanup conflict
-            # refuses identically every time, so neither may send the creator
-            # into a retry loop -- both need a fresh approval instead.
+            # A phone-gate refusal (`reason`), a speech-cleanup conflict or a
+            # Visuals refusal refuses identically every time, so none may send
+            # the creator into a retry loop -- each needs a fresh approval.
             "recovery": "ask_user" if never_retry else "retry",
             **({"reason": reason} if reason else {}),
         }
@@ -2025,7 +2044,7 @@ def _finish_approval_dispatch(
             role="assistant",
             event_type="assistant_render_failed",
             content=(
-                speech_cleanup_refusal
+                refusal_copy
                 or (_phone_gate_refusal_copy(reason) if reason else None)
                 or (
                     "I couldn't start the render. Your draft is still saved, "
@@ -2211,7 +2230,8 @@ def _unified_montage_review(
         except ValueError:
             continue
     live = {req.id: req for req in brief.live()}
-    receipts = [receipt for receipt in receipts if receipt.requirement_id in live]
+    # A record planned before unjudged receipts were dropped can still carry some.
+    receipts = [r for r in receipts if is_judged(live.get(r.requirement_id), r)]
     if not receipts:
         return default_text, []
     checked = CreativeBrief(
