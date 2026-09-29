@@ -93,3 +93,53 @@ def test_sfx_snapshot_lists_draft_placements(monkeypatch) -> None:
     )
     placements = build_editor_snapshot(_job(projected), projected)["sfx"]["placements"]
     assert [p["id"] for p in placements] == ["x", "y"]
+
+
+# --- KRI-219: the phone reads `sections` first; chat edits must land there too ------------
+
+
+def _bootstrap_payload(variant: dict) -> dict:
+    """What `read_or_bootstrap_draft` stores when the editor is opened first."""
+    from app.kria.drafts import _editor_snapshot
+
+    return _editor_snapshot(variant, "gen-1")
+
+
+def test_chat_text_edit_lands_in_sections_when_editor_was_opened_first() -> None:
+    variant = _variant()
+    prior = _bootstrap_payload(variant)
+    assert "sections" in prior
+    compiled = compile_editor_ops(
+        _job(variant),
+        project_editor_draft(variant, prior),
+        [{"op": "edit_text", "bar_index": 0, "text": "skeeps"}],
+    )
+    merged = merge_editor_draft(prior, _dump(compiled))
+    # The flat key (commit shape) AND the nested copy the iOS decoder reads.
+    assert merged["text_elements"][0]["text"] == "skeeps"
+    assert merged["sections"]["text_elements"][0]["text"] == "skeeps"
+    # Untouched sections and the base generation survive.
+    assert merged["base_generation"] == "gen-1"
+    assert set(prior["sections"]) <= set(merged["sections"])
+
+
+def test_chat_remove_music_nulls_the_track_inside_sections() -> None:
+    variant = {**_variant(), "music_track_id": "track-1"}
+    prior = _bootstrap_payload(variant)
+    assert prior["sections"]["music_track_id"] == "track-1"
+    merged = merge_editor_draft(prior, {"remove_music": True})
+    assert merged["sections"]["music_track_id"] is None
+
+
+def test_chat_mix_edit_updates_sections_mix_and_keeps_audio_mix_reader_working() -> None:
+    variant = _variant()
+    prior = _bootstrap_payload(variant)
+    merged = merge_editor_draft(prior, {"mix": {"music_level": 0.3}})
+    assert merged["sections"]["mix"]["music_level"] == 0.3
+
+
+def test_flat_previous_payload_is_unchanged_by_the_sections_overlay() -> None:
+    previous = {"text_elements": [{"text": "a"}], "base_generation": "g"}
+    merged = merge_editor_draft(previous, {"text_elements": [{"text": "b"}]})
+    assert "sections" not in merged
+    assert merged["text_elements"] == [{"text": "b"}]

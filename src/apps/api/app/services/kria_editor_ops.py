@@ -961,7 +961,46 @@ def merge_editor_draft(previous: dict[str, Any], current: dict[str, Any]) -> dic
         merged["remove_music"] = False
     elif previous.get("remove_music"):
         merged["remove_music"] = True
+    _overlay_sections(merged, previous, current)
     return merged
+
+
+# Commit-request keys that are metadata, not editable sections.
+_NON_SECTION_KEYS = frozenset(
+    {
+        "base_generation",
+        "copilot_receipt_ids",
+        "retry_guided_revision",
+        "guided_revision",
+        "guided_revision_number",
+        "remove_music",
+    }
+)
+
+
+def _overlay_sections(
+    merged: dict[str, Any], previous: dict[str, Any], current: dict[str, Any]
+) -> None:
+    """Keep the nested `sections` copy in step with the flat commit-shaped keys.
+
+    Opening the editor bootstraps a draft whose editable state lives under
+    `sections` (`drafts._editor_snapshot`), and the iOS decoder reads `sections`
+    first, ignoring flat keys. Chat ops emit flat keys, so without this overlay
+    the phone kept showing the pre-edit state after a chat edit said "Done".
+    """
+    sections = previous.get("sections")
+    if not isinstance(sections, dict):
+        return
+    updated = dict(sections)
+    for key, value in current.items():
+        if key in _NON_SECTION_KEYS:
+            continue
+        updated[key] = merged.get(key, value)
+    if current.get("remove_music"):
+        updated["music_track_id"] = None
+    elif current.get("music_track_id"):
+        updated["music_track_id"] = current["music_track_id"]
+    merged["sections"] = updated
 
 
 _MAX_CLIP_LABELS = 80  # fast_cuts allows 80 cuts
