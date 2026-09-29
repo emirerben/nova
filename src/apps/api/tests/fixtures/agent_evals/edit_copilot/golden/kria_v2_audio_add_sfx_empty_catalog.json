@@ -1,0 +1,50 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-29-v51",
+  "input": {
+    "utterance": "add a whoosh at 3s",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "editor_ops_version": 2,
+      "allowed_op_families": [
+        "sfx"
+      ],
+      "has_narrated_captions": false,
+      "text_bars": [],
+      "slots": [
+        {
+          "output_start_s": 0,
+          "output_end_s": 8,
+          "duration_s": 8
+        }
+      ],
+      "total_duration_s": 8,
+      "sfx": {
+        "placements": [
+          {
+            "index": 0,
+            "id": "a",
+            "label": "Pop",
+            "at_s": 1.0,
+            "gain": 1.0,
+            "duration_s": 0.2
+          }
+        ],
+        "catalog": []
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"reject\", \"ops\": [], \"confidence\": 0.9, \"reply\": \"There are no sound effects available for this edit.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "reject",
+    "ops": [],
+    "confidence": 0.9,
+    "reply": "There are no sound effects available for this edit.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "add_sfx_empty_catalog"
+  }
+}

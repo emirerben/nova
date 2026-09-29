@@ -2357,6 +2357,12 @@ def check_edit_copilot_compiles(
             # scope for a path-free synthetic snapshot.
             return []
 
+        if variant.get("render_destination") == "device":
+            # Device variants commit through the phone compiler, which needs a
+            # pinned recipe + receipts a synthetic snapshot cannot supply; the
+            # compile + schema checks above are the real signal here.
+            return []
+
         from app.routes import generative_jobs as gj
 
         music_track = None
@@ -2364,8 +2370,20 @@ def check_edit_copilot_compiles(
             from .snapshot_variant import build_fake_music_track
 
             music_track = build_fake_music_track(payload.music_track_id)
+        background_track = None
+        bed = getattr(payload, "background_music", None)
+        if bed is not None and bed.track_id:
+            from .snapshot_variant import build_fake_music_track
+
+            background_track = build_fake_music_track(bed.track_id)
         try:
-            gj.prepare_editor_commit(job, variant["variant_id"], payload, music_track=music_track)
+            gj.prepare_editor_commit(
+                job,
+                variant["variant_id"],
+                payload,
+                music_track=music_track,
+                background_music_track=background_track,
+            )
         except HTTPException as exc:
             return [
                 f"{label}: prepare_editor_commit rejected ops {op_names} "

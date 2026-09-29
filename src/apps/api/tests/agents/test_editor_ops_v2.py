@@ -49,6 +49,11 @@ def test_timeline_lane_registers_its_specs_and_fragment() -> None:
     assert "patch_slots" in editor_ops_v2.prompt_fragments()
 
 
+def test_lane_specs_only_extend_or_add_known_ops() -> None:
+    names = [spec.name for spec in editor_ops_v2.lane_specs()]
+    assert len(names) == len(set(names))
+
+
 def _snapshot(**extra) -> dict:
     return {
         "allowed_op_families": ["text", "style", "timeline"],

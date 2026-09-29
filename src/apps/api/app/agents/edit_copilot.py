@@ -204,7 +204,9 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "set_caption_meta": frozenset({"patch"}),
     "set_caption_emphasis": frozenset({"cue_index", "emphasis"}),
     "swap_music": frozenset({"track_id"}),
-    "set_mix": frozenset({"music_level"}),
+    # KRI-219: at least one of music_level/original_level/music_gain_db,
+    # enforced in _coerce_payload (the union-only registry cannot drop a member).
+    "set_mix": frozenset(),
     "remove_music": frozenset(),
     "set_intro_layout": frozenset({"layout"}),
     "apply_custom_effect": frozenset({"effect"}),
@@ -1633,10 +1635,17 @@ def _format_snapshot(snapshot: dict) -> str:
                         for r in _component_rows(roles, 6, component_context_enabled)
                     ]
                     roles_part = f" roles={','.join(r for r in clean_roles if r)}"
+                category = effect.get("category")
+                category_part = (
+                    f" category={_field(category, max_chars=30)}"
+                    if isinstance(category, str)
+                    else ""
+                )
                 lines.append(
                     f"- id={_field(effect.get('id'), max_chars=80)!r} "
-                    f"name={_field(effect.get('name'), max_chars=32)!r} "
+                    f"name={_field(effect.get('name') or effect.get('label'), max_chars=32)!r} "
                     f"duration={_fmt_round3(_first_number(effect, ('duration_s',)))}s"
+                    f"{category_part}"
                     f"{roles_part}"
                 )
         else:
@@ -1802,6 +1811,17 @@ def _format_snapshot(snapshot: dict) -> str:
         mix = snapshot["mix"]
         lines.append("\nMIX:")
         lines.append(f"music_level={_fmt_round3(_first_number(mix, ('music_level',)))}")
+        if snapshot.get("render_destination") == "device":
+            lines.append(
+                "original_level="
+                f"{_fmt_round3(_first_number(mix, ('original_level',)))} (0-1, editable)"
+            )
+        bed = mix.get("background_music")
+        if isinstance(bed, dict):
+            lines.append(
+                "background_music_gain_db="
+                f"{_fmt_round3(_first_number(bed, ('gain_db',)))} (-40..0, editable)"
+            )
 
     if "title" in snapshot:
         lines.append(f"\nTITLE: {_field(snapshot.get('title'), max_chars=300)!r}")
@@ -3435,6 +3455,20 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
             detail="at least one sound property is required",
         )
         return None
+    if name == "set_mix":
+        from app.agents.editor_ops_v2.audio import has_mix_field  # noqa: PLC0415
+
+        if not _v2.is_v2_snapshot(snapshot):
+            # v2-only fields never reach the web drawer's contract.
+            payload.pop("original_level", None)
+            payload.pop("music_gain_db", None)
+        if not has_mix_field(payload):
+            state.reject(
+                op=name,
+                reason="missing_required",
+                detail="at least one of music_level, original_level, music_gain_db is required",
+            )
+            return None
     missing = _OP_REQUIRED[name] - payload.keys()
     if missing:
         log.warning("edit_copilot.drop_missing_fields", op=name, missing=sorted(missing))
@@ -4244,6 +4278,11 @@ def _coerce_payload(
     if name == "set_mix" and not isinstance(snapshot.get("mix"), dict):
         state.invalid_value()
         return None
+    if name == "set_mix":
+        from app.agents.editor_ops_v2.audio import validate_set_mix  # noqa: PLC0415
+
+        if validate_set_mix(out, snapshot, state) is None:
+            return None
     if name == "open_tool":
         tool = out.get("tool")
         if tool not in _VALID_OPEN_TOOLS:

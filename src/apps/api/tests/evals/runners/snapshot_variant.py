@@ -240,6 +240,15 @@ def build_synthetic_variant(
     # so a `set_mix` op can validate all the way through `prepare_editor_commit`
     # even when the snapshot's own `mix` section omitted a level.
     variant["mix"] = music_level if music_level is not None else 0.5
+    # KRI-219 Lane C: device-only original_level + adjustable background bed.
+    if snapshot.get("render_destination") == "device":
+        variant["render_destination"] = "device"
+    bed = mix.get("background_music")
+    if isinstance(bed, dict) and bed.get("track_id"):
+        variant["smart_music_treatment"] = {
+            "track_id": bed["track_id"],
+            "gain_db": bed.get("gain_db", -18.0),
+        }
 
     if "remove_visual_media" in op_names or "visual_media" in snapshot:
         variant["visual_blocks"] = _visual_blocks_from_snapshot(snapshot)
