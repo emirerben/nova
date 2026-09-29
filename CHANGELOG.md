@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.9.0] - 2026-09-29
+
+### Changed
+- fix(ios): settle chat thinking regardless of which fetch delivered the reply (KRI-222) (#1268) <!-- release-pr: 1268 -->
+
 ## [0.77.8.0] - 2026-09-29
 
 ### Changed
