@@ -34,6 +34,7 @@ from app.services.kria_editor_ops import (
     _clip_label_links,
     _DraftState,
     _slot_duration,
+    is_caption_text_bar,
 )
 
 MAX_TEXT_CHARS = 500
@@ -146,6 +147,7 @@ def bars_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                 "clip_id": clip if isinstance(clip, str) and clip else None,
                 "removed": bool(row.get("removed")),
                 "start_s": _number(row.get("start_s")),
+                "caption": row.get("caption_cue") is True,
             }
         )
     return out
@@ -170,6 +172,7 @@ def bars_from_variant(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]
                     "clip_id": (links.get(row_id) or {}).get("clip_id"),
                     "removed": bool(row.get("removed")),
                     "start_s": _number(row.get("start_s")),
+                    "caption": is_caption_text_bar(row),
                 }
             )
         index += 1
@@ -220,7 +223,8 @@ def resolve_selector(bars: list[dict[str, Any]], selector: dict[str, Any]) -> li
     matched: list[str] = []
     for bar in bars:
         # Lyric lines are timing-locked to the song; the lyrics editor owns them.
-        if bar["removed"] or bar["role"] == "lyric_line":
+        # Captions/narration are owned by the caption ops, never text selectors.
+        if bar["removed"] or bar["role"] == "lyric_line" or bar.get("caption"):
             continue
         kind = kinds[bar["id"]]
         if "ids" in selector and bar["id"] not in ids:

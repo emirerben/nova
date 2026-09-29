@@ -11,13 +11,18 @@ from app.agents.editor_ops_v2 import register_all_handlers
 from app.agents.editor_ops_v2 import timeline as tl
 from app.services import kria_editor_ops as ops
 from app.services import kria_editor_timeline as ket
-from app.services.kria_editor_ops import KriaEditorOpError, compile_editor_ops
+from app.services.kria_editor_ops import (
+    KriaEditorOpError,
+    build_editor_snapshot,
+    compile_editor_ops,
+)
 from tests.services._guided_timeline_fixtures import (
     arm_guided,
     guided_bars,
     guided_job,
     guided_revision,
 )
+from tests.services.test_kria_editor_clip_context import _caps  # noqa: F401  (autouse fixture)
 from tests.services.test_kria_editor_ops import _job, _variant
 
 register_all_handlers()
@@ -127,3 +132,51 @@ def test_legacy_slots_get_media_kind_from_clip_paths() -> None:
     assert tl._select(state, {"media_kind": "image"}) == [1]
     assert tl._select(state, {"media_kind": "video"}) == [0]
     assert tl._is_image(rows[1]) and not tl._is_image(rows[0])
+
+
+def _narrated_variant():
+    from tests.services.test_kria_editor_clip_context import _job_and_variant
+
+    job, variant = _job_and_variant()
+    for index in (1, 2):
+        variant["text_elements"].append(
+            {
+                "id": f"narration-caption-{index}",
+                "text": f"spoken words {index}",
+                "start_s": float(index),
+                "end_s": float(index) + 0.9,
+                "role": "generative_sequence",
+                "position": "custom",
+                "source_params": {"source": "caption_cue", "key": str(index)},
+            }
+        )
+    return job, variant
+
+
+def test_text_selector_groups_never_sweep_up_narration_captions() -> None:
+    from app.services.kria_editor_ops_text import (
+        bars_from_snapshot,
+        bars_from_variant,
+        resolve_selector,
+    )
+    from tests.services.test_kria_editor_clip_context import _context
+
+    job, variant = _narrated_variant()
+    snapshot = build_editor_snapshot(job, variant, clip_context=_context(job, variant))
+    for bars in (bars_from_variant(job, variant), bars_from_snapshot(snapshot)):
+        for group in ("all", "free", "title", "labels"):
+            matched = resolve_selector(bars, {"group": group})
+            assert not any(bar_id.startswith("narration-caption-") for bar_id in matched), group
+        assert resolve_selector(bars, {"group": "all"})  # real text still matches
+
+
+def test_delete_all_text_keeps_narration_captions() -> None:
+    from tests.services.test_kria_editor_clip_context import _context, _parse
+
+    job, variant = _narrated_variant()
+    snapshot = build_editor_snapshot(job, variant, clip_context=_context(job, variant))
+    output = _parse(snapshot, [{"op": "remove_texts", "selector": {"group": "all"}}], "delete all")
+    assert output.outcome == "proposed", output.rejection_reasons
+    compiled = compile_editor_ops(job, variant, output.ops)
+    kept = {row["id"] for row in compiled.payload.text_elements}
+    assert {"narration-caption-1", "narration-caption-2"} <= kept

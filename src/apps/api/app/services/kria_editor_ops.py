@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
-from app.agents._schemas.text_element import _ALLOWED_FONTS
+from app.agents._schemas.text_element import _ALLOWED_FONTS, CAPTION_CUE_SOURCE
 from app.config import settings
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
@@ -83,6 +83,15 @@ class CompiledEditorDraft:
     # KRI-218: [{id, clip_id|None, role, before|None, after|None}] for every text
     # whose wording changed / was added / was removed (receipts read this).
     text_diff: list[dict[str, Any]] = field(default_factory=list)
+
+
+def is_caption_text_bar(row: dict[str, Any]) -> bool:
+    """A subtitle/narration caption living in ``text_elements`` (not chat-editable text)."""
+    params = row.get("source_params")
+    return bool(
+        (isinstance(params, dict) and params.get("source") == CAPTION_CUE_SOURCE)
+        or str(row.get("id") or "").startswith("narration-caption-")
+    )
 
 
 def _variant_slots(variant: dict[str, Any], job: Any = None) -> list[dict[str, Any]]:
@@ -644,6 +653,8 @@ def build_editor_snapshot(
                 }
             },
             **_bar_clip_link(row, label_links),
+            # Caption/narration bars: selector groups must not sweep them up.
+            **({"caption_cue": True} if is_caption_text_bar(row) else {}),
             # Tombstoned generated text: selector ops must not match it.
             **({"removed": True} if row.get("removed") else {}),
         }
