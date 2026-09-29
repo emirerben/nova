@@ -2233,8 +2233,10 @@ async def test_editor_ops_turn_receipts_cover_only_this_turns_requirements(
             content = event.content
         assert set(receipts) == {"r2", "r3"}  # r1 is from an earlier turn
         assert receipts["r2"]["status"] == "met"
-        assert receipts["r3"]["status"] == "partial"  # can't verify is not "Couldn't"
+        # KRI-218: no per-clip structure to diff is "unchecked", not a failure.
+        assert receipts["r3"]["status"] == "unchecked"
         assert "Couldn't" not in content
-        assert "Done:" in content and "Partly:" in content
+        assert "Done:" in content and "Not checked:" in content
+        assert "Partly:" not in content
     finally:
         await async_engine.dispose()
