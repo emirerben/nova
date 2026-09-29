@@ -51,22 +51,11 @@ def _check(strategy=None, *, clips=(PROXY,), item_format="montage", user=USER):
 def unified_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "phone_rendering_enabled", True)
     monkeypatch.setattr(settings, "phone_render_user_ids", [])
-    monkeypatch.setattr(settings, "montage_unified_plan_enabled", True)
-    monkeypatch.setattr(settings, "montage_unified_plan_user_ids", [])
 
 
 def test_the_unified_planner_settles_text_order_and_timing_but_not_audio_or_style(unified_on):
     assert UNIFIED_SETTLED_KINDS == {"text", "order", "timing"}
     assert _check() == ["r5", "r6"]
-
-
-def test_with_the_flag_off_every_requirement_is_still_checked_at_draft_time(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
-    monkeypatch.setattr(settings, "montage_unified_plan_enabled", False)
-    monkeypatch.setattr(settings, "montage_unified_plan_user_ids", [])
-    assert _check() == ["r1", "r2", "r3", "r4", "r5", "r6"]
 
 
 @pytest.mark.parametrize("fmt", ["montage", "day_vlog", "single_hero"])
@@ -89,8 +78,8 @@ def test_the_voiceover_lane_is_judged_because_the_worker_leaves_the_unified_plan
     unified_on, audio
 ):
     """Approval maps only original_audio / licensed_music out of the voiceover lane; the
-    worker then takes the plain lane, which builds no receipts, so a deferred requirement
-    would be judged nowhere. Whether a voiceover is recorded yet does not matter."""
+    worker then takes the voiceover montage lane, which builds no receipts, so a deferred
+    requirement would be judged nowhere. Whether a voiceover is recorded yet does not matter."""
     assert len(_check(_strategy(audio_strategy=audio))) == 6
 
 
@@ -112,13 +101,6 @@ def test_an_account_the_phone_gate_excludes_is_judged(unified_on, monkeypatch):
     monkeypatch.setattr(settings, "phone_rendering_enabled", False)
     monkeypatch.setattr(settings, "phone_render_user_ids", [])
     assert len(_check()) == 6
-
-
-def test_the_allowlist_alone_turns_deferral_on_for_that_account(unified_on, monkeypatch):
-    monkeypatch.setattr(settings, "montage_unified_plan_enabled", False)
-    monkeypatch.setattr(settings, "montage_unified_plan_user_ids", [str(USER)])
-    assert _check() == ["r5", "r6"]
-    assert len(_check(user=uuid.uuid4())) == 6
 
 
 def test_a_missing_strategy_defers_nothing(unified_on):

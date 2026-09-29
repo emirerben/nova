@@ -1345,7 +1345,7 @@ def _dispatch_item_render(
     montage-family phone dispatch is refused as ``unapproved_guided``. True
     (with ``bypass_guided_edit_gate`` and the account covered by
     ``settings.kria_runtime_v2_phone_for``) lets that one shape through to the
-    worker's decisions-only ``_run_phone_montage_job``. False (default) keeps
+    worker's decisions-only ``_run_phone_voiceover_montage_job``. False (default) keeps
     every other caller's gate byte-identical.
 
     ``phone_speech_cleanup_unattended``: runtime-v2 approval has no creator
@@ -1902,7 +1902,7 @@ def _dispatch_item_render(
                     fmt in NARRATED_EDIT_FORMATS and not has_recorded_voiceover
                 )
             # KRI-132: a recorded voiceover must never dispatch a phone job
-            # doomed to fail in the worker (`_run_phone_montage_job` raises
+            # doomed to fail in the worker (`_run_phone_voiceover_montage_job` raises
             # "Phone rendering does not yet support voiceover edits" when the
             # flag is off, or when the compiled recipe needs a capability the
             # device hasn't verified). Fail closed HERE instead, before a Job

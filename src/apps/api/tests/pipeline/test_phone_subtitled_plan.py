@@ -327,7 +327,7 @@ def test_rejects_clip_over_five_minutes():
 def test_unexpected_caption_compilation_failure_fails_closed(monkeypatch):
     """A caption-compiler crash (bad transcript/edit content, a font that
     can't resolve a glyph, ...) must fail closed as `UnsupportedPhonePlan`,
-    never propagate a raw exception -- mirrors `compile_phone_montage_plan`'s
+    never propagate a raw exception -- mirrors `compile_phone_voiceover_montage_plan`'s
     identical wrapping of `build_persistent_intro_overlays`/
     `compile_text_overlay` failures."""
     import app.pipeline.phone_subtitled_plan as module

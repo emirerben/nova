@@ -6,7 +6,7 @@ export-safety-margin refit math and its rounding tolerance -- those stay
 untouched (byte-identical behavior) since that logic is already load-bearing
 and verified; only the float-noise text snap below is shared with it. This
 module exists so the SECOND
-compiler (`app.pipeline.phone_montage_plan`, for the montage/day_vlog/
+compiler (`app.pipeline.phone_voiceover_montage_plan`, for the montage/day_vlog/
 single_hero archetypes) doesn't have to reinvent that math, and so a THIRD
 compiler (voiceover/subtitled/etc., future phases) has somewhere to import it
 from instead of copy-pasting again.
@@ -92,7 +92,7 @@ class PhoneMusicBed(BaseModel):
     publish/ready/path-prefix contract directly against a sync DB session
     instead of calling that async function. `inspect_library_asset` (already
     sync) then pins the exact generation + fingerprint. Consumed by
-    `compile_phone_montage_plan`, which never touches the database or GCS
+    `compile_phone_voiceover_montage_plan`, which never touches the database or GCS
     itself -- it only reads this already-verified value.
     """
 
@@ -124,7 +124,7 @@ class PhoneNarrationBed(BaseModel):
     media addressed by plan item, not catalog id -- see
     `app.kria.render_assets.VoiceoverRenderAsset`.
 
-    Consumed by `compile_phone_montage_plan`, which never touches the
+    Consumed by `compile_phone_voiceover_montage_plan`, which never touches the
     database or GCS itself -- it only reads this already-verified value.
     """
 

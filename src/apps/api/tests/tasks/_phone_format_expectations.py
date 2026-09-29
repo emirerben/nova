@@ -82,7 +82,7 @@ _GUIDED_VOICEOVER = PhoneFormatExpectation(
         "PHONE_RENDER_SUPPORTED_FORMATS, but without "
         "PHONE_NARRATION_RENDERING_ENABLED + a verified narrationAudio the gate "
         "now refuses here with a typed reason instead of minting a Job that "
-        "_run_phone_montage_job would reject on pickup."
+        "_run_phone_voiceover_montage_job would reject on pickup."
     ),
 )
 
@@ -93,8 +93,8 @@ _GUIDED_VOICEOVER_ENABLED = PhoneFormatExpectation(
     worker_note=(
         "Flag on + narrationAudio verified: binds phone sources and dispatches "
         "with no guided proposal (voiceover is never guided-applicable). The "
-        "worker routes to _run_phone_montage_job, which compiles the voiceover "
-        "as a narration audio track (compile_phone_montage_plan). Rendered on "
+        "worker routes to _run_phone_voiceover_montage_job, which compiles the voiceover "
+        "as a narration audio track (compile_phone_voiceover_montage_plan). Rendered on "
         "the simulator by DeviceMontageRenderE2ETests."
     ),
 )
