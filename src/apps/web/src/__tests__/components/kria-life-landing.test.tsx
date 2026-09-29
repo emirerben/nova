@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import KriaLifeLanding, {
   getLandingMorphState,
   getLandingScrollProgress,
+  getLogoMaskMotionUnit,
   getProductDemoStep,
 } from "@/components/KriaLifeLanding";
 
@@ -29,6 +30,10 @@ describe("KriaLifeLanding", () => {
         addEventListener: jest.fn(),
         removeEventListener: jest.fn(),
       }),
+    });
+    Object.defineProperty(window, "CSS", {
+      configurable: true,
+      value: { supports: jest.fn().mockReturnValue(false) },
     });
     (HTMLMediaElement.prototype.play as jest.Mock).mockReset().mockResolvedValue(undefined);
     (HTMLMediaElement.prototype.pause as jest.Mock).mockReset();
@@ -57,7 +62,7 @@ describe("KriaLifeLanding", () => {
     }
   });
 
-  it("crossfades the white wordmark into the video-filled wordmark on scroll", () => {
+  it("keeps the glass shell over the video-filled wordmark on scroll", () => {
     expect(getLandingScrollProgress(0, 0, 2300, 1000)).toBe(0);
     expect(getLandingScrollProgress(650, 0, 2300, 1000)).toBe(0.5);
     expect(getLandingScrollProgress(1300, 0, 2300, 1000)).toBe(1);
@@ -69,15 +74,25 @@ describe("KriaLifeLanding", () => {
 
     expect(start.fullOpacity).toBe(1);
     expect(start.logoOpacity).toBe(0);
+    expect(start.glassOpacity).toBe(1);
     expect(start.wordmarkOpacity).toBe(1);
     expect(middle.logoOpacity).toBeGreaterThan(0);
+    expect(middle.glassOpacity).toBe(1);
     expect(middle.wordmarkOpacity).toBeLessThan(1);
     expect(middle.logoOpacity + middle.wordmarkOpacity).toBeCloseTo(1);
     expect(middle.fullScale).toBeLessThan(1);
     expect(end.fullOpacity).toBe(0);
     expect(end.logoOpacity).toBe(1);
+    expect(end.glassOpacity).toBe(1);
     expect(end.wordmarkOpacity).toBe(0);
     expect(end.logoScale).toBe(1);
+  });
+
+  it("converts screen-pixel drift into the scaled SVG mask coordinate space", () => {
+    const logoWidth = 585.34;
+    const svgScale = logoWidth / 97.4;
+
+    expect(getLogoMaskMotionUnit(logoWidth) * svgScale).toBeCloseTo(1);
   });
 
   it("maps the real product recording to the matching journey copy", () => {
@@ -128,11 +143,17 @@ describe("KriaLifeLanding", () => {
         'use[href="/landing/life/kria-wordmark-white-outlined.svg#font_3_205"]',
       ),
     ).toBeInTheDocument();
-    expect(container.querySelectorAll("svg use")).toHaveLength(4);
+    expect(container.querySelectorAll("svg use")).toHaveLength(8);
     expect(container.querySelector("foreignObject[mask]")).toBeInTheDocument();
-    expect(
-      container.querySelector('mask image[href="/landing/life/kria-wordmark-white-outlined.svg"]'),
-    ).toBeInTheDocument();
+    expect(container.querySelectorAll('mask [class*="logoMaskLetter"]')).toHaveLength(4);
+    expect(container.querySelectorAll('[class*="glassLetter"]')).toHaveLength(4);
+    for (const letter of ["K", "R", "I", "A"]) {
+      expect(container.querySelectorAll(`[class*="letterFloat${letter}"]`)).toHaveLength(2);
+    }
+    expect(container.querySelector('[class*="glassWordmark"]')).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
     expect(container.querySelector("svg text")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play hero reel" })).toBeInTheDocument();
     fireEvent.playing(video);
@@ -229,7 +250,29 @@ describe("KriaLifeLanding", () => {
     });
   });
 
-  it("starts the masked reel only after the hero begins morphing on scroll", () => {
+  it("starts the masked reel when the glass build begins", () => {
+    const play = HTMLMediaElement.prototype.play as jest.Mock;
+    const { container } = render(<KriaLifeLanding />);
+    const video = container.querySelector("video")!;
+    Object.defineProperty(video, "paused", {
+      configurable: true,
+      get: () => false,
+    });
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      value: 0.8,
+    });
+
+    fireEvent.timeUpdate(video);
+
+    expect(play).toHaveBeenCalledTimes(2);
+    expect(container.querySelector("section[data-stage]")).toHaveAttribute(
+      "data-stage",
+      "wordmark",
+    );
+  });
+
+  it("starts the masked reel on scroll if the build has not started", () => {
     const play = HTMLMediaElement.prototype.play as jest.Mock;
     const { container } = render(<KriaLifeLanding />);
     const video = container.querySelector("video")!;
@@ -250,6 +293,23 @@ describe("KriaLifeLanding", () => {
     fireEvent.scroll(window);
 
     expect(play).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses a native scroll timeline without registering a scroll handler", () => {
+    (window.CSS.supports as jest.Mock).mockReturnValue(true);
+    const addEventListener = jest.spyOn(window, "addEventListener");
+
+    const { container } = render(<KriaLifeLanding />);
+
+    expect(container.querySelector("section[data-stage]")).toHaveAttribute(
+      "data-scroll-driver",
+      "native",
+    );
+    expect(addEventListener).not.toHaveBeenCalledWith(
+      "scroll",
+      expect.any(Function),
+      expect.anything(),
+    );
   });
 
   it("uses the completed static fallback when initial autoplay is rejected", async () => {
