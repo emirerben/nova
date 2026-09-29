@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.15.0] - 2026-09-29
+
+### Changed
+- fix(ios): long-press text moves keep the finger's whole drag (#1266) <!-- release-pr: 1266 -->
+
 ## [0.77.14.0] - 2026-09-29
 
 ### Changed
