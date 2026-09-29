@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.6.0] - 2026-09-29
+
+### Changed
+- test(evals): request-following golden set to 30 threads, live report flag, P6b KPI (KRI-212) (#1257) <!-- release-pr: 1257 -->
+
 ## [0.77.5.0] - 2026-09-29
 
 ### Changed
