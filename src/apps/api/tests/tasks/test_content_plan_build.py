@@ -3344,6 +3344,7 @@ def _run_phone_dispatch(
     phone_lane_request: dict | None = None,
     phone_subtitled_media_lanes_enabled: bool = False,
     dispatch_kwargs: dict | None = None,
+    pool_rows: list | None = None,
 ):
     from app.config import settings
 
@@ -3361,8 +3362,10 @@ def _run_phone_dispatch(
     )
     job = SimpleNamespace(id=uuid.uuid4(), assembly_plan={})
     session = MagicMock()
-    # `bypass_guided_edit_gate` re-counts pool assets under the item lock.
-    session.execute.return_value.scalar_one.return_value = 0
+    # `bypass_guided_edit_gate` re-counts pool assets under the item lock; the
+    # unified phone montage then reads the rows it would place (KRI-217).
+    session.execute.return_value.scalar_one.return_value = len(pool_rows or [])
+    session.execute.return_value.all.return_value = list(pool_rows or [])
 
     monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
     monkeypatch.setattr(settings, "silence_cut_enabled", True)
@@ -3499,6 +3502,127 @@ def test_v2_phone_montage_respects_the_account_allowlist(monkeypatch: pytest.Mon
     )
     assert result.outcome == "invalid_clips"
     assert result.reason == "unapproved_guided"
+
+
+# --- KRI-217: a runtime-v2 phone montage with Visuals -----------------------
+#
+# Every v2 approval bypasses the guided gate, and the bypass refused any item
+# with a pool asset, so each iOS montage with a photo answered "I couldn't start
+# the render" forever (thread 6BF1213E, 2026-09-28). The unified phone montage
+# places ready Visuals itself; only a Visual it cannot place yet refuses.
+
+
+def _pool_row(kind: str = "image", status: str = "ready") -> SimpleNamespace:
+    return SimpleNamespace(id=uuid.uuid4(), kind=kind, status=status)
+
+
+def _run_v2_visuals_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    pool_rows: list,
+    *,
+    phone_account: bool = True,
+    dispatch_kwargs: dict | None = None,
+    unverified: str | None = None,
+):
+    from app.config import settings
+    from tests._prod_profile import PROD_VERIFIED_FEATURES, apply_prod_profile
+
+    apply_prod_profile(monkeypatch)
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_user_ids", [])
+    return _run_phone_dispatch(
+        monkeypatch,
+        edit_format="montage",
+        approved=False,
+        # An account outside phone rendering renders in the cloud, where a v2
+        # montage is clip-only.
+        phone_rendering_enabled=phone_account,
+        dispatch_kwargs=dispatch_kwargs or _V2_PHONE_DISPATCH,
+        phone_render_verified_features=[
+            name for name in PROD_VERIFIED_FEATURES if name != unverified
+        ],
+        pool_rows=pool_rows,
+    )
+
+
+def test_v2_phone_montage_with_ready_photos_dispatches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reported shape: videos plus Visuals photos, production flags."""
+    result, _job, mock_build, bind_mock = _run_v2_visuals_dispatch(
+        monkeypatch, [_pool_row(), _pool_row(), _pool_row(kind="video")]
+    )
+
+    assert result.outcome == "dispatched"
+    bind_mock.assert_called_once()
+    assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
+
+
+@pytest.mark.parametrize("status", ["uploaded", "queued", "analyzing"])
+def test_v2_phone_montage_waits_for_a_visual_still_being_prepared(
+    monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    result, _job, mock_build, bind_mock = _run_v2_visuals_dispatch(
+        monkeypatch, [_pool_row(), _pool_row(status=status)]
+    )
+
+    assert result.outcome == "visuals_processing"
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
+
+
+@pytest.mark.parametrize(("kind", "feature"), [("image", "stillImages"), ("video", "visualVideos")])
+def test_v2_phone_montage_refuses_a_visual_the_phone_cannot_draw(
+    monkeypatch: pytest.MonkeyPatch, kind: str, feature: str
+) -> None:
+    result, _job, mock_build, _bind = _run_v2_visuals_dispatch(
+        monkeypatch, [_pool_row(kind=kind)], unverified=feature
+    )
+
+    assert result.outcome == "guided_edit_bypass_unsafe"
+    mock_build.assert_not_called()
+
+
+def test_v2_phone_montage_ignores_visuals_outside_an_explicit_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With "only use the videos", a photo still analysing must not block the render."""
+    strategy = {
+        "edit_format": "montage",
+        "render_program": "guided",
+        "pacing": "fast",
+        "media_scope": "selected",
+        "selected_media_ids": ["registered-spine-0"],
+    }
+    result, *_ = _run_v2_visuals_dispatch(
+        monkeypatch,
+        [_pool_row(status="analyzing")],
+        dispatch_kwargs={**_V2_PHONE_DISPATCH, "creator_strategy": strategy},
+    )
+
+    assert result.outcome == "dispatched"
+
+
+@pytest.mark.parametrize(
+    ("phone_account", "dispatch_kwargs", "status"),
+    [
+        # A cloud-rendered v2 montage is clip-only: a creator's photo refuses.
+        (False, _V2_PHONE_DISPATCH, "ready"),
+        # draft_edit_proposal's clip-only fallback is byte-identical to before:
+        # any pool row refuses, even one that never reached a plan.
+        (True, {"bypass_guided_edit_gate": True}, "failed"),
+    ],
+)
+def test_clip_only_bypass_lanes_still_refuse_pool_media(
+    monkeypatch: pytest.MonkeyPatch, phone_account: bool, dispatch_kwargs: dict, status: str
+) -> None:
+    result, _job, mock_build, bind_mock = _run_v2_visuals_dispatch(
+        monkeypatch,
+        [_pool_row(status=status)],
+        phone_account=phone_account,
+        dispatch_kwargs=dispatch_kwargs,
+    )
+
+    assert result.outcome == "guided_edit_bypass_unsafe"
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
 
 
 def test_phone_gate_unsupported_format_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

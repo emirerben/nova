@@ -2613,6 +2613,41 @@ Self-narration phone journeys (narrated format, no separate voiceover, multi-cli
 audio) go through the identical `embedded_spine` path and get the same benefit/limit, though
 KRI-205 was reported specifically for Talking-to-camera.
 
+## [2026-09-28] Runtime-v2 montage with Visuals: the unified phone montage places them instead of refusing (KRI-217)
+
+Context. Every iOS montage that included a Visuals photo answered "I couldn't start the
+render. Your draft is still saved, so you can retry..." (thread 6BF1213E: 6 phone videos,
+2 ready photos, 1 abandoned upload reservation). `execute_kria_approval` dispatches every
+v2 approval with `bypass_guided_edit_gate=True`, and the bypass re-count from P2-4
+(2026-08-18) refuses any item with a pool row, because its original caller
+(draft_edit_proposal's fallback) renders a clip-only montage. The KRI-190 unified plan was
+clip-only too, so the refusal was correct about the renderer, but the planner had already
+promised the photos and the reply offered a retry that could never pass. iOS picks v2
+whenever offered and the server offers it to every account. No v2 test had Visuals, and
+`tests/_prod_profile.py` predated the v2 and unified-plan flags.
+
+Decision. Extend the unified planner rather than add a guided-proposal step to v2: ready
+Visuals become `lane="asset"` fast cuts spread between the clips (the montage opens on a
+clip), which `_run_phone_guided_job` already binds and draws (KRI-121). The dispatcher
+counts only the creator's Visuals for a v2 approval (manifest-visible states; a
+reservation or a failed photo never reached a plan), lets the unified lane through,
+refuses while one is still uploaded/queued/analyzing (`visuals_processing`), and keeps
+refusing on clip-only lanes. Both refusals get their own copy and `recovery: ask_user`.
+The non-v2 bypass callers stay byte-identical (any pool row refuses).
+
+Replaying the thread's real media through the planner then found a second, older bug
+on the same path: whole frames stop a fraction of a frame short of a clip under 0.4s
+(the thread's 0.298s IMG_4327), and the strict snapshot only accepts such a clip shown
+whole, so the unified plan raised. A clip under `MIN_VIDEO_CUT_S` is now shown whole.
+
+Consequences. Photos keep upload order and hold 1.2s (3s cap); they carry no capture time,
+so a "filmed order" brief lists them as fallback. Positional `shot_labels` follow
+on-screen order, photos included. A cloud-rendered v2 montage still cannot place Visuals;
+that needs v2 guided execution in the cloud worker (follow-up on KRI-217). The unified
+lane still renders source audio only (KRI-190), so a plan that promises "an upbeat track"
+does not get one on the phone. Still open on the unified planner: per-cut rounding can
+leave a montage that lands exactly on the 3s floor at 2.999s, which the snapshot refuses.
+
 ## [2026-09-29] Two montage writers by design: voiceover montages -> voiceover montage writer; everything else -> unified (KRI-220)
 
 Context. KRI-190 put every non-voiceover phone montage on the unified planner behind

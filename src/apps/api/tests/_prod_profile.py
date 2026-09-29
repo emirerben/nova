@@ -8,9 +8,10 @@ when `creator_prompt_fidelity_enabled` and guided editing are both on AND the
 voiceover has a resolved narration identity -- i.e. always in production, never
 in the old tests.
 
-`PROD_TRUE_FLAGS` was derived on 2026-09-22 from `fly secrets list --app
-nova-video`: every secret sharing `PHONE_RENDERING_ENABLED`'s digest holds the
-same value, and that one is known to be `true` (pilot renders work). No secret
+`PROD_TRUE_FLAGS` was derived on 2026-09-22 (re-derived 2026-09-28) from
+`fly secrets list --app nova-video`: every secret sharing
+`PHONE_RENDERING_ENABLED`'s digest holds the same value, and that one is
+known to be `true` (pilot renders work). No secret
 VALUE is recorded here, only which boolean flags are on. Re-derive when a phone
 gate changes behaviour in production but not in tests.
 
@@ -97,6 +98,22 @@ PROD_TRUE_FLAGS: tuple[str, ...] = (
     "user_style_enabled",
     "visual_blocks_enabled",
     "visual_block_autoplan_enabled",
+    # Re-derived 2026-09-28 (KRI-217): on in production (same digest), missing
+    # above. Without the runtime-v2 flags no prod-shaped test reached the lane
+    # that refused every iOS montage with a photo. (MONTAGE_UNIFIED_PLAN_ENABLED
+    # was on too; KRI-220 removed the flag.)
+    "clip_facts_enabled",
+    "creator_clip_preparation_enabled",
+    "edit_proposal_semantic_enabled",
+    "guided_voiceover_speech_cleanup_enabled",
+    "kria_creative_brief_enabled",
+    "kria_runtime_v2_enabled",
+    "kria_runtime_v2_phone_enabled",
+    "phone_sfx_speech_duck_enabled",
+    "phone_subtitled_editor_lanes_enabled",
+    "phone_subtitled_media_lanes_enabled",
+    "phone_subtitled_reaction_beats_enabled",
+    "phone_subtitled_video_overlays_enabled",
 )
 
 # `PHONE_RENDER_VERIFIED_FEATURES` as read from the production api machine on

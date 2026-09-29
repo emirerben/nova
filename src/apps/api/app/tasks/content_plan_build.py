@@ -622,8 +622,14 @@ DispatchOutcome = Literal[
     # montage fallback) checked zero registered pool assets in a SEPARATE
     # transaction; this lock re-asserts it and refuses the bypass if a pool
     # asset appeared in the gap (P2-4, 2026-08-18 adversarial review) —
-    # never silently drop pool media behind a montage.
+    # never silently drop pool media behind a montage. Runtime v2 bypasses
+    # every approval (KRI-217): only the creator's Visuals count there, and its
+    # unified phone montage places ready ones itself, refusing only a kind the
+    # phone cannot draw.
     "guided_edit_bypass_unsafe",
+    # KRI-217: a Visual the creator added (and the planner saw) is still being
+    # uploaded or analysed, so the unified phone montage cannot place it yet.
+    "visuals_processing",
     # The approved plan already failed to render non-transiently (see
     # services/edit_proposals.guided_render_is_blocked); Generate is refused
     # until the user revises it in the planner.
@@ -1298,6 +1304,80 @@ def _phone_unrenderable_reason(approved_snapshot: dict, owner_id: uuid.UUID) -> 
     return None
 
 
+# KRI-217: Visuals the creator manifest shows (`creator_sessions.
+# CREATOR_VISIBLE_ASSET_STATES`) that cannot be placed yet. `preparing` and
+# `promoting` rows are upload reservations the planner never saw (an abandoned
+# one lingers until maintenance reaps it), and a `failed` row never reaches a plan.
+_VISUALS_IN_FLIGHT_STATES = ("uploaded", "queued", "analyzing")
+
+
+def _lands_on_unified_phone_montage(
+    item: PlanItem, plan: ContentPlan, *, allow_phone_unapproved_montage: bool
+) -> bool:
+    """Whether a bypassed montage dispatch renders as the unified phone montage.
+
+    Mirrors the worker's fork in `generative_build`: a runtime-v2 approval
+    (the only caller of `allow_phone_unapproved_montage`) of a montage-family
+    item whose footage is on the phone, for an account with phone rendering and
+    runtime v2 for phones. Every such montage without a recorded voiceover is
+    planned by the KRI-190 unified planner (KRI-220), which places the item's
+    ready Visuals itself (KRI-217); a voiceover item is not guided-applicable
+    and never reaches this gate.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+
+    return bool(
+        allow_phone_unapproved_montage
+        and any(is_analysis_proxy_path(path) for path in item.clip_gcs_paths or [])
+        and settings.phone_rendering_for(plan.user_id)
+        and settings.kria_runtime_v2_phone_for(plan.user_id)
+    )
+
+
+def _v2_visuals_refusal(
+    session,  # noqa: ANN001
+    item: PlanItem,
+    creator_strategy: dict | None,
+    *,
+    unified_phone_montage: bool,
+) -> DispatchOutcome | None:
+    """Why a runtime-v2 montage cannot render with this item's Visuals, if so.
+
+    Only the creator's Visuals count: rows the manifest shows, not a dedupe
+    receipt, narrowed to an explicit `selected` scope, the same rows the unified
+    worker places (`_load_unified_montage_visuals`). The unified phone montage
+    waits for one still being prepared and refuses a kind the phone cannot draw;
+    every other v2 montage lane is clip-only, so it refuses any.
+    """
+    from app.models import PlanItemAsset  # noqa: PLC0415
+    from app.pipeline.unified_montage import selected_visual_ids  # noqa: PLC0415
+    from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
+
+    selected = selected_visual_ids(creator_strategy)
+    rows = [
+        row
+        for row in session.execute(
+            select(PlanItemAsset.id, PlanItemAsset.kind, PlanItemAsset.status).where(
+                PlanItemAsset.plan_item_id == item.id,
+                PlanItemAsset.deduplicated_to_asset_id.is_(None),
+                PlanItemAsset.status.in_(("ready", *_VISUALS_IN_FLIGHT_STATES)),
+            )
+        ).all()
+        if selected is None or f"asset-{row.id}" in selected
+    ]
+    if not rows:
+        return None
+    if not unified_phone_montage:
+        return "guided_edit_bypass_unsafe"
+    if any(row.status in _VISUALS_IN_FLIGHT_STATES for row in rows):
+        return "visuals_processing"
+    drawable = phone_drawable_visual_kinds()
+    if any(row.kind not in drawable for row in rows):
+        return "guided_edit_bypass_unsafe"
+    return None
+
+
 def _dispatch_item_render(
     session,  # noqa: ANN001
     item: PlanItem,
@@ -1338,7 +1418,8 @@ def _dispatch_item_render(
     confirmed native Creator plan, runtime-v2 native execution, or
     draft_edit_proposal's GUIDED_AUTO_DESIGN_ENABLED fallback. These paths have
     no approved guided proposal. Zero registered pool assets is rechecked under
-    the item lock; ordinary Generate callers must leave this False.
+    the item lock, except on the unified phone montage, which places ready
+    Visuals itself (KRI-217); ordinary Generate callers must leave this False.
 
     ``allow_phone_unapproved_montage`` (KRI-187): the runtime-v2 approval path
     has no approved guided proposal to hand a phone job, so without this a
@@ -1475,7 +1556,27 @@ def _dispatch_item_render(
             .where(PlanItemAsset.plan_item_id == item.id)
         ).scalar_one()
         if pool_count > 0:
-            return DispatchResult("guided_edit_bypass_unsafe")
+            if not allow_phone_unapproved_montage:
+                return DispatchResult("guided_edit_bypass_unsafe")
+            # KRI-217: a runtime-v2 approval. Its unified phone montage places
+            # the item's ready Visuals itself, and on any v2 lane an upload
+            # reservation or a failed Visual (never in the plan) must not
+            # refuse the render forever.
+            refusal = _v2_visuals_refusal(
+                session,
+                item,
+                creator_strategy,
+                unified_phone_montage=_lands_on_unified_phone_montage(
+                    item, plan, allow_phone_unapproved_montage=allow_phone_unapproved_montage
+                ),
+            )
+            if refusal is not None:
+                log.info(
+                    "plan_item_render.v2_visuals_refused",
+                    plan_item_id=str(item.id),
+                    outcome=refusal,
+                )
+                return DispatchResult(refusal)
     elif guided_applicable and (
         settings.guided_edit_capability_enabled
         or settings.guided_edit_enforcement_enabled

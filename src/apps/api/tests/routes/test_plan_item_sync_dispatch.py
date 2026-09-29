@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -50,6 +50,7 @@ from app.schemas.edit_proposal import (
     canonical_media_digest,
 )
 from app.storage import ObjectMetadata
+from app.tasks import generative_build
 from app.tasks.content_plan_build import DispatchResult, dispatch_item_render_for
 
 _ENQUEUE = "app.services.job_dispatch.enqueue_orchestrator_sync"
@@ -682,6 +683,187 @@ def test_bypass_guided_edit_gate_refuses_when_pool_asset_present() -> None:
     assert result.outcome == "guided_edit_bypass_unsafe"
     enqueue.assert_not_called()
     assert _jobs_for(item_id) == []
+
+
+# --- KRI-217: runtime-v2 iPhone montage with Visuals photos ----------------
+
+
+def _seed_phone_montage_with_visuals(
+    monkeypatch, pool: list[tuple[str, str, timedelta]], *, phone: bool = True
+) -> tuple[uuid.UUID, uuid.UUID, dict[str, uuid.UUID]]:
+    """Thread 6BF1213E's shape: phone proxies plus Visuals, production flags.
+
+    ``pool`` rows are (name, status, created offset from now). Returns the user,
+    the item and the pool row ids by name. ``phone=False`` is an account that
+    renders in the cloud, with uploaded clips instead of phone proxies.
+    """
+    from tests._prod_profile import apply_prod_profile  # noqa: PLC0415
+
+    apply_prod_profile(monkeypatch)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", phone)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_user_ids", [])
+    # Production preflight; a montage has no narration source, so it never asks.
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    user_id, item_id = _seed_item(clips=[])
+    now = datetime.now(UTC)
+    ids: dict[str, uuid.UUID] = {}
+    with sync_session() as s:
+        s.get(PlanItem, item_id).clip_gcs_paths = [
+            f"users/{user_id}/creation-threads/t/analysis-proxy-ios-{n}.mp4"
+            if phone
+            else f"users/{user_id}/plan/{item_id}/clip-{n}.mp4"
+            for n in range(3)
+        ]
+        for name, status, offset in pool:
+            row = PlanItemAsset(
+                plan_item_id=item_id,
+                user_id=user_id,
+                gcs_path=f"users/{user_id}/plan/{item_id}/pool/{name}.jpg",
+                gcs_generation="17",
+                kind="image",
+                status=status,
+                aspect=4 / 3,
+                source_filename=f"{name}.jpeg",
+                created_at=now + offset,
+            )
+            s.add(row)
+            s.flush()
+            ids[name] = row.id
+        s.commit()
+    return user_id, item_id, ids
+
+
+def _v2_phone_dispatch(item_id: uuid.UUID) -> DispatchResult:
+    from app.kria.media_sources import OriginalMediaDescriptor  # noqa: PLC0415
+    from app.services.phone_sources import PhoneSourceBinding  # noqa: PLC0415
+
+    def bind(_assignments, paths):  # noqa: ANN001, ANN202
+        return tuple(
+            PhoneSourceBinding(
+                media_id=f"proxy-{index}",
+                proxy_path=path,
+                generation="7",
+                original=OriginalMediaDescriptor(
+                    sha256=f"{index:x}".rjust(64, "a"),
+                    byte_count=1000,
+                    duration_s=5.0,
+                    width=1920,
+                    height=1080,
+                    has_audio=True,
+                ),
+            )
+            for index, path in enumerate(paths)
+        )
+
+    with (
+        patch("app.services.phone_sources.bind_phone_sources", side_effect=bind),
+        patch(_ENQUEUE),
+    ):
+        return dispatch_item_render_for(
+            str(item_id), bypass_guided_edit_gate=True, allow_phone_unapproved_montage=True
+        )
+
+
+def test_v2_phone_montage_with_photos_renders_the_ready_ones(monkeypatch) -> None:
+    """The reported failure: "I couldn't start the render" for videos + photos.
+
+    An abandoned upload reservation (the stuck IMG_4328 in the thread) and a
+    failed photo never block; the worker places exactly the ready photos that
+    existed when the job was minted, in upload order.
+    """
+    _user_id, item_id, ids = _seed_phone_montage_with_visuals(
+        monkeypatch,
+        [
+            ("second", "ready", timedelta(minutes=-2)),
+            ("first", "ready", timedelta(minutes=-3)),
+            ("abandoned", "preparing", timedelta(minutes=-1)),
+            ("broken", "failed", timedelta(minutes=-1)),
+        ],
+    )
+
+    result = _v2_phone_dispatch(item_id)
+
+    assert result.outcome == "dispatched", result
+    [job] = _jobs_for(item_id)
+    with sync_session() as s:
+        s.add(
+            PlanItemAsset(
+                plan_item_id=item_id,
+                user_id=job.user_id,
+                gcs_path=f"users/{job.user_id}/plan/{item_id}/pool/late.jpg",
+                gcs_generation="17",
+                kind="image",
+                status="ready",
+                created_at=job.created_at + timedelta(minutes=5),
+            )
+        )
+        s.commit()
+    visuals = generative_build._load_unified_montage_visuals(str(job.id), selected=None)
+    assert [visual.media_id for visual in visuals] == [str(ids["first"]), str(ids["second"])]
+    assert {(visual.lane, visual.kind) for visual in visuals} == {("asset", "image")}
+    assert visuals[0].manifest_id == f"asset-{ids['first']}"
+    narrowed = generative_build._load_unified_montage_visuals(
+        str(job.id), selected=frozenset({f"asset-{ids['second']}", "proxy-0"})
+    )
+    assert [visual.media_id for visual in narrowed] == [str(ids["second"])]
+
+
+def test_v2_phone_montage_waits_while_a_photo_is_still_analysing(monkeypatch) -> None:
+    _user_id, item_id, _ids = _seed_phone_montage_with_visuals(
+        monkeypatch,
+        [
+            ("ready", "ready", timedelta(minutes=-2)),
+            ("analysing", "analyzing", timedelta(minutes=-1)),
+        ],
+    )
+
+    result = _v2_phone_dispatch(item_id)
+
+    assert result.outcome == "visuals_processing"
+    assert _jobs_for(item_id) == []
+
+
+@pytest.mark.parametrize(
+    ("pool", "outcome"),
+    [
+        # Rows that never reach a plan: an abandoned upload, a failed photo.
+        (
+            [("abandoned", "preparing"), ("broken", "failed")],
+            "dispatched",
+        ),
+        # A creator's photo on a clip-only lane is refused, never dropped.
+        ([("photo", "ready")], "guided_edit_bypass_unsafe"),
+    ],
+)
+def test_the_clip_only_cloud_v2_lane_counts_only_the_creators_visuals(
+    monkeypatch, pool, outcome
+) -> None:
+    _user_id, item_id, _ids = _seed_phone_montage_with_visuals(
+        monkeypatch, [(name, status, timedelta(minutes=-1)) for name, status in pool], phone=False
+    )
+
+    assert _v2_phone_dispatch(item_id).outcome == outcome
+
+
+def test_unified_visuals_loader_pins_a_missing_generation(monkeypatch) -> None:
+    _user_id, item_id, ids = _seed_phone_montage_with_visuals(
+        monkeypatch, [("legacy", "ready", timedelta(minutes=-2))]
+    )
+    with sync_session() as s:
+        s.get(PlanItemAsset, ids["legacy"]).gcs_generation = None
+        s.commit()
+    assert _v2_phone_dispatch(item_id).outcome == "dispatched"
+    [job] = _jobs_for(item_id)
+
+    metadata = ObjectMetadata(path="p", generation="99", etag=None, size=1, content_type=None)
+    with patch("app.storage.object_metadata", return_value=metadata):
+        [visual] = generative_build._load_unified_montage_visuals(str(job.id), selected=None)
+
+    assert visual.generation == "99"
+    with sync_session() as s:
+        assert s.get(PlanItemAsset, ids["legacy"]).gcs_generation == "99"
 
 
 def test_confirmed_native_montage_dispatches_without_a_guided_proposal(monkeypatch) -> None:

@@ -203,7 +203,10 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   the label is too short to read). Unlabelled cuts are 1.2s. A requested length
   (`brief timing.duration_s`, else `strategy.target_duration_s`) grows cuts (up to the
   clip's length; without a stated length, at most 3s each) or shrinks unlabelled
-  cuts (not below 0.8s); readable text wins.
+  cuts (not below 0.8s); readable text wins. A clip shorter than the snapshot's
+  0.4s video-cut floor is shown whole (`MIN_VIDEO_CUT_S`, KRI-217): whole frames
+  stopped a fraction of a frame short of a 0.298s iPhone clip, which the strict
+  snapshot refused.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`) >
   `Montage`. Never a model hook, never place text nobody asked for. Creator-written
@@ -213,6 +216,27 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   ids (a missing glyph fails the whole recipe), so `skia_font_covers` picks the
   first bundled font (creator font, Fraunces, DM Sans) that covers every string;
   only uncovered characters are dropped when none does.
+- *Visuals (KRI-217)*: the item's ready Visuals-pool photos and videos
+  (`_load_unified_montage_visuals`: not a dedupe receipt, registered before the
+  job was minted, narrowed to an explicit `selected` strategy scope) are spread
+  evenly between the clips (`_scatter`; the montage opens on a clip) in upload
+  order, as `lane="asset"` fast cuts. A photo holds 1.2s (never more than 3s,
+  even with a stated length); the creator's `image_layout` ("don't crop my
+  photos") is honoured. `_run_phone_guided_job` binds them like any approved
+  guided story's Visuals (`bind_phone_visuals`, `stillImages`/`visualVideos`). A
+  kind the phone cannot draw fails the job (`UnsupportedPhonePlan`), never drops.
+
+**Dispatch (KRI-217).** Every runtime-v2 approval dispatches with
+`bypass_guided_edit_gate=True`, and the bypass used to refuse any item with a pool
+row (`guided_edit_bypass_unsafe`), so every iOS montage with a photo answered "I
+couldn't start the render" with a retry that could never pass (thread 6BF1213E).
+For a v2 approval `_v2_visuals_refusal` now counts only the creator's Visuals
+(manifest-visible states; an abandoned upload reservation or a failed photo never
+blocks). The unified phone lane renders them, refusing only while one is still
+uploaded/queued/analyzing (`visuals_processing`) or when the phone cannot draw its
+kind. A cloud-rendered v2 montage is clip-only and still refuses them. `_finish_approval_dispatch` answers both with
+`_VISUALS_DISPATCH_REFUSALS` copy and `recovery: ask_user`. Non-v2 bypass callers
+are byte-identical.
 
 **Not covered / known gaps.** The worker plans from the thread's *latest* brief, not
 the approved version (a redelivery before the plan is pinned can pick up a newer
@@ -242,12 +266,18 @@ review.
 narrowed and renamed `compile_phone_voiceover_montage_plan`, and handles ONLY
 montages with a recorded voiceover (voice + optional low music bed, trim-to-footage,
 intro hook), which the unified planner cannot express yet. Cloud (non-phone) montage
-is untouched.
+is untouched. A cloud-rendered v2 montage still cannot place Visuals (v2 has no
+guided execution there; KRI-217 follow-up).
 
 Guards: `tests/pipeline/test_unified_montage.py`,
 `tests/tasks/test_unified_montage_dispatch.py` (the East Run repro, no-flag routing,
-voiceover-lane exclusion, chat edit), `tests/kria/test_unified_montage_receipts.py`,
-`tests/evals/test_main_creator_evals.py::kri190_route_facts_and_order`.
+voiceover-lane exclusion, chat edit, photos in the device recipe),
+`tests/kria/test_unified_montage_receipts.py`,
+`tests/evals/test_main_creator_evals.py::kri190_route_facts_and_order`,
+`tests/routes/test_plan_item_sync_dispatch.py` (KRI-217 real-Postgres dispatch and
+Visuals loader), `tests/tasks/test_content_plan_build.py` (`test_v2_phone_montage_*`
+Visuals cases), `tests/kria/test_runtime_phone_v2.py`
+(`test_a_visuals_refusal_says_what_to_do_instead_of_retry`).
 There is no flag to roll back; revert the PR. In-flight jobs keep their pinned plan.
 
 ## Render consent
