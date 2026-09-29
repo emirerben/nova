@@ -63,6 +63,15 @@ def test_original_level_rejected_honestly_off_device() -> None:
     assert "phone-rendered" in state.rejection_reasons[0]["detail"]
 
 
+def test_original_level_rejected_on_guided_native_device_snapshot() -> None:
+    """Guided saves persist only music_level; original_level would be silently dropped."""
+    snap = _snap(render_destination="device", guided_revision={"revision_number": 1})
+    parsed, state = _parse({"op": "set_mix", "original_level": 0}, snap)
+    assert parsed is None
+    assert state.rejection_reasons[0]["reason"] == "capability_unavailable"
+    assert "footage's own sound" in state.rejection_reasons[0]["detail"]
+
+
 def test_original_level_not_reachable_from_web_drawer_snapshot() -> None:
     snap = _snap(render_destination="device")
     snap.pop("editor_ops_version")

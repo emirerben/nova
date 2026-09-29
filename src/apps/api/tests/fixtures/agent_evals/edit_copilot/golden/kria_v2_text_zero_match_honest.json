@@ -209,13 +209,7 @@
     "suggestions": [],
     "needs_clarification": true,
     "outcome": "clarification",
-    "rejection_reasons": [
-      {
-        "op": "rewrite_text",
-        "reason": "invalid_value",
-        "detail": "operation values are invalid"
-      }
-    ]
+    "rejection_reasons": []
   },
   "meta": {
     "source": "hand_authored_golden",

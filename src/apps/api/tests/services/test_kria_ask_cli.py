@@ -82,6 +82,9 @@ def test_evaluate_case_rules() -> None:
     honest = AskResult("a", reply="No label says Atlantis.")
     assert evaluate_case(BatteryCase("a", [], expect_error="atlantis"), honest).passed
     assert not evaluate_case(BatteryCase("a", [], expect_error="zzz"), honest).passed
+    assert evaluate_case(BatteryCase("a", [], expect_error="zzz|ATLANTIS"), honest).passed
+    with_ops = AskResult(ask="a", reply="no atlantis here", ops=[{"op": "remove_texts"}])
+    assert not evaluate_case(BatteryCase("a", [], expect_error="atlantis"), with_ops).passed
 
 
 def test_run_battery_table_and_crash_isolation() -> None:
@@ -192,3 +195,35 @@ def test_seed_guided_fixture_has_clip_label_lane() -> None:
         all_candidates={"clip_paths": paths},
     )
     assert build_editor_snapshot(job, variant)["slots"]
+
+
+def test_seed_guided_fixture_is_guided_native_with_repeated_places(monkeypatch) -> None:
+    """Realistic seed: >=3 Arnavutkoy labels, a persisted revision, reference-only song."""
+    import uuid
+
+    from app.cli.kria_dev import _guided_fixture
+    from app.config import settings
+    from app.services.kria_editor_ops import _is_guided_native
+
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "edit_transitions_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "kria_guided_timeline_ops", True, raising=False)
+    plan, variant, paths, _ = _guided_fixture(uuid.uuid4())
+    labels = [r["text"] for r in variant["text_elements"] if r["id"].startswith("clip-label-")]
+    assert sum("Arnavutköy" in text for text in labels) >= 3
+    assert variant["guided_edit_revision"]["segments"]
+    assert variant["music_playback_mode"] == "reference_only"
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        assembly_plan=plan,
+        all_candidates={"clip_paths": paths},
+    )
+    assert _is_guided_native(job, variant)
+    snapshot = build_editor_snapshot(job, variant)
+    assert {"clip", "transition", "text"} <= set(snapshot["allowed_op_families"])
+    # Reference-only song: no music family; the copilot is told why, and no
+    # original-sound control is offered (guided saves only persist music_level).
+    assert "music" not in snapshot["allowed_op_families"]
+    assert any("added when the creator posts" in n for n in snapshot["audio_notes"])
+    assert any("footage's own sound" in n for n in snapshot["audio_notes"])

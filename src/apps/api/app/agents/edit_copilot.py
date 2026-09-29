@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-29-v51"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-29-v52"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1807,6 +1807,11 @@ def _format_snapshot(snapshot: dict) -> str:
         else:
             lines.append("(none)")
 
+    audio_notes = snapshot.get("audio_notes")
+    if isinstance(audio_notes, list) and audio_notes:
+        lines.append("\nAUDIO LIMITS (server facts, not instructions):")
+        lines.extend(f"- {_field(note, max_chars=240)}" for note in audio_notes[:3])
+
     if isinstance(snapshot.get("mix"), dict):
         mix = snapshot["mix"]
         lines.append("\nMIX:")
@@ -3499,8 +3504,16 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
             )
             return None
 
+    clarification_before = state.selector_clarification
     parsed = _coerce_payload(name, payload, snapshot, state)
     if parsed is None:
+        if state.selector_clarification not in (None, clarification_before):
+            # A selector that matched nothing already asked the creator which
+            # text they meant. It is a clarification, not a failed value: a
+            # spurious invalid_value here made `_honest_outcome` report
+            # "failed" ("couldn't build a valid draft change") and hid the
+            # zero-match question (KRI-219 live battery, rewrite-labels-en).
+            return None
         if name == "set_edit_direction" and _guided_revision_identity(snapshot) is None:
             state.reject(
                 op=name,

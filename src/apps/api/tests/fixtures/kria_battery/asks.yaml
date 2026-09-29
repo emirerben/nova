@@ -11,7 +11,7 @@ asks:
     ask: "tüm Arnavutköy etiketleri sadece Arnavutköy yazsın"
     expect_ops: [rewrite_text]
   - id: replace-everywhere
-    ask: "replace Alpha with Beta everywhere"
+    ask: "replace Sahili with Sahil everywhere"
     expect_ops: [rewrite_text]
   - id: labels-yellow
     ask: "make all the labels yellow"
@@ -31,14 +31,14 @@ asks:
   - id: delete-all-labels
     ask: "delete all the labels"
     expect_ops: [remove_texts]
-  - id: remove-day-1-tr
-    ask: "'day 1' yazısını kaldır"
+  - id: remove-galata-tr
+    ask: "içinde 'Galata' geçen tüm yazıları kaldır"
     expect_ops: [remove_texts]
   - id: add-end-text
     ask: "add an end text that says see you soon, in the same style as the title"
     expect_ops: [add_text]
   - id: label-clip-3
-    ask: "label clip 3 Galata Tower"
+    ask: "add a separate caption saying golden hour during clip 3, keep the existing label"
     expect_ops: [add_text]
   - id: total-20s
     ask: "make it 20 seconds"
@@ -51,21 +51,29 @@ asks:
     expect_ops: [patch_slots]
   - id: speed-up-clip-2
     ask: "speed up clip 2"
-    expect_ops: [patch_slots]
+    # GAP: device (phone) recipes do not render playback_rate; compile refuses honestly.
+    expect_ops: []
+    expect_error: "Speed changes are not available"
   - id: slowmo-last
     ask: "slow motion on the last clip"
-    expect_ops: [patch_slots]
+    # GAP: same as speed-up-clip-2.
+    expect_ops: []
+    expect_error: "Speed changes are not available"
   - id: crossfade-all
     ask: "add a crossfade between all the clips"
     expect_ops: [patch_slots]
   - id: no-transitions
     ask: "remove all the transitions"
-    expect_ops: [patch_slots]
+    # The seeded fast-montage plan is all hard cuts, so the honest answer is "already cuts".
+    expect_ops: []
+    expect_error: "already|hard cut|no transition|cuts"
   - id: bw-all
     ask: "make everything black and white"
-    expect_ops: [patch_slots]
+    # GAP: looks are not rendered on device recipes (and EDIT_WIDE_LOOKS_ENABLED is off in prod).
+    expect_ops: []
+    expect_error: "available"
   - id: move-shot-first
-    ask: "move the Beta Bridge shot to the start, the labels should follow"
+    ask: "move the Galata Bridge shot to the start, the labels should follow"
     expect_ops: [reorder_clip]
   - id: cut-first-2s
     ask: "cut the first 2 seconds"
@@ -75,16 +83,24 @@ asks:
     expect_ops: [remove_clip]
   - id: music-quieter
     ask: "make the music quieter"
-    expect_ops: [set_mix]
+    # GAP by design: the guided song is reference-only (added when posting); no music in the render.
+    expect_ops: []
+    expect_error: "post|paylaş"
   - id: mute-original
     ask: "mute the original sound"
-    expect_ops: [set_mix]
+    # GAP: guided-native saves persist only music_level; no original-sound lane exists.
+    expect_ops: []
+    expect_error: "sound"
   - id: remove-music-tr
     ask: "müziği kaldır"
-    expect_ops: [remove_music]
+    # GAP by design: reference-only song, nothing to remove.
+    expect_ops: []
+    expect_error: "post|paylaş"
   - id: whoosh-at-3s
     ask: "add a whoosh at 3 seconds"
-    expect_ops: [add_sfx]
+    # GAP: phone recipes do not render the SFX lane (KRI-114 Phase 4); family withheld on device.
+    expect_ops: []
+    expect_error: "available"
   - id: multi-turn-same-for-title
     ask: "same for the title"
     turns:
@@ -94,7 +110,7 @@ asks:
   - id: zero-match-honesty
     ask: "delete all the labels that say Atlantis"
     expect_ops: []
-    expect_error: "Atlantis"
+    expect_error: "Atlantis|no label|none of|couldn't find"
   - id: labels-yellow-bigger-tr
     ask: "etiketleri sarı yap ve büyüt"
     expect_ops: [patch_text]

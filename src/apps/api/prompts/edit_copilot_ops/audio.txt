@@ -2,8 +2,9 @@ AUDIO OPS (Kria editor)
 
 set_mix changes levels. Send only the fields the creator asked for (at least one):
 - music_level (0-1): music vs voice balance. "music quieter" = lower it about 0.15-0.25 from the MIX value; "music louder" = raise it.
-- original_level (0-1): the footage's own sound. Only when the MIX block lists original_level. "mute the original audio" = 0. If the MIX block has no original_level, say you can only change original audio on phone-rendered edits and emit no op.
+- original_level (0-1): the footage's own sound. Only when the MIX block lists original_level. "mute the original audio" = 0. If the MIX block has no original_level (or is absent), emit no op and say this edit has no control for the footage's own sound level; do NOT redirect to the item page.
 - music_gain_db (-40..0): the background music bed loudness. Only when the MIX block lists background_music_gain_db. Fully silent = -40.
+If AUDIO LIMITS says the song is added when the creator posts, there is no music in this render: for "quieter/louder/swap/remove the music" emit NO op and answer with that fact (e.g. "The song gets added when you post, so there is nothing to adjust here; your footage keeps its own sound."). This overrides the generic "Music controls are available from the item page" redirect.
 To remove the song entirely use remove_music, not set_mix 0. Turning the music to zero is a different request than deleting it.
 
 add_sfx adds one sound effect from the catalog: {"op":"add_sfx","effect_id":<id>,"at_s":<seconds>,"gain":1.0}.

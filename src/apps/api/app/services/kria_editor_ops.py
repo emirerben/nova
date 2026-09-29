@@ -481,6 +481,21 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     return sorted(set(families) & _PORTABLE_FAMILIES)
 
 
+def _audio_notes(job: Any, variant: dict[str, Any]) -> list[str]:
+    """Plain-language audio limits so the copilot answers honestly instead of
+    redirecting to a control that does not exist for this edit."""
+    notes: list[str] = []
+    if variant.get("music_playback_mode") == "reference_only":
+        notes.append(
+            "The matched song is added when the creator posts. It is not part of this "
+            "render, so there is no music to make quieter, swap or remove here; the "
+            "footage keeps its own sound."
+        )
+    if variant.get("render_destination") == "device" and _is_guided_native(job, variant):
+        notes.append("This edit has no control for the footage's own sound level.")
+    return notes
+
+
 def _has_guided_title_bar(variant: dict[str, Any]) -> bool:
     return variant.get("resolved_archetype") == "guided_story" and any(
         isinstance(row, dict) and row.get("id") == "guided-title" and not row.get("removed")
@@ -715,10 +730,17 @@ def build_editor_snapshot(
         # bed-only keys are omitted elsewhere so other snapshots stay identical.
         if variant.get("render_destination") == "device":
             snapshot["render_destination"] = "device"
-            snapshot["mix"]["original_level"] = variant.get("original_audio_level")
+            # Guided-native saves project only `mix.music_level` into the
+            # revision (routes/generative_jobs `_project_guided_revision_lanes`);
+            # `original_level` would be silently dropped, so it is not offered.
+            if not _is_guided_native(job, variant):
+                snapshot["mix"]["original_level"] = variant.get("original_audio_level")
         bed = _background_bed(caps, variant, guided_native=_is_guided_native(job, variant))
         if bed is not None:
             snapshot["mix"]["background_music"] = bed
+    audio_notes = _audio_notes(job, variant)
+    if audio_notes:
+        snapshot["audio_notes"] = audio_notes
     if "sfx" in snapshot["allowed_op_families"]:
         placements = [row for row in variant.get("sound_effects") or [] if isinstance(row, dict)]
         snapshot["sfx"] = {

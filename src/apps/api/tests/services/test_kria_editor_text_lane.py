@@ -268,6 +268,29 @@ def test_zero_match_is_an_honest_clarification_naming_the_selector() -> None:
     assert "nothing" in output.reply.lower()
 
 
+def test_zero_match_stays_a_clarification_through_the_route_outcome() -> None:
+    """Regression (KRI-219 live battery): the route re-derives the outcome from
+    `rejection_reasons`; a zero-match selector must not also leave an
+    `invalid_value` rejection or it surfaces as "couldn't build a valid draft"."""
+    from app.routes._copilot import _honest_outcome
+
+    _, _, snapshot, _ = _east_run()
+    output = _ops(
+        snapshot,
+        [
+            {
+                "op": "rewrite_text",
+                "selector": {"group": "labels", "contains": "Atlantis"},
+                "text": "Atlantis",
+            }
+        ],
+    )
+    assert output.rejection_reasons == []
+    outcome, reply = _honest_outcome(output, [])
+    assert outcome == "clarification"
+    assert "Atlantis" in reply and "valid draft" not in reply
+
+
 def test_already_matching_text_is_reported_not_silently_applied() -> None:
     job, variant, snapshot, labels = _east_run()
     output = _ops(

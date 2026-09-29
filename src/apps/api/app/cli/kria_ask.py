@@ -107,7 +107,13 @@ def evaluate_case(case: BatteryCase, result: AskResult) -> CaseVerdict:
     """
     if case.expect_error:
         haystack = f"{result.error or ''} {result.reply}".lower()
-        ok = case.expect_error.lower() in haystack
+        # `a|b` = any alternative (replies are model-worded, sometimes Turkish).
+        ok = any(
+            alt.strip().lower() in haystack for alt in case.expect_error.split("|") if alt.strip()
+        )
+        if ok and not result.error and result.ops:
+            # An honesty case that still emitted ops claimed success it cannot deliver.
+            return CaseVerdict(case, False, f"honesty case produced ops {result.op_names}", result)
         return CaseVerdict(
             case, ok, "" if ok else f"missing error text {case.expect_error!r}", result
         )

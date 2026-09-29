@@ -39,8 +39,28 @@ def require_local_database(url: str) -> None:
         raise SystemExit(f"Refusing Kria dev mutation against {parsed.host}/{database}")
 
 
-_GUIDED_PLACES = ["Alpha Quay", "Beta Bridge", "Gamma Tower", "Delta Palace"]
-_GUIDED_CLIPS = 6
+# East-Run-shaped: two Arnavutköy places, one repeated on a NON-adjacent clip so
+# it keeps its own label (consecutive repeats dedupe) => 3 labels contain
+# "Arnavutköy". Real place names, invented footage (no prod data).
+_GUIDED_PLACES = [
+    "Arnavutköy Sahili",
+    "Arnavutköy Çarşı",
+    "Arnavutköy Sahili",
+    "Galata Bridge",
+    "Dolmabahçe Palace",
+    "Galata Tower",
+]
+_GUIDED_CLIPS = len(_GUIDED_PLACES)
+# Matched song is reference-only on every current (compiler v6+) guided plan:
+# it is added when posting, so music level/swap/remove are NOT editable and the
+# clips' own audio is what plays. Mirrors prod; see docs in the battery file.
+_GUIDED_TRACK = {
+    "track_id": "dev-track-1",
+    "title": "Dev Song",
+    "artist": "Kria Dev",
+    "catalog_duration_s": 180.0,
+    "start_s": 0.0,
+}
 
 
 def _guided_fixture(user_id: uuid.UUID) -> tuple[dict, dict, list[str], list[dict]]:
@@ -52,7 +72,10 @@ def _guided_fixture(user_id: uuid.UUID) -> tuple[dict, dict, list[str], list[dic
     playback does not.
     """
     from app.kria.brief import BriefRequirement, CreativeBrief  # noqa: PLC0415
-    from app.pipeline.guided_story import compile_execution_plan  # noqa: PLC0415
+    from app.pipeline.guided_story import (  # noqa: PLC0415
+        compile_execution_plan,
+        song_reference_variant_fields,
+    )
     from app.pipeline.unified_montage import (  # noqa: PLC0415
         UnifiedClip,
         brief_view,
@@ -62,15 +85,7 @@ def _guided_fixture(user_id: uuid.UUID) -> tuple[dict, dict, list[str], list[dic
     paths = [f"users/dev/{user_id}/proxy-{i}.mp4" for i in range(_GUIDED_CLIPS)]
     clips, assignments = [], []
     for i, path in enumerate(paths):
-        facts = []
-        if i % 3 != 2:
-            facts.append(
-                {
-                    "kind": "landmark",
-                    "value": _GUIDED_PLACES[i % 4],
-                    "provenance": "inferred",
-                }
-            )
+        facts = [{"kind": "landmark", "value": _GUIDED_PLACES[i], "provenance": "inferred"}]
         clips.append(
             UnifiedClip(
                 media_id=f"clip-{i}",
@@ -82,10 +97,12 @@ def _guided_fixture(user_id: uuid.UUID) -> tuple[dict, dict, list[str], list[dic
                 facts=tuple(facts),
             )
         )
-        row: dict = {"gcs_path": path}
-        if facts:
-            row["analysis"] = {"clip_facts": [{**facts[0], "confidence": 0.8}]}
-        assignments.append(row)
+        assignments.append(
+            {
+                "gcs_path": path,
+                "analysis": {"clip_facts": [{**facts[0], "confidence": 0.8}]},
+            }
+        )
     brief = CreativeBrief(
         version=1,
         requirements=[
@@ -93,8 +110,9 @@ def _guided_fixture(user_id: uuid.UUID) -> tuple[dict, dict, list[str], list[dic
         ],
     )
     guided = plan_unified_montage(clips, brief_view(brief)).guided_edit()
-    execution_plan = compile_execution_plan(guided, track=None)
+    execution_plan = compile_execution_plan(guided, track=_GUIDED_TRACK)
     variant = {
+        **song_reference_variant_fields(execution_plan),
         "variant_id": "guided_story",
         "resolved_archetype": "guided_story",
         "render_status": "ready",
@@ -107,6 +125,17 @@ def _guided_fixture(user_id: uuid.UUID) -> tuple[dict, dict, list[str], list[dic
         "guided_story_execution_plan": execution_plan,
         "variants": [variant],
     }
+    # Persist the editor revision the way a first Save would, so the variant is
+    # guided-native for `_guided_v2_revision` (needs GUIDED_STORY_EDITOR_V2_ENABLED
+    # for caps.timeline / clips.* to be advertised).
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from app.routes.generative_jobs import _guided_v2_revision  # noqa: PLC0415
+
+    stub = SimpleNamespace(id=uuid.uuid4(), assembly_plan=plan)
+    revision = _guided_v2_revision(stub, variant)  # type: ignore[arg-type]
+    if revision is not None:
+        variant["guided_edit_revision"] = revision
     return plan, variant, paths, assignments
 
 

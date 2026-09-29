@@ -209,13 +209,7 @@
     "suggestions": [],
     "needs_clarification": true,
     "outcome": "clarification",
-    "rejection_reasons": [
-      {
-        "op": "remove_texts",
-        "reason": "invalid_value",
-        "detail": "operation values are invalid"
-      }
-    ]
+    "rejection_reasons": []
   },
   "meta": {
     "source": "hand_authored_golden",

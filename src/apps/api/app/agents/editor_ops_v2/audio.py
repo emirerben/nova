@@ -60,6 +60,14 @@ def validate_set_mix(out: dict, snapshot: dict, state: Any) -> dict | None:
         if level is None:
             state.invalid_value()
             return None
+        if snapshot.get("guided_revision") is not None:
+            # Guided-native saves only carry mix.music_level into the revision.
+            state.reject(
+                op="set_mix",
+                reason="capability_unavailable",
+                detail="this edit has no control for the footage's own sound level",
+            )
+            return None
         if snapshot.get("render_destination") != "device":
             # The server stores mix.original_level but its renderer ignores it
             # ("not yet honored", generative_jobs.EditorCommitMix); only the
@@ -98,6 +106,10 @@ def _op_set_mix(state: Any, op: dict[str, Any]) -> None:
     if op.get("original_level") is not None:
         if state.variant.get("render_destination") != "device":
             raise KriaEditorOpError("Original audio can only be changed on phone-rendered edits")
+        from app.services.kria_editor_ops import _is_guided_native  # noqa: PLC0415
+
+        if _is_guided_native(state.job, state.variant):
+            raise KriaEditorOpError("This edit has no control for the footage's own sound level")
         state.original_level = max(0.0, min(1.0, float(op["original_level"])))
     if op.get("music_gain_db") is not None:
         treatment = state.variant.get("smart_music_treatment")
