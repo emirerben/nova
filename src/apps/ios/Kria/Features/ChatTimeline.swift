@@ -136,8 +136,10 @@ struct ChatTimelineGroup: Identifiable {
 enum ChatSubmission {
     static let mediaOnlyMessage = "Suggest an edit."
 
-    static func message(text: String, readyMediaCount: Int, pendingUploadCount: Int, hasUploadFailures: Bool) -> String? {
-        guard pendingUploadCount == 0, !hasUploadFailures else { return nil }
+    /// A file that failed to attach never blocks sending (KRI-211): it is simply not part of the
+    /// message. Only files still on their way hold it back, because sending now would leave them out.
+    static func message(text: String, readyMediaCount: Int, pendingUploadCount: Int) -> String? {
+        guard pendingUploadCount == 0 else { return nil }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return trimmed }
         return readyMediaCount > 0 ? mediaOnlyMessage : nil

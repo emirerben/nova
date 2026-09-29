@@ -20,7 +20,9 @@
       "KriaUITests/CreationUITests/testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap",
       "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges",
       "KriaUITests/SlidePostUITests/testSlidePostCreationUsesExplicitProposalAndCreateThenContextualKria",
-      "KriaUITests/SlidePostUITests/testSlideFormatCoverAndBackRemainReachableAtLargeText"
+      "KriaUITests/SlidePostUITests/testSlideFormatCoverAndBackRemainReachableAtLargeText",
+      "KriaUITests/CreationUITests/testUnreadableAttachmentDoesNotBlockSend",
+      "KriaUITests/CreationUITests/testFailedUploadWithRecordDoesNotBlockSendAndOffersRetry"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -104,7 +106,8 @@
       "KriaUITests/NativeCaptionVisualUITests/testClipSelectionShowsTransitionControl",
       "KriaUITests/NativeCaptionVisualUITests/testTransitionControlHiddenWhenCapabilityClosed",
       "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryVisibleOnDevice",
-      "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryHiddenWhenCapabilityClosed"
+      "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryHiddenWhenCapabilityClosed",
+      "KriaUITests/NativeEditorInspectorUITests/testMissingOriginalsOffersFindingFilesInsteadOfRetry"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",

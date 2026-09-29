@@ -224,6 +224,57 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(user.waitForExistence(timeout: 10))
     }
 
+    /// KRI-211: one unreadable file must not hold the rest of the message hostage. The banner
+    /// says it will be left out, Send stays enabled, and sending clears it.
+    func testUnreadableAttachmentDoesNotBlockSend() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_UPLOAD_FAILURE"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        let banner = app.staticTexts["footage-upload-failures-message"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 8))
+        XCTAssertEqual(banner.label, "1 file couldn’t be read and won’t be sent")
+        XCTAssertTrue(app.buttons["footage-upload-failures-dismiss"].exists)
+
+        let send = app.buttons["Send clips"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        XCTAssertTrue(send.isEnabled, "A failed attach must not disable Send")
+        send.tap()
+
+        XCTAssertTrue(app.staticTexts["You: Suggest an edit."].waitForExistence(timeout: 10))
+        XCTAssertTrue(banner.waitForNonExistence(timeout: 5), "Sending clears that project's failures")
+    }
+
+    /// KRI-211: an upload that failed on the way (network) keeps its record so it can be retried, but it
+    /// is not "in progress": Send stays enabled, and the banner says what happened, not "couldn't be read".
+    func testFailedUploadWithRecordDoesNotBlockSendAndOffersRetry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_UPLOAD_FAILURE"] = "record"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        let banner = app.staticTexts["footage-upload-failures-message"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 8))
+        XCTAssertEqual(banner.label, "1 file didn’t upload and won’t be sent unless you retry")
+        XCTAssertFalse(banner.label.contains("read"))
+        XCTAssertTrue(app.buttons["footage-upload-failures-retry"].exists)
+
+        let send = app.buttons["Send clips"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        XCTAssertTrue(send.isEnabled, "A failed upload that still has its record must not disable Send")
+        send.tap()
+        XCTAssertTrue(app.staticTexts["You: Suggest an edit."].waitForExistence(timeout: 10))
+    }
+
     func testIncomingResponseDoesNotPullReaderFromScrolledHistory() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
