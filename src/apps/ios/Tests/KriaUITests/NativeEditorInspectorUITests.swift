@@ -915,7 +915,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Showing finished render"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Showing your last finished video"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].exists)
         XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].isHittable, "Retry must not sit under the canvas")
         XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)
@@ -930,7 +930,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-missing-originals"]
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["Showing finished render"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Showing your last finished video"].waitForExistence(timeout: 8))
         let copy = app.staticTexts["native-editor-originals-unavailable"]
         XCTAssertTrue(copy.waitForExistence(timeout: 3))
         XCTAssertEqual(copy.label, "The original clips for this edit are on another device. Find the files to edit here.")

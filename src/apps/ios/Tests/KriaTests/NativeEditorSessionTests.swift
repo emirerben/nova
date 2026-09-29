@@ -2180,6 +2180,14 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges)
     }
 
+    /// KRI-227: a save acknowledgement moves the document to the commit generation (`g2`) before the
+    /// phone publishes under its own id (`published-g2`). Device narration is a generation-owned input,
+    /// so the check must stay keyed on the generation the preview was prepared for.
+    func testNarrationCheckStaysOnPreviewGenerationWhileSaveRenderPends() {
+        XCTAssertEqual(NativeEditorSession.narrationOwnerGeneration(previewGeneration: "g1", documentGeneration: "g2"), "g1")
+        XCTAssertEqual(NativeEditorSession.narrationOwnerGeneration(previewGeneration: nil, documentGeneration: "g2"), "g2")
+    }
+
     func testDevicePublishedGenerationAndIdentityFenceReadyPreview() async throws {
         let threadID = UUID(), jobID = UUID()
         let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
@@ -2210,6 +2218,7 @@ final class NativeEditorSessionTests: XCTestCase {
         await renderSessions.reconcile(key, capabilities: .disabled)
         XCTAssertFalse(session.applyPreviewVariant(["render_generation_id": .string("published-g2"), "render_status": .string("ready"), "output_url": .string("https://storage.example/g2.mp4")], generation: "g2"))
         XCTAssertEqual(session.saveState, .previewPending)
+        XCTAssertFalse(session.showsEditApplied, "Edit applied only appears once the render lands")
         await statusBox.set(DeviceRenderStatusResponse(phase: "published", request: request, publishedGeneration: "published-g2"))
         await renderSessions.reconcile(key, capabilities: .disabled)
         session.trimSelected(edge: .trailing, to: 1.25)
@@ -2218,6 +2227,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.sourcePoolExpectation = refreshedSources
         XCTAssertTrue(session.applyPreviewVariant(["render_generation_id": .string("published-g2"), "render_status": .string("ready"), "output_url": .string("https://storage.example/g2.mp4")], generation: "g2"))
         XCTAssertEqual(session.saveState, .saved)
+        XCTAssertTrue(session.showsEditApplied, "KRI-227: a pending save that lands confirms the edit")
         XCTAssertEqual(session.document.revision.baseGeneration, "published-g2")
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(session.document.clips.first?.durationS, localDuration, "Refreshing generation-owned inputs must retain the follow-up edit")

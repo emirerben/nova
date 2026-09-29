@@ -119,10 +119,10 @@ struct NativeEditorSaveBanner: View {
             }
         case .previewPending:
             banner(
-                title: "Saved — preview updating",
+                title: "Edit saved",
                 detail: session.rendersOnDevice
-                    ? "Your edit is saved. Check rendering progress on this iPhone."
-                    : "Your edit is safe. The cloud preview is rendering now.",
+                    ? "Applying it to your video on this iPhone…"
+                    : "Applying it to your video…",
                 systemImage: "checkmark.circle",
                 tint: KriaColor.ink
             )
