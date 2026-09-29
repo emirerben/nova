@@ -498,6 +498,9 @@ struct NativeEditorTemporaryVideo {
     private var pendingPreviewGeneration: String?
     private var changedSections: Set<EditorSection> = []
     private var explicitlyDirtySections: Set<EditorSection> = []
+    /// Highest chat-draft revision already staged (or deliberately left to the
+    /// conflict path) so an undo/discard is not re-applied by the next sync.
+    private var appliedChatDraftRevision: Int?
     private var pendingRenderRetrySections: Set<EditorSection> = []
     private var clipIDsBySlot: [String: UUID] = [:]
     private var compatibilityClipMetadata: [UUID: (sourceClipIndex: Int?, slotID: String?)] = [:]
@@ -1006,12 +1009,18 @@ struct NativeEditorTemporaryVideo {
             let requestedVariantKey = variantID ?? snapshot.variantKey
             if let jobID { authoritativeVariant = try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) }
             else { authoritativeVariant = nil }
-            draft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
+            let loadedDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
+            draft = loadedDraft
             configureCapabilities(from: authoritativeVariant)
             cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); pendingRenderRetrySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
+            appliedChatDraftRevision = nil
             itemID = snapshot.itemID; variantKey = requestedVariantKey
             durationSourcesInvalidated = false
             setAuthoritativeDuration(Self.number(authoritativeVariant?["duration_s"]))
+            if conversationRuntimeVersion == 2,
+               let staged = stagedChatDocument(snapshot: snapshot, draft: loadedDraft, variant: authoritativeVariant) {
+                applyStagedChatDocument(staged, revision: snapshot.draftRevision)
+            }
             refreshDuration()
             if let output = authoritativeVariant?["output_url"]?.stringValue, let url = URL(string: output) {
                 // See installPlayer's isCurrent doc comment: render_status
@@ -1033,6 +1042,33 @@ struct NativeEditorTemporaryVideo {
             saveState = .loadFailed(error.localizedDescription)
             loadState = .failed(error.localizedDescription)
         }
+    }
+
+    /// True when the rendered variant is the generation this editor's clean
+    /// baseline was built from. Documents cannot be compared directly: each
+    /// fetch mints fresh placeholder asset ids for slots that lack one.
+    private func variantUnchanged(_ variant: [String: JSONValue]?) -> Bool {
+        guard let generation = variant?["render_generation_id"]?.stringValue, !generation.isEmpty else { return false }
+        return generation == cleanDocument.revision.baseGeneration
+    }
+
+    /// The chat draft's staged lanes as a document, or nil when the draft is
+    /// stale/absent/already applied (see `DraftSnapshot.stagedChatEdit`).
+    private func stagedChatDocument(snapshot: DraftSnapshot, draft: EditorDraft, variant: [String: JSONValue]?) -> (document: EditorDocument, sections: Set<EditorSection>)? {
+        guard let edit = snapshot.stagedChatEdit(over: Self.snapshotPreservingClipMetadata(draft), variant: variant, appliedRevision: appliedChatDraftRevision) else { return nil }
+        var value = EditorDocument(snapshot: edit.snapshot)
+        value.revision.number = draft.revision
+        return (value, edit.sections)
+    }
+
+    /// Show a staged chat edit as unsaved changes on top of the clean document.
+    /// The clean baseline stays on the undo stack, so one Undo discards it.
+    private func applyStagedChatDocument(_ staged: (document: EditorDocument, sections: Set<EditorSection>), revision: Int) {
+        appendUndo(document); redoStack.removeAll()
+        document = staged.document
+        changedSections.formUnion(staged.sections)
+        appliedChatDraftRevision = revision
+        refreshDirtyState()
     }
 
     /// Reconcile the same project after an agent turn. A response that arrives
@@ -1094,19 +1130,38 @@ struct NativeEditorTemporaryVideo {
                 return
             }
             let nextDocument = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(nextDraft))
+            // A runtime-v2 chat turn parks its editor edit in the draft head
+            // (never rendered); show it as unsaved edits instead of ignoring it.
+            let staged = conversationRuntimeVersion == 2 && sameTarget
+                ? stagedChatDocument(snapshot: snapshot, draft: nextDraft, variant: variant) : nil
             guard sequence == promptRefreshSequence, !Task.isCancelled else { return }
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
             guard cleanDocument == baseline else { return }
             if let previous = saveStateBeforePromptFailure { saveState = previous }
-            guard !sameTarget || nextDocument != cleanDocument else { return }
+            guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
             guard !hasUnsavedChanges, pendingText == nil, !isSaving else {
+                // Unsaved local edits. When the rendered variant is unchanged
+                // and the chat touched only lanes the creator has not, both
+                // sides can be kept lane-by-lane; otherwise stay explicit.
+                if let staged, variantUnchanged(variant), pendingText == nil, !isSaving,
+                   staged.sections.isDisjoint(with: changedSections.union(explicitlyDirtySections)) {
+                    appendUndo(document); redoStack.removeAll()
+                    var merged = document
+                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
+                    document = merged
+                    changedSections.formUnion(staged.sections)
+                    appliedChatDraftRevision = snapshot.draftRevision
+                    refreshDirtyState(); refreshDuration()
+                    return
+                }
                 saveState = .conflict
                 return
             }
             let selected = selection
             let time = currentTime
             draft = nextDraft
+            if !sameTarget { appliedChatDraftRevision = nil }
             if conversationRuntimeVersion == 1 { legacyPromptSnapshot = nextDraft.serverSnapshot }
             cleanDocument = document
             jobID = nextJobID; variantKey = nextVariantKey; itemID = snapshot.itemID
@@ -1115,6 +1170,7 @@ struct NativeEditorTemporaryVideo {
             changedSections.removeAll(); explicitlyDirtySections.removeAll()
             durationSourcesInvalidated = false
             setAuthoritativeDuration(Self.number(variant?["duration_s"]))
+            if let staged { applyStagedChatDocument(staged, revision: snapshot.draftRevision) }
             refreshDuration()
             if let selected, selectionExists(selected) { select(selected, seekToStart: false) }
             else { select(nil) }

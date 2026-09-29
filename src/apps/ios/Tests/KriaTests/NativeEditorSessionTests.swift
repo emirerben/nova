@@ -3125,7 +3125,7 @@ private actor SessionTestStatus {
 }
 
 final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
-    let draftSnapshot: DraftSnapshot
+    var draftSnapshot: DraftSnapshot
     var draftError: APIError?
     let openReceipt: OpenInEditorResponse?
     var authoritativeVariant: [String: JSONValue]?

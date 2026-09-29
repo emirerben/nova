@@ -399,6 +399,18 @@ async def _load_editor_target(
     )
 
 
+_WEB_PROPOSED_REPLY = "I prepared this edit for the editor to validate and stage."
+_PHONE_STAGED_REPLY = (
+    "Updated your edit \u2014 it's in the editor now. Save when you're happy with it."
+)
+
+
+def _phone_editor_reply(reply: str) -> str:
+    """The web copilot's canned "validate and stage" wording is wrong on phone:
+    the draft is already live in the editor, unsaved until the creator saves."""
+    return _PHONE_STAGED_REPLY if reply.strip() == _WEB_PROPOSED_REPLY else reply
+
+
 async def _plan_editor_revision(
     db: AsyncSession,
     *,
@@ -423,7 +435,7 @@ async def _plan_editor_revision(
     )
     if response.ops:
         return adapt_editor_action(
-            reply=response.reply,
+            reply=_phone_editor_reply(response.reply),
             ops=response.ops,
             # This portable operation invokes server speech processing; ordinary
             # text/timeline/mix edits stay drafts until an explicit Save.
