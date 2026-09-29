@@ -257,9 +257,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(plain.label, "I guessed Old Lighthouse")
 
         // One tap: the correction is started, the keyboard is up, and the bare stub alone is not
-        // yet sendable (ChatSubmission.isBareCorrectionStub, unit-tested directly in
-        // RequirementChipsTests since Send here is also gated by unrelated in-flight chat state
-        // that this fixture doesn't settle).
+        // yet sendable (ChatSubmission.isBareCorrectionStub, also unit-tested in RequirementChipsTests).
         scrollIntoView(guessed, in: app)
         guessed.tap()
         let composer = app.textFields["Message Kria"]
@@ -272,6 +270,8 @@ final class CreationUITests: XCTestCase {
 
         // Typing the name updates the draft, and a second tap adds to it instead of replacing it.
         composer.typeText("Besiktas")
+        // KRI-222: the finished render must have settled the thinking state, so a real message is sendable.
+        XCTAssertTrue(send.isEnabled, "Send must be enabled once the render has settled")
         // Dismiss the keyboard before scrolling again: it shrinks the conversation's visible band enough
         // that the next guess can sit entirely underneath it, out of any swipe's reach. The header's tap
         // gesture only clears focus, so the draft (and its appended correction) survives.

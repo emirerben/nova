@@ -313,6 +313,10 @@ private struct CreationWorkspaceView: View {
     @State private var isSending = false
     @State private var isActing = false
     @State private var isThinking = false
+    /// Highest transcript sequence known when the thinking turn was accepted; only later events can settle it.
+    @State private var thinkingAnchor: Int?
+    /// Approvals have no reply message, so a terminal job status also ends the wait (KRI-222).
+    @State private var thinkingSettlesOnJobStatus = false
     @State private var failure: ChatFailure?
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
@@ -994,6 +998,8 @@ private struct CreationWorkspaceView: View {
         model.uploads.clearUnreadableFailures(projectID: project.id)
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
         conversationAcceptedID = UUID()
+        thinkingAnchor = afterSequence
+        thinkingSettlesOnJobStatus = false
         isThinking = true
         failure = await acceptedMutationRefreshError(
             "Your message was sent, but the conversation couldn’t refresh.",
@@ -1187,6 +1193,8 @@ private struct CreationWorkspaceView: View {
             events: events
         )
         reconcilePendingMessages()
+        // Before the stale-revision guard: a reply delivered by an out-of-order projection still counts.
+        settleThinking()
         guard acceptsProjection, projectionOrder.accept(requestSequence) else { return }
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: thread.revision)
         fullThread = thread
@@ -1232,15 +1240,7 @@ private struct CreationWorkspaceView: View {
             selectedFormat = latestFormat
         }
         reconcilePendingMessages()
-        let settledThinkingTypes: Set<String> = [
-            "generation_started", "render_queued", "render_started", "rendering",
-            "generation_ready", "render_failed", "generation_failed"
-        ]
-        if fresh.contains(where: {
-            ChatTranscriptMessage.from(event: $0)?.role == .assistant || settledThinkingTypes.contains($0.eventType)
-        }) {
-            isThinking = false
-        }
+        settleThinking()
         // The delta fetch and merge above already succeeded, so the banner is
         // stale regardless of what happens next — clear it here rather than
         // after `synchronizeApproval()`, whose own failure would otherwise
@@ -1263,6 +1263,19 @@ private struct CreationWorkspaceView: View {
         }
         if !fresh.isEmpty, !isThinking { await editorSession.synchronizePromptRevision() }
         return !fresh.isEmpty || threadRevision > revisionBeforeDelta
+    }
+
+    /// Clears `isThinking` once the reply or a render-state event has landed in `events`, no matter
+    /// which fetch (delta or full projection) delivered it.
+    private func settleThinking() {
+        guard isThinking, let anchor = thinkingAnchor else { return }
+        let jobTerminal = thinkingSettlesOnJobStatus
+            && ChatThinkingSettlement.isTerminalJobStatus(fullThread?.job?.status)
+        if ChatThinkingSettlement.isSettled(events: events, after: anchor) || jobTerminal {
+            isThinking = false
+            thinkingAnchor = nil
+            thinkingSettlesOnJobStatus = false
+        }
     }
 
     private func reconcilePendingMessages() {
@@ -1348,6 +1361,8 @@ private struct CreationWorkspaceView: View {
                 return
             }
             self.approval = nil
+            thinkingAnchor = decision == "approve" ? afterSequence : nil
+            thinkingSettlesOnJobStatus = decision == "approve"
             isThinking = decision == "approve"
             failure = await acceptedMutationRefreshError(
                 "Kria recorded that decision, but the conversation couldn’t refresh.",
@@ -1451,6 +1466,29 @@ struct ThreadProjectionOrder {
 enum ThreadRevisionOrder {
     static func advance(current: Int, incoming: Int) -> Int { max(current, incoming) }
     static func acceptsProjection(current: Int, incoming: Int) -> Bool { incoming >= current }
+}
+
+/// Decides when a "thinking" turn is over. Pure so it is unit-testable: the answer depends only on
+/// the merged transcript and the sequence the turn was accepted at, never on which fetch delivered it.
+enum ChatThinkingSettlement {
+    static let settledTypes: Set<String> = [
+        "generation_started", "render_queued", "render_started", "rendering",
+        "generation_ready", "render_failed", "generation_failed"
+    ]
+
+    static func settles(_ event: ThreadEvent) -> Bool {
+        ChatTranscriptMessage.from(event: event)?.role == .assistant || settledTypes.contains(event.eventType)
+    }
+
+    static func isSettled(events: [ThreadEvent], after anchor: Int) -> Bool {
+        events.contains { $0.sequence > anchor && settles($0) }
+    }
+
+    static func isTerminalJobStatus(_ status: String?) -> Bool {
+        guard let status = status?.lowercased() else { return false }
+        return status == "ready" || status == "done" || status == "failed" || status == "cancelled"
+            || status.contains("_ready") || status.contains("_failed")
+    }
 }
 
 /// Deltas carry append-only events and a revision, while a full thread carries
