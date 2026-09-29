@@ -43,24 +43,32 @@ const PRODUCTION_WORDMARK_LETTERS = [
     definition: "font_3_205",
     transform: "matrix(42.192846,-5.929818,-5.929818,-42.192846,7.3646118,78.39235)",
     className: "wordmarkK",
+    floatClassName: "letterFloatK",
+    glassClassName: "glassLetterK",
   },
   {
     glyph: "r",
     definition: "font_4_221",
     transform: "matrix(40.820325,2.8544348,2.8544348,-40.820325,35.041086,83.16414)",
     className: "wordmarkR",
+    floatClassName: "letterFloatR",
+    glassClassName: "glassLetterR",
   },
   {
     glyph: "i",
     definition: "font_4_196",
     transform: "matrix(40.764287,-3.566413,-3.566413,-40.764287,59.32224,78.61586)",
     className: "wordmarkI",
+    floatClassName: "letterFloatI",
+    glassClassName: "glassLetterI",
   },
   {
     glyph: "a",
     definition: "font_3_175",
     transform: "matrix(42.289915,5.1925485,5.1925485,-42.289915,72.0213,79.226078)",
     className: "wordmarkA",
+    floatClassName: "letterFloatA",
+    glassClassName: "glassLetterA",
   },
 ] as const;
 
@@ -74,6 +82,10 @@ function getLandingHeroStage(currentTime: number): LandingHeroStage {
 
 function clamp(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+export function getLogoMaskMotionUnit(logoWidth: number): number {
+  return 97.4 / Math.max(logoWidth, 1);
 }
 
 function rangeProgress(value: number, start: number, end: number): number {
@@ -108,10 +120,11 @@ export function getLandingMorphState(progress: number) {
     insetX: collapse * 26,
     insetY: collapse * 35,
     radius: collapse * 54,
-    // The logo starts as the pure-white production mark. Scrolling then
-    // crossfades to the synchronized reel masked by those exact glyphs.
+    // The synchronized reel fills the exact glyphs while the finished glass
+    // shell stays visible above it. Only the construction trace dissolves.
     logoOpacity: logoReveal,
     logoScale: 1.08 - logoReveal * 0.08,
+    glassOpacity: 1,
     wordmarkOpacity: 1 - logoReveal,
     chromeOpacity: 1 - rangeProgress(eased, 0, 0.24),
   };
@@ -125,15 +138,17 @@ export default function KriaLifeLanding() {
   const fullVideoLayerRef = useRef<HTMLDivElement>(null);
   const logoVideoLayerRef = useRef<SVGSVGElement>(null);
   const logoMaskRef = useRef<SVGMaskElement>(null);
-  const logoMaskImageRef = useRef<SVGImageElement>(null);
+  const logoMaskLettersRef = useRef<SVGGElement>(null);
   const logoForeignObjectRef = useRef<SVGForeignObjectElement>(null);
   const wordmarkRef = useRef<SVGSVGElement>(null);
+  const glassWordmarkRef = useRef<HTMLDivElement>(null);
   const payoffRef = useRef<HTMLDivElement>(null);
   const playbackControlRef = useRef<HTMLButtonElement>(null);
   const demoVideoRef = useRef<HTMLVideoElement>(null);
   const userPausedRef = useRef(false);
   const logoPlaybackStartedRef = useRef(false);
   const maskId = `${useId()}-kria-video-mask`;
+  const glassFilterId = `${useId()}-kria-glass-filter`;
   const [heroStage, setHeroStage] = useState<LandingHeroStage>("fullscreen");
   const [timelineReady, setTimelineReady] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
@@ -213,9 +228,10 @@ export default function KriaLifeLanding() {
     const fullLayer = fullVideoLayerRef.current;
     const logoLayer = logoVideoLayerRef.current;
     const mask = logoMaskRef.current;
-    const maskImage = logoMaskImageRef.current;
+    const maskLetters = logoMaskLettersRef.current;
     const foreignObject = logoForeignObjectRef.current;
     const wordmark = wordmarkRef.current;
+    const glassWordmark = glassWordmarkRef.current;
     const payoff = payoffRef.current;
     const playbackControl = playbackControlRef.current;
     if (
@@ -224,9 +240,10 @@ export default function KriaLifeLanding() {
       !fullLayer ||
       !logoLayer ||
       !mask ||
-      !maskImage ||
+      !maskLetters ||
       !foreignObject ||
       !wordmark ||
+      !glassWordmark ||
       !payoff ||
       !playbackControl
     ) {
@@ -234,6 +251,12 @@ export default function KriaLifeLanding() {
     }
 
     let raf = 0;
+    let sectionTop = section.offsetTop;
+    let sectionHeight = section.offsetHeight;
+    let viewportHeight = window.innerHeight;
+    const nativeScrollTimeline =
+      typeof CSS !== "undefined" && CSS.supports("animation-timeline: scroll()");
+    section.dataset.scrollDriver = nativeScrollTimeline ? "native" : "fallback";
 
     const measureMask = () => {
       const width = hero.clientWidth;
@@ -249,10 +272,16 @@ export default function KriaLifeLanding() {
       logoLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
       mask.setAttribute("width", String(width));
       mask.setAttribute("height", String(height));
-      maskImage.setAttribute("x", String(x));
-      maskImage.setAttribute("y", String(y));
-      maskImage.setAttribute("width", String(logoWidth));
-      maskImage.setAttribute("height", String(logoHeight));
+      const logoScale = logoWidth / 97.4;
+      const maskMotionUnit = getLogoMaskMotionUnit(logoWidth);
+      maskLetters.setAttribute(
+        "transform",
+        `translate(${x} ${y}) scale(${logoScale}) translate(-3.8 -42.5)`,
+      );
+      hero.style.setProperty("--logo-mask-float-positive", `${maskMotionUnit}px`);
+      hero.style.setProperty("--logo-mask-float-negative", `${-maskMotionUnit}px`);
+      hero.style.setProperty("--logo-mask-float-positive-2", `${maskMotionUnit * 2}px`);
+      hero.style.setProperty("--logo-mask-float-negative-2", `${-maskMotionUnit * 2}px`);
       foreignObject.setAttribute("width", String(width));
       foreignObject.setAttribute("height", String(height));
     };
@@ -262,8 +291,18 @@ export default function KriaLifeLanding() {
       fullLayer.style.opacity = state.fullOpacity.toFixed(4);
       fullLayer.style.transform = `scale(${state.fullScale.toFixed(4)})`;
       fullLayer.style.clipPath = `inset(${state.insetY.toFixed(3)}% ${state.insetX.toFixed(3)}% round ${state.radius.toFixed(2)}px)`;
-      logoLayer.style.opacity = state.logoOpacity.toFixed(4);
-      logoLayer.style.transform = `scale(${state.logoScale.toFixed(4)})`;
+      const refractiveCoreVisible = heroStage === "complete" ? 1 : 0;
+      logoLayer.style.opacity = Math.max(state.logoOpacity, refractiveCoreVisible).toFixed(4);
+      logoLayer.style.transform = "scale(1)";
+      hero.style.setProperty(
+        "--logo-video-scale",
+        (1.035 - state.logoOpacity * 0.035).toFixed(4),
+      );
+      if (heroStage === "complete") {
+        glassWordmark.style.opacity = state.glassOpacity.toFixed(4);
+      } else {
+        glassWordmark.style.removeProperty("opacity");
+      }
       wordmark.style.opacity = state.wordmarkOpacity.toFixed(4);
       payoff.style.opacity = state.chromeOpacity.toFixed(4);
       playbackControl.style.opacity = state.chromeOpacity.toFixed(4);
@@ -283,9 +322,9 @@ export default function KriaLifeLanding() {
       }
       const progress = getLandingScrollProgress(
         window.scrollY,
-        section.offsetTop,
-        section.offsetHeight,
-        window.innerHeight,
+        sectionTop,
+        sectionHeight,
+        viewportHeight,
       );
       applyProgress(progress);
       if (
@@ -302,11 +341,19 @@ export default function KriaLifeLanding() {
     };
 
     const handleResize = () => {
+      sectionTop = section.offsetTop;
+      sectionHeight = section.offsetHeight;
+      viewportHeight = window.innerHeight;
       measureMask();
-      scheduleUpdate();
+      if (!nativeScrollTimeline) scheduleUpdate();
     };
 
     measureMask();
+    if (nativeScrollTimeline) {
+      window.addEventListener("resize", handleResize);
+      return () => window.removeEventListener("resize", handleResize);
+    }
+
     update();
     window.addEventListener("scroll", scheduleUpdate, { passive: true });
     window.addEventListener("resize", handleResize);
@@ -315,7 +362,7 @@ export default function KriaLifeLanding() {
       window.removeEventListener("resize", handleResize);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [reducedMotion, startLogoPlayback, staticFallback]);
+  }, [heroStage, reducedMotion, startLogoPlayback, staticFallback]);
 
   const handleTimeUpdate = useCallback(() => {
     const video = videoRef.current;
@@ -331,8 +378,17 @@ export default function KriaLifeLanding() {
     }
     const stage = getLandingHeroStage(video.currentTime);
     setHeroStage((previous) => (previous === "complete" ? previous : stage));
-    if (stage === "complete") setHasRevealedPayoff(true);
-  }, []);
+    if (
+      stage !== "fullscreen" &&
+      !logoPlaybackStartedRef.current &&
+      !video.paused
+    ) {
+      startLogoPlayback();
+    }
+    if (stage === "complete") {
+      setHasRevealedPayoff(true);
+    }
+  }, [startLogoPlayback]);
 
   const handlePlaying = useCallback(() => {
     const video = videoRef.current;
@@ -483,11 +539,20 @@ export default function KriaLifeLanding() {
                 maskUnits="userSpaceOnUse"
               >
                 <rect width="100%" height="100%" fill="#000000" />
-                <image
-                  ref={logoMaskImageRef}
-                  href={KRIA_WORDMARK}
-                  preserveAspectRatio="xMidYMid meet"
-                />
+                <g ref={logoMaskLettersRef}>
+                  {PRODUCTION_WORDMARK_LETTERS.map((letter) => (
+                    <g
+                      key={letter.glyph}
+                      className={`${styles.logoMaskLetter} ${styles[letter.floatClassName]}`}
+                    >
+                      <use
+                        href={`${KRIA_WORDMARK}#${letter.definition}`}
+                        transform={letter.transform}
+                        fill="#ffffff"
+                      />
+                    </g>
+                  ))}
+                </g>
               </mask>
             </defs>
             <foreignObject
@@ -533,6 +598,111 @@ export default function KriaLifeLanding() {
               />
             ))}
           </svg>
+
+          <div
+            ref={glassWordmarkRef}
+            className={styles.glassWordmark}
+            aria-hidden="true"
+          >
+            <svg
+              className={styles.glassDefinitions}
+              viewBox="0 0 97.4 42.8"
+              role="presentation"
+            >
+              <defs>
+                <filter
+                  id={glassFilterId}
+                  x="-12"
+                  y="-12"
+                  width="121.4"
+                  height="66.8"
+                  filterUnits="userSpaceOnUse"
+                  colorInterpolationFilters="sRGB"
+                >
+                  <feGaussianBlur in="SourceAlpha" stdDeviation="0.72" result="soft" />
+                  <feSpecularLighting
+                    in="soft"
+                    surfaceScale="3.2"
+                    specularConstant="1.15"
+                    specularExponent="22"
+                    lightingColor="#ffffff"
+                    result="specular"
+                  >
+                    <fePointLight x="4" y="-5" z="12" />
+                  </feSpecularLighting>
+                  <feComposite
+                    in="specular"
+                    in2="SourceAlpha"
+                    operator="in"
+                    result="specularClipped"
+                  />
+                  <feMorphology
+                    in="SourceAlpha"
+                    operator="dilate"
+                    radius="0.34"
+                    result="expanded"
+                  />
+                  <feComposite
+                    in="expanded"
+                    in2="SourceAlpha"
+                    operator="out"
+                    result="outerRing"
+                  />
+                  <feFlood floodColor="#ccecff" floodOpacity="0.9" result="edgeColor" />
+                  <feComposite
+                    in="edgeColor"
+                    in2="outerRing"
+                    operator="in"
+                    result="brightEdge"
+                  />
+                  <feOffset in="SourceAlpha" dx="0.42" dy="0.55" result="shifted" />
+                  <feComposite
+                    in="shifted"
+                    in2="SourceAlpha"
+                    operator="out"
+                    result="lowerRing"
+                  />
+                  <feFlood floodColor="#00274c" floodOpacity="0.82" result="depthColor" />
+                  <feComposite
+                    in="depthColor"
+                    in2="lowerRing"
+                    operator="in"
+                    result="darkEdge"
+                  />
+                  <feMerge>
+                    <feMergeNode in="darkEdge" />
+                    <feMergeNode in="brightEdge" />
+                    <feMergeNode in="specularClipped" />
+                  </feMerge>
+                </filter>
+              </defs>
+            </svg>
+            {PRODUCTION_WORDMARK_LETTERS.map((letter) => (
+              <div
+                key={letter.glyph}
+                className={`${styles.glassLetter} ${styles[letter.glassClassName]} ${styles[letter.floatClassName]}`}
+              >
+                <span className={styles.glassContour} />
+                <span className={styles.glassDepth} />
+                <span className={styles.glassCore} />
+                <span className={styles.glassGlint} />
+                <svg
+                  className={styles.glassLighting}
+                  viewBox="0 0 97.4 42.8"
+                  preserveAspectRatio="xMidYMid meet"
+                  role="presentation"
+                >
+                  <image
+                    href={KRIA_WORDMARK}
+                    width="97.4"
+                    height="42.8"
+                    preserveAspectRatio="xMidYMid meet"
+                    filter={`url(#${glassFilterId})`}
+                  />
+                </svg>
+              </div>
+            ))}
+          </div>
 
           <div ref={payoffRef} className={styles.heroPayoff}>
             <div className={styles.heroActions}>
