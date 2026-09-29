@@ -163,12 +163,21 @@ def seed(email: str, *, guided: bool = False) -> dict[str, str]:
         )
         db.add(plan)
         db.flush()
+        # Protected PlanItem media fields may only be assigned by the
+        # plan_item_media facade (test_protected_plan_item_media_fields_have_one_writer),
+        # so the guided fixture is built first and passed to the constructor.
+        guided_fixture = _guided_fixture(user.id) if guided else None
         item = PlanItem(
             content_plan_id=plan.id,
             position=1,
             idea="Kria local matcha update",
             item_status="awaiting_clips",
             edit_format="montage",
+            **(
+                {"clip_gcs_paths": guided_fixture[2], "clip_assignments": guided_fixture[3]}
+                if guided_fixture is not None
+                else {}
+            ),
         )
         db.add(item)
         db.flush()
@@ -181,8 +190,8 @@ def seed(email: str, *, guided: bool = False) -> dict[str, str]:
         db.flush()
         job_id: str | None = None
         media_state: list[dict] = []
-        if guided:
-            plan_json, variant, paths, assignments = _guided_fixture(user.id)
+        if guided_fixture is not None:
+            plan_json, variant, paths, _assignments = guided_fixture
             job = Job(
                 user_id=user.id,
                 status="variants_ready",
@@ -194,11 +203,8 @@ def seed(email: str, *, guided: bool = False) -> dict[str, str]:
             )
             db.add(job)
             db.flush()
-            item.edit_format = "montage"
             item.item_status = "ready"
             item.current_job_id = job.id
-            item.clip_gcs_paths = paths
-            item.clip_assignments = assignments
             session.target_job_id = job.id
             session.target_variant_id = variant["variant_id"]
             session.target_generation_id = variant["render_generation_id"]
