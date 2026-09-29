@@ -40,6 +40,9 @@ _MIN_BAR_S = 0.2
 # A bar that carries a segment_id (server projection stamps EVERY projected bar,
 # titles included) is only "clip-bound" if it still fills that segment.
 _SEGMENT_FIT_TOLERANCE_S = 0.15
+# Whole-video bars are identified by id BEFORE the segment fit test: a title
+# exactly one clip long must not travel with that clip on a reorder.
+_ANCHORED_IDS = frozenset({"guided-title", "guided-closing-title"})
 
 _CODE_TEXT = {
     "TIMELINE_EMPTY": "The video needs at least one clip",
@@ -64,7 +67,8 @@ def _op_error(message: str):
 
 
 def _round(value: float) -> float:
-    return round(float(value), 3)
+    # Segments live on the 1/30s grid at 6 decimals; ms rounding drifts off it.
+    return round(float(value), 6)
 
 
 # ── Slot rows <-> segments ────────────────────────────────────────────────────
@@ -321,7 +325,7 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
         if is_label:
             old_segment = _identify_old_segment(bar, media_id, old_segments)
             clip_bound = True
-        elif bar.get("segment_id"):
+        elif bar.get("segment_id") and str(bar.get("id") or "") not in _ANCHORED_IDS:
             candidate = _identify_old_segment(bar, None, old_segments)
             if (
                 candidate is not None
@@ -368,8 +372,19 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
         new_start = start_point[0]
         new_end = min(new_total, end_point[0] + _FRAME_S)
         if new_end - new_start <= _FRAME_S / 2:
-            drop(bar, None, False)
-            continue
+            # A bar spanning clips that reorder projects inverted/tiny: fall back
+            # to the window of the segment it starts in, never lose the text.
+            start_segment = next(
+                (s for s in new_segments if str(s["segment_id"]) == str(start_point[1])), None
+            )
+            if start_segment is not None:
+                new_end = min(new_total, float(start_segment["output_end_s"]))
+            if new_end - new_start <= _FRAME_S / 2:
+                new_end = min(new_total, new_start + _MIN_BAR_S)
+                new_start = max(0.0, new_end - _MIN_BAR_S)
+        if end - start >= _MIN_BAR_S and new_end - new_start < _MIN_BAR_S:
+            new_end = min(new_total, new_start + _MIN_BAR_S)
+            new_start = max(0.0, new_end - _MIN_BAR_S)
         updated = dict(bar)
         updated["start_s"], updated["end_s"] = _round(new_start), _round(new_end)
         updated["segment_id"] = start_point[1]

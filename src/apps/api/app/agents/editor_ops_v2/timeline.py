@@ -271,6 +271,7 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
     active = [i for i, row in enumerate(rows) if not row.get("removed")]
     last_active = active[-1] if active else -1
     applied = 0
+    duration_only_on_cut = False
     for index in indexes:
         row = rows[index]
         if patch.get("removed") is True:
@@ -324,6 +325,11 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
             current = row.get("transition_after") or "cut"
             transition = patch.get("transition_after", current)
             if transition == "cut":
+                if "transition_after" not in patch:
+                    # Duration-only patch on a hard cut has nothing to lengthen:
+                    # not applied (reported honestly below), row untouched.
+                    duration_only_on_cut = True
+                    continue
                 row["transition_after"] = "cut"
                 row["transition_duration_s"] = None
             else:
@@ -336,6 +342,8 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
             "transition_after" in patch or "transition_duration_s" in patch
         ):
             raise _err("The last clip has no transition after it")
+        if duration_only_on_cut:
+            raise _err("Those clips have a hard cut, so there is no transition to lengthen")
         raise _err("That change does not apply to the selected clips")
     state.changed.add("timeline")
 

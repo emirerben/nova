@@ -99,6 +99,19 @@ def _variant_slots(variant: dict[str, Any], job: Any = None) -> list[dict[str, A
         return [copy.deepcopy(row) for row in draft if isinstance(row, dict)]
     timeline = variant.get("user_timeline") or variant.get("ai_timeline") or {}
     rows = [copy.deepcopy(row) for row in timeline.get("slots") or [] if isinstance(row, dict)]
+    if rows and job is not None:
+        # Legacy slot rows carry no media identity: derive photo/video from the
+        # job's clip paths so kind selectors and still-image rules see photos.
+        paths = list((getattr(job, "all_candidates", None) or {}).get("clip_paths") or [])
+        for row in rows:
+            index = row.get("clip_index")
+            if (
+                row.get("media_kind") is None
+                and isinstance(index, int)
+                and not isinstance(index, bool)
+                and 0 <= index < len(paths)
+            ):
+                row["media_kind"] = _path_kind(paths[index])
     if rows or job is None:
         return rows
     guided = _guided_v2_revision(job, variant)
