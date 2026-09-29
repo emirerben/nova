@@ -74,7 +74,6 @@ async def dry_run_kria_reconcile(
 
 class PhoneRenderConfigResponse(BaseModel):
     phone_rendering_enabled: bool
-    montage_unified_plan_enabled: bool
     # The device-parity capability allowlist as this process reads it (a Fly secret in
     # prod). The code default is empty, so an empty list here means the secret is unset.
     verified_features: list[str]
@@ -98,7 +97,6 @@ async def get_phone_render_config() -> PhoneRenderConfigResponse:
     verified = sorted(str(feature) for feature in settings.phone_render_verified_features)
     return PhoneRenderConfigResponse(
         phone_rendering_enabled=bool(settings.phone_rendering_enabled),
-        montage_unified_plan_enabled=bool(settings.montage_unified_plan_enabled),
         verified_features=verified,
         default_verified_features=sorted(default),
         authored_text_verified="authoredText" in verified,

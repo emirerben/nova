@@ -44,7 +44,7 @@ from app.services.phone_overlay_grounding import GroundedOverlayCards
 from app.services.phone_reaction_grounding import GroundedReactionBeats
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, PhoneVisualBinding
 from app.tasks import generative_build as gb
-from tests.pipeline.test_phone_montage_plan import _binding
+from tests.pipeline.test_phone_voiceover_montage_plan import _binding
 from tests.tasks.test_generative_build import _Meta
 from tests.tasks.test_generative_build_silence_cut import DURATION, SILENCES, _cut_words
 
@@ -363,7 +363,7 @@ def test_self_narrated_resolving_to_talking_head_fails_closed(monkeypatch):
 def test_subtitled_worker_rejects_direct_format_it_does_not_own(monkeypatch):
     """`_run_phone_subtitled_job`'s own defense-in-depth: only `subtitled` or
     a no-voiceover narrated* item may reach it -- a montage-family item
-    (routed to `_run_phone_montage_job` by the dispatch fork in normal
+    (routed to `_run_phone_voiceover_montage_job` by the dispatch fork in normal
     operation) is rejected if ever called directly."""
     job, snapshot, _session, _binding_ = _setup_subtitled(monkeypatch, edit_format="montage")
     with pytest.raises(ValueError, match="No phone renderer is registered"):

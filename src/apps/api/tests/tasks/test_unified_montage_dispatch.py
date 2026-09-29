@@ -130,7 +130,7 @@ def _fixture(*, capture: bool = True):
 
 @pytest.fixture
 def harness(monkeypatch):
-    def build(*, flag: bool = True, brief: CreativeBrief | None = None, capture: bool = True):
+    def build(*, brief: CreativeBrief | None = None, capture: bool = True):
         bindings, assignments = _fixture(capture=capture)
         user_id = uuid.uuid4()
         snapshot = {
@@ -196,7 +196,6 @@ def harness(monkeypatch):
         monkeypatch.setattr(clip_facts, "enrich_clip_facts", fake_enrich)
         monkeypatch.setattr(gb.settings, "phone_rendering_enabled", True)
         monkeypatch.setattr(gb.settings, "clip_facts_enabled", True)
-        monkeypatch.setattr(gb.settings, "montage_unified_plan_enabled", flag)
         monkeypatch.setattr(
             gb.settings,
             "phone_render_verified_features",
@@ -209,8 +208,12 @@ def harness(monkeypatch):
                 "audioMix",
             ],
         )
-        plain = Mock(side_effect=AssertionError("the plain phone-montage lane must not run"))
-        monkeypatch.setattr(gb, "_run_phone_montage_job", plain)
+        plain = Mock(
+            side_effect=AssertionError(
+                "the voiceover montage lane must not run for a non-voiceover montage"
+            )
+        )
+        monkeypatch.setattr(gb, "_run_phone_voiceover_montage_job", plain)
         cloud = Mock(side_effect=AssertionError("phone job entered the cloud renderer"))
         monkeypatch.setattr(gb, "_run_guided_story_job", cloud)
         return job, snapshot, session, bindings, plain
@@ -218,7 +221,7 @@ def harness(monkeypatch):
     return build
 
 
-def test_flag_on_renders_the_east_run_brief_as_a_guided_device_job(harness):
+def test_a_non_voiceover_montage_renders_the_east_run_brief_as_a_guided_device_job(harness):
     job, _snapshot, session, _bindings, plain = harness(brief=_brief())
 
     gb._run_generative_job(str(job.id))
@@ -301,24 +304,16 @@ def test_no_brief_still_produces_a_plain_guided_montage(harness):
     assert "requirement_receipts" not in record
 
 
-def test_flag_off_keeps_the_plain_lane_and_never_plans_unified(harness, monkeypatch):
-    job, _snapshot, _session, _bindings, plain = harness(flag=False, brief=_brief())
-    plain.side_effect = None
-    unified = Mock(side_effect=AssertionError("flag off must not run the unified planner"))
-    monkeypatch.setattr(gb, "_run_phone_unified_montage_job", unified)
-
+def test_a_non_voiceover_montage_takes_unified_with_no_flag_set(harness):
+    """KRI-220: no flag, no allowlist -- every non-voiceover montage is unified, even at
+    the item's default `landscape_fit="fit"` the removed plain lane rejected."""
+    assert not hasattr(gb.settings, "montage_unified_plan_enabled")
+    assert not hasattr(gb.settings, "montage_unified_plan_for")
+    job, _snapshot, _session, _bindings, plain = harness(brief=_brief())
+    assert job.all_candidates["landscape_fit"] == "fit"
+    assert not job.all_candidates.get("voiceover_gcs_path")
     gb._run_generative_job(str(job.id))
-
-    plain.assert_called_once()
-    unified.assert_not_called()
-    assert "guided_edit" not in job.assembly_plan
-    assert "unified_montage" not in job.assembly_plan
-
-
-def test_allowlisted_account_gets_unified_while_the_global_flag_is_off(harness, monkeypatch):
-    job, *_ = harness(flag=False, brief=_brief())
-    monkeypatch.setattr(gb.settings, "montage_unified_plan_user_ids", [str(job.user_id)])
-    gb._run_generative_job(str(job.id))
+    plain.assert_not_called()
     assert job.status == "awaiting_device"
     assert "unified_montage" in job.assembly_plan
 
@@ -367,33 +362,6 @@ def test_a_clip_without_a_phone_binding_fails_closed(harness):
         gb._run_phone_unified_montage_job(
             str(job.id), snapshot, job.all_candidates, ownership_epoch=3
         )
-
-
-def test_flag_off_the_plain_lane_is_untouched_including_its_fit_guard(monkeypatch):
-    """The failure the East Run thread hit stays byte-identical with the flag off."""
-    from tests.tasks.test_phone_montage_dispatch import setup as montage_setup
-
-    job, _snapshot, _session, _bindings, _cloud = montage_setup(monkeypatch)
-    job.all_candidates["landscape_fit"] = "fit"
-    monkeypatch.setattr(gb.settings, "montage_unified_plan_enabled", False)
-    failures: list[tuple[str, str | None]] = []
-    monkeypatch.setattr(gb, "mark_failed_phase", lambda *_a, **_k: None)
-    monkeypatch.setattr(
-        gb,
-        "_fail_job",
-        lambda _job_id, detail, failure_reason=None: (
-            failures.append((detail, failure_reason)) or True
-        ),
-    )
-    unified = Mock(side_effect=AssertionError("flag off must not run the unified planner"))
-    monkeypatch.setattr(gb, "_run_phone_unified_montage_job", unified)
-
-    gb._run_generative_job(str(job.id))
-
-    assert failures == [
-        ("letterboxed landscape fit is not yet supported on the phone", "phone_plan_unsupported")
-    ]
-    unified.assert_not_called()
 
 
 def test_chat_text_edit_on_the_unified_plan_succeeds(harness, monkeypatch):

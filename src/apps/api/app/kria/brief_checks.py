@@ -881,7 +881,7 @@ def defers_to_unified_montage(
 
     Mirrors the worker's own choice so the two cannot leave a requirement judged nowhere:
     a phone job (some clip is a phone analysis proxy and the account is enrolled), a
-    montage-family format, `montage_unified_plan_for`, and no voiceover lane. Approval
+    montage-family format, and no voiceover lane (KRI-220: no flag). Approval
     maps `audio_strategy` to the audio mode (`original_audio`/`licensed_music` leave the
     voiceover lane; anything else is the voiceover lane or a `voiceover_required` refusal),
     so an absent or voiceover-ish strategy is conservatively not deferred.
@@ -895,7 +895,6 @@ def defers_to_unified_montage(
         and str(edit_format or "") in GUIDED_EDIT_FORMATS
         and any(is_analysis_proxy_path(str(path)) for path in clip_paths or ())
         and settings.phone_rendering_for(creator_id)
-        and settings.montage_unified_plan_for(creator_id)
     )
 
 

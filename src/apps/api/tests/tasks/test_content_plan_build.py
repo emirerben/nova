@@ -3448,7 +3448,7 @@ def test_v2_phone_montage_dispatches_without_an_approved_proposal(
 ) -> None:
     """KRI-187: a runtime-v2 approval (no guided proposal) reaches a device job
     once the v2-phone flag covers the account -- the worker then runs
-    `_run_phone_montage_job`, and the Job carries no `guided_edit` snapshot."""
+    `_run_phone_voiceover_montage_job`, and the Job carries no `guided_edit` snapshot."""
     from app.config import settings
 
     monkeypatch.setattr(settings, "kria_runtime_v2_phone_enabled", True)
