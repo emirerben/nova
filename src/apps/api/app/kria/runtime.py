@@ -33,6 +33,7 @@ from app.kria.api_schemas import (
     TurnCancelled,
 )
 from app.kria.brief import apply_receipt_statuses, load_latest_brief
+from app.kria.brief_checks import is_judged
 from app.kria.contracts import (
     CreativeBriefOut,
     CreativeBriefRequirementOut,
@@ -1364,6 +1365,7 @@ async def read_creative_brief(
         .scalars()
         .all()
     )
+    live = {req.id: req for req in brief.live()}
     newest: dict[str, RequirementReceipt] = {}
     for event in events:
         for raw in (event.payload or {}).get("requirement_receipts") or []:
@@ -1371,9 +1373,12 @@ async def read_creative_brief(
                 receipt = RequirementReceipt.model_validate(raw)
             except ValueError:
                 continue
-            newest.setdefault(receipt.requirement_id, receipt)
-    live_ids = {req.id for req in brief.live()}
-    receipts = [r for r in newest.values() if r.requirement_id in live_ids]
+            # Older events can hold a "can't verify" receipt that judged nothing;
+            # it is never a requirement's outcome, so the requirement stays open.
+            rid = receipt.requirement_id
+            if rid not in newest and is_judged(live.get(rid), receipt):
+                newest[rid] = receipt
+    receipts = list(newest.values())
     shown = apply_receipt_statuses(brief, [r.model_dump(mode="json") for r in receipts])
     return CreativeBriefOut(
         thread_id=str(thread.id),

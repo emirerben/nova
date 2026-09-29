@@ -282,6 +282,8 @@ def test_receipts_say_what_was_met_and_what_was_partial(harness):
     assert "I kept filming order" in receipts["r4"]["reason"]
     assert job.assembly_plan["unified_montage"]["ordering_basis"] == "capture_time"
     assert receipts["r3"]["status"] == "met"
+    # "Fast but readable" has no number to check: nothing judged it, so no receipt.
+    assert "r2" not in receipts
 
 
 def test_without_capture_times_the_order_stays_attachment_and_says_so(harness):

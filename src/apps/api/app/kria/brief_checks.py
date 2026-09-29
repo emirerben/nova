@@ -2,8 +2,10 @@
 
 No model is involved. Each checker compares one Creative Brief requirement with
 facts read from the drafted plan (a strategy or an editor payload) and returns a
-``RequirementReceipt``. A requirement with no checker is reported ``partial``
-("could not be verified"): the reply never claims what the server did not check.
+``RequirementReceipt``. A requirement nothing could judge (no checker, or the
+facts to judge it were missing) gets no receipt: it stays ``open`` and the reply
+says nothing about it, so the reply never claims what the server did not check
+and never labels an unchecked ask "Partly".
 
 Checks implemented: per-clip text coverage, ordering vs the requested key,
 duration within +/-10%, literal on-screen text, "keep my whole take" on a
@@ -386,14 +388,20 @@ def _guess_labels(facts: PlanFacts, only: str | None = None) -> list[InferredLab
     ]
 
 
+_CANT_CHECK_EDITOR_CLIP_TEXT = "I can't verify per-clip text on an editor edit."
+
+
 def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     wanted = _fold(req.literal or "")
     if facts.editor:
         # An editor payload has no per-clip structure: judge the literal if the
-        # creator wrote one, otherwise say it can't be checked. Never "couldn't".
+        # creator wrote one (it holds every on-screen text, so a missing literal
+        # is a real miss), otherwise say it can't be checked. Never "couldn't".
         if wanted and any(_contains_text(t, wanted) for t in facts.texts):
             return _receipt(req, "met", None)
-        return _receipt(req, "partial", "I can't verify per-clip text on an editor edit.")
+        if wanted:
+            return _receipt(req, "partial", "That exact text isn't in this edit.")
+        return _receipt(req, "partial", _CANT_CHECK_EDITOR_CLIP_TEXT)
     ids = facts.clip_ids
 
     def text_for(index: int, clip: str) -> str | None:
@@ -533,10 +541,16 @@ def _route_reversed_reason(req: BriefRequirement, facts: PlanFacts) -> str | Non
     )
 
 
+# A strategy draft never records its clip order (only a unified montage plan
+# does), so a draft-time order check can only say it couldn't tell.
+_CANT_CONFIRM_ORDER = "I can't confirm the order this draft uses."
+_CANT_CHECK_ORDER_RULE = "I can't verify this ordering automatically."
+
+
 def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
     if not facts.ordering_basis:
-        return _receipt(req, "partial", "I can't confirm the order this draft uses.")
+        return _receipt(req, "partial", _CANT_CONFIRM_ORDER)
     basis = facts.ordering_basis
     reversed_reason = _route_reversed_reason(req, facts)
     if reversed_reason is not None:
@@ -550,7 +564,7 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
             )
     elif not key or key != basis:
         # Nothing here can confirm an ordering this checker has no rule for.
-        return _receipt(req, "partial", "I can't verify this ordering automatically.")
+        return _receipt(req, "partial", _CANT_CHECK_ORDER_RULE)
     if facts.ordering_fallback_clip_ids:
         n = len(facts.ordering_fallback_clip_ids)
         return _receipt(
@@ -690,11 +704,28 @@ def _names(values: Iterable[str]) -> str:
 
 
 # Reasons that mean "the facts to judge this were not available": neutral in the
-# reply (like a requirement with no checker), never a failure notice.
+# reply (like a requirement with no checker), never a failure notice. The last
+# two come from requirements with no checker; listing them keeps `is_judged`
+# right even if `_has_checker` and `check_requirement` drift apart.
 _CANT_CHECK_BEATS = "I can't check the pop-ins on this draft yet."
 _CANT_CHECK_TAKE = "I can't confirm this draft keeps your whole take."
 _CANT_CHECK_TITLE = "I can't confirm where this draft's title came from."
-_NEUTRAL_REASONS = frozenset({_CANT_CHECK_BEATS, _CANT_CHECK_TAKE, _CANT_CHECK_TITLE})
+_CANT_CONFIRM_LENGTH = "I can't confirm this draft's length yet."
+_CANT_CHECK_TIMING = "I can't verify this timing automatically."
+_NO_CHECKER = "I can't verify this one automatically yet."
+_NEUTRAL_REASONS = frozenset(
+    {
+        _CANT_CHECK_BEATS,
+        _CANT_CHECK_TAKE,
+        _CANT_CHECK_TITLE,
+        _CANT_CHECK_EDITOR_CLIP_TEXT,
+        _CANT_CONFIRM_ORDER,
+        _CANT_CHECK_ORDER_RULE,
+        _CANT_CONFIRM_LENGTH,
+        _CANT_CHECK_TIMING,
+        _NO_CHECKER,
+    }
+)
 
 
 def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -780,9 +811,9 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         return _check_whole_take(req, facts)
     target = req.facts.get("duration_s")
     if not isinstance(target, (int, float)) or target <= 0:
-        return _receipt(req, "partial", "I can't verify this timing automatically.")
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
     if facts.duration_s is None:
-        return _receipt(req, "partial", "I can't confirm this draft's length yet.")
+        return _receipt(req, "partial", _CANT_CONFIRM_LENGTH)
     if abs(facts.duration_s - float(target)) <= DURATION_TOLERANCE * float(target):
         return _receipt(req, "met", None)
     # The edit's own length is what is compared: the phone adds its outro after the edit,
@@ -855,7 +886,7 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_timing(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _wants_closing(req)):
         return _check_reaction_beats(req, facts)
-    return _receipt(req, "partial", "I can't verify this one automatically yet.")
+    return _receipt(req, "partial", _NO_CHECKER)
 
 
 # KRI-190: requirement kinds the unified montage planner settles at render time. Its
@@ -923,10 +954,24 @@ def requirements_to_check_at_draft(
     return [req for req in requirements if not (defers and req.kind in UNIFIED_SETTLED_KINDS)]
 
 
+def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool:
+    """True when a checker had what it needed to decide ``req``.
+
+    With no checker, or with a neutral reason (the facts were missing), nothing
+    was checked. Such a receipt read "Partly: add captions (I can't verify this
+    one automatically yet)", a half-done claim on nearly every reply. Receipts
+    stored before these stopped being written still exist, so every reader of
+    stored receipts filters through this too.
+    """
+    return req is not None and _has_checker(req) and receipt.reason not in _NEUTRAL_REASONS
+
+
 def build_receipts(
     requirements: Iterable[BriefRequirement], facts: PlanFacts
 ) -> list[RequirementReceipt]:
-    return [check_requirement(req, facts) for req in requirements if req.live]
+    """Receipts for the live requirements a checker judged; the rest stay ``open``."""
+    checked = ((req, check_requirement(req, facts)) for req in requirements if req.live)
+    return [receipt for req, receipt in checked if is_judged(req, receipt)]
 
 
 # ------------------------------------------------------------------------ reply
@@ -942,16 +987,17 @@ def reply_from_receipts(
 ) -> str:
     """Compose the creator-facing reply from receipts only.
 
-    The model's free-text summary is kept only when every requirement is met;
-    otherwise the reply is exactly what was checked, so it cannot overclaim.
+    The model's free-text summary is kept only when every judged requirement is
+    met; otherwise the reply is exactly what was checked, so it cannot overclaim.
+    An unjudged receipt (stored before ``build_receipts`` dropped them) gets no
+    line and never turns the reply into a failure notice.
     """
     by_id = {req.id: req for req in brief.requirements}
+    judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
     lines: list[str] = []
     guesses: list[str] = []
-    for receipt in receipts:
-        req = by_id.get(receipt.requirement_id)
-        what = req.text() if req else receipt.requirement_id
-        line = f"{_LABEL[receipt.status]}: {what}"
+    for receipt in judged:
+        line = f"{_LABEL[receipt.status]}: {by_id[receipt.requirement_id].text()}"
         if receipt.reason and receipt.status != "met":
             line += f" ({receipt.reason.rstrip('.')})"
         lines.append(line)
@@ -959,22 +1005,11 @@ def reply_from_receipts(
     if guesses:
         shown = ", ".join(dict.fromkeys(guesses))
         lines.append(f"I guessed these, tell me if any is wrong: {shown}")
-    checkable = {
-        r.requirement_id
-        for r in receipts
-        if (req := by_id.get(r.requirement_id)) is not None
-        and _has_checker(req)
-        and r.reason not in _NEUTRAL_REASONS
-    }
-    # "Can't verify" is neutral: only a requirement a checker actually judged
-    # can turn the reply into a failure notice.
-    problem = any(r.status != "met" and r.requirement_id in checkable for r in receipts)
-    head = ""
-    if not problem and summary and summary.strip():
-        head = summary.strip() + "\n"
-    elif problem:
-        head = "Not everything you asked for made it in:\n"
-    text = head + "\n".join(f"- {line}" for line in lines)
+    body = "\n".join(f"- {line}" for line in lines)
+    if any(r.status != "met" for r in judged):
+        text = "Not everything you asked for made it in:\n" + body
+    else:
+        text = "\n".join(part for part in ((summary or "").strip(), body) if part)
     if len(text) > MAX_REPLY_CHARS:
         text = text[: MAX_REPLY_CHARS - 1].rstrip() + "…"
     return text
@@ -988,6 +1023,7 @@ __all__ = [
     "PlanFacts",
     "build_receipts",
     "check_requirement",
+    "is_judged",
     "plan_facts_from_editor_payload",
     "plan_facts_from_strategy",
     "plan_facts_from_unified_montage",
