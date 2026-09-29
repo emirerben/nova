@@ -1982,6 +1982,9 @@ def check_edit_copilot(output: Any) -> list[str]:
         "stack_images",
         "undo_last_edit",
         "repeat_last_edit",
+        # KRI-219 Lane B: server-snapshot (editor_ops_version 2) timeline bulk ops.
+        "patch_slots",
+        "set_total_duration",
     }
     failures: list[str] = []
 
@@ -2144,6 +2147,8 @@ _EDITOR_OPS_COMPILABLE_NAMES = frozenset(
         "remove_clip",
         "split_clip",
         "set_transition",
+        "patch_slots",
+        "set_total_duration",
         "add_unused_sources",
         "set_media_duration",
         "stack_images",
@@ -2189,6 +2194,11 @@ _EDITOR_OPS_NO_TIMELINE_NAMES = frozenset(
 # short and reviewable — see structural.py's docstring note above for the
 # broader "different runtime" bucket, which needs no entry here at all.
 _EDITOR_OPS_ALLOWLIST: dict[str, str] = {
+    "kria_v2_timeline_speed_up_clip": (
+        "playback_rate is a guided-story-only control (the synthetic replay variant is "
+        "a plain montage); its compile path is pinned in "
+        "tests/services/test_kria_editor_guided_timeline.py."
+    ),
     "component_prices_selective": (
         "the real variant carries 150+ pre-existing generated price labels; "
         "the montage-archetype 50-element cap in validate_text_elements_payload "

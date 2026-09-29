@@ -19,6 +19,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from app.agents._schemas.text_element import _ALLOWED_FONTS
+from app.config import settings
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitCaptionMeta,
@@ -88,6 +89,10 @@ def _variant_slots(variant: dict[str, Any], job: Any = None) -> list[dict[str, A
     bridge shot" to a clip (KRI-191). With ``job`` the fallback derives the same
     unsigned, path-free segment rows the editor's timeline projection uses.
     """
+    draft = variant.get("guided_draft_slots")
+    if isinstance(draft, list) and draft:
+        # KRI-219: an in-flight guided timeline draft (see project_editor_draft).
+        return [copy.deepcopy(row) for row in draft if isinstance(row, dict)]
     timeline = variant.get("user_timeline") or variant.get("ai_timeline") or {}
     rows = [copy.deepcopy(row) for row in timeline.get("slots") or [] if isinstance(row, dict)]
     if rows or job is None:
@@ -97,8 +102,15 @@ def _variant_slots(variant: dict[str, Any], job: Any = None) -> list[dict[str, A
         return []
     segment_layout, _layouts = _guided_v2_layouts(job, variant)
     rows = _guided_v2_slot_rows(guided, segment_layout, include_source_path=False)
+    kind_by_media = {
+        str(source.get("media_id")): source.get("kind")
+        for source in guided.get("sources") or []
+        if isinstance(source, dict)
+    }
     for row, segment in zip(rows, guided.get("segments") or [], strict=False):
         row["media_id"] = str(segment.get("media_id"))
+        if kind_by_media.get(row["media_id"]) in {"video", "image"}:
+            row["media_kind"] = kind_by_media[row["media_id"]]
     return rows
 
 
@@ -129,6 +141,8 @@ def _safe_slot(
     media_id = row.get("media_id")
     if isinstance(media_id, str) and media_id:
         slot["media_id"] = media_id
+    if row.get("playback_rate") is not None:
+        slot["playback_rate"] = row["playback_rate"]
     if moment:
         slot["moment"] = moment
     if facts:
@@ -231,7 +245,9 @@ def _clip_label_links(job: Any, variant: dict[str, Any]) -> dict[str, dict[str, 
 
 def _is_guided_native(job: Any, variant: dict[str, Any]) -> bool:
     """A story-native variant: no legacy timeline, timing lives in a guided revision."""
-    if variant.get("user_timeline") or variant.get("ai_timeline"):
+    if not variant.get("guided_draft_slots") and (
+        variant.get("user_timeline") or variant.get("ai_timeline")
+    ):
         return False
     return _guided_v2_revision(job, variant) is not None
 
@@ -392,7 +408,11 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     # KRI-191 the same ops could not resolve at all (empty slots); filling the
     # slots must not make them reachable.
     guided_native = _is_guided_native(job, variant)
-    if caps.get("timeline") is True and not guided_native:
+    # KRI-219: with `kria_guided_timeline_ops` the compiler rebases per-clip label
+    # bars onto their segments (services/kria_editor_timeline.py), so the guided
+    # clip/transition families open up. visual_media stays withheld below.
+    guided_timeline_ops = bool(getattr(settings, "kria_guided_timeline_ops", False))
+    if caps.get("timeline") is True and (not guided_native or guided_timeline_ops):
         families.append("clip")
         clips = caps.get("clips") or {}
         transition = clips.get("transitions") if isinstance(clips, dict) else None
@@ -734,6 +754,15 @@ def _slot_duration(row: dict[str, Any]) -> float:
     return max(0.0, value)
 
 
+def _slot_rate(row: dict[str, Any]) -> float:
+    """Source seconds consumed per output second (1.0 unless a guided retime)."""
+    try:
+        value = float(row.get("playback_rate") or 1.0)
+    except (TypeError, ValueError):
+        value = 1.0
+    return value if value > 0 else 1.0
+
+
 def _timeline_models(rows: list[dict[str, Any]]) -> list[TimelineSlotEdit]:
     return [
         TimelineSlotEdit(
@@ -748,6 +777,8 @@ def _timeline_models(rows: list[dict[str, Any]]) -> list[TimelineSlotEdit]:
             transition_duration_s=row.get("transition_duration_s"),
             look_preset=row.get("look_preset") or "none",
             look_adjustments=row.get("look_adjustments"),
+            # Only guided rows carry these; omission on the wire means "inherit".
+            **{key: row[key] for key in ("playback_rate", "source_crop") if key in row},
         )
         for row in rows
     ]
@@ -769,8 +800,16 @@ def _summary(op: dict[str, Any]) -> str:
     return name[:1].upper() + name[1:]
 
 
-def project_editor_draft(variant: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    """Overlay a same-generation draft without mutating the rendered Job."""
+def project_editor_draft(
+    variant: dict[str, Any], payload: dict[str, Any], job: Any = None
+) -> dict[str, Any]:
+    """Overlay a same-generation draft without mutating the rendered Job.
+
+    ``job`` is optional; with it, a guided-native variant keeps its draft slots in
+    ``guided_draft_slots`` (rows enriched with media identity and re-windowed on
+    the output clock) instead of ``user_timeline``, so the variant is still
+    recognised as guided on turn 2+ (KRI-219).
+    """
     projected = copy.deepcopy(variant)
     for key in ("text_elements", "caption_cues", "music_track_id", "visual_blocks"):
         if payload.get(key) is not None:
@@ -780,7 +819,21 @@ def project_editor_draft(variant: dict[str, Any], payload: dict[str, Any]) -> di
     ):
         projected["guided_edit_revision"]["visual_blocks"] = copy.deepcopy(payload["visual_blocks"])
         projected["guided_edit_revision"]["state_hash"] = ""
-    if payload.get("timeline_slots") is not None:
+    guided_draft = (
+        payload.get("timeline_slots") is not None
+        and job is not None
+        and _is_guided_native(job, variant)
+    )
+    if guided_draft:
+        from app.services.kria_editor_timeline import (  # noqa: PLC0415
+            project_guided_draft_slots,
+        )
+
+        rows, total = project_guided_draft_slots(job, variant, payload["timeline_slots"])
+        projected["guided_draft_slots"] = rows
+        if total > 0:
+            projected["duration_s"] = total
+    elif payload.get("timeline_slots") is not None:
         originals = {
             row.get("slot_id"): row for row in _variant_slots(variant) if row.get("slot_id")
         }
@@ -1002,6 +1055,8 @@ class _DraftState:
     sound_effects: list[dict[str, Any]]
     slots: list[dict[str, Any]]
     base_generation: Any
+    # Slots as they were before this bundle's ops (guided label rebase reads it).
+    initial_slots: list[dict[str, Any]] = field(default_factory=list)
     removed_text_bars: set[int] = field(default_factory=set)
     changed: set[str] = field(default_factory=set)
     changes: list[str] = field(default_factory=list)
@@ -1134,7 +1189,7 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
         row["in_s"] = float(op["in_s"])
     elif name == "trim_clip_start":
         amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
-        row["in_s"] = float(row.get("in_s") or 0.0) + amount
+        row["in_s"] = float(row.get("in_s") or 0.0) + amount * _slot_rate(row)
         row["duration_beats"] = None
         row["duration_s"] = _slot_duration(row) - amount
     else:
@@ -1156,7 +1211,7 @@ def _op_trim_output_start(state: _DraftState, op: dict[str, Any]) -> None:
             remaining -= duration
             continue
         if remaining > 0:
-            row["in_s"] = float(row.get("in_s") or 0.0) + remaining
+            row["in_s"] = float(row.get("in_s") or 0.0) + remaining * _slot_rate(row)
             row["duration_beats"] = None
             row["duration_s"] = duration - remaining
             remaining = 0
@@ -1196,7 +1251,7 @@ def _op_split_clip(state: _DraftState, op: dict[str, Any]) -> None:
         **row,
         "slot_id": None,
         "parent_segment_id": row.get("slot_id"),
-        "in_s": float(row.get("in_s") or 0.0) + local,
+        "in_s": float(row.get("in_s") or 0.0) + local * _slot_rate(row),
         "duration_beats": None,
         "duration_s": duration - local,
     }
@@ -1489,6 +1544,7 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         slots=_variant_slots(variant, job),
         base_generation=variant_render_baseline(variant),
     )
+    state.initial_slots = copy.deepcopy(state.slots)
 
     for op in ops:
         name = str(op.get("op") or "")
@@ -1500,6 +1556,13 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
 
     changed = state.changed
     guided = _guided_v2_revision(job, variant)
+    if "timeline" in changed and guided is not None and _is_guided_native(job, variant):
+        from app.services.kria_editor_timeline import rebase_guided_text  # noqa: PLC0415
+
+        # Invariant: a guided payload carrying timeline_slots ALWAYS carries the
+        # rebased text_elements, so the server treats text as authored and skips
+        # its (right-biased, non-label-aware) own projection.
+        rebase_guided_text(state, guided)
     request = EditorCommitRequest(
         guided_revision_number=int(guided["revision_number"]) if guided is not None else None,
         visual_blocks=state.visual_blocks,

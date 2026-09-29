@@ -19,6 +19,7 @@ def guided_revision(
     source_duration_s: float = 10.0,
     transitions: dict[int, tuple[str, float]] | None = None,
     extra_segment: dict[int, dict[str, Any]] | None = None,
+    text_elements: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     prefix = f"generative-jobs/{job_id}/sources/"
     segments = []
@@ -51,6 +52,7 @@ def guided_revision(
                 for index in range(count)
             ],
             "segments": segments,
+            **({"text_elements": text_elements} if text_elements else {}),
         }
     )
 

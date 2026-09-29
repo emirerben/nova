@@ -31,8 +31,7 @@ def scenarios(revision):
     return {
         "identity": [_slot(f"s{i + 1}", i, 2.0) for i in range(4)],
         "reorder": [_slot(f"s{i + 1}", i, 2.0) for i in (2, 0, 1, 3)],
-        "trim": [_slot("s1", 0, 1.0, in_s=1.0)]
-        + [_slot(f"s{i + 1}", i, 2.0) for i in range(1, 4)],
+        "trim": [_slot("s1", 0, 1.0, in_s=1.0)] + [_slot(f"s{i + 1}", i, 2.0) for i in range(1, 4)],
         "remove": [
             _slot("s1", 0, 2.0),
             _slot("s2", 1, 2.0, removed=True),
@@ -91,7 +90,9 @@ def _run(module, revision, bars):
         rev = guided_revision(job_id)
         job, variant = guided_job(rev, bars, job_id)
         payload = gj.TimelineEditRequest.model_construct(
-            slots=slots, revision_number=1, base_generation=gj.variant_render_baseline(variant),
+            slots=slots,
+            revision_number=1,
+            base_generation=gj.variant_render_baseline(variant),
             guided_revision=None,
         )
         module._guided_v2_revision = lambda *_a, _r=rev: _r

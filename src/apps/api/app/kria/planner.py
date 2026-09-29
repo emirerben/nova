@@ -318,7 +318,7 @@ async def _load_editor_target(
         )
     ).scalar_one_or_none()
     if head is not None and (head.snapshot_json or {}).get("kind") == "editor":
-        variant = project_editor_draft(variant, head.snapshot_json.get("editor_payload") or {})
+        variant = project_editor_draft(variant, head.snapshot_json.get("editor_payload") or {}, job)
     clip_context = await _copilot_clip_context(
         db, thread=thread, thread_id=thread_id, job=job, variant=variant, item=item
     )
