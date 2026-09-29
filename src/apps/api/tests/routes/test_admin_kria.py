@@ -219,3 +219,41 @@ def test_trace_alerts_cover_expiry_unknown_observer_lag_and_duplicate_generation
         "terminal_job_observer_lag",
         "duplicate_approved_generation",
     }
+
+
+def test_phone_render_config_reports_the_verified_capability_names(client: TestClient) -> None:
+    """KRI-209: the prod allowlist is a Fly secret; this is how it is read without ssh."""
+    from app.config import settings as real_settings
+
+    with (
+        patch("app.routes.admin.settings") as auth_settings,
+        patch.object(real_settings, "phone_render_verified_features", ["audioMix", "authoredText"]),
+        patch.object(real_settings, "phone_rendering_enabled", True),
+    ):
+        auth_settings.admin_api_key = ADMIN_TOKEN
+        response = client.get(
+            "/admin/kria/phone-render-config", headers={"X-Admin-Token": ADMIN_TOKEN}
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["verified_features"] == ["audioMix", "authoredText"]
+    assert body["authored_text_verified"] is True
+    assert body["phone_rendering_enabled"] is True
+    # The code default is empty: production depends on the secret being set.
+    assert body["default_verified_features"] == []
+
+
+def test_phone_render_config_flags_a_missing_authored_text_and_needs_admin(
+    client: TestClient,
+) -> None:
+    from app.config import settings as real_settings
+
+    with (
+        patch("app.routes.admin.settings") as auth_settings,
+        patch.object(real_settings, "phone_render_verified_features", []),
+    ):
+        auth_settings.admin_api_key = ADMIN_TOKEN
+        denied = client.get("/admin/kria/phone-render-config")
+        ok = client.get("/admin/kria/phone-render-config", headers={"X-Admin-Token": ADMIN_TOKEN})
+    assert denied.status_code in {401, 422}
+    assert ok.json()["authored_text_verified"] is False

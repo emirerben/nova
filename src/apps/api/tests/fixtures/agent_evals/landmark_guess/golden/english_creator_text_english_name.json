@@ -1,0 +1,23 @@
+{
+  "agent": "nova.video.landmark_guess",
+  "prompt_version": "2026-09-25.1",
+  "input": {
+    "file_uri": "clips/devtest-1778504452/clip_01.mp4",
+    "file_mime": "video/mp4",
+    "place": "Beyoğlu, İstanbul, Türkiye",
+    "lat": 41.02,
+    "lon": 28.97,
+    "creator_text": "my 20k run from Arnavutköy to Eminönü, we started in the morning"
+  },
+  "raw_text": "{\"name\": \"Galata Bridge\", \"confidence\": 0.7, \"evidence\": \"iron bridge with fishermen along the rail\"}",
+  "output": {
+    "name": "Galata Bridge",
+    "confidence": 0.7,
+    "evidence": "iron bridge with fishermen along the rail"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "The creator wrote in English, so the name is the English one, never a mix of a Turkish and an English name across clips (KRI-210).",
+    "live_note": "Replay uses raw_text; live is structural only. The live pass for prompt 2026-09-25.1 runs in the KRI-212 eval lane."
+  }
+}

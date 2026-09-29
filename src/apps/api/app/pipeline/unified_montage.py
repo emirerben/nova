@@ -33,13 +33,14 @@ from __future__ import annotations
 
 import math
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from pydantic import ValidationError
 
+from app.kria.brief_route import END_KEYS, START_KEYS, first_text, fold_text
 from app.schemas.edit_proposal import (
     MAX_PROPOSAL_DURATION_S,
     ClipLabel,
@@ -68,8 +69,8 @@ MAX_CREATOR_LABEL_CHARS = 120
 # Only when the creator gave nothing to title with.
 DEFAULT_TITLE = "Montage"
 _CAPTURE_ORDER_KEYS = frozenset({"capture_time", "chronological", "route", "time", "shot_order"})
-_START_KEYS = ("start", "from", "origin")
-_END_KEYS = ("end", "to", "destination", "finish")
+_START_KEYS = START_KEYS
+_END_KEYS = END_KEYS
 
 
 def min_display_s(chars: int) -> float:
@@ -174,14 +175,7 @@ def brief_view(brief: Any) -> BriefView:
     )
 
 
-def _first(facts: Mapping[str, Any], keys: Iterable[str]) -> str | None:
-    for key in keys:
-        value = facts.get(key)
-        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
-            text = _nfc(value)
-            if text:
-                return text
-    return None
+_first = first_text
 
 
 def _has_dotted_i(text: str) -> bool:
@@ -244,6 +238,45 @@ def _fact_label(clip: UnifiedClip) -> tuple[str, str, bool] | None:
     return None
 
 
+def _endpoint_record(clip: UnifiedClip) -> dict[str, Any]:
+    """Where one endpoint clip was filmed: its geocoded place and inferred landmark.
+
+    ``places`` keeps the full geocode ("Kadıköy, İstanbul, Türkiye") so a route name can
+    match any part of it; ``label`` is the short text the creator would recognise.
+    """
+    places: list[dict[str, str]] = []
+    label = ""
+    for fact in clip.facts:
+        kind = str(fact.get("kind") or "")
+        value = _nfc(fact.get("value"))
+        if kind not in ("place", "landmark") or not value:
+            continue
+        places.append(
+            {
+                "text": value[:120],
+                "kind": kind,
+                "provenance": str(fact.get("provenance") or ""),
+            }
+        )
+        if kind == "place" and not label:
+            label = _place_label(value)[:MAX_LABEL_CHARS]
+    if not label:
+        label = next((row["text"] for row in places if row["kind"] == "landmark"), "")[
+            :MAX_LABEL_CHARS
+        ]
+    return {"media_id": clip.media_id, "label": label, "places": places}
+
+
+def _endpoint_places(ordered: Sequence[UnifiedClip]) -> dict[str, Any]:
+    """The first and last ordered clips' place facts (needs at least two clips)."""
+    if len(ordered) < 2:
+        return {}
+    first, last = _endpoint_record(ordered[0]), _endpoint_record(ordered[-1])
+    if not first["places"] and not last["places"]:
+        return {}
+    return {"first": first, "last": last}
+
+
 @dataclass
 class UnifiedMontagePlan:
     snapshot: EditProposalSnapshot
@@ -258,6 +291,13 @@ class UnifiedMontagePlan:
     duration_s: float
     brief_version: int | None
     wants_per_clip_text: bool
+    # media_id -> why its label was left off ("repeat": same text as the previous
+    # kept label; "no_fact": nothing grounded to write). Ids only, never text.
+    dropped_label_reasons: dict[str, str] = field(default_factory=dict)
+    # The route the creator stated, and where the first/last clips were filmed
+    # (KRI-208): what the receipt needs to notice a reversed route.
+    route: dict[str, str] = field(default_factory=dict)
+    endpoint_places: dict[str, Any] = field(default_factory=dict)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -280,9 +320,12 @@ class UnifiedMontagePlan:
                 for label in (self.snapshot.clip_labels or [])
             ],
             "dropped_label_clip_ids": list(self.dropped_label_clip_ids),
+            "dropped_label_reasons": dict(self.dropped_label_reasons),
             "short_label_clip_ids": list(self.short_label_clip_ids),
             "ordering_basis": self.ordering_basis,
             "ordering_fallback_clip_ids": list(self.ordering_fallback_clip_ids),
+            "route": dict(self.route),
+            "endpoint_places": dict(self.endpoint_places),
         }
 
     def guided_edit(self, *, generation_attempt_id: str | None = None) -> dict[str, Any]:
@@ -479,6 +522,8 @@ def plan_unified_montage(
 
     labels: dict[str, ClipLabel] = {}
     dropped: list[str] = []
+    dropped_reasons: dict[str, str] = {}
+    previous_kept: str | None = None  # folded text of the last label that stayed
     for index, clip in enumerate(ordered):
         chosen: tuple[str, str, str | None, bool] | None = None  # text, provenance, kind, inferred
         if clip.media_id in view.clip_literals:
@@ -499,11 +544,22 @@ def plan_unified_montage(
         if chosen is None:
             if labels_requested:
                 dropped.append(clip.media_id)
+                dropped_reasons[clip.media_id] = "no_fact"
             continue
         text = _cap_label(_nfc(chosen[0]), chosen[1])
         if not text:
             dropped.append(clip.media_id)
+            dropped_reasons[clip.media_id] = "no_fact"
             continue
+        folded = fold_text(text)
+        if chosen[1] != "creator" and folded == previous_kept:
+            # Three clips on one bridge would read "Bosphorus Strait" three times: a
+            # label stays only when it adds information. The creator's own words are
+            # never dropped, however often they repeat them.
+            dropped.append(clip.media_id)
+            dropped_reasons[clip.media_id] = "repeat"
+            continue
+        previous_kept = folded
         labels[clip.media_id] = ClipLabel(
             media_id=clip.media_id,
             text=text,
@@ -522,9 +578,10 @@ def plan_unified_montage(
     family, title, closing, labels = _fit_typography(
         font_covers, requested_font, title, closing, labels
     )
-    dropped.extend(
-        media_id for media_id in ordered_ids(ordered) if media_id in labelled_before - set(labels)
-    )
+    for media_id in ordered_ids(ordered):
+        if media_id in labelled_before - set(labels):
+            dropped.append(media_id)
+            dropped_reasons[media_id] = "no_fact"
     if not title:
         title, title_source = DEFAULT_TITLE, "default"
 
@@ -652,6 +709,9 @@ def plan_unified_montage(
         duration_s=total_s,
         brief_version=view.version,
         wants_per_clip_text=labels_requested,
+        dropped_label_reasons=dropped_reasons,
+        route={key: value for key, value in (("start", start_fact), ("end", end_fact)) if value},
+        endpoint_places=_endpoint_places(ordered),
     )
 
 
