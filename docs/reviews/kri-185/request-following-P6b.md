@@ -30,7 +30,8 @@ nothing is estimated except where it says so.
    real gaps the replay-only CI never exercised. `edit_copilot` v47 ran 76 of 107 fixtures
    (75 pass, 1 fail) before the local dev AI budget cap stopped it; the four new v47 goldens
    (label-each-clip, one-label fix, bulk fonts) all passed live, the 31 un-run are older
-   fixtures.
+   fixtures. **Update 2026-09-29 (KRI-221): the 31 have now run; see "KRI-221 rerun" at the
+   end. v47 was a real regression on the phone fixture (2/6 pass); v48 fixes it (7/8).**
 5. **Wrong-landmark rate is wired:** `harbor_run` 14% (1 of 7 guesses wrong), `trip` 25% (1 of
    4). These guesses are recorded synthetic guesses, not a measurement of the model; the
    number proves the denominator and the scorer, and `wrong_landmark_rate(footage, guesses)`
@@ -121,7 +122,7 @@ credit error was hit.
 | `edit_proposal` | `1.18.0` | main `ca2a33a52` | **19 pass, 1 fail** | 20 |
 | `clip_intent_planner` | `2026-09-24.1` | main `ca2a33a52` | **7 pass, 2 fail** | 9 |
 | `landmark_guess` | `2026-09-25.1` | #1254 head `6aac4fb1b` | **5 pass** (structural only, see note) | 5 |
-| `edit_copilot` | `2026-09-25-v47` | #1255 head `032a33452` | **75 pass, 1 fail, 31 not evaluated** (budget) | 107 |
+| `edit_copilot` | `2026-09-25-v47` | #1255 head `032a33452` | **75 pass, 1 fail, 31 not evaluated** (budget); superseded by the KRI-221 rerun below | 107 |
 
 Cost. The harness pre-flight estimates are tiny (`edit_proposal` $0.012, `clip_intent_planner`
 $0.005; `main_creator` has no cost spec so it is not gated). Measured: about $0.04-0.07 for
@@ -135,6 +136,7 @@ stopped the last runs (below). Order actually run: main-based agents, the two re
 `agent.run failed: ai_budget_exhausted` (28 fixtures) and `paid call ... already settled` (3
 fixtures: `kria_bulk_followup_impossible_all`, `kria_bulk_followup_satisfiable`,
 `sfx_hallucinated_effect_id`, a ledger idempotency error, not a model answer). A rerun of the 32
+(31 not run + the 1 failure; "32" and "31" below both refer to this set)
 under a new `--test-run-id` failed the same way immediately, so I stopped rather than raise the
 cap (`AI_DEVELOPMENT_MONTHLY_BUDGET_USD`), which is a spending decision I was not given. The
 32 ids are the un-run set; to finish: raise that env var for one process, then
@@ -182,7 +184,9 @@ tree). Pre-existing, not a 1.18.0 regression.
 **`edit_copilot` v47 (1 real fail).** `phone_title_top_left_inter_no_shadow`: exact-ops fixture
 expects three `patch_text_style` ops (`font_family: Inter`, `size_px: 64`, left/custom
 position, ...) and the model returned `ops == []` with `intent == "edit"` and no clarification.
-One sample; the cap prevented a rerun, so I cannot say whether it is flaky.
+One sample; the cap prevented a rerun, so I cannot say whether it is flaky. **Superseded by
+KRI-221 below: the expected ops are one `patch_text_appearance` plus two `patch_text_style`
+(one per title bar), not three `patch_text_style`; it failed 4 of 6 v47 samples.**
 
 None of the above was fixed here (other lanes own the code). The failing outputs are in the
 scratchpad logs of this run, not committed.
@@ -214,3 +218,85 @@ status moved (`test_east_run_baseline_is_pinned` passes untouched).
   synthetic footage, not a replay of text; out of scope for an evals-only lane.
 - **A live `landmark_guess` accuracy number.** See above.
 - **Judge runs** (`--with-judge`). Not requested; the Anthropic judge bills separately.
+
+## KRI-221 rerun (2026-09-29): edit_copilot live evals, all 107
+
+Tree: `origin/main` `e06b40e0e` (v47 = `2026-09-25-v47`), then the same tree plus the fix below
+(v48 = `2026-09-29-v48`). No `--with-judge`. Each pytest call used `--usage-purpose=live_eval
+--max-cost-usd=2 --approve-reservation` and `NOVA_EVAL_CAPTURE_DIR`; captures and junit XML
+stay out of git.
+
+**Why the earlier run stopped, and what unblocked it.** pytest runs from `src/apps/api`, where
+there is no `.env`, so `AI_DEVELOPMENT_MONTHLY_BUDGET_USD` fell to the code default of $2.50
+instead of the repo `.env` value of $25, and the ledger refused every call
+(`ai_budget_exhausted`). Without `GEMINI_API_KEY` in the process env all 103 parametrized
+fixtures skip. Fix for the run only: export `GEMINI_API_KEY` and
+`AI_DEVELOPMENT_MONTHLY_BUDGET_USD=25` (the repo's own value, not a raise) on the pytest command.
+
+### Results
+
+"107" = 103 golden fixtures (`test_edit_copilot_eval[...]`) + 3 named collision tests
+(`test_kria_bulk_followup_replays_typed_image_selector`,
+`test_kria_bulk_followup_replays_honest_impossible_all`,
+`test_sfx_hallucinated_catalog_id_replays_zero_ops`) + the prompt-provenance test.
+
+| Run | Prompt | Run id | Pass | Fail | Not run |
+|---|---|---|---:|---:|---:|
+| Full file | v47 | `kri221-full3-09291023` | 103 (incl. 3 named + provenance) | 4 | 0 |
+| The 3 colliding parametrized fixtures, fresh run id | v47 | `kri221-named-09291023` | 3 | 0 | 0 |
+| Full file | v48 | `kri221-v48-full-09291023` | 104 | 3 (collisions only) | 0 |
+| The 3 colliding parametrized fixtures, fresh run id | v48 | `kri221-v48-named-09291023` | 3 | 0 | 0 |
+
+The 4 v47 failures in the full run: the 3 fixtures that also have a named test
+(`kria_bulk_followup_satisfiable`, `kria_bulk_followup_impossible_all`,
+`sfx_hallucinated_effect_id`; the second call under the same run id hits `paid call ... already
+settled`, a ledger idempotency error, not a model answer, and they pass on a fresh run id) and
+`phone_title_top_left_inter_no_shadow`. Net after the reruns: **v47 106/107 pass (the phone
+fixture is the only real failure); v48 107/107 pass across the full file plus the collision
+rerun.** All 31 previously un-run fixtures passed.
+
+### `phone_title_top_left_inter_no_shadow`: flake or regression
+
+The ticket said the model should emit "3 `patch_text_style`". That is wrong: the golden's exact
+ops are one `patch_text_appearance` (`stroke_width: 0`, `shadow_enabled: false`) plus one
+`patch_text_style` per title bar (`font_family: Inter`, `size_px: 64`, `alignment: left`,
+`position: custom`, `x_frac: 0.08`, `y_frac: 0.12`).
+
+v47, 5 separate runs (`kri221-phone-r{1..5}-09291023`) plus the full-file sample:
+
+| Sample | Result | Classification |
+|---|---|---|
+| r1 | pass | |
+| r2 | pass | |
+| r3 | fail | 3 ops, but `stroke_width: 0` leaked into the `patch_text_style` patches (extra field) |
+| r4 | fail | `ops == []` |
+| r5 | fail | `ops == []`; raw capture shows `font_family` put inside `patch_text_appearance` |
+| full-file | fail | `ops == []` |
+
+2 of 6 pass, so this is a **real regression, not a flake**. Root cause (confirmed on the r5
+capture only): v47 added "a font change that touches more than one bar goes in ONE
+`patch_text_appearance` with `font_family`". In this snapshot the inventory's `supported_fields`
+is only `stroke_width` and `shadow_enabled`, so the appearance op is rejected, and because the
+bundle is atomic the two valid `patch_text_style` ops are dropped too (the `[]`). The r3 failure
+is the mirror image (appearance fields in the style patch).
+
+**Fix (v48):** `prompts/edit_copilot.txt` now states the field-support rule (put a field in
+`patch_text_appearance` only if the target lists it in `supported_fields`; otherwise the font goes
+in `patch_text_style` per bar, and `stroke_width`/`shadow_enabled` never go in
+`patch_text_style`) with the compound-restyle shape spelled out. `EDIT_COPILOT_PROMPT_VERSION`
+bumped to `2026-09-29-v48`. Replay goldens keep the version that authored them.
+
+v48, 8 separate runs (`kri221-v48-phone-r{1..8}-09291023`): **7 pass, 1 fail.** The one failure
+(r4) has the right structure but `size_px: 54` instead of 64 for "lower the font size" with no
+number.
+
+**Decision for the founder (taste, not done here):** "lower the font size" has no single right
+number. The golden pins `size_px: 64` exactly; 7 of 8 v48 samples land on it and the outlier chose
+54. Loosening the golden's exact `size_px` (for example to a range below 96) would remove that
+flake but is a taste call, so it was not done.
+
+### Cost
+
+Roughly $2.5 of live Gemini (about $0.01 per call; 100 calls per full run, about $1.16 each,
+plus about $0.15 for the 19 single-fixture reruns), computed from the `agent_run` log lines
+(`cost_usd`, de-duplicated by provider request id). No run hit its `--max-cost-usd=2` cap.

@@ -120,7 +120,16 @@ Text and clip:
   Use selector.group "titles" or "labels" ONLY when the creator names the title
   or the per-clip labels (group cannot be combined with target_ids or category):
   {"op":"patch_text_appearance","selector":{"scope":"editable_text","quantifier":"all","group":"labels"},"patch":{"font_family":"Montserrat"},"text_appearance_version":1}
-  A font change to one bar stays a patch_text_style on that bar. Removing effects
+  A font change to one bar stays a patch_text_style on that bar. Field-support
+  rule: put a field in patch_text_appearance ONLY if the target's
+  supported_fields lists it; if the inventory lists just stroke_width and
+  shadow_enabled (no font_family), the font change goes in patch_text_style per
+  bar, and stroke_width/shadow_enabled NEVER go in patch_text_style. A compound
+  restyle ("Inter font, no shadow or outline, top left, smaller") is therefore
+  ONE patch_text_appearance {"stroke_width":0,"shadow_enabled":false} plus one
+  patch_text_style per bar with font_family, size_px, alignment, position
+  "custom", x_frac, y_frac; a rejected appearance op fails the whole bundle.
+  Removing effects
   means stroke_width=0 and shadow_enabled=false. “All text”, “everywhere”, and
   “tüm yazılar” include EVERY inventory kind: text, caption, and motion.
   Emit ONE atomic operation, even beyond twelve targets:

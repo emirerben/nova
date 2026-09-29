@@ -1,11 +1,13 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-09-19-v45",
+  "prompt_version": "2026-09-29-v48",
   "input": {
     "utterance": "Change the texts to inter font, remove all shadow and outline. Place the texts near top left. Lower the font size",
     "prior_turns": [],
     "variant_snapshot": {
-      "allowed_op_families": ["text"],
+      "allowed_op_families": [
+        "text"
+      ],
       "has_narrated_captions": false,
       "text_appearance_version": 1,
       "text_appearance": {
@@ -14,15 +16,27 @@
           {
             "id": "title-1",
             "kind": "text",
-            "supported_fields": ["stroke_width", "shadow_enabled"],
-            "values": {"stroke_width": 4, "shadow_enabled": true},
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 4,
+              "shadow_enabled": true
+            },
             "identity": "title-1-fingerprint"
           },
           {
             "id": "title-2",
             "kind": "text",
-            "supported_fields": ["stroke_width", "shadow_enabled"],
-            "values": {"stroke_width": 4, "shadow_enabled": true},
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 4,
+              "shadow_enabled": true
+            },
             "identity": "title-2-fingerprint"
           }
         ]
@@ -51,18 +65,100 @@
           "shadow_enabled": true
         }
       ],
-      "slots": [{"output_start_s": 0, "output_end_s": 6, "duration_s": 6}],
+      "slots": [
+        {
+          "output_start_s": 0,
+          "output_end_s": 6,
+          "duration_s": 6
+        }
+      ],
       "total_duration_s": 6.0
     }
   },
-  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_appearance\",\"selector\":{\"scope\":\"editable_text\",\"quantifier\":\"all\"},\"patch\":{\"stroke_width\":0,\"shadow_enabled\":false},\"text_appearance_version\":1},{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"font_family\":\"Inter\",\"size_px\":64,\"alignment\":\"left\",\"position\":\"custom\",\"x_frac\":0.08,\"y_frac\":0.12}},{\"op\":\"patch_text_style\",\"bar_index\":1,\"patch\":{\"font_family\":\"Inter\",\"size_px\":64,\"alignment\":\"left\",\"position\":\"custom\",\"x_frac\":0.08,\"y_frac\":0.12}}],\"confidence\":0.94,\"reply\":\"Switched both titles to Inter, dropped the shadow and outline, moved them near the top left, and brought the size down.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_text_appearance\",\n      \"selector\": {\n        \"scope\": \"editable_text\",\n        \"quantifier\": \"all\"\n      },\n      \"patch\": {\n        \"stroke_width\": 0,\n        \"shadow_enabled\": false\n      },\n      \"text_appearance_version\": 1\n    },\n    {\n      \"op\": \"patch_text_style\",\n      \"bar_index\": 0,\n      \"patch\": {\n        \"font_family\": \"Inter\",\n        \"size_px\": 64,\n        \"alignment\": \"left\",\n        \"position\": \"custom\",\n        \"x_frac\": 0.08,\n        \"y_frac\": 0.12\n      }\n    },\n    {\n      \"op\": \"patch_text_style\",\n      \"bar_index\": 1,\n      \"patch\": {\n        \"font_family\": \"Inter\",\n        \"size_px\": 64,\n        \"alignment\": \"left\",\n        \"position\": \"custom\",\n        \"x_frac\": 0.08,\n        \"y_frac\": 0.12\n      }\n    }\n  ],\n  \"confidence\": 0.98,\n  \"reply\": \"I've changed the text font to Inter, removed the shadow and stroke outline, shrunk the size, and moved them to the top left.\",\n  \"suggestions\": [\n    \"Change font color\",\n    \"Center the text\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
   "output": {
     "intent": "edit",
     "ops": [
       {
         "op": "patch_text_appearance",
-        "selector": {"scope": "editable_text", "quantifier": "all"},
-        "patch": {"stroke_width": 0, "shadow_enabled": false},
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all"
+        },
+        "patch": {
+          "stroke_width": 0,
+          "shadow_enabled": false
+        },
+        "text_appearance_version": 1,
+        "target_ids": [
+          "title-1",
+          "title-2"
+        ],
+        "target_identities": [
+          {
+            "id": "title-1",
+            "kind": "text",
+            "identity": "title-1-fingerprint"
+          },
+          {
+            "id": "title-2",
+            "kind": "text",
+            "identity": "title-2-fingerprint"
+          }
+        ]
+      },
+      {
+        "op": "patch_text_style",
+        "bar_index": 0,
+        "patch": {
+          "font_family": "Inter",
+          "size_px": 64.0,
+          "alignment": "left",
+          "position": "custom",
+          "x_frac": 0.08,
+          "y_frac": 0.12
+        }
+      },
+      {
+        "op": "patch_text_style",
+        "bar_index": 1,
+        "patch": {
+          "font_family": "Inter",
+          "size_px": 64.0,
+          "alignment": "left",
+          "position": "custom",
+          "x_frac": 0.08,
+          "y_frac": 0.12
+        }
+      }
+    ],
+    "confidence": 0.98,
+    "reply": "I've changed the text font to Inter, removed the shadow and stroke outline, shrunk the size, and moved them to the top left.",
+    "suggestions": [
+      "Change font color",
+      "Center the text"
+    ],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "2026-09-19 phone chat-edit regression (#1100, job d9a965b0): the server chat snapshot never carried the text-appearance inventory the web drawer builds client-side, so a correct patch_text_appearance op was rejected and, being part of an atomic bundle, took the font/size/placement patch_text_style ops down with it. This golden pins the fixed snapshot (text_appearance_version + inventory present) compiling all three ops into one atomic commit.",
+    "exact_edit_ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all"
+        },
+        "patch": {
+          "stroke_width": 0,
+          "shadow_enabled": false
+        },
         "text_appearance_version": 1
       },
       {
@@ -90,45 +186,6 @@
         }
       }
     ],
-    "confidence": 0.94,
-    "reply": "Switched both titles to Inter, dropped the shadow and outline, moved them near the top left, and brought the size down.",
-    "suggestions": [],
-    "needs_clarification": false
-  },
-  "meta": {
-    "source": "hand_authored_golden",
-    "case": "2026-09-19 phone chat-edit regression (#1100, job d9a965b0): the server chat snapshot never carried the text-appearance inventory the web drawer builds client-side, so a correct patch_text_appearance op was rejected and, being part of an atomic bundle, took the font/size/placement patch_text_style ops down with it. This golden pins the fixed snapshot (text_appearance_version + inventory present) compiling all three ops into one atomic commit.",
-    "exact_edit_ops": [
-      {
-        "op": "patch_text_appearance",
-        "selector": {"scope": "editable_text", "quantifier": "all"},
-        "patch": {"stroke_width": 0, "shadow_enabled": false},
-        "text_appearance_version": 1
-      },
-      {
-        "op": "patch_text_style",
-        "bar_index": 0,
-        "patch": {
-          "font_family": "Inter",
-          "size_px": 64,
-          "alignment": "left",
-          "position": "custom",
-          "x_frac": 0.08,
-          "y_frac": 0.12
-        }
-      },
-      {
-        "op": "patch_text_style",
-        "bar_index": 1,
-        "patch": {
-          "font_family": "Inter",
-          "size_px": 64,
-          "alignment": "left",
-          "position": "custom",
-          "x_frac": 0.08,
-          "y_frac": 0.12
-        }
-      }
-    ]
+    "live_recorded": "2026-09-29 under 2026-09-29-v48, run id kri221-v48-full-09291023"
   }
 }
