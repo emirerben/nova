@@ -8,6 +8,10 @@ struct DeviceRenderPanel: View {
     let sessions: DeviceRenderSessions
     let retry: () async -> Void
     @State private var showsSourceRecovery = false
+    /// KRI-211: the attention state is caused by originals that are not on this
+    /// iPhone. Measured (not guessed from an error string) with the same check the
+    /// recovery sheet uses, so the copy and the sheet can never disagree.
+    @State private var originalsMissing = false
     var body: some View {
         VStack(spacing: 12) {
         DeviceRenderStatusCard(
@@ -17,7 +21,8 @@ struct DeviceRenderPanel: View {
             retryNeedsAttention: {
                 let ok = await sessions.retryNeedsAttention(key)
                 if ok { await retry() }
-            }
+            },
+            originalsMissing: originalsMissing
         )
         if [.needsAttention, .cancelled].contains(sessions.presentations[key]?.phase ?? .preparing) {
             Button("Find original files") { showsSourceRecovery = true }
@@ -25,11 +30,18 @@ struct DeviceRenderPanel: View {
                 .accessibilityIdentifier("device-render-find-originals")
         }
         }
-        .sheet(isPresented: $showsSourceRecovery) {
+        .task(id: sessions.presentations[key]?.phase) { await refreshOriginalsMissing() }
+        .sheet(isPresented: $showsSourceRecovery, onDismiss: { Task { await refreshOriginalsMissing() } }) {
             DeviceSourceRecoveryView(key: key, sessions: sessions, retry: retry)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+    }
+
+    private func refreshOriginalsMissing() async {
+        guard sessions.presentations[key]?.phase == .needsAttention else { originalsMissing = false; return }
+        let missing = (try? await sessions.sourcesNeedingRelink(key)) ?? []
+        originalsMissing = !missing.isEmpty
     }
 }
 
@@ -50,7 +62,7 @@ private struct DeviceSourceRecoveryView: View {
                     .font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                 if loading { ProgressView().accessibilityLabel("Checking original files") }
                 ForEach(targets) { target in
-                    DeviceOriginalRelinkRow(target: target) { file in
+                    DeviceOriginalRelinkRow(title: target.title) { file in
                         try await sessions.relink(target, for: key, from: file)
                         await refresh()
                         if targets.isEmpty && message == nil { await retry(); dismiss() }
@@ -76,8 +88,8 @@ private struct DeviceSourceRecoveryView: View {
     }
 }
 
-private struct DeviceOriginalRelinkRow: View {
-    let target: DeviceRelinkTarget
+struct DeviceOriginalRelinkRow: View {
+    let title: String
     let relink: (URL) async throws -> Void
     @State private var selecting = false
     @State private var checking = false
@@ -86,7 +98,7 @@ private struct DeviceOriginalRelinkRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button { selecting = true } label: {
-                Label("Find \(target.title.lowercased())", systemImage: "folder")
+                Label("Find \(title.lowercased())", systemImage: "folder")
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(KriaSecondaryButtonStyle())
@@ -139,8 +151,10 @@ enum DeviceRenderAttentionCopy {
     /// would recompile the identical recipe and fail identically, so the button
     /// is hidden rather than offered. Every other `needsAttention` reason
     /// (thermal, storage, export failure) is transient and stays retryable.
-    static func showsRetryButton(phase: DeviceRenderPhase, reasonCode: String?) -> Bool {
+    static func showsRetryButton(phase: DeviceRenderPhase, reasonCode: String?, originalsMissing: Bool = false) -> Bool {
         guard [.needsAttention, .cancelled, .localReady].contains(phase) else { return false }
+        // KRI-211: retrying cannot conjure files that are on another device.
+        if originalsMissing && phase == .needsAttention { return false }
         // `renderer_outdated` is structural the same way `unsupported_recipe` is: retrying
         // recompiles the identical, still-too-new recipe and fails identically.
         let structuralReasons: Set<String> = ["unsupported_recipe", "renderer_outdated"]
@@ -156,6 +170,8 @@ struct DeviceRenderStatusCard: View {
     /// Calls the server `/device-render/retry` endpoint and re-reconciles.
     /// Nil in previews/older call sites, which fall back to the plain `retry`.
     var retryNeedsAttention: (() async -> Void)? = nil
+    /// KRI-211: this attention state is because the original clips are not on this iPhone.
+    var originalsMissing = false
     /// Injectable so the save action doesn't require Photos authorization in
     /// tests/previews — matches `EditorViews`' existing use of the same protocol.
     var photoLibrarySaver: any PhotoLibrarySaving = PhotoLibrarySaver()
@@ -171,7 +187,10 @@ struct DeviceRenderStatusCard: View {
             if [.preparing, .rendering, .syncing].contains(presentation.phase) {
                 ProgressView().accessibilityLabel(title)
             }
-            if let message = needsAttentionAwareMessage {
+            if originalsMissing && presentation.phase == .needsAttention {
+                Text(NativeEditorSession.originalsUnavailableMessage).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                    .accessibilityIdentifier("device-render-originals-missing")
+            } else if let message = needsAttentionAwareMessage {
                 Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
             }
             if let file = presentation.localFile {
@@ -184,7 +203,7 @@ struct DeviceRenderStatusCard: View {
                         .accessibilityIdentifier("device-render-save-message")
                 }
             }
-            if DeviceRenderAttentionCopy.showsRetryButton(phase: presentation.phase, reasonCode: presentation.reasonCode) {
+            if DeviceRenderAttentionCopy.showsRetryButton(phase: presentation.phase, reasonCode: presentation.reasonCode, originalsMissing: originalsMissing) {
                 Button(presentation.localFile == nil ? "Try again" : "Retry sync") {
                     guard presentation.requiresServerRetry, let retryNeedsAttention else {
                         retry(); return
@@ -256,7 +275,7 @@ struct DeviceRenderStatusCard: View {
         case .syncing: "Syncing your video"
         case .synced: "Your video is synced"
         case .cancelled: "Rendering stopped"
-        case .needsAttention: "This edit needs your attention"
+        case .needsAttention: originalsMissing ? "This edit needs its original clips" : "This edit needs your attention"
         case .superseded: "A newer edit is available"
         }
     }
@@ -268,7 +287,7 @@ struct DeviceRenderStatusCard: View {
         case .syncing: "Your video is ready to watch and share while it uploads."
         case .synced: "Available in your Gallery and on your other devices."
         case .cancelled: "Your project and original footage are saved."
-        case .needsAttention: "Your project is saved. You can wait and try again."
+        case .needsAttention: originalsMissing ? "Your project is saved." : "Your project is saved. You can wait and try again."
         case .superseded: "Kria will use the latest approved version."
         }
     }

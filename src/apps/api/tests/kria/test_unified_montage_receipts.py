@@ -1,4 +1,4 @@
-"""KRI-190: the flag, its allowlist, and the review reply built from a unified plan's receipts."""
+"""KRI-190: the review reply built from a unified plan's receipts."""
 
 from __future__ import annotations
 
@@ -39,26 +39,11 @@ def brief_on(monkeypatch):
     monkeypatch.setattr(kria_runtime, "load_latest_brief_sync", lambda _db, _thread_id: _brief())
 
 
-def test_flag_and_allowlist(monkeypatch):
-    user = uuid.uuid4()
-    monkeypatch.setattr(settings, "montage_unified_plan_enabled", False)
-    monkeypatch.setattr(settings, "montage_unified_plan_user_ids", [])
-    assert settings.montage_unified_plan_for(user) is False
-    monkeypatch.setattr(settings, "montage_unified_plan_user_ids", [str(user)])
-    assert settings.montage_unified_plan_for(user) is True
-    assert settings.montage_unified_plan_for(uuid.uuid4()) is False
-    monkeypatch.setattr(settings, "montage_unified_plan_enabled", True)
-    assert settings.montage_unified_plan_for(uuid.uuid4()) is True
-    assert Settings.model_fields["montage_unified_plan_enabled"].default is False
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [("abc-123", ["abc-123"]), ("a, b", ["a", "b"]), ('["a","b"]', ["a", "b"]), ("", [])],
-)
-def test_allowlist_env_loads_single_csv_and_json(monkeypatch, raw, expected):
-    monkeypatch.setenv("MONTAGE_UNIFIED_PLAN_USER_IDS", raw)
-    assert Settings(_env_file=None).montage_unified_plan_user_ids == expected
+def test_the_unified_montage_flag_and_allowlist_are_gone():
+    """KRI-220: every non-voiceover phone montage is unified; there is nothing to toggle."""
+    for name in ("montage_unified_plan_enabled", "montage_unified_plan_user_ids"):
+        assert name not in Settings.model_fields
+    assert not hasattr(Settings, "montage_unified_plan_for")
 
 
 def test_reply_lists_what_was_partial_and_what_was_guessed(brief_on):

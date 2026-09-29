@@ -756,6 +756,159 @@ def test_dispatch_item_render_refuses_clean_choice_before_minting_a_job(
     mock_enqueue.assert_not_called()
 
 
+# --- KRI-205 fallout: runtime-v2 has no choice surface for the enforce
+# preflight guard, so an undecided phone source must dispatch instead of
+# refusing (`phone_speech_cleanup_unattended`) ------------------------------
+
+
+def _run_phone_unattended_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    source_path: str,
+    phone_speech_cleanup_unattended: bool,
+) -> tuple[object, MagicMock, MagicMock, MagicMock]:
+    from app.config import settings
+    from app.kria.media_sources import is_analysis_proxy_path
+
+    item = _cleanup_dispatch_item()
+    item.clip_gcs_paths = [source_path]
+    assignment = {
+        "media_id": "registered-spine",
+        "manifest_identity": "registered-spine",
+        "gcs_path": source_path,
+        "storage_generation": "generation-17",
+        "duration_s": 12.0,
+        "has_audio": True,
+    }
+    if is_analysis_proxy_path(source_path):
+        # `bind_phone_sources` requires a verified proxy receipt for every
+        # analysis-proxy clip path (see tests/services/test_phone_sources.py
+        # for the canonical shape) before the dispatch can reach `dispatched`.
+        assignment["upload_contract"] = {
+            "purpose": "analysis_proxy",
+            "proxy": {
+                "original": {
+                    "sha256": "a" * 64,
+                    "byte_count": 1000,
+                    "duration_s": 12,
+                    "width": 1920,
+                    "height": 1080,
+                    "has_audio": True,
+                },
+                "duration_s": 12,
+                "width": 640,
+                "height": 360,
+                "frame_rate": 15,
+            },
+        }
+    item.clip_assignments = [assignment]
+    plan = SimpleNamespace(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={},
+        all_candidates={"clip_paths": list(item.clip_gcs_paths)},
+    )
+    session = MagicMock()
+
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "edit_format_talking_head_enabled", True)
+    monkeypatch.setattr(settings, "narrated_self_narration_enabled", True)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            source=SimpleNamespace(
+                storage_path=source_path,
+                source_policy_fingerprint="active-source-fingerprint",
+            )
+        ),
+    )
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync") as mock_enqueue,
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+            phone_speech_cleanup_unattended=phone_speech_cleanup_unattended,
+        )
+
+    return result, session, mock_build, mock_enqueue
+
+
+def test_phone_speech_cleanup_unattended_dispatches_analysis_proxy_without_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-205 fallout: runtime-v2 approval has no creator choice surface, so
+    an undecided phone (analysis-proxy) narration source under the enforce
+    preflight guard dispatches without cleanup instead of refusing --
+    restoring the pre-KRI-205 phone dispatch behaviour, because `choice ==
+    "clean"` could never apply to a phone proxy anyway."""
+
+    result, session, mock_build, mock_enqueue = _run_phone_unattended_dispatch(
+        monkeypatch,
+        source_path="users/u/plan/i/analysis-proxy-ios-source.mp4",
+        phone_speech_cleanup_unattended=True,
+    )
+
+    assert result.outcome == "dispatched"
+    mock_build.assert_called_once()
+    mock_enqueue.assert_called_once()
+    session.add.assert_called_once()
+    session.commit.assert_called_once()
+
+
+def test_phone_speech_cleanup_unattended_false_still_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """v1 (and every other caller that leaves the flag False) keeps refusing
+    an undecided analysis-proxy source under the enforce guard, byte-
+    identical to today -- this pins the pre-fix (v1) behaviour."""
+
+    result, _session, mock_build, mock_enqueue = _run_phone_unattended_dispatch(
+        monkeypatch,
+        source_path="users/u/plan/i/analysis-proxy-ios-source.mp4",
+        phone_speech_cleanup_unattended=False,
+    )
+
+    assert result.outcome == "speech_cleanup_analysis_conflict"
+    mock_build.assert_not_called()
+    mock_enqueue.assert_not_called()
+
+
+def test_phone_speech_cleanup_unattended_ignored_for_non_proxy_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unattended fallthrough is scoped to analysis-proxy sources only --
+    an undecided CLOUD (non-proxy) source still refuses even with the flag
+    set, since a real choice surface is always reachable for a cloud
+    source and "clean" is a normal, applicable outcome there."""
+
+    result, _session, mock_build, mock_enqueue = _run_phone_unattended_dispatch(
+        monkeypatch,
+        source_path="users/u/plan/i/talking.mp4",
+        phone_speech_cleanup_unattended=True,
+    )
+
+    assert result.outcome == "speech_cleanup_analysis_conflict"
+    mock_build.assert_not_called()
+    mock_enqueue.assert_not_called()
+
+
 def _cleanup_dispatch_item() -> SimpleNamespace:
     item_id = uuid.uuid4()
     clip_path = "users/u/plan/i/talking.mp4"
@@ -3295,7 +3448,7 @@ def test_v2_phone_montage_dispatches_without_an_approved_proposal(
 ) -> None:
     """KRI-187: a runtime-v2 approval (no guided proposal) reaches a device job
     once the v2-phone flag covers the account -- the worker then runs
-    `_run_phone_montage_job`, and the Job carries no `guided_edit` snapshot."""
+    `_run_phone_voiceover_montage_job`, and the Job carries no `guided_edit` snapshot."""
     from app.config import settings
 
     monkeypatch.setattr(settings, "kria_runtime_v2_phone_enabled", True)

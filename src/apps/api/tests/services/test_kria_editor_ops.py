@@ -668,8 +668,12 @@ def test_snapshot_advertises_the_text_appearance_inventory_when_enabled(monkeypa
     targets = snapshot["text_appearance"]["targets"]
     assert [t["id"] for t in targets] == ["text-0", "text-1"]
     assert targets[0]["kind"] == "text"
-    assert targets[0]["supported_fields"] == ["stroke_width", "shadow_enabled"]
-    assert targets[0]["values"] == {"stroke_width": 2.0, "shadow_enabled": True}
+    assert targets[0]["supported_fields"] == ["stroke_width", "shadow_enabled", "font_family"]
+    assert targets[0]["values"] == {
+        "stroke_width": 2.0,
+        "shadow_enabled": True,
+        "font_family": variant["text_elements"][0].get("font_family"),
+    }
     assert isinstance(targets[0]["identity"], str) and targets[0]["identity"]
 
     monkeypatch.setattr("app.config.settings.text_appearance_enabled", False)

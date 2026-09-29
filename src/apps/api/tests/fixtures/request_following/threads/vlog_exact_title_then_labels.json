@@ -1,0 +1,205 @@
+{
+  "fixture_id": "vlog_exact_title_then_labels",
+  "provenance": "authored",
+  "footage": "vlog",
+  "description": "The exact title from turn one must still be there after a caption edit.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Call it exactly \"Ece'nin Cumartesisi\".",
+      "engine": "recorded"
+    },
+    {
+      "turn_id": "t1",
+      "user_message": "Now caption every clip with what I'm doing.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "title",
+      "kind": "text",
+      "scope": "title",
+      "request_type": "title_exact",
+      "checker": "title_exact",
+      "params": {
+        "literal": "Ece'nin Cumartesisi"
+      },
+      "source": "Call it exactly \"Ece'nin Cumartesisi\".",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "captioned",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_described",
+      "checker": "label_coverage",
+      "params": {
+        "min_frac": 1.0
+      },
+      "source": "Now caption every clip with what I'm doing.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "names-the-activity",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_described",
+      "checker": "label_mentions",
+      "params": {
+        "clips": {
+          "V1": [
+            "waking"
+          ],
+          "V2": [
+            "clean"
+          ],
+          "V4": [
+            "grocery"
+          ],
+          "V5": [
+            "gym"
+          ],
+          "V6": [
+            "cook"
+          ],
+          "V8": [
+            "walk"
+          ]
+        }
+      },
+      "source": "Now caption every clip with what I'm doing.",
+      "introduced_in_turn": 1
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "V1",
+          "start_s": 0.0,
+          "end_s": 2.0
+        },
+        {
+          "clip_id": "V2",
+          "start_s": 2.0,
+          "end_s": 5.0
+        },
+        {
+          "clip_id": "V3",
+          "start_s": 5.0,
+          "end_s": 7.0
+        },
+        {
+          "clip_id": "V4",
+          "start_s": 7.0,
+          "end_s": 10.5
+        },
+        {
+          "clip_id": "V5",
+          "start_s": 10.5,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "V6",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "V7",
+          "start_s": 17.0,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "V8",
+          "start_s": 19.5,
+          "end_s": 22.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Ece'nin Cumartesisi",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        },
+        {
+          "id": "label-0",
+          "role": "label",
+          "text": "Waking up",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter",
+          "clip_id": "V1"
+        },
+        {
+          "id": "label-1",
+          "role": "label",
+          "text": "Cleaning the flat",
+          "start_s": 2.0,
+          "end_s": 5.0,
+          "font_family": "Inter",
+          "clip_id": "V2"
+        },
+        {
+          "id": "label-2",
+          "role": "label",
+          "text": "Laundry",
+          "start_s": 5.0,
+          "end_s": 7.0,
+          "font_family": "Inter",
+          "clip_id": "V3"
+        },
+        {
+          "id": "label-3",
+          "role": "label",
+          "text": "Grocery run",
+          "start_s": 7.0,
+          "end_s": 10.5,
+          "font_family": "Inter",
+          "clip_id": "V4"
+        },
+        {
+          "id": "label-4",
+          "role": "label",
+          "text": "Gym session",
+          "start_s": 10.5,
+          "end_s": 13.5,
+          "font_family": "Inter",
+          "clip_id": "V5"
+        },
+        {
+          "id": "label-5",
+          "role": "label",
+          "text": "Cooking pasta",
+          "start_s": 13.5,
+          "end_s": 17.0,
+          "font_family": "Inter",
+          "clip_id": "V6"
+        },
+        {
+          "id": "label-6",
+          "role": "label",
+          "text": "Journaling",
+          "start_s": 17.0,
+          "end_s": 19.5,
+          "font_family": "Inter",
+          "clip_id": "V7"
+        },
+        {
+          "id": "label-7",
+          "role": "label",
+          "text": "Night walk",
+          "start_s": 19.5,
+          "end_s": 22.5,
+          "font_family": "Inter",
+          "clip_id": "V8"
+        }
+      ],
+      "total_duration_s": 22.5
+    },
+    "reply": "Kept your title and captioned all 8 clips."
+  }
+}

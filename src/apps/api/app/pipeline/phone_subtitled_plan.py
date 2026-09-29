@@ -4,7 +4,7 @@ sticker/photo/video cards, a sound-effects track, and a muted ending clip
 (KRI-174 Phase 1 -- see `app.pipeline.phone_subtitled_lanes`; video overlay
 cards are KRI-183).
 
-Companion to `app.pipeline.phone_montage_plan.compile_phone_montage_plan` and
+Companion to `app.pipeline.phone_voiceover_montage_plan.compile_phone_voiceover_montage_plan` and
 `app.pipeline.phone_guided_plan.compile_phone_guided_plan` -- see those
 modules' docstrings for the general contract every phone compiler follows:
 no media is downloaded or rendered here, and unsupported lanes fail closed
@@ -119,7 +119,7 @@ def compile_phone_subtitled_plan(
     """Compile the subtitled edit format's phone recipe.
 
     ``bindings`` follows the same one-binding-per-clip contract as
-    `compile_phone_montage_plan`/`compile_phone_guided_plan`, but subtitled is
+    `compile_phone_voiceover_montage_plan`/`compile_phone_guided_plan`, but subtitled is
     single-clip by product definition: exactly one binding is required (the
     uploader already caps new subtitled items at one clip; an item switched
     from montage can still carry more, and the cloud path silently uses only
@@ -765,7 +765,7 @@ def _display_dims(original) -> tuple[int, int]:
     """(width, height) as actually DISPLAYED once `orientation_degrees` is
     applied -- a 1080x1920-pixel file flagged 90/270 degrees is portrait on
     screen despite carrying landscape pixel dimensions (mirrors the
-    golden-hour exact-canvas check in `phone_montage_plan.py`/
+    golden-hour exact-canvas check in `phone_voiceover_montage_plan.py`/
     `phone_guided_plan.py`, which reasons about the same rotation flag)."""
     if original.orientation_degrees in (90, 270):
         return original.height, original.width

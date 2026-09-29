@@ -2,6 +2,61 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.11.0] - 2026-09-29
+
+### Changed
+- refactor(phone): voiceover-only montage writer; unified planner for every other montage (KRI-220) (#1269) <!-- release-pr: 1269 -->
+
+## [0.77.10.0] - 2026-09-29
+
+### Changed
+- fix(evals): edit_copilot v48 phone-restyle regression + KRI-221 live rerun (#1270) <!-- release-pr: 1270 -->
+
+## [0.77.9.0] - 2026-09-29
+
+### Changed
+- fix(ios): settle chat thinking regardless of which fetch delivered the reply (KRI-222) (#1268) <!-- release-pr: 1268 -->
+
+## [0.77.8.0] - 2026-09-29
+
+### Changed
+- feat(web): make the landing wordmark living glass (#1267) <!-- release-pr: 1267 -->
+
+## [0.77.7.0] - 2026-09-29
+
+### Changed
+- feat(ios): requirement receipt chips and guessed-name corrections in chat (KRI-207) (#1258) <!-- release-pr: 1258 -->
+
+## [0.77.6.0] - 2026-09-29
+
+### Changed
+- test(evals): request-following golden set to 30 threads, live report flag, P6b KPI (KRI-212) (#1257) <!-- release-pr: 1257 -->
+
+## [0.77.5.0] - 2026-09-29
+
+### Changed
+- feat(ios): originals-missing editor state, failed attach never blocks Send, flaky text test (KRI-211, KRI-213) (#1256) <!-- release-pr: 1256 -->
+
+## [0.77.4.0] - 2026-09-29
+
+### Changed
+- feat(kria): copilot sees clips, facts and brief; one-op bulk fonts (KRI-191, KRI-203) (#1255) <!-- release-pr: 1255 -->
+
+## [0.77.3.0] - 2026-09-29
+
+### Changed
+- feat(kria): route-direction, label and title receipts, narrated float-noise snap (KRI-208/209/210) (#1254) <!-- release-pr: 1254 -->
+
+## [0.77.2.0] - 2026-09-28
+
+### Changed
+- test(ios): expect Edit text's 120pt typing preview in the resize test (KRI-185) (#1263) <!-- release-pr: 1263 -->
+
+## [0.77.1.0] - 2026-09-28
+
+### Changed
+- fix(kria): let v2 phone Talking renders dispatch past the enforce cleanup guard (#1259) <!-- release-pr: 1259 -->
+
 ## [0.77.0.0] - 2026-09-28
 
 ### Added

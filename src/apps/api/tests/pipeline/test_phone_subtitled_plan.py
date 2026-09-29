@@ -327,7 +327,7 @@ def test_rejects_clip_over_five_minutes():
 def test_unexpected_caption_compilation_failure_fails_closed(monkeypatch):
     """A caption-compiler crash (bad transcript/edit content, a font that
     can't resolve a glyph, ...) must fail closed as `UnsupportedPhonePlan`,
-    never propagate a raw exception -- mirrors `compile_phone_montage_plan`'s
+    never propagate a raw exception -- mirrors `compile_phone_voiceover_montage_plan`'s
     identical wrapping of `build_persistent_intro_overlays`/
     `compile_text_overlay` failures."""
     import app.pipeline.phone_subtitled_plan as module
@@ -1206,3 +1206,20 @@ def test_video_overlay_recipe_passes_phone_pilot_validation_when_verified(monkey
         settings, "phone_render_verified_features", list(recipe.required_capabilities)
     )
     validate_phone_pilot_recipe(recipe, allow_editor_media=True)
+
+
+def test_a_caption_ending_at_the_clip_end_never_overshoots_the_timeline():
+    """KRI-209 audit: the subtitled compiler is one un-retimed clip and clamps every
+    caption to `timeline_duration_s == clip duration`, so it cannot overshoot by float
+    noise. Pinned so a future retime or ending-clip change has to face the strict
+    `layer.end > duration` validation in `EditRecipeV2`."""
+    duration_s = 24.998
+    cues = [
+        {"text": "Hello everyone", "start_s": 0.0, "end_s": 1.5},
+        {"text": "and that is it", "start_s": 23.5, "end_s": duration_s + 0.004},
+    ]
+
+    recipe = compile_phone_subtitled_plan((_binding(duration_s=duration_s),), caption_cues=cues)
+
+    assert recipe.duration == duration_s
+    assert all(layer.end <= recipe.duration for layer in recipe.text_layers)

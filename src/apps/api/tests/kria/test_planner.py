@@ -208,8 +208,8 @@ async def test_editor_revision_copies_orm_values_before_releasing_read_transacti
 
     job_id = uuid.uuid4()
     session_id = uuid.uuid4()
-    item = SimpleNamespace(current_job_id=job_id)
-    thread = SimpleNamespace(active_creator_agent_session_id=session_id)
+    item = SimpleNamespace(current_job_id=job_id, clip_assignments=[])
+    thread = SimpleNamespace(active_creator_agent_session_id=session_id, creator_id=uuid.uuid4())
     session = SimpleNamespace(
         target_job_id=job_id,
         target_variant_id="original_text",
@@ -218,6 +218,7 @@ async def test_editor_revision_copies_orm_values_before_releasing_read_transacti
     )
     job = SimpleNamespace(
         id=job_id,
+        user_id=uuid.uuid4(),
         assembly_plan={
             "variants": [
                 {"variant_id": "original_text", "render_status": "ready"},
@@ -256,7 +257,7 @@ async def test_editor_revision_copies_orm_values_before_releasing_read_transacti
     monkeypatch.setattr(
         planner,
         "build_editor_snapshot",
-        lambda *_args: {"allowed_op_families": ["trim_output_start"]},
+        lambda *_args, **_kwargs: {"allowed_op_families": ["trim_output_start"]},
     )
     monkeypatch.setattr(planner, "run_copilot_turn", copilot)
 
