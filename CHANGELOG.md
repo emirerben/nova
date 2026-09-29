@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.11.0] - 2026-09-29
+
+### Changed
+- refactor(phone): voiceover-only montage writer; unified planner for every other montage (KRI-220) (#1269) <!-- release-pr: 1269 -->
+
 ## [0.77.10.0] - 2026-09-29
 
 ### Changed
