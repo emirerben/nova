@@ -810,7 +810,7 @@ def test_clip_scoped_text_checks_only_that_clip() -> None:
 def test_editor_payload_facts_never_report_per_clip_text_as_not_possible() -> None:
     facts = plan_facts_from_editor_payload({"text_elements": [{"text": "Galata"}]})
     assert check_requirement(_req("text", "clip:c1", literal="Galata"), facts).status == "met"
-    assert check_requirement(_req("text", "per_clip"), facts).status == "partial"
+    assert check_requirement(_req("text", "per_clip"), facts).status == "unchecked"
 
 
 def test_positional_shot_labels_count_as_per_clip_text() -> None:

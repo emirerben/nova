@@ -95,6 +95,10 @@ class PlanFacts:
     # True when the facts come from an editor payload, which carries literal
     # on-screen text only (no per-clip structure, order or duration).
     editor: bool = False
+    # KRI-218: True when the editor facts carry a per-clip text diff (`per_clip_text`,
+    # `clip_ids` filled from what the turn actually changed), so per-clip text can be
+    # judged for real instead of "can't verify".
+    has_clip_structure: bool = False
     # The strategy's edit format, and how many video clips it renders (None when
     # the footage list was not available to count).
     edit_format: str | None = None
@@ -334,8 +338,16 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
     )
 
 
-def plan_facts_from_editor_payload(payload: Mapping[str, Any] | None) -> PlanFacts:
-    """Editor drafts expose only literal on-screen text to the checkers."""
+def plan_facts_from_editor_payload(
+    payload: Mapping[str, Any] | None,
+    text_diff: Iterable[Mapping[str, Any]] | None = None,
+) -> PlanFacts:
+    """Editor drafts expose literal on-screen text, plus (KRI-218) the turn's text diff.
+
+    ``text_diff`` is the compiler's ``[{id, clip_id, role, before, after}]``. Clip-linked
+    entries fill ``per_clip_text`` / ``clip_ids`` (only the clips this turn touched), so a
+    per-clip requirement is checked against what was really written.
+    """
     if not payload:
         return PlanFacts()
     strings: list[str] = []
@@ -351,7 +363,24 @@ def plan_facts_from_editor_payload(payload: Mapping[str, Any] | None) -> PlanFac
                 walk(item)
 
     walk(json.loads(json.dumps(payload, default=str)))
-    return PlanFacts(texts=tuple(strings), editor=True)
+    per_clip: dict[str, str] = {}
+    title: str | None = None
+    for entry in text_diff or ():
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
+            continue
+        clip = entry.get("clip_id")
+        if isinstance(clip, str) and clip:
+            per_clip[clip] = entry["after"]
+        elif entry.get("role") == "title":
+            title = entry["after"]
+    return PlanFacts(
+        texts=tuple(strings),
+        editor=True,
+        has_clip_structure=bool(per_clip),
+        per_clip_text=per_clip,
+        clip_ids=tuple(per_clip),
+        title=title,
+    )
 
 
 def _receipt(
@@ -388,12 +417,23 @@ def _guess_labels(facts: PlanFacts, only: str | None = None) -> list[InferredLab
 
 def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     wanted = _fold(req.literal or "")
-    if facts.editor:
-        # An editor payload has no per-clip structure: judge the literal if the
-        # creator wrote one, otherwise say it can't be checked. Never "couldn't".
+    if facts.editor and not facts.has_clip_structure:
+        # No per-clip diff for this edit: judge the literal if the creator wrote one,
+        # otherwise say it wasn't checked. `unchecked` is neutral, never a failure.
         if wanted and any(_contains_text(t, wanted) for t in facts.texts):
             return _receipt(req, "met", None)
-        return _receipt(req, "partial", "I can't verify per-clip text on an editor edit.")
+        return _receipt(req, "unchecked", _CANT_CHECK_CLIP_TEXT)
+    if facts.editor and wanted and _wants_exact_text(req):
+        # "just say X" / "X only": every clip this turn touched must read exactly X.
+        off = [c for c, t in facts.per_clip_text.items() if _fold(t) != wanted]
+        if off:
+            total = len(facts.per_clip_text)
+            return _receipt(
+                req,
+                "partial",
+                f"{len(off)} of {total} text{'s' if total != 1 else ''} "
+                f"didn't end up reading exactly \u201c{req.literal}\u201d.",
+            )
     ids = facts.clip_ids
 
     def text_for(index: int, clip: str) -> str | None:
@@ -694,7 +734,20 @@ def _names(values: Iterable[str]) -> str:
 _CANT_CHECK_BEATS = "I can't check the pop-ins on this draft yet."
 _CANT_CHECK_TAKE = "I can't confirm this draft keeps your whole take."
 _CANT_CHECK_TITLE = "I can't confirm where this draft's title came from."
-_NEUTRAL_REASONS = frozenset({_CANT_CHECK_BEATS, _CANT_CHECK_TAKE, _CANT_CHECK_TITLE})
+_CANT_CHECK_CLIP_TEXT = "I couldn't compare this edit clip by clip."
+_NEUTRAL_REASONS = frozenset(
+    {_CANT_CHECK_BEATS, _CANT_CHECK_TAKE, _CANT_CHECK_TITLE, _CANT_CHECK_CLIP_TEXT}
+)
+
+# "labels just say X" / "X only" / "sadece X": the creator wants the text to BE the literal,
+# not merely contain it.
+_EXACT_TEXT_RE = re.compile(
+    r"\b(?:just|only|exactly|simply|solely|sadece|yaln[i\u0131]zca|sade)\b", re.IGNORECASE
+)
+
+
+def _wants_exact_text(req: BriefRequirement) -> bool:
+    return bool(_EXACT_TEXT_RE.search(req.description or ""))
 
 
 def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -932,7 +985,12 @@ def build_receipts(
 
 # ------------------------------------------------------------------------ reply
 
-_LABEL = {"met": "Done", "partial": "Partly", "not_possible": "Couldn't"}
+_LABEL = {
+    "met": "Done",
+    "partial": "Partly",
+    "not_possible": "Couldn't",
+    "unchecked": "Not checked",
+}
 
 
 def reply_from_receipts(
@@ -969,7 +1027,9 @@ def reply_from_receipts(
     }
     # "Can't verify" is neutral: only a requirement a checker actually judged
     # can turn the reply into a failure notice.
-    problem = any(r.status != "met" and r.requirement_id in checkable for r in receipts)
+    problem = any(
+        r.status not in ("met", "unchecked") and r.requirement_id in checkable for r in receipts
+    )
     head = ""
     if not problem and summary and summary.strip():
         head = summary.strip() + "\n"
