@@ -1,0 +1,101 @@
+{
+  "fixture_id": "harbor_route_reversed",
+  "provenance": "authored",
+  "footage": "harbor_run",
+  "description": "The stated route contradicts filming order: keep filming order, name both endpoints, ask which to follow.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "I ran from Kestrel Point to Old Mill Pier this morning. Show the run in that order.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "keeps-filming-order",
+      "kind": "order",
+      "scope": "global",
+      "request_type": "order_route",
+      "checker": "order_by_key",
+      "params": {
+        "key": "capture_time"
+      },
+      "source": "I ran from Kestrel Point to Old Mill Pier this morning. Show the run in that order.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "receipt-names-the-reversal",
+      "kind": "order",
+      "scope": "global",
+      "request_type": "order_route",
+      "checker": "reply_states",
+      "params": {
+        "all_of": [
+          "filmed starting at Old Mill Pier",
+          "reverse",
+          "tell me if you want your route order"
+        ]
+      },
+      "source": "I ran from Kestrel Point to Old Mill Pier this morning. Show the run in that order.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "H1",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "clip_id": "H2",
+          "start_s": 3.0,
+          "end_s": 5.5
+        },
+        {
+          "clip_id": "H3",
+          "start_s": 5.5,
+          "end_s": 9.0
+        },
+        {
+          "clip_id": "H4",
+          "start_s": 9.0,
+          "end_s": 11.5
+        },
+        {
+          "clip_id": "H5",
+          "start_s": 11.5,
+          "end_s": 14.5
+        },
+        {
+          "clip_id": "H6",
+          "start_s": 14.5,
+          "end_s": 16.5
+        },
+        {
+          "clip_id": "H7",
+          "start_s": 16.5,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "H8",
+          "start_s": 19.5,
+          "end_s": 23.0
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Brightwater run",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 23.0
+    },
+    "reply": "Your clips were filmed starting at Old Mill Pier and ending at Kestrel Point, the reverse of the route you gave (Kestrel Point → Old Mill Pier). I kept filming order; tell me if you want your route order instead."
+  }
+}

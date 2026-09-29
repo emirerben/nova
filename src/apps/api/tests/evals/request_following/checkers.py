@@ -367,6 +367,123 @@ def font_forbidden(
     return _fraction_status(clean / len(texts)), reason
 
 
+# ── Receipt, dedupe and correction checkers (KRI-185 P6b) ────────────────────
+
+
+def _label_sequence(plan: FinalPlan) -> list[str]:
+    """The first label on each labelled clip, in the order the clips play."""
+    covering = labels_covering(plan)
+    ordered = [c for c, _ in sorted(_first_positions(plan).items(), key=lambda kv: kv[1])]
+    return [covering[c][0].text for c in ordered if covering.get(c)]
+
+
+def label_no_consecutive_repeat(
+    _req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
+) -> CheckResult:
+    """A label that repeats the previous kept label is noise, not a caption (KRI-210)."""
+    sequence = _label_sequence(plan)
+    if not sequence:
+        return "unmet", "no labels on screen to compare"
+    repeats = sum(1 for a, b in zip(sequence, sequence[1:], strict=False) if fold(a) == fold(b))
+    reason = f"{repeats} label(s) repeat the one before them"
+    return _fraction_status(1 - repeats / len(sequence)), reason
+
+
+def text_avoids(
+    req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
+) -> CheckResult:
+    """None of these terms may appear (a mixed-language name, a banned phrase)."""
+    terms = [str(t) for t in req.params["terms"]]
+    joined = fold(" \n ".join(_scope_texts(plan, str(req.params.get("scope", "any")))))
+    present = [t for t in terms if fold(t) in joined]
+    if not present:
+        return "met", "none of the avoided terms appear"
+    return _fraction_status(1 - len(present) / len(terms)), f"still present: {', '.join(present)}"
+
+
+def labels_none(
+    _req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
+) -> CheckResult:
+    """No label may be invented when no fact grounds it."""
+    labels = label_texts(plan)
+    if not labels:
+        return "met", "no invented labels"
+    return "unmet", f"{len(labels)} label(s) were made up: {[t.text for t in labels][:3]}"
+
+
+def font_all_equal(
+    req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
+) -> CheckResult:
+    """Every text lane (optionally only some roles) is set in this font: a bulk style
+    request must reach all of them, not the first eight."""
+    font = fold(str(req.params["font"]))
+    roles = set(req.params.get("roles") or [])
+    texts = [t for t in plan.texts if not roles or t.role in roles]
+    if not texts:
+        return "unmet", "no text lanes to restyle"
+    ok = sum(1 for t in texts if fold(t.font_family or "") == font)
+    return _fraction_status(
+        ok / len(texts)
+    ), f"{ok}/{len(texts)} text lanes use {req.params['font']}"
+
+
+def clips_unchanged(
+    _req: Requirement, plan: FinalPlan, _f: Footage, previous: FinalPlan | None
+) -> CheckResult:
+    """A style or text edit must not re-plan the clips."""
+    if previous is None:
+        return "unmet", "no earlier edit to compare with"
+    same = _signature_clips(plan) == _signature_clips(previous)
+    return ("met", "clips untouched") if same else ("unmet", "the clip layout changed")
+
+
+def _signature_clips(plan: FinalPlan) -> tuple:
+    return tuple((c.clip_id, round(c.end_s - c.start_s, 2)) for c in plan.clips)
+
+
+def label_single_change(
+    req: Requirement, plan: FinalPlan, _f: Footage, previous: FinalPlan | None
+) -> CheckResult:
+    """ "That's X, not Y" edits ONE label: the named clip says the new text and every other
+    label is exactly as it was."""
+    if previous is None:
+        return "unmet", "no earlier edit to compare with"
+    clip_id, wanted = str(req.params["clip_id"]), str(req.params["text"])
+    now, before = labels_covering(plan), labels_covering(previous)
+    target = [t.text for t in now.get(clip_id, [])]
+    if not any(nfc(t) == nfc(wanted) for t in target):
+        return "unmet", f"{clip_id} reads {target or 'no label'}, wanted {wanted!r}"
+    moved = [
+        c
+        for c in before
+        if c != clip_id and [t.text for t in before[c]] != [t.text for t in now.get(c, [])]
+    ]
+    if moved:
+        return "partial", f"corrected {clip_id} but also changed: {', '.join(moved)}"
+    return "met", f"only {clip_id} changed"
+
+
+def reply_states(
+    req: Requirement, _plan: FinalPlan, _f: Footage, _p: FinalPlan | None, reply: str | None
+) -> CheckResult:
+    """The reply itself must say something (a receipt: what the AI saw and did), and/or
+    must not say something (a false claim). Reply-only; judged on the turn it was asked."""
+    all_of = [str(p) for p in req.params.get("all_of", [])]
+    none_of = [str(p) for p in req.params.get("none_of", [])]
+    if reply is None:
+        return ("unmet", "no reply to read") if all_of else ("met", "no reply, so no false claim")
+    text = unicodedata.normalize("NFC", reply)
+    missing = [p for p in all_of if not re.search(p, text, re.IGNORECASE)]
+    claimed = [p for p in none_of if re.search(p, text, re.IGNORECASE)]
+    if claimed:
+        return "unmet", f"reply claims: {', '.join(claimed)}"
+    if not missing:
+        return "met", "reply says what it must"
+    if len(missing) < len(all_of):
+        return "partial", f"reply omits: {', '.join(missing)}"
+    return "unmet", f"reply omits: {', '.join(missing)}"
+
+
 CHECKERS: dict[str, Checker] = {
     "title_exact": title_exact,
     "text_contains": text_contains,
@@ -382,11 +499,25 @@ CHECKERS: dict[str, Checker] = {
     "readability": readability,
     "restructure_changed": restructure_changed,
     "font_forbidden": font_forbidden,
+    "label_no_consecutive_repeat": label_no_consecutive_repeat,
+    "text_avoids": text_avoids,
+    "labels_none": labels_none,
+    "font_all_equal": font_all_equal,
+    "clips_unchanged": clips_unchanged,
+    "label_single_change": label_single_change,
 }
+
+# Checkers that read the reply as well as the edit.
+ReplyChecker = Callable[
+    [Requirement, FinalPlan, Footage, FinalPlan | None, str | None], CheckResult
+]
+REPLY_CHECKERS: dict[str, ReplyChecker] = {"reply_states": reply_states}
 
 # Requirements about something that must HAPPEN on the turn they are asked (compare with the
 # edit before it), not a property the finished edit must keep having.
-EVENT_CHECKERS = frozenset({"restructure_changed"})
+EVENT_CHECKERS = frozenset(
+    {"restructure_changed", "clips_unchanged", "label_single_change", "reply_states"}
+)
 
 # Reply markers that say "this part was not done". Deliberately excludes "unchanged":
 # "Everything else is unchanged" is exactly the sentence that hid the KRI-185 drops.
@@ -397,9 +528,19 @@ DISCLAIMER = re.compile(
 )
 
 
+def known_checker_ids() -> frozenset[str]:
+    return frozenset(CHECKERS) | frozenset(REPLY_CHECKERS)
+
+
 def run_checker(
-    req: Requirement, plan: FinalPlan, footage: Footage, previous: FinalPlan | None = None
+    req: Requirement,
+    plan: FinalPlan,
+    footage: Footage,
+    previous: FinalPlan | None = None,
+    reply: str | None = None,
 ) -> CheckResult:
+    if req.checker in REPLY_CHECKERS:
+        return REPLY_CHECKERS[req.checker](req, plan, footage, previous, reply)
     try:
         checker = CHECKERS[req.checker]
     except KeyError as exc:

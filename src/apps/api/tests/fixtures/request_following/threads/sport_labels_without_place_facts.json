@@ -1,0 +1,98 @@
+{
+  "fixture_id": "sport_labels_without_place_facts",
+  "provenance": "authored",
+  "footage": "sport",
+  "description": "These clips carry no place or landmark: inventing labels would be a fabrication.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Label each clip with where it was filmed.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "no-invented-labels",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_described",
+      "checker": "labels_none",
+      "params": {},
+      "source": "Label each clip with where it was filmed.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "says-why",
+      "kind": "text",
+      "scope": "global",
+      "request_type": "label_described",
+      "checker": "reply_states",
+      "params": {
+        "all_of": [
+          "couldn'?t",
+          "where"
+        ]
+      },
+      "source": "Label each clip with where it was filmed.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "S1",
+          "start_s": 0.0,
+          "end_s": 2.5
+        },
+        {
+          "clip_id": "S2",
+          "start_s": 2.5,
+          "end_s": 4.5
+        },
+        {
+          "clip_id": "S3",
+          "start_s": 4.5,
+          "end_s": 7.5
+        },
+        {
+          "clip_id": "S4",
+          "start_s": 7.5,
+          "end_s": 10.0
+        },
+        {
+          "clip_id": "S5",
+          "start_s": 10.0,
+          "end_s": 12.0
+        },
+        {
+          "clip_id": "S6",
+          "start_s": 12.0,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "S7",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "S8",
+          "start_s": 17.0,
+          "end_s": 19.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "Five-a-side",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 19.5
+    },
+    "reply": "I couldn't tell where these were filmed (the clips carry no location), so I didn't add place labels."
+  }
+}
