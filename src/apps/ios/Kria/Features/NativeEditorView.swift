@@ -775,7 +775,7 @@ private struct NativeKriaInspector: View {
                 // toggleCaptions() writes caption_meta ("enabled"), so this is
                 // gated by the meta capability (KRI-216), not the coarse
                 // canEditCaptions, which can be true from cues alone.
-                .disabled(!session.canEditCaptionAppearance)
+                .disabled(!session.canEditCaptionMeta)
                 NativeDocumentInspector(session: session)
             }
             .padding(24)
@@ -884,7 +884,7 @@ private struct NativeCaptionsInspector: View {
                 // so these are gated by the meta capability (KRI-216) rather
                 // than the coarse canEditCaptions.
                 Toggle("Captions", isOn: Binding(get: { session.draft.captions.enabled }, set: { _ in session.toggleCaptions() }))
-                    .disabled(!session.canEditCaptionAppearance)
+                    .disabled(!session.canEditCaptionMeta)
                     .accessibilityIdentifier("native-editor-captions-toggle")
             } footer: {
                 Text("Captions stay synchronized to the cut. Toggle them on to preview the readable version.")
@@ -893,10 +893,10 @@ private struct NativeCaptionsInspector: View {
                 Picker("Caption style", selection: $style) { ForEach(styles, id: \.self, content: Text.init) }
                     .pickerStyle(.menu)
                     .onChange(of: style) { _, newValue in session.setCaptionStyle(newValue.lowercased()) }
-                    .disabled(!session.canEditCaptionAppearance)
+                    .disabled(!session.canEditCaptionMeta)
                     .accessibilityIdentifier("native-editor-caption-style")
             }
-            if !session.canEditCaptionAppearance {
+            if !session.canEditCaptionMeta {
                 Section { Label("This video has no caption-safe render base, so caption changes are unavailable.", systemImage: "lock") }
             }
         }

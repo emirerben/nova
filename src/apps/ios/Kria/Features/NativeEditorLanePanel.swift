@@ -105,8 +105,8 @@ struct NativeCaptionPanel: View {
                 // Save-refusing controls as enabled — or block a lane that
                 // IS editable just because the other one isn't.
                 case .edit: transcript.disabled(!session.canEditCaptionLines)
-                case .style: style
-                case .settings: settings
+                case .style: style.disabled(!session.canEditCaptionMeta)
+                case .settings: settings.disabled(!session.canEditCaptionMeta)
                 }
                 if !session.canEditCaptions {
                     Text("Captions aren’t available for this edit.").foregroundStyle(KriaColor.mutedInk)
@@ -229,8 +229,7 @@ struct NativeCaptionPanel: View {
             NativeEditorMenuRow(title: "Show captions", value: meta["enabled"] != .bool(false) ? "On" : "Off") {
                 Button("On") { session.setCaptionEnabled(true) }
                 Button("Off") { session.setCaptionEnabled(false) }
-            }.disabled(!session.canEditCaptionAppearance)
-                .accessibilityIdentifier("native-editor-caption-visible")
+            }.accessibilityIdentifier("native-editor-caption-visible")
             NativeEditorMenuRow(title: "Highlight spoken word", value: highlightsWords ? "On" : "Off") {
                 Button("On") { session.setCaptionAppearance(key: "highlight_spoken_word", value: .bool(true)) }
                 Button("Off") { session.setCaptionAppearance(key: "highlight_spoken_word", value: .bool(false)) }

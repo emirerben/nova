@@ -3289,6 +3289,15 @@ struct NativeEditorTemporaryVideo {
     /// coarse `canEditCaptions` when the server hasn't sent a `caption_cues`
     /// key (older servers, or the guided-story text-lane path).
     var canEditCaptionLines: Bool { canEditSection(.captions) }
+    /// Caption on/off, style, font, color and size writes land in
+    /// `caption_meta`, so their controls are gated by the `caption_meta`
+    /// capability (KRI-216) — the same guard `setCaptionEnabled`,
+    /// `toggleCaptions`, `setCaptionStyle`, `setCaptionFont` and
+    /// `setCaptionMeta` apply. Unlike `canEditCaptionAppearance`, this does not
+    /// also require `caption_editor_style`, which only the `appearance` keys
+    /// need. Falls back to `canEditCaptions` when the server hasn't sent the
+    /// key (older servers, deterministic UI fixtures).
+    var canEditCaptionMeta: Bool { canEditCaptions && canEditSection(.captionMeta) }
 
     func setCaptionAppearance(key: String, value: JSONValue) {
         guard canEditCaptionAppearance else { return }
