@@ -271,6 +271,10 @@ private struct CreationWorkspaceView: View {
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @FocusState private var composerFocused: Bool
     @State private var prompt = ""
+    /// KRI-207: requirement names for the receipt chips; loaded once a reply carries receipts.
+    @State private var briefRequirements: [String: CreativeBriefRequirement] = [:]
+    /// The brief loaded (or, after one retry, definitively failed): chips can show their final titles.
+    @State private var briefSettled = false
     @State private var events: [ThreadEvent] = []
     @State private var initialConversationLoaded = false
     @State private var pendingMessages: [ChatPendingMessage] = []
@@ -309,6 +313,10 @@ private struct CreationWorkspaceView: View {
     @State private var isSending = false
     @State private var isActing = false
     @State private var isThinking = false
+    /// Highest transcript sequence known when the thinking turn was accepted; only later events can settle it.
+    @State private var thinkingAnchor: Int?
+    /// Approvals have no reply message, so a terminal job status also ends the wait (KRI-222).
+    @State private var thinkingSettlesOnJobStatus = false
     @State private var failure: ChatFailure?
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
@@ -347,10 +355,6 @@ private struct CreationWorkspaceView: View {
             sourcePurposes: [], role: .visual
         )
         return selectedFormat == .montage && destination.visualKinds != nil ? fullThread?.deviceReadyVisualCount ?? 0 : 0
-    }
-
-    private var hasUploadFailures: Bool {
-        uploadFailures.contains { $0.projectID == project.id }
     }
 
     private var activeProposalEvent: ThreadEvent? {
@@ -396,7 +400,7 @@ private struct CreationWorkspaceView: View {
     }
 
     private var activeUploadIDs: Set<UUID> {
-        var ids = Set(uploadRecords.filter { $0.projectID == project.id }.map(\.id))
+        var ids = Set(BackgroundUploadCoordinator.inProgressRecords(uploadRecords).filter { $0.projectID == project.id }.map(\.id))
         ids.formUnion(uploadInFlight.filter { $0.value.projectID == project.id }.keys)
         if let selection = photoSelections[project.id.uuidString] {
             ids.formUnion(selection.entries.values.filter { $0.mediaID == nil }.map(\.recordID))
@@ -410,6 +414,11 @@ private struct CreationWorkspaceView: View {
             suppressedMessageIDs: suppressedTimelineMessages,
             uploads: activeUploadIDs.compactMap { uploadAnchors[$0] }
         )
+    }
+
+    /// The newest reply that carries requirement receipts; a new one means the brief may have changed.
+    private var latestReceiptEventID: String? {
+        events.last { $0.payload?["requirement_receipts"] != nil }?.id
     }
 
     private var timelineUpdateToken: String {
@@ -436,7 +445,15 @@ private struct CreationWorkspaceView: View {
         switch entry.content {
         case .message(let message):
             ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } },
-                           responseStartedAt: responsePresentation.startTime(for: message.id))
+                           responseStartedAt: responsePresentation.startTime(for: message.id),
+                           requirements: briefRequirements,
+                           briefSettled: briefSettled,
+                           onCorrectGuess: { label in
+                               // One tap: the sentence is started (after whatever the creator already
+                               // typed), the keyboard is up, and only the right name is left to type.
+                               prompt = label.correctionDraft(appendingTo: prompt)
+                               composerFocused = true
+                           })
                 .id(entry.id)
         case .stage:
             stageContent.id(entry.id)
@@ -518,7 +535,8 @@ private struct CreationWorkspaceView: View {
     }
 
     private var pendingUploadCount: Int {
-        uploadRecords.filter { $0.projectID == project.id }.count + preparingUploadCount
+        // A record whose upload failed stays in `uploadRecords` for Retry, but Send must not wait for it.
+        BackgroundUploadCoordinator.inProgressRecords(uploadRecords).filter { $0.projectID == project.id }.count + preparingUploadCount
     }
 
     private var isUITesting: Bool {
@@ -582,7 +600,7 @@ private struct CreationWorkspaceView: View {
                     isSending: isSending || isActing,
                     canAttach: canAttachMedia,
                     canSendWithoutText: readyMediaCount > 0,
-                    blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures,
+                    blocksSubmission: isThinking || pendingUploadCount > 0,
                     placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
                     isFocused: $composerFocused,
                     attach: openAttachments,
@@ -607,6 +625,37 @@ private struct CreationWorkspaceView: View {
         .onReceive(model.uploads.$inFlight) { uploadInFlight = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$failures) { uploadFailures = $0 }
+        .task(id: latestReceiptEventID) {
+            guard latestReceiptEventID != nil else { return }
+            // One retry, then settle either way: a failed fetch leaves neutral titles, not bare chips
+            // that wait forever. Titles already learned are kept, so an older reply keeps its wording
+            // when a newer brief drops that requirement.
+            var brief = try? await model.api.creationBrief(threadID: project.id)
+            if brief == nil, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                brief = try? await model.api.creationBrief(threadID: project.id)
+            }
+            guard !Task.isCancelled else { return }
+            if let brief { briefRequirements.merge(brief.requirementsByID) { _, new in new } }
+            briefSettled = true
+        }
+        #if DEBUG
+        // KRI-211 fixtures: `1` = one file that couldn't be read; `record` = an upload that failed on
+        // the way and still has its record (Retry). Neither may block Send.
+        .task(id: project.id) {
+            switch ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_UPLOAD_FAILURE"] {
+            case "1":
+                model.uploads.reportFailure(
+                    projectID: project.id, role: .clip, filename: "Selected item",
+                    message: "This file couldn’t be read. Try Files or choose it again."
+                )
+            case "record":
+                model.uploads.seedFailedUploadForTesting(projectID: project.id)
+            default:
+                break
+            }
+        }
+        #endif
         .onReceive(model.uploads.$previewVersion) { previewVersion = $0 }
         .onReceive(model.uploads.$progress) { uploadProgress = $0 }
         .onReceive(model.uploads.$attachedThreads) { threads in
@@ -673,7 +722,7 @@ private struct CreationWorkspaceView: View {
             }
             ChatComposer(
                 text: $prompt, isSending: isSending || isActing,
-                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0 || hasUploadFailures, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
+                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
             )
         }
         .background(KriaColor.paper)
@@ -706,6 +755,7 @@ private struct CreationWorkspaceView: View {
                     removeMedia: { mediaID in performAction("remove_media", payload: ["media_id": .string(mediaID)]) },
                     failures: uploadFailures.filter { $0.projectID == project.id },
                     dismissFailure: { model.uploads.dismissFailure(id: $0) },
+                    retryFailure: { id in Task { await model.uploads.retryUpload(recordID: id) } },
                     // Only a project this iPhone renders can be made of Visuals
                     // alone, and only from the Visuals the server's rule counts.
                     visualCount: selectedFormat == .slides
@@ -862,9 +912,10 @@ private struct CreationWorkspaceView: View {
         // Generic creator runtime has no slide proposal/create tools.
         guard selectedFormat != .slides else { return }
         guard !isSending, !isActing, !isThinking,
+              !ChatSubmission.isBareCorrectionStub(submittedMessage ?? prompt),
               let message = ChatSubmission.message(
                 text: submittedMessage ?? prompt, readyMediaCount: readyMediaCount,
-                pendingUploadCount: pendingUploadCount, hasUploadFailures: hasUploadFailures
+                pendingUploadCount: pendingUploadCount
               ) else { return }
         let draftToRestore = submittedMessage == nil ? prompt : message
         isSending = true
@@ -900,6 +951,7 @@ private struct CreationWorkspaceView: View {
             do {
                 let thread = try await model.api.sendCreationMessage(threadID: project.id, message: message, expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID)
                 pendingTurnSubmission = nil
+                model.uploads.clearUnreadableFailures(projectID: project.id)
                 apply(thread, requestSequence: requestSequence)
                 conversationAcceptedID = UUID()
                 await editorSession.synchronizePromptRevision()
@@ -941,8 +993,13 @@ private struct CreationWorkspaceView: View {
             return
         }
         pendingTurnSubmission = nil
+        // The banner said these files won't be sent. Only now that the server has the message has it
+        // done its job; a conflict, a network error or an unsaved editor leaves it (and the draft) alone.
+        model.uploads.clearUnreadableFailures(projectID: project.id)
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
         conversationAcceptedID = UUID()
+        thinkingAnchor = afterSequence
+        thinkingSettlesOnJobStatus = false
         isThinking = true
         failure = await acceptedMutationRefreshError(
             "Your message was sent, but the conversation couldn’t refresh.",
@@ -1136,6 +1193,8 @@ private struct CreationWorkspaceView: View {
             events: events
         )
         reconcilePendingMessages()
+        // Before the stale-revision guard: a reply delivered by an out-of-order projection still counts.
+        settleThinking()
         guard acceptsProjection, projectionOrder.accept(requestSequence) else { return }
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: thread.revision)
         fullThread = thread
@@ -1181,15 +1240,7 @@ private struct CreationWorkspaceView: View {
             selectedFormat = latestFormat
         }
         reconcilePendingMessages()
-        let settledThinkingTypes: Set<String> = [
-            "generation_started", "render_queued", "render_started", "rendering",
-            "generation_ready", "render_failed", "generation_failed"
-        ]
-        if fresh.contains(where: {
-            ChatTranscriptMessage.from(event: $0)?.role == .assistant || settledThinkingTypes.contains($0.eventType)
-        }) {
-            isThinking = false
-        }
+        settleThinking()
         // The delta fetch and merge above already succeeded, so the banner is
         // stale regardless of what happens next — clear it here rather than
         // after `synchronizeApproval()`, whose own failure would otherwise
@@ -1212,6 +1263,19 @@ private struct CreationWorkspaceView: View {
         }
         if !fresh.isEmpty, !isThinking { await editorSession.synchronizePromptRevision() }
         return !fresh.isEmpty || threadRevision > revisionBeforeDelta
+    }
+
+    /// Clears `isThinking` once the reply or a render-state event has landed in `events`, no matter
+    /// which fetch (delta or full projection) delivered it.
+    private func settleThinking() {
+        guard isThinking, let anchor = thinkingAnchor else { return }
+        let jobTerminal = thinkingSettlesOnJobStatus
+            && ChatThinkingSettlement.isTerminalJobStatus(fullThread?.job?.status)
+        if ChatThinkingSettlement.isSettled(events: events, after: anchor) || jobTerminal {
+            isThinking = false
+            thinkingAnchor = nil
+            thinkingSettlesOnJobStatus = false
+        }
     }
 
     private func reconcilePendingMessages() {
@@ -1297,6 +1361,8 @@ private struct CreationWorkspaceView: View {
                 return
             }
             self.approval = nil
+            thinkingAnchor = decision == "approve" ? afterSequence : nil
+            thinkingSettlesOnJobStatus = decision == "approve"
             isThinking = decision == "approve"
             failure = await acceptedMutationRefreshError(
                 "Kria recorded that decision, but the conversation couldn’t refresh.",
@@ -1402,6 +1468,29 @@ enum ThreadRevisionOrder {
     static func acceptsProjection(current: Int, incoming: Int) -> Bool { incoming >= current }
 }
 
+/// Decides when a "thinking" turn is over. Pure so it is unit-testable: the answer depends only on
+/// the merged transcript and the sequence the turn was accepted at, never on which fetch delivered it.
+enum ChatThinkingSettlement {
+    static let settledTypes: Set<String> = [
+        "generation_started", "render_queued", "render_started", "rendering",
+        "generation_ready", "render_failed", "generation_failed"
+    ]
+
+    static func settles(_ event: ThreadEvent) -> Bool {
+        ChatTranscriptMessage.from(event: event)?.role == .assistant || settledTypes.contains(event.eventType)
+    }
+
+    static func isSettled(events: [ThreadEvent], after anchor: Int) -> Bool {
+        events.contains { $0.sequence > anchor && settles($0) }
+    }
+
+    static func isTerminalJobStatus(_ status: String?) -> Bool {
+        guard let status = status?.lowercased() else { return false }
+        return status == "ready" || status == "done" || status == "failed" || status == "cancelled"
+            || status.contains("_ready") || status.contains("_failed")
+    }
+}
+
 /// Deltas carry append-only events and a revision, while a full thread carries
 /// mutable fields such as the user-visible title. Keep the decision pure so a
 /// non-conversational background update cannot leave the workspace header or
@@ -1431,6 +1520,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     /// the question, so a hand-typed paraphrase never resolves it.
     var options: [String] = []
     var recommendedOption: String? = nil
+    /// KRI-207: one outcome per requirement in the creator's brief, from the event that carried them.
+    var receipts: [RequirementReceiptItem] = []
 
     static func syntheticUser(_ content: String) -> Self {
         Self(id: "synthetic-\(content)", role: .user, content: content)
@@ -1471,7 +1562,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             recommendedOption = event.payload?["recommended_option"]?.stringValue
         }
-        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption)
+        let receipts = role == .assistant ? RequirementReceiptItem.parse(payload: event.payload) : []
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts)
     }
 }
 

@@ -2647,3 +2647,25 @@ that needs v2 guided execution in the cloud worker (follow-up on KRI-217). The u
 lane still renders source audio only (KRI-190), so a plan that promises "an upbeat track"
 does not get one on the phone. Still open on the unified planner: per-cut rounding can
 leave a montage that lands exactly on the 3s floor at 2.999s, which the snapshot refuses.
+
+## [2026-09-29] Two montage writers by design: voiceover montages -> voiceover montage writer; everything else -> unified (KRI-220)
+
+Context. KRI-190 put every non-voiceover phone montage on the unified planner behind
+`MONTAGE_UNIFIED_PLAN_ENABLED` (ON in prod) and left the plain lane in place, with a
+follow-up to delete `compile_phone_montage_plan`. Inspection showed it was not dead code:
+it is the only phone writer for a montage with a recorded voiceover.
+
+Decision (founder, 2026-09-29). Keep it, rename and narrow it. `compile_phone_voiceover_montage_plan`
+(`app/pipeline/phone_voiceover_montage_plan.py`) and `_run_phone_voiceover_montage_job` handle ONLY the
+montage-family `voiceover` archetype (`voiceover_only` / `voiceover_music`) and fail closed
+(`narrationAudio`) without a narration bed. The worker forks on `voiceover_gcs_path`; every
+other montage goes to the unified planner with no flag. `MONTAGE_UNIFIED_PLAN_ENABLED`, the user
+allowlist and `montage_unified_plan_for` are removed (prod value confirmed `true` via
+`GET /admin/kria/phone-render-config` before removal, so there is no behaviour change in prod).
+
+Why two writers. The unified planner cannot yet mix a recorded voice with a low music bed,
+trim to a long voice, or carry the intro hook; the voiceover writer does all three.
+
+Reversal condition. Delete the voiceover writer once the unified planner gains voice + music
+mix and long-voice trimming and a device comparison shows parity.
+

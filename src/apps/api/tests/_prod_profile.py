@@ -99,8 +99,9 @@ PROD_TRUE_FLAGS: tuple[str, ...] = (
     "visual_blocks_enabled",
     "visual_block_autoplan_enabled",
     # Re-derived 2026-09-28 (KRI-217): on in production (same digest), missing
-    # above. Without the runtime-v2 and unified-montage flags no prod-shaped test
-    # reached the lane that refused every iOS montage with a photo.
+    # above. Without the runtime-v2 flags no prod-shaped test reached the lane
+    # that refused every iOS montage with a photo. (MONTAGE_UNIFIED_PLAN_ENABLED
+    # was on too; KRI-220 removed the flag.)
     "clip_facts_enabled",
     "creator_clip_preparation_enabled",
     "edit_proposal_semantic_enabled",
@@ -108,7 +109,6 @@ PROD_TRUE_FLAGS: tuple[str, ...] = (
     "kria_creative_brief_enabled",
     "kria_runtime_v2_enabled",
     "kria_runtime_v2_phone_enabled",
-    "montage_unified_plan_enabled",
     "phone_sfx_speech_duck_enabled",
     "phone_subtitled_editor_lanes_enabled",
     "phone_subtitled_media_lanes_enabled",

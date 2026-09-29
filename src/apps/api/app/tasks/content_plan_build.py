@@ -1318,9 +1318,11 @@ def _lands_on_unified_phone_montage(
 
     Mirrors the worker's fork in `generative_build`: a runtime-v2 approval
     (the only caller of `allow_phone_unapproved_montage`) of a montage-family
-    item whose footage is on the phone, for an account with phone rendering,
-    runtime v2 for phones and the KRI-190 unified plan. That lane places the
-    item's ready Visuals itself (KRI-217).
+    item whose footage is on the phone, for an account with phone rendering and
+    runtime v2 for phones. Every such montage without a recorded voiceover is
+    planned by the KRI-190 unified planner (KRI-220), which places the item's
+    ready Visuals itself (KRI-217); a voiceover item is not guided-applicable
+    and never reaches this gate.
     """
     from app.config import settings  # noqa: PLC0415
     from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
@@ -1330,7 +1332,6 @@ def _lands_on_unified_phone_montage(
         and any(is_analysis_proxy_path(path) for path in item.clip_gcs_paths or [])
         and settings.phone_rendering_for(plan.user_id)
         and settings.kria_runtime_v2_phone_for(plan.user_id)
-        and settings.montage_unified_plan_for(plan.user_id)
     )
 
 
@@ -1386,6 +1387,7 @@ def _dispatch_item_render(
     ownership_epoch: int,
     bypass_guided_edit_gate: bool = False,
     allow_phone_unapproved_montage: bool = False,
+    phone_speech_cleanup_unattended: bool = False,
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
@@ -1424,8 +1426,18 @@ def _dispatch_item_render(
     montage-family phone dispatch is refused as ``unapproved_guided``. True
     (with ``bypass_guided_edit_gate`` and the account covered by
     ``settings.kria_runtime_v2_phone_for``) lets that one shape through to the
-    worker's decisions-only ``_run_phone_montage_job``. False (default) keeps
+    worker's decisions-only ``_run_phone_voiceover_montage_job``. False (default) keeps
     every other caller's gate byte-identical.
+
+    ``phone_speech_cleanup_unattended``: runtime-v2 approval has no creator
+    choice surface to offer the speech-cleanup card that v1's chat route
+    presents, so an undecided narration source would otherwise refuse here
+    under the enforce guard. True lets an undecided **analysis-proxy** phone
+    source dispatch without cleanup instead of refusing -- "clean" can never
+    apply to a phone proxy (see ``_speech_cleanup_dispatch_snapshot``), so
+    this just restores the pre-KRI-205 phone dispatch behaviour. A non-proxy
+    (cloud) source, or this flag left False, still refuses. False (default)
+    keeps every other caller's gate byte-identical.
     """
     from app.agents._schemas.edit_format import (  # noqa: PLC0415
         coerce_edit_format,
@@ -1679,7 +1691,23 @@ def _dispatch_item_render(
             mode=settings.speech_cleanup_preflight_mode,
             rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
         ):
-            return DispatchResult("speech_cleanup_analysis_conflict")
+            from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+
+            if phone_speech_cleanup_unattended and is_analysis_proxy_path(
+                resolution.source.storage_path
+            ):
+                # Runtime-v2 approval has no choice surface to offer here, and
+                # "clean" could never apply to a phone proxy anyway (see the
+                # `is_analysis_proxy_path` gate in
+                # `_speech_cleanup_dispatch_snapshot` above) -- so an
+                # undecided phone source dispatches without cleanup instead
+                # of refusing, exactly as it did before KRI-205.
+                log.info(
+                    "plan_item_render.speech_cleanup_phone_unattended",
+                    plan_item_id=str(item.id),
+                )
+            else:
+                return DispatchResult("speech_cleanup_analysis_conflict")
     if speech_cleanup_analysis_id is not None or speech_cleanup_choice is not None:
         preflight = _speech_cleanup_dispatch_snapshot(
             session,
@@ -1975,7 +2003,7 @@ def _dispatch_item_render(
                     fmt in NARRATED_EDIT_FORMATS and not has_recorded_voiceover
                 )
             # KRI-132: a recorded voiceover must never dispatch a phone job
-            # doomed to fail in the worker (`_run_phone_montage_job` raises
+            # doomed to fail in the worker (`_run_phone_voiceover_montage_job` raises
             # "Phone rendering does not yet support voiceover edits" when the
             # flag is off, or when the compiled recipe needs a capability the
             # device hasn't verified). Fail closed HERE instead, before a Job
@@ -2338,6 +2366,7 @@ def dispatch_item_render_for(
     *,
     bypass_guided_edit_gate: bool = False,
     allow_phone_unapproved_montage: bool = False,
+    phone_speech_cleanup_unattended: bool = False,
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
@@ -2665,6 +2694,7 @@ def dispatch_item_render_for(
             ownership_epoch=ownership_epoch,
             bypass_guided_edit_gate=bypass_guided_edit_gate,
             allow_phone_unapproved_montage=allow_phone_unapproved_montage,
+            phone_speech_cleanup_unattended=phone_speech_cleanup_unattended,
             creator_strategy=creator_strategy,
             creator_clip_order=creator_clip_order,
             creator_request=creator_request,

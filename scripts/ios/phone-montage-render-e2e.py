@@ -2,19 +2,27 @@
 """Prepare the KRI-132 on-device montage-family render check.
 
 Companion to `scripts/ios/phone-photo-render-e2e.py` (KRI-121, guided
-compiler only). That script never touches `app.pipeline.phone_montage_plan
-.compile_phone_montage_plan` -- the SECOND phone compiler, used for
+compiler only). That script never touches `app.pipeline.phone_voiceover_montage_plan
+.compile_phone_voiceover_montage_plan` -- the SECOND phone compiler, used for
 `montage`/`day_vlog`/`single_hero` generative-edit variants (see
 `docs/runbooks/phone-rendering.md`'s "Montage family on the phone" section).
 This script closes that gap the same way: it builds the exact decision/
-binding shapes `tests/pipeline/test_phone_montage_plan.py` uses (`_binding`/
+binding shapes `tests/pipeline/test_phone_voiceover_montage_plan.py` uses (`_binding`/
 `_step`/`fixture`, ~lines 15-101 there), calls the REAL
-`compile_phone_montage_plan` followed by the REAL
+`compile_phone_voiceover_montage_plan` followed by the REAL
 `app.services.phone_rollout.validate_phone_pilot_recipe`, and writes what the
 device receives so `DeviceMontageRenderE2ETests` can render it through the
 production device resolver and exporter on the simulator.
 
-Four cases exercise four distinct compiler branches:
+KRI-220: `compile_phone_voiceover_montage_plan` now writes ONLY voiceover
+montages (the unified planner owns every other phone montage). The three
+voiceover-less cases below (`cuts_text`, `music`, `crossfade`) therefore no
+longer compile through it: this script records them as RETIRED and leaves them
+out of `e2e.json` (their Swift tests skip). Only `narration` still exercises
+this compiler. Re-covering plain montage cuts/crossfade/music on the device is a
+follow-up that must go through the unified (guided) plan instead.
+
+Four cases originally exercised four distinct compiler branches:
   - `cuts_text`   -- plain cuts, preserved original audio, an agent-text intro
                      (basicComposition/positionedText/animatedText).
   - `crossfade`   -- a crossfade transition between two clips, no text/music
@@ -30,7 +38,7 @@ Four cases exercise four distinct compiler branches:
                      clamp (basicComposition/audioMix/narrationAudio).
 
 Three more cases exercise the OTHER two KRI-132 phone compilers -- neither
-goes through `compile_phone_montage_plan` at all:
+goes through `compile_phone_voiceover_montage_plan` at all:
   - `subtitled_sentence` -- `app.pipeline.phone_subtitled_plan
                      .compile_phone_subtitled_plan`: one portrait clip,
                      sentence (`pop-in`) captions with a deliberate gap
@@ -57,8 +65,8 @@ a deliberate gap with no active cue, so `DeviceMontageRenderE2ETests` can
 assert caption pixels appear and disappear without OCR.
 
 `day_vlog`/`single_hero` are deliberately NOT separate cases: read
-`app/pipeline/phone_montage_plan.py` in full -- neither `resolved_archetype`
-nor `edit_format` is referenced anywhere in `compile_phone_montage_plan`.
+`app/pipeline/phone_voiceover_montage_plan.py` in full -- neither `resolved_archetype`
+nor `edit_format` is referenced anywhere in `compile_phone_voiceover_montage_plan`.
 `app/pipeline/generative_decision.py`'s module docstring confirms this is by
 design ("the montage-family renderer itself has no `edit_format` concept ...
 present for forward compatibility with callers that do"). Archetype only
@@ -88,6 +96,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src/apps/api"))
@@ -108,10 +117,10 @@ from app.pipeline.generative_decision import (
     GenerativeVariantDecision,
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
-from app.pipeline.phone_montage_plan import compile_phone_montage_plan
 from app.pipeline.phone_narrated_plan import NarratedPhoneStep, compile_phone_narrated_plan
 from app.pipeline.phone_recipe_shared import PhoneMusicBed, PhoneNarrationBed
 from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+from app.pipeline.phone_voiceover_montage_plan import compile_phone_voiceover_montage_plan
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding
 
@@ -293,12 +302,24 @@ def main() -> None:
 
     bindings = {name: _binding(out / f"{name}.mp4", name) for name in clips}
 
-    recipes: dict[str, object] = {}
+    class _Recipes(dict):
+        """Retired cases have no recipe; hand back an inert stand-in so their (dropped)
+        `e2e.json` entries can still be built before being filtered out below."""
+
+        def __missing__(self, key):
+            return SimpleNamespace(duration=0.0, required_capabilities=set())
+
+    recipes: dict[str, object] = _Recipes()
     compile_errors: dict[str, str] = {}
+    retired_cases: set[str] = set()
 
     def _compile(case_id: str, decision, case_bindings, *, music=None, narration=None) -> None:
+        if narration is None:
+            # KRI-220: voiceover-less montages are the unified planner's, not this compiler's.
+            retired_cases.add(case_id)
+            return
         try:
-            recipes[case_id] = compile_phone_montage_plan(
+            recipes[case_id] = compile_phone_voiceover_montage_plan(
                 decision, case_bindings, music=music, narration=narration
             )
         except (UnsupportedPhonePlan, ValueError) as exc:
@@ -717,6 +738,8 @@ def main() -> None:
             },
         },
     }
+    for retired in retired_cases:
+        e2e["cases"].pop(retired, None)
     (out / "e2e.json").write_text(json.dumps(e2e, indent=2))
 
     print(f"Wrote {out}. Recipes compiled and validated for: {', '.join(recipes)}")

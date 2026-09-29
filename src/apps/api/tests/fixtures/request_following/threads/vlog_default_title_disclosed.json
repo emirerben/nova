@@ -1,0 +1,90 @@
+{
+  "fixture_id": "vlog_default_title_disclosed",
+  "provenance": "authored",
+  "footage": "vlog",
+  "description": "Nothing to title from: the reply must not pass a placeholder off as the creator's.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Give it a title.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "receipt-names-the-source",
+      "kind": "text",
+      "scope": "title",
+      "request_type": "title_described",
+      "checker": "reply_states",
+      "params": {
+        "all_of": [
+          "default title"
+        ],
+        "none_of": [
+          "from (what you|your)"
+        ]
+      },
+      "source": "Give it a title.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "V1",
+          "start_s": 0.0,
+          "end_s": 2.0
+        },
+        {
+          "clip_id": "V2",
+          "start_s": 2.0,
+          "end_s": 5.0
+        },
+        {
+          "clip_id": "V3",
+          "start_s": 5.0,
+          "end_s": 7.0
+        },
+        {
+          "clip_id": "V4",
+          "start_s": 7.0,
+          "end_s": 10.5
+        },
+        {
+          "clip_id": "V5",
+          "start_s": 10.5,
+          "end_s": 13.5
+        },
+        {
+          "clip_id": "V6",
+          "start_s": 13.5,
+          "end_s": 17.0
+        },
+        {
+          "clip_id": "V7",
+          "start_s": 17.0,
+          "end_s": 19.5
+        },
+        {
+          "clip_id": "V8",
+          "start_s": 19.5,
+          "end_s": 22.5
+        }
+      ],
+      "texts": [
+        {
+          "id": "title",
+          "role": "title",
+          "text": "My day",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "font_family": "Inter"
+        }
+      ],
+      "total_duration_s": 22.5
+    },
+    "reply": "I used a plain default title because none was given."
+  }
+}

@@ -689,19 +689,20 @@ def test_bypass_guided_edit_gate_refuses_when_pool_asset_present() -> None:
 
 
 def _seed_phone_montage_with_visuals(
-    monkeypatch, pool: list[tuple[str, str, timedelta]]
+    monkeypatch, pool: list[tuple[str, str, timedelta]], *, phone: bool = True
 ) -> tuple[uuid.UUID, uuid.UUID, dict[str, uuid.UUID]]:
     """Thread 6BF1213E's shape: phone proxies plus Visuals, production flags.
 
     ``pool`` rows are (name, status, created offset from now). Returns the user,
-    the item and the pool row ids by name.
+    the item and the pool row ids by name. ``phone=False`` is an account that
+    renders in the cloud, with uploaded clips instead of phone proxies.
     """
     from tests._prod_profile import apply_prod_profile  # noqa: PLC0415
 
     apply_prod_profile(monkeypatch)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", phone)
     monkeypatch.setattr(settings, "phone_render_user_ids", [])
     monkeypatch.setattr(settings, "kria_runtime_v2_phone_user_ids", [])
-    monkeypatch.setattr(settings, "montage_unified_plan_user_ids", [])
     # Production preflight; a montage has no narration source, so it never asks.
     monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
     monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
@@ -710,7 +711,10 @@ def _seed_phone_montage_with_visuals(
     ids: dict[str, uuid.UUID] = {}
     with sync_session() as s:
         s.get(PlanItem, item_id).clip_gcs_paths = [
-            f"users/{user_id}/creation-threads/t/analysis-proxy-ios-{n}.mp4" for n in range(3)
+            f"users/{user_id}/creation-threads/t/analysis-proxy-ios-{n}.mp4"
+            if phone
+            else f"users/{user_id}/plan/{item_id}/clip-{n}.mp4"
+            for n in range(3)
         ]
         for name, status, offset in pool:
             row = PlanItemAsset(
@@ -833,13 +837,12 @@ def test_v2_phone_montage_waits_while_a_photo_is_still_analysing(monkeypatch) ->
         ([("photo", "ready")], "guided_edit_bypass_unsafe"),
     ],
 )
-def test_the_clip_only_v2_phone_lane_counts_only_the_creators_visuals(
+def test_the_clip_only_cloud_v2_lane_counts_only_the_creators_visuals(
     monkeypatch, pool, outcome
 ) -> None:
     _user_id, item_id, _ids = _seed_phone_montage_with_visuals(
-        monkeypatch, [(name, status, timedelta(minutes=-1)) for name, status in pool]
+        monkeypatch, [(name, status, timedelta(minutes=-1)) for name, status in pool], phone=False
     )
-    monkeypatch.setattr(settings, "montage_unified_plan_enabled", False)
 
     assert _v2_phone_dispatch(item_id).outcome == outcome
 

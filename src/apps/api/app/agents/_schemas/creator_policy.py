@@ -392,7 +392,7 @@ def effective_render_program(
             # render_program == "native"` a few lines after this resolves.
             #
             # The montage-family phone compiler
-            # (`app.pipeline.phone_montage_plan.compile_phone_montage_plan`)
+            # (`app.pipeline.phone_voiceover_montage_plan.compile_phone_voiceover_montage_plan`)
             # only ever binds clip-lane sources bound to the device
             # (`PhoneSourceBinding`) — it has no Visuals-pool asset support
             # at all, unlike the guided-story compiler. An explicit

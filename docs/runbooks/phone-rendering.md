@@ -111,11 +111,11 @@ Enrollment (`phone_rendering_for`) is checked first regardless of format.
 
 `montage`/`day_vlog`/`single_hero` items **without a voiceover** compile
 straight from the analysis proxies: `app.tasks.generative_build
-._run_phone_montage_job` runs the SAME ingest → text agents → style selector
+._run_phone_voiceover_montage_job` runs the SAME ingest → text agents → style selector
 → music matcher → `_resolve_archetype` → `_specs_for_archetype` prework the
 cloud path uses, then hands the top-ranked spec to `_decide_generative_variant`
-(pure — no media I/O) and `app.pipeline.phone_montage_plan
-.compile_phone_montage_plan` (also pure — no media I/O, no DB). The compiler
+(pure — no media I/O) and `app.pipeline.phone_voiceover_montage_plan
+.compile_phone_voiceover_montage_plan` (also pure — no media I/O, no DB). The compiler
 maps each decided `AssemblyStep` to a `TimelineClip` (crossfade/fade-to-black/
 fade-to-white transitions; the on-device refit math shared with the guided
 compiler via `app.pipeline.phone_recipe_shared` when a step's proxy-measured
@@ -249,7 +249,7 @@ branch is reached, mirroring `_dispatch_item_render`'s own
 has_voiceover=True)` (always `False`) and `routes/creator_agent.py`'s
 `bypass_guided_edit_gate = render_program == "native"`. Guarded so nothing
 silently drops creator media: the montage-family phone compiler
-(`compile_phone_montage_plan`) only ever binds clip-lane sources, never
+(`compile_phone_voiceover_montage_plan`) only ever binds clip-lane sources, never
 Visuals-pool ("asset-*") media, so an explicit pool-media selection
 alongside a voiceover fails closed with `PhoneMediaUnavailableError` instead
 of resolving native and dropping it; `media_scope == "all"` with a
@@ -1751,7 +1751,7 @@ existing v1 threads stay v1 in both directions.
 allow_phone_unapproved_montage=True)`. A v2 approval has no approved guided
 proposal, which the phone gate normally requires (`unapproved_guided`). For a
 montage-family format on a covered account the gate lets it through and the
-worker runs `_run_phone_montage_job` (decisions-only, pins the device request,
+worker runs `_run_phone_voiceover_montage_job` (decisions-only, pins the device request,
 `Job.status = awaiting_device`). Any other caller, an uncovered account, or the
 flag off keeps the refusal byte-identically. A refused dispatch records its
 `phone_gate` reason on the execution error (`reason`). Formats that still need
@@ -1797,27 +1797,26 @@ account: new phone thread -> brief -> approve plan -> device render -> chat edit
 
 ## One montage plan on the phone (KRI-190)
 
-`MONTAGE_UNIFIED_PLAN_ENABLED` (or `MONTAGE_UNIFIED_PLAN_USER_IDS`, comma-separated
-or JSON) routes a phone montage-family job with no approved proposal through the
-guided fast-montage plan instead of `_run_phone_montage_job`. Design and decisions:
+Every phone montage-family job with no approved proposal and no recorded voiceover
+goes through the guided fast-montage plan (KRI-220: no flag; the former
+`MONTAGE_UNIFIED_PLAN_ENABLED`/`_USER_IDS` were removed). A montage WITH a recorded
+voiceover runs `_run_phone_voiceover_montage_job`, the only remaining montage writer. Design and decisions:
 `docs/pipelines/kria-agent-runtime.md` ("One montage plan"). The worker needs no
 capability beyond what any guided phone edit with text already needs (`authoredText`
 must be in `PHONE_RENDER_VERIFIED_FEATURES`, since the guided title and label fonts
 are variable fonts); a montage missing it fails as `phone_plan_unsupported`, exactly
 like an approved guided edit would.
 
-**Device check (human).** Allowlist your account, start a phone thread on v2, send
+**Device check (human).** Start a phone thread on v2, send
 one East Run message ("20K from Arnavutköy to Eminönü, name the landmark on each
 clip, in the order I filmed, fast but readable") with clips whose Photos capture
 time/location are on. Expect: clips in filming order, a label on every clip that has
 a place or a landmark, each label on screen for its reading time, the title
 `20K Run · Arnavutköy → Eminönü`, a review message that says what is partial, and a
-working chat text edit afterwards. Compare against the plain lane before the old
-lane is deleted.
+working chat text edit afterwards. Also send a montage WITH a recorded voiceover
+and confirm it still renders through the voiceover writer.
 
-**Rollback.** `fly secrets set MONTAGE_UNIFIED_PLAN_ENABLED=false
-MONTAGE_UNIFIED_PLAN_USER_IDS= --app nova-video` + restart the worker. New jobs use
-the plain lane again; a job already planned keeps its pinned guided plan.
+**Rollback.** No flag; revert the PR. A job already planned keeps its pinned guided plan.
 
 **Visuals in the montage (KRI-217).** Ready Visuals-pool photos (and Visuals
 videos) are spread between the clips and drawn by the device like any guided
@@ -1830,9 +1829,8 @@ montage reply with `python3 scripts/admin.py --prod GET
   prepared."): a creator Visual is `uploaded`/`queued`/`analyzing`. Refresh
   project once it is `ready` (`/admin/plan-items/<item>/debug` → `pool_assets`).
 - `guided_edit_bypass_unsafe` ("I can't put your Visuals into this montage
-  yet."): the lane is clip-only (a cloud-rendered account, or
-  `MONTAGE_UNIFIED_PLAN_*` off for the account) or the phone cannot draw that
-  kind. Removing the Visuals and refreshing renders the videos.
+  yet."): the lane is clip-only (a cloud-rendered account) or the phone cannot
+  draw that kind. Removing the Visuals and refreshing renders the videos.
 
 An abandoned upload reservation (`preparing`, reaped after about 30 minutes) or a
 `failed` Visual never blocks a v2 montage and never reaches the plan.
