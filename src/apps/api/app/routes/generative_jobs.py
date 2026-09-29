@@ -7543,28 +7543,17 @@ def _guided_source_context(assembly: dict, source: dict) -> dict[str, str]:
     return {}
 
 
-def _guided_v2_timeline_projection(
-    job: Job,
-    variant: dict,
-    *,
-    image_preview_paths: dict[str, str] | None = None,
-    sign_url: Callable[[str, int], str] | None = None,
-) -> dict:
-    sign_url = sign_url or _timeline_url_signer()
-    revision = _guided_v2_revision(job, variant)
-    if revision is None:
-        return {
-            "editable": False,
-            "reason": "guided_story_revision_unavailable",
-            "beat_grid": [],
-            "total_duration_s": 0.0,
-            "has_user_edits": False,
-            "slots": [],
-            "clips": [],
-            "edit_wide_look_presets": [],
-        }
-    sources = list(revision.get("sources") or [])
-    source_index = {str(source.get("media_id")): index for index, source in enumerate(sources)}
+def _guided_v2_layouts(
+    job: Job, variant: dict
+) -> tuple[
+    Callable[[dict[str, Any]], Literal["fullscreen", "supporting_card"]],
+    dict[str, Literal["fullscreen", "supporting_card"]],
+]:
+    """Per-segment layout resolver + first-occurrence layout by media id.
+
+    Pure (no I/O, no signing), shared by the public timeline projection and the
+    path-free Kria editor snapshot.
+    """
     execution_plan = (
         job.assembly_plan.get("guided_story_execution_plan")
         if isinstance(job.assembly_plan, dict)
@@ -7608,6 +7597,81 @@ def _guided_v2_timeline_projection(
                     return canonical
         return layout_by_media_id.get(str(segment.get("media_id")), "fullscreen")
 
+    return segment_layout, layout_by_media_id
+
+
+def _guided_v2_slot_rows(
+    revision: dict,
+    segment_layout: Callable[[dict[str, Any]], Literal["fullscreen", "supporting_card"]],
+    *,
+    include_source_path: bool = True,
+) -> list[dict]:
+    """The timeline slots of a guided v2 revision.
+
+    ``include_source_path=False`` yields the unsigned, path-free form the Kria
+    copilot snapshot needs (no ``source_gcs_path``); the public projection keeps
+    it for the browser editor.
+    """
+    sources = list(revision.get("sources") or [])
+    source_index = {str(source.get("media_id")): index for index, source in enumerate(sources)}
+    slots: list[dict] = []
+    for order, segment in enumerate(revision.get("segments") or []):
+        media_id = str(segment.get("media_id"))
+        source = sources[source_index[media_id]] if media_id in source_index else {}
+        slots.append(
+            {
+                "slot_id": segment.get("segment_id"),
+                "segment_id": segment.get("segment_id"),
+                "parent_segment_id": segment.get("parent_segment_id"),
+                "clip_index": source_index.get(media_id),
+                **({"source_gcs_path": source.get("gcs_path")} if include_source_path else {}),
+                "source_duration_s": source.get("duration_s"),
+                "in_s": segment.get("source_start_s"),
+                "duration_s": segment.get("duration_s"),
+                **({"source_crop": segment["source_crop"]} if segment.get("source_crop") else {}),
+                **(
+                    {"playback_rate": segment["playback_rate"]}
+                    if segment.get("playback_rate") is not None
+                    else {}
+                ),
+                "duration_beats": None,
+                "output_start_s": segment.get("output_start_s"),
+                "output_end_s": segment.get("output_end_s"),
+                "order": order,
+                "removed": False,
+                "transition_after": segment.get("transition_after", "cut"),
+                "transition_duration_s": segment.get("transition_duration_s"),
+                "look_preset": normalize_look_preset(segment.get("look_preset")),
+                "look_adjustments": segment.get("look_adjustments"),
+                "layout": segment_layout(segment),
+            }
+        )
+    return slots
+
+
+def _guided_v2_timeline_projection(
+    job: Job,
+    variant: dict,
+    *,
+    image_preview_paths: dict[str, str] | None = None,
+    sign_url: Callable[[str, int], str] | None = None,
+) -> dict:
+    sign_url = sign_url or _timeline_url_signer()
+    revision = _guided_v2_revision(job, variant)
+    if revision is None:
+        return {
+            "editable": False,
+            "reason": "guided_story_revision_unavailable",
+            "beat_grid": [],
+            "total_duration_s": 0.0,
+            "has_user_edits": False,
+            "slots": [],
+            "clips": [],
+            "edit_wide_look_presets": [],
+        }
+    sources = list(revision.get("sources") or [])
+    segment_layout, layout_by_media_id = _guided_v2_layouts(job, variant)
+
     # A source row has no occurrence identity. Use its first timeline
     # occurrence for add-source defaults while slots below retain their own
     # per-segment layout.
@@ -7646,38 +7710,7 @@ def _guided_v2_timeline_projection(
                 "context": _guided_source_context(job.assembly_plan or {}, source),
             }
         )
-    slots: list[dict] = []
-    for order, segment in enumerate(revision.get("segments") or []):
-        media_id = str(segment.get("media_id"))
-        source = sources[source_index[media_id]] if media_id in source_index else {}
-        slots.append(
-            {
-                "slot_id": segment.get("segment_id"),
-                "segment_id": segment.get("segment_id"),
-                "parent_segment_id": segment.get("parent_segment_id"),
-                "clip_index": source_index.get(media_id),
-                "source_gcs_path": source.get("gcs_path"),
-                "source_duration_s": source.get("duration_s"),
-                "in_s": segment.get("source_start_s"),
-                "duration_s": segment.get("duration_s"),
-                **({"source_crop": segment["source_crop"]} if segment.get("source_crop") else {}),
-                **(
-                    {"playback_rate": segment["playback_rate"]}
-                    if segment.get("playback_rate") is not None
-                    else {}
-                ),
-                "duration_beats": None,
-                "output_start_s": segment.get("output_start_s"),
-                "output_end_s": segment.get("output_end_s"),
-                "order": order,
-                "removed": False,
-                "transition_after": segment.get("transition_after", "cut"),
-                "transition_duration_s": segment.get("transition_duration_s"),
-                "look_preset": normalize_look_preset(segment.get("look_preset")),
-                "look_adjustments": segment.get("look_adjustments"),
-                "layout": segment_layout(segment),
-            }
-        )
+    slots = _guided_v2_slot_rows(revision, segment_layout)
     total = max((float(row.get("output_end_s") or 0.0) for row in slots), default=0.0)
     writable = bool(getattr(settings, "guided_story_editor_v2_enabled", False))
     return {
