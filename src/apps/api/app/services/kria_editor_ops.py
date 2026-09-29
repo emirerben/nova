@@ -21,6 +21,7 @@ from typing import Any
 from app.agents._schemas.text_element import _ALLOWED_FONTS
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
+    EditorCommitBackgroundMusic,
     EditorCommitCaptionMeta,
     EditorCommitMix,
     EditorCommitRequest,
@@ -307,6 +308,28 @@ def _music_operation_editable(caps: dict[str, Any], key: str) -> bool:
     if isinstance(value, dict):
         return value.get("editable") is True
     return value is True
+
+
+def _background_bed(
+    caps: dict[str, Any], variant: dict[str, Any], *, guided_native: bool
+) -> dict[str, Any] | None:
+    """The adjustable smart background bed, or None when not gain-editable.
+
+    Mirrors the commit route: `background_music` is a full-replacement section
+    that needs the `background_music` capability and an existing treatment
+    (guided-story v2 rejects the section outright).
+    """
+    treatment = variant.get("smart_music_treatment")
+    if guided_native or caps.get("background_music") is not True or not isinstance(treatment, dict):
+        return None
+    track_id = treatment.get("track_id")
+    if not isinstance(track_id, str) or not track_id:
+        return None
+    try:
+        gain_db = float(treatment.get("gain_db", -18.0))
+    except (TypeError, ValueError):
+        gain_db = -18.0
+    return {"track_id": track_id, "gain_db": round(gain_db, 2)}
 
 
 def _music_removable(caps: dict[str, Any], current_track_id: str | None) -> bool:
@@ -663,6 +686,14 @@ def build_editor_snapshot(
             "candidates": [],
         }
         snapshot["mix"] = {"music_level": variant.get("mix")}
+        # KRI-219 Lane C: audio controls the parser gates on. Device-only /
+        # bed-only keys are omitted elsewhere so other snapshots stay identical.
+        if variant.get("render_destination") == "device":
+            snapshot["render_destination"] = "device"
+            snapshot["mix"]["original_level"] = variant.get("original_audio_level")
+        bed = _background_bed(caps, variant, guided_native=_is_guided_native(job, variant))
+        if bed is not None:
+            snapshot["mix"]["background_music"] = bed
     if "sfx" in snapshot["allowed_op_families"]:
         placements = [row for row in variant.get("sound_effects") or [] if isinstance(row, dict)]
         snapshot["sfx"] = {
@@ -686,7 +717,9 @@ def build_editor_snapshot(
             # always fails closed as a clarification — it never reaches
             # compile_editor_ops. patch_sfx/remove_sfx on existing
             # placements work fully without a catalog.
-            "catalog": [],
+            # Built by the async planner (it owns the DB read) and passed in
+            # via clip_context; empty => add_sfx fails closed in the parser.
+            "catalog": list(clip_context.get("sfx_catalog") or []),
         }
     if "effect" in snapshot["allowed_op_families"]:
         snapshot["camera_effects"] = [
@@ -1007,6 +1040,9 @@ class _DraftState:
     changes: list[str] = field(default_factory=list)
     caption_patch: dict[str, Any] = field(default_factory=dict)
     mix_level: float | None = None
+    original_level: float | None = None
+    music_gain_db: float | None = None
+    background_track_id: str | None = None
     remove_music: bool = False
     music_track_id: str | None = None
     title: str | None = None
@@ -1510,7 +1546,26 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
             EditorCommitCaptionMeta(**state.caption_patch) if "caption_meta" in changed else None
         ),
         timeline_slots=_timeline_models(state.slots) if "timeline" in changed else None,
-        mix=EditorCommitMix(music_level=state.mix_level) if "mix" in changed else None,
+        mix=(
+            EditorCommitMix(
+                music_level=state.mix_level,
+                **(
+                    {"original_level": state.original_level}
+                    if state.original_level is not None
+                    else {}
+                ),
+            )
+            if "mix" in changed
+            and (state.mix_level is not None or state.original_level is not None)
+            else None
+        ),
+        background_music=(
+            EditorCommitBackgroundMusic(
+                track_id=state.background_track_id, gain_db=state.music_gain_db
+            )
+            if state.music_gain_db is not None
+            else None
+        ),
         music_track_id=state.music_track_id,
         remove_music=state.remove_music,
         title=state.title,
