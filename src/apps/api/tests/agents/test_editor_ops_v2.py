@@ -24,7 +24,7 @@ from tests.services.test_kria_editor_ops import _job, _variant
 
 
 def test_prompt_version_pinned() -> None:
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-29-v49"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-29-v51"
 
 
 def test_op_cap_is_a_single_shared_constant() -> None:
@@ -41,6 +41,12 @@ def test_lane_specs_are_wellformed() -> None:
     new = [s.name for s in specs if s.coerce is not None]
     assert len(new) == len(set(new)), "two lanes declared the same new op"
     assert all(s.family for s in specs if s.coerce is not None)
+
+
+def test_timeline_lane_registers_its_specs_and_fragment() -> None:
+    names = {spec.name for spec in editor_ops_v2.lane_specs()}
+    assert {"patch_slots", "set_total_duration"} <= names
+    assert "patch_slots" in editor_ops_v2.prompt_fragments()
 
 
 def _snapshot(**extra) -> dict:

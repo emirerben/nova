@@ -7885,3 +7885,69 @@ def test_cloud_guided_story_still_requires_every_approved_text_id() -> None:
     gj._require_guided_story_text_ids(variant, [element])
     with pytest.raises(HTTPException):
         gj._require_guided_story_text_ids(variant, [])
+
+
+def test_guided_timeline_commit_with_rebased_labels_has_no_tombstones_and_renders(
+    monkeypatch,
+) -> None:
+    """KRI-219 Lane B: copilot reorder + rebased labels commit as authored text.
+
+    The compiled payload carries `timeline_slots` AND the rebased `text_elements`,
+    so the server skips its own projection: no label is tombstoned, the labels sit
+    on the moved segments, and the render generation is bumped.
+    """
+    import app.services.kria_editor_ops as kria_ops
+    from app.config import settings
+    from app.services.kria_editor_ops import compile_editor_ops
+    from tests.services._guided_timeline_fixtures import guided_bars, guided_revision
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "edit_transitions_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "kria_guided_timeline_ops", True, raising=False)
+    job = _job(resolved_archetype="guided_story")
+    variant = job.assembly_plan["variants"][0]
+    variant.pop("ai_timeline")
+    bars = guided_bars(guided_revision(str(job.id)))
+    revision = guided_revision(str(job.id), text_elements=copy.deepcopy(bars))
+    variant["text_elements"] = copy.deepcopy(revision["text_elements"])
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_a: revision)
+    monkeypatch.setattr(kria_ops, "_guided_v2_revision", lambda *_a: revision)
+    monkeypatch.setattr(
+        kria_ops,
+        "_editor_capabilities",
+        lambda _j, _v: {
+            "text_elements": True,
+            "timeline": True,
+            "clips": {"transitions": {"editable": True}},
+        },
+    )
+    before_generation = (
+        variant["render_generation_id"] if "render_generation_id" in variant else None
+    )
+
+    compiled = compile_editor_ops(
+        job, variant, [{"op": "reorder_clip", "from_index": 2, "to_index": 0}]
+    )
+    payload = compiled.payload
+    assert payload.timeline_slots is not None and payload.text_elements is not None
+    payload.guided_revision_number = revision["revision_number"]
+
+    prep = gj.prepare_editor_commit(job, "song_text", payload)
+
+    saved = job.assembly_plan["variants"][0]["guided_edit_revision"]
+    assert prep["guided_revision_render"] is True
+    assert [row for row in saved["tombstones"] if row.get("lane") == "text_elements"] == []
+    by_id = {row["id"]: row for row in saved["text_elements"]}
+    assert (by_id["clip-label-media-m2"]["start_s"], by_id["clip-label-media-m2"]["end_s"]) == (
+        0.0,
+        2.0,
+    )
+    by_media = {segment["media_id"]: segment for segment in saved["segments"]}
+    for media_id, segment in by_media.items():
+        label = by_id[f"clip-label-media-{media_id}"]
+        assert label["start_s"] == pytest.approx(segment["output_start_s"], abs=1e-3)
+        assert label["end_s"] == pytest.approx(segment["output_end_s"], abs=1e-3)
+    new_generation = job.assembly_plan["variants"][0]["render_generation_id"]
+    assert new_generation and new_generation != before_generation
+    assert saved["revision_number"] == revision["revision_number"] + 1

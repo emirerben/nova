@@ -1319,6 +1319,15 @@ class Settings(BaseSettings):
             "groups."
         ),
     )
+    kria_guided_timeline_ops: bool = Field(
+        default=False,
+        description=(
+            "KRI-219: let the Kria chat copilot reorder/trim/retime/split/remove clips and "
+            "set transitions on guided-native (story) variants. Per-clip label bars follow "
+            "their segment through the edit (services/kria_editor_timeline.py). Off keeps "
+            "guided variants text-only in chat, byte-identical to before."
+        ),
+    )
     guided_story_editor_v2_enabled: bool = Field(
         default=False,
         description=(

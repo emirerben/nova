@@ -419,7 +419,7 @@ def _complete_draft_turn(
             ):
                 raise RuntimeError("Save the current draft before applying speech processing")
             compiled = compile_editor_ops(
-                job, project_editor_draft(variant, prior_payload), arguments.operations
+                job, project_editor_draft(variant, prior_payload, job), arguments.operations
             )
             changes = compiled.changes
             document = KriaDraftDocument(

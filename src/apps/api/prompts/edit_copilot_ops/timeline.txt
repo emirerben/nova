@@ -1,0 +1,24 @@
+TIMELINE BULK OPERATIONS (server draft only). Two extra operations cover whole-edit asks. PREFER THEM over one op per clip whenever the request touches several clips or the total length.
+
+- patch_slots: {"op":"patch_slots","selector":{...},"patch":{...}}
+  selector: EXACTLY ONE of {"all":true} | {"slot_indexes":[0,2]} | {"clip_ids":["m1"]} (a slot's media_id) | {"media_kind":"video"|"image"}. Indices are the `slots` indices shown in CURRENT DRAFT; removed slots are skipped.
+  patch (any of): "duration_s" (seconds, 0.1 or more), "in_s" (where in the source the clip starts), "playback_rate" (0.25-4; 2 = twice as fast; the same footage plays, so the clip gets shorter), "look_preset" (none|stadium_diffusion|olive_film|smoky_split_tone|golden_hour|faded_analog), "transition_after" (cut|crossfade|dip_to_black|flash) with optional "transition_duration_s" (0.1-0.3), "source_crop" ({"x","y","width","height"} all 0-1, staying inside the frame), "removed": true. The last clip never gets a transition; it is ignored there.
+  Speed, look and crop are only offered when the edit supports them; if a change is refused, say so plainly.
+- set_total_duration: {"op":"set_total_duration","target_s":20,"strategy":"proportional"}
+  Retargets the WHOLE edit's length in seconds (transition overlaps included). strategy: "proportional" (default: every clip scaled, longer clips stay longer), "uniform" (equal clip lengths), "trim_tail" (keep clip lengths, shorten or drop clips from the END, or lengthen the last clips). A clip can never run past its source footage, so a target longer than the footage allows is refused with the longest possible length: tell the user that number and offer it.
+  Use it for "make it N seconds", "shorten it to N", "make it longer". Do not combine it with per-clip duration ops in the same reply.
+
+On story edits, each clip's label (text bar linked to a clip) follows its clip automatically through reorder, trim, split, retime and remove: do NOT re-time labels yourself with set_text_timing after a timeline op. A removed clip's label is removed with it (the change list says so). Titles stay at the start; closing text stays at the end. You may combine edit_text/patch_text_style with timeline ops, but never timing ops on text.
+
+Examples (JSON ops only):
+- "make it 20 seconds" -> {"op":"set_total_duration","target_s":20,"strategy":"proportional"}
+- "videoyu 15 saniyeye indir" -> {"op":"set_total_duration","target_s":15,"strategy":"proportional"}
+- "keep every clip the same length, 12 seconds total" -> {"op":"set_total_duration","target_s":12,"strategy":"uniform"}
+- "all clips 2 seconds" -> {"op":"patch_slots","selector":{"all":true},"patch":{"duration_s":2}}
+- "speed up clip 2" (slot index 1) -> {"op":"patch_slots","selector":{"slot_indexes":[1]},"patch":{"playback_rate":2}}
+- "crossfade between every clip" -> {"op":"patch_slots","selector":{"all":true},"patch":{"transition_after":"crossfade","transition_duration_s":0.3}}
+- "move the bridge shot first" (the slot whose moment mentions the bridge is index 3) -> {"op":"reorder_clip","from_index":3,"to_index":0}
+- "cut the first 2 seconds" -> {"op":"trim_output_start","start_s":2}
+- "remove clip 4" (slot index 3) -> {"op":"remove_clip","slot_index":3}
+- "ilk klibi kaldir" (remove the first clip) -> {"op":"remove_clip","slot_index":0}
+- "give the photos a golden hour look" -> {"op":"patch_slots","selector":{"media_kind":"image"},"patch":{"look_preset":"golden_hour"}}
