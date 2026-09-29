@@ -271,6 +271,10 @@ private struct CreationWorkspaceView: View {
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @FocusState private var composerFocused: Bool
     @State private var prompt = ""
+    /// KRI-207: requirement names for the receipt chips; loaded once a reply carries receipts.
+    @State private var briefRequirements: [String: CreativeBriefRequirement] = [:]
+    /// The brief loaded (or, after one retry, definitively failed): chips can show their final titles.
+    @State private var briefSettled = false
     @State private var events: [ThreadEvent] = []
     @State private var initialConversationLoaded = false
     @State private var pendingMessages: [ChatPendingMessage] = []
@@ -408,6 +412,11 @@ private struct CreationWorkspaceView: View {
         )
     }
 
+    /// The newest reply that carries requirement receipts; a new one means the brief may have changed.
+    private var latestReceiptEventID: String? {
+        events.last { $0.payload?["requirement_receipts"] != nil }?.id
+    }
+
     private var timelineUpdateToken: String {
         timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
     }
@@ -432,7 +441,15 @@ private struct CreationWorkspaceView: View {
         switch entry.content {
         case .message(let message):
             ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } },
-                           responseStartedAt: responsePresentation.startTime(for: message.id))
+                           responseStartedAt: responsePresentation.startTime(for: message.id),
+                           requirements: briefRequirements,
+                           briefSettled: briefSettled,
+                           onCorrectGuess: { label in
+                               // One tap: the sentence is started (after whatever the creator already
+                               // typed), the keyboard is up, and only the right name is left to type.
+                               prompt = label.correctionDraft(appendingTo: prompt)
+                               composerFocused = true
+                           })
                 .id(entry.id)
         case .stage:
             stageContent.id(entry.id)
@@ -604,6 +621,20 @@ private struct CreationWorkspaceView: View {
         .onReceive(model.uploads.$inFlight) { uploadInFlight = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$failures) { uploadFailures = $0 }
+        .task(id: latestReceiptEventID) {
+            guard latestReceiptEventID != nil else { return }
+            // One retry, then settle either way: a failed fetch leaves neutral titles, not bare chips
+            // that wait forever. Titles already learned are kept, so an older reply keeps its wording
+            // when a newer brief drops that requirement.
+            var brief = try? await model.api.creationBrief(threadID: project.id)
+            if brief == nil, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                brief = try? await model.api.creationBrief(threadID: project.id)
+            }
+            guard !Task.isCancelled else { return }
+            if let brief { briefRequirements.merge(brief.requirementsByID) { _, new in new } }
+            briefSettled = true
+        }
         #if DEBUG
         // KRI-211 fixtures: `1` = one file that couldn't be read; `record` = an upload that failed on
         // the way and still has its record (Retry). Neither may block Send.
@@ -877,6 +908,7 @@ private struct CreationWorkspaceView: View {
         // Generic creator runtime has no slide proposal/create tools.
         guard selectedFormat != .slides else { return }
         guard !isSending, !isActing, !isThinking,
+              !ChatSubmission.isBareCorrectionStub(submittedMessage ?? prompt),
               let message = ChatSubmission.message(
                 text: submittedMessage ?? prompt, readyMediaCount: readyMediaCount,
                 pendingUploadCount: pendingUploadCount
@@ -1450,6 +1482,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     /// the question, so a hand-typed paraphrase never resolves it.
     var options: [String] = []
     var recommendedOption: String? = nil
+    /// KRI-207: one outcome per requirement in the creator's brief, from the event that carried them.
+    var receipts: [RequirementReceiptItem] = []
 
     static func syntheticUser(_ content: String) -> Self {
         Self(id: "synthetic-\(content)", role: .user, content: content)
@@ -1490,7 +1524,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             recommendedOption = event.payload?["recommended_option"]?.stringValue
         }
-        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption)
+        let receipts = role == .assistant ? RequirementReceiptItem.parse(payload: event.payload) : []
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts)
     }
 }
 

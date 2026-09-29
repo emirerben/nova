@@ -168,6 +168,12 @@ struct ChatMessageRow: View {
     let message: ChatTranscriptMessage
     var onSelectOption: ((String) -> Void)? = nil
     var responseStartedAt: Date? = nil
+    /// KRI-207: names for the receipt chips, keyed by requirement id (the brief, once loaded).
+    var requirements: [String: CreativeBriefRequirement] = [:]
+    /// The brief has loaded, or its fetch definitively failed; until then the chips wait.
+    var briefSettled = false
+    /// Starts a correction for a guessed name; nil hides the "Guessed names" row.
+    var onCorrectGuess: ((InferredLabel) -> Void)? = nil
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -217,6 +223,9 @@ struct ChatMessageRow: View {
                         recommendedOption: message.recommendedOption,
                         select: onSelectOption
                     )
+                }
+                if !message.receipts.isEmpty {
+                    RequirementChipsView(receipts: message.receipts, requirements: requirements, titlesReady: briefSettled, correct: onCorrectGuess)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1091,6 +1100,7 @@ struct ChatComposer: View {
 
     private var canSend: Bool {
         (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || canSendWithoutText) && !isSending && !blocksSubmission
+            && !ChatSubmission.isBareCorrectionStub(text)
     }
 
     var body: some View {
