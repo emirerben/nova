@@ -172,7 +172,7 @@ def test_dry_run_surfaces_compile_error(monkeypatch) -> None:
 
 def test_main_refuses_non_local_database(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.config.settings.database_url", "postgresql://u:p@prod-db.example.com:5432/nova"
+        "app.config.settings.database_url", "postgresql://u@prod-db.example.com:5432/nova"
     )
     with pytest.raises(SystemExit, match="Refusing"):
         kria_ask.main(["--thread", THREAD, "hello"])
@@ -231,7 +231,7 @@ def test_seed_guided_fixture_is_guided_native_with_repeated_places(monkeypatch) 
 
 def _commit_env(monkeypatch, *, redis: str, provider: str) -> None:
     monkeypatch.setattr(
-        "app.config.settings.database_url", "postgresql://u:p@localhost:5432/nova_dev"
+        "app.config.settings.database_url", "postgresql://u@localhost:5432/nova_dev"
     )
     monkeypatch.setattr("app.config.settings.redis_url", redis)
     monkeypatch.setattr("app.config.settings.storage_provider", provider)
