@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.5.0] - 2026-09-29
+
+### Changed
+- feat(ios): originals-missing editor state, failed attach never blocks Send, flaky text test (KRI-211, KRI-213) (#1256) <!-- release-pr: 1256 -->
+
 ## [0.77.4.0] - 2026-09-29
 
 ### Changed
