@@ -2376,6 +2376,17 @@ private struct NativeTimelineBar: View {
     let onTrimEnd: () -> Void
     var onDragXChange: ((CGFloat) -> Void)? = nil
     @State private var isMoving = false
+    /// Global x of the finger when the long press was recognized. The move is
+    /// measured from here, not from the sequenced drag's `translation`: SwiftUI
+    /// starts that drag at the first touch sample it handles after the press
+    /// is recognized, so `translation` drops the travel before that sample.
+    /// Selecting the block at recognition keeps the main thread busy for a
+    /// moment, and a quick drag can arrive as one coalesced sample and lose
+    /// all of its travel.
+    @State private var moveAnchorX: CGFloat?
+    /// The finger's global x at touch-down and at its latest sample, seen from
+    /// the start of the touch so `moveAnchorX` is known at recognition.
+    @GestureState private var touchX: (down: CGFloat, latest: CGFloat)?
     @GestureState private var moveGestureActive = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -2425,20 +2436,32 @@ private struct NativeTimelineBar: View {
                 onMoveStart(); onMoveChange(1); onMoveEnd()
             }
             .simultaneousGesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .updating($touchX) { value, touch, _ in touch = (value.startLocation.x, value.location.x) }
+            )
+            .simultaneousGesture(
                 LongPressGesture(minimumDuration: 0.45, maximumDistance: 8)
                     .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
                     .updating($moveGestureActive) { _, active, _ in active = true }
                     .onChanged { value in
                         guard canMove, case .second(true, let drag) = value else { return }
-                        if !isMoving { isMoving = true; onMoveStart() }
+                        if !isMoving {
+                            isMoving = true
+                            // A recognition that arrives with a drag sample may
+                            // already count it in `latest`; touch-down can't.
+                            moveAnchorX = drag == nil ? touchX?.latest : touchX?.down
+                            onMoveStart()
+                        }
                         if let drag {
-                            onMoveChange(TimeInterval(drag.translation.width / max(1, pixelsPerSecond)))
+                            let travel = drag.location.x - (moveAnchorX ?? drag.startLocation.x)
+                            onMoveChange(TimeInterval(travel / max(1, pixelsPerSecond)))
                             onDragXChange?(drag.location.x)
                         }
                     }
                     .onEnded { _ in
                         if isMoving { onMoveEnd() }
                         isMoving = false
+                        moveAnchorX = nil
                     }
             )
 
@@ -2481,6 +2504,7 @@ private struct NativeTimelineBar: View {
         .onChange(of: moveGestureActive) { _, active in
             if !active && isMoving {
                 isMoving = false
+                moveAnchorX = nil
                 onMoveEnd()
             }
         }
