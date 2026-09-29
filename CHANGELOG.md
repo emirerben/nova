@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.10.0] - 2026-09-29
+
+### Changed
+- fix(evals): edit_copilot v48 phone-restyle regression + KRI-221 live rerun (#1270) <!-- release-pr: 1270 -->
+
 ## [0.77.9.0] - 2026-09-29
 
 ### Changed
