@@ -313,4 +313,56 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(playing(), "job-b.mp4", "old job's video must not stay on screen")
         XCTAssertFalse(session.needsReload(for: project(jobB, revision: 26)))
     }
+
+    private func replanFixture(manualEdit: Bool) async -> (NativeEditorSession, EditorCommitSpy, ProjectSummary, UUID) {
+        let jobA = UUID(uuidString: Self.jobID)!, jobB = UUID(), threadID = UUID()
+        func project(_ job: UUID, revision: Int) -> ProjectSummary {
+            ProjectSummary(id: threadID, title: "Chat", status: .ready, updatedAt: .now, posterURL: nil,
+                outputVariantID: "initial", runtimeVersion: 2, serverRevision: revision, activeJobID: job, activePlanItemID: "item")
+        }
+        var variantA = Self.variant(generation: "g1"); variantA["output_url"] = .string("https://example.com/job-a.mp4")
+        let fake = EditorCommitSpy(draftSnapshot: Self.chatSnapshot(shape: .flatOnly), authoritativeVariant: variantA)
+        let session = NativeEditorSession(project: project(jobA, revision: 5))
+        await session.load(project: project(jobA, revision: 5), api: fake)
+        if manualEdit { session.setClipTiming(clipID: "s1", durationS: 1.1) }
+        // Re-plan finished as a NEW job with its own generation.
+        var variantB = Self.variant(generation: "gNew"); variantB["output_url"] = .string("https://example.com/job-b.mp4")
+        fake.authoritativeVariant = variantB
+        fake.draftSnapshot = DraftSnapshot(draftID: "n", itemID: "item", variantKey: "initial", draftRevision: 1, snapshotHash: "h", etag: "e",
+            baseJobID: jobB.uuidString, baseGenerationID: "gNew", snapshot: [:], canUndo: false, createdAt: .now)
+        return (session, fake, project(jobB, revision: 9), jobB)
+    }
+
+    func testReplanWithOnlyChatStagedEditsSwitchesToTheNewJobWithoutCommitting() async throws {
+        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: false)
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        await session.adoptLatestJob(newProject, api: fake)
+        XCTAssertEqual(fake.commitCount, 0)
+        XCTAssertNil(session.newerJobPrompt)
+        XCTAssertFalse(session.hasUnsavedChanges, "obsolete staged edits dropped")
+        XCTAssertEqual(session.document.textElements.first?.text, "hello")
+        XCTAssertEqual(fake.editorVariantJobIDs.last, jobB)
+        XCTAssertEqual((session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent, "job-b.mp4")
+        // The old draft (or a re-sync) must not re-stage.
+        await session.synchronizePromptRevision()
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    func testReplanWithManualEditsPromptsThenSwitchDiscardsAndKeepEditingStays() async throws {
+        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: true)
+        await session.adoptLatestJob(newProject, api: fake)
+        XCTAssertEqual(session.newerJobPrompt, newProject)
+        XCTAssertTrue(session.hasUnsavedChanges, "no silent switch or discard")
+        XCTAssertNotEqual(fake.editorVariantJobIDs.last, jobB)
+        session.keepEditingCurrentJob()
+        XCTAssertNil(session.newerJobPrompt)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        await session.adoptLatestJob(newProject, api: fake)
+        XCTAssertNotNil(session.newerJobPrompt)
+        await session.switchToLatestJob(newProject, api: fake)
+        XCTAssertNil(session.newerJobPrompt)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(fake.editorVariantJobIDs.last, jobB)
+        XCTAssertEqual(fake.commitCount, 0)
+    }
 }

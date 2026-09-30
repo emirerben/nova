@@ -159,8 +159,25 @@ struct NativeEditorView: View {
             // Sending from the conversation sheet must not dismiss it (only the
             // creator closes it); `conversationAcceptedID` is intentionally unused here.
             // A re-plan can finish as a NEW job while this editor is open: show it.
-            .onChange(of: project.activeJobID) { _, _ in
-                Task { if !session.hasUnsavedChanges { await loadEditor() } }
+            .onChange(of: project.activeJobID) { _, _ in Task { await loadEditor() } }
+            .safeAreaInset(edge: .top) {
+                if let newer = session.newerJobPrompt {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("A new version of your video is ready")
+                            .font(KriaFont.body().weight(.semibold))
+                        Text("Switching discards your unsaved edits.")
+                            .font(.footnote)
+                        HStack {
+                            Button("Switch") { Task { await session.switchToLatestJob(newer, api: model.api) } }
+                                .accessibilityIdentifier("native-editor-switch-job")
+                            Button("Keep editing") { session.keepEditingCurrentJob() }
+                                .accessibilityIdentifier("native-editor-keep-editing")
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(KriaColor.paper)
+                }
             }
             .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.removeSharedFile) {
                 if let file = exporter.sharedFile { ShareSheetView(url: file) }
@@ -633,6 +650,10 @@ struct NativeEditorView: View {
         #endif
         session.useDeviceRendering(model.deviceRenders)
         session.useMediaUploads(model.uploads)
+        if session.isBehindActiveJob(project) {
+            await session.adoptLatestJob(project, api: model.api)
+            return
+        }
         guard session.needsReload(for: project) else {
             // Already loaded: a chat draft may have landed while this tab was hidden.
             if project.runtimeVersion == 2 { await session.synchronizePromptRevision() }

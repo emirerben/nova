@@ -1150,6 +1150,8 @@ struct NativeEditorTemporaryVideo {
             let nextVariantKey = snapshot.variantKey
             let nextDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: variant)
             let sameTarget = nextJobID == jobID && nextVariantKey == variantKey && snapshot.itemID == itemID
+            // A different job needs its video reloaded: adoptLatestJob owns that.
+            if conversationRuntimeVersion == 2, nextJobID != jobID { return }
             if conversationRuntimeVersion == 1, sameTarget, nextDraft.serverSnapshot == legacyPromptSnapshot,
                sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled {
                 if let previous = saveStateBeforePromptFailure { saveState = previous }
@@ -1272,6 +1274,36 @@ struct NativeEditorTemporaryVideo {
             installPlayer(url: url, preferredDuration: authoritativeDuration)
         }
     }
+
+    /// A newer render job than the one loaded is waiting on a manual-edit decision.
+    @Published private(set) var newerJobPrompt: ProjectSummary?
+
+    func isBehindActiveJob(_ project: ProjectSummary) -> Bool {
+        guard loadState == .loaded, let target = project.activeJobID, let jobID else { return false }
+        return target != jobID
+    }
+
+    /// The thread's active job changed (a re-plan rendered a new video). Edits
+    /// staged from chat belong to the old job and are obsolete, so they are
+    /// dropped and the new job loads automatically. The creator's own unsaved
+    /// edits are never discarded silently: they raise `newerJobPrompt` instead.
+    func adoptLatestJob(_ project: ProjectSummary, api: any KriaAPIClient) async {
+        guard isBehindActiveJob(project), !isSaving else { return }
+        if hasUnsavedChanges, !hasOnlyChatStagedChanges {
+            newerJobPrompt = project
+            return
+        }
+        await switchToLatestJob(project, api: api)
+    }
+
+    /// Switch now; discards any unsaved edits (caller has decided).
+    func switchToLatestJob(_ project: ProjectSummary, api: any KriaAPIClient) async {
+        newerJobPrompt = nil
+        await load(project: project, api: api)
+        await refreshDeviceRender()
+    }
+
+    func keepEditingCurrentJob() { newerJobPrompt = nil }
 
     /// The thread now points at a different render job: the old job's player,
     /// source composition and device-render identity must not keep showing.
