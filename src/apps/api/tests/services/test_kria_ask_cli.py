@@ -66,10 +66,10 @@ def test_parse_args_rejects_bad_combinations(argv) -> None:  # noqa: ANN001
         parse_args(argv)
 
 
-def test_battery_file_is_the_39_ask_set() -> None:
+def test_battery_file_is_the_40_ask_set() -> None:
     cases = load_battery(BATTERY)
-    assert len(cases) == 39
-    assert len({c.id for c in cases}) == 39
+    assert len(cases) == 40
+    assert len({c.id for c in cases}) == 40
     assert {op for c in cases for op in c.expect_ops} <= V2_OPS
     assert any("ö" in c.ask or "ı" in c.ask for c in cases)  # Turkish present
 

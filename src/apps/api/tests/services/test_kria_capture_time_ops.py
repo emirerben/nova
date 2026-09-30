@@ -736,3 +736,46 @@ def test_zone_note_survives_the_canned_success_reply(guided) -> None:
     assert "Europe/Istanbul" in reply and "No filming time for clip 3" in reply
     phone = _phone_editor_reply(reply)
     assert phone.startswith("Updated your edit") and "Europe/Istanbul" in phone
+
+
+# ── descriptive captions are never answered with place names (KRI-219) ───────
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Add a text to each clip explaining the part of the wedding (could be airport pickup)",
+        "write what is happening in each clip",
+        "her klibe düğünün hangi bölümü olduğunu yaz",
+    ],
+)
+def test_descriptive_caption_ask_is_a_clarification_not_place_names(guided, utterance) -> None:
+    job, variant, _rev = guided
+    out = EditCopilotAgent(ModelClient()).parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [{"op": "label_each_clip", "source": "facts"}],
+                "confidence": 0.9,
+                "reply": "Done, labelled every clip.",
+                "suggestions": [],
+                "needs_clarification": False,
+            }
+        ),
+        EditCopilotInput(
+            utterance=utterance, prior_turns=[], variant_snapshot=_snapshot(job, variant)
+        ),
+    )
+    assert out.ops == [] and out.outcome == "clarification"
+    assert "Tell me what each clip is" in out.reply and "Done" not in out.reply
+
+
+def test_place_label_asks_are_not_caught_by_the_guard(guided) -> None:
+    job, variant, _rev = guided
+    out = _parse(
+        _snapshot(job, variant),
+        [{"op": "label_each_clip", "source": "facts"}],
+        utterance="label each clip with its place name",
+    )
+    assert out.ops or out.rejection_reasons  # reached the normal label path
+    assert "Tell me what each clip is" not in out.reply

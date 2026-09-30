@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-30-v57"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-30-v58"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2002,6 +2002,8 @@ class _ParseState:
         # `reorder_clips_by` found the clips already in order: the model's reply
         # ("I've reordered...") would contradict that, so `parse` composes the reply.
         self.reorder_noop = False
+        # The creator's message, for guards that need its wording (set by `parse`).
+        self.utterance = ""
 
     def invalid_value(self) -> None:
         self.invalid_value_seen = True
@@ -3032,6 +3034,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
 
         confidence = _coerce_confidence(data.get("confidence", 0.5))
         state = _ParseState(confidence)
+        state.utterance = input.utterance or ""
         raw_ops = data.get("ops") or []
         if not isinstance(raw_ops, list):
             raw_ops = []
@@ -3888,6 +3891,19 @@ def _coerce_text_appearance(
     }
 
 
+_CREATIVE_CAPTION_RE = re.compile(
+    r"\b(explain\w*|describ\w*|what (is|s|was|happens|happened)|which part|"
+    r"part of (the |a |my )?\w+|what each|a\u00e7\u0131kla\w*|acikla\w*|anlat\w*|"
+    r"hangi b\u00f6l\u00fcm\w*)\b"
+)
+_CREATIVE_CAPTION_CLARIFICATION = (
+    "I can only label clips from facts I have (their place, landmark or filming time), so I "
+    "can't tell which part of the day each clip shows. Tell me what each clip is (for example "
+    "'clip 1 is the airport pickup, clip 2 is the pre-wedding') and I'll write those on the "
+    "clips, or I can label them with the place names or the times instead."
+)
+
+
 def _label_fold(text: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
 
@@ -3921,6 +3937,19 @@ def _coerce_label_each_clip(
 
     if payload.get("source") != "facts":
         state.invalid_value()
+        return None
+    if payload.get("label_from", "place") == "place" and _CREATIVE_CAPTION_RE.search(
+        _label_fold(state.utterance)
+    ):
+        # "Add a text to each clip explaining the part of the wedding": the creator wants
+        # wording about what each clip IS. label_each_clip only prints place / landmark /
+        # filming time from facts, so running it would silently answer with place names.
+        state.selector_clarification = _CREATIVE_CAPTION_CLARIFICATION
+        state.reject(
+            op=name,
+            reason="capability_unavailable",
+            detail="the request asks for descriptive captions, not facts",
+        )
         return None
     label_from = payload.get("label_from", "place")
     mode = payload.get("mode", "replace")
