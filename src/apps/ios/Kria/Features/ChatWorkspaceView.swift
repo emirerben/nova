@@ -1263,6 +1263,14 @@ private struct CreationWorkspaceView: View {
         ) {
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
         }
+        // A re-plan can finish as a NEW render job while the editor (or its chat
+        // sheet) is open; the thread summary is the authority on the active job.
+        if currentProject.runtimeVersion == 2, editorSession.loadState == .loaded,
+           fresh.contains(where: { ["generation_ready", "assistant_review"].contains($0.eventType) && $0.payload?["job_id"]?.stringValue != nil }),
+           let thread = try? await model.api.project(threadID: project.id) {
+            apply(thread)
+            await editorSession.adoptLatestJob(thread.summary, api: model.api)
+        }
         if !fresh.isEmpty, !isThinking { await editorSession.synchronizePromptRevision() }
         return !fresh.isEmpty || threadRevision > revisionBeforeDelta
     }

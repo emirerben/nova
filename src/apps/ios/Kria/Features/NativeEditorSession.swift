@@ -1151,7 +1151,10 @@ struct NativeEditorTemporaryVideo {
             let nextDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: variant)
             let sameTarget = nextJobID == jobID && nextVariantKey == variantKey && snapshot.itemID == itemID
             // A different job needs its video reloaded: adoptLatestJob owns that.
-            if conversationRuntimeVersion == 2, nextJobID != jobID { return }
+            if conversationRuntimeVersion == 2, nextJobID != jobID {
+                await adoptActiveJobFromThread(api: api, threadID: threadID)
+                return
+            }
             if conversationRuntimeVersion == 1, sameTarget, nextDraft.serverSnapshot == legacyPromptSnapshot,
                sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled {
                 if let previous = saveStateBeforePromptFailure { saveState = previous }
@@ -1211,6 +1214,15 @@ struct NativeEditorTemporaryVideo {
             await prepareSourcePreview()
         } catch {
             guard sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled else { return }
+            // The loaded job was superseded by a re-plan render (its editor
+            // routes now answer "content plan unavailable"/409): follow the
+            // thread to its current job instead of reporting a refresh failure.
+            if conversationRuntimeVersion == 2,
+               let apiError = error as? APIError, apiError == .contentPlanUnavailable || apiError == .conflict {
+                let before = jobID
+                await adoptActiveJobFromThread(api: api, threadID: threadID)
+                if jobID != before || newerJobPrompt != nil { return }
+            }
             // A refresh error temporarily owns the banner. Any intervening
             // save/render status assignment relinquishes that ownership.
             let previous = saveStateBeforePromptFailure ?? saveState
@@ -1303,12 +1315,20 @@ struct NativeEditorTemporaryVideo {
         await refreshDeviceRender()
     }
 
+    /// Ask the server which job the thread points at now, then run the adopt decision.
+    func adoptActiveJobFromThread(api: any KriaAPIClient, threadID: UUID) async {
+        guard let thread = try? await api.project(threadID: threadID) else { return }
+        await adoptLatestJob(thread.summary, api: api)
+    }
+
     func keepEditingCurrentJob() { newerJobPrompt = nil }
 
     /// The thread now points at a different render job: the old job's player,
     /// source composition and device-render identity must not keep showing.
     private func discardPlaybackForNewJob() {
         sourcePreviewTask?.cancel()
+        previewRefreshTask?.cancel(); pendingPreviewGeneration = nil
+        promptRefreshSequence &+= 1
         sourcePreviewSequence += 1
         player?.pause()
         player = nil

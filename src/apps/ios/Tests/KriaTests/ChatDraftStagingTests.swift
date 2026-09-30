@@ -365,4 +365,66 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(fake.editorVariantJobIDs.last, jobB)
         XCTAssertEqual(fake.commitCount, 0)
     }
+
+    private func thread(_ id: UUID, job: UUID, revision: Int) throws -> CreationThread {
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(CreationThread.self, from: Data(#"""
+        {"id":"\#(id.uuidString)","title":"Chat","status":"active","revision":\#(revision),"runtime_version":2,
+         "active_job_id":"\#(job.uuidString)","active_plan_item_id":"item","state":{"selected_variant_id":"initial"},
+         "job":{"id":"\#(job.uuidString)","status":"variants_ready","variants":[{"variant_id":"initial","render_status":"ready"}]},
+         "updated_at":"2026-09-30T08:00:00Z"}
+        """#.utf8))
+    }
+
+    /// Editor open on J1 with chat-staged edits; a re-plan then renders J2.
+    private func supersededFixture(manualEdit: Bool) async throws -> (NativeEditorSession, EditorCommitSpy, UUID) {
+        let threadID = UUID(), jobA = UUID(uuidString: Self.jobID)!, jobB = UUID()
+        func project(_ job: UUID, revision: Int) -> ProjectSummary {
+            ProjectSummary(id: threadID, title: "Chat", status: .ready, updatedAt: .now, posterURL: nil, outputVariantID: "initial",
+                runtimeVersion: 2, serverRevision: revision, activeJobID: job, activePlanItemID: "item")
+        }
+        var variantA = Self.variant(generation: "g1"); variantA["output_url"] = .string("https://example.com/job-a.mp4")
+        let fake = EditorCommitSpy(draftSnapshot: Self.chatSnapshot(shape: .flatOnly), authoritativeVariant: variantA)
+        let session = NativeEditorSession(project: project(jobA, revision: 5))
+        await session.load(project: project(jobA, revision: 5), api: fake)
+        if manualEdit { session.setClipTiming(clipID: "s1", durationS: 1.1) }
+        var variantB = Self.variant(generation: "gNew"); variantB["output_url"] = .string("https://example.com/job-b.mp4")
+        fake.authoritativeVariant = variantB
+        fake.supersededJobIDs = [jobA]
+        fake.refreshedThread = try thread(threadID, job: jobB, revision: 9)
+        fake.draftSnapshot = DraftSnapshot(draftID: "n", itemID: "item", variantKey: "initial", draftRevision: 1, snapshotHash: "h", etag: "e",
+            baseJobID: jobA.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now)
+        return (session, fake, jobB)
+    }
+
+    func testOpenEditorFollowsAReplanWhenTheOldJobIsSuperseded() async throws {
+        let (session, fake, jobB) = try await supersededFixture(manualEdit: false)
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        // Old job's routes now 409 "content plan unavailable": adopt J2, no error banner.
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(fake.editorVariantJobIDs.last, jobB)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(fake.commitCount, 0)
+        XCTAssertEqual((session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent, "job-b.mp4")
+        if case .refreshFailed = session.saveState { XCTFail("must not show the refresh-failed banner") }
+    }
+
+    func testDraftHeadOnTheNewJobAdoptsItToo() async throws {
+        let (session, fake, jobB) = try await supersededFixture(manualEdit: false)
+        fake.draftSnapshot = DraftSnapshot(draftID: "n", itemID: "item", variantKey: "initial", draftRevision: 1, snapshotHash: "h", etag: "e",
+            baseJobID: jobB.uuidString, baseGenerationID: "gNew", snapshot: [:], canUndo: false, createdAt: .now)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(fake.editorVariantJobIDs.last, jobB)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testSupersededJobWithManualEditsPromptsInsteadOfSwitching() async throws {
+        let (session, fake, jobB) = try await supersededFixture(manualEdit: true)
+        await session.synchronizePromptRevision()
+        XCTAssertNotNil(session.newerJobPrompt)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertNotEqual(fake.editorVariantJobIDs.last, jobB)
+        XCTAssertEqual(fake.commitCount, 0)
+    }
 }
