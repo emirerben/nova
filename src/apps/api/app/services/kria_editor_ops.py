@@ -1303,6 +1303,11 @@ def _op_remove_text(state: _DraftState, op: dict[str, Any]) -> None:
 
 def _op_label_each_clip(state: _DraftState, op: dict[str, Any]) -> None:
     _apply_clip_labels(op, state.text, state.slots, state.removed_text_bars)
+    if op.get("label_from") == "capture_time":
+        count = len(op.get("labels") or [])
+        state.summary = f"{'Add filming time to' if op.get('mode') == 'append' else 'Label'} " + (
+            f"{count} clip{'s' if count != 1 else ''}"
+        )
     state.changed.add("text")
 
 

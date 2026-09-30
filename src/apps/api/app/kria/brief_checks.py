@@ -22,7 +22,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.kria.brief import BriefRequirement, CreativeBrief
-from app.kria.brief_route import END_KEYS, START_KEYS, first_text, fold_text, loose_text
+from app.kria.brief_route import (
+    END_KEYS,
+    START_KEYS,
+    first_text,
+    fold_text,
+    loose_text,
+    wants_filming_time_text,
+)
 from app.kria.contracts import InferredLabel, RequirementReceipt
 
 if TYPE_CHECKING:
@@ -94,6 +101,11 @@ class PlanFacts:
     # KRI-190: clips whose label is on a cut shorter than its reading time (the
     # clip itself is too short). A label the viewer cannot read is not "met".
     unreadable_label_clip_ids: tuple[str, ...] = ()
+    # KRI-219: what grounded each clip's label ("capture_time", "place", "landmark",
+    # ...; absent = unknown), and the zone filming hours were printed in ("" = none).
+    per_clip_label_kinds: dict[str, str] = field(default_factory=dict)
+    label_timezone: str = ""
+    label_timezone_basis: str = ""
     # True when the facts come from an editor payload, which carries literal
     # on-screen text only (no per-clip structure, order or duration).
     editor: bool = False
@@ -339,6 +351,13 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         ),
         texts=tuple(text for text in (title, *per_clip.values()) if text),
         unreadable_label_clip_ids=tuple(str(c) for c in record.get("short_label_clip_ids") or []),
+        per_clip_label_kinds={
+            str(row["media_id"]): str(row["fact_kind"])
+            for row in labels
+            if row.get("text") and row.get("fact_kind")
+        },
+        label_timezone=str(record.get("label_timezone") or ""),
+        label_timezone_basis=str(record.get("label_timezone_basis") or ""),
     )
 
 
@@ -476,6 +495,14 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
                 f"{len(off)} of {total} text{'s' if total != 1 else ''} "
                 f"didn't end up reading exactly \u201c{req.literal}\u201d.",
             )
+    if (
+        not facts.editor
+        and wants_filming_time_text(req.kind, req.scope, req.literal, req.description, req.facts)
+        and facts.per_clip_text
+    ):
+        judged = _check_filming_time_text(req, facts)
+        if judged is not None:
+            return judged
     ids = facts.clip_ids
 
     def text_for(index: int, clip: str) -> str | None:
@@ -546,6 +573,37 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
             f"{'them' if repeats != 1 else 'it'} off."
         )
     return _receipt(req, "partial", reason, inferred, guessed)
+
+
+def _check_filming_time_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """ "Add the hour to each video": place names or nothing are NOT the hour (KRI-219)."""
+    kinds = facts.per_clip_label_kinds
+    if not kinds:
+        return None  # grounding unknown: fall through to the coverage check
+    total = len(facts.clip_ids) or len(facts.per_clip_text)
+    timed = [c for c in facts.per_clip_text if kinds.get(c) == "capture_time"]
+    if not timed:
+        return _receipt(
+            req,
+            "not_possible",
+            "The labels are place names, not the hour each clip was filmed.",
+        )
+    if len(timed) < total:
+        missing = total - len(timed)
+        return _receipt(
+            req,
+            "partial",
+            f"Filming hour on {len(timed)} of {total} clips; "
+            f"{missing} {'have' if missing != 1 else 'has'} no filming time.",
+        )
+    if facts.label_timezone_basis == "utc":
+        return _receipt(
+            req,
+            "partial",
+            "Hours are shown in UTC, because your clips don't say which time zone they "
+            "were filmed in.",
+        )
+    return None
 
 
 _NAME_IN_REASON_CHARS = 32

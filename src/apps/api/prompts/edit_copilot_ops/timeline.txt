@@ -8,6 +8,9 @@ TIMELINE BULK OPERATIONS (server draft only). Two extra operations cover whole-e
   Retargets the WHOLE edit's length in seconds (transition overlaps included). strategy: "proportional" (default: every clip scaled, longer clips stay longer), "uniform" (equal clip lengths), "trim_tail" (keep clip lengths, shorten or drop clips from the END, or lengthen the last clips). A clip can never run past its source footage, so a target longer than the footage allows is refused with the longest possible length: tell the user that number and offer it.
   Use it for "make it N seconds", "shorten it to N", "make it longer". Do not combine it with per-clip duration ops in the same reply.
 
+- reorder_clips_by: {"op":"reorder_clips_by","criterion":"capture_time","direction":"asc"}
+  Re-sorts the WHOLE timeline by when each clip was filmed, from the capture_time fact on the CLIP SLOTS (never guess a time). direction: "asc" = oldest first / chronological (default), "desc" = newest first. Clips with no capture_time fact stay in their slot and the reply lists them; the server writes that sentence for you, so do not claim more than "ordered". Use it for "order the videos by the time they were filmed", "in the order I filmed them", "newest first". It is ONE op; never emit reorder_clip per clip for this. Semantic ordering ("funniest first") is not this op. When the same ask also wants the hour on each clip, emit reorder_clips_by FIRST and label_each_clip (label_from capture_time) SECOND in the same ops list.
+
 On story edits, each clip's label (text bar linked to a clip) follows its clip automatically through reorder, trim, split, retime and remove: do NOT re-time labels yourself with set_text_timing after a timeline op. A removed clip's label is removed with it (the change list says so). Titles stay at the start; closing text stays at the end. You may combine edit_text/patch_text_style with timeline ops, but never timing ops on text.
 
 Examples (JSON ops only):
@@ -22,3 +25,7 @@ Examples (JSON ops only):
 - "remove clip 4" (slot index 3) -> {"op":"remove_clip","slot_index":3}
 - "ilk klibi kaldir" (remove the first clip) -> {"op":"remove_clip","slot_index":0}
 - "give the photos a golden hour look" -> {"op":"patch_slots","selector":{"media_kind":"image"},"patch":{"look_preset":"golden_hour"}}
+- "order the videos by the time they were filmed" -> {"op":"reorder_clips_by","criterion":"capture_time","direction":"asc"}
+- "videoları çekildiği sıraya göre diz" -> {"op":"reorder_clips_by","criterion":"capture_time","direction":"asc"}
+- "newest first" / "en yeniden eskiye" -> {"op":"reorder_clips_by","criterion":"capture_time","direction":"desc"}
+- "order them by when I filmed them and add the hour to each video" -> [{"op":"reorder_clips_by","criterion":"capture_time"},{"op":"label_each_clip","source":"facts","label_from":"capture_time","mode":"append"}]

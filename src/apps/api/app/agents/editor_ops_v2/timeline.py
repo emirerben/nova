@@ -180,7 +180,96 @@ def _coerce_set_total_duration(name: str, payload: dict, snapshot: dict, state: 
     return {"target_s": target, "strategy": strategy}
 
 
+_ORDER_CRITERIA = ("capture_time",)
+_ORDER_DIRECTIONS = ("asc", "desc")
+
+
+def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
+    """Resolve ``reorder_clips_by`` into a concrete slot permutation.
+
+    The order comes from the capture-time facts the SERVER put on each slot,
+    never from anything the model wrote. Clips with no capture time keep their
+    slot (``order_by_capture_time`` semantics) and are reported in the reply;
+    ties keep their current relative order.
+    """
+    from app.agents import edit_copilot as ec  # noqa: PLC0415
+    from app.services.clip_facts import (  # noqa: PLC0415
+        capture_time_from_facts,
+        ordered_capture_media,
+    )
+
+    criterion = payload.get("criterion")
+    direction = payload.get("direction", "asc")
+    if criterion not in _ORDER_CRITERIA or direction not in _ORDER_DIRECTIONS:
+        state.invalid_value()
+        return None
+    slots = [s for s in ec._snapshot_list(snapshot, ec._SLOT_INDEX_KEYS) if isinstance(s, dict)]
+    if len(slots) < 2:
+        state.reject(
+            op=name, reason="capability_unavailable", detail="there is only one clip to order"
+        )
+        return None
+    times: dict[str, Any] = {}
+    active: list[int] = []
+    for index, slot in enumerate(slots):
+        if slot.get("removed"):
+            continue
+        active.append(index)
+        facts = slot.get("facts")
+        moment = (
+            capture_time_from_facts([f for f in facts if isinstance(f, dict)])
+            if isinstance(facts, list)
+            else None
+        )
+        if moment is not None:
+            times[str(index)] = moment
+    untimed = [str(n + 1) for n, index in enumerate(active) if str(index) not in times]
+    if len(times) < 2:
+        state.reply_notes.append(
+            "I couldn't order them by filming time: "
+            + (
+                "none of your clips carries a filming time."
+                if not times
+                else "only one of your clips carries a filming time."
+            )
+        )
+        state.reject(
+            op=name,
+            reason="capability_unavailable",
+            detail="fewer than two clips carry a capture time",
+        )
+        return None
+    result = ordered_capture_media(
+        [str(i) for i in range(len(slots))], times, descending=direction == "desc"
+    )
+    permutation = [int(i) for i in result.ordered_ids]
+    if permutation == list(range(len(slots))):
+        state.reply_notes.append("The clips are already in that order" + ".")
+        state.reject(
+            op=name, reason="capability_unavailable", detail="the clips are already in that order"
+        )
+        return None
+    if untimed:
+        state.reply_notes.append(
+            f"No filming time for clip{'s' if len(untimed) != 1 else ''} {', '.join(untimed)}."
+        )
+        state.reply_notes.append("Clips without one stay where they are.")
+    return {
+        "criterion": criterion,
+        "direction": direction,
+        "permutation": permutation,
+        "media_ids": [str(s.get("media_id") or "") for s in slots],
+    }
+
+
 SPECS: list[OpSpec] = [
+    OpSpec(
+        name="reorder_clips_by",
+        required=frozenset({"criterion"}),
+        fields=frozenset({"criterion", "direction"}),
+        family=_FAMILY,
+        coerce=_coerce_reorder_clips_by,
+    ),
     OpSpec(
         name="patch_slots",
         required=frozenset({"selector", "patch"}),
@@ -487,8 +576,33 @@ def _op_set_total_duration(state: Any, op: dict[str, Any]) -> None:
     _write_durations(state, idx, d)
 
 
+def _op_reorder_clips_by(state: Any, op: dict[str, Any]) -> None:
+    permutation = op.get("permutation")
+    media_ids = op.get("media_ids")
+    rows = state.slots
+    if (
+        not isinstance(permutation, list)
+        or not isinstance(media_ids, list)
+        or len(permutation) != len(rows)
+        or len(media_ids) != len(rows)
+        or sorted(permutation) != list(range(len(rows)))
+        or any(isinstance(i, bool) or not isinstance(i, int) for i in permutation)
+    ):
+        raise _err("The timeline changed before this reorder could be drafted")
+    if any(str(row.get("media_id") or "") != media_ids[i] for i, row in enumerate(rows)):
+        raise _err("The timeline changed before this reorder could be drafted")
+    if op.get("criterion") != "capture_time":
+        raise _err("That ordering is not supported")
+    state.slots[:] = [rows[i] for i in permutation]
+    state.changed.add("timeline")
+    state.summary = "Order clips by filming time" + (
+        ", newest first" if op.get("direction") == "desc" else ""
+    )
+
+
 def register_handlers() -> None:
     """Register compile handlers with kria_editor_ops (lazy import)."""
     ops = _ops()
     ops.register_handler("patch_slots", _op_patch_slots)
     ops.register_handler("set_total_duration", _op_set_total_duration)
+    ops.register_handler("reorder_clips_by", _op_reorder_clips_by)

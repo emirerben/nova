@@ -45,7 +45,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.kria.brief_route import END_KEYS, START_KEYS, first_text, fold_text
+from app.kria.brief_route import (
+    END_KEYS,
+    START_KEYS,
+    first_text,
+    fold_text,
+    wants_filming_time_text,
+)
 from app.schemas.edit_proposal import (
     MAX_PROPOSAL_DURATION_S,
     ClipLabel,
@@ -55,7 +61,12 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     canonical_media_digest,
 )
-from app.services.clip_facts import order_by_capture_time
+from app.services.clip_facts import (
+    capture_time_from_facts,
+    display_timezone,
+    format_capture_hour,
+    order_by_capture_time,
+)
 
 FPS = 30
 # The reading-time rule: 0.8s to notice the text plus 60ms per character,
@@ -149,6 +160,8 @@ class BriefView:
     # described label; only the scoped ones above are applied per clip.
     wants_order: bool = False
     order_by_capture: bool = False
+    # KRI-219: the per-clip text is the hour each clip was filmed, not its place.
+    per_clip_text_is_time: bool = False
     title_literal: str | None = None
     global_literal: str | None = None
     facts: Mapping[str, Any] = field(default_factory=dict)
@@ -162,6 +175,7 @@ def brief_view(brief: Any) -> BriefView:
     wants_text = False
     wants_order = False
     order_capture = False
+    wants_time = False
     clip_literals: dict[str, str] = {}
     title_literal: str | None = None
     global_literal: str | None = None
@@ -172,6 +186,10 @@ def brief_view(brief: Any) -> BriefView:
             if value not in (None, "") and key not in facts:
                 facts[str(key)] = value
         if req.kind == "text":
+            if wants_filming_time_text(
+                req.kind, req.scope, req.literal, req.description, req.facts
+            ):
+                wants_time = True
             if req.scope == "per_clip":
                 wants_text = True
             elif req.scope.startswith("clip:") and req.literal:
@@ -198,6 +216,7 @@ def brief_view(brief: Any) -> BriefView:
         clip_literals=clip_literals,
         wants_order=wants_order,
         order_by_capture=order_capture,
+        per_clip_text_is_time=wants_time,
         title_literal=title_literal,
         global_literal=global_literal,
         facts=facts,
@@ -330,11 +349,22 @@ class UnifiedMontagePlan:
     endpoint_places: dict[str, Any] = field(default_factory=dict)
     # The Visuals-pool ids among ``clip_ids`` (KRI-217), in plan order.
     visual_ids: list[str] = field(default_factory=list)
+    # Zone the filming hours were printed in, "" when the labels are not hours.
+    label_timezone: str = ""
+    label_timezone_basis: str = ""
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
         # Only a montage with Visuals names them: every earlier record stays as is.
         visuals = {"visual_ids": list(self.visual_ids)} if self.visual_ids else {}
+        zone = (
+            {
+                "label_timezone": self.label_timezone,
+                "label_timezone_basis": self.label_timezone_basis,
+            }
+            if self.label_timezone
+            else {}
+        )
         return {
             "version": 1,
             "brief_version": self.brief_version,
@@ -361,6 +391,7 @@ class UnifiedMontagePlan:
             "route": dict(self.route),
             "endpoint_places": dict(self.endpoint_places),
             **visuals,
+            **zone,
         }
 
     def guided_edit(self, *, generation_attempt_id: str | None = None) -> dict[str, Any]:
@@ -605,6 +636,11 @@ def plan_unified_montage(
     dropped: list[str] = []
     dropped_reasons: dict[str, str] = {}
     previous_kept: str | None = None  # folded text of the last label that stayed
+    # "Add the hour to each video" (KRI-219): print the filming hour, or leave the
+    # clip unlabelled and say so. A place name is never substituted for it.
+    hour_zone, hour_basis = display_timezone(
+        [clip.facts for clip in ordered] if view.per_clip_text_is_time else []
+    )
     for index, clip in enumerate(ordered):
         chosen: tuple[str, str, str | None, bool] | None = None  # text, provenance, kind, inferred
         if clip.ref_id in view.clip_literals:
@@ -614,6 +650,10 @@ def plan_unified_montage(
         elif clip.ref_id in intent_labels:
             text, creator_text = intent_labels[clip.ref_id]
             chosen = (text, "creator" if creator_text else "fact", None, not creator_text)
+        elif view.wants_per_clip_text and view.per_clip_text_is_time:
+            moment = clip.capture_time or capture_time_from_facts(clip.facts)
+            if moment is not None:
+                chosen = (format_capture_hour(moment, hour_zone), "fact", "capture_time", False)
         elif view.wants_per_clip_text:
             fact = _fact_label(clip)
             if fact is not None:
@@ -625,7 +665,9 @@ def plan_unified_montage(
         if chosen is None:
             if labels_requested:
                 dropped.append(clip.media_id)
-                dropped_reasons[clip.media_id] = "no_fact"
+                dropped_reasons[clip.media_id] = (
+                    "no_capture_time" if view.per_clip_text_is_time else "no_fact"
+                )
             continue
         text = _cap_label(_nfc(chosen[0]), chosen[1])
         if not text:
@@ -633,7 +675,7 @@ def plan_unified_montage(
             dropped_reasons[clip.media_id] = "no_fact"
             continue
         folded = fold_text(text)
-        if chosen[1] != "creator" and folded == previous_kept:
+        if chosen[1] != "creator" and chosen[2] != "capture_time" and folded == previous_kept:
             # Three clips on one bridge would read "Bosphorus Strait" three times: a
             # label stays only when it adds information. The creator's own words are
             # never dropped, however often they repeat them.
@@ -812,6 +854,8 @@ def plan_unified_montage(
         # Where the first and last clips were filmed: a Visual carries no place.
         endpoint_places=_endpoint_places([clip for clip in ordered if clip.lane == "clip"]),
         visual_ids=[clip.media_id for clip in ordered if clip.lane == "asset"],
+        label_timezone=hour_zone if view.per_clip_text_is_time and labels else "",
+        label_timezone_basis=hour_basis if view.per_clip_text_is_time and labels else "",
     )
 
 

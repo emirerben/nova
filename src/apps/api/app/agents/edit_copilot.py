@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-29-v55"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-30-v56"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -237,7 +237,9 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
         {"selector", "patch", "text_appearance_version", "target_ids", "target_identities"}
     ),
     # `labels` is derived from the snapshot by the parser, never read from the model.
-    "label_each_clip": frozenset({"source"}),
+    # `label_from`/`mode`/`timezone` only SELECT which server fact is printed and
+    # how (KRI-219); the printed text is still never model-authored.
+    "label_each_clip": frozenset({"source", "label_from", "mode", "timezone"}),
     "set_text_timing": frozenset({"bar_index", "start_s", "end_s"}),
     "add_text": frozenset({"text", "start_s", "end_s"}),
     "remove_text": frozenset({"bar_index"}),
@@ -1988,6 +1990,11 @@ class _ParseState:
         # KRI-219: a v2 selector op that matched nothing sets this; parse() turns
         # it into an honest clarification (never a silent no-op).
         self.selector_clarification: str | None = None
+        # Server-authored, fact-grounded sentences (which clips have no filming
+        # time, which time zone hours are shown in). `parse` appends them to the
+        # reply when ops were proposed and REPLACES the model's reply when a
+        # request was refused, so the reply can never claim what the ops didn't do.
+        self.reply_notes: list[str] = []
 
     def invalid_value(self) -> None:
         self.invalid_value_seen = True
@@ -3251,6 +3258,9 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 )
             else:
                 reply = f"How short should the {referent or 'clips'} be?"
+        if state.reply_notes:
+            notes = " ".join(dict.fromkeys(state.reply_notes))
+            reply = f"{reply} {notes}".strip() if ops else notes
         if not reply:
             reply = "Got it. What else should we change?"
 
@@ -3877,10 +3887,36 @@ def _coerce_label_each_clip(
       clip's output window (compile step).
     """
     from app.pipeline.unified_montage import _fact_label  # noqa: PLC0415
+    from app.services.clip_facts import (  # noqa: PLC0415
+        capture_time_from_facts,
+        display_timezone,
+        format_capture_hour,
+        timezone_note,
+    )
 
     if payload.get("source") != "facts":
         state.invalid_value()
         return None
+    label_from = payload.get("label_from", "place")
+    mode = payload.get("mode", "replace")
+    if label_from not in {"place", "capture_time"} or mode not in {"replace", "append"}:
+        state.invalid_value()
+        return None
+    from_time = label_from == "capture_time"
+    append = mode == "append"
+    slot_rows = [
+        slot
+        for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+        if isinstance(slot, dict) and not slot.get("removed")
+    ]
+    zone, zone_basis = display_timezone(
+        [
+            [f for f in (slot.get("facts") or []) if isinstance(f, dict)]
+            for slot in slot_rows
+            if isinstance(slot.get("facts"), list)
+        ],
+        payload.get("timezone"),
+    )
     all_bars = [bar for bar in _snapshot_list(snapshot, _TEXT_INDEX_KEYS) if isinstance(bar, dict)]
     bars: dict[str, dict] = {}
     for bar in all_bars:
@@ -3899,32 +3935,53 @@ def _coerce_label_each_clip(
     seen_media: set[str] = set()
     already_correct = 0
     kept_edited = 0
-    for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS):
-        if not isinstance(slot, dict) or slot.get("removed"):
-            continue
+    untimed: list[str] = []
+    for number, slot in enumerate(slot_rows, start=1):
         media_id = slot.get("media_id")
         facts = slot.get("facts")
         if not isinstance(media_id, str) or not media_id or media_id in seen_media:
             continue
         seen_media.add(media_id)
         if not isinstance(facts, list):
+            if from_time:
+                untimed.append(str(number))
             continue
-        chosen = _fact_label(SimpleNamespace(facts=tuple(f for f in facts if isinstance(f, dict))))
-        if chosen is None:
-            continue
-        text = chosen[0].strip()
-        if not text or _label_fold(text) == previous:
-            continue
-        previous = _label_fold(text)
+        if from_time:
+            moment = capture_time_from_facts([f for f in facts if isinstance(f, dict)])
+            if moment is None:
+                untimed.append(str(number))
+                continue
+            text = format_capture_hour(moment, zone)
+        else:
+            chosen = _fact_label(
+                SimpleNamespace(facts=tuple(f for f in facts if isinstance(f, dict)))
+            )
+            if chosen is None:
+                continue
+            text = chosen[0].strip()
+            if not text or _label_fold(text) == previous:
+                continue
+            previous = _label_fold(text)
         entry: dict[str, Any] = {"media_id": media_id, "text": text}
         bar = bars.get(media_id)
         if bar is not None:
-            if bar.get("edited") is True:
-                kept_edited += 1
-                continue
-            if _label_fold(str(bar.get("text") or "")) == _label_fold(text):
-                already_correct += 1
-                continue
+            existing = " ".join(str(bar.get("text") or "").split())
+            if append:
+                # Adding to a label never overwrites what the creator wrote, so
+                # a hand-edited bar is fine here; one that already shows it is not.
+                if _label_fold(text) in _label_fold(existing):
+                    already_correct += 1
+                    continue
+                entry["text"] = f"{existing} \u00b7 {text}" if existing else text
+                if len(entry["text"]) > 120:
+                    continue
+            else:
+                if bar.get("edited") is True:
+                    kept_edited += 1
+                    continue
+                if _label_fold(existing) == _label_fold(text):
+                    already_correct += 1
+                    continue
             entry["bar_id"] = str(bar["id"])
         else:
             start, end = slot.get("output_start_s"), slot.get("output_end_s")
@@ -3946,6 +4003,12 @@ def _coerce_label_each_clip(
             entry["start_s"] = round(float(start), 3)
             entry["end_s"] = round(float(end), 3)
         labels.append(entry)
+    if from_time:
+        if untimed:
+            plural = "s" if len(untimed) != 1 else ""
+            state.reply_notes.append(f"No filming time for clip{plural} {', '.join(untimed)}.")
+        if labels:
+            state.reply_notes.append(timezone_note(zone, zone_basis))
     if not labels:
         state.reject(
             op=name,
@@ -3956,7 +4019,11 @@ def _coerce_label_each_clip(
                 else (
                     "the labels you edited by hand were kept, and no other clip needs one"
                     if kept_edited
-                    else "none of the clips has a grounded place, landmark or creator label"
+                    else (
+                        "none of the clips carries a filming time"
+                        if from_time
+                        else "none of the clips has a grounded place, landmark or creator label"
+                    )
                 )
             ),
         )
@@ -3964,6 +4031,10 @@ def _coerce_label_each_clip(
     if len(labels) > 80:
         labels = labels[:80]
     result: dict[str, Any] = {"source": "facts", "labels": labels}
+    if from_time:
+        result["label_from"] = "capture_time"
+        result["mode"] = mode
+        result["timezone"] = zone
     if kept_edited:
         result["kept_edited"] = kept_edited
     return result

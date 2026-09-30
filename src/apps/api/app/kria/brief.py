@@ -39,6 +39,7 @@ from pydantic import (
 )
 from sqlalchemy import func, select
 
+from app.kria.brief_route import wants_filming_time_text
 from app.models import CreativeBriefVersion
 
 RequirementKind = Literal["text", "order", "select", "timing", "audio", "style"]
@@ -246,6 +247,10 @@ class CurrentPlanShape:
     # advertises the `clip` op family). None/False = today's behaviour: order and
     # select requirements always re-plan.
     can_edit_timeline: bool | None = None
+    # KRI-219: the v2 `reorder_clips_by` op exists on this variant AND at least two
+    # clips carry a capture-time fact, so "order by when I filmed them" is an
+    # editor op, not a planner re-run.
+    can_order_by_capture_time: bool = False
 
 
 _PER_CLIP_LANE_ROLES = {"shot_label", "clip_label", "per_clip", "label"}
@@ -307,12 +312,30 @@ def plan_shape_from_editor_snapshot(snapshot: Mapping[str, Any] | None) -> Curre
         isinstance(bar, Mapping) and str(bar.get("id") or "").startswith("clip-label-")
         for bar in bars
     )
+    can_edit_timeline = "clip" in (snapshot.get("allowed_op_families") or [])
     return CurrentPlanShape(
         has_render=True,
         has_per_clip_text_lane=legacy_lane or label_bars,
         can_fill_per_clip_text=legacy_lane or snapshot.get("label_facts") is True,
-        can_edit_timeline="clip" in (snapshot.get("allowed_op_families") or []),
+        can_edit_timeline=can_edit_timeline,
+        can_order_by_capture_time=can_edit_timeline and _timed_slot_count(snapshot) >= 2,
     )
+
+
+def _timed_slot_count(snapshot: Mapping[str, Any]) -> int:
+    """Active slots carrying a capture-time fact (v2 snapshots only)."""
+    if snapshot.get("editor_ops_version") != 2:
+        return 0
+    count = 0
+    for slot in snapshot.get("slots") or []:
+        if not isinstance(slot, Mapping) or slot.get("removed"):
+            continue
+        facts = slot.get("facts")
+        if isinstance(facts, list) and any(
+            isinstance(f, Mapping) and f.get("kind") == "capture_time" for f in facts
+        ):
+            count += 1
+    return count
 
 
 # Positional/explicit clip moves and removals an editor op can express. Semantic
@@ -360,6 +383,56 @@ def _structural_reqs_editable(
     return True
 
 
+_CAPTURE_ORDER_KEYS = {"capture_time", "chronological", "time"}
+_ORDER_ONLY_FACTS = {"key", "by", "direction", "order"}
+
+
+def is_capture_order_requirement(req: BriefRequirement | BriefUpdate) -> bool:
+    """An order requirement that is exactly "by when it was filmed" (no route)."""
+    if req.kind != "order":
+        return False
+    facts = req.facts or {}
+    key = str(facts.get("key") or facts.get("by") or "").casefold()
+    return key in _CAPTURE_ORDER_KEYS and set(facts) <= _ORDER_ONLY_FACTS
+
+
+def is_filming_time_label_requirement(req: BriefRequirement | BriefUpdate) -> bool:
+    """A per-clip text requirement whose text is the hour each clip was filmed."""
+    return wants_filming_time_text(req.kind, req.scope, req.literal, req.description, req.facts)
+
+
+def _capture_time_ask_editable(
+    reqs: list[BriefRequirement | BriefUpdate], current_plan: CurrentPlanShape
+) -> bool:
+    """True when EVERY requirement is an editor op over server-known capture times.
+
+    "Order them by the time they were filmed and add the hour to each" is a
+    `reorder_clips_by` + `label_each_clip` bundle, not a re-plan. Anything else in
+    the ask (selection, place labels, audio, timing) keeps the planner.
+    """
+    if not current_plan.can_order_by_capture_time:
+        return False
+    can_fill = (
+        current_plan.has_per_clip_text_lane
+        if current_plan.can_fill_per_clip_text is None
+        else current_plan.can_fill_per_clip_text
+    )
+    has_order = False
+    for req in reqs:
+        if is_capture_order_requirement(req):
+            has_order = True
+        elif is_filming_time_label_requirement(req):
+            if not can_fill:
+                return False
+        elif req.kind == "text" and req.scope == "title" and req.literal:
+            continue
+        elif req.kind == "style":
+            continue
+        else:
+            return False
+    return has_order
+
+
 def route_requirements(
     new_reqs: Iterable[BriefRequirement | BriefUpdate],
     current_plan: CurrentPlanShape | None,
@@ -375,6 +448,8 @@ def route_requirements(
     if not reqs:
         return "editor_ops"
     kinds = {req.kind for req in reqs}
+    if _capture_time_ask_editable(reqs, current_plan):
+        return "editor_ops"
     if kinds & {"order", "select"}:
         if not (
             current_plan.can_edit_timeline
