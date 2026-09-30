@@ -17,6 +17,7 @@ enum NativeEditorUITestFixtures {
         case unknown = "unknown-sections"
         case autoScrollExtend = "autoscroll-extend"
         case guidedText = "guided-text"
+        case talkingCaptions = "talking-captions"
     }
 
     struct Fixture: Sendable {
@@ -46,6 +47,7 @@ enum NativeEditorUITestFixtures {
         case .unknown: unknownSections
         case .autoScrollExtend: autoScrollExtend
         case .guidedText: guidedText
+        case .talkingCaptions: talkingCaptions
         }
     }
 
@@ -282,6 +284,37 @@ enum NativeEditorUITestFixtures {
                 "sound_effects": .object(["editable": .bool(true)]),
                 "overlays": .object(["editable": .bool(true)]),
                 "media_overlays": .object(["editable": .bool(true)]),
+                "text_elements": .object(["editable": .bool(false), "reason": .string("Text isn’t editable for this edit on this iPhone.")]),
+            ]),
+        ])
+    }()
+
+    /// A Talking (subtitled) edit rendered on this iPhone, shaped like the
+    /// API's payload: each `caption_cues` row also comes back in
+    /// `text_elements` as a `caption_cue`-tagged mirror with its own hex id
+    /// and the cue's window (`_base_text_elements_for_variant`, CAPTION path).
+    /// The timeline must still show one CAPTIONS row.
+    static let talkingCaptions: EditorDraft = {
+        let clips = [clip(900, start: 0, duration: 6)]
+        let cues: [(text: String, start: Double, end: Double)] = [("Bu alan var mı?", 1.2, 3.7), ("Evet, boş.", 3.7, 5.6)]
+        return draft(clips: clips, text: [], captions: true, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "caption_cues": .array(cues.map { .object(["text": .string($0.text), "start_s": .number($0.start), "end_s": .number($0.end)]) }),
+            "caption_meta": .object(["enabled": .bool(true), "style": .string("sentence")]),
+            "text_elements": .array(cues.enumerated().map { index, cue in .object([
+                "id": .string(String(format: "%032x", 0x901 + index)), "text": .string(cue.text),
+                "start_s": .number(cue.start), "end_s": .number(cue.end), "role": .string("generative_sequence"),
+                "position": .string("bottom"), "alignment": .string("center"), "effect": .string("static"),
+                "source_params": .object(["source": .string("caption_cue"), "key": .string(String(index)),
+                                          "source_text": .string(cue.text)]),
+            ]) }),
+        ], rootExtras: [
+            "render_destination": .string("device"),
+            "resolved_archetype": .string("subtitled"),
+            "editor_capabilities": .object([
+                "timeline": .bool(true),
+                "caption_cues": .object(["editable": .bool(true)]),
+                "caption_meta": .object(["editable": .bool(true)]),
                 "text_elements": .object(["editable": .bool(false), "reason": .string("Text isn’t editable for this edit on this iPhone.")]),
             ]),
         ])
