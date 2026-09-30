@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.18.0] - 2026-09-30
+
+### Changed
+- fix(ios): Save no longer shows a false "video changed" card (KRI-227) (#1274) <!-- release-pr: 1274 -->
+
 ## [0.77.17.0] - 2026-09-30
 
 ### Fixed
