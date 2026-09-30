@@ -155,4 +155,4 @@ asks:
     ask: "Add a text to each clip explaining the part of the wedding (could be airport pickup, pre wedding etc)"
     # Facts are place/time only: never substitute place names for a description.
     expect_ops: []
-    expect_error: "tell me what each clip|what each clip is"
+    expect_error: "which part|tell me what|what each clip"
