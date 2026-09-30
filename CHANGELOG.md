@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.19.0] - 2026-09-30
+
+### Changed
+- feat(phone): crop/re-frame + face-aware guided text on iPhone renders (KRI-140) (#1275) <!-- release-pr: 1275 -->
+
 ## [0.77.18.0] - 2026-09-30
 
 ### Changed
