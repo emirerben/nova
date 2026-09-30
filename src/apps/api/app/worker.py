@@ -210,6 +210,7 @@ celery_app.conf.update(
     task_routes={
         **{name: {"queue": "maintenance"} for name in MAINTENANCE_TASK_NAMES},
         "tasks.run_kria_turn": {"queue": "agent-control"},
+        "tasks.extract_kria_brief": {"queue": "agent-control"},
         "tasks.prepare_creator_clips": {"queue": settings.pool_asset_analysis_queue},
         # Make the queue a property of the TASK, not of each dispatcher. A
         # future bare `repair_job_poster.delay(...)` would otherwise land on

@@ -1515,6 +1515,10 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # KRI-219 latency: serve short in-place text/label/order edits with the fast copilot
+    # BEFORE the pro-model requirement extraction (which then runs off the critical
+    # path). false = the previous extract-first order for every post-render turn.
+    kria_copilot_first_enabled: bool = True
     # Owner-safe "Nova steps" activity feed projected from pipeline_trace +
     # phase_log + AgentRun (app/services/nova_steps.py) onto the generative
     # job status response. Ships OFF -- `steps` stays None (byte-identical

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import unicodedata
 import uuid
@@ -693,6 +694,8 @@ def _wire_planner(monkeypatch, *, output, editor_plan, snapshot):  # noqa: ANN00
     db, creator_id = _planner_db(item)
     monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
     monkeypatch.setattr(settings, "clip_intents_enabled", False)
+    # These tests pin the extract-first router; the copilot-first fast path has its own.
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", False)
     manifest = _MANIFEST.model_copy(update={"item_id": str(item.id)})
     monkeypatch.setattr(
         planner, "resolve_item_creator_context", AsyncMock(return_value=(manifest, []))
@@ -1123,3 +1126,105 @@ def test_editor_order_and_select_are_unjudged_not_partial() -> None:
     for kind in ("order", "select"):
         req = _req(kind, "global")
         assert not is_judged(req, check_requirement(req, facts))
+
+
+# ── KRI-219 latency: copilot-first fast path ────────────────────────────────
+
+
+def _ops_plan(*names: str) -> KriaTurnPlan:
+    return KriaTurnPlan.model_validate(
+        {
+            "mode": "act",
+            "turn_value": "action",
+            "intents": [
+                {
+                    "intent_id": "apply-editor-ops",
+                    "tool_name": "draft.apply_editor_ops",
+                    "tool_version": 1,
+                    "arguments": {"operations": [{"op": n} for n in names], "summary": "s"},
+                }
+            ],
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_fast_path_answers_before_the_slow_extraction_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, item, creator_id, copilot, runs = _wire_planner(
+        monkeypatch,
+        output=SimpleNamespace(action=AskUser(**_ASK), brief_updates=[]),
+        editor_plan=_ops_plan("edit_text"),
+        snapshot={"text_bars": []},
+    )
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", True)
+    started = []
+
+    async def slow(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+        started.append(True)
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(planner, "_call_main_creator", slow)
+    result = await asyncio.wait_for(
+        plan_live_turn(
+            db,
+            thread_id=uuid.uuid4(),
+            item_id=item.id,
+            creator_id=creator_id,
+            user_message="Change the title to Ahmet Wedding Vlog",
+        ),
+        timeout=2,
+    )
+    assert started == [] and runs == []  # the slow extraction never blocked the turn
+    assert result.defer_brief is True and result.brief_route == "editor_ops"
+    assert result.brief_updates == () and result.brief_manifest is not None
+    copilot.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message,plan_ops",
+    [
+        ("Make it a completely different vibe, use only the best 3 clips", ["edit_text"]),
+        ("Do it again based on my prompt", ["edit_text"]),
+        ("remove clip 4", ["remove_clip"]),  # structural: keeps the router
+        ("x" * 400, ["edit_text"]),
+    ],
+)
+async def test_fast_path_declines_replan_structural_and_long_asks(
+    monkeypatch: pytest.MonkeyPatch, message: str, plan_ops: list[str]
+) -> None:
+    output = SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("select", "global")])
+    db, item, creator_id, copilot, runs = _wire_planner(
+        monkeypatch, output=output, editor_plan=_ops_plan(*plan_ops), snapshot={"text_bars": []}
+    )
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", True)
+    result = await plan_live_turn(
+        db, thread_id=uuid.uuid4(), item_id=item.id, creator_id=creator_id, user_message=message
+    )
+    assert runs, "the extraction ran on the critical path"
+    assert result.defer_brief is False and result.brief_route == "replan"
+
+
+@pytest.mark.asyncio
+async def test_fast_path_kill_switch_restores_extract_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, item, creator_id, _copilot, runs = _wire_planner(
+        monkeypatch,
+        output=SimpleNamespace(
+            action=AskUser(**_ASK), brief_updates=[_upd("text", "title", literal="N")]
+        ),
+        editor_plan=_ops_plan("edit_text"),
+        snapshot={"text_bars": []},
+    )
+    result = await plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item.id,
+        creator_id=creator_id,
+        user_message="Change the title to N",
+    )
+    assert runs and result.defer_brief is False
+    assert [u.literal for u in result.brief_updates] == ["N"]

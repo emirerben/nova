@@ -7,6 +7,7 @@ cannot author risk, target pins, idempotency identities, or completion claims.
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from dataclasses import dataclass, replace
 
@@ -83,6 +84,10 @@ class PlannedKriaTurn:
     # The manifest this turn planned against, so the receipt checks resolve
     # reaction beats (owned images, capability) exactly as approval will.
     brief_manifest: ResolvedCreatorManifest | None = None
+    # KRI-219 latency: the editor copilot served this in-place edit BEFORE the slow
+    # Main Creator requirement extraction; the completed turn schedules that
+    # extraction off the critical path (`extract_deferred_brief`).
+    defer_brief: bool = False
 
 
 def adapt_creator_action(
@@ -714,6 +719,67 @@ async def _refetch_item(db: AsyncSession, item_id: uuid.UUID) -> PlanItem:
     return item
 
 
+# Ops whose effect is confined to the current render's text/labels/order. A turn the
+# copilot serves with ONLY these can skip the pro-model requirement extraction on the
+# critical path (KRI-219). Anything structural (clip removal, retime, trims) or
+# ambiguous keeps the router.
+_FAST_PATH_OPS = frozenset(
+    {
+        "edit_text",
+        "rewrite_text",
+        "patch_text",
+        "patch_text_style",
+        "patch_text_appearance",
+        "remove_texts",
+        "add_text",
+        "set_text_timing",
+        "set_texts_timing",
+        "label_each_clip",
+        "reorder_clips_by",
+    }
+)
+_FAST_PATH_MAX_CHARS = 280
+# Wording that needs the planner even when the copilot could stage something.
+_REPLAN_CUES = re.compile(
+    r"\b(vibe|different|another version|new (edit|video|version|cut)|recut|re-?cut|re-?do|"
+    r"from scratch|best \d+|top \d+|\d+ best|use (only|just)|only (the )?(best|funniest|top)|"
+    r"funniest|shuffle|more clips|fewer clips|farkl\w*|yeniden|bastan|ba\u015ftan)\b"
+)
+
+
+def _fast_path_eligible(message: str) -> bool:
+    from app.kria.brief import wants_full_replan  # noqa: PLC0415
+
+    text = " ".join(message.casefold().split())
+    return (
+        0 < len(text) <= _FAST_PATH_MAX_CHARS
+        and not wants_full_replan(message)
+        and _REPLAN_CUES.search(text) is None
+    )
+
+
+def _is_fast_path_plan(plan: KriaTurnPlan | None) -> bool:
+    """An act plan whose editor ops are all in-place text/label/order ops."""
+    if plan is None or plan.mode != "act" or not plan.intents:
+        return False
+    for intent in plan.intents:
+        if intent.tool_name != "draft.apply_editor_ops":
+            return False
+        arguments = intent.arguments
+        ops = (
+            arguments.get("operations")
+            if isinstance(arguments, dict)
+            else getattr(arguments, "operations", None)
+        )
+        if not ops:
+            return False
+        for op in ops:
+            name = op.get("op") if isinstance(op, dict) else getattr(op, "op", None)
+            if str(name) not in _FAST_PATH_OPS:
+                return False
+    return True
+
+
 async def plan_live_turn(
     db: AsyncSession,
     *,
@@ -742,6 +808,26 @@ async def plan_live_turn(
         and item.current_job_id is not None
         and manifest.capabilities["dispatch_render"].available
     )
+    if extract_first and settings.kria_copilot_first_enabled and _fast_path_eligible(user_message):
+        # KRI-219 latency: the copilot (flash, ~2-4 s) answers a short in-place
+        # text/label/order tweak before the pro-model extraction (~12 s) is even
+        # started. Only a plan made of in-place ops is taken; anything else (a
+        # question, a structural op, a refusal) falls through to the router below,
+        # unchanged. The requirement extraction still runs, off the critical path.
+        fast_plan = await _plan_editor_revision(
+            db, thread_id=thread_id, item=item, user_message=user_message
+        )
+        if _is_fast_path_plan(fast_plan):
+            return PlannedKriaTurn(
+                plan=fast_plan,
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+                brief_route="editor_ops",
+                brief_clip_ids=tuple(str(media.media_id) for media in manifest.media),
+                brief_manifest=manifest,
+                defer_brief=True,
+            )
+        item = await _refetch_item(db, item_id)
     if not extract_first:
         editor_plan = await _plan_editor_revision(
             db,
@@ -867,7 +953,59 @@ async def plan_live_turn(
     )
 
 
+async def extract_deferred_brief(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    user_message: str,
+) -> tuple[tuple[BriefUpdate, ...], Route | None]:
+    """Run the Main Creator requirement extraction for an already-applied editor turn.
+
+    Same inputs and the same router as the inline path, so the brief ends up exactly
+    as if the extraction had run first. Returns the newly stated requirements and the
+    router verdict for them (``replan`` = the copilot's in-place edit did not cover
+    everything the creator asked for).
+    """
+    item = await db.get(PlanItem, item_id)
+    if item is None:
+        return (), None
+    plan = await db.get(ContentPlan, item.content_plan_id)
+    persona = await db.get(Persona, plan.persona_id) if plan is not None else None
+    if plan is None or plan.user_id != creator_id or persona is None:
+        return (), None
+    manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
+    prior_brief = await load_latest_brief(db, thread_id)
+    inputs = await _load_creator_inputs(
+        db,
+        thread_id=thread_id,
+        item=item,
+        persona=persona,
+        creator_id=creator_id,
+        user_message=user_message,
+        manifest=manifest,
+        media_context=media_context,
+        prior_brief=prior_brief,
+        brief_on=True,
+    )
+    if isinstance(inputs, PlannedKriaTurn):
+        return (), None
+    output = await _call_main_creator(inputs, thread_id=thread_id, creator_id=creator_id)
+    updates = tuple(output.brief_updates)
+    effective = apply_updates(prior_brief, updates, source_turn_id=None)
+    fresh = new_requirements(prior_brief, effective)
+    item = await _refetch_item(db, item_id)
+    shape = CurrentPlanShape(has_render=False)
+    if item.current_job_id is not None:
+        target = await _load_editor_target(db, thread_id=thread_id, item=item)
+        shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
+        await db.rollback()
+    return updates, route_requirements(fresh, shape, message=user_message)
+
+
 __all__ = [
+    "extract_deferred_brief",
     "PlannedKriaTurn",
     "adapt_creator_action",
     "adapt_editor_action",

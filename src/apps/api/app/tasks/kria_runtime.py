@@ -39,7 +39,7 @@ from app.kria.brief_checks import (
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.language import is_paraphrase_only
-from app.kria.planner import PlannedKriaTurn, plan_live_turn
+from app.kria.planner import PlannedKriaTurn, extract_deferred_brief, plan_live_turn
 from app.kria.registry import KRIA_TOOLS
 from app.models import (
     ContentPlan,
@@ -1226,6 +1226,15 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     )
                     return {"turn_id": turn_id, "status": "requeued"}
                 return {"turn_id": turn_id, "status": "ignored"}
+            if planned.defer_brief:
+                try:
+                    extract_kria_brief.apply_async(
+                        args=[turn_id], task_id=f"brief-{turn_id}", queue="agent-control"
+                    )
+                except Exception:  # noqa: BLE001 - the brief is best-effort context
+                    log.warning(
+                        "kria_deferred_brief_enqueue_failed", turn_id=turn_id, exc_info=True
+                    )
             if completion.successor_turn_id is not None:
                 run_kria_turn.apply_async(
                     args=[completion.successor_turn_id],
@@ -1333,6 +1342,87 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 queue="agent-control",
             )
         raise
+
+
+async def _extract_brief_async(snapshot: dict[str, Any], user_message: str):
+    engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            return await extract_deferred_brief(
+                db,
+                thread_id=uuid.UUID(str(snapshot["thread_id"])),
+                item_id=uuid.UUID(str(snapshot["item_id"])),
+                creator_id=uuid.UUID(str(snapshot["creator_id"])),
+                user_message=user_message,
+            )
+    finally:
+        await engine.dispose()
+
+
+_DEFERRED_REPLAN_NOTE = (
+    "I made that change in the editor. Part of your request needs a fresh edit, not an "
+    "in-place tweak: tell me to redo it and I'll re-plan around your full request."
+)
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.extract_kria_brief",
+    soft_time_limit=90,
+    time_limit=120,
+    max_retries=0,
+)
+def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
+    """KRI-219: record the requirements of an in-place edit the copilot already applied.
+
+    The fast path answered the creator first; this runs the slow extraction after
+    the fact, persists the brief version for that turn (idempotent per turn), and
+    says so when the router would have re-planned (the edit covered only part of
+    the ask). Best-effort: it never touches the draft.
+    """
+    identifier = uuid.UUID(turn_id)
+    with sync_session() as db:
+        turn = db.get(CreatorAgentTurn, identifier)
+        if turn is None or turn.status != "completed":
+            return {"turn_id": turn_id, "status": "ignored"}
+        thread = db.get(CreationThread, turn.thread_id)
+        source = db.get(CreationThreadEvent, turn.source_event_id)
+        if thread is None or source is None:
+            return {"turn_id": turn_id, "status": "ignored"}
+        snapshot, message = _snapshot(thread), str(source.content or "")
+    if not snapshot.get("item_id"):
+        return {"turn_id": turn_id, "status": "ignored"}
+    try:
+        updates, route = asyncio.run(_extract_brief_async(snapshot, message))
+    except Exception:  # noqa: BLE001 - best-effort context
+        log.warning("kria_deferred_brief_failed", turn_id=turn_id, exc_info=True)
+        return {"turn_id": turn_id, "status": "failed"}
+    with sync_session() as db:
+        thread = db.execute(
+            select(CreationThread)
+            .where(CreationThread.id == uuid.UUID(str(snapshot["thread_id"])))
+            .with_for_update()
+        ).scalar_one()
+        if updates:
+            persist_brief_version_sync(db, thread_id=thread.id, turn_id=identifier, updates=updates)
+        if route == "replan":
+            log.info("kria_fast_path_route_mismatch", turn_id=turn_id)
+            _append_sync_event(
+                db,
+                thread,
+                role="assistant",
+                event_type="assistant_response",
+                content=_DEFERRED_REPLAN_NOTE,
+                payload={
+                    "turn_id": turn_id,
+                    "turn_value": "recovery",
+                    "receipt_ids": [],
+                    "next_actions": [],
+                    "schema_version": 2,
+                },
+            )
+        db.commit()
+    return {"turn_id": turn_id, "status": "done", "route": str(route)}
 
 
 def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim | None:
