@@ -12,9 +12,17 @@ final class RecipeWriter: @unchecked Sendable {
     let audio: AVAssetReaderAudioMixOutput?
     let audioInput: AVAssetWriterInput
     let duration: Double
+    /// KRI-139: set when the recipe asks for a loudness target; `run` measures the
+    /// mix with a separate reader before writing, then normalizes every buffer.
+    let loudnessTarget: Double?
+    let asset: AVAsset
+    let audioMix: AVAudioMix?
 
     @MainActor init(preview: PreviewComposition, outputURL: URL, bitrate: Int) async throws {
         let asset = preview.playerItem.asset
+        self.asset = asset
+        audioMix = preview.playerItem.audioMix
+        loudnessTarget = preview.loudnessTargetLUFS
         duration = preview.description.duration
         guard duration.isFinite, duration > 0, duration <= 1800 else { throw RecipeError.invalidTimeline }
         reader = try AVAssetReader(asset: asset)
@@ -58,6 +66,11 @@ final class RecipeWriter: @unchecked Sendable {
     func run(progress: (@Sendable (Double) -> Void)?) async throws {
         do {
             try Task.checkCancellation()
+            var normalizer: LoudnessNormalizer?
+            if let loudnessTarget, audio != nil {
+                traceDeviceExportPhase("measure_loudness")
+                normalizer = LoudnessNormalizer(target: loudnessTarget, meter: try await LoudnessMeter.measure(asset: asset, audioMix: audioMix))
+            }
             guard writer.startWriting(), reader.startReading() else { throw writer.error ?? reader.error ?? MediaEngineError.exportFailed }
             traceDeviceExportPhase("started_reading_writing")
             writer.startSession(atSourceTime: .zero)
@@ -86,7 +99,8 @@ final class RecipeWriter: @unchecked Sendable {
                     try autoreleasepool {
                         let sample: CMSampleBuffer?
                         if let audio {
-                            sample = audio.copyNextSampleBuffer()
+                            let next = audio.copyNextSampleBuffer()
+                            sample = try next.map { try normalizer?.normalized($0) ?? $0 }
                         } else if silenceFrame < silenceFrames {
                             let count = Int(min(1024, silenceFrames - silenceFrame))
                             sample = try Self.silence(startFrame: silenceFrame, frames: count)

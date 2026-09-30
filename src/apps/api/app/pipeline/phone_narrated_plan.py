@@ -96,14 +96,16 @@ Audio mix approximation (documented divergence, accepted for v1)
 
 Cloud (`_mix_user_voiceover`, `app/tasks/template_orchestrate.py:6501-6601`):
 voice at gain 1.0, footage bed side-chain DUCKED under the voice (dips while
-narration plays, rises in pauses), loudnorm, and a 0.5s voice fade-out. The
-phone engine has no ducking/loudnorm/ramp primitive at all -- only a flat,
-constant `AudioMixRecipe.original_volume` for the whole timeline and a flat
-per-clip `volume` on the narration track. Exactly mirroring
-`compile_phone_voiceover_montage_plan`'s already-shipped approximation for its own
-voiceover case: a single constant attenuated footage-bed gain under a
-full-volume voice is the accepted v1 approximation (no ducking, no
-loudnorm, no fade). ``mix`` here uses the SAME convention
+narration plays, rises in pauses), loudnorm, and a 0.5s voice fade-out.
+Since KRI-139 the phone expresses all three: the voice clip carries a 0.5s
+``audio_fade_out``, ``AudioMixRecipe.target_lufs`` asks the device to
+normalize the exported mix, and -- only when the caller passes
+``duck_footage_bed`` (the worker's `audioDucking` verified-feature gate) --
+``duck_original_during_music`` asks the device to side-chain duck the footage
+under the voice with the cloud's compressor settings, at the cloud's
+``_NARRATED_FOOTAGE_BED_MAX_GAIN`` resting level. Without the gate the bed
+stays the shipped v1 approximation: one constant attenuated footage-bed gain
+under a full-volume voice. ``mix`` here uses the SAME convention
 `GenerativeVariantDecision.mix` does in the montage compiler (1.0 = voice
 fully dominant/default, 0.0 = footage bed at its loudest) --
 ``footage_bed_gain = max(0.0, 1.0 - mix)``. The cloud narrated path's actual
@@ -133,8 +135,10 @@ from app.kria.render_assets import RenderAssetManifest, VoiceoverRenderAsset
 from app.pipeline.canvas import canvas_for_orientation
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import (
+    NARRATED_FOOTAGE_BED_MAX_GAIN,
     TIMING_ROUNDING_TOLERANCE_S,
     PhoneNarrationBed,
+    audio_fade,
     snap_text_overshoot,
     timeline_end_s,
 )
@@ -271,8 +275,13 @@ def compile_phone_narrated_plan(
     caption_cues: list[dict] | None = None,
     caption_style: str = "sentence",
     orientation: str = "portrait",
+    target_lufs: float | None = None,
+    duck_footage_bed: bool = False,
 ) -> EditRecipeV2:
     """See the module docstring for the full contract.
+
+    ``target_lufs`` / ``duck_footage_bed`` (KRI-139): see "Audio mix
+    approximation" -- both are passed in so this module stays settings-free.
 
     ``steps`` must already be in narration-timeline order and tile
     ``[0, voiceover_duration_s]`` contiguously (see "Step-timing contract").
@@ -387,6 +396,8 @@ def compile_phone_narrated_plan(
     )
     voice_mix = max(0.0, min(1.0, float(mix if mix is not None else 1.0)))
     footage_bed_gain = max(0.0, 1.0 - voice_mix)
+    if duck_footage_bed:
+        footage_bed_gain *= NARRATED_FOOTAGE_BED_MAX_GAIN
     narration_duration_s = max(0.1, min(float(voiceover_duration_s), narration.duration_s))
 
     tracks = [
@@ -403,6 +414,7 @@ def compile_phone_narrated_plan(
                     timeline_start=0.0,
                     rate=1.0,
                     volume=1.0,
+                    audio_fade_out=audio_fade(narration_duration_s),
                 )
             ],
         ),
@@ -410,6 +422,9 @@ def compile_phone_narrated_plan(
     audio = AudioMixRecipe(
         narration_asset_id=narration_asset.id,
         original_volume=footage_bed_gain,
+        # Nothing to duck when the bed is silent.
+        duck_original_during_music=duck_footage_bed and footage_bed_gain > 0,
+        target_lufs=target_lufs,
     )
     # A caption that ends at the voiceover's nominal end can overshoot the recipe's own
     # duration by float noise (a slowed-down clip's `usable / (usable / target)` lands
@@ -426,6 +441,7 @@ def compile_phone_narrated_plan(
             else set()
         )
         | ({"variableSpeed"} if any(clip.rate != 1 for clip in clips) else set())
+        | ({"audioDucking"} if audio.duck_original_during_music else set())
     )
 
     return EditRecipeV2(

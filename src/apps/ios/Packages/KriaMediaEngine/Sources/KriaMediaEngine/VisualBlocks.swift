@@ -178,33 +178,50 @@ let audioEdgeFade: TimeInterval = 0.025
 /// leaks the first few milliseconds at full level even when muted. Seeding the
 /// timeline origin with 0 closes that; the edge ramps stop hard cuts clicking.
 /// Ramps never overlap a `setVolume` point: mute-window edges inside an edge
-/// zone are ignored (at most 25 ms of a window edge).
-func applyAudioGain(_ parameter: AVMutableAudioMixInputParameters, clip: TimelineClip, gain: Double, windows: [AudioMuteWindow]) {
+/// zone are ignored (at most 25 ms of a window edge, or of an authored fade).
+///
+/// KRI-139: an authored `audioFadeIn`/`audioFadeOut` longer than the declick
+/// edge replaces it, and a `duck` envelope scales the steady region between the
+/// edges (the side-chain ducked footage bed) as consecutive ramps.
+func applyAudioGain(_ parameter: AVMutableAudioMixInputParameters, clip: TimelineClip, gain: Double, windows: [AudioMuteWindow], duck: AudioDuckEnvelope? = nil) {
     func cm(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 60_000) }
     let start = clip.timelineStart
     // Audio stops with the moving segment; a held video tail carries no sound.
     let audioEnd = start + clip.sourceDuration / clip.rate
     let edge = max(0, min(audioEdgeFade, (audioEnd - start) / 4))
+    let half = (audioEnd - start) / 2
+    let fadeIn = max(edge, min(clip.audioFadeIn ?? 0, half)), fadeOut = max(edge, min(clip.audioFadeOut ?? 0, half))
     let affected = windows.filter { $0.clipIDs.contains(clip.id) && $0.start < clip.timelineStart + clip.duration && $0.end > clip.timelineStart }
     let boundaries = Set([start] + affected.flatMap { [max(clip.timelineStart, $0.start), min(clip.timelineStart + clip.duration, $0.end)] }).sorted()
     func level(at time: Double) -> Float {
         affected.contains { $0.start <= time && $0.end > time } ? 0 : Float(gain * clip.volume)
     }
+    func ducked(_ time: Double) -> Float { Float(duck?.gain(at: time) ?? 1) }
     // Nothing plays before the clip: keep the implicit unity default away from it.
     if start > 0 { parameter.setVolume(0, at: .zero) }
+    let steadyStart = start + fadeIn, steadyEnd = audioEnd - fadeOut
     let initial = level(at: start)
-    if initial > 0, edge > 0 {
-        parameter.setVolumeRamp(fromStartVolume: 0, toEndVolume: initial, timeRange: CMTimeRange(start: cm(start), duration: cm(edge)))
+    if initial > 0, fadeIn > 0 {
+        parameter.setVolumeRamp(fromStartVolume: 0, toEndVolume: initial * ducked(steadyStart), timeRange: CMTimeRange(start: cm(start), duration: cm(fadeIn)))
     } else {
         parameter.setVolume(initial, at: cm(start))
     }
-    let steadyEnd = audioEnd - edge
-    for time in boundaries where time >= start + edge && time < steadyEnd {
-        parameter.setVolume(level(at: time), at: cm(time))
+    if let duck, steadyEnd > steadyStart {
+        // Ramp between every duck breakpoint and mute-window edge; a window edge
+        // is a step, so each segment ramps at its own window level.
+        let marks = Set([steadyStart, steadyEnd] + boundaries.filter { $0 > steadyStart && $0 < steadyEnd } + duck.times(in: steadyStart...steadyEnd)).sorted()
+        for (from, to) in zip(marks, marks.dropFirst()) where to - from > 0.000_001 {
+            let held = level(at: from)
+            parameter.setVolumeRamp(fromStartVolume: held * ducked(from), toEndVolume: held * ducked(to), timeRange: CMTimeRange(start: cm(from), end: cm(to)))
+        }
+    } else {
+        for time in boundaries where time >= steadyStart && time < steadyEnd {
+            parameter.setVolume(level(at: time), at: cm(time))
+        }
     }
     let last = level(at: max(start, min(steadyEnd, boundaries.last(where: { $0 < steadyEnd }) ?? start)))
-    if last > 0, edge > 0 {
-        parameter.setVolumeRamp(fromStartVolume: last, toEndVolume: 0, timeRange: CMTimeRange(start: cm(steadyEnd), duration: cm(edge)))
+    if last > 0, fadeOut > 0 {
+        parameter.setVolumeRamp(fromStartVolume: last * ducked(steadyEnd), toEndVolume: 0, timeRange: CMTimeRange(start: cm(steadyEnd), duration: cm(fadeOut)))
     }
 }
 #endif

@@ -141,6 +141,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 throw RecipeError.invalidTimeline
             }
             try clip.sourceCrop?.validate()
+            for fade in [clip.audioFadeIn, clip.audioFadeOut].compactMap({ $0 }) {
+                guard fade.isFinite, (0...60).contains(fade) else { throw RecipeError.invalidTimeline }
+            }
             if clip.stillLayout != nil {
                 guard schemaVersion == 2, tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: { $0.id == clip.id }) }),
                       clip.rate == 1, clip.look == nil, clip.holdDuration == nil, clip.sourceCrop == nil, clip.transform == .identity,
@@ -171,6 +174,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         guard levels.allSatisfy(\.isFinite), (0...2).contains(audio.musicVolume),
               (0...2).contains(audio.originalVolume), (0...60).contains(audio.fadeIn),
               (0...60).contains(audio.fadeOut) else { throw RecipeError.invalidTimeline }
+        if let target = audio.targetLUFS { guard target.isFinite, (-40 ... -5).contains(target) else { throw RecipeError.invalidTimeline } }
     }
 
     /// Derive requirements from content too: an omitted server capability must not drop an effect.
@@ -199,6 +203,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
             result.insert(.audioMix)
         }
         if audio.narrationAssetID != nil { result.insert(.narrationAudio) }
+        if audio.duckOriginalDuringMusic { result.insert(.audioDucking) }
         return result
     }
 
@@ -317,6 +322,12 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     /// A Visuals photo shown whole inside a card over a blurred cover of itself.
     public var stillLayout: StillLayout?
     public var volume: Double
+    /// Seconds of linear gain ramp at this clip's audio start/end (KRI-139):
+    /// the music bed's fades and the cloud's 0.5 s voiceover fade-out. Used in
+    /// place of the declick edge (`audioEdgeFade`) when longer. See
+    /// `app.kria.recipes.TimelineClip.audio_fade_in`.
+    public var audioFadeIn: TimeInterval?
+    public var audioFadeOut: TimeInterval?
     public var duration: TimeInterval { sourceDuration / rate + (holdDuration ?? 0) }
     /// Opacity from `overlayFadeIn`/`overlayFadeOut` alone across this clip's
     /// own timeline window; exactly 1 when neither is set, or when the clip is
@@ -328,14 +339,15 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
                                                  fadeIn: overlayFadeIn == true, fadeOut: overlayFadeOut == true)
     }
     // Use Swift's acronym-normalized spelling so convertToSnakeCase/convertFromSnakeCase agree.
-    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout, overlayFadeIn, overlayFadeOut }
+    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout, overlayFadeIn, overlayFadeOut, audioFadeIn, audioFadeOut }
     public init(id: String, sourceAssetID: String, sourceStart: TimeInterval = 0, sourceDuration: TimeInterval,
                 timelineStart: TimeInterval = 0, rate: Double = 1, transform: MediaTransform = .identity,
-                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil, overlayFadeIn: Bool? = nil, overlayFadeOut: Bool? = nil) {
+                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil, overlayFadeIn: Bool? = nil, overlayFadeOut: Bool? = nil, audioFadeIn: TimeInterval? = nil, audioFadeOut: TimeInterval? = nil) {
         self.id = id; self.sourceAssetID = sourceAssetID; self.sourceStart = sourceStart; self.sourceDuration = sourceDuration
         self.timelineStart = timelineStart; self.rate = rate; self.transform = transform; self.transition = transition; self.text = text; self.volume = volume
         self.look = look; self.holdDuration = holdDuration; self.overlayAboveText = overlayAboveText; self.overlayPopIn = overlayPopIn; self.overlayPreserveAlpha = overlayPreserveAlpha; self.visualPlacement = visualPlacement; self.overlayDissolveSeed = overlayDissolveSeed; self.sourceCrop = sourceCrop; self.stillLayout = stillLayout
         self.overlayFadeIn = overlayFadeIn; self.overlayFadeOut = overlayFadeOut
+        self.audioFadeIn = audioFadeIn; self.audioFadeOut = audioFadeOut
     }
 }
 
@@ -389,7 +401,11 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
     /// the narration `TimelineTrack`'s clip `volume`, mirroring `musicAssetID`'s
     /// reference-only role. See `app.kria.recipes.AudioMixRecipe.narration_asset_id`.
     public var narrationAssetID: String?
-    private enum CodingKeys: String, CodingKey { case musicAssetID = "musicAssetId", musicVolume, originalVolume, fadeIn, fadeOut, duckOriginalDuringMusic, muteWindows, narrationAssetID = "narrationAssetId" }
+    /// Integrated-loudness target for the exported mix (KRI-139): the exporter
+    /// measures the mix (ITU-R BS.1770) and applies one gain plus a -1.5 dBTP
+    /// limiter, approximating the cloud's `loudnorm`. Nil leaves levels as mixed.
+    public var targetLUFS: Double?
+    private enum CodingKeys: String, CodingKey { case musicAssetID = "musicAssetId", musicVolume, originalVolume, fadeIn, fadeOut, duckOriginalDuringMusic, muteWindows, narrationAssetID = "narrationAssetId", targetLUFS = "targetLufs" }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         musicAssetID = try c.decodeIfPresent(String.self, forKey: .musicAssetID)
@@ -398,6 +414,7 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
         duckOriginalDuringMusic = try c.decode(Bool.self, forKey: .duckOriginalDuringMusic)
         muteWindows = try c.decodeIfPresent([AudioMuteWindow].self, forKey: .muteWindows) ?? []
         narrationAssetID = try c.decodeIfPresent(String.self, forKey: .narrationAssetID)
+        targetLUFS = try c.decodeIfPresent(Double.self, forKey: .targetLUFS)
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -407,8 +424,9 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
         try c.encode(duckOriginalDuringMusic, forKey: .duckOriginalDuringMusic)
         if !muteWindows.isEmpty { try c.encode(muteWindows, forKey: .muteWindows) }
         try c.encodeIfPresent(narrationAssetID, forKey: .narrationAssetID)
+        try c.encodeIfPresent(targetLUFS, forKey: .targetLUFS)
     }
-    public init(musicAssetID: String? = nil, musicVolume: Double = 1, originalVolume: Double = 1, fadeIn: TimeInterval = 0, fadeOut: TimeInterval = 0, duckOriginalDuringMusic: Bool = false, muteWindows: [AudioMuteWindow] = [], narrationAssetID: String? = nil) { self.musicAssetID = musicAssetID; self.musicVolume = musicVolume; self.originalVolume = originalVolume; self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.duckOriginalDuringMusic = duckOriginalDuringMusic; self.muteWindows = muteWindows; self.narrationAssetID = narrationAssetID }
+    public init(musicAssetID: String? = nil, musicVolume: Double = 1, originalVolume: Double = 1, fadeIn: TimeInterval = 0, fadeOut: TimeInterval = 0, duckOriginalDuringMusic: Bool = false, muteWindows: [AudioMuteWindow] = [], narrationAssetID: String? = nil, targetLUFS: Double? = nil) { self.musicAssetID = musicAssetID; self.musicVolume = musicVolume; self.originalVolume = originalVolume; self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.duckOriginalDuringMusic = duckOriginalDuringMusic; self.muteWindows = muteWindows; self.narrationAssetID = narrationAssetID; self.targetLUFS = targetLUFS }
     public static let `default` = AudioMixRecipe()
 }
 

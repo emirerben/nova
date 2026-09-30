@@ -424,6 +424,14 @@
             "minimum": 0,
             "title": "Original Volume",
             "type": "number"
+          },
+          "target_lufs": {
+            "default": null,
+            "maximum": -5,
+            "minimum": -40,
+            "nullable": true,
+            "title": "Target Lufs",
+            "type": "number"
           }
         },
         "title": "AudioMixRecipe",
@@ -7209,6 +7217,22 @@
       "TimelineClip": {
         "additionalProperties": false,
         "properties": {
+          "audio_fade_in": {
+            "default": null,
+            "maximum": 60,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Audio Fade In",
+            "type": "number"
+          },
+          "audio_fade_out": {
+            "default": null,
+            "maximum": 60,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Audio Fade Out",
+            "type": "number"
+          },
           "hold_duration": {
             "default": null,
             "maximum": 1800,

@@ -32,6 +32,21 @@ EXPORT_SAFETY_MARGIN_S = 0.05
 # mismatch.
 TIMING_ROUNDING_TOLERANCE_S = 0.005
 
+# Mirrors the cloud's `afade=t=out:d=0.5` on a recorded voiceover
+# (`_mix_user_voiceover`) and on a song bed (`_mix_template_audio`); the phone
+# expresses it as a per-clip `TimelineClip.audio_fade_out` (KRI-139).
+PHONE_AUDIO_FADE_S = 0.5
+
+# Mirrors `app.tasks.template_orchestrate._NARRATED_FOOTAGE_BED_MAX_GAIN`: the
+# resting level of a side-chain ducked footage bed. Only applied together with
+# the native duck -- the flat (un-ducked) approximation keeps its shipped gain.
+NARRATED_FOOTAGE_BED_MAX_GAIN = 0.6
+
+
+def audio_fade(clip_duration_s: float) -> float:
+    """`PHONE_AUDIO_FADE_S`, shortened so a fade never covers half a short clip."""
+    return round(max(0.0, min(PHONE_AUDIO_FADE_S, clip_duration_s / 2)), 6)
+
 
 def snap_text_overshoot(layers: Iterable[Any], timeline_end_s: float) -> None:
     """Snap a text layer that overshoots the timeline by float noise back onto it.

@@ -4381,7 +4381,11 @@ def _run_phone_voiceover_montage_job(
                 job_id, decision.extras.get("voiceover_gcs_path")
             )
             recipe = compile_phone_voiceover_montage_plan(
-                decision, bindings, music=music, narration=narration
+                decision,
+                bindings,
+                music=music,
+                narration=narration,
+                target_lufs=settings.output_target_lufs,
             )
 
     validate_phone_pilot_recipe(recipe)
@@ -6373,6 +6377,8 @@ def _run_phone_narrated_job(
                 mix=mix,
                 caption_cues=cues,
                 caption_style=caption_style,
+                target_lufs=settings.output_target_lufs,
+                duck_footage_bed="audioDucking" in settings.phone_render_verified_features,
             )
 
     validate_phone_pilot_recipe(recipe)

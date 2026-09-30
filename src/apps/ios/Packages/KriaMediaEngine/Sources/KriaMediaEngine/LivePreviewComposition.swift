@@ -268,7 +268,7 @@ public struct LivePreviewExportSnapshot: Sendable {
                 guard let clip = clips[binding.clipID] else { throw NativePreviewFeatureError("LivePreviewComposition-181") }
                 let parameter = AVMutableAudioMixInputParameters()
                 parameter.trackID = binding.trackID
-                applyAudioGain(parameter, clip: clip, gain: binding.usesOriginalGain ? next.audio.originalVolume : 1, windows: next.audio.muteWindows)
+                applyAudioGain(parameter, clip: clip, gain: binding.usesOriginalGain ? next.audio.originalVolume : 1, windows: next.audio.muteWindows, duck: binding.usesOriginalGain ? preview.duckEnvelope : nil)
                 return parameter
             }
         }
