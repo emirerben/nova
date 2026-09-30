@@ -50,6 +50,11 @@ References: [models and pricing](https://docs.typesafe.ai/models),
 
 ## Reproducible evaluation status
 
+See [Pilot fixture review and editing guide](pilot-fixture-review.md) for the exact outbound
+payload, field semantics, all 25 expanded cases, current evidence risks, and the recommended
+human-adjudicated replacement workflow. The current generated manifest is suitable for harness
+plumbing checks, not feasibility evidence.
+
 The committed builder produces 25 cases / 100 individual decisions from the existing
 request-following fixture families:
 
@@ -60,12 +65,14 @@ request-following fixture families:
 - fixture lineage never crosses calibration and held-out splits;
 - labels are explicitly `derived` and `human_adjudicated=false`.
 
-No `TYPESAFE_API_KEY` was available, and no human adjudication was performed. Consequently there
-are no honest measurements yet for incorrect flags, missed violations, coverage, latency, billed
-tokens, cost, retry rate, fallback rate, or English/Turkish quality deltas. The report command
-forces **NO-GO** when predictions, held-out adjudication, a 100-200-decision set, or explicit
-numeric gates are missing. Provider failures count as abstentions and reduce coverage; the harness
-does not invent probabilities.
+A scoped `TYPESAFE_API_KEY` is now configured locally, but no manifest data has been sent to the
+provider and no human adjudication was performed. The current generated cases need the review and
+replacement work described above before a live run can produce credible evidence. Consequently
+there are no honest measurements yet for incorrect flags, missed violations, coverage, latency,
+billed tokens, cost, retry rate, fallback rate, or English/Turkish quality deltas. The report
+command forces **NO-GO** when predictions, held-out adjudication, a 100-200-decision set, or
+explicit numeric gates are missing. Provider failures count as abstentions and reduce coverage;
+the harness does not invent probabilities.
 
 Commands:
 
