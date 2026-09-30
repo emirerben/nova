@@ -51,6 +51,7 @@ from app.kria.brief_route import (
     first_text,
     fold_text,
     wants_filming_time_text,
+    wants_hour_only_text,
 )
 from app.schemas.edit_proposal import (
     MAX_PROPOSAL_DURATION_S,
@@ -162,6 +163,8 @@ class BriefView:
     order_by_capture: bool = False
     # KRI-219: the per-clip text is the hour each clip was filmed, not its place.
     per_clip_text_is_time: bool = False
+    # "hh_mm" or "hour" (just the hour, no minutes) for those filming-time labels.
+    time_format: str = "hh_mm"
     title_literal: str | None = None
     global_literal: str | None = None
     facts: Mapping[str, Any] = field(default_factory=dict)
@@ -176,6 +179,7 @@ def brief_view(brief: Any) -> BriefView:
     wants_order = False
     order_capture = False
     wants_time = False
+    hour_only = False
     clip_literals: dict[str, str] = {}
     title_literal: str | None = None
     global_literal: str | None = None
@@ -190,6 +194,8 @@ def brief_view(brief: Any) -> BriefView:
                 req.kind, req.scope, req.literal, req.description, req.facts
             ):
                 wants_time = True
+            if req.scope == "per_clip" and wants_hour_only_text(req.description, req.literal):
+                wants_time = hour_only = True
             if req.scope == "per_clip":
                 wants_text = True
             elif req.scope.startswith("clip:") and req.literal:
@@ -217,6 +223,7 @@ def brief_view(brief: Any) -> BriefView:
         wants_order=wants_order,
         order_by_capture=order_capture,
         per_clip_text_is_time=wants_time,
+        time_format="hour" if hour_only else "hh_mm",
         title_literal=title_literal,
         global_literal=global_literal,
         facts=facts,
@@ -653,7 +660,12 @@ def plan_unified_montage(
         elif view.wants_per_clip_text and view.per_clip_text_is_time:
             moment = clip.capture_time or capture_time_from_facts(clip.facts)
             if moment is not None:
-                chosen = (format_capture_hour(moment, hour_zone), "fact", "capture_time", False)
+                chosen = (
+                    format_capture_hour(moment, hour_zone, view.time_format),
+                    "fact",
+                    "capture_time",
+                    False,
+                )
         elif view.wants_per_clip_text:
             fact = _fact_label(clip)
             if fact is not None:

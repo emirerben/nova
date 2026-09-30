@@ -29,6 +29,7 @@ from app.kria.brief_route import (
     fold_text,
     loose_text,
     wants_filming_time_text,
+    wants_hour_only_text,
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
 
@@ -480,6 +481,21 @@ _CANT_CHECK_EDITOR_CLIP_TEXT = "I can't verify per-clip text on an editor edit."
 
 
 def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if (
+        req.scope == "per_clip"
+        and wants_hour_only_text(req.description, req.literal)
+        and facts.per_clip_text
+    ):
+        # "Just the hour, no minutes" is a FORMAT: met only when every label the plan
+        # actually carries is a bare hour, never because the labels merely exist.
+        bad = [c for c, t in facts.per_clip_text.items() if not re.fullmatch(r"\d{1,2}", t.strip())]
+        if bad:
+            return _receipt(
+                req,
+                "partial",
+                f"{len(bad)} of {len(facts.per_clip_text)} labels still show more than the "
+                "hour. A re-render can't reformat them; ask me again to change them in the editor.",
+            )
     wanted = _fold(req.literal or "")
     if facts.editor and not facts.has_clip_structure:
         # No per-clip diff for this edit: judge the literal if the creator wrote one

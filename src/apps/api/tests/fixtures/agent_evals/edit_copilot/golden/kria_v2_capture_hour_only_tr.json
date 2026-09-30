@@ -1,0 +1,284 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-30-v56",
+  "input": {
+    "utterance": "saatleri sadece saat olarak göster",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "editor_ops_version": 2,
+      "allowed_op_families": [
+        "clip",
+        "text",
+        "transition"
+      ],
+      "label_facts": true,
+      "slots": [
+        {
+          "key": "s1",
+          "slot_id": "s1",
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 0.0,
+          "output_end_s": 3.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video",
+          "facts": [
+            {
+              "kind": "capture_time",
+              "value": "2026-09-20T14:32:00Z",
+              "provenance": "exif"
+            },
+            {
+              "kind": "place",
+              "value": "Kadıköy, İstanbul, Türkiye",
+              "provenance": "geocode"
+            }
+          ]
+        },
+        {
+          "key": "s2",
+          "slot_id": "s2",
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 3.0,
+          "output_end_s": 6.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video",
+          "facts": [
+            {
+              "kind": "capture_time",
+              "value": "2026-09-20T09:05:00Z",
+              "provenance": "exif"
+            },
+            {
+              "kind": "place",
+              "value": "Kadıköy, İstanbul, Türkiye",
+              "provenance": "geocode"
+            }
+          ]
+        },
+        {
+          "key": "s3",
+          "slot_id": "s3",
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 6.0,
+          "output_end_s": 9.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video",
+          "facts": [
+            {
+              "kind": "place",
+              "value": "Kadıköy, İstanbul, Türkiye",
+              "provenance": "geocode"
+            }
+          ]
+        },
+        {
+          "key": "s4",
+          "slot_id": "s4",
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 9.0,
+          "output_end_s": 12.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video",
+          "facts": [
+            {
+              "kind": "capture_time",
+              "value": "2026-09-20T11:47:00Z",
+              "provenance": "exif"
+            },
+            {
+              "kind": "place",
+              "value": "Kadıköy, İstanbul, Türkiye",
+              "provenance": "geocode"
+            }
+          ]
+        }
+      ],
+      "text_bars": [
+        {
+          "id": "guided-title",
+          "text": "Antalya Trip",
+          "start_s": 0.0,
+          "end_s": 12.0,
+          "role": "generative_intro",
+          "font_family": "Playfair Display",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "middle",
+          "alignment": "center",
+          "effect": "static"
+        },
+        {
+          "id": "clip-label-media-m0",
+          "text": "08:00",
+          "start_s": 0.0,
+          "end_s": 3.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "size_px": 58,
+          "color": "#FFF8F0",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "alignment": "center",
+          "effect": "static",
+          "clip_id": "m0",
+          "inferred": true,
+          "edited": true
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "14:00",
+          "start_s": 3.0,
+          "end_s": 6.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "size_px": 58,
+          "color": "#FFF8F0",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "alignment": "center",
+          "effect": "static",
+          "clip_id": "m1",
+          "inferred": true,
+          "edited": true
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "19:00",
+          "start_s": 6.0,
+          "end_s": 9.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "size_px": 58,
+          "color": "#FFF8F0",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "alignment": "center",
+          "effect": "static",
+          "clip_id": "m2",
+          "inferred": true,
+          "edited": true
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "20:00",
+          "start_s": 9.0,
+          "end_s": 12.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "size_px": 58,
+          "color": "#FFF8F0",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "alignment": "center",
+          "effect": "static",
+          "clip_id": "m3",
+          "inferred": true,
+          "edited": true
+        }
+      ],
+      "total_duration_s": 12,
+      "max_duration_s": 120,
+      "remaining_duration_s": 108
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"label_each_clip\", \"source\": \"facts\", \"label_from\": \"capture_time\", \"mode\": \"replace\", \"time_format\": \"hour\"}], \"confidence\": 0.96, \"reply\": \"Saatleri sadece saat yaptım.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "label_each_clip",
+        "source": "facts",
+        "labels": [
+          {
+            "media_id": "m0",
+            "text": "17",
+            "bar_id": "clip-label-media-m0"
+          },
+          {
+            "media_id": "m1",
+            "text": "12",
+            "bar_id": "clip-label-media-m1"
+          },
+          {
+            "media_id": "m3",
+            "text": "14",
+            "bar_id": "clip-label-media-m3"
+          }
+        ],
+        "label_from": "capture_time",
+        "mode": "replace",
+        "timezone": "Europe/Istanbul",
+        "time_format": "hour"
+      }
+    ],
+    "confidence": 0.96,
+    "reply": "Saatleri sadece saat yaptım. No filming time for clip 3. Times are shown in Europe/Istanbul time.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "TR hour-only via facts",
+    "lane": "kria-219-capture-time",
+    "exact_edit_ops": [
+      {
+        "op": "label_each_clip",
+        "source": "facts",
+        "labels": [
+          {
+            "media_id": "m0",
+            "text": "17",
+            "bar_id": "clip-label-media-m0"
+          },
+          {
+            "media_id": "m1",
+            "text": "12",
+            "bar_id": "clip-label-media-m1"
+          },
+          {
+            "media_id": "m3",
+            "text": "14",
+            "bar_id": "clip-label-media-m3"
+          }
+        ],
+        "label_from": "capture_time",
+        "mode": "replace",
+        "timezone": "Europe/Istanbul",
+        "time_format": "hour"
+      }
+    ]
+  }
+}

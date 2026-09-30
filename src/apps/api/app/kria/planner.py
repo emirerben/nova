@@ -408,7 +408,13 @@ _PHONE_STAGED_REPLY = (
 def _phone_editor_reply(reply: str) -> str:
     """The web copilot's canned "validate and stage" wording is wrong on phone:
     the draft is already live in the editor, unsaved until the creator saves."""
-    return _PHONE_STAGED_REPLY if reply.strip() == _WEB_PROPOSED_REPLY else reply
+    text = reply.strip()
+    if text == _WEB_PROPOSED_REPLY:
+        return _PHONE_STAGED_REPLY
+    if text.startswith(_WEB_PROPOSED_REPLY + " "):
+        # Server notes (time zone, clips without a filming time) ride after the canned line.
+        return f"{_PHONE_STAGED_REPLY} {text[len(_WEB_PROPOSED_REPLY) + 1 :]}"
+    return reply
 
 
 async def _plan_editor_revision(

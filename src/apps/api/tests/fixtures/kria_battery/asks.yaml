@@ -133,3 +133,21 @@ asks:
   - id: capture-order-and-hour
     ask: "Order the videos based on the time they were filmed. Add the hour as well to each video"
     expect_ops: [reorder_clips_by, label_each_clip]
+  - id: capture-hour-only-en
+    ask: "change the timestamps to just the hour, not the minutes"
+    turns:
+      - {role: user, content: "add the hour to each video"}
+      - {role: assistant, content: "Added the filming hour to 5 clips."}
+    expect_ops: [label_each_clip]
+  - id: capture-hour-only-tr
+    ask: "saatleri sadece saat olarak göster"
+    turns:
+      - {role: user, content: "her videoya saat bilgisini ekle"}
+      - {role: assistant, content: "Her videoya saati ekledim."}
+    expect_ops: [label_each_clip]
+  - id: capture-hour-topleft-smaller
+    ask: "Move the timestamps to the top left, make them smaller. Remove everything after the hours, don’t include minutes"
+    turns:
+      - {role: user, content: "add the hour to each video"}
+      - {role: assistant, content: "Added the filming hour to 5 clips."}
+    expect_ops: [label_each_clip, patch_text]

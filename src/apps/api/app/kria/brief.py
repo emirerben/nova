@@ -458,7 +458,10 @@ def route_requirements(
         ):
             return "replan"
         return "editor_ops"
-    if len(kinds) > 1:
+    if len(kinds) > 1 and not kinds <= {"text", "style"}:
+        # Text and style are both in-place label/title tweaks the editor ops express
+        # (KRI-219: "move the timestamps top left, make them smaller, just the hour");
+        # any other mix (audio, timing, ...) still needs the planner.
         return "replan"
     per_clip_text = any(
         req.kind == "text" and (req.scope == "per_clip" or req.scope.startswith("clip:"))

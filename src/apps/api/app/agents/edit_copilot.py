@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-30-v56"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-30-v57"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -239,7 +239,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     # `labels` is derived from the snapshot by the parser, never read from the model.
     # `label_from`/`mode`/`timezone` only SELECT which server fact is printed and
     # how (KRI-219); the printed text is still never model-authored.
-    "label_each_clip": frozenset({"source", "label_from", "mode", "timezone"}),
+    "label_each_clip": frozenset({"source", "label_from", "mode", "timezone", "time_format"}),
     "set_text_timing": frozenset({"bar_index", "start_s", "end_s"}),
     "add_text": frozenset({"text", "start_s", "end_s"}),
     "remove_text": frozenset({"bar_index"}),
@@ -696,6 +696,10 @@ class EditCopilotOutput(BaseModel):
     # KRI-186: parts of the user's message that did not become an op, each
     # {"request": ..., "reason": ...}. Surfaced verbatim by the chat reply.
     unmet_requests: list[dict[str, str]] = Field(default_factory=list, max_length=6)
+    # Server-authored facts about this turn (missing filming times, the time zone
+    # used). Survives the canned "I prepared this edit" reply that replaces a model
+    # reply claiming success.
+    reply_notes: str = ""
 
 
 _MAX_UNMET_REQUESTS = 6
@@ -3372,6 +3376,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 clarification_context=clarification_context,
                 pending_actions=pending_actions,
                 unmet_requests=_sanitize_unmet_requests(data.get("unmet_requests")),
+                reply_notes=" ".join(dict.fromkeys(state.reply_notes)),
             )
         except Exception as exc:  # noqa: BLE001
             raise RefusalError(f"edit_copilot: output validation — {exc}") from exc
@@ -3919,7 +3924,12 @@ def _coerce_label_each_clip(
         return None
     label_from = payload.get("label_from", "place")
     mode = payload.get("mode", "replace")
-    if label_from not in {"place", "capture_time"} or mode not in {"replace", "append"}:
+    time_format = payload.get("time_format", "hh_mm")
+    if (
+        label_from not in {"place", "capture_time"}
+        or mode not in {"replace", "append"}
+        or time_format not in {"hh_mm", "hour"}
+    ):
         state.invalid_value()
         return None
     from_time = label_from == "capture_time"
@@ -3971,7 +3981,7 @@ def _coerce_label_each_clip(
             if moment is None:
                 untimed.append(str(number))
                 continue
-            text = format_capture_hour(moment, zone)
+            text = format_capture_hour(moment, zone, time_format)
         else:
             chosen = _fact_label(
                 SimpleNamespace(facts=tuple(f for f in facts if isinstance(f, dict)))
@@ -3989,14 +3999,18 @@ def _coerce_label_each_clip(
             if append:
                 # Adding to a label never overwrites what the creator wrote, so
                 # a hand-edited bar is fine here; one that already shows it is not.
-                if _label_fold(text) in _label_fold(existing):
+                shown = {_label_fold(part) for part in existing.split("\u00b7")}
+                if _label_fold(text) in shown:
                     already_correct += 1
                     continue
                 entry["text"] = f"{existing} \u00b7 {text}" if existing else text
                 if len(entry["text"]) > 120:
                     continue
             else:
-                if bar.get("edited") is True:
+                # A bar that is only a time ("11", "17:38", even model-typed) is not
+                # the creator's own wording: the hour request may redo it.
+                only_time = from_time and bool(re.fullmatch(r"\d{1,2}([:.]\d{2})?", existing))
+                if bar.get("edited") is True and not only_time:
                     kept_edited += 1
                     continue
                 if _label_fold(existing) == _label_fold(text):
@@ -4055,6 +4069,8 @@ def _coerce_label_each_clip(
         result["label_from"] = "capture_time"
         result["mode"] = mode
         result["timezone"] = zone
+        if time_format != "hh_mm":
+            result["time_format"] = time_format
     if kept_edited:
         result["kept_edited"] = kept_edited
     return result

@@ -607,3 +607,132 @@ def test_noop_reorder_reply_says_only_already_ordered(guided) -> None:
     assert "reordered" not in out.reply.lower() and "Done." not in out.reply
     assert "already in chronological order" in out.reply
     assert out.reply.startswith("Added the filming hour to")
+
+
+# ── hour-only format, in-place routing, format honesty (KRI-219 wedding thread) ──
+
+
+def _label_op(snapshot, **extra):
+    return _parse(
+        snapshot,
+        [{"op": "label_each_clip", "source": "facts", "label_from": "capture_time", **extra}],
+    )
+
+
+def test_hour_only_replace_uses_facts_and_the_one_zone(guided) -> None:
+    job, variant, _rev = guided
+    snap = _snapshot(job, variant)
+    out = _label_op(snap, mode="replace", time_format="hour")
+    # model-typed / creator-changed bars that are ONLY a time may be redone
+    labels = {r["media_id"]: r["text"] for r in out.ops[0]["labels"]} if out.ops else {}
+    assert labels == {} or all(t.isdigit() and len(t) == 2 for t in labels.values())
+    for bar in snap["text_bars"]:
+        if bar.get("clip_id"):
+            bar["text"], bar["edited"] = "08:00", True  # a model-typed hour
+    out = _label_op(snap, mode="replace", time_format="hour")
+    labels = {r["media_id"]: r["text"] for r in out.ops[0]["labels"]}
+    # Istanbul (all clips Turkish): 14:32Z -> 17, 09:05Z -> 12, 11:47Z -> 14
+    assert labels == {"m0": "17", "m1": "12", "m3": "14"}
+    assert out.ops[0]["time_format"] == "hour"
+    assert "Europe/Istanbul" in out.reply
+    assert _label_op(snap, time_format="minutes").ops == []
+
+
+def test_default_time_format_is_unchanged(guided) -> None:
+    job, variant, _rev = guided
+    out = _label_op(_snapshot(job, variant), mode="append")
+    assert out.ops[0]["labels"][0]["text"].endswith("17:32")
+
+
+def test_hand_worded_labels_are_still_kept_by_hour_replace(guided) -> None:
+    job, variant, _rev = guided
+    snap = _snapshot(job, variant)
+    for bar in snap["text_bars"]:
+        if bar.get("clip_id") == "m0":
+            bar["text"], bar["edited"] = "Ahmet arrives", True
+        elif bar.get("clip_id"):
+            bar["edited"] = False
+    out = _label_op(snap, mode="replace", time_format="hour")
+    assert {r["media_id"] for r in out.ops[0]["labels"]} == {"m1", "m3"}
+
+
+def _shape(job, variant):
+    return plan_shape_from_editor_snapshot(_snapshot(job, variant))
+
+
+def test_wedding_thread_requirement_sets_route_to_the_editor(guided) -> None:
+    job, variant, _rev = guided
+    shape = _shape(job, variant)
+    style = BriefRequirement(
+        id="r6",
+        kind="style",
+        scope="per_clip",
+        description="Move the timestamps to the top left, make them smaller.",
+    )
+    text = BriefRequirement(
+        id="r7",
+        kind="text",
+        scope="per_clip",
+        description="Remove everything after the hours, don’t include minutes",
+    )
+    msg = (
+        "Move the timestamps to the top left, make them smaller. Remove everything after the hours"
+    )
+    assert route_requirements([style, text], shape, message=msg) == "editor_ops"
+    assert route_requirements([text], shape, message="just the hour") == "editor_ops"
+    title = BriefRequirement(id="r8", kind="text", scope="title", literal="Ahmet")
+    assert route_requirements([title, style], shape, message="title + style") == "editor_ops"
+    audio = BriefRequirement(id="r9", kind="audio", scope="global", description="louder music")
+    assert route_requirements([style, audio], shape, message="x") == "replan"
+    select = BriefRequirement(id="r10", kind="select", scope="global", description="best 3")
+    assert route_requirements([style, select], shape, message="x") == "replan"
+
+
+def test_replan_hour_only_prints_bare_hours_and_receipt_verifies_format() -> None:
+    from app.kria.brief_checks import check_requirement, plan_facts_from_unified_montage
+
+    only = BriefRequirement(
+        id="r7", kind="text", scope="per_clip", description="just the hour, don't include minutes"
+    )
+    plan = _montage([only], {"a": "2026-09-20T14:32:00Z", "c": "2026-09-20T09:05:00Z"})
+    labels = [r["text"] for r in plan.record()["labels"]]
+    assert all(t.isdigit() for t in labels)
+    assert check_requirement(only, plan_facts_from_unified_montage(plan.record())).status == "met"
+    # labels that still carry minutes can never read "met" for an hour-only ask
+    record = plan.record()
+    for row in record["labels"]:
+        row["text"] = "14:32"
+    receipt = check_requirement(only, plan_facts_from_unified_montage(record))
+    assert receipt.status == "partial" and "editor" in (receipt.reason or "")
+
+
+def test_zone_note_survives_the_canned_success_reply(guided) -> None:
+    from app.kria.planner import _phone_editor_reply
+    from app.routes._copilot import _honest_outcome
+
+    job, variant, _rev = guided
+    out = EditCopilotAgent(ModelClient()).parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [
+                    {
+                        "op": "label_each_clip",
+                        "source": "facts",
+                        "label_from": "capture_time",
+                        "mode": "append",
+                        "time_format": "hour",
+                    }
+                ],
+                "confidence": 0.9,
+                "reply": "Done, I updated the timestamps.",
+                "suggestions": [],
+                "needs_clarification": False,
+            }
+        ),
+        EditCopilotInput(utterance="x", prior_turns=[], variant_snapshot=_snapshot(job, variant)),
+    )
+    _outcome, reply = _honest_outcome(out, out.ops)
+    assert "Europe/Istanbul" in reply and "No filming time for clip 3" in reply
+    phone = _phone_editor_reply(reply)
+    assert phone.startswith("Updated your edit") and "Europe/Istanbul" in phone

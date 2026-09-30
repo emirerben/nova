@@ -316,11 +316,19 @@ def display_timezone(
     return "UTC", "utc"
 
 
-def format_capture_hour(moment: datetime, zone: str) -> str:
-    """24-hour ``HH:MM`` in ``zone`` (no locale is known for a creator today)."""
+TIME_FORMATS = ("hh_mm", "hour")
+
+
+def format_capture_hour(moment: datetime, zone: str, time_format: str = "hh_mm") -> str:
+    """24-hour ``HH:MM`` (default) or the zero-padded hour alone (``"hour"``) in ``zone``.
+
+    No locale is known for a creator today, so both are 24-hour. ``hour`` is the data
+    contract for "just the hour, not the minutes"; the display is the bare "14".
+    """
     from zoneinfo import ZoneInfo  # noqa: PLC0415
 
-    return moment.astimezone(ZoneInfo(zone)).strftime("%H:%M")
+    local = moment.astimezone(ZoneInfo(zone))
+    return local.strftime("%H") if time_format == "hour" else local.strftime("%H:%M")
 
 
 def timezone_note(zone: str, basis: str) -> str:

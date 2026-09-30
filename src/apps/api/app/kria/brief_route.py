@@ -78,3 +78,17 @@ def wants_filming_time_text(
     if key in CLIP_TIME_KEYS:
         return True
     return bool(_TIME_LABEL_TEXT.search(loose_text(description or "")))
+
+
+# "just the hour, not the minutes": the filming-time label format the creator wants.
+_HOUR_ONLY_TEXT = re.compile(
+    r"\b(just|only|sadece|yalnizca)\b.{0,25}\b(hours?|saat\w*)\b"
+    r"|\bafter the hours?\b"
+    r"|\b(don.?t|do not|dont|not|no|without|exclude|omit|hide|remove|olmadan|gosterme)\b"
+    r".{0,30}\b(minutes?|dakika\w*)\b"
+)
+
+
+def wants_hour_only_text(description: str | None, literal: str | None = None) -> bool:
+    """True when the wording asks for the hour WITHOUT the minutes."""
+    return bool(_HOUR_ONLY_TEXT.search(loose_text(f"{description or ''} {literal or ''}")))

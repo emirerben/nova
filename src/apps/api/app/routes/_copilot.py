@@ -119,7 +119,8 @@ def _honest_outcome(
     if outcome == "proposed":
         if reply and not _claims_success(reply):
             return outcome, reply
-        return outcome, "I prepared this edit for the editor to validate and stage."
+        canned = "I prepared this edit for the editor to validate and stage."
+        return outcome, f"{canned} {output.reply_notes}".strip()
     if outcome == "applied":
         # Compatibility response for pre-v2 browser bundles during a split
         # deploy. Those clients own the historical local-apply wording.
