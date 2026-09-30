@@ -1834,3 +1834,49 @@ montage reply with `python3 scripts/admin.py --prod GET
 
 An abandoned upload reservation (`preparing`, reaped after about 30 minutes) or a
 `failed` Visual never blocks a v2 montage and never reaches the plan.
+
+## Crop, face-aware text, and SFX outside Talking (KRI-140)
+
+**Crop / re-frame.** `compile_phone_guided_plan` now carries a moment's
+`source_crop` on the recipe clip (`TimelineClip.source_crop`, normalized
+top-left-origin rectangle) for bound footage, Visuals videos, and fullscreen
+photos; a `supporting_card` photo (drawn whole) still refuses. A cropped clip adds
+the new **`sourceCrop`** capability (Python `MediaCapability` + Swift enum +
+`effectiveCapabilities`, kept in step by `tests/kria/test_capability_matrix.py`),
+and `validate_phone_pilot_recipe` refuses it ("Cropped clips await native parity…")
+until the device verifies it. The editor's footage-crop control stays closed on a
+phone guided story until then (`_clamp_phone_editor_capabilities(source_crop=…)`).
+The device applies the crop, then cover-fits it — same order as the cloud's
+`reframe` `source_crop`.
+
+**Rollout order (the capability is new vocabulary, so builds matter).**
+1. Ship a TestFlight build containing the Swift `sourceCrop` case (an older build
+   cannot decode `required_capabilities: ["sourceCrop"]`, so never flip first).
+2. Verify on a device: a guided story with a cropped clip renders and matches the
+   cloud framing.
+3. Append `sourceCrop` to `PHONE_RENDER_VERIFIED_FEATURES`
+   (`fly secrets set …` + restart api and worker). Rollback: remove it.
+
+**Face-aware guided text.** The cloud burn's `_apply_guided_text_face_placement`
+needs decoded frames; a phone render has none. With
+`PHONE_GUIDED_TEXT_FACE_PLACEMENT_ENABLED=true`, `_run_phone_guided_job` samples
+faces from each footage moment's analysis proxy
+(`app.pipeline.phone_guided_text_placement`), maps them through the moment's crop
+and the cover-fit into canvas coordinates, reuses the cloud ladder
+(`choose_guided_text_y_frac`), and bakes the chosen `y_frac` into the variant's
+`text_elements` before the recipe compiles — so the device and a later text-only
+Save keep it. Pool photos/videos have no proxy and are not sampled; fail-open
+(download/sampling errors keep the authored position). Limitation: a Save that
+recompiles the whole plan from the approved plan (timeline edits) re-derives the
+authored position. Server-only; rollback `fly secrets set
+PHONE_GUIDED_TEXT_FACE_PLACEMENT_ENABLED=false --app nova-video` + worker restart.
+Pins: `tests/pipeline/test_phone_guided_text_placement.py`.
+
+**SFX outside Talking — decision: stays cloud-only.** `licensed_sfx_intent` and
+`editor_sound_effects` on guided-story / montage plans keep failing closed
+(`soundEffects`), and the planner refuses the request up front
+(`unsupported_on_phone`, "sound_effects cannot render on the iPhone yet") instead
+of failing at render. The Talking lane is timed to a transcript and ducked under
+speech (KRI-174/181); guided stories and montages have no equivalent grounding, so
+a naive port would place effects blindly. Revisit only with a design for
+transcript-free placement.

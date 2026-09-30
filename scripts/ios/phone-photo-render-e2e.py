@@ -417,6 +417,8 @@ def main() -> None:
         "narrationAudio",
         "animatedText",
         "authoredText",
+        # KRI-140: cropped footage / photo case.
+        "sourceCrop",
     ]
     footage = _moment(
         "video",
@@ -885,6 +887,69 @@ def main() -> None:
         "caption_samples": cleaned_caption_samples,
     }
 
+    # --- KRI-140: crop / re-frame ---------------------------------------------
+    # Landscape footage of four 480px bands (red, lime, blue, yellow). Cover-
+    # fitting it uncropped onto the portrait canvas keeps only the centre strip
+    # (lime|blue), so a crop to the outer bands can only show if the device
+    # really applied it; the uncropped control proves the difference.
+    bands = out / "bands.mp4"
+    _ffmpeg(
+        *("-f", "lavfi", "-i", "color=c=red:s=480x1080:r=30:d=10"),
+        *("-f", "lavfi", "-i", "color=c=0x00ff00:s=480x1080:r=30:d=10"),
+        *("-f", "lavfi", "-i", "color=c=blue:s=480x1080:r=30:d=10"),
+        *("-f", "lavfi", "-i", "color=c=yellow:s=480x1080:r=30:d=10"),
+        *("-f", "lavfi", "-i", "sine=frequency=440:duration=10"),
+        *("-filter_complex", "[0:v][1:v][2:v][3:v]hstack=inputs=4[v]"),
+        *("-map", "[v]", "-map", "4:a", "-c:v", "libx264", "-pix_fmt", "yuv420p"),
+        *("-c:a", "aac", "-shortest", str(bands)),
+    )
+    bands_sha, bands_bytes = _fingerprint(bands)
+    bands_source = PhoneSourceBinding(
+        media_id="analysis-proxy-bands.mp4",
+        proxy_path="users/owner/creation/analysis-proxy-bands.mp4",
+        generation="103",
+        original=OriginalMediaDescriptor(
+            sha256=bands_sha, byte_count=bands_bytes, duration_s=10,
+            width=1920, height=1080, has_audio=True,
+        ),
+    )
+
+    def bands_moment(moment_id: str, start: float, end: float, **fields: object) -> dict:
+        return _moment(
+            moment_id, start, end, media_id=bands_source.media_id, lane="clip", kind="video",
+            gcs_path=bands_source.proxy_path, generation=bands_source.generation,
+            source_start_s=1, source_end_s=round(end - start + 1, 3), **fields,
+        )
+
+    crop_plan = _plan(
+        [
+            bands_moment("crop-yellow", 0, 2, source_crop={"x": 0.75, "y": 0, "width": 0.25, "height": 1}),
+            bands_moment("crop-red", 2, 4, source_crop={"x": 0, "y": 0, "width": 0.25, "height": 1}),
+            # The photo is red|green halves: its right half is all green.
+            pooled(still, "crop-photo", 4, 6, source_crop={"x": 0.5, "y": 0, "width": 0.5, "height": 1}),
+            bands_moment("uncropped", 6, 8),
+        ],
+        [bands_source.media_id, still.media_id],
+        source_audio=True,
+    )
+    crop_status, crop_recipe = _status(crop_plan, (bands_source,), (still,))
+    assert "sourceCrop" in crop_recipe.required_capabilities
+    (out / "status-crop.json").write_text(json.dumps(crop_status, indent=2))
+    crop_entry = {
+        "status_file": "status-crop.json",
+        "clips": [{"media_id": bands_source.media_id, "file": bands.name}],
+        "samples": [
+            {"name": "crop-yellow-left", "t": 1.0, "x": 270, "y": 960, "rgb": [255, 255, 0]},
+            {"name": "crop-yellow-right", "t": 1.0, "x": 810, "y": 960, "rgb": [255, 255, 0]},
+            {"name": "crop-red-left", "t": 3.0, "x": 270, "y": 960, "rgb": [255, 0, 0]},
+            {"name": "crop-red-right", "t": 3.0, "x": 810, "y": 960, "rgb": [255, 0, 0]},
+            {"name": "crop-photo-left", "t": 5.0, "x": 270, "y": 960, "rgb": [0, 255, 0]},
+            {"name": "crop-photo-right", "t": 5.0, "x": 810, "y": 960, "rgb": [0, 255, 0]},
+            {"name": "uncropped-left", "t": 7.0, "x": 270, "y": 960, "rgb": [0, 255, 0]},
+            {"name": "uncropped-right", "t": 7.0, "x": 810, "y": 960, "rgb": [0, 0, 255]},
+        ],
+    }
+
     (out / "e2e.json").write_text(
         json.dumps(
             {
@@ -916,6 +981,7 @@ def main() -> None:
                         {"name": "base-after", "t": 5.5, "x": 540, "y": 960, "rgb": [0, 0, 255]},
                     ],
                 },
+                "crop": crop_entry,
                 "narrated_story": narrated_story_entry,
                 "narrated_story_cleaned": cleaned_entry,
             },

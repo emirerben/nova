@@ -320,6 +320,35 @@ final class RenderAssetTests: XCTestCase {
         return recipe
     }
 
+    /// KRI-140: the server compiler now emits `source_crop`; a device that has not
+    /// verified `sourceCrop` must route the recipe away rather than render it uncropped.
+    func testSourceCropDerivesItsCapabilityAndRoutesAwayWhenUnverified() throws {
+        var recipe = try fixtureRecipe()
+        XCTAssertFalse(recipe.effectiveCapabilities.contains(.sourceCrop))
+        recipe.tracks[0].clips[0].sourceCrop = NormalizedSourceRect(x: 0.1, y: 0.2, width: 0.5, height: 0.6)
+        XCTAssertNoThrow(try recipe.validate())
+        XCTAssertTrue(recipe.effectiveCapabilities.contains(.sourceCrop))
+        let verified = recipe.effectiveCapabilities.subtracting([.sourceCrop])
+        let unverified = CapabilityNegotiator(provider: DefaultRendererCapabilities(capabilities: verified)).decide(for: recipe)
+        XCTAssertEqual(unverified.route, .cloud)
+        XCTAssertEqual(unverified.missingCapabilities, [.sourceCrop])
+        XCTAssertEqual(CapabilityNegotiator(provider: DefaultRendererCapabilities(capabilities: recipe.effectiveCapabilities)).decide(for: recipe).route, .local)
+    }
+
+    /// The server serializes the crop as snake_case `source_crop` on the clip.
+    func testServerSourceCropJSONDecodesOntoTheClip() throws {
+        var recipe = try fixtureRecipe()
+        recipe.tracks[0].clips[0].sourceCrop = NormalizedSourceRect(x: 0.1, y: 0.2, width: 0.5, height: 0.6)
+        let data = try RecipeJSON.encode(recipe)
+        let json = try XCTUnwrap(String(data: data, encoding: .utf8))
+        XCTAssertTrue(json.contains("\"source_crop\""))
+        let decoded = try RecipeJSON.decode(data)
+        XCTAssertEqual(decoded.tracks[0].clips[0].sourceCrop, NormalizedSourceRect(x: 0.1, y: 0.2, width: 0.5, height: 0.6))
+        var outOfBounds = decoded
+        outOfBounds.tracks[0].clips[0].sourceCrop = NormalizedSourceRect(x: 0.6, y: 0, width: 0.6, height: 1)
+        XCTAssertThrowsError(try outOfBounds.validate())
+    }
+
     /// Derived per pool kind, so a build that renders photos but not pool videos
     /// (or the reverse) routes the recipe away instead of dropping the media.
     func testVisualKindsDeriveTheirOwnCapabilities() throws {

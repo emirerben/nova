@@ -193,6 +193,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if clips.contains(where: { $0.transition != nil && $0.transition?.kind != .crossfade }) { result.insert(.clipTransitions) }
         if clips.contains(where: { $0.overlayDissolveSeed != nil || $0.overlayAboveText != nil || $0.holdDuration != nil || $0.overlayPopIn != nil || $0.overlayPreserveAlpha != nil || $0.overlayFadeIn != nil || $0.overlayFadeOut != nil }) { result.insert(.editorMedia) }
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
+        if clips.contains(where: { $0.sourceCrop != nil }) { result.insert(.sourceCrop) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
             result.insert(.audioMix)
@@ -427,7 +428,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          animatedText, authoredText, crossfade, clipTransitions, goldenHourLook, audioMix,
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
-         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, stillImages, visualVideos
+         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, stillImages, visualVideos, sourceCrop
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }
