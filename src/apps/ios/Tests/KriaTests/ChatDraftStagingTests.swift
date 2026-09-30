@@ -427,4 +427,31 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertNotEqual(fake.editorVariantJobIDs.last, jobB)
         XCTAssertEqual(fake.commitCount, 0)
     }
+
+    private static func textDraft(revision: Int, texts: [(String, String)], jobID: String = ChatDraftStagingTests.jobID) -> DraftSnapshot {
+        let rows: [JSONValue] = texts.map { id, text in
+            .object(["id": .string(id), "text": .string(text), "start_s": .number(0), "end_s": .number(2),
+                     "role": .string("generative_intro"), "x_frac": .number(0.5), "y_frac": .number(0.2), "color": .null])
+        }
+        return DraftSnapshot(draftID: "d\(revision)", itemID: "item", variantKey: "initial", draftRevision: revision, snapshotHash: "h",
+            etag: "e", baseJobID: jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "editor_payload": .object([
+                "base_generation": .string("g1"), "text_elements": .array(rows)])], canUndo: true, createdAt: .now)
+    }
+
+    /// Real sequence (thread 8f208e18): rev A edits labels, rev B (cumulative) changes the title.
+    func testCumulativeTitleChangeReplacesTheStagedLabelsAndUpdatesTheDocument() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        fake.draftSnapshot = Self.textDraft(revision: 2, texts: [("t1", "hello A")])
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "hello A")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        fake.draftSnapshot = Self.textDraft(revision: 3, texts: [("t1", "Ahmet Wedding Vlog")])
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "Ahmet Wedding Vlog")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        // A variant re-fetch with the same generation must not drop the staged edit.
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "Ahmet Wedding Vlog")
+    }
 }

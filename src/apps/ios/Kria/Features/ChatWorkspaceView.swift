@@ -1113,7 +1113,10 @@ private struct CreationWorkspaceView: View {
         while !Task.isCancelled {
             do {
                 let changed = try await refreshDelta()
-                await refreshDeviceRender()
+                // A published device render never changes on its own; keep
+                // polling it only while it is unsettled or the thread moved.
+                let deviceSettled = deviceRenderKey.flatMap { model.deviceRenders.presentations[$0]?.phase } == .synced
+                if changed || !deviceSettled || currentProject.status == .rendering { await refreshDeviceRender() }
                 delay = changed || isSending || isActing || currentProject.status == .rendering
                     || fullThread?.preparationIsActive == true || speechCleanupIsChecking
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)

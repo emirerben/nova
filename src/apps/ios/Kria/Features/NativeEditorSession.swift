@@ -1,5 +1,6 @@
 import AVFoundation
 import KriaMediaEngine
+import os
 import SwiftUI
 import ImageIO
 import UIKit
@@ -1079,7 +1080,9 @@ struct NativeEditorTemporaryVideo {
     /// The chat draft's staged lanes as a document, or nil when the draft is
     /// stale/absent/already applied (see `DraftSnapshot.stagedChatEdit`).
     private func stagedChatDocument(snapshot: DraftSnapshot, draft: EditorDraft, variant: [String: JSONValue]?) -> (document: EditorDocument, sections: Set<EditorSection>)? {
-        guard let edit = snapshot.stagedChatEdit(over: Self.snapshotPreservingClipMetadata(draft), variant: variant, appliedRevision: appliedChatDraftRevision) else { return nil }
+        let edit = snapshot.stagedChatEdit(over: Self.snapshotPreservingClipMetadata(draft), variant: variant, appliedRevision: appliedChatDraftRevision)
+        Self.stagingLog.debug("draft received rev=\(snapshot.draftRevision, privacy: .public) applied=\(self.appliedChatDraftRevision ?? -1, privacy: .public) gen=\(variant?["render_generation_id"]?.stringValue ?? "-", privacy: .public) staged=\(edit.map { $0.sections.map(\.rawValue).sorted().joined(separator: ",") } ?? "skipped", privacy: .public)")
+        guard let edit else { return nil }
         var value = EditorDocument(snapshot: edit.snapshot)
         value.revision.number = draft.revision
         return (value, edit.sections)
@@ -1095,11 +1098,29 @@ struct NativeEditorTemporaryVideo {
         refreshDirtyState()
         chatStagedDocument = staged.document
         chatStagedSections = staged.sections
+        Self.stagingLog.debug("staged applied rev=\(revision, privacy: .public) dirty=\(self.changedSections.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); preview rebuild scheduled")
+        // Same path a local edit takes: make sure the live preview recompiles now.
+        scheduleSourcePreviewUpdate()
     }
 
     /// Reconcile the same project after an agent turn. A response that arrives
     /// after a manual edit cannot replace it; conflict resolution remains explicit.
+    private static let stagingLog = Logger(subsystem: "com.kria.app", category: "chat-staging")
+    private var syncNeedsRetry = false
+
     func synchronizePromptRevision() async {
+        // A concurrent save/hydration can change the clean baseline while this
+        // suspends; a dropped sync would otherwise leave a chat edit invisible
+        // until the editor is reloaded (nothing else re-polls without new events).
+        for attempt in 0..<3 {
+            syncNeedsRetry = false
+            await runPromptRevisionSync()
+            guard syncNeedsRetry, !Task.isCancelled else { return }
+            Self.stagingLog.debug("sync retry attempt=\(attempt + 1, privacy: .public)")
+        }
+    }
+
+    private func runPromptRevisionSync() async {
         guard loadState == .loaded, !isSaving, let api, let threadID else { return }
         promptRefreshSequence &+= 1
         let sequence = promptRefreshSequence
@@ -1168,7 +1189,7 @@ struct NativeEditorTemporaryVideo {
             guard sequence == promptRefreshSequence, !Task.isCancelled else { return }
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
-            guard cleanDocument == baseline else { return }
+            guard cleanDocument == baseline else { syncNeedsRetry = true; return }
             if let previous = saveStateBeforePromptFailure { saveState = previous }
             guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
             // Only the previous chat draft is unsaved: the newer cumulative
@@ -1191,6 +1212,7 @@ struct NativeEditorTemporaryVideo {
                     refreshDirtyState(); refreshDuration()
                     return
                 }
+                Self.stagingLog.debug("sync conflict: local edits overlap chat draft rev=\(snapshot.draftRevision, privacy: .public)")
                 saveState = .conflict
                 return
             }
@@ -1649,6 +1671,7 @@ struct NativeEditorTemporaryVideo {
                 // created while media downloaded and keep Undo's base consistent.
                 document = try base.hydrate(document, duration: duration)
                 cleanDocument = try base.hydrate(cleanDocument, duration: duration)
+                chatStagedDocument = try chatStagedDocument.map { try base.hydrate($0, duration: duration) }
                 undoStack = try undoStack.map { try base.hydrate($0, duration: duration) }
                 redoStack = try redoStack.map { try base.hydrate($0, duration: duration) }
                 let source = NativeTimelineSource(mediaID: base.mediaID, sourceURL: base.url, original: nil, localRequired: false)
@@ -1671,6 +1694,7 @@ struct NativeEditorTemporaryVideo {
                 #endif
                 document = try NativePhoneTalkingSource.hydrate(document, clipIndex: phoneTalkingIndex, duration: duration)
                 cleanDocument = try NativePhoneTalkingSource.hydrate(cleanDocument, clipIndex: phoneTalkingIndex, duration: duration)
+                chatStagedDocument = try chatStagedDocument.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration) }
                 undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration) }
                 redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration) }
                 refreshDuration()
@@ -1678,6 +1702,7 @@ struct NativeEditorTemporaryVideo {
             if previewVariant["resolved_archetype"] == .string("narrated") {
                 document = try NativeNarratedSourceTiming.hydrate(document, sources: sources)
                 cleanDocument = try NativeNarratedSourceTiming.hydrate(cleanDocument, sources: sources)
+                chatStagedDocument = try chatStagedDocument.map { try NativeNarratedSourceTiming.hydrate($0, sources: sources) }
                 undoStack = try undoStack.map { try NativeNarratedSourceTiming.hydrate($0, sources: sources) }
                 redoStack = try redoStack.map { try NativeNarratedSourceTiming.hydrate($0, sources: sources) }
                 refreshDuration()
