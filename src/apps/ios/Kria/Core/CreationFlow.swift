@@ -201,7 +201,9 @@ enum ProjectUploadDestination: Equatable {
                 : "Add photos or supporting videos here. Kria renders your video on this iPhone."
         case .checking: "Checking how this project renders…"
         case .paused: "Rendering on iPhone is temporarily unavailable. Your project is saved; try again later."
-        case .mixed: "This project has sources from different rendering destinations. Keep the project and reconnect its original footage before continuing."
+        // KRI-141: name the control that clears this. Removing the listed footage empties
+        // `sourcePurposes`, so the next upload resolves to one destination again.
+        case .mixed: "Some footage in this project was uploaded for a different kind of render. Remove the clips listed under Footage, then add them again to continue."
         case .visualsUnavailableOnPhone: "Visuals aren’t available yet for videos rendered on iPhone. Continue with your footage; Kria renders it on this iPhone."
         case .voiceoverUnavailableOnPhone: "Voiceover isn’t available yet for videos rendered on iPhone. Your project is saved."
         }

@@ -153,6 +153,33 @@ def test_flag_on_leaves_clip_operations_and_lanes_dicts_closed_when_present(monk
     assert clamped["lanes"]["motion_scenes"] == _PHONE_CLOSED
 
 
+def test_guided_story_footage_crop_stays_closed_until_the_device_verifies_it(monkeypatch):
+    """KRI-140: the crop control opens for a phone guided story only with
+    `sourceCrop` verified; playback rate / looks stay closed either way."""
+    synthetic = {
+        "clips": {
+            "source_crop": {"editable": True, "reason": None},
+            "playback_rate": {"editable": True, "reason": None},
+            "looks": {"editable": True, "reason": None},
+        }
+    }
+    closed = gj._clamp_phone_editor_capabilities(synthetic, guided_story=True)
+    assert closed["clips"]["source_crop"] == _PHONE_CLOSED
+
+    opened = gj._clamp_phone_editor_capabilities(synthetic, guided_story=True, source_crop=True)
+    assert opened["clips"]["source_crop"] == {"editable": True, "reason": None}
+    assert opened["clips"]["playback_rate"] == _PHONE_CLOSED
+    assert opened["clips"]["looks"] == _PHONE_CLOSED
+
+    monkeypatch.setattr(gj.settings, "phone_render_verified_features", ["sourceCrop"])
+    job, variant = _subtitled_job(monkeypatch)
+    device = {**variant, "render_destination": "device", "resolved_archetype": "guided_story"}
+    monkeypatch.setattr(gj, "_base_editor_capabilities", lambda _job, _variant: synthetic)
+    assert gj._editor_capabilities(job, device)["clips"]["source_crop"]["editable"] is True
+    monkeypatch.setattr(gj.settings, "phone_render_verified_features", [])
+    assert gj._editor_capabilities(job, device)["clips"]["source_crop"] == _PHONE_CLOSED
+
+
 # --------------------------------------------------------------------------
 # `_variants_for_response` — lazy projection on read
 # --------------------------------------------------------------------------

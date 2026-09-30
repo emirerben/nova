@@ -1648,12 +1648,6 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         } else { return nil }
     }
 
-    static func available(in events: [ThreadEvent]) -> [CreationFormat] {
-        guard let prompt = events.last(where: { $0.eventType == "format_prompt" }),
-              case let .object(formats) = prompt.payload?["formats"] else { return [] }
-        return allCases.filter { formats[$0.serverValue] != nil }
-    }
-
     init?(serverValue: String) {
         switch serverValue {
         case "montage": self = .montage

@@ -205,7 +205,7 @@ def test_pins_device_record_and_variant_without_assembling(monkeypatch):
     assert variant["render_destination"] == "device"
     assert variant["render_generation_id"] == "generation"
     assert variant["ok"] is False
-    assert job.assembly_plan["phone_deferred_variants"] == []
+    assert "phone_deferred_variants" not in job.assembly_plan
     cloud.assert_not_called()
 
 
@@ -361,7 +361,9 @@ def test_narrated_archetype_still_rejected_on_the_phone(monkeypatch):
     cloud.assert_not_called()
 
 
-def test_deferred_specs_are_recorded_and_not_lost(monkeypatch):
+def test_only_the_top_ranked_spec_renders_on_the_phone(monkeypatch):
+    """KRI-141: the phone renders one variant, like every content-plan item; the
+    others are dropped rather than parked in a field no client reads."""
     track = _track("track1")
     voice = {
         "text_mode": "none",
@@ -378,7 +380,8 @@ def test_deferred_specs_are_recorded_and_not_lost(monkeypatch):
     gb._run_generative_job(str(job.id))
 
     assert job.assembly_plan["variants"][0]["variant_id"] == "voiceover_music"
-    assert job.assembly_plan["phone_deferred_variants"] == ["voiceover_only"]
+    assert [v["variant_id"] for v in job.assembly_plan["variants"]] == ["voiceover_music"]
+    assert "phone_deferred_variants" not in job.assembly_plan
 
 
 def test_per_variant_upsert_replaces_awaiting_and_refuses_ready(monkeypatch):

@@ -6264,8 +6264,14 @@ def _clamp_phone_editor_capabilities(
     media_enabled: bool = False,
     subtitled_lanes: bool = False,
     guided_story: bool = False,
+    source_crop: bool = False,
 ) -> dict:
-    """Close every control a device-rendered variant cannot save, shape-preserving."""
+    """Close every control a device-rendered variant cannot save, shape-preserving.
+
+    ``source_crop`` (KRI-140): a guided-story device variant keeps the footage
+    crop control once the device has verified ``sourceCrop`` -- the phone
+    compiler then carries the crop on the clip instead of refusing it.
+    """
     clamped = dict(capabilities)
     # KRI-182 step 1: a subtitled device variant with the editor-lanes rollout
     # on keeps `sfx`/`overlays` exactly as `_base_editor_capabilities` computed
@@ -6290,6 +6296,7 @@ def _clamp_phone_editor_capabilities(
                         media_enabled
                         and (group, name) in {("clips", "add"), ("lanes", "visual_blocks")}
                     )
+                    and not (source_crop and (group, name) == ("clips", "source_crop"))
                     and not (group == "lanes" and name in subtitled_carve_out)
                     else value
                 )
@@ -6367,6 +6374,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             media_enabled=_phone_editor_media_available(job, variant),
             subtitled_lanes=_phone_subtitled_editor_lanes_available(job, variant),
             guided_story=variant.get("resolved_archetype") == "guided_story",
+            source_crop=(
+                variant.get("resolved_archetype") == "guided_story"
+                and "sourceCrop" in settings.phone_render_verified_features
+            ),
         )
     return capabilities
 

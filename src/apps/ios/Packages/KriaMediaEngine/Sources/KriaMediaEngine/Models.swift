@@ -193,6 +193,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if clips.contains(where: { $0.transition != nil && $0.transition?.kind != .crossfade }) { result.insert(.clipTransitions) }
         if clips.contains(where: { $0.overlayDissolveSeed != nil || $0.overlayAboveText != nil || $0.holdDuration != nil || $0.overlayPopIn != nil || $0.overlayPreserveAlpha != nil || $0.overlayFadeIn != nil || $0.overlayFadeOut != nil }) { result.insert(.editorMedia) }
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
+        if clips.contains(where: { $0.sourceCrop != nil }) { result.insert(.sourceCrop) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
             result.insert(.audioMix)
@@ -422,12 +423,20 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
 /// recipe (`app/pipeline/phone_guided_plan.py`'s per-lane reject list). Kept
 /// in lockstep with the Python mirror (`app/kria/recipes.py::MediaCapability`)
 /// by `tests/kria/test_capability_matrix.py`.
+///
+/// `hevcDecode` and `hdr` are also never derived (KRI-141), for a different
+/// reason: they describe the originals, which stay on the iPhone, not the
+/// recipe. Every render handles them without routing -- the video composition
+/// is SDR Rec.709, so AVFoundation decodes HEVC and tone-maps HDR frames before
+/// the compositor sees them. The one exception, a `look` that only grades SDR
+/// H.264, refuses such a source at compose time with a structural
+/// `NativePreviewFeatureError`, reported as `unsupported_recipe`.
 public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
     case visualBlocks, motionScenes, editorMedia, cameraEffects, basicComposition, positionedText,
          animatedText, authoredText, crossfade, clipTransitions, goldenHourLook, audioMix,
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
-         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, stillImages, visualVideos
+         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, stillImages, visualVideos, sourceCrop
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

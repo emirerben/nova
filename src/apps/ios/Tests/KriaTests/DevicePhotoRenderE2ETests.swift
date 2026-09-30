@@ -52,6 +52,30 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         XCTAssertTrue(isColor(try sample("cutout", 100, 100), [255, 0, 255]))
     }
 
+    /// KRI-140: server-compiled `source_crop` (bound footage + a fullscreen Visuals
+    /// photo) renders on the production exporter. The footage is four colour bands,
+    /// so the outer-band crops can only appear if the crop was really applied; the
+    /// uncropped control keeps the cover-fit centre strip (lime | blue).
+    func testServerCompiledCropRendersOnTheIPhone() async throws {
+        let input = try inputDirectory()
+        let meta = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: input.appendingPathComponent("e2e.json"))) as? [String: Any])
+        let caseMeta = try XCTUnwrap(meta["crop"] as? [String: Any])
+        let samples = try XCTUnwrap(caseMeta["samples"] as? [[String: Any]])
+        let times = try Dictionary(uniqueKeysWithValues: samples.map { (try XCTUnwrap($0["name"] as? String), try XCTUnwrap($0["t"] as? Double)) })
+        let frames = try await render(
+            status: try XCTUnwrap(caseMeta["status_file"] as? String), input: input, bindsFootage: true, output: "crop",
+            at: times, footageClips: try XCTUnwrap(caseMeta["clips"] as? [[String: Any]]),
+            requiredEffectiveCapabilities: [.sourceCrop, .stillImages],
+            dropCapabilityChecks: ["sourceCrop", "stillImages"]
+        )
+        for sample in samples {
+            let name = try XCTUnwrap(sample["name"] as? String)
+            let expected = try XCTUnwrap(sample["rgb"] as? [Int])
+            let actual = pixel(try XCTUnwrap(frames[name]), x: try XCTUnwrap(sample["x"] as? Int), y: try XCTUnwrap(sample["y"] as? Int))
+            XCTAssertTrue(isColor(actual, expected), "\(name): expected \(expected) got \(actual)")
+        }
+    }
+
     func testProjectMadeOnlyOfVisualsRendersOnTheIPhone() async throws {
         let input = try inputDirectory()
         let frames = try await render(status: "status-visuals-only.json", input: input, bindsFootage: false, output: "visuals-only",

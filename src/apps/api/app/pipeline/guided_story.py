@@ -11,7 +11,7 @@ import math
 import os
 import shutil
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Literal
@@ -4836,11 +4836,13 @@ def _evenly_spaced_window_anchors(start_s: float, end_s: float, n: int) -> list[
 
 
 def _apply_guided_text_face_placement(
-    base_path: str,
+    base_path: str | None,
     text_element_rows: list[dict[str, Any]],
     *,
     job_id: str,
     canvas: Canvas,
+    duration_s: float | None = None,
+    sampler: Callable[[list[float], float], tuple[list[Any], dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Move the guided-story title/chapter/closing text off any face in its shot.
 
@@ -4852,6 +4854,13 @@ def _apply_guided_text_face_placement(
     design: any sampling/measurement error leaves that element's authored
     position untouched, only logging a trace event so the collision (or the
     failure to check) stays visible in ``/admin/jobs/<id>/debug``.
+
+    The cloud burn passes the assembled ``base_path`` and lets this probe it.
+    A phone render has no assembled video: it passes ``duration_s`` (the
+    approved output length) and a ``sampler(anchors_s, timeout_s)`` that
+    returns ``(face_regions, receipt)`` in output-canvas coordinates
+    (``app.pipeline.phone_guided_text_placement``); everything after the
+    sampling (ladder, measurement, trace events, fail-open) is shared.
     """
 
     from app.pipeline.generative_overlays import (  # noqa: PLC0415
@@ -4875,11 +4884,12 @@ def _apply_guided_text_face_placement(
     if not eligible:
         return text_element_rows
 
-    try:
-        duration_s = float(probe_video(base_path).duration_s)
-    except Exception as exc:  # noqa: BLE001 - fail open, nothing to sample against
-        log.warning("guided_text_face_placement_probe_failed", job_id=job_id, error=str(exc))
-        return text_element_rows
+    if duration_s is None:
+        try:
+            duration_s = float(probe_video(base_path).duration_s)
+        except Exception as exc:  # noqa: BLE001 - fail open, nothing to sample against
+            log.warning("guided_text_face_placement_probe_failed", job_id=job_id, error=str(exc))
+            return text_element_rows
     if duration_s <= 0:
         return text_element_rows
 
@@ -4891,16 +4901,19 @@ def _apply_guided_text_face_placement(
         end_s = max(start_s + _FRAME_S, min(duration_s, float(row.get("end_s", duration_s))))
         anchors = _evenly_spaced_window_anchors(start_s, end_s, _GUIDED_FACE_PLACEMENT_ANCHORS)
         try:
-            face_regions, face_receipt = sample_face_regions(
-                base_path,
-                anchors,
-                max_samples=max(len(anchors), 1),
-                timeout_s=(
-                    _GUIDED_FACE_PLACEMENT_TIMEOUT_BASE_S
-                    + _GUIDED_FACE_PLACEMENT_TIMEOUT_PER_ANCHOR_S * len(anchors)
-                ),
-                count_decoded=True,
+            timeout_s = _GUIDED_FACE_PLACEMENT_TIMEOUT_BASE_S + (
+                _GUIDED_FACE_PLACEMENT_TIMEOUT_PER_ANCHOR_S * len(anchors)
             )
+            if sampler is not None:
+                face_regions, face_receipt = sampler(anchors, timeout_s)
+            else:
+                face_regions, face_receipt = sample_face_regions(
+                    base_path,
+                    anchors,
+                    max_samples=max(len(anchors), 1),
+                    timeout_s=timeout_s,
+                    count_decoded=True,
+                )
             [overlay] = build_overlays_from_text_elements(
                 [TextElement.model_validate(row)],
                 video_duration_s=duration_s,
