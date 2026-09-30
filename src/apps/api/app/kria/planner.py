@@ -787,6 +787,7 @@ async def plan_live_turn(
     item_id: uuid.UUID,
     creator_id: uuid.UUID,
     user_message: str,
+    allow_fast_path: bool = True,
 ) -> PlannedKriaTurn:
     item = await db.get(PlanItem, item_id)
     if item is None:
@@ -808,7 +809,12 @@ async def plan_live_turn(
         and item.current_job_id is not None
         and manifest.capabilities["dispatch_render"].available
     )
-    if extract_first and settings.kria_copilot_first_enabled and _fast_path_eligible(user_message):
+    if (
+        extract_first
+        and allow_fast_path
+        and settings.kria_copilot_first_enabled
+        and _fast_path_eligible(user_message)
+    ):
         # KRI-219 latency: the copilot (flash, ~2-4 s) answers a short in-place
         # text/label/order tweak before the pro-model extraction (~12 s) is even
         # started. Only a plan made of in-place ops is taken; anything else (a
@@ -827,7 +833,18 @@ async def plan_live_turn(
                 brief_manifest=manifest,
                 defer_brief=True,
             )
-        item = await _refetch_item(db, item_id)
+        # The copilot call rolled the session back, which EXPIRES every loaded row
+        # (item, plan, persona): reading one from async code raises MissingGreenlet.
+        # Re-enter the planner from the top so the extract-first path re-reads
+        # everything it needs, exactly as if the fast path had not been tried.
+        return await plan_live_turn(
+            db,
+            thread_id=thread_id,
+            item_id=item_id,
+            creator_id=creator_id,
+            user_message=user_message,
+            allow_fast_path=False,
+        )
     if not extract_first:
         editor_plan = await _plan_editor_revision(
             db,
