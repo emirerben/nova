@@ -156,7 +156,7 @@ def test_editor_change_during_verification_rejects_late_publication(fixture, mon
     attempt, _ = prepared(fixture)
     mock_storage(fixture, monkeypatch)
 
-    def verify(*args):
+    def verify(*args, **kwargs):
         fixture.job.assembly_plan["variants"][0]["render_generation_id"] = "new-edit"
 
     monkeypatch.setattr(routes, "_verify_export", verify)
@@ -172,7 +172,8 @@ def test_verified_publication_attaches_cleanup_and_reconciles_lost_response(fixt
     attempt, path = prepared(fixture)
     signed_calls = mock_storage(fixture, monkeypatch)
     monkeypatch.setattr(settings, "phone_rendering_enabled", False)
-    verifier = MagicMock()
+    poster = f"job-posters/{fixture.job.id}/abc.poster.jpg"
+    verifier = MagicMock(return_value=poster)
     monkeypatch.setattr(routes, "_verify_export", verifier)
     cleanup = SimpleNamespace(
         user_id=fixture.user.id,
@@ -188,6 +189,10 @@ def test_verified_publication_attaches_cleanup_and_reconciles_lost_response(fixt
     assert cleanup.status == "attached"
     assert fixture.job.status == "variants_ready"
     assert fixture.job.assembly_plan["variants"][0]["video_path"] == path
+    # KRI-231: phone renders never pass through a worker, so publication is
+    # the only place their gallery poster can be minted.
+    assert fixture.job.assembly_plan["variants"][0]["poster_path"] == poster
+    assert verifier.call_args.kwargs["poster_job_id"] == fixture.job.id
     # A phone-rendered variant's playback URL must survive at least as long
     # as a normal viewing/scrubbing session — the bare `signed_get_url`
     # default (5 min, sized for ffprobe preflight) previously expired while
@@ -287,7 +292,7 @@ def test_held_recipe_cannot_publish_reserved_output(fixture, monkeypatch, during
     attempt, _ = prepared(fixture)
     mock_storage(fixture, monkeypatch)
 
-    def hold(*args):
+    def hold(*args, **kwargs):
         record = device_record(fixture.job, "first")
         record["status"]["phase"] = "needs_attention"
         save_device_record(fixture.job, "first", record)
@@ -856,7 +861,7 @@ def complete_device_export(fixture, monkeypatch, plan: dict | None):
     if plan is not None:
         fixture.job.assembly_plan.update(plan)
     mock_storage(fixture, monkeypatch)
-    monkeypatch.setattr(routes, "_verify_export", MagicMock())
+    monkeypatch.setattr(routes, "_verify_export", MagicMock(return_value=None))
     fixture.db.execute.return_value = scalar(
         SimpleNamespace(
             user_id=fixture.user.id,
@@ -987,7 +992,7 @@ def test_published_phone_export_edits_pin_next_device_revision(fixture, monkeypa
     }
     save_device_record(fixture.job, "guided_story", record)
     mock_storage(fixture, monkeypatch)
-    monkeypatch.setattr(routes, "_verify_export", MagicMock())
+    monkeypatch.setattr(routes, "_verify_export", MagicMock(return_value=None))
     fixture.db.execute.return_value = scalar(
         SimpleNamespace(
             user_id=fixture.user.id,
@@ -1105,3 +1110,25 @@ def test_retry_rejected_unless_needs_attention(fixture, monkeypatch):
     )
     assert response.status_code == 409
     fixture.db.commit.assert_not_awaited()
+
+
+def test_publication_replaces_stale_cloud_poster_when_poster_fails(fixture, monkeypatch):
+    """A failed phone poster must not leave an earlier cloud render's poster."""
+    attempt, path = prepared(fixture)
+    fixture.job.assembly_plan["variants"][0]["poster_path"] = "old/cloud.poster.jpg"
+    mock_storage(fixture, monkeypatch)
+    monkeypatch.setattr(routes, "_verify_export", MagicMock(return_value=None))
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
+    )
+    assert response.status_code == 200, response.text
+    variant = fixture.job.assembly_plan["variants"][0]
+    assert variant["video_path"] == path
+    assert variant["poster_path"] is None

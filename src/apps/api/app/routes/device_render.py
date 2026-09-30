@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 from pathlib import Path
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,7 +65,9 @@ from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.render_library import catalog_path, inspect_library_asset
 from app.services.speech_cleanup import SpeechCleanupFailure
 from app.services.speech_cleanup_outcome import build_preflight_public_outcome
+from app.services.template_poster import upload_video_poster
 
+log = structlog.get_logger()
 router = APIRouter()
 
 # GET /device-render is polled continuously by the phone client and the item
@@ -572,7 +575,15 @@ def _verify_export(
     expected_sha256: str,
     status: DeviceRenderStatus,
     brand_tail: str = "none",
-) -> None:
+    *,
+    poster_job_id: uuid.UUID | None = None,
+) -> str | None:
+    """Verify the phone's export; with ``poster_job_id``, also publish its poster.
+
+    Returns the poster key, or ``None`` when no poster was requested or the
+    extraction failed. The poster is fail-open: a healthy export still
+    publishes without one, and the library's repair path can mint it later.
+    """
     with tempfile.TemporaryDirectory(prefix="kria_device_export_") as directory:
         local = Path(directory) / "export.mp4"
         storage.download_generation_to_file(path, str(local), generation=generation)
@@ -636,6 +647,21 @@ def _verify_export(
             0.1, 2 / recipe.frame_rate
         ):
             raise ValueError("export duration mismatch")
+        if poster_job_id is None:
+            return None
+        # Reuse the verified download: phone renders never pass through a
+        # worker, so this is the only point that holds the published bytes.
+        try:
+            return upload_video_poster(str(local), path, job_id=poster_job_id)
+        except Exception as exc:  # noqa: BLE001 - poster is fail-open by contract
+            log.warning(
+                "device_export_poster_failed",
+                job_id=str(poster_job_id),
+                video_path=path,
+                error_class=type(exc).__name__,
+                error=str(exc)[:300],
+            )
+            return None
 
 
 @router.post("/jobs/{job_id}/device-render/complete", response_model=DeviceExportCompleteOut)
@@ -670,7 +696,7 @@ async def complete_device_export(
             or not metadata.generation
         ):
             raise ValueError("export metadata mismatch")
-        await asyncio.to_thread(
+        poster_path = await asyncio.to_thread(
             _verify_export,
             attempt["path"],
             str(metadata.generation),
@@ -678,6 +704,7 @@ async def complete_device_export(
             attempt["sha256"],
             status,
             attempt.get("brand_tail", "none"),
+            poster_job_id=job_id,
         )
     except FileNotFoundError as exc:
         raise HTTPException(409, "Export upload has not finished") from exc
@@ -725,6 +752,9 @@ async def complete_device_export(
             "render_generation_id": attempt_id,
             "render_finished_at": datetime.now(UTC).isoformat(),
             "video_path": attempt["path"],
+            # Always overwrite: a poster inherited from an earlier cloud render
+            # would show a different video than the one now published.
+            "poster_path": poster_path,
             "output_url": url,
             "render_destination": "device",
             **finished_durations(status.request.recipe.duration, attempt.get("brand_tail", "none")),
