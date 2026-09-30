@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.17.0] - 2026-09-30
+
+### Fixed
+- fix(ios): list Talking captions once on the editor timeline, not as cue and mirrored text element (#1273) <!-- release-pr: 1273 -->
+
 ## [0.77.16.0] - 2026-09-29
 
 ### Changed
