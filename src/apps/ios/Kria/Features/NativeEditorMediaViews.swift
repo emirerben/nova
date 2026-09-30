@@ -747,15 +747,29 @@ struct NativeVideoPreview: View {
             // buttons work and tap-to-fullscreen on the empty canvas keeps working.
             .allowsHitTesting(!(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
 
+            if session.showsEditApplied {
+                Label("Edit applied", systemImage: "checkmark.circle.fill")
+                    .font(KriaFont.body(12).weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(.black.opacity(0.72), in: Capsule())
+                    .padding(10)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                    .accessibilityIdentifier("native-editor-edit-applied")
+                    .onAppear { UIAccessibility.post(notification: .announcement, argument: "Edit applied") }
+            }
+
             if session.sourcePreviewState.isFailure, session.isShowingRenderedFallback {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Showing finished render")
+                    Text("Showing your last finished video")
                         .font(KriaFont.body(12).weight(.semibold))
                     if case .failed(let message) = session.sourcePreviewState {
                         Text(message)
                             .font(KriaFont.body(11))
                             .lineLimit(2)
-                        Button("Retry") { Task { await session.prepareSourcePreview() } }
+                        Button("Try again") { Task { await session.prepareSourcePreview() } }
                             .accessibilityIdentifier("native-editor-retry-source-preview")
                             .font(KriaFont.body(11).weight(.semibold))
                     } else {

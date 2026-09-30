@@ -338,6 +338,10 @@ struct NativeEditorTemporaryVideo {
     /// nil`) is the only reliable "is a rebuild still pending" signal.
     private var sourcePreviewSettledSequence = 0
     private var sourcePreviewGeneration: String?
+    /// True for ~3 s after a pending save's render lands (KRI-227), so the
+    /// creator sees the edit was applied. Never set on editor open.
+    @Published private(set) var showsEditApplied = false
+    private var editAppliedTask: Task<Void, Never>?
     private var sourcePreviewUpdateDeferred = false
     var hasSourcePreview: Bool { sourcePreviewState == .ready }
     /// A source-composited player is editable. A failed source preparation can
@@ -1412,7 +1416,7 @@ struct NativeEditorTemporaryVideo {
     static func sourcePreviewMessage(for error: Error) -> String {
         switch error {
         case APIError.conflict:
-            return "This video changed. Close and reopen the editor to load the latest version."
+            return "A newer version of this video exists. Close and reopen the editor to see it."
         case APIError.sessionExpired:
             return "Sign in again to load the source videos."
         case NativeEditorRenderError.unsupportedLane:
@@ -1602,6 +1606,17 @@ struct NativeEditorTemporaryVideo {
         return status.request.recipe.audio.narrationAssetID == nil ? nil : status.request
     }
 
+    /// Narration is a generation-owned preview input: it belongs to the
+    /// generation the preview was prepared for, not to a save acknowledgement
+    /// whose render is still pending (the phone publishes under its own id).
+    private func narrationOwnerGeneration(_ document: EditorDocument) -> String {
+        Self.narrationOwnerGeneration(previewGeneration: sourcePreviewGeneration, documentGeneration: document.revision.baseGeneration)
+    }
+
+    static func narrationOwnerGeneration(previewGeneration: String?, documentGeneration: String) -> String {
+        previewGeneration ?? documentGeneration
+    }
+
     private func resolveDeviceNarration(document: EditorDocument, sequence: Int) async throws -> ResolvedEditorSource? {
         guard let api, let jobID, let variantKey else { throw APIError.invalidResponse }
         let status = try await api.deviceRender(jobID: jobID, variantID: variantKey)
@@ -1610,7 +1625,7 @@ struct NativeEditorTemporaryVideo {
             throw CancellationError()
         }
         guard let request = try Self.currentDeviceNarrationRequest(
-            status, jobID: jobID, variantID: variantKey, generation: document.revision.baseGeneration
+            status, jobID: jobID, variantID: variantKey, generation: narrationOwnerGeneration(document)
         ) else { return nil }
         guard let narrationID = request.recipe.audio.narrationAssetID,
               var asset = request.recipe.assets.first(where: { $0.id == narrationID }) else {
@@ -1642,14 +1657,14 @@ struct NativeEditorTemporaryVideo {
             // launch. A missing or stale required asset fails the preview
             // visibly instead of silently exporting an AAC silence track.
             if resolvedAudio["narration"] == nil,
-               deviceNarrationResolutionGeneration != document.revision.baseGeneration {
+               deviceNarrationResolutionGeneration != narrationOwnerGeneration(document) {
                 let narration = try await resolveDeviceNarration(document: document, sequence: sequence)
                 guard sequence == sourcePreviewSequence, !Task.isCancelled,
                       document.revision.baseGeneration == self.document.revision.baseGeneration else {
                     throw CancellationError()
                 }
                 if let narration { resolvedAudio["narration"] = narration }
-                deviceNarrationResolutionGeneration = document.revision.baseGeneration
+                deviceNarrationResolutionGeneration = narrationOwnerGeneration(document)
             }
         } else if Self.usesRenderedNarration(previewVariant), resolvedAudio["narration"] == nil {
             // Legacy narrated renders persist the exact cleaned voice + bed in
@@ -4609,6 +4624,16 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    private func announceEditApplied() {
+        showsEditApplied = true
+        editAppliedTask?.cancel()
+        editAppliedTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            self?.showsEditApplied = false
+        }
+    }
+
     func retryPreviewRefresh() {
         guard let generation = pendingPreviewGeneration else { return }
         saveState = .previewPending
@@ -4648,6 +4673,7 @@ struct NativeEditorTemporaryVideo {
             pendingRenderRetrySections.removeAll()
             pendingPreviewGeneration = nil
             saveState = .saved
+            announceEditApplied()
             return true
         }
         if status == "failed" {
