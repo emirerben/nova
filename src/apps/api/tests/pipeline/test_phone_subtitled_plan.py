@@ -16,9 +16,13 @@ from app.pipeline.phone_subtitled_lanes import (
     sfx_path_is_playable,
 )
 from app.pipeline.phone_subtitled_plan import (
+    CUTAWAY_TRACK_ID,
     SFX_SPEECH_DUCK_GAIN,
+    PhoneCutaway,
     compile_phone_subtitled_plan,
+    cutaways_from_recipe,
     sfx_duck_receipt,
+    speaker_binding_from_recipe,
     speech_windows_from_cues,
 )
 from app.pipeline.silence_cut import CutPlan, Removal, no_op_plan
@@ -1223,3 +1227,136 @@ def test_a_caption_ending_at_the_clip_end_never_overshoots_the_timeline():
 
     assert recipe.duration == duration_s
     assert all(layer.end <= recipe.duration for layer in recipe.text_layers)
+
+
+# --- KRI-136: multi-clip Talking head cutaways ------------------------------
+
+
+def _cutaway(media_id: str, start_s: float, end_s: float, **binding_kwargs) -> PhoneCutaway:
+    return PhoneCutaway(binding=_binding(media_id, **binding_kwargs), start_s=start_s, end_s=end_s)
+
+
+def test_cutaways_are_muted_full_frame_overlays_over_the_speaker():
+    speaker = _binding("speaker", duration_s=20.0)
+    recipe = compile_phone_subtitled_plan(
+        (speaker,),
+        caption_cues=_CUES,
+        cutaways=(
+            _cutaway("broll-a", 1.5, 4.5),
+            # Landscape b-roll is fine: it is cover-cropped, not a face.
+            _cutaway("broll-b", 10.0, 12.0, width=1920, height=1080),
+        ),
+    )
+
+    main, cutaway_track = recipe.tracks[0], recipe.tracks[1]
+    assert main.id == "subtitled"
+    assert [clip.source_asset_id for clip in main.clips] == ["speaker"]
+    assert recipe.duration == pytest.approx(20.0)
+    assert cutaway_track.id == CUTAWAY_TRACK_ID
+    assert cutaway_track.kind == "overlay"
+    assert [
+        (c.source_asset_id, c.timeline_start, c.source_duration) for c in cutaway_track.clips
+    ] == [
+        ("broll-a", 1.5, pytest.approx(3.0)),
+        ("broll-b", 10.0, pytest.approx(2.0)),
+    ]
+    for clip in cutaway_track.clips:
+        assert clip.volume == 0
+        assert clip.visual_placement.width_fraction is None
+        assert clip.visual_placement.contain is False
+    assert {"visualBlocks", "visualVideos", "audioMix"} <= recipe.required_capabilities
+    recipe.model_validate(recipe.model_dump(mode="json"))
+
+
+def test_cutaways_empty_is_byte_identical_to_single_clip():
+    bindings = (_binding(duration_s=10.0),)
+    assert (
+        compile_phone_subtitled_plan(bindings, caption_cues=_CUES, cutaways=()).model_dump_json()
+        == compile_phone_subtitled_plan(bindings, caption_cues=_CUES).model_dump_json()
+    )
+
+
+def test_cutaway_is_clamped_to_speaker_and_to_its_own_footage():
+    speaker = _binding("speaker", duration_s=10.0)
+    recipe = compile_phone_subtitled_plan(
+        (speaker,),
+        caption_cues=_CUES,
+        cutaways=(
+            # Only 1.2s of footage: the window shrinks, never freezes.
+            _cutaway("short", 2.0, 5.0, duration_s=1.2),
+            # Runs past the speaker: clamped, the video is never extended.
+            _cutaway("late", 8.5, 11.0),
+        ),
+    )
+    clips = recipe.tracks[1].clips
+    assert [(c.source_asset_id, c.source_duration) for c in clips] == [
+        ("short", pytest.approx(1.2)),
+        ("late", pytest.approx(1.5)),
+    ]
+    assert recipe.duration == pytest.approx(10.0)
+
+    # Below the 0.5s floor after clamping: dropped, and no empty track.
+    tiny = compile_phone_subtitled_plan(
+        (speaker,), caption_cues=_CUES, cutaways=(_cutaway("tiny", 9.7, 12.0),)
+    )
+    assert [track.id for track in tiny.tracks] == ["subtitled"]
+
+
+def test_cutaways_draw_under_overlay_cards():
+    speaker = _binding("speaker", duration_s=10.0)
+    recipe = compile_phone_subtitled_plan(
+        (speaker,),
+        caption_cues=_CUES,
+        visuals=(_photo_visual(),),
+        lanes=PhoneSubtitledLanes(overlays=[_overlay_card()]),
+        cutaways=(_cutaway("broll", 1.5, 4.0),),
+    )
+    assert [track.id for track in recipe.tracks] == [
+        "subtitled",
+        CUTAWAY_TRACK_ID,
+        "subtitled-overlays",
+    ]
+
+
+@pytest.mark.parametrize(
+    "cutaways, match",
+    [
+        ((_cutaway("speaker", 2.0, 4.0),), "reuse the speaker"),
+        ((_cutaway("a", 2.0, 5.0), _cutaway("b", 4.0, 6.0)), "overlap"),
+    ],
+)
+def test_cutaway_rejections(cutaways, match):
+    with pytest.raises(UnsupportedPhonePlan, match=match):
+        compile_phone_subtitled_plan(
+            (_binding("speaker", duration_s=10.0),), caption_cues=_CUES, cutaways=cutaways
+        )
+
+
+def test_speaker_and_cutaways_read_back_from_a_pinned_recipe():
+    speaker = _binding("speaker", duration_s=20.0)
+    cutaways = (_cutaway("broll-a", 1.5, 4.5), _cutaway("broll-b", 10.0, 12.0))
+    bindings = (cutaways[0].binding, speaker, cutaways[1].binding)
+    recipe = compile_phone_subtitled_plan((speaker,), caption_cues=_CUES, cutaways=cutaways)
+
+    assert speaker_binding_from_recipe(recipe, bindings) == speaker
+    assert cutaways_from_recipe(recipe, bindings) == cutaways
+    recompiled = compile_phone_subtitled_plan(
+        (speaker_binding_from_recipe(recipe, bindings),),
+        caption_cues=_CUES,
+        cutaways=cutaways_from_recipe(recipe, bindings),
+    )
+    assert recompiled.model_dump_json() == recipe.model_dump_json()
+    single = compile_phone_subtitled_plan((speaker,), caption_cues=_CUES)
+    assert cutaways_from_recipe(single, (speaker,)) == ()
+
+
+def test_talking_head_passes_phone_pilot_validation(monkeypatch):
+    recipe = compile_phone_subtitled_plan(
+        (_binding("speaker", duration_s=20.0),),
+        caption_cues=_CUES,
+        cutaways=(_cutaway("broll", 1.5, 4.5),),
+    )
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe, allow_editor_media=True)

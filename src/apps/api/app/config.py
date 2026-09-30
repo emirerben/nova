@@ -195,6 +195,19 @@ class Settings(BaseSettings):
     # set PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_video_overlays_enabled: bool = False
+    # KRI-136: a self-narrated (`narrated*`, no recorded voiceover) item with
+    # 2+ clips that resolves to the `talking_head` archetype renders on the
+    # device: the speech clip stays the main track (its audio runs the whole
+    # way, with editable captions) and the other clips cover the picture as
+    # muted full-frame cutaways (`compile_phone_subtitled_plan(cutaways=...)`).
+    # Also needs `narrated_self_narration_enabled`, phone `subtitled`, and the
+    # `visualBlocks`/`visualVideos`/`audioMix` device features -- see
+    # `app.services.phone_rollout.phone_talking_head_supported`. False
+    # (default): byte-identical, the dispatch gate refuses with
+    # `self_narration_multi_clip`. Apply: `fly secrets set
+    # PHONE_TALKING_HEAD_RENDERING_ENABLED=true --app nova-video` +
+    # `fly machine restart <id>` (api + worker). No NEXT_PUBLIC twin.
+    phone_talking_head_rendering_enabled: bool = False
     # KRI-132 (narrated walkthrough): a `narrated`/`narrated_planned`/
     # `narrated_ready` item WITH a recorded voiceover compiles through
     # `app.pipeline.phone_narrated_plan.compile_phone_narrated_plan`

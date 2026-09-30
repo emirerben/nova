@@ -29,9 +29,23 @@ named-but-unimplemented `MediaCapability`, rather than leaving it bare).
 With ``lanes=None`` (or an all-empty `PhoneSubtitledLanes`) and
 ``visuals=()``, this compiler's output is byte-identical to the pre-KRI-174
 shape -- every lane below is strictly additive and opt-in.
+
+Multi-clip Talking head (KRI-136): ``cutaways`` turns the same recipe into
+the phone version of the cloud `app.pipeline.talking_head_assembler`: the
+speaker (spine) clip stays the ONLY main-track clip, so its audio plays the
+whole way through, and every other clip covers the picture for a short
+window as a muted, full-frame clip on its own overlay track
+(`CUTAWAY_TRACK_ID`). The device engine already renders that shape --
+a `VisualMediaPlacement` with no ``width_fraction`` cover-fills the canvas,
+and a placed clip never contributes audio -- so no new native primitive is
+needed. Cutaway footage may be landscape (it is centre-cropped, like the
+cloud's b-roll reframe); only the speaker clip must be portrait. With
+``cutaways=()`` the output is byte-identical to the single-clip shape.
 """
 
 from __future__ import annotations
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.kria.portable_visual import VisualMediaPlacement
 from app.kria.recipes import (
@@ -103,6 +117,35 @@ _SFX_SPEECH_MIN_OVERLAP_S = 0.05
 # re-save the creator's own volume instead of ducking an effect twice.
 SFX_DUCK_RECEIPT_FIELD = "phone_sfx_duck_receipt"
 
+# KRI-136: the overlay track that carries multi-clip Talking-head cutaways.
+# Listed right after the main track so a sticker/photo/video card on
+# ``subtitled-overlays`` (same ``order`` range, later track) always draws on
+# top of a cutaway, never under it.
+CUTAWAY_TRACK_ID = "talking-head-cutaways"
+# Mirrors `talking_head_assembler._MIN_WINDOW_S`: a shorter cutaway reads as
+# a flicker, not a cut.
+_MIN_CUTAWAY_S = 0.5
+
+
+class PhoneCutaway(BaseModel):
+    """One multi-clip Talking-head cutaway (KRI-136): ``binding``'s picture
+    replaces the speaker's between ``start_s`` and ``end_s`` (final timeline
+    seconds -- the CUT timeline when a speech-cleanup cut applies), reading
+    the cutaway clip from ``source_start_s``. Its audio is never heard."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    binding: PhoneSourceBinding
+    source_start_s: float = Field(default=0.0, ge=0)
+    start_s: float = Field(ge=0, le=1800)
+    end_s: float = Field(gt=0, le=1800)
+
+    @model_validator(mode="after")
+    def _window(self) -> PhoneCutaway:
+        if self.end_s <= self.start_s:
+            raise ValueError("cutaway window must have positive duration")
+        return self
+
 
 def compile_phone_subtitled_plan(
     bindings: tuple[PhoneSourceBinding, ...],
@@ -115,6 +158,7 @@ def compile_phone_subtitled_plan(
     cut_plan: CutPlan | None = None,
     keep_segments: list[tuple[float, float]] | None = None,
     caption_look: PhoneCaptionLook | None = None,
+    cutaways: tuple[PhoneCutaway, ...] = (),
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
 
@@ -204,6 +248,11 @@ def compile_phone_subtitled_plan(
     PhoneCaptionLook`) forwards verbatim to `compile_caption_layers` --
     ``None`` (default) is that module's own hardcoded default look,
     byte-identical to this compiler's pre-KRI-216 caption appearance.
+
+    ``cutaways`` (optional, KRI-136) makes this a multi-clip Talking head:
+    ``bindings`` still holds exactly the ONE speaker clip, and each
+    `PhoneCutaway` carries its own binding. See the module docstring and
+    `_compile_cutaway_track` for the exact shape and rejections.
 
     Rejects (all `UnsupportedPhonePlan`, fail-closed):
       - zero or more than one binding.
@@ -342,6 +391,18 @@ def compile_phone_subtitled_plan(
         required_capabilities |= {"visualVideos", "audioMix"}
 
     tracks = [TimelineTrack(id="subtitled", kind="video", clips=main_clips)]
+
+    if cutaways:
+        cutaway_track = _compile_cutaway_track(
+            cutaways,
+            speaker_media_id=binding.media_id,
+            speaker_end=speaker_end,
+            assets=assets,
+            manifest=manifest,
+        )
+        if cutaway_track.clips:
+            tracks.append(cutaway_track)
+            required_capabilities |= {"visualBlocks", "visualVideos", "audioMix"}
 
     if lanes is not None and lanes.overlays:
         try:
@@ -608,6 +669,118 @@ def _compile_video_overlay_clip(
             fade_out=card.fade,
         ),
     )
+
+
+def _compile_cutaway_track(
+    cutaways: tuple[PhoneCutaway, ...],
+    *,
+    speaker_media_id: str,
+    speaker_end: float,
+    assets: dict[str, MediaAsset],
+    manifest: dict[str, object],
+) -> TimelineTrack:
+    """Compile KRI-136 cutaways onto the muted, full-frame `CUTAWAY_TRACK_ID`
+    overlay track.
+
+    Each window is clamped to the speaker's own timeline (a cutaway never
+    extends the video -- the speech is the spine), and shortened to the
+    cutaway's own footage rather than holding a last frame (the device never
+    freezes a clip; the speaker simply shows through again, like the cloud
+    `eof_action=pass`). A window left shorter than `_MIN_CUTAWAY_S` is
+    dropped. Rejects (`UnsupportedPhonePlan`) a cutaway over the speaker clip
+    itself, a non-video cutaway, or two overlapping windows.
+    """
+    clips: list[TimelineClip] = []
+    previous_end = 0.0
+    for index, cutaway in enumerate(sorted(cutaways, key=lambda c: (c.start_s, c.end_s))):
+        cut_binding = cutaway.binding
+        original = cut_binding.original
+        if cut_binding.media_id == speaker_media_id:
+            raise UnsupportedPhonePlan("a Talking-head cutaway cannot reuse the speaker clip")
+        if original.width is None or original.height is None:
+            raise UnsupportedPhonePlan("a Talking-head cutaway requires a video clip")
+        if cutaway.start_s < previous_end - 1e-6:
+            raise UnsupportedPhonePlan("Talking-head cutaways must not overlap")
+        window_start = cutaway.start_s
+        window_end = min(cutaway.end_s, speaker_end)
+        available = float(original.duration_s) - cutaway.source_start_s
+        window_end = min(window_end, window_start + max(available, 0.0))
+        if window_end - window_start < _MIN_CUTAWAY_S:
+            continue
+        asset = cut_binding.render_asset()
+        manifest[asset.id] = asset
+        assets[asset.id] = MediaAsset(
+            id=asset.id,
+            relative_path=asset.id,
+            fingerprint=AssetFingerprint(hex=original.sha256, byte_count=original.byte_count),
+            duration=original.duration_s,
+            natural_size=MediaSize(width=original.width, height=original.height),
+            orientation_degrees=original.orientation_degrees,
+            is_proxy_available=True,
+        )
+        clips.append(
+            TimelineClip(
+                id=f"cutaway-{index}",
+                source_asset_id=asset.id,
+                source_start=cutaway.source_start_s,
+                source_duration=window_end - window_start,
+                timeline_start=window_start,
+                rate=1,
+                volume=0,
+                visual_placement=VisualMediaPlacement(
+                    order=1,
+                    window_start=window_start,
+                    window_end=window_end,
+                ),
+            )
+        )
+        previous_end = window_end
+    return TimelineTrack(id=CUTAWAY_TRACK_ID, kind="overlay", clips=clips)
+
+
+def cutaways_from_recipe(
+    recipe: EditRecipeV2, bindings: tuple[PhoneSourceBinding, ...]
+) -> tuple[PhoneCutaway, ...]:
+    """The inverse of `_compile_cutaway_track`: read a pinned recipe's
+    cutaways back so a phone-editor Save recompiles them unchanged (the
+    editor never moves them; captions/lanes share the same timeline).
+    Returns ``()`` for a single-clip Talking recipe. Raises ``ValueError`` if
+    a cutaway's clip no longer has a phone source binding."""
+    track = next((t for t in recipe.tracks if t.id == CUTAWAY_TRACK_ID), None)
+    if track is None:
+        return ()
+    by_media_id = {b.media_id: b for b in bindings}
+    cutaways: list[PhoneCutaway] = []
+    for clip in track.clips:
+        cut_binding = by_media_id.get(clip.source_asset_id)
+        if cut_binding is None:
+            raise ValueError("Talking-head cutaway has no phone source binding")
+        cutaways.append(
+            PhoneCutaway(
+                binding=cut_binding,
+                source_start_s=clip.source_start,
+                start_s=clip.timeline_start,
+                end_s=clip.timeline_start + clip.source_duration,
+            )
+        )
+    return tuple(cutaways)
+
+
+def speaker_binding_from_recipe(
+    recipe: EditRecipeV2, bindings: tuple[PhoneSourceBinding, ...]
+) -> PhoneSourceBinding:
+    """The binding whose asset plays on a pinned recipe's main
+    (``"subtitled"``) track -- the speaker. With one binding this is always
+    that binding; a multi-clip Talking head picks the spine out of all of
+    them. Raises ``ValueError`` when no binding matches."""
+    if len(bindings) == 1:
+        return bindings[0]
+    main_track = next((t for t in recipe.tracks if t.id == "subtitled"), None)
+    main_assets = {clip.source_asset_id for clip in main_track.clips} if main_track else set()
+    matches = [b for b in bindings if b.media_id in main_assets]
+    if len(matches) != 1:
+        raise ValueError("Talking-head recipe has no single speaker clip")
+    return matches[0]
 
 
 def _compile_sfx_track(

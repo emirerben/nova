@@ -4846,6 +4846,57 @@ def _run_phone_unified_montage_job(
         return copy.deepcopy(current)
 
 
+# KRI-136: variant receipt for a multi-clip phone Talking head.
+PHONE_TALKING_HEAD_FIELD = "phone_talking_head"
+
+
+def _phone_talking_head_cutaways(
+    *,
+    speaker_clip_id: str,
+    speaker_duration_s: float,
+    clip_metas: list,
+    clip_id_to_gcs: dict[str, str],
+    binding_by_proxy: dict,
+) -> tuple:
+    """Schedule the non-speaker clips as KRI-136 phone cutaways.
+
+    Reuses the cloud assembler's pure `schedule_broll` (same lead-in, cadence
+    and 0.5-3s window bounds) over the speaker's own duration, in upload
+    order, and pairs each window with its clip's phone source binding.
+    """
+    from app.pipeline.phone_subtitled_plan import PhoneCutaway  # noqa: PLC0415
+    from app.pipeline.talking_head_assembler import (  # noqa: PLC0415
+        BrollSource,
+        schedule_broll,
+    )
+
+    broll: list[BrollSource] = []
+    cutaway_bindings: dict = {}
+    for meta in clip_metas:
+        cid = str(meta.clip_id)
+        if cid == speaker_clip_id:
+            continue
+        cutaway_binding = binding_by_proxy.get(clip_id_to_gcs.get(cid))
+        if cutaway_binding is None:
+            raise ValueError("Talking-head cutaway has no matching phone source binding")
+        cutaway_bindings[cid] = cutaway_binding
+        broll.append(
+            BrollSource(
+                clip_id=cid,
+                reframed_path="",
+                source_dur_s=float(cutaway_binding.original.duration_s),
+            )
+        )
+    return tuple(
+        PhoneCutaway(
+            binding=cutaway_bindings[window.clip_id],
+            start_s=window.start_s,
+            end_s=window.end_s,
+        )
+        for window in schedule_broll(speaker_duration_s, broll)
+    )
+
+
 def _run_phone_subtitled_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -4853,12 +4904,13 @@ def _run_phone_subtitled_job(
 
     Reached for a declared `subtitled` item, or a self-narrated `narrated`/
     `narrated_planned`/`narrated_ready` item with NO recorded voiceover --
-    `content_plan_build.py`'s dispatch gate only lets the self-narration case
-    through for the single-clip shape that could possibly resolve to
-    `subtitled` (never `talking_head`, which has no phone compiler); this
-    function re-verifies that with the real, post-ingest `_resolve_archetype`
-    before proceeding, since the dispatch gate cannot run that analysis
-    itself.
+    `content_plan_build.py`'s dispatch gate lets the self-narration case
+    through for one clip (resolves to `subtitled`), or for 2+ clips when
+    `phone_talking_head_supported()` (KRI-136: resolves to `talking_head`,
+    rendered as the speaker clip plus muted full-frame cutaways -- see
+    `_phone_talking_head_cutaways`); this function re-verifies that with the
+    real, post-ingest `_resolve_archetype` before proceeding, since the
+    dispatch gate cannot run that analysis itself.
 
     Mirrors `_run_phone_voiceover_montage_job`'s fences (immutable generation, bound
     sources, single pinned device revision, redelivery idempotency) but skips
@@ -4912,6 +4964,7 @@ def _run_phone_subtitled_job(
         phone_subtitled_overlays_supported,
         phone_subtitled_reaction_beats_supported,
         phone_subtitled_video_overlays_supported,
+        phone_talking_head_supported,
         validate_phone_pilot_recipe,
     )
     from app.services.phone_sources import (  # noqa: PLC0415
@@ -4995,12 +5048,17 @@ def _run_phone_subtitled_job(
         raise ValueError(
             f"Phone rendering does not yet support self-narrated '{edit_format}' edits"
         )
-    if len(bindings) != 1:
+    # KRI-136: a self-narrated item with 2+ clips renders as a multi-clip
+    # Talking head (speaker clip + muted full-frame cutaways) when
+    # `phone_talking_head_supported()`; the real archetype is re-verified
+    # post-ingest below. Everything else keeps the single-clip contract.
+    multi_clip = len(bindings) >= 2
+    if multi_clip and not (self_narrated and phone_talking_head_supported()):
         raise ValueError("Phone subtitled rendering requires exactly one clip")
 
     clip_paths_gcs: list[str] = list(all_candidates.get("clip_paths") or [])
-    if len(clip_paths_gcs) != 1:
-        raise ValueError("Phone rendering requires exactly one clip path")
+    if len(clip_paths_gcs) != len(bindings):
+        raise ValueError("Phone rendering requires one clip path per phone source")
 
     # `required_v1` now HAS a native phone application here (a single
     # embedded-spine clip is exactly the shape `compile_phone_subtitled_plan`'s
@@ -5008,6 +5066,14 @@ def _run_phone_subtitled_job(
     # exists, further down; this only normalizes the contract token.
     speech_cleanup_contract = str(snapshot.get("speech_cleanup_contract") or "legacy_auto")
     cleanup_required = speech_cleanup_contract == "required_v1"
+    if multi_clip and cleanup_required:
+        # KRI-136 v1: cutaway windows are scheduled on the uncut speaker
+        # timeline only. The dispatch gate already refuses cleanup for a
+        # multi-clip phone item (`speech_cleanup_unavailable_on_phone`); never
+        # ship an uncut render the creator consented to cut.
+        raise SpeechCleanupFailure(
+            "apply_failed", "speech cleanup isn't available for multi-clip phone Talking yet"
+        )
 
     language: str = all_candidates.get("language") or "en"
     # KRI-177: same explicit override contract as the cloud subtitled render —
@@ -5170,7 +5236,7 @@ def _run_phone_subtitled_job(
                     for cid, path in clip_id_to_local.items()
                     if probe_map.get(path) is not None
                 }
-                archetype, _spine, _fallback_reason = _resolve_archetype(
+                archetype, spine_clip_id, _fallback_reason = _resolve_archetype(
                     edit_format,
                     clip_metas,
                     clip_id_to_local,
@@ -5178,23 +5244,37 @@ def _run_phone_subtitled_job(
                     voiceover_gcs_path=None,
                     clip_durations_s=clip_durations_s,
                 )
-                if archetype != "subtitled":
+                expected_archetype = "talking_head" if multi_clip else "subtitled"
+                if archetype != expected_archetype or (multi_clip and spine_clip_id is None):
                     raise UnsupportedPhonePlan(
                         f"self-narrated phone rendering resolved to unsupported "
                         f"archetype={archetype!r}"
                     )
 
-            clip_id = next(iter(clip_id_to_local))
+            clip_id = spine_clip_id if multi_clip else next(iter(clip_id_to_local))
             clip_path = clip_id_to_local[clip_id]
             gcs_path = clip_id_to_gcs.get(clip_id)
-            binding = bindings[0]
-            if gcs_path != binding.proxy_path:
+            binding_by_proxy = {row.proxy_path: row for row in bindings}
+            binding = binding_by_proxy.get(gcs_path) if multi_clip else bindings[0]
+            if binding is None or gcs_path != binding.proxy_path:
                 raise UnsupportedPhonePlan("subtitled clip has no matching phone source binding")
+            # The compiler takes exactly the speaker clip; KRI-136 cutaways
+            # carry their own bindings (scheduled once the speaker is probed).
+            speaker_bindings = (binding,)
+            cutaways: tuple = ()
 
             probe = probe_video(clip_path)
             if float(probe.duration_s) > 300.0:
                 raise UnsupportedPhonePlan(
                     "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
+                )
+            if multi_clip:
+                cutaways = _phone_talking_head_cutaways(
+                    speaker_clip_id=clip_id,
+                    speaker_duration_s=float(probe.duration_s),
+                    clip_metas=clip_metas,
+                    clip_id_to_gcs=clip_id_to_gcs,
+                    binding_by_proxy=binding_by_proxy,
                 )
 
             # `required_v1`: bind the immutable preflight snapshot to THIS
@@ -5415,7 +5495,11 @@ def _run_phone_subtitled_job(
             sfx_duck: dict | None = None
             if not media_lanes_enabled:
                 recipe = compile_phone_subtitled_plan(
-                    bindings, caption_cues=cues, caption_style=caption_style, cut_plan=cut_plan
+                    speaker_bindings,
+                    caption_cues=cues,
+                    caption_style=caption_style,
+                    cut_plan=cut_plan,
+                    cutaways=cutaways,
                 )
             else:
                 raw_lane_request = snapshot.get(PHONE_SUBTITLED_LANES_FIELD)
@@ -5743,13 +5827,14 @@ def _run_phone_subtitled_job(
                 while True:
                     try:
                         recipe = compile_phone_subtitled_plan(
-                            bindings,
+                            speaker_bindings,
                             caption_cues=cues,
                             caption_style=caption_style,
                             visuals=visuals,
                             lanes=lanes,
                             duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
                             cut_plan=cut_plan,
+                            cutaways=cutaways,
                         )
                         sfx_duck = sfx_duck_receipt(lanes, recipe)
                         break
@@ -5872,10 +5957,11 @@ def _run_phone_subtitled_job(
                     pass
 
     if not media_lanes_enabled:
-        validate_phone_pilot_recipe(recipe)
+        validate_phone_pilot_recipe(recipe, allow_editor_media=bool(cutaways))
     else:
         validate_phone_pilot_recipe(
-            recipe, allow_editor_media=bool(lanes is not None and lanes.overlays)
+            recipe,
+            allow_editor_media=bool(cutaways) or bool(lanes is not None and lanes.overlays),
         )
     variant_id = "subtitled"
     request = make_device_request(
@@ -5935,6 +6021,23 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
+        if multi_clip:
+            # KRI-136: the phone Talking lane (and its editor) owns this
+            # variant, so `resolved_archetype` stays "subtitled"; this receipt
+            # says it is really the multi-clip Talking head and which clip
+            # speaks.
+            new_entry[PHONE_TALKING_HEAD_FIELD] = {
+                "version": 1,
+                "speaker_media_id": binding.media_id,
+                "cutaways": [
+                    {
+                        "media_id": cutaway.binding.media_id,
+                        "start_s": cutaway.start_s,
+                        "end_s": cutaway.end_s,
+                    }
+                    for cutaway in cutaways
+                ],
+            }
         if overlay_grounding_enabled:
             new_entry["phone_overlay_receipt"] = overlay_receipt
         if beats_enabled:

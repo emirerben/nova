@@ -25,7 +25,9 @@ from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, lane_names
 from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
     compile_phone_subtitled_plan,
+    cutaways_from_recipe,
     sfx_duck_receipt,
+    speaker_binding_from_recipe,
 )
 from app.services.device_render import device_status, pin_device_request
 from app.services.phone_editor_sources import (
@@ -296,14 +298,25 @@ def _compile_subtitled_editor_commit(
     # the video). An uncut variant's main track is a single full-duration
     # clip, so this reproduces `keep_segments=None`'s own default byte-for-
     # byte -- no branch on "was this cut" needed.
+    # KRI-136: a multi-clip Talking head pins every clip as a phone source;
+    # the speaker is whichever one plays on the main track, and its cutaways
+    # carry over from the pinned recipe unchanged (captions/lanes share the
+    # same timeline, and the editor never moves a cutaway).
+    speaker = bindings[0]
+    cutaways: tuple = ()
+    if isinstance(previous.recipe, EditRecipeV2):
+        speaker = speaker_binding_from_recipe(previous.recipe, bindings)
+        cutaways = cutaways_from_recipe(previous.recipe, bindings)
+    elif len(bindings) != 1:
+        raise ValueError("multi-clip phone Talking edits need a pinned recipe")
     keep_segments = (
-        _previous_keep_segments(previous.recipe, bindings[0].render_asset().id)
+        _previous_keep_segments(previous.recipe, speaker.render_asset().id)
         if isinstance(previous.recipe, EditRecipeV2)
         else None
     )
 
     recipe = compile_phone_subtitled_plan(
-        bindings,
+        (speaker,),
         caption_cues=caption_cues,
         caption_style=caption_style,
         visuals=visuals,
@@ -311,9 +324,10 @@ def _compile_subtitled_editor_commit(
         duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
         keep_segments=keep_segments,
         caption_look=caption_look,
+        cutaways=cutaways,
     )
     duck_receipt = sfx_duck_receipt(lanes, recipe)
-    validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays))
+    validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays or cutaways))
     request = make_device_request(
         job_id=previous.identity.job_id,
         variant_id=variant_id,
