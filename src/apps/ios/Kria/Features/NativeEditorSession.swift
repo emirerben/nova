@@ -1221,6 +1221,9 @@ struct NativeEditorTemporaryVideo {
 
     func needsReload(for project: ProjectSummary) -> Bool {
         guard loadState == .loaded else { return true }
+        // A re-plan can render a NEW job for the same thread; the loaded
+        // session then still shows the old job's video.
+        if let target = project.activeJobID, let jobID, target != jobID { return true }
         guard let loadedServerRevision else { return false }
         return loadedServerRevision != project.serverRevision
     }
@@ -1263,6 +1266,20 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// The thread now points at a different render job: the old job's player,
+    /// source composition and device-render identity must not keep showing.
+    private func discardPlaybackForNewJob() {
+        sourcePreviewTask?.cancel()
+        sourcePreviewSequence += 1
+        player?.pause()
+        player = nil
+        finishedRenderURL = nil; finishedRenderPlayer = nil; finishedRenderIsCurrent = true
+        sourcePreview = nil; sourceCompiler = nil; sourcePool = nil; resolvedSources = nil
+        sourcePreviewState = .idle; sourcePreviewGeneration = nil
+        previewVariant = [:]
+        pendingDeviceRenderIdentity = nil
+    }
+
     /// Gallery rows are render jobs, not creation-thread IDs. Promote the job
     /// through the server's idempotent editor route, then project its live
     /// variant into the same local draft model used by conversation projects.
@@ -1279,6 +1296,7 @@ struct NativeEditorTemporaryVideo {
     ) async {
         self.api = api
         self.threadID = threadID
+        if let previous = jobID, previous != editorJobID { discardPlaybackForNewJob() }
         jobID = editorJobID
         isSaving = true
         saveState = .saving

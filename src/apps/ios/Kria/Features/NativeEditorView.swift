@@ -156,7 +156,12 @@ struct NativeEditorView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
-            .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
+            // Sending from the conversation sheet must not dismiss it (only the
+            // creator closes it); `conversationAcceptedID` is intentionally unused here.
+            // A re-plan can finish as a NEW job while this editor is open: show it.
+            .onChange(of: project.activeJobID) { _, _ in
+                Task { if !session.hasUnsavedChanges { await loadEditor() } }
+            }
             .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.removeSharedFile) {
                 if let file = exporter.sharedFile { ShareSheetView(url: file) }
             }

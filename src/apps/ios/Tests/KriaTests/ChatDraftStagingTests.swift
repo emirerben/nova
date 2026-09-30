@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import Kria
 
@@ -285,5 +286,31 @@ final class ChatDraftStagingTests: XCTestCase {
         fake.authoritativeVariant = Self.variant(generation: "g2")
         await session.synchronizePromptRevision()
         XCTAssertFalse(session.isDirty(.text) || session.isDirty(.timeline), "draft based on g1 is stale after the commit")
+    }
+
+    /// Real-thread shape (80ade387): a re-plan re-rendered as a NEW job.
+    func testOpeningAfterAReplanTargetsTheNewJobAndDropsTheOldPlayback() async throws {
+        let jobA = UUID(), jobB = UUID(), threadID = UUID()
+        func project(_ job: UUID, revision: Int) -> ProjectSummary {
+            ProjectSummary(id: threadID, title: "Chat", status: .ready, updatedAt: .now, posterURL: nil,
+                outputVariantID: "initial", runtimeVersion: 2, serverRevision: revision,
+                activeJobID: job, activePlanItemID: "item")
+        }
+        var variantA = Self.variant(generation: "gA"); variantA["output_url"] = .string("https://example.com/job-a.mp4")
+        var variantB = Self.variant(generation: "gB"); variantB["output_url"] = .string("https://example.com/job-b.mp4")
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), draftError: .conflict, authoritativeVariant: variantA)
+        let session = NativeEditorSession(project: project(jobA, revision: 20))
+        await session.load(project: project(jobA, revision: 20), api: fake)
+        func playing() -> String? { (session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent }
+        XCTAssertEqual(playing(), "job-a.mp4")
+        XCTAssertFalse(session.needsReload(for: project(jobA, revision: 20)))
+
+        // Same revision but a different active job must still reload.
+        XCTAssertTrue(session.needsReload(for: project(jobB, revision: 20)))
+        fake.authoritativeVariant = variantB
+        await session.load(project: project(jobB, revision: 26), api: fake)
+        XCTAssertEqual(fake.editorVariantJobIDs.last, jobB)
+        XCTAssertEqual(playing(), "job-b.mp4", "old job's video must not stay on screen")
+        XCTAssertFalse(session.needsReload(for: project(jobB, revision: 26)))
     }
 }

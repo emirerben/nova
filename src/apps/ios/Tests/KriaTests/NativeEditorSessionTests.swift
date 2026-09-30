@@ -3152,6 +3152,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     var lastItemID: String?
     var draftCallCount = 0
     var lastVariantID: String?
+    var editorVariantJobIDs: [UUID] = []
     var projectCallCount = 0
     var editorVariantsCallCount = 0
     var sourcePoolCallCount = 0
@@ -3203,7 +3204,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
         return openReceipt
     }
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
-        lastVariantID = variantID
+        lastVariantID = variantID; editorVariantJobIDs.append(jobID)
         if let editorVariantError { throw editorVariantError }
         return authoritativeVariant ?? ["editor_revision_number": phoneDestination ? .number(7) : .null, "render_destination": .string(phoneDestination ? "device" : "cloud"), "variant_id": .string(variantID), "render_generation_id": .string("generation-1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]), "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])])]
     }
