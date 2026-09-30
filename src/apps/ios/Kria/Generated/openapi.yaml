@@ -1474,6 +1474,7 @@
               "thermal",
               "unsupported_recipe",
               "cancelled_by_user",
+              "timed_out",
               "unknown"
             ],
             "title": "Reason Code",
@@ -1507,6 +1508,7 @@
               "thermal",
               "unsupported_recipe",
               "cancelled_by_user",
+              "timed_out",
               "unknown"
             ],
             "title": "Reason Code",

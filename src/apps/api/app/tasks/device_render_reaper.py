@@ -93,7 +93,7 @@ def _reap_job(job_id: Any, *, threshold_s: int, now: datetime) -> int:
             if (now - freshness) < timedelta(seconds=threshold_s):
                 continue
             try:
-                mark_device_failed(job, variant_id, reason_code="unknown", detail=_STALE_DETAIL)
+                mark_device_failed(job, variant_id, reason_code="timed_out", detail=_STALE_DETAIL)
             except ValueError:
                 # Phase moved under us (e.g. a client-driven failure report or a
                 # publish raced this sweep) — leave it alone, nothing to reap.

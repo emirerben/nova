@@ -4113,12 +4113,12 @@ def _run_phone_voiceover_montage_job(
     prework, same as the cloud path deliberately avoids) or an unlocked read
     of a field a concurrent editor could be rewriting.
 
-    Deferred (see docs/runbooks/phone-rendering.md): every variant but the
-    top-ranked one (recorded under `assembly_plan["phone_deferred_variants"]`),
-    SFX/media-overlay lanes, masonry/collage presets, lyric overlays,
-    carousel-moment splices, letterboxed landscape fit, editorial sequence/
-    rhythm text, and audio ducking -- all fail closed via `UnsupportedPhonePlan`
-    inside the compiler.
+    One variant per job (KRI-141): only the top-ranked spec renders; the rest are
+    dropped (logged, never stored), matching the content-plan single-variant norm.
+    Deferred (see docs/runbooks/phone-rendering.md): SFX/media-overlay lanes,
+    masonry/collage presets, lyric overlays, carousel-moment splices, letterboxed
+    landscape fit, editorial sequence/rhythm text, and audio ducking -- all fail
+    closed via `UnsupportedPhonePlan` inside the compiler.
     """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
@@ -4310,7 +4310,14 @@ def _run_phone_voiceover_montage_job(
             )
             if not specs:
                 raise ValueError("No renderable variant for this edit")
-            spec, deferred_specs = specs[0], specs[1:]
+            spec, dropped_specs = specs[0], specs[1:]
+            if dropped_specs:
+                log.info(
+                    "phone_render_variants_dropped",
+                    job_id=job_id,
+                    rendered=spec["variant_id"],
+                    dropped=[s["variant_id"] for s in dropped_specs],
+                )
             if spec.get("text_mode") not in {"agent_text", "none"}:
                 raise UnsupportedPhonePlan(f"unsupported text_mode: {spec.get('text_mode')}")
 
@@ -4410,7 +4417,6 @@ def _run_phone_voiceover_montage_job(
         else:
             variants.append(new_entry)
         current["variants"] = variants
-        current["phone_deferred_variants"] = [s["variant_id"] for s in deferred_specs]
         job.assembly_plan = current
         pin_device_request(job, request, base_generation=generation)
         job.status = "awaiting_device"
@@ -5935,7 +5941,6 @@ def _run_phone_subtitled_job(
         else:
             variants.append(new_entry)
         current["variants"] = variants
-        current["phone_deferred_variants"] = []
         if media_lanes_enabled and visual_rows:
             # Private receipts the editor recompiles from; each row keeps
             # gcs_path so pool deletion still sees the photo/video as referenced.
@@ -6413,7 +6418,6 @@ def _run_phone_narrated_job(
         else:
             variants.append(new_entry)
         current["variants"] = variants
-        current["phone_deferred_variants"] = []
         job.assembly_plan = current
         pin_device_request(job, request, base_generation=generation)
         job.status = "awaiting_device"

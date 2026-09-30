@@ -166,7 +166,7 @@ def test_subtitled_compiles_and_pins_device_request(monkeypatch):
     assert variant["render_status"] == "awaiting_device"
     assert variant["render_destination"] == "device"
     assert variant["caption_cues"]
-    assert job.assembly_plan["phone_deferred_variants"] == []
+    assert "phone_deferred_variants" not in job.assembly_plan
 
 
 def test_subtitled_redelivery_is_a_no_op(monkeypatch):

@@ -16,14 +16,15 @@ from app.kria.device_render import (
 DEVICE_RENDER_FIELD = "_device_render_v1"
 
 # Human-readable fallback when the reporter (phone client or reaper) sends an
-# empty detail string. Keyed by reason_code; "unknown" also backs the reaper's
-# own stale-timeout report (app/tasks/device_render_reaper.py).
+# empty detail string. Keyed by reason_code; "timed_out" is the reaper's own
+# stale-timeout report (app/tasks/device_render_reaper.py).
 _DEFAULT_FAILURE_DETAIL: dict[str, str] = {
     "export_failed": "The export failed on your device. Open the project to retry.",
     "insufficient_storage": "Not enough storage on your device to finish the export.",
     "thermal": "Your device paused rendering to cool down. Open the project to retry.",
     "unsupported_recipe": "This edit isn't supported by on-device rendering yet.",
     "cancelled_by_user": "The export was cancelled on your device.",
+    "timed_out": "No delivery from your device in the last 24 hours. Open the project to retry.",
     "unknown": "Something went wrong rendering on your device. Open the project to retry.",
 }
 

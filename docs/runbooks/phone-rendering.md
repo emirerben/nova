@@ -133,10 +133,13 @@ not the sequence/rhythm upgrade), crossfade/fade-to-black/fade-to-white
 transitions, variable speed, the `golden_hour` look on exact-canvas
 unrotated sources, a licensed music bed at its matched offset.
 
-**Deferred, fails closed via `UnsupportedPhonePlan`:** every variant but the
-top-ranked one (the rest are recorded under
-`assembly_plan["phone_deferred_variants"]` so nothing is silently lost —
-multi-variant phone rendering is a follow-up), SFX/media-overlay lanes,
+**One variant:** only the top-ranked spec renders on the phone; any others
+are dropped (logged as `phone_render_variants_dropped`, not stored). Plan items
+are single-variant in the cloud too, except a voiceover with a matched track
+under the original-audio policy (KRI-141 chose dropping over telling the
+creator about a version they can't get).
+
+**Deferred, fails closed via `UnsupportedPhonePlan`:** SFX/media-overlay lanes,
 masonry/collage presets, lyric overlays, carousel-moment splices, letterboxed
 landscape fit, the editorial sequence/rhythm typographic upgrade, non-
 `golden_hour`/`none` color grades, and audio ducking.
@@ -1212,7 +1215,8 @@ app or a missed push notification otherwise leaves a job `awaiting_device` (or
 - **Client-driven failure report** — `POST /me/jobs/{job_id}/device-render/failures`
   (10/min): body `{identity, reason_code, detail}` where `reason_code` is one
   of `export_failed`, `insufficient_storage`, `thermal`, `unsupported_recipe`,
-  `cancelled_by_user`, `unknown`; `detail` is an optional free-text string
+  `cancelled_by_user`, `timed_out` (the reaper's code; phones don't send it),
+  `unknown`; `detail` is an optional free-text string
   (≤2000 chars). Valid only from `awaiting_device`/`syncing`; a repeat report
   against an already-`needs_attention` identity returns 200 idempotently
   (current state, original reason preserved); against a `published` record it
@@ -1243,7 +1247,9 @@ app or a missed push notification otherwise leaves a job `awaiting_device` (or
   polled `GET /device-render` — throttled to one write per 60s — else
   `pinned_at`, stamped at pin time, else `job.updated_at`) is older than
   `settings.device_render_stale_after_s` (default 86400s = 24h). Reaping calls
-  `mark_device_failed(reason_code="unknown", ...)`, sets
+  `mark_device_failed(reason_code="timed_out", ...)` (its own code since
+  KRI-141, so the phone shows timeout-specific copy; older records keep
+  `unknown`), sets
   `job.failure_reason="device_render_stale"`, and stamps `reaped_at` on the
   record so it is never re-reaped.
 
