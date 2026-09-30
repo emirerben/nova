@@ -273,23 +273,46 @@ def zone_for_timezone_name(name: object) -> str | None:
     return name.strip()
 
 
+def _zone_of_facts(facts: Iterable[Mapping[str, Any]]) -> str | None:
+    """The single-zone country zone named by one clip's place fact, if any."""
+    for fact in facts:
+        if fact.get("kind") != "place":
+            continue
+        parts = [_fold_place(part) for part in str(fact.get("value") or "").split(",")]
+        for part in reversed(parts):  # the country is the last part of the geocode
+            zone = _SINGLE_ZONE_COUNTRIES.get(part)
+            if zone is not None:
+                return zone
+    return None
+
+
 def display_timezone(
     facts_per_clip: Iterable[Iterable[Mapping[str, Any]]], override: object = None
 ) -> tuple[str, str]:
     """``(iana_name, basis)`` used to print filming hours; basis is "creator",
-    "place" or "utc"."""
+    "place" or "utc".
+
+    THE one resolver (editor ops and the planner both call it), order-independent:
+    a zone the creator named wins; otherwise a non-UTC zone is used only when every
+    timed clip that HAS a place names a country of one single zone and they all agree
+    (a clip with no place abstains; a place in an unrecognised country forces UTC).
+    Different countries get UTC, stated, never a confident guess (2026-09-30: a UK clip
+    first in one order and a Turkish clip first in another printed the same clips two
+    hours apart).
+    """
     named = zone_for_timezone_name(override)
     if named is not None:
         return named, "creator"
+    zones: set[str | None] = set()
     for facts in facts_per_clip:
-        for fact in facts:
-            if fact.get("kind") != "place":
-                continue
-            parts = [_fold_place(part) for part in str(fact.get("value") or "").split(",")]
-            for part in reversed(parts):
-                zone = _SINGLE_ZONE_COUNTRIES.get(part)
-                if zone is not None:
-                    return zone, "place"
+        rows = [f for f in facts if isinstance(f, Mapping)]
+        if capture_time_from_facts(rows) is None:
+            continue
+        if not any(f.get("kind") == "place" for f in rows):
+            continue  # no place recorded: abstains (cannot contradict the others)
+        zones.add(_zone_of_facts(rows))
+    if len(zones) == 1 and None not in zones:
+        return next(iter(zones)), "place"  # type: ignore[arg-type]
     return "UTC", "utc"
 
 
@@ -303,7 +326,10 @@ def format_capture_hour(moment: datetime, zone: str) -> str:
 def timezone_note(zone: str, basis: str) -> str:
     """The plain-language basis a reply must state alongside filming hours."""
     if basis == "utc":
-        return "Times are shown in UTC (your clips don't say which time zone they were filmed in)."
+        return (
+            "Times are shown in UTC (your clips were filmed in more than one time zone, or "
+            "one I can't tell)."
+        )
     return f"Times are shown in {zone.replace('_', ' ')} time."
 
 

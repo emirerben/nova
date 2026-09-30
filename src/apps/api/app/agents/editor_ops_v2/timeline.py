@@ -244,7 +244,12 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
     )
     permutation = [int(i) for i in result.ordered_ids]
     if permutation == list(range(len(slots))):
-        state.reply_notes.append("The clips are already in that order" + ".")
+        state.reorder_noop = True
+        state.reply_notes.append(
+            "The clips are already in "
+            + ("newest-first" if direction == "desc" else "chronological")
+            + " order."
+        )
         state.reject(
             op=name, reason="capability_unavailable", detail="the clips are already in that order"
         )

@@ -390,6 +390,7 @@ def _editor_payload_duration(payload: Mapping[str, Any]) -> float | None:
 def plan_facts_from_editor_payload(
     payload: Mapping[str, Any] | None,
     text_diff: Iterable[Mapping[str, Any]] | None = None,
+    changes: Iterable[str] | None = None,
 ) -> PlanFacts:
     """Editor drafts expose literal on-screen text, plus (KRI-218) the turn's text diff.
 
@@ -422,7 +423,12 @@ def plan_facts_from_editor_payload(
             per_clip[clip] = entry["after"]
         elif entry.get("role") == "title":
             title = entry["after"]
+    # The compiler's own change list says the timeline was re-sorted by filming time.
+    ordered_by_capture = any(
+        str(change).startswith("Order clips by filming time") for change in changes or ()
+    )
     return PlanFacts(
+        ordering_basis="capture_time" if ordered_by_capture else None,
         duration_s=_editor_payload_duration(payload),
         editor_text_edited=bool(
             isinstance(payload, Mapping)
@@ -596,13 +602,11 @@ def _check_filming_time_text(req: BriefRequirement, facts: PlanFacts) -> Require
             f"Filming hour on {len(timed)} of {total} clips; "
             f"{missing} {'have' if missing != 1 else 'has'} no filming time.",
         )
-    if facts.label_timezone_basis == "utc":
-        return _receipt(
-            req,
-            "partial",
-            "Hours are shown in UTC, because your clips don't say which time zone they "
-            "were filmed in.",
-        )
+    if facts.label_timezone:
+        # Delivered, but the creator must know which zone the hours are in.
+        from app.services.clip_facts import timezone_note  # noqa: PLC0415
+
+        return _receipt(req, "met", timezone_note(facts.label_timezone, facts.label_timezone_basis))
     return None
 
 
@@ -1161,7 +1165,7 @@ def reply_from_receipts(
     guesses: list[str] = []
     for receipt in judged:
         line = f"{_LABEL[receipt.status]}: {by_id[receipt.requirement_id].text()}"
-        if receipt.reason and receipt.status != "met":
+        if receipt.reason:
             line += f" ({receipt.reason.rstrip('.')})"
         lines.append(line)
         guesses.extend(receipt.inferred)

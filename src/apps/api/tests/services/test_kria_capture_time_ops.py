@@ -29,6 +29,13 @@ from tests.services._guided_timeline_fixtures import (
 )
 
 
+def _timed(place: str) -> list[dict]:
+    return [
+        {"kind": "capture_time", "value": "2026-09-20T12:00:00Z", "provenance": "exif"},
+        {"kind": "place", "value": place, "provenance": "geocode"},
+    ]
+
+
 def _facts(iso: str | None, place: str | None = None) -> list[dict]:
     rows = []
     if iso:
@@ -139,7 +146,7 @@ def test_reorder_already_in_order_is_a_noop_reply(guided) -> None:
         _snapshot(job, variant, facts), [{"op": "reorder_clips_by", "criterion": "capture_time"}]
     )
     assert out.ops == []
-    assert "already in that order" in out.reply
+    assert "already in chronological order" in out.reply
 
 
 def test_reorder_rejects_unknown_criterion_and_model_permutation(guided) -> None:
@@ -349,14 +356,14 @@ def test_reorder_then_label_in_one_bundle_keeps_labels_on_their_clips(guided) ->
 
 
 def test_display_timezone_precedence() -> None:
-    place = [[{"kind": "place", "value": "Kadıköy, İstanbul, Türkiye"}]]
+    place = [_timed("Kadıköy, İstanbul, Türkiye")]
     assert display_timezone(place) == ("Europe/Istanbul", "place")
-    assert display_timezone([[{"kind": "place", "value": "Meltem, Muratpasa, Turquia"}]]) == (
+    assert display_timezone([_timed("Meltem, Muratpasa, Turquia")]) == (
         "Europe/Istanbul",
         "place",
     )
     assert display_timezone(place, "Asia/Tokyo") == ("Asia/Tokyo", "creator")
-    assert display_timezone([[{"kind": "place", "value": "Somewhere, Testland"}]]) == ("UTC", "utc")
+    assert display_timezone([_timed("Somewhere, Testland")]) == ("UTC", "utc")
     assert display_timezone([], "nope") == ("UTC", "utc")
     from datetime import UTC, datetime
 
@@ -421,7 +428,7 @@ def test_no_capture_facts_keeps_the_planner_route(guided) -> None:
 # ── re-plan path honesty (KRI-129: no silent place-for-time substitution) ────
 
 
-def _montage(brief_reqs, capture: dict[str, str | None]):
+def _montage(brief_reqs, capture: dict[str, str | None], places: dict[str, str] | None = None):
     from datetime import datetime
 
     from app.kria.brief import CreativeBrief
@@ -429,9 +436,8 @@ def _montage(brief_reqs, capture: dict[str, str | None]):
 
     clips = []
     for i, (media_id, iso) in enumerate(capture.items()):
-        facts = [
-            {"kind": "place", "value": f"Place {i}, Antalya, Türkiye", "provenance": "geocode"}
-        ]
+        place = (places or {}).get(media_id, f"Place {i}, Antalya, Türkiye")
+        facts = [{"kind": "place", "value": place, "provenance": "geocode"}]
         when = None
         if iso:
             facts.append({"kind": "capture_time", "value": iso, "provenance": "exif"})
@@ -509,3 +515,95 @@ def test_receipt_partial_when_some_clips_have_no_time_and_when_utc() -> None:
         check_requirement(HOUR_REQS[1], plan_facts_from_unified_montage(full.record())).status
         == "met"
     )
+
+
+def test_mixed_countries_resolve_to_utc_whatever_the_order() -> None:
+    uk = _timed("Wandsworth, London, United Kingdom")
+    tr = _timed("Ulus, Be\u015fikta\u015f, T\u00fcrkiye")
+    assert display_timezone([uk, tr]) == ("UTC", "utc")
+    assert display_timezone([tr, uk]) == ("UTC", "utc")
+    assert display_timezone([tr, _timed("Somewhere, Testland")]) == ("UTC", "utc")
+    assert display_timezone([tr, tr]) == ("Europe/Istanbul", "place")
+    # a clip with no place, or with no capture time, does not vote
+    noplace = [{"kind": "capture_time", "value": "2026-09-20T12:00:00Z", "provenance": "exif"}]
+    assert display_timezone([tr, noplace]) == ("Europe/Istanbul", "place")
+    assert display_timezone([noplace]) == ("UTC", "utc")
+    untimed = [{"kind": "place", "value": "London, United Kingdom"}]
+    assert display_timezone([tr, untimed]) == ("Europe/Istanbul", "place")
+
+
+def test_editor_ops_and_replan_print_identical_hours_for_the_same_clips(guided) -> None:
+    places = {
+        "m0": "Wandsworth, London, United Kingdom",
+        "m1": "Ulus, Be\u015fikta\u015f, T\u00fcrkiye",
+        "m2": "Ann Arbor, United States",
+        "m3": "Lisboa, Portugal",
+    }
+    times = {
+        "m0": "2026-06-07T15:41:55Z",
+        "m1": "2024-07-11T13:36:13Z",
+        "m2": "2026-05-03T05:56:36Z",
+        "m3": "2026-06-18T09:17:19Z",
+    }
+    facts = {
+        m: [
+            {"kind": "capture_time", "value": times[m], "provenance": "exif"},
+            {"kind": "place", "value": places[m], "provenance": "geocode"},
+        ]
+        for m in places
+    }
+    job, variant, _rev = guided
+    out = _parse(
+        _snapshot(job, variant, facts),
+        [
+            {
+                "op": "label_each_clip",
+                "source": "facts",
+                "label_from": "capture_time",
+                "mode": "append",
+            }
+        ],
+    )
+    editor_hours = {}
+    for row in out.ops[0]["labels"]:
+        editor_hours[row["media_id"]] = row["text"].split(" \u00b7 ")[-1]
+    replan = _montage(HOUR_REQS[1:], dict(times), places)
+    plan_hours = {r["media_id"]: r["text"] for r in replan.record()["labels"]}
+    assert editor_hours == plan_hours
+    assert replan.record()["label_timezone"] == "UTC" == out.ops[0]["timezone"]
+    assert "UTC" in out.reply
+
+
+def test_replan_receipt_states_the_zone_in_the_reply() -> None:
+    from app.kria.brief import CreativeBrief
+    from app.kria.brief_checks import (
+        build_receipts,
+        plan_facts_from_unified_montage,
+        reply_from_receipts,
+    )
+
+    plan = _montage(HOUR_REQS, {"a": "2026-09-20T14:32:00Z", "c": "2026-09-20T09:05:00Z"})
+    brief = CreativeBrief(version=1, requirements=HOUR_REQS[1:])
+    receipts = build_receipts(brief.requirements, plan_facts_from_unified_montage(plan.record()))
+    assert "Europe/Istanbul" in reply_from_receipts(brief, receipts)
+
+
+def test_noop_reorder_reply_says_only_already_ordered(guided) -> None:
+    job, variant, _rev = guided
+    facts = {f"m{i}": _facts(f"2026-09-20T0{i}:00:00Z") for i in range(4)}
+    out = _parse(
+        _snapshot(job, variant, facts),
+        [
+            {"op": "reorder_clips_by", "criterion": "capture_time"},
+            {
+                "op": "label_each_clip",
+                "source": "facts",
+                "label_from": "capture_time",
+                "mode": "append",
+            },
+        ],
+    )
+    assert [op["op"] for op in out.ops] == ["label_each_clip"]
+    assert "reordered" not in out.reply.lower() and "Done." not in out.reply
+    assert "already in chronological order" in out.reply
+    assert out.reply.startswith("Added the filming hour to")

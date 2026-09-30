@@ -1995,6 +1995,9 @@ class _ParseState:
         # reply when ops were proposed and REPLACES the model's reply when a
         # request was refused, so the reply can never claim what the ops didn't do.
         self.reply_notes: list[str] = []
+        # `reorder_clips_by` found the clips already in order: the model's reply
+        # ("I've reordered...") would contradict that, so `parse` composes the reply.
+        self.reorder_noop = False
 
     def invalid_value(self) -> None:
         self.invalid_value_seen = True
@@ -3260,7 +3263,10 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 reply = f"How short should the {referent or 'clips'} be?"
         if state.reply_notes:
             notes = " ".join(dict.fromkeys(state.reply_notes))
-            reply = f"{reply} {notes}".strip() if ops else notes
+            if ops and state.reorder_noop:
+                reply = _server_reply(ops, notes)
+            else:
+                reply = f"{reply} {notes}".strip() if ops else notes
         if not reply:
             reply = "Got it. What else should we change?"
 
@@ -3394,6 +3400,20 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
 
     def refusal_clarification(self) -> str:
         return self.schema_clarification()
+
+
+def _server_reply(ops: list[dict], notes: str) -> str:
+    """Reply composed from the ops themselves (never model prose) for a mixed bundle
+    whose reorder was a no-op."""
+    parts: list[str] = []
+    for op in ops:
+        if op.get("op") == "label_each_clip" and op.get("label_from") == "capture_time":
+            count = len(op.get("labels") or [])
+            verb = "Added the filming hour to" if op.get("mode") == "append" else "Labelled"
+            parts.append(f"{verb} {count} clip{'s' if count != 1 else ''}.")
+        else:
+            parts.append("Updated the edit.")
+    return " ".join([*dict.fromkeys(parts), notes])
 
 
 def _with_v2_fragments(prompt: str, snapshot: object) -> str:

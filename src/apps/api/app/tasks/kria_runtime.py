@@ -475,7 +475,7 @@ def _complete_draft_turn(
                     # Editor operations verify only the requirements stated in
                     # this very turn, against literal text in the editor payload.
                     facts = plan_facts_from_editor_payload(
-                        document.editor_payload, document.editor_text_diff
+                        document.editor_payload, document.editor_text_diff, changes
                     )
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
                 if checked:
