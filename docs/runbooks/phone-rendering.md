@@ -225,8 +225,9 @@ Parity check: `scripts/ios/phone-audio-parity.py` compiles real recipes, renders
 them through `KriaMediaEngine` (`AudioParityFixtureTests`, host or simulator),
 mixes the same inputs with the real `_mix_user_voiceover`, and compares
 `ebur128` loudness, true peak, end levels and the 400ms loudness curve.
-Measured 2026-09-30 (macOS `say` voice, synthetic music bed, pink-noise
-footage), phone vs cloud:
+Measured 2026-09-30 on the iPhone 17 Pro simulator (iOS 26.5; the macOS host
+run gave identical numbers), with a macOS `say` voice, a synthetic music bed
+and pink-noise footage. Phone vs cloud:
 
 | Case | Cloud LUFS | Phone LUFS | Δ | Short-term Δ median / p90 |
 | --- | --- | --- | --- | --- |
