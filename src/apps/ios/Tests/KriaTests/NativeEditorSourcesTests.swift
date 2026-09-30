@@ -192,6 +192,32 @@ final class NativeEditorSourcesTests: XCTestCase {
         XCTAssertNil(NativePhoneTalkingSource.sourceIndex(variant: variant, document: document, pool: pool, lanesEditable: true))
     }
 
+    /// KRI-232: job 62716037's speech cleanup removed three spans; the Talking
+    /// source must play as the server's hard-cut kept segments, not whole.
+    func testPhoneTalkingSourceSplitsOnSpeechCleanupCuts() throws {
+        let variant: [String: JSONValue] = ["silence_cut": .object(["removed": .array([
+            .object(["start_s": .number(10.97), "end_s": .number(11.33), "reason": .string("filler_acoustic")]),
+            .object(["start_s": .number(2.55), "end_s": .number(2.97), "reason": .string("filler_acoustic")]),
+            .object(["start_s": .number(4.365), "end_s": .number(4.581), "reason": .string("silence")]),
+        ])])]
+        let removed = NativePhoneTalkingSource.removedSpans(variant: variant)
+        XCTAssertEqual(removed.map(\.start), [2.55, 4.365, 10.97])
+        XCTAssertTrue(NativePhoneTalkingSource.removedSpans(variant: [:]).isEmpty)
+
+        let document = EditorDocument(capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+        let hydrated = try NativePhoneTalkingSource.hydrate(document, clipIndex: 0, duration: 14.8, removed: removed)
+        XCTAssertEqual(hydrated.clips.map(\.inS), [0, 2.97, 4.581, 11.33])
+        let durations = hydrated.clips.compactMap(\.durationS)
+        for (actual, expected) in zip(durations, [2.55, 1.395, 6.389, 3.47]) { XCTAssertEqual(actual, expected, accuracy: 0.0001) }
+        XCTAssertEqual(durations.reduce(0, +), 13.804, accuracy: 0.0001, "the server's cut edit_duration_s")
+        XCTAssertEqual(Set(hydrated.clips.compactMap(\.id)).count, 4)
+        XCTAssertTrue(hydrated.clips.allSatisfy { $0.raw["native_composite_source"] == .bool(true) && $0.transitionAfter == "cut" })
+        // Rehydrating an already-split document is stable, and a cleanup that
+        // removed everything cannot fall back to the uncut source.
+        XCTAssertEqual(try NativePhoneTalkingSource.hydrate(hydrated, clipIndex: 0, duration: 14.8, removed: removed), hydrated)
+        XCTAssertThrowsError(try NativePhoneTalkingSource.hydrate(document, clipIndex: 0, duration: 2, removed: [(0, 3)]))
+    }
+
     func testProductionTimelineVideoURLsDecodeAsOriginalSources() throws {
         let data = Data(#"{"clips":[{"clip_index":0,"signed_url":"https://storage.googleapis.com/bucket/original.mov","used":true},{"clip_index":1,"media_id":"approved-video","kind":"video","signed_url":"https://storage.googleapis.com/bucket/other.mp4"}]}"#.utf8)
         let pool = try JSONDecoder().decode(NativeEditorSourcePool.self, from: data)
