@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.18.0] - 2026-09-30
+
+### Changed
+- fix(ios): Save no longer shows a false "video changed" card (KRI-227) (#1274) <!-- release-pr: 1274 -->
+
+## [0.77.17.0] - 2026-09-30
+
+### Fixed
+- fix(ios): list Talking captions once on the editor timeline, not as cue and mirrored text element (#1273) <!-- release-pr: 1273 -->
+
+## [0.77.16.0] - 2026-09-29
+
+### Changed
+- fix(phone): edit and restyle captions on iPhone-rendered Talking edits (KRI-216) (#1264) <!-- release-pr: 1264 -->
+
+## [0.77.15.0] - 2026-09-29
+
+### Changed
+- fix(ios): long-press text moves keep the finger's whole drag (#1266) <!-- release-pr: 1266 -->
+
 ## [0.77.14.0] - 2026-09-29
 
 ### Changed

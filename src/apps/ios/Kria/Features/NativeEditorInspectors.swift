@@ -500,7 +500,7 @@ private struct NativeSelectedCaptionInspector: View {
                     .accessibilityIdentifier("native-editor-selected-caption-input")
                 Button("Apply caption") { session.updateCaptionCue(id: selection.id, text: content) }
                     .buttonStyle(KriaPrimaryButtonStyle())
-                    .disabled(!session.canEditCaptions || content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!session.canEditCaptionLines || content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 if let cue {
                     NativeEditorSlider(session: session, value: $start, in: 0...max(cue.endS, session.duration), step: 0.1) { Text("In") }
                         .onChange(of: start) { _, value in session.updateCaptionCue(id: selection.id, startS: value) }
@@ -509,7 +509,7 @@ private struct NativeSelectedCaptionInspector: View {
                     LabeledContent("Range", value: "\(nativeTimecode(start)) – \(nativeTimecode(end))")
                 }
             }
-            .disabled(!session.canEditCaptions)
+            .disabled(!session.canEditCaptionLines)
             Section("Caption settings") {
                 Toggle("Captions", isOn: Binding(
                     get: { session.draft.captions.enabled },

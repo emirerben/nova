@@ -31,6 +31,34 @@ final class NativeEditorMediaViewTests: XCTestCase {
         XCTAssertEqual(session.document.captionUnits.map(\.id), session.document.captionCues.map(\.id))
     }
 
+    // A Talking edit's payload carries every caption twice: the cue and the
+    // API's caption_cue-tagged text mirror, in the same window. Both on the
+    // timeline stacked a second CAPTIONS row of the same sentences under the
+    // video. The timeline (and the preview tap targets built from it) must
+    // list each caption once, as its cue.
+    func testTimelineListsMirroredCaptionsOnceAsTheirCues() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.talkingCaptions)
+        XCTAssertEqual(session.document.captionCues.count, 2)
+        let mirrorIDs = Set(session.document.textElements.filter(\.isCaption).map(\.id))
+        XCTAssertEqual(mirrorIDs.count, 2)
+        // NativeMiniStrip's CAPTIONS rows: cues plus caption-tagged text.
+        let captionRowItems = session.timelineItems.filter {
+            $0.kind == .captionCue || ($0.kind == .text && mirrorIDs.contains($0.id))
+        }
+        XCTAssertEqual(captionRowItems.map(\.id), session.document.captionCues.map(\.id))
+        XCTAssertEqual(Set(NativeEditorInteraction.packLanes(captionRowItems).map(\.lane)), [0], "one CAPTIONS row")
+        XCTAssertEqual(session.document.textElements.map(\.id).sorted(), mirrorIDs.sorted(), "the document keeps the mirrors")
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    // Guided-story captions exist only as caption-tagged text elements, so
+    // there they are the captions and stay on the timeline.
+    func testTimelineKeepsCaptionTaggedTextWhenThereAreNoCues() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.projectedCaptions)
+        XCTAssertTrue(session.document.captionCues.isEmpty)
+        XCTAssertTrue(session.timelineItems.contains { $0.kind == .text && $0.id == "00000000-0000-4000-8000-000000000301" })
+    }
+
     func testVoiceoverAndGuidedNarrationUseRenderedVoiceTrack() {
         for variant: [String: JSONValue] in [
             ["resolved_archetype": .string("narrated")],

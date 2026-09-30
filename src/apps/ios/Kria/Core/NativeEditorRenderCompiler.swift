@@ -317,7 +317,10 @@ enum NativeEditorRenderError: Error, Equatable {
                 // The cue-native block below renders the cues, so skip the
                 // mirrors here; both firing burned every sentence twice, once
                 // mid-frame across the speaker's face (KRI-172 render 1aff3f03).
-                if !document.captionCues.isEmpty { continue }
+                // The session's timeline has no item for a mirror either, so
+                // this skip must stay ahead of the item lookup below, which
+                // throws on a missing item.
+                if document.isCaptionCueMirror(rawElement) { continue }
             }
             let element = rawElement.isCaption
                 ? Self.applyingCaptionMeta(captionMeta, to: rawElement) : rawElement

@@ -6259,7 +6259,11 @@ def _phone_subtitled_editor_lanes_open(job: Job, variant: dict) -> bool:
 
 
 def _clamp_phone_editor_capabilities(
-    capabilities: dict, *, media_enabled: bool = False, subtitled_lanes: bool = False
+    capabilities: dict,
+    *,
+    media_enabled: bool = False,
+    subtitled_lanes: bool = False,
+    guided_story: bool = False,
 ) -> dict:
     """Close every control a device-rendered variant cannot save, shape-preserving."""
     clamped = dict(capabilities)
@@ -6313,6 +6317,37 @@ def _clamp_phone_editor_capabilities(
             clamped["text_elements_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
     if "visual_editor_style" in clamped:
         clamped["visual_editor_style"] = False
+    # KRI-216: a subtitled device variant with the editor-lanes rollout on can
+    # Save `caption_cues`/`caption_meta` through the phone subtitled compiler
+    # (`phone_subtitled_editor.py`) — open both, matching the sfx/overlays
+    # carve-out above. Every OTHER device variant (phone narrated, montage,
+    # subtitled with the rollout off) 422s on either section today, so close
+    # both — EXCEPT a guided_story device variant: guided phone text
+    # edits already go through `prepare_phone_editor_commit`'s guided branch,
+    # gated on the same revision `operation()` used above, so leave its
+    # pre-clamp, revision-gated caption_meta/caption_cues/caption_editor_style
+    # exactly as `_base_editor_capabilities` computed them (today's behavior;
+    # the clamp has never touched these three keys for guided device variants).
+    if subtitled_lanes:
+        if "caption_cues" in clamped:
+            clamped["caption_cues"] = {"editable": True, "reason": None}
+        if "caption_meta" in clamped:
+            clamped["caption_meta"] = {"editable": True, "reason": None}
+        if "caption_editor_style" in clamped:
+            clamped["caption_editor_style"] = True
+    elif not guided_story:
+        if "caption_cues" in clamped:
+            clamped["caption_cues"] = {
+                "editable": False,
+                "reason": _PHONE_EDIT_UNSUPPORTED_REASON,
+            }
+        if "caption_meta" in clamped:
+            clamped["caption_meta"] = {
+                "editable": False,
+                "reason": _PHONE_EDIT_UNSUPPORTED_REASON,
+            }
+        if "caption_editor_style" in clamped:
+            clamped["caption_editor_style"] = False
     if media_enabled:
         clamped["phone_editor_media"] = {
             "enabled": True,
@@ -6331,6 +6366,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             capabilities,
             media_enabled=_phone_editor_media_available(job, variant),
             subtitled_lanes=_phone_subtitled_editor_lanes_available(job, variant),
+            guided_story=variant.get("resolved_archetype") == "guided_story",
         )
     return capabilities
 
@@ -6367,6 +6403,28 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
     # unlock text tools while caption cue edits remain a separate caption_cues
     # section.
     caption_reason = CAPTION_TAB_COPY if archetype == "subtitled" else None
+    # KRI-216: explicit Save-time editability for a `caption_cues` (line text/
+    # timing) or `caption_meta` (Style + Settings) Save, mirroring
+    # `_is_editable_caption_variant` so the editor never advertises a control
+    # Save would 422 on. Computed once and reused by the slides/legacy-guided/
+    # default maps below so BOTH keys are present on every capability map;
+    # the guided-story v2 map overrides these with its own `operation()`
+    # eligibility (revision-gated, not archetype-gated).
+    caption_edit_editable = _is_editable_caption_variant(variant)
+    if caption_edit_editable:
+        caption_edit_no_edit_reason: str | None = None
+    elif archetype not in CAPTION_EDIT_ARCHETYPES:
+        caption_edit_no_edit_reason = "unsupported_archetype"
+    else:
+        caption_edit_no_edit_reason = "no_caption_base"
+    caption_cues_capability = {
+        "editable": caption_edit_editable,
+        "reason": caption_edit_no_edit_reason,
+    }
+    caption_meta_capability = {
+        "editable": caption_edit_editable,
+        "reason": caption_edit_no_edit_reason,
+    }
     from app.config import settings  # noqa: PLC0415
 
     if archetype == "slides":
@@ -6424,6 +6482,8 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
             },
             "carousel": False,
             "carousel_reason": reason,
+            "caption_cues": caption_cues_capability,
+            "caption_meta": caption_meta_capability,
         }
 
     if archetype == "guided_story":
@@ -6490,7 +6550,11 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
                 "mix": False,
                 # Guided captions are caption_cue TextElements. The metadata
                 # control is safe because it never changes their audio-bound
-                # timing or source identity.
+                # timing or source identity. `caption_cues` (the line text/
+                # timing edits themselves) share the same revision-gated
+                # eligibility: `_prepare_editor_commit` accepts `caption_cues`
+                # for guided_v2 through the same text_elements/revision path.
+                "caption_cues": operation(),
                 "caption_meta": operation(),
                 "caption_editor_style": bool(revision is not None),
                 "sfx": bool(settings.sound_effects_enabled),
@@ -6640,6 +6704,8 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
             },
             "carousel": False,
             "carousel_reason": reason,
+            "caption_cues": caption_cues_capability,
+            "caption_meta": caption_meta_capability,
         }
 
     from app.pipeline.motion_scene import (  # noqa: PLC0415
@@ -6730,7 +6796,9 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
             )
             and _text_elements_allowed(variant)
         ),
-        "caption_editor_style": archetype in CAPTION_EDIT_ARCHETYPES,
+        # Same predicate as `caption_meta.editable` below — never advertise the
+        # styled-caption editor for a variant whose caption Save would 422.
+        "caption_editor_style": caption_edit_editable,
         "visual_editor_style": visual_blocks_reason is None or overlays_reason is None,
         "timeline": timeline_ok,
         "timeline_max_slots": _TIMELINE_MAX_SLOTS,
@@ -6801,6 +6869,8 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
         },
         "carousel": carousel_reason is None,
         "carousel_reason": carousel_reason,
+        "caption_cues": caption_cues_capability,
+        "caption_meta": caption_meta_capability,
     }
 
 
@@ -9177,7 +9247,11 @@ def _prepare_editor_commit(
 
     validated_caption_cues: list[dict] | None = None
     if payload.caption_cues is not None:
-        if not (_is_editable_caption_variant(variant) or guided_v2):
+        if not (
+            _is_editable_caption_variant(variant)
+            or guided_v2
+            or _phone_subtitled_editor_lanes_available(job, variant)
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{CAPTION_TAB_COPY}.",
@@ -9190,7 +9264,11 @@ def _prepare_editor_commit(
     if payload.caption_meta is not None:
         # Meta toggles (style/font/enabled/position) are accepted for BOTH caption
         # archetypes — the fields and the reburn task are shared.
-        if not (_is_editable_caption_variant(variant) or guided_v2):
+        if not (
+            _is_editable_caption_variant(variant)
+            or guided_v2
+            or _phone_subtitled_editor_lanes_available(job, variant)
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{CAPTION_TAB_COPY}.",

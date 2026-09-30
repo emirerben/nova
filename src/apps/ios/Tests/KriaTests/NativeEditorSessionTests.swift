@@ -2181,6 +2181,14 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges)
     }
 
+    /// KRI-227: a save acknowledgement moves the document to the commit generation (`g2`) before the
+    /// phone publishes under its own id (`published-g2`). Device narration is a generation-owned input,
+    /// so the check must stay keyed on the generation the preview was prepared for.
+    func testNarrationCheckStaysOnPreviewGenerationWhileSaveRenderPends() {
+        XCTAssertEqual(NativeEditorSession.narrationOwnerGeneration(previewGeneration: "g1", documentGeneration: "g2"), "g1")
+        XCTAssertEqual(NativeEditorSession.narrationOwnerGeneration(previewGeneration: nil, documentGeneration: "g2"), "g2")
+    }
+
     func testDevicePublishedGenerationAndIdentityFenceReadyPreview() async throws {
         let threadID = UUID(), jobID = UUID()
         let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
@@ -2211,6 +2219,7 @@ final class NativeEditorSessionTests: XCTestCase {
         await renderSessions.reconcile(key, capabilities: .disabled)
         XCTAssertFalse(session.applyPreviewVariant(["render_generation_id": .string("published-g2"), "render_status": .string("ready"), "output_url": .string("https://storage.example/g2.mp4")], generation: "g2"))
         XCTAssertEqual(session.saveState, .previewPending)
+        XCTAssertFalse(session.showsEditApplied, "Edit applied only appears once the render lands")
         await statusBox.set(DeviceRenderStatusResponse(phase: "published", request: request, publishedGeneration: "published-g2"))
         await renderSessions.reconcile(key, capabilities: .disabled)
         session.trimSelected(edge: .trailing, to: 1.25)
@@ -2219,6 +2228,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.sourcePoolExpectation = refreshedSources
         XCTAssertTrue(session.applyPreviewVariant(["render_generation_id": .string("published-g2"), "render_status": .string("ready"), "output_url": .string("https://storage.example/g2.mp4")], generation: "g2"))
         XCTAssertEqual(session.saveState, .saved)
+        XCTAssertTrue(session.showsEditApplied, "KRI-227: a pending save that lands confirms the edit")
         XCTAssertEqual(session.document.revision.baseGeneration, "published-g2")
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(session.document.clips.first?.durationS, localDuration, "Refreshing generation-owned inputs must retain the follow-up edit")
@@ -2691,6 +2701,168 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertTrue(session.canEditCaptions)
             XCTAssertTrue(session.canEditCaptionAppearance)
         }
+    }
+
+    // KRI-216: phone (`render_destination == "device"`) renders never carry
+    // `base_video_path`, so the legacy archetype allowlist in
+    // `configureCapabilities` always read a device subtitled variant as
+    // caption-closed. The server now sends explicit `caption_cues`/
+    // `caption_meta` capability objects, which must take priority over that
+    // heuristic and open both line editing and appearance editing.
+    func testDeviceSubtitledVariantWithExplicitCaptionCapabilitiesOpensCaptionEditing() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("subtitled"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object([
+                    "caption_cues": .object(["editable": .bool(true)]),
+                    "caption_meta": .object(["editable": .bool(true)]),
+                    "caption_editor_style": .bool(true),
+                ]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditCaptions)
+        XCTAssertTrue(session.canEditCaptionLines)
+        XCTAssertTrue(session.canEditCaptionMeta)
+        XCTAssertTrue(session.canEditCaptionAppearance)
+    }
+
+    // KRI-216: cues open, meta closed — line edits stay available while the
+    // Style/Settings writes (`caption_meta`) are locked, even though the
+    // coarse `canEditCaptions` is true from the cues lane alone.
+    func testExplicitCaptionCuesOnlyKeepsCaptionMetaLocked() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("subtitled"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object([
+                    "caption_cues": .object(["editable": .bool(true)]),
+                    "caption_meta": .object(["editable": .bool(false), "reason": .string("device_render_locked")]),
+                    "caption_editor_style": .bool(false),
+                ]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditCaptions)
+        XCTAssertTrue(session.canEditCaptionLines)
+        XCTAssertFalse(session.canEditCaptionMeta)
+        XCTAssertFalse(session.canEditCaptionAppearance)
+    }
+
+    // KRI-216: Show captions and the display style write `caption_meta`, not
+    // the appearance keys, so they stay open without `caption_editor_style`.
+    func testCaptionMetaOpensWithoutCaptionEditorStyle() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("subtitled"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object([
+                    "caption_cues": .object(["editable": .bool(true)]),
+                    "caption_meta": .object(["editable": .bool(true)]),
+                ]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditCaptionMeta)
+        XCTAssertFalse(session.canEditCaptionAppearance)
+        session.setCaptionEnabled(false)
+        XCTAssertEqual(session.document.captionMeta["enabled"], .bool(false))
+    }
+
+    // KRI-216: the same device subtitled shape, but the server explicitly
+    // closes both lanes — must not fall back to any legacy heuristic.
+    func testDeviceSubtitledVariantWithExplicitCaptionCapabilitiesBothFalseClosesCaptionEditing() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("subtitled"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object([
+                    "caption_cues": .object(["editable": .bool(false), "reason": .string("device_render_locked")]),
+                    "caption_meta": .object(["editable": .bool(false), "reason": .string("device_render_locked")]),
+                ]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertFalse(session.canEditCaptions)
+        XCTAssertFalse(session.canEditCaptionLines)
+        XCTAssertFalse(session.canEditCaptionMeta)
+        XCTAssertFalse(session.canEditCaptionAppearance)
+    }
+
+    // KRI-216: a legacy cloud variant that never sends the new capability
+    // keys must keep working off the old base_video_path heuristic.
+    func testLegacyCloudVariantWithBaseVideoPathAndNoExplicitCaptionKeysStillOpensCaptionEditing() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "resolved_archetype": .string("subtitled"),
+                "base_video_path": .string("base.mp4"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true)]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditCaptions)
+        XCTAssertTrue(session.canEditCaptionLines)
+        XCTAssertTrue(session.canEditCaptionMeta)
+    }
+
+    // KRI-216: a device variant from an old server that never sends the new
+    // capability keys must stay closed (the pre-fix, still-correct behavior
+    // for a server that genuinely cannot honor a phone caption edit).
+    func testDeviceVariantWithNoExplicitCaptionKeysFromOldServerClosesCaptionEditing() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("subtitled"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true)]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertFalse(session.canEditCaptions)
+        XCTAssertFalse(session.canEditCaptionLines)
+        XCTAssertFalse(session.canEditCaptionMeta)
     }
 
     // KRI-110: a variant that never carries the narrated-only

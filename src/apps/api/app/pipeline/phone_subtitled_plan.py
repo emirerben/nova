@@ -45,7 +45,11 @@ from app.kria.recipes import (
 )
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
-from app.pipeline.phone_captions import caption_font_assets, compile_caption_layers
+from app.pipeline.phone_captions import (
+    PhoneCaptionLook,
+    caption_font_assets,
+    compile_caption_layers,
+)
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_subtitled_lanes import (
     CAPTION_BAND_TOP_FRAC,
@@ -109,6 +113,8 @@ def compile_phone_subtitled_plan(
     lanes: PhoneSubtitledLanes | None = None,
     duck_sfx_under_speech: bool = False,
     cut_plan: CutPlan | None = None,
+    keep_segments: list[tuple[float, float]] | None = None,
+    caption_look: PhoneCaptionLook | None = None,
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
 
@@ -184,6 +190,21 @@ def compile_phone_subtitled_plan(
     removals (``cut_plan.removed`` empty -- a no-op or bailed-out plan) is
     equivalent to passing ``None``.
 
+    ``keep_segments`` (optional, KRI-216) is the SAME shape as
+    ``cut_plan.keep_segments`` but pre-resolved by the caller, for a phone
+    editor Save that must reconstruct a previously pinned cut without
+    rebuilding a full `CutPlan` (`app.services.phone_editor.
+    _compile_subtitled_editor_commit` reads the kept windows straight off the
+    previous pinned `EditRecipeV2`'s own main-track clips). Takes precedence
+    over ``cut_plan`` when both are given -- a caller should only ever pass
+    one. Same coordinate contract as ``cut_plan``: ``caption_cues``/``lanes``
+    must already be expressed against the resulting cut timeline.
+
+    ``caption_look`` (optional, KRI-216, `app.pipeline.phone_captions.
+    PhoneCaptionLook`) forwards verbatim to `compile_caption_layers` --
+    ``None`` (default) is that module's own hardcoded default look,
+    byte-identical to this compiler's pre-KRI-216 caption appearance.
+
     Rejects (all `UnsupportedPhonePlan`, fail-closed):
       - zero or more than one binding.
       - a non-video source (no probed width/height).
@@ -219,15 +240,20 @@ def compile_phone_subtitled_plan(
         )
 
     duration_s = float(original.duration_s)
-    # A cut plan with no removals (no-op or safety-bailed-out) renders the
-    # single full-duration clip exactly like `cut_plan=None` -- this is the
-    # ONLY branch point `cut_plan` introduces; every line below it is shared.
-    keep_segments = (
-        [(float(start), float(end)) for start, end in cut_plan.keep_segments]
-        if cut_plan is not None and cut_plan.removed
-        else [(0.0, duration_s)]
-    )
-    if not keep_segments or all(end <= start for start, end in keep_segments):
+    # An explicit `keep_segments` (editor Save reconstructing a previously
+    # pinned cut) wins over `cut_plan`; a cut plan with no removals (no-op or
+    # safety-bailed-out) renders the single full-duration clip exactly like
+    # both being `None` -- this is the ONLY branch point either introduces;
+    # every line below it is shared.
+    if keep_segments is not None:
+        resolved_keep_segments = [(float(start), float(end)) for start, end in keep_segments]
+    elif cut_plan is not None and cut_plan.removed:
+        resolved_keep_segments = [
+            (float(start), float(end)) for start, end in cut_plan.keep_segments
+        ]
+    else:
+        resolved_keep_segments = [(0.0, duration_s)]
+    if not resolved_keep_segments or all(end <= start for start, end in resolved_keep_segments):
         raise UnsupportedPhonePlan("speech cleanup removed the entire clip")
     asset = binding.render_asset()
     assets: dict[str, MediaAsset] = {
@@ -246,7 +272,7 @@ def compile_phone_subtitled_plan(
     manifest: dict[str, object] = {asset.id: asset}
     main_clips: list[TimelineClip] = []
     cursor = 0.0
-    for index, (seg_start, seg_end) in enumerate(keep_segments):
+    for index, (seg_start, seg_end) in enumerate(resolved_keep_segments):
         seg_duration = seg_end - seg_start
         if seg_duration <= 0:
             continue
@@ -270,6 +296,7 @@ def compile_phone_subtitled_plan(
             canvas_height=_STORY_CANVAS.height,
             style=caption_style,
             timeline_duration_s=speaker_end,
+            look=caption_look,
         )
     except UnsupportedPhonePlan:
         raise
