@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_route import END_KEYS, START_KEYS, first_text, fold_text, loose_text
 from app.kria.contracts import InferredLabel, RequirementReceipt
@@ -711,6 +712,8 @@ _CANT_CHECK_BEATS = "I can't check the pop-ins on this draft yet."
 _CANT_CHECK_TAKE = "I can't confirm this draft keeps your whole take."
 _CANT_CHECK_TITLE = "I can't confirm where this draft's title came from."
 _CANT_CONFIRM_LENGTH = "I can't confirm this draft's length yet."
+_TALKING_KEEPS_WHOLE_TAKE = "A Talking edit keeps your whole take, so its length follows your clip"
+_VOICEOVER_SETS_LENGTH = "A voiceover edit runs as long as your voiceover"
 _CANT_CHECK_TIMING = "I can't verify this timing automatically."
 _NO_CHECKER = "I can't verify this one automatically yet."
 _NEUTRAL_REASONS = frozenset(
@@ -812,6 +815,12 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
     target = req.facts.get("duration_s")
     if not isinstance(target, (int, float)) or target <= 0:
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    if facts.edit_format == "subtitled":
+        # KRI-142: the Talking renderers keep the whole take (minus any speech
+        # cleanup); `target_duration_s` never trims it, so it can't be "met".
+        return _receipt(req, "partial", _TALKING_KEEPS_WHOLE_TAKE)
+    if facts.edit_format in NARRATED_EDIT_FORMATS:
+        return _receipt(req, "partial", _VOICEOVER_SETS_LENGTH)
     if facts.duration_s is None:
         return _receipt(req, "partial", _CANT_CONFIRM_LENGTH)
     if abs(facts.duration_s - float(target)) <= DURATION_TOLERANCE * float(target):
@@ -984,11 +993,14 @@ def reply_from_receipts(
     receipts: list[RequirementReceipt],
     *,
     summary: str | None = None,
+    notices: Sequence[str] = (),
 ) -> str:
     """Compose the creator-facing reply from receipts only.
 
     The model's free-text summary is kept only when every judged requirement is
     met; otherwise the reply is exactly what was checked, so it cannot overclaim.
+    ``notices`` are the server's own repair notes (KRI-142). The summary already
+    carries them, so they are added back only when the summary is replaced.
     An unjudged receipt (stored before ``build_receipts`` dropped them) gets no
     line and never turns the reply into a failure notice.
     """
@@ -1008,6 +1020,8 @@ def reply_from_receipts(
     body = "\n".join(f"- {line}" for line in lines)
     if any(r.status != "met" for r in judged):
         text = "Not everything you asked for made it in:\n" + body
+        if notices:
+            text += "\n" + " ".join(notices)
     else:
         text = "\n".join(part for part in ((summary or "").strip(), body) if part)
     if len(text) > MAX_REPLY_CHARS:
