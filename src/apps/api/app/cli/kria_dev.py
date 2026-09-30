@@ -51,6 +51,10 @@ _GUIDED_PLACES = [
     "Galata Tower",
 ]
 _GUIDED_CLIPS = len(_GUIDED_PLACES)
+# Filming times (UTC hour:minute) for the seeded clips: deliberately NOT in clip order,
+# with one clip (index 2) carrying none, so "order by filming time" / "add the hour"
+# asks exercise reordering, an untimed clip and the Istanbul zone (place = Türkiye).
+_GUIDED_CAPTURE_UTC = ["11:20", "09:05", None, "14:45", "10:30", "13:10"]
 # Matched song is reference-only on every current (compiler v6+) guided plan:
 # it is added when posting, so music level/swap/remove are NOT editable and the
 # clips' own audio is what plays. Mirrors prod; see docs in the battery file.
@@ -97,9 +101,14 @@ def _guided_fixture(user_id: uuid.UUID) -> tuple[dict, dict, list[str], list[dic
                 facts=tuple(facts),
             )
         )
+        capture: dict = {"place": {"locality": "Istanbul", "country": "T\u00fcrkiye"}}
+        moment = _GUIDED_CAPTURE_UTC[i] if i < len(_GUIDED_CAPTURE_UTC) else None
+        if moment:
+            capture["capture_time"] = f"2026-09-20T{moment}:00Z"
         assignments.append(
             {
                 "gcs_path": path,
+                "capture": capture,
                 "analysis": {"clip_facts": [{**facts[0], "confidence": 0.8}]},
             }
         )

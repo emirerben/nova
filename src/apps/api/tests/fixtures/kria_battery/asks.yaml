@@ -114,3 +114,22 @@ asks:
   - id: labels-yellow-bigger-tr
     ask: "etiketleri sarı yap ve büyüt"
     expect_ops: [patch_text]
+  # KRI-219 filming-time asks (seeded clips carry capture times; clip 3 has none, Istanbul zone).
+  - id: capture-order-en
+    ask: "order the videos by the time they were filmed"
+    expect_ops: [reorder_clips_by]
+  - id: capture-order-tr
+    ask: "videoları çekildiği zamana göre sırala"
+    expect_ops: [reorder_clips_by]
+  - id: capture-order-newest-first
+    ask: "newest first, based on when they were filmed"
+    expect_ops: [reorder_clips_by]
+  - id: capture-hour-en
+    ask: "add the hour to each video"
+    expect_ops: [label_each_clip]
+  - id: capture-hour-tr
+    ask: "her videoya saat bilgisini de ekle"
+    expect_ops: [label_each_clip]
+  - id: capture-order-and-hour
+    ask: "Order the videos based on the time they were filmed. Add the hour as well to each video"
+    expect_ops: [reorder_clips_by, label_each_clip]
