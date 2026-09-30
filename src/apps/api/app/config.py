@@ -476,6 +476,19 @@ class Settings(BaseSettings):
             str(uid) for uid in self.kria_creative_brief_user_ids
         }
 
+    # KRI-228: optional Jev semantic verification of a proposed Kria draft.
+    # This is a shadow-only pilot: the deterministic Creative Brief receipts
+    # remain authoritative and Jev can never change a reply, draft, approval,
+    # or render. Keep disabled until the labeled eval and TypeSafe data-handling
+    # review pass. Missing credentials fail open inside the background task.
+    # Rollback: set JEV_BRIEF_SHADOW_ENABLED=false and restart workers.
+    jev_brief_shadow_enabled: bool = False
+    typesafe_api_key: str = ""
+    jev_model: Literal["jev-1.13.0"] = "jev-1.13.0"
+    jev_api_url: str = "https://api.typesafe.ai/v1/systemone"
+    jev_timeout_seconds: float = Field(default=3.0, gt=0.0, le=10.0)
+    jev_max_attempts: int = Field(default=2, ge=1, le=2)
+
     # GET /creation-threads/{id} degrades a thread whose render-graph edge
     # (PlanItem/CreatorAgentSession/Job ownership) has drifted incoherent,
     # instead of 404ing the whole project and its intact chat transcript.

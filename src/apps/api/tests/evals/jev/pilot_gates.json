@@ -1,0 +1,9 @@
+{
+  "error_rate": 0.02,
+  "false_flag_rate": 0.05,
+  "missed_violation_rate": 0.1,
+  "p95_latency_ms": 1500.0,
+  "required_coverage": 0.8,
+  "required_recall": 0.95,
+  "unsupported_coverage": 0.8
+}

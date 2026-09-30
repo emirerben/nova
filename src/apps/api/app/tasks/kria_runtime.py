@@ -81,6 +81,32 @@ _MAX_ABANDONED_CLAIMS = 3
 _DRAFT_BODY_RETENTION = timedelta(days=30)
 
 
+def _dispatch_jev_brief_shadow(
+    *,
+    plan_item_id: str,
+    creator_agent_session_id: str,
+    payload: dict[str, Any] | None,
+    baseline_receipts: list[dict[str, Any]],
+) -> None:
+    """Queue the optional shadow only after the authoritative draft commits."""
+    if not settings.jev_brief_shadow_enabled or not settings.typesafe_api_key or payload is None:
+        return
+    try:
+        from app.tasks.jev_shadow import evaluate_jev_brief_shadow  # noqa: PLC0415
+
+        evaluate_jev_brief_shadow.apply_async(
+            kwargs={
+                "plan_item_id": plan_item_id,
+                "creator_agent_session_id": creator_agent_session_id,
+                "payload": payload,
+                "baseline_receipts": baseline_receipts,
+            },
+            queue="agent-control",
+        )
+    except Exception as exc:  # noqa: BLE001 - an optional shadow never breaks Kria
+        log.warning("jev_brief_shadow_enqueue_failed", error_type=type(exc).__name__)
+
+
 @dataclass(frozen=True)
 class _Completion:
     committed: bool
@@ -441,6 +467,7 @@ def _complete_draft_turn(
             raise RuntimeError("Kria produced an unsupported draft tool")
         reply_text = arguments.summary
         requirement_receipts: list[dict[str, Any]] = []
+        jev_shadow_payload: dict[str, Any] | None = None
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
@@ -482,6 +509,40 @@ def _complete_draft_turn(
                         receipts,
                         summary=arguments.summary,
                     )
+                if (
+                    settings.jev_brief_shadow_enabled
+                    and settings.typesafe_api_key
+                    and apply_intent.tool_name == "draft.apply_strategy"
+                ):
+                    try:
+                        from app.agents._schemas.creator_agent import (  # noqa: PLC0415
+                            CreativeStrategy,
+                        )
+                        from app.services.jev_brief_shadow import (  # noqa: PLC0415
+                            build_jev_brief_payload,
+                        )
+
+                        strategy = CreativeStrategy.model_validate(document.strategy or {})
+                        media_descriptions = [
+                            media.label
+                            for media in (
+                                planned.brief_manifest.media if planned.brief_manifest else []
+                            )
+                            if media.label
+                        ]
+                        shadow = build_jev_brief_payload(
+                            brief,
+                            strategy,
+                            media_descriptions,
+                        )
+                        jev_shadow_payload = (
+                            shadow.model_dump(mode="json", exclude_none=True) if shadow else None
+                        )
+                    except Exception as exc:  # noqa: BLE001 - projection is non-authoritative
+                        log.warning(
+                            "jev_brief_shadow_projection_failed",
+                            error_type=type(exc).__name__,
+                        )
         next_revision = (
             int(
                 db.execute(
@@ -570,6 +631,12 @@ def _complete_draft_turn(
             turn.lease_expires_at = None
             thread_id = thread.id
             db.commit()
+            _dispatch_jev_brief_shadow(
+                plan_item_id=str(item.id),
+                creator_agent_session_id=str(session.id),
+                payload=jev_shadow_payload,
+                baseline_receipts=requirement_receipts,
+            )
             return _Completion(
                 committed=True, successor_turn_id=_promote_queued_successor_sync(thread_id)
             )
@@ -674,6 +741,12 @@ def _complete_draft_turn(
         turn.lease_owner = None
         turn.lease_expires_at = None
         db.commit()
+        _dispatch_jev_brief_shadow(
+            plan_item_id=str(item.id),
+            creator_agent_session_id=str(session.id),
+            payload=jev_shadow_payload,
+            baseline_receipts=requirement_receipts,
+        )
         return _Completion(committed=True)
 
 
