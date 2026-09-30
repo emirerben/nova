@@ -137,6 +137,10 @@ enum DeviceRenderAttentionCopy {
         // "Start a new edit" wouldn't fix that -- updating the app would.
         "renderer_outdated": "Update Kria to render this edit.",
         "cancelled_by_user": "Rendering was stopped. Your project is saved.",
+        // KRI-141: the server's stale-render reaper (`device_render_reaper.py`) gave up
+        // after a day with no word from this iPhone -- usually Kria was closed or the
+        // phone slept mid-render. Transient, so "Try again" stays.
+        "timed_out": "Kria stopped waiting after a day without hearing from this iPhone. Your project is saved. Keep Kria open and try again.",
     ]
 
     static func message(phase: DeviceRenderPhase, reasonCode: String?, fallback: String?) -> String? {
@@ -222,6 +226,7 @@ struct DeviceRenderStatusCard: View {
                 Button("Stop rendering", action: stop)
                     .font(KriaFont.body(14))
                     .frame(minHeight: 44)
+                    .accessibilityIdentifier("device-render-stop")
             }
         }
         .padding(16)
@@ -237,6 +242,7 @@ struct DeviceRenderStatusCard: View {
     @ViewBuilder private func localActions(_ file: URL) -> some View {
         Button("Play video") { playback = LocalPlayback(url: file) }
             .buttonStyle(KriaSecondaryButtonStyle())
+            .accessibilityIdentifier("device-render-play")
         // The local file is already fully rendered on-device — unlike
         // EditorViews.saveToPhotos (cloud path), there's nothing to download first.
         Button {
@@ -249,6 +255,7 @@ struct DeviceRenderStatusCard: View {
         .accessibilityIdentifier("device-render-save-to-photos")
         ShareLink(item: file) { Label("Share", systemImage: "square.and.arrow.up") }
             .buttonStyle(KriaSecondaryButtonStyle())
+            .accessibilityIdentifier("device-render-share")
     }
 
     private func save(_ file: URL) async {

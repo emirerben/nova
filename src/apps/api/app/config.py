@@ -710,6 +710,18 @@ class Settings(BaseSettings):
     # render_geometry.choose_guided_text_y_frac. Default OFF ⇒ byte-identical to
     # today's fixed y_frac placement.
     guided_text_face_placement_enabled: bool = False
+    # KRI-140: the same decision for a PHONE-rendered guided story. There is no
+    # assembled video on the server, so `_run_phone_guided_job` samples faces
+    # from each footage moment's analysis proxy (mapped through the moment's
+    # crop + the engine's cover-fit) and bakes the chosen `y_frac` into the
+    # variant's text rows before the recipe compiles
+    # (`app.pipeline.phone_guided_text_placement`). Independent of the cloud
+    # flag above; server-only (no app build needed). False (default) leaves the
+    # authored position: byte-identical. Read at plan time, so a flip affects
+    # the next phone render. Apply: `fly secrets set
+    # PHONE_GUIDED_TEXT_FACE_PLACEMENT_ENABLED=true --app nova-video` + `fly
+    # machine restart <id>` (worker).
+    phone_guided_text_face_placement_enabled: bool = False
 
     # Kill switch for authored TextElements on subtitled variants. When False,
     # subtitled remains captions-only and the text-element routes/capabilities

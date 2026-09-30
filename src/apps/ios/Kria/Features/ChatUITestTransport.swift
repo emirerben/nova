@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+import KriaMediaEngine
 
 /// Offline chat fixture: every HTTP request is intercepted, even if a caller
 /// changes its URL. The existing UI-only fallback supplies projects and drafts.
@@ -67,6 +68,7 @@ private final class CreationChatFixture: @unchecked Sendable {
     private var failedGenerates: Set<String> = []
     private var slideDrafts: [String: [String: Any]] = [:]
     private var slideRendered: Set<String> = []
+    private var deviceRevisions: [String: Int] = [:]
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     private var runtime: Int { ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1 }
     /// Returns nil when the request should fail without any HTTP response.
@@ -76,7 +78,11 @@ private final class CreationChatFixture: @unchecked Sendable {
         let body = (try? JSONSerialization.jsonObject(with: bodyData(request))) as? [String: Any] ?? [:]
         func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
         if path == "/creation-threads/capabilities" {
-            return response(["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", 1), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true])
+            var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", 1), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
+            if DeviceRenderUITestFixture.scenario != nil {
+                capabilities["phone_rendering"] = ["enabled": true, "recipe_versions": [1, 2], "verified_features": MediaCapability.allCases.map(\.rawValue)]
+            }
+            return response(capabilities)
         }
         if path == "/creation-threads" {
             if request.httpMethod == "POST" {
@@ -97,6 +103,10 @@ private final class CreationChatFixture: @unchecked Sendable {
             return response(Array(threads.values))
         }
         let parts = path.split(separator: "/").map(String.init)
+        if parts.count >= 4, parts[0] == "me", parts[1] == "jobs", parts[3] == "device-render",
+           let scenario = DeviceRenderUITestFixture.scenario, let jobID = UUID(uuidString: parts[2]) {
+            return deviceRenderResponse(scenario: scenario, jobID: jobID, route: parts.count > 4 ? parts[4] : nil, body: body)
+        }
         if parts.first == "plan-items", parts.count >= 2, ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_FIXTURE"] == "1" {
             return slideResponse(request, itemID: parts[1], parts: parts, body: body)
         }
@@ -124,14 +134,16 @@ private final class CreationChatFixture: @unchecked Sendable {
             }
             if action == "select_format" {
                 state["format"] = payload["format"]
+                // A phone-render account's clip is an analysis proxy; the original stays on the iPhone.
+                let mediaID = DeviceRenderUITestFixture.scenario == nil ? "fixture-clip" : "analysis-proxy-fixture-clip"
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
-                    state["media"] = [["media_id": "fixture-clip", "kind": "video", "filename": "sample.mov"]]
+                    state["media"] = [["media_id": mediaID, "kind": "video", "filename": "sample.mov"]]
                 }
                 append("action_select_format", payload: payload)
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
                     append("media_added", role: "system", payload: [
                         "media": [[
-                            "media_id": "fixture-clip", "kind": "video", "filename": "sample.mov"
+                            "media_id": mediaID, "kind": "video", "filename": "sample.mov"
                         ]],
                         "media_count": 1
                     ])
@@ -160,8 +172,13 @@ private final class CreationChatFixture: @unchecked Sendable {
                     thread["creator_agent"] = ["status": "executing", "summary": "Open on the laugh and keep the pacing quick."]
                 }
                 thread["active_job_id"] = id
-                thread["job"] = ["id": id, "status": "processing", "variants": []]
-                renders[id] = 0
+                if DeviceRenderUITestFixture.scenario != nil {
+                    // The server hands the variant to this iPhone and waits; no cloud render advances it.
+                    thread["job"] = ["id": id, "status": "processing", "variants": [["variant_id": DeviceRenderUITestFixture.variantID, "render_status": "awaiting_device", "render_destination": "device"]]]
+                } else {
+                    thread["job"] = ["id": id, "status": "processing", "variants": []]
+                    renders[id] = 0
+                }
                 append("generation_started")
             } else if action == "remove_media" { state["media"] = []; append("action_remove_media") }
         } else if parts.last == "messages" || parts.last == "turns" {
@@ -288,6 +305,40 @@ private final class CreationChatFixture: @unchecked Sendable {
         return response(state)
     }
 
+    /// KRI-141 device-render fixture (`KRIA_CHAT_DEVICE_RENDER`). `ready`: the server waits on
+    /// this iPhone. `unsupported_recipe` / `timed_out`: the server already gave up with that
+    /// `reason_code`; `/device-render/retry` mints revision 2, which then waits on the iPhone.
+    private func deviceRenderResponse(scenario: String, jobID: UUID, route: String?, body: [String: Any]) -> (Int, Data) {
+        func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
+        let key = jobID.uuidString
+        let revision = deviceRevisions[key, default: 1]
+        func identity(_ revision: Int) -> DeviceRenderIdentity {
+            DeviceRenderIdentity(jobID: jobID, variantID: DeviceRenderUITestFixture.variantID, recipeRevision: revision,
+                                 recipeDigest: String(repeating: revision == 1 ? "a" : "b", count: 64))
+        }
+        func encoded<T: Encodable>(_ value: T) -> Any {
+            (try? RecipeJSON.encoder().encode(value)).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? [:]
+        }
+        switch route {
+        case nil:
+            let recipe = KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "source", relativePath: "source")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])])
+            var status: [String: Any] = ["phase": "awaiting_device", "request": encoded(DeviceRenderRequest(identity: identity(revision), recipe: recipe))]
+            if scenario != "ready", revision == 1 {
+                status["phase"] = "needs_attention"
+                status["reason_code"] = scenario
+                status["reason"] = "Fixture device render stopped: \(scenario)"
+            }
+            return response(status)
+        case "retry":
+            deviceRevisions[key] = revision + 1
+            return response(["identity": encoded(identity(revision + 1)), "phase": "awaiting_device"])
+        case "failures":
+            return response(["identity": encoded(identity(revision)), "phase": "needs_attention", "reason_code": body["reason_code"] as? String ?? "export_failed"])
+        default:
+            return response(["detail": "Fixture route missing"], status: 404)
+        }
+    }
+
     /// `KRIA_CHAT_GENERATE_CONFLICT` makes "generate" answer HTTP 409 like the
     /// Creator confirmation controller: `stale_manifest` until Kria re-plans once
     /// more, `wait_for_render` on the first attempt only.
@@ -322,6 +373,42 @@ private final class CreationChatFixture: @unchecked Sendable {
             data.append(buffer, count: count)
         }
         return data
+    }
+}
+
+/// KRI-141: the on-device half of the device-render fixture. `DeviceRenderSessions(api:)` asks
+/// this before building the AVFoundation coordinator; outside that UI-test mode it returns nil.
+/// The export is a short, deterministic placeholder file and publishing always succeeds, so the
+/// journey reaches the real status card's ready state without footage or network uploads.
+enum DeviceRenderUITestFixture {
+    static let variantID = "original_text"
+    static var scenario: String? {
+        guard ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") else { return nil }
+        return ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_RENDER"]
+    }
+
+    static func coordinator(directory: URL) throws -> DeviceRenderCoordinator? {
+        guard scenario != nil else { return nil }
+        return try DeviceRenderCoordinator(directory: directory, exporter: Exporter(), sources: Sources(), publisher: Publisher())
+    }
+
+    private struct Exporter: LocalExporting {
+        func export(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
+            // Long enough for a UI test to see the rendering state and its Stop button.
+            try await Task.sleep(for: .seconds(3))
+            try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("kria ui-test device export".utf8).write(to: outputURL)
+            return ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
+        }
+    }
+
+    private struct Sources: DeviceSourceResolving {
+        func resolve(for recipe: KriaMediaEngine.EditRecipe) async throws -> [String: URL] { [:] }
+    }
+
+    private struct Publisher: DeviceRenderPublishing {
+        func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
+        func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
     }
 }
 #endif

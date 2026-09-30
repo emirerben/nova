@@ -1474,6 +1474,7 @@
               "thermal",
               "unsupported_recipe",
               "cancelled_by_user",
+              "timed_out",
               "unknown"
             ],
             "title": "Reason Code",
@@ -1507,6 +1508,7 @@
               "thermal",
               "unsupported_recipe",
               "cancelled_by_user",
+              "timed_out",
               "unknown"
             ],
             "title": "Reason Code",
@@ -1899,6 +1901,7 @@
                 "local1080Export",
                 "stillImages",
                 "visualVideos",
+                "sourceCrop",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -2009,6 +2012,7 @@
                 "local1080Export",
                 "stillImages",
                 "visualVideos",
+                "sourceCrop",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -4502,6 +4506,46 @@
           "font_asset_id"
         ],
         "title": "MotionSceneProgram",
+        "type": "object"
+      },
+      "NormalizedSourceCrop": {
+        "additionalProperties": false,
+        "description": "A source rectangle in normalized, top-left-origin coordinates.\n\nMirrors ``KriaMediaEngine.NormalizedSourceRect`` (same bounds and 1e-6\nslack) so a crop that validates here validates on the device.",
+        "properties": {
+          "height": {
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Height",
+            "type": "number"
+          },
+          "width": {
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "title": "NormalizedSourceCrop",
         "type": "object"
       },
       "NovaStep": {
@@ -7226,6 +7270,11 @@
             "minLength": 1,
             "title": "Source Asset Id",
             "type": "string"
+          },
+          "source_crop": {
+            "$ref": "#/components/schemas/NormalizedSourceCrop",
+            "default": null,
+            "nullable": true
           },
           "source_duration": {
             "exclusiveMinimum": true,

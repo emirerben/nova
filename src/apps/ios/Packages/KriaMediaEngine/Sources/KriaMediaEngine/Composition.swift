@@ -221,13 +221,17 @@ struct PreviewAudioBinding: Sendable {
                     let size = try await source.load(.naturalSize)
                     let preferred = Self.coreImagePreferredTransform(try await source.load(.preferredTransform))
                     if clip.look != nil {
+                        // The one path that refuses HEVC/HDR originals on purpose (KRI-141):
+                        // everywhere else the SDR Rec.709 video composition has AVFoundation
+                        // decode and tone-map them. Structural, so the device render reports
+                        // `unsupported_recipe` instead of offering a retry that can't work.
                         // Cloud scales/crops before grading. Until native YUV
                         // resize parity is verified, accept exact-canvas footage
                         // only; grading at source resolution would change pixels.
                         guard recipeTrack.kind == .video, size == canvas, preferred.isIdentity,
-                              clip.transform == .identity else { throw NativePreviewFeatureError("Composition-135") }
+                              clip.transform == .identity else { throw NativePreviewFeatureError("Composition-135", isStructural: true) }
                         let formats = try await source.load(.formatDescriptions)
-                        guard !formats.isEmpty else { throw NativePreviewFeatureError("Composition-137") }
+                        guard !formats.isEmpty else { throw NativePreviewFeatureError("Composition-137", isStructural: true) }
                         for format in formats {
                             let extensions = CMFormatDescriptionGetExtensions(format) as NSDictionary? ?? [:]
                             let transfer = extensions[kCMFormatDescriptionExtension_TransferFunction] as? String
@@ -238,7 +242,7 @@ struct PreviewAudioBinding: Sendable {
                                   depth == nil || depth == 8,
                                   transfer == nil || transfer == kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String,
                                   primaries == nil || primaries == kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String else {
-                                throw NativePreviewFeatureError("Composition-148")
+                                throw NativePreviewFeatureError("Composition-148", isStructural: true)
                             }
                         }
                     }

@@ -23,7 +23,10 @@
       "KriaUITests/SlidePostUITests/testSlideFormatCoverAndBackRemainReachableAtLargeText",
       "KriaUITests/CreationUITests/testReceiptChipsAndGuessedNamesStartACorrection",
       "KriaUITests/CreationUITests/testUnreadableAttachmentDoesNotBlockSend",
-      "KriaUITests/CreationUITests/testFailedUploadWithRecordDoesNotBlockSendAndOffersRetry"
+      "KriaUITests/CreationUITests/testFailedUploadWithRecordDoesNotBlockSendAndOffersRetry",
+      "KriaUITests/DeviceRenderUITests/testPhoneRenderReachesReadyWithPlaySaveAndShare",
+      "KriaUITests/DeviceRenderUITests/testUnsupportedRecipeAsksForANewEditWithoutRetry",
+      "KriaUITests/DeviceRenderUITests/testTimedOutRenderRetriesToReady"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -157,6 +160,7 @@
     "src/apps/ios/Kria/Features/AccountPrivacyViews.swift": "projects",
     "src/apps/ios/Kria/Features/AccountDeletionView.swift": "projects",
     "src/apps/ios/Kria/Features/BrandPreviewHost.swift": "projects",
-    "src/apps/ios/Tests/KriaUITests/SignInUITests.swift": "projects"
+    "src/apps/ios/Tests/KriaUITests/SignInUITests.swift": "projects",
+    "src/apps/ios/Tests/KriaUITests/DeviceRenderUITests.swift": "creation"
   }
 }

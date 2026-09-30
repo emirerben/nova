@@ -77,6 +77,25 @@ class TextTreatment(_RecipeModel):
         return self
 
 
+class NormalizedSourceCrop(_RecipeModel):
+    """A source rectangle in normalized, top-left-origin coordinates.
+
+    Mirrors ``KriaMediaEngine.NormalizedSourceRect`` (same bounds and 1e-6
+    slack) so a crop that validates here validates on the device.
+    """
+
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _within_source(self) -> NormalizedSourceCrop:
+        if self.x + self.width > 1.000001 or self.y + self.height > 1.000001:
+            raise ValueError("source_crop must stay within normalized source bounds")
+        return self
+
+
 class TimelineClip(_RecipeModel):
     id: str = Field(min_length=1, max_length=160)
     source_asset_id: str = Field(min_length=1, max_length=160)
@@ -97,6 +116,10 @@ class TimelineClip(_RecipeModel):
     # A Visuals photo shown whole: fitted inside a card over a blurred cover of
     # itself instead of cropped to fill the frame (guided ``supporting_card``).
     still_layout: Literal["supporting_card"] | None = None
+    # Re-frame: the device crops this rectangle out of the source, then
+    # cover-fits it to the canvas (cloud: ``reframe`` ``source_crop``).
+    # Requires the ``sourceCrop`` capability.
+    source_crop: NormalizedSourceCrop | None = None
     volume: float = Field(default=1, ge=0, le=2)
 
     @model_serializer(mode="wrap")
@@ -110,6 +133,7 @@ class TimelineClip(_RecipeModel):
             "overlay_pop_in",
             "overlay_preserve_alpha",
             "still_layout",
+            "source_crop",
         ):
             if getattr(self, key) is None:
                 result.pop(key, None)
@@ -171,6 +195,7 @@ MediaCapability = Literal[
     "local1080Export",
     "stillImages",
     "visualVideos",
+    "sourceCrop",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the
@@ -233,6 +258,12 @@ class EditRecipeV1(_RecipeModel):
                     or clip.transform != MediaTransform()
                 ):
                     raise ValueError("a still card requires a plain V2 main-track clip")
+                if clip.source_crop is not None:
+                    if clip.still_layout is not None or clip.visual_placement is not None:
+                        raise ValueError(
+                            "a source crop cannot combine with a still card or a visual placement"
+                        )
+                    self.required_capabilities |= {"sourceCrop"}
                 if (
                     clip.overlay_dissolve_seed is not None
                     or clip.hold_duration is not None

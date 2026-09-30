@@ -918,7 +918,6 @@ def test_photo_output_window_must_still_match_the_approved_timeline(change):
         ("look_preset", "golden_hour"),
         ("look_preset", "warm"),
         ("look_adjustments", {"brightness": 0.1}),
-        ("source_crop", {"x": 0, "y": 0, "width": 0.5, "height": 0.5}),
         ("playback_rate", 2),
     ],
 )
@@ -1290,7 +1289,6 @@ def test_golden_hour_pool_video_compiles_only_exact_canvas_unrotated():
         ("image_motion", "subtle_zoom_in"),
         ("look_preset", "warm"),
         ("look_adjustments", {"brightness": 0.1}),
-        ("source_crop", {"x": 0, "y": 0, "width": 0.5, "height": 0.5}),
         ("playback_rate", 2),
     ],
 )
@@ -1307,16 +1305,79 @@ def test_explicit_unit_playback_rate_is_not_a_video_treatment():
     assert recipe_digest(recipe) == recipe_digest(compile_phone_guided_plan(*pool_video_fixture()))
 
 
-@pytest.mark.parametrize(
-    "field,value",
-    [("source_crop", {"x": 0, "y": 0, "width": 0.5, "height": 0.5}), ("playback_rate", 2)],
-)
-def test_bound_footage_crop_and_retime_fail_closed_instead_of_silently_dropping(field, value):
-    # Both compiled before, rendering uncropped 1x footage the creator never approved.
+def test_bound_footage_retime_fails_closed_instead_of_silently_dropping():
+    # Compiled before, rendering 1x footage the creator never approved.
     plan, bindings = fixture()
-    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={field: value})
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"playback_rate": 2})
     with pytest.raises(UnsupportedPhonePlan, match="unsupported phone moment treatment"):
         compile_phone_guided_plan(plan, bindings)
+
+
+CROP = {"x": 0.1, "y": 0.2, "width": 0.5, "height": 0.6}
+
+
+def test_bound_footage_crop_rides_on_the_clip_and_requires_the_source_crop_capability():
+    plan, bindings = fixture()
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"source_crop": CROP})
+    recipe = compile_phone_guided_plan(plan, bindings)
+    clips = recipe.tracks[0].clips
+    assert clips[0].source_crop is not None
+    assert clips[0].source_crop.model_dump() == CROP
+    assert all(clip.source_crop is None for clip in clips[1:])
+    assert "sourceCrop" in recipe.required_capabilities
+    serialized = recipe.model_dump(mode="json", by_alias=False)["tracks"][0]["clips"]
+    assert serialized[0]["source_crop"] == CROP
+    assert all("source_crop" not in clip for clip in serialized[1:])
+
+
+def test_uncropped_plan_recipe_is_unchanged_and_needs_no_crop_capability():
+    plan, bindings = fixture()
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert "sourceCrop" not in recipe.required_capabilities
+    clips = recipe.model_dump(mode="json")["tracks"][0]["clips"]
+    assert all("source_crop" not in clip for clip in clips)
+
+
+def test_crop_is_refused_by_the_pilot_gate_until_the_device_verifies_it(monkeypatch):
+    plan, bindings = fixture()
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"source_crop": CROP})
+    recipe = compile_phone_guided_plan(plan, bindings)
+    others = sorted(recipe.required_capabilities - {"sourceCrop"})
+    monkeypatch.setattr(settings, "phone_render_verified_features", others)
+    with pytest.raises(ValueError, match="Cropped clips"):
+        validate_phone_pilot_recipe(recipe)
+    monkeypatch.setattr(settings, "phone_render_verified_features", [*others, "sourceCrop"])
+    validate_phone_pilot_recipe(recipe)
+
+
+def test_pool_video_crop_compiles():
+    plan, bindings, visuals = pool_video_fixture(source_crop=CROP)
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    assert recipe.tracks[0].clips[1].source_crop.model_dump() == CROP
+    assert {"sourceCrop", "visualVideos"} <= recipe.required_capabilities
+
+
+def test_fullscreen_photo_crop_compiles():
+    plan, bindings, visuals = photo_fixture(source_crop=CROP)
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    photo = next(clip for clip in recipe.tracks[0].clips if clip.source_crop is not None)
+    assert photo.still_layout is None and photo.source_crop.model_dump() == CROP
+
+
+@pytest.mark.parametrize(
+    "crop",
+    [
+        {"x": 0.6, "y": 0, "width": 0.6, "height": 1},
+        {"x": 0, "y": 0, "width": 0, "height": 1},
+        {"x": 0, "y": 0},
+    ],
+)
+def test_malformed_crop_fails_closed_with_the_capability_named(crop):
+    plan, bindings = fixture()
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"source_crop": crop})
+    with pytest.raises(UnsupportedPhonePlan, match="unsupported phone crop") as excinfo:
+        compile_phone_guided_plan(plan, bindings)
+    assert excinfo.value.capability == "sourceCrop"
 
 
 @pytest.mark.parametrize(
