@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.20.0] - 2026-09-30
+
+### Changed
+- fix(ios): phone render journey tests, timed-out copy, single variant (KRI-141) (#1276) <!-- release-pr: 1276 -->
+
 ## [0.77.19.0] - 2026-09-30
 
 ### Changed
