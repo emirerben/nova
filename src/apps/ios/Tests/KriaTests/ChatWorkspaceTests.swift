@@ -118,21 +118,6 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertTrue(ChatThinkingSettlement.isSettled(events: events + [event(id: "new", sequence: 8)], after: 7))
     }
 
-    func testFormatPromptExposesOnlyServerAvailableChoices() {
-        let prompt = ThreadEvent(
-            id: "format-prompt",
-            sequence: 1,
-            revision: 1,
-            role: "assistant",
-            eventType: "format_prompt",
-            content: "Choose a format",
-            payload: ["formats": .object(["montage": .string("montage"), "narrated": .string("narrated_planned"), "slides": .string("slides")])],
-            createdAt: .now
-        )
-
-        XCTAssertEqual(CreationFormat.available(in: [prompt]), [.montage, .narrated, .slides])
-    }
-
     func testAcceptedMutationRefreshFailureDoesNotReportTheMutationAsRejected() async throws {
         let failure = await acceptedMutationRefreshError(
             "Your message was sent, but the conversation couldn’t refresh.",

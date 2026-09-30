@@ -82,6 +82,7 @@ public enum DeviceRenderFailureReasonCode: String, Sendable {
         // understand, which is what the plain `RecipeError` branch below covers.
         if case RecipeError.unsupportedSchema = error { return .rendererOutdated }
         if error is RecipeError { return .unsupportedRecipe }
+        if let feature = error as? NativePreviewFeatureError, feature.isStructural { return .unsupportedRecipe }
         if error is MediaEngineError || error is SourceAssetError { return .exportFailed }
         return .unknown
     }

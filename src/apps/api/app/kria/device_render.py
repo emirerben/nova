@@ -137,6 +137,10 @@ DeviceFailureReasonCode = Literal[
     "thermal",
     "unsupported_recipe",
     "cancelled_by_user",
+    # Server-only today: the stale-render reaper stamps it when a phone went a day
+    # without a word (app/tasks/device_render_reaper.py). The phone has its own copy
+    # for it (KRI-141), so it must not share the catch-all "unknown".
+    "timed_out",
     "unknown",
 ]
 

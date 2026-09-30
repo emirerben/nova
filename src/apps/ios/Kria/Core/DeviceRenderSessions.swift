@@ -75,6 +75,10 @@ enum DeviceRenderButtonTitle {
             let project = BackgroundUploadCoordinator.projectDirectory(key.projectID)
             let variant = SHA256.hash(data: Data(key.variantID.utf8)).map { String(format: "%02x", $0) }.joined()
             let directory = project.root.appending(path: "device-renders/\(key.jobID.uuidString)/\(variant)", directoryHint: .isDirectory)
+            #if DEBUG
+            // UI tests only (`-ui-testing-chat` + `KRIA_CHAT_DEVICE_RENDER`): a fixture export stands in for AVFoundation.
+            if let fixture = try DeviceRenderUITestFixture.coordinator(directory: directory) { return fixture }
+            #endif
             let library = RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory))
             return try DeviceRenderCoordinator(
                 directory: directory,

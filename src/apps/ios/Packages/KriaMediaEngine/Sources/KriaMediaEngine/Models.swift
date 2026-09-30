@@ -423,6 +423,14 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
 /// recipe (`app/pipeline/phone_guided_plan.py`'s per-lane reject list). Kept
 /// in lockstep with the Python mirror (`app/kria/recipes.py::MediaCapability`)
 /// by `tests/kria/test_capability_matrix.py`.
+///
+/// `hevcDecode` and `hdr` are also never derived (KRI-141), for a different
+/// reason: they describe the originals, which stay on the iPhone, not the
+/// recipe. Every render handles them without routing -- the video composition
+/// is SDR Rec.709, so AVFoundation decodes HEVC and tone-maps HDR frames before
+/// the compositor sees them. The one exception, a `look` that only grades SDR
+/// H.264, refuses such a source at compose time with a structural
+/// `NativePreviewFeatureError`, reported as `unsupported_recipe`.
 public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
     case visualBlocks, motionScenes, editorMedia, cameraEffects, basicComposition, positionedText,
          animatedText, authoredText, crossfade, clipTransitions, goldenHourLook, audioMix,

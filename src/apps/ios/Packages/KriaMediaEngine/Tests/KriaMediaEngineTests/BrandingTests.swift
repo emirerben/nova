@@ -158,6 +158,18 @@ final class BrandingTests: XCTestCase {
             .exportFailed)
     }
 
+    /// KRI-141: an HDR/HEVC original under a look is refused by the recipe and its
+    /// sources, so a retry fails identically -- `unsupported_recipe` hides "Try again".
+    /// Every other preview-feature refusal keeps its old `unknown` classification.
+    func testStructuralFeatureRefusalReportsAsUnsupportedRecipe() {
+        XCTAssertEqual(
+            DeviceRenderFailureReasonCode.forRenderFailure(NativePreviewFeatureError("Composition-148", isStructural: true)),
+            .unsupportedRecipe)
+        XCTAssertEqual(
+            DeviceRenderFailureReasonCode.forRenderFailure(NativePreviewFeatureError("Export-44")),
+            .unknown)
+    }
+
     #if canImport(AVFoundation)
     /// Bright pixels inside `rect`, measured from the visual top-left.
     @MainActor private func brightPixels(in image: CGImage, rect: CGRect,
