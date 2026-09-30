@@ -14,6 +14,7 @@ from app.kria.recipes import (
     Canvas,
     MediaAsset,
     MediaSize,
+    NormalizedSourceCrop,
     TimelineClip,
     TimelineTrack,
     Transition,
@@ -108,6 +109,16 @@ def _clock_aligned(value: float) -> bool:
 # The device recipe's source bound (EditRecipeV2 and Models.swift reject a
 # clip starting past it). Footage originals can't exceed it; pool videos can.
 _DEVICE_SOURCE_LIMIT_S = 1800
+
+
+def _phone_source_crop(crop: dict[str, float] | None) -> NormalizedSourceCrop | None:
+    """The plan's re-frame as a recipe crop; a malformed one fails closed."""
+    if crop is None:
+        return None
+    try:
+        return NormalizedSourceCrop.model_validate(crop)
+    except ValueError as exc:
+        raise UnsupportedPhonePlan("unsupported phone crop", capability="sourceCrop") from exc
 
 
 def compile_phone_guided_plan(
@@ -235,20 +246,22 @@ def compile_phone_guided_plan(
                 or moment.image_motion is not None
                 or moment.look_preset != "none"
                 or moment.look_adjustments
-                or moment.source_crop is not None
                 or moment.playback_rate not in {None, 1}
+                # A re-frame is applied to the whole photo; a card draws the
+                # photo whole, so the two contradict each other.
+                or (moment.source_crop is not None and moment.layout != "fullscreen")
             ):
                 raise UnsupportedPhonePlan("unsupported phone photo treatment")
         else:
-            # The recipe has no crop or retime for story footage; dropping
-            # either silently would render something the creator didn't approve.
+            # The recipe has no retime for story footage; dropping it silently
+            # would render something the creator didn't approve. A crop rides
+            # on the clip (`source_crop`, `sourceCrop` capability).
             if (
                 moment.kind != "video"
                 or moment.layout != "fullscreen"
                 or moment.image_motion is not None
                 or moment.look_preset not in {"none", "golden_hour"}
                 or moment.look_adjustments
-                or moment.source_crop is not None
                 or moment.playback_rate not in {None, 1}
             ):
                 raise UnsupportedPhonePlan("unsupported phone moment treatment")
@@ -333,6 +346,7 @@ def compile_phone_guided_plan(
                     rate=1,
                     transition=incoming,
                     still_layout="supporting_card" if moment.layout == "supporting_card" else None,
+                    source_crop=_phone_source_crop(moment.source_crop),
                 )
             )
             cursor = moment.output_end_s
@@ -411,6 +425,7 @@ def compile_phone_guided_plan(
                 rate=1,
                 transition=incoming,
                 look="golden_hour" if moment.look_preset == "golden_hour" else None,
+                source_crop=_phone_source_crop(moment.source_crop),
             )
         )
         cursor = moment.output_end_s

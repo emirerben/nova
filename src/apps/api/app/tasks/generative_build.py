@@ -3752,6 +3752,21 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
         )
     raw_plan, _track = _guided_execution_plan(job_id, guided)
     plan = GuidedStoryExecutionPlan.model_validate(raw_plan)
+    if settings.phone_guided_text_face_placement_enabled and bindings:
+        # KRI-140/KRI-116: the cloud burn moves a title off a face on decoded
+        # frames; the phone has none, so decide it here from the proxies and
+        # bake it into the rows the variant persists (Save keeps it).
+        from app.pipeline.phone_guided_text_placement import (  # noqa: PLC0415
+            place_guided_text_off_faces,
+        )
+        from app.storage import download_to_file  # noqa: PLC0415
+
+        placed = place_guided_text_off_faces(
+            plan, raw_plan["text_elements"], bindings, job_id=job_id, download=download_to_file
+        )
+        if placed != raw_plan["text_elements"]:
+            raw_plan["text_elements"] = placed
+            plan = GuidedStoryExecutionPlan.model_validate(raw_plan)
     if plan.narration is not None:
         # "Clean up speech": a required_v1 Job plays exactly the cleaned
         # derivative its immutable preflight snapshot consented to, never the

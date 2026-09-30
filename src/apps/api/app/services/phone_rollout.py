@@ -219,6 +219,10 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise ValueError(
             "Authored text phases and backgrounds await native parity and device qualification"
         )
+    if any(
+        clip.source_crop is not None for track in recipe.tracks for clip in track.clips
+    ) and "sourceCrop" not in set(settings.phone_render_verified_features):
+        raise ValueError("Cropped clips await native parity and device qualification")
     if not recipe.required_capabilities.issubset(settings.phone_render_verified_features):
         raise ValueError("This edit needs a phone capability that is not enabled")
     if any(
