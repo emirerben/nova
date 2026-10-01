@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v61"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v62"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2005,15 +2005,19 @@ class _ParseState:
         # reply when ops were proposed and REPLACES the model's reply when a
         # request was refused, so the reply can never claim what the ops didn't do.
         self.reply_notes: list[str] = []
+        # Plain-words reasons a value was refused (shown when the whole request fails).
+        self.invalid_notes: list[str] = []
         # `reorder_clips_by` found the clips already in order: the model's reply
         # ("I've reordered...") would contradict that, so `parse` composes the reply.
         self.reorder_noop = False
         # The creator's message, for guards that need its wording (set by `parse`).
         self.utterance = ""
 
-    def invalid_value(self) -> None:
+    def invalid_value(self, note: str | None = None) -> None:
         self.invalid_value_seen = True
         self.confidence = min(self.confidence, 0.4)
+        if note and note not in self.invalid_notes:
+            self.invalid_notes.append(note)
 
     def reject(self, *, op: str, reason: str, detail: str) -> None:
         self.rejection_reasons.append({"op": op, "reason": reason, "detail": detail})
@@ -3275,6 +3279,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 )
             else:
                 reply = f"How short should the {referent or 'clips'} be?"
+        if not ops and state.invalid_notes:
+            state.reply_notes.extend(state.invalid_notes)
         if state.reply_notes:
             notes = " ".join(dict.fromkeys(state.reply_notes))
             if ops and state.reorder_noop:
@@ -3807,7 +3813,15 @@ def _appearance_target_rows(snapshot: dict, selector: object) -> list[dict[str, 
         seen.add(target_id)
     eligible = [row for row in targets if category is None or row.get("kind") == category]
     if group is not None:
-        eligible = [row for row in eligible if row.get("group") == _TEXT_APPEARANCE_GROUPS[group]]
+        in_group = [row for row in eligible if row.get("group") == _TEXT_APPEARANCE_GROUPS[group]]
+        if not in_group and group == "labels":
+            # Chat-added caption bars are free texts: see resolve_selector's fallback.
+            in_group = [
+                row
+                for row in eligible
+                if str(row.get("id") or "").startswith("kria-") and not row.get("group")
+            ]
+        eligible = in_group
     target_ids = selector.get("target_ids")
     if target_ids is None:
         return eligible
@@ -5200,6 +5214,25 @@ def _resolve_placement(patch: dict) -> dict:
     return resolved
 
 
+_TEXT_CASE_ALIASES = {
+    "lowercase": "lower",
+    "lower case": "lower",
+    "lower-case": "lower",
+    "all lowercase": "lower",
+    "no capitals": "lower",
+    "non capital": "lower",
+    "uppercase": "upper",
+    "upper case": "upper",
+    "all caps": "upper",
+    "capitalize": "title",
+    "capitalized": "title",
+    "titlecase": "title",
+    "title case": "title",
+    "normal": "none",
+    "original": "none",
+}
+
+
 def _coerce_patch(patch: dict, state: _ParseState) -> dict:
     out: dict[str, Any] = {}
     for key, value in _resolve_placement(patch).items():
@@ -5207,12 +5240,15 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
             continue
         if key == "font_family":
             if not isinstance(value, str) or value not in _ALLOWED_FONTS:
-                state.invalid_value()
+                state.invalid_value(f"I don't have a font called {value!r}")
                 return {}
             out[key] = value
         elif key == "effect":
             if not isinstance(value, str) or value not in _ALLOWED_EFFECTS:
-                state.invalid_value()
+                state.invalid_value(
+                    f"I couldn't set the effect to {value!r}; the options are "
+                    + ", ".join(sorted(_ALLOWED_EFFECTS))
+                )
                 return {}
             out[key] = value
         elif key in {"color", "highlight_color"}:
@@ -5226,8 +5262,13 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
                 return {}
             out[key] = value
         elif key == "text_case":
+            if isinstance(value, str):
+                value = _TEXT_CASE_ALIASES.get(" ".join(value.casefold().split()), value)
             if value not in _VALID_TEXT_CASE:
-                state.invalid_value()
+                state.invalid_value(
+                    "I couldn't set the letter case to "
+                    f"{value!r}; the options are none, upper, lower, title"
+                )
                 return {}
             out[key] = value
         elif key == "position":

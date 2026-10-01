@@ -118,6 +118,14 @@ def _selected(
     if not matched:
         _clarify(state, zero_match_message(selector, find=find))
         return None
+    if selector.get("group") == "labels" and not any(
+        bar["clip_id"] or str(bar["id"]).startswith("clip-label-")
+        for bar in bars
+        if bar["id"] in set(matched)
+    ):
+        state.reply_notes.append(
+            "I applied that to the captions you added in chat (free texts, not clip labels)."
+        )
     return selector, matched
 
 

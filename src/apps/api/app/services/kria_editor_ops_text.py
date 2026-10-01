@@ -243,6 +243,19 @@ def resolve_selector(bars: list[dict[str, Any]], selector: dict[str, Any]) -> li
         if equals is not None and folded != equals:
             continue
         matched.append(bar["id"])
+    if not matched and group == "labels" and set(selector) <= {"group"}:
+        # "them" after "add a caption to each clip": chat-added caption bars are free texts
+        # (a clip that already has a label refuses a second linked bar), so the model's
+        # "labels" selector would match nothing. Target those chat-added bars instead.
+        matched = [
+            bar["id"]
+            for bar in bars
+            if not bar["removed"]
+            and not bar.get("caption")
+            and bar["role"] != "lyric_line"
+            and kinds[bar["id"]] == "text"
+            and str(bar["id"]).startswith("kria-")
+        ]
     return matched
 
 

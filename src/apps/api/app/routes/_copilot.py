@@ -141,6 +141,9 @@ def _honest_outcome(
             return outcome, reply
         return outcome, "That kind of edit isn't available for this draft yet."
     if outcome == "failed":
+        if output.reply_notes:
+            # A specific reason beats the generic line (e.g. which value was not accepted).
+            return outcome, f"I couldn't apply that: {output.reply_notes}"
         return outcome, "I couldn't build a valid draft change for that request. Try again."
     if reply and not _claims_success(reply):
         return outcome, reply

@@ -1252,3 +1252,27 @@ async def test_a_copilot_refusal_on_a_text_ask_is_not_turned_into_a_replan(
         user_message="Add a label to each video with the same style as the title about what it is",
     )
     assert result.plan is refusal and runs == [] and result.defer_brief is True
+
+
+@pytest.mark.asyncio
+async def test_router_reuses_the_first_copilot_answer_instead_of_calling_it_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Copilot-first declined, the router then said editor_ops: no second copilot call."""
+    refusal = KriaTurnPlan(mode="respond", turn_value="recovery", response="I can't do that.")
+    db, item, creator_id, copilot, _runs = _wire_planner(
+        monkeypatch,
+        output=SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("style", "global")]),
+        editor_plan=refusal,
+        snapshot={"text_bars": [], "allowed_op_families": ["text"]},
+    )
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", True)
+    result = await plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item.id,
+        creator_id=creator_id,
+        user_message="make everything feel calmer",
+    )
+    assert copilot.await_count == 1
+    assert result.plan is refusal and result.brief_route == "editor_ops"

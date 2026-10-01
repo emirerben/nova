@@ -820,6 +820,7 @@ async def plan_live_turn(
     creator_id: uuid.UUID,
     user_message: str,
     allow_fast_path: bool = True,
+    first_editor_result: tuple[KriaTurnPlan | None] | None = None,
 ) -> PlannedKriaTurn:
     item = await db.get(PlanItem, item_id)
     if item is None:
@@ -887,6 +888,9 @@ async def plan_live_turn(
             creator_id=creator_id,
             user_message=user_message,
             allow_fast_path=False,
+            # The copilot already answered this exact message against this exact draft:
+            # the router below reuses that answer instead of paying for a second call.
+            first_editor_result=(fast_plan,),
         )
     if not extract_first:
         editor_plan = await _plan_editor_revision(
@@ -973,10 +977,13 @@ async def plan_live_turn(
         await db.rollback()
     route = route_requirements(fresh, shape, message=user_message)
     if route == "editor_ops":
-        item = await _refetch_item(db, item_id)
-        editor_plan = await _plan_editor_revision(
-            db, thread_id=thread_id, item=item, user_message=user_message
-        )
+        if first_editor_result is not None:
+            editor_plan = first_editor_result[0]
+        else:
+            item = await _refetch_item(db, item_id)
+            editor_plan = await _plan_editor_revision(
+                db, thread_id=thread_id, item=item, user_message=user_message
+            )
         if editor_plan is not None:
             return PlannedKriaTurn(
                 plan=editor_plan,

@@ -904,3 +904,144 @@ def test_event_words_are_kept_when_the_footage_supports_them(guided) -> None:
         utterance=ASK_DESCRIBE,
     )
     assert [op["text"] for op in out.ops] == ["Wedding preparations"]
+
+
+# ── 2026-10-01 follow-ups: restyle just-added captions, enrich failures, no false replan note ──
+
+CAPTION_BARS = [
+    {
+        "id": "guided-title",
+        "text": "5 am in my room",
+        "start_s": 0.0,
+        "end_s": 1.7,
+        "role": "generative_intro",
+        "font_family": "Instrument Serif",
+        "size_px": 78,
+        "color": "#FFF8F0",
+        "position": "custom",
+        "x_frac": 0.78,
+        "y_frac": 0.16,
+        "alignment": "center",
+        "effect": "static",
+    },
+    *[
+        {
+            "id": f"kria-cap{i}",
+            "text": t,
+            "start_s": float(2 * i),
+            "end_s": float(2 * i + 2),
+            "role": "generative_intro",
+            "font_family": "Instrument Serif",
+            "size_px": 78,
+            "color": "#FFF8F0",
+            "position": "custom",
+            "x_frac": 0.5,
+            "y_frac": 0.66,
+            "alignment": "center",
+            "effect": "static",
+        }
+        for i, t in enumerate(["Window reflection", "Computer monitors"])
+    ],
+]
+RESTYLE_ASK = (
+    "Update them to show on the bottom left or on empty spots. Make them a bit smaller, "
+    "all non capital, and remove the effect"
+)
+
+
+def _caption_snapshot(job, variant):
+    snap = _seen_snapshot(job, variant)
+    snap["text_bars"] = [dict(b) for b in CAPTION_BARS]
+    snap["text_appearance_version"] = 1
+    snap["text_appearance"] = {
+        "version": 1,
+        "caption_cues_editable": False,
+        "targets": [
+            {
+                "id": b["id"],
+                "kind": "text",
+                "supported_fields": ["stroke_width", "shadow_enabled", "font_family"],
+                "values": {
+                    "stroke_width": 0.0,
+                    "shadow_enabled": True,
+                    "font_family": "Instrument Serif",
+                },
+                "identity": f"id{b['id']}",
+                **({"group": "title"} if b["id"] == "guided-title" else {}),
+            }
+            for b in CAPTION_BARS
+        ],
+    }
+    return snap
+
+
+def test_restyling_chat_added_captions_with_everyday_words_is_accepted(guided) -> None:
+    job, variant, _rev = guided
+    out = _parse(
+        _caption_snapshot(job, variant),
+        [
+            {
+                "op": "patch_text",
+                "selector": {"group": "labels"},
+                "patch": {
+                    "position": "custom",
+                    "alignment": "left",
+                    "x_frac": 0.08,
+                    "y_frac": 0.86,
+                    "size_scale": 0.8,
+                    "text_case": "lowercase",
+                },
+            },
+            {
+                "op": "patch_text_appearance",
+                "selector": {"scope": "editable_text", "quantifier": "all", "group": "labels"},
+                "patch": {"stroke_width": 0, "shadow_enabled": False},
+                "text_appearance_version": 1,
+            },
+        ],
+        utterance=RESTYLE_ASK,
+    )
+    assert [op["op"] for op in out.ops] == ["patch_text", "patch_text_appearance"]
+    assert out.ops[0]["patch"]["text_case"] == "lower"
+    assert out.ops[0]["target_ids"] == ["kria-cap0", "kria-cap1"]  # never the title
+    assert out.ops[1]["target_ids"] == ["kria-cap0", "kria-cap1"]
+    assert "captions you added in chat" in out.reply
+
+
+def test_a_refused_value_is_named_in_plain_words(guided) -> None:
+    from app.routes._copilot import _honest_outcome
+
+    job, variant, _rev = guided
+    out = _parse(
+        _caption_snapshot(job, variant),
+        [
+            {
+                "op": "patch_text",
+                "selector": {"group": "all"},
+                "patch": {"effect": "glow-in-the-dark"},
+            }
+        ],
+        utterance="remove the effect",
+    )
+    assert out.ops == [] and out.outcome == "failed"
+    _outcome, reply = _honest_outcome(out, out.ops)
+    assert "couldn't set the effect to 'glow-in-the-dark'" in reply and "typewriter" in reply
+
+
+def test_per_clip_text_is_expressible_in_place_when_clips_were_seen(guided) -> None:
+    from app.kria.brief import BriefRequirement, plan_shape_from_editor_snapshot, route_requirements
+
+    job, variant, _rev = guided
+    snap = _seen_snapshot(job, variant)
+    snap.pop("label_facts", None)
+    snap["text_bars"] = [dict(CAPTION_BARS[0])]  # no clip-label lane at all
+    req = BriefRequirement(
+        id="r6",
+        kind="text",
+        scope="per_clip",
+        description="a label about what the video is, matching the title style",
+    )
+    assert route_requirements([req], plan_shape_from_editor_snapshot(snap)) == "editor_ops"
+    for slot in snap["slots"]:
+        slot.pop("seen", None)
+    assert route_requirements([req], plan_shape_from_editor_snapshot(snap)) == "replan"

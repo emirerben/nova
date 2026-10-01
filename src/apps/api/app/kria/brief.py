@@ -315,10 +315,24 @@ def plan_shape_from_editor_snapshot(snapshot: Mapping[str, Any] | None) -> Curre
     can_edit_timeline = "clip" in (snapshot.get("allowed_op_families") or [])
     return CurrentPlanShape(
         has_render=True,
-        has_per_clip_text_lane=legacy_lane or label_bars,
-        can_fill_per_clip_text=legacy_lane or snapshot.get("label_facts") is True,
+        has_per_clip_text_lane=legacy_lane or label_bars or _has_seen(snapshot),
+        # `seen` (stored clip understanding) lets the copilot write per-clip captions with
+        # add_text even where no place/time fact exists for label_each_clip (KRI-219).
+        can_fill_per_clip_text=legacy_lane
+        or snapshot.get("label_facts") is True
+        or _has_seen(snapshot),
         can_edit_timeline=can_edit_timeline,
         can_order_by_capture_time=can_edit_timeline and _timed_slot_count(snapshot) >= 2,
+    )
+
+
+def _has_seen(snapshot: Mapping[str, Any]) -> bool:
+    return any(
+        isinstance(slot, Mapping)
+        and not slot.get("removed")
+        and isinstance(slot.get("seen"), Mapping)
+        and slot["seen"].get("text")
+        for slot in snapshot.get("slots") or []
     )
 
 
