@@ -143,7 +143,14 @@
           "position": "custom",
           "alignment": "center",
           "effect": "static",
-          "role": "generative_intro"
+          "role": "generative_intro",
+          "shadow_enabled": true,
+          "animation_phases": {
+            "entrance": "typewriter",
+            "exit": "none",
+            "loop": "none",
+            "speed": 1.0
+          }
         },
         {
           "id": "kria-cap0",
@@ -158,7 +165,14 @@
           "position": "custom",
           "alignment": "center",
           "effect": "static",
-          "role": "generative_intro"
+          "role": "generative_intro",
+          "shadow_enabled": true,
+          "animation_phases": {
+            "entrance": "typewriter",
+            "exit": "none",
+            "loop": "none",
+            "speed": 1.0
+          }
         },
         {
           "id": "kria-cap1",
@@ -173,7 +187,14 @@
           "position": "custom",
           "alignment": "center",
           "effect": "static",
-          "role": "generative_intro"
+          "role": "generative_intro",
+          "shadow_enabled": true,
+          "animation_phases": {
+            "entrance": "typewriter",
+            "exit": "none",
+            "loop": "none",
+            "speed": 1.0
+          }
         }
       ],
       "total_duration_s": 12,
@@ -234,7 +255,7 @@
       }
     }
   },
-  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"patch_text\", \"selector\": {\"group\": \"labels\"}, \"patch\": {\"position\": \"custom\", \"alignment\": \"left\", \"x_frac\": 0.08, \"y_frac\": 0.86, \"size_scale\": 0.8, \"text_case\": \"lowercase\"}}, {\"op\": \"patch_text_appearance\", \"selector\": {\"scope\": \"editable_text\", \"quantifier\": \"all\", \"group\": \"labels\"}, \"patch\": {\"stroke_width\": 0, \"shadow_enabled\": false}, \"text_appearance_version\": 1}], \"confidence\": 0.96, \"reply\": \"Moved them to the bottom left, smaller, lowercase, no shadow or outline. I can't see empty spots, so I used the bottom left.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"patch_text\", \"selector\": {\"group\": \"labels\"}, \"patch\": {\"position\": \"custom\", \"alignment\": \"left\", \"x_frac\": 0.08, \"y_frac\": 0.86, \"size_scale\": 0.8, \"text_case\": \"lowercase\"}}, {\"op\": \"patch_text_appearance\", \"selector\": {\"scope\": \"editable_text\", \"quantifier\": \"all\", \"group\": \"labels\"}, \"patch\": {\"stroke_width\": 0, \"shadow_enabled\": false}, \"text_appearance_version\": 1}], \"confidence\": 0.96, \"reply\": \"Moved them to the bottom left, smaller and lowercase. I can't see empty spots, so I used the bottom left.\", \"suggestions\": [], \"needs_clarification\": false}",
   "output": {
     "intent": "edit",
     "ops": [
@@ -249,46 +270,22 @@
           "x_frac": 0.08,
           "y_frac": 0.86,
           "text_case": "lower",
-          "size_scale": 0.8
+          "size_scale": 0.8,
+          "animation_phases": {
+            "entrance": "none",
+            "exit": "none",
+            "loop": "none"
+          }
         },
         "target_ids": [
           "kria-cap0",
           "kria-cap1"
         ],
         "expected_count": 2
-      },
-      {
-        "op": "patch_text_appearance",
-        "selector": {
-          "scope": "editable_text",
-          "quantifier": "all",
-          "group": "labels"
-        },
-        "patch": {
-          "stroke_width": 0,
-          "shadow_enabled": false
-        },
-        "text_appearance_version": 1,
-        "target_ids": [
-          "kria-cap0",
-          "kria-cap1"
-        ],
-        "target_identities": [
-          {
-            "id": "kria-cap0",
-            "kind": "text",
-            "identity": "ikria-cap0"
-          },
-          {
-            "id": "kria-cap1",
-            "kind": "text",
-            "identity": "ikria-cap1"
-          }
-        ]
       }
     ],
     "confidence": 0.96,
-    "reply": "Moved them to the bottom left, smaller, lowercase, no shadow or outline. I can't see empty spots, so I used the bottom left. I applied that to the captions you added in chat (free texts, not clip labels).",
+    "reply": "Moved them to the bottom left, smaller and lowercase. I can't see empty spots, so I used the bottom left. I applied that to the captions you added in chat (free texts, not clip labels). I turned off the typewriter animation; say if you also want the shadow gone.",
     "suggestions": [],
     "needs_clarification": false,
     "outcome": "proposed",
@@ -301,6 +298,6 @@
     "source": "hand_authored_golden",
     "case": "restyle just-added captions: bottom left, smaller, lowercase, no shadow/stroke",
     "lane": "kria-219-capture-time",
-    "note": "structural check only (model wording varies)"
+    "note": "structural check only; animation (typewriter) is removed, shadow/stroke untouched"
   }
 }

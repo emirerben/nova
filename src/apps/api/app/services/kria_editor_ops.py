@@ -712,6 +712,9 @@ def build_editor_snapshot(
                     "x_frac",
                     "y_frac",
                     "rotation_deg",
+                    # The visible "effect" a creator means is usually the entrance
+                    # animation (typewriter/fade/pop), which lives here, not in `effect`.
+                    "animation_phases",
                 }
             },
             **_bar_clip_link(row, label_links),

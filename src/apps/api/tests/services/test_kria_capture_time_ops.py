@@ -923,6 +923,13 @@ CAPTION_BARS = [
         "y_frac": 0.16,
         "alignment": "center",
         "effect": "static",
+        "shadow_enabled": True,
+        "animation_phases": {
+            "entrance": "typewriter",
+            "exit": "none",
+            "loop": "none",
+            "speed": 1.0,
+        },
     },
     *[
         {
@@ -939,6 +946,13 @@ CAPTION_BARS = [
             "y_frac": 0.66,
             "alignment": "center",
             "effect": "static",
+            "shadow_enabled": True,
+            "animation_phases": {
+                "entrance": "typewriter",
+                "exit": "none",
+                "loop": "none",
+                "speed": 1.0,
+            },
         }
         for i, t in enumerate(["Window reflection", "Computer monitors"])
     ],
@@ -975,37 +989,68 @@ def _caption_snapshot(job, variant):
     return snap
 
 
-def test_restyling_chat_added_captions_with_everyday_words_is_accepted(guided) -> None:
+def test_remove_the_effect_turns_off_the_animation_not_the_shadow(guided) -> None:
     job, variant, _rev = guided
-    out = _parse(
-        _caption_snapshot(job, variant),
-        [
-            {
-                "op": "patch_text",
-                "selector": {"group": "labels"},
-                "patch": {
-                    "position": "custom",
-                    "alignment": "left",
-                    "x_frac": 0.08,
-                    "y_frac": 0.86,
-                    "size_scale": 0.8,
-                    "text_case": "lowercase",
-                },
+    model_ops = [
+        {
+            "op": "patch_text",
+            "selector": {"group": "labels"},
+            "patch": {
+                "position": "custom",
+                "alignment": "left",
+                "x_frac": 0.08,
+                "y_frac": 0.86,
+                "size_scale": 0.8,
+                "text_case": "lowercase",
             },
-            {
-                "op": "patch_text_appearance",
-                "selector": {"scope": "editable_text", "quantifier": "all", "group": "labels"},
-                "patch": {"stroke_width": 0, "shadow_enabled": False},
-                "text_appearance_version": 1,
-            },
-        ],
-        utterance=RESTYLE_ASK,
-    )
-    assert [op["op"] for op in out.ops] == ["patch_text", "patch_text_appearance"]
-    assert out.ops[0]["patch"]["text_case"] == "lower"
+        },
+        {
+            "op": "patch_text_appearance",
+            "selector": {"scope": "editable_text", "quantifier": "all", "group": "labels"},
+            "patch": {"stroke_width": 0, "shadow_enabled": False},
+            "text_appearance_version": 1,
+        },
+    ]
+    out = _parse(_caption_snapshot(job, variant), model_ops, utterance=RESTYLE_ASK)
+    # The shadow/stroke op is dropped; the animation goes to none on the same caption bars.
+    assert [op["op"] for op in out.ops] == ["patch_text"]
+    patch = out.ops[0]["patch"]
+    assert patch["text_case"] == "lower" and patch["x_frac"] == 0.08 and patch["y_frac"] == 0.86
+    assert patch["size_scale"] == 0.8
+    assert patch["animation_phases"] == {"entrance": "none", "exit": "none", "loop": "none"}
     assert out.ops[0]["target_ids"] == ["kria-cap0", "kria-cap1"]  # never the title
-    assert out.ops[1]["target_ids"] == ["kria-cap0", "kria-cap1"]
+    assert "turned off the typewriter animation" in out.reply
+    assert "say if you also want the shadow gone" in out.reply
     assert "captions you added in chat" in out.reply
+
+
+def test_the_shadow_is_touched_only_when_the_creator_says_so(guided) -> None:
+    job, variant, _rev = guided
+    shadow_op = {
+        "op": "patch_text_appearance",
+        "selector": {"scope": "editable_text", "quantifier": "all", "group": "labels"},
+        "patch": {"shadow_enabled": False},
+        "text_appearance_version": 1,
+    }
+    out = _parse(
+        _caption_snapshot(job, variant), [shadow_op], utterance="remove the shadow from them"
+    )
+    assert [op["op"] for op in out.ops] == ["patch_text_appearance"]
+    # an effect request with only a shadow op from the model still becomes the animation
+    out = _parse(_caption_snapshot(job, variant), [shadow_op], utterance="efekti kaldır")
+    assert [op["op"] for op in out.ops] == ["patch_text"]
+    assert out.ops[0]["patch"]["animation_phases"]["entrance"] == "none"
+
+
+def test_the_snapshot_and_prompt_show_each_bars_animation(guided) -> None:
+    from app.agents.edit_copilot import _format_snapshot
+
+    job, variant, _rev = guided
+    for bar in variant["text_elements"]:
+        bar["animation_phases"] = {"entrance": "typewriter", "exit": "none", "loop": "none"}
+    snap = build_editor_snapshot(job, variant)
+    assert snap["text_bars"][0]["animation_phases"]["entrance"] == "typewriter"
+    assert "animation=entrance:typewriter,exit:none,loop:none" in _format_snapshot(snap)
 
 
 def test_a_refused_value_is_named_in_plain_words(guided) -> None:

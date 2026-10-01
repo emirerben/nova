@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v62"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v63"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1300,6 +1300,17 @@ def _format_snapshot(snapshot: dict) -> str:
             for key in style_keys:
                 if bar.get(key) is not None:
                     style_bits.append(f"{key}={_field(bar.get(key), max_chars=80)}")
+            phases = bar.get("animation_phases")
+            if isinstance(phases, dict):
+                style_bits.append(
+                    "animation="
+                    + ",".join(
+                        f"{name}:{_field(phases.get(name) or 'none', max_chars=20)}"
+                        for name in ("entrance", "exit", "loop")
+                    )
+                )
+            if isinstance(bar.get("shadow_enabled"), bool):
+                style_bits.append(f"shadow={'on' if bar['shadow_enabled'] else 'off'}")
             timing = (
                 f" {start:.2f}-{end:.2f}s"
                 if start is not None and end is not None
@@ -3214,6 +3225,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
 
         ops, no_effect_reply = _drop_normalized_no_effect_ops(ops, input.variant_snapshot)
         ops = _ground_descriptive_captions(ops, input.variant_snapshot, input.utterance, state)
+        ops = _effect_removal_pass(ops, input.variant_snapshot, input.utterance, state)
 
         capacity_pending_seed = _bulk_pending_for_clarification(
             ops,
@@ -3944,6 +3956,80 @@ def _creator_vocab(utterance: str) -> set[str]:
         for word in re.findall(r"[^\W\d_]{4,}", _label_fold(utterance))
         if word not in _CAPTION_INSTRUCTION_WORDS
     }
+
+
+_EFFECT_WORDS = re.compile(
+    r"\b(effects?|animat\w*|typewriter|fade|pop|motion|efekt\w*|animasyon\w*)\b"
+)
+_SHADOW_WORDS = re.compile(
+    r"\b(shadows?|outlines?|strokes?|borders?|glow|g\u00f6lge\w*|kontur\w*)\b"
+)
+_REMOVE_WORDS = re.compile(
+    r"\b(remove|removing|no|without|turn off|disable|stop|get rid of|"
+    r"kald\u0131r\w*|sil|olmas\u0131n)\b"
+)
+_NO_PHASES = {"entrance": "none", "exit": "none", "loop": "none"}
+
+
+def _effect_removal_pass(
+    ops: list[dict], snapshot: dict, utterance: str, state: _ParseState
+) -> list[dict]:
+    """ "Remove the effect" means the ANIMATION (typewriter/fade/pop), not shadow or stroke.
+
+    Real draft: title and captions carried ``animation_phases.entrance = typewriter`` with a
+    static text effect and shadow on; the model removed the shadow. When the creator names an
+    effect/animation and no shadow/outline word, the animation is turned off on the targeted
+    bars, a shadow/stroke-only appearance op is dropped, and the reply says what changed.
+    """
+    text = _label_fold(utterance or "")
+    if not (_EFFECT_WORDS.search(text) and _REMOVE_WORDS.search(text)):
+        return ops
+    wants_shadow = _SHADOW_WORDS.search(text) is not None
+    kept: list[dict] = []
+    dropped_targets: list[str] = []
+    for op in ops:
+        patch = op.get("patch") if isinstance(op.get("patch"), dict) else {}
+        if (
+            op.get("op") == "patch_text_appearance"
+            and not wants_shadow
+            and patch
+            and set(patch) <= {"shadow_enabled", "stroke_width"}
+        ):
+            dropped_targets = list(op.get("target_ids") or dropped_targets)
+            continue
+        kept.append(op)
+    patch_ops = [op for op in kept if op.get("op") == "patch_text"]
+    if patch_ops:
+        for op in patch_ops:
+            op["patch"] = {**op["patch"], "animation_phases": dict(_NO_PHASES)}
+        targets = {t for op in patch_ops for t in op.get("target_ids") or []}
+    elif dropped_targets:
+        kept.append(
+            {
+                "op": "patch_text",
+                "selector": {"ids": dropped_targets},
+                "patch": {"animation_phases": dict(_NO_PHASES)},
+                "target_ids": dropped_targets,
+                "expected_count": len(dropped_targets),
+            }
+        )
+        targets = set(dropped_targets)
+    else:
+        return ops
+    names = {
+        str((bar.get("animation_phases") or {}).get("entrance"))
+        for bar in _snapshot_list(snapshot, _TEXT_INDEX_KEYS)
+        if isinstance(bar, dict)
+        and bar.get("id") in targets
+        and isinstance(bar.get("animation_phases"), dict)
+        and (bar["animation_phases"].get("entrance") or "none") != "none"
+    }
+    label = f"the {sorted(names)[0]} animation" if len(names) == 1 else "the text animation"
+    note = f"I turned off {label}"
+    if not wants_shadow:
+        note += "; say if you also want the shadow gone"
+    state.reply_notes.append(note + ".")
+    return kept
 
 
 def _ground_descriptive_captions(
