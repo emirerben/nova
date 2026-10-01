@@ -277,3 +277,11 @@ def test_edit_copilot_eval(
         assert deltas(result.output["ops"]) == deltas(expected)
         for phrase in fixture.meta.get("reply_contains", []):
             assert phrase.lower() in result.output["reply"].lower()
+
+
+def test_capability_unavailable_detail_is_user_readable() -> None:
+    """The rejection detail is shown verbatim as the reply; it must be plain language."""
+    from app.agents.edit_copilot import CAPABILITY_UNAVAILABLE_DETAIL
+
+    assert CAPABILITY_UNAVAILABLE_DETAIL == "I can't change that on this edit yet."
+    assert "operation" not in CAPABILITY_UNAVAILABLE_DETAIL
