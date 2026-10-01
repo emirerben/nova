@@ -61,11 +61,13 @@ from app.routes.generative_jobs import (
     enqueue_editor_commit_render,
     phone_subtitled_sfx_paths_sync,
     prepare_editor_commit,
+    variant_render_baseline,
 )
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
     KriaEditorOpError,
     compile_editor_ops,
+    fresh_editor_head_payload,
     merge_editor_draft,
     project_editor_draft,
 )
@@ -387,6 +389,7 @@ def _complete_draft_turn(
 
         variant_key = str(session.target_variant_id or "initial")
         generation_id = str(session.target_generation_id or "") or None
+        draft_generation_id = generation_id
         head = db.execute(
             select(CreatorEditDraft)
             .where(
@@ -412,13 +415,13 @@ def _complete_draft_turn(
             if variant is None:
                 raise RuntimeError("The exact editor target is no longer available")
             prior_payload = (
-                (head.snapshot_json or {}).get("editor_payload") or {}
-                if head is not None
-                and head.base_job_id == job.id
-                and head.base_generation_id == generation_id
-                and (head.snapshot_json or {}).get("kind") == "editor"
+                fresh_editor_head_payload(head, variant)
+                if head is not None and head.base_job_id == job.id
                 else {}
             )
+            # The session pointer goes stale after an editor Save; stamp the draft
+            # with the variant's real generation so it never self-perpetuates.
+            draft_generation_id = variant_render_baseline(variant) or generation_id
             if prior_payload and any(
                 op.get("op") == "apply_speech_cut_candidate" for op in arguments.operations
             ):
@@ -529,7 +532,7 @@ def _complete_draft_turn(
             item_id=item.id,
             variant_key=variant_key,
             base_job_id=job.id if job is not None else None,
-            base_generation_id=generation_id,
+            base_generation_id=draft_generation_id,
             draft_revision=next_revision,
             parent_draft_id=head.id if head is not None else None,
             snapshot_json=snapshot,
