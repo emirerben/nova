@@ -258,23 +258,30 @@ public struct LivePreviewExportSnapshot: Sendable {
             RecipeVideoInstruction(timeRange: range, layers: active, text: painted, canvas: current.renderSize,
                 cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore)
         }
-        let mix = AVMutableAudioMix()
-        if recipe.audio.musicAssetID != nil {
-            guard next.audio == recipe.audio, next.tracks == recipe.tracks else { throw NativePreviewFeatureError("LivePreviewComposition-176") }
-            mix.inputParameters = preview.playerItem.audioMix?.inputParameters ?? []
-        } else {
+        // The guards above pin every clip's timing and fades, so only volumes,
+        // `originalVolume` and mute windows can move the mix. A text, style or
+        // overlay edit changes none of them: keep the live item's mix as it is.
+        // Re-assigning even an identical mix to the item AVPlayer is rendering
+        // is the one runtime difference KRI-241 traced the silent voice after
+        // an unsaved caption edit to; a full rebuild brings the voice back.
+        var mix: AVMutableAudioMix?
+        if next.audio != recipe.audio || next.tracks.flatMap(\.clips).map(\.volume) != recipe.tracks.flatMap(\.clips).map(\.volume) {
+            // The music bed has no binding to rebuild it from.
+            guard recipe.audio.musicAssetID == nil else { throw NativePreviewFeatureError("LivePreviewComposition-176") }
             let clips = Dictionary(uniqueKeysWithValues: next.tracks.flatMap(\.clips).map { ($0.id, $0) })
-            mix.inputParameters = try preview.audioBindings.map { binding in
+            let rebuilt = AVMutableAudioMix()
+            rebuilt.inputParameters = try preview.audioBindings.map { binding in
                 guard let clip = clips[binding.clipID] else { throw NativePreviewFeatureError("LivePreviewComposition-181") }
                 let parameter = AVMutableAudioMixInputParameters()
                 parameter.trackID = binding.trackID
                 applyAudioGain(parameter, clip: clip, gain: binding.usesOriginalGain ? next.audio.originalVolume : 1, windows: next.audio.muteWindows, duck: binding.usesOriginalGain ? preview.duckEnvelope : nil)
                 return parameter
             }
+            mix = rebuilt
         }
         // Publish only after every layer and audio binding validates successfully.
         preview.playerItem.videoComposition = replacement
-        preview.playerItem.audioMix = mix
+        if let mix { preview.playerItem.audioMix = mix }
         assetURLs = urls
         recipe = next
     }
