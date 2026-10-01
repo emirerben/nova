@@ -46,6 +46,13 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # are always captured when the creator states a route or a sequence (v39).
 MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v39"
 
+# Prior chat messages the model sees. Callers must bound their history to this:
+# runtime v2 loaded 24 rows, so every turn on a longer thread failed input
+# validation with "I couldn't finish that step" (KRI-238). Raised 20 -> 40: 20 was
+# too small for real threads; the planner truncates each row to 1000 chars, so 40
+# rows is ~10k tokens worst case.
+MAIN_CREATOR_CONVERSATION_MAX = 40
+
 # Appended to the OWNED FOOTAGE SUMMARIES header line ONLY when CLIP_FACTS is on
 # for the account ("" otherwise, so the flag-off prompt is byte-identical). The
 # `facts` list sits beside `analysis_only_not_copy`, not inside it, because
@@ -228,7 +235,7 @@ class MainCreatorInput(BaseModel):
     creator_direction: str = Field(default="", max_length=4000)
     item_context: str = Field(default="", max_length=4000)
     media_context: list[dict] = Field(default_factory=list, max_length=50)
-    conversation: list[dict] = Field(default_factory=list, max_length=20)
+    conversation: list[dict] = Field(default_factory=list, max_length=MAIN_CREATOR_CONVERSATION_MAX)
     capability_manifest: ResolvedCreatorManifest
     # KRI-188: True only when the Creative Brief is on for this creator. Off =>
     # the prompt is byte-identical and no `brief_updates` are read from output.
@@ -467,6 +474,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             )[:1000]
             raise SchemaError(f"main_creator: invalid output: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, ValueError):
+                # Server policy refusals ("all-media scope requires the guided
+                # proposal capability") carry fixed, value-free messages. Name
+                # the rule so the retry can change course instead of repeating
+                # the same strategy blind (KRI-238).
+                self._schema_feedback = str(exc)[:300]
             raise SchemaError(f"main_creator: invalid output: {exc}") from exc
 
     def schema_clarification(self) -> str:
@@ -510,12 +523,14 @@ def _reaction_beats_available(manifest: ResolvedCreatorManifest) -> bool:
 
 
 def _repair_action_envelope(action: object) -> object:
-    """Repair only the known harmless nested-summary envelope typo.
+    """Repair only the known harmless nested-field envelope typos.
 
-    Some model responses put a proposal summary inside ``strategy`` although
-    the documented envelope puts it beside ``strategy``. Move only a string
-    summary when the destination is absent; all other malformed or unknown
-    fields remain subject to the strict adapter and fail closed.
+    Some model responses put the proposal `summary` (a string) or
+    `render_intent_evidence` (an object) inside ``strategy`` although the
+    documented envelope puts both beside ``strategy`` (the evidence one was
+    seen on a phone Talking "Add captions" turn, KRI-238). Move each only when
+    its destination is absent; all other malformed or unknown fields remain
+    subject to the strict adapter and fail closed.
     """
 
     if not isinstance(action, dict) or action.get("kind") != "propose_strategy":
@@ -523,18 +538,19 @@ def _repair_action_envelope(action: object) -> object:
     strategy = action.get("strategy")
     if not isinstance(strategy, dict):
         return action
-    nested_summary = strategy.get("summary")
-    if "summary" in action or not isinstance(nested_summary, str):
+    moved = {
+        key: strategy[key]
+        for key, kind in (("summary", str), ("render_intent_evidence", dict))
+        if key not in action and isinstance(strategy.get(key), kind)
+    }
+    if not moved:
         return action
-    repaired_strategy = dict(strategy)
-    repaired_strategy.pop("summary", None)
-    repaired = dict(action)
-    repaired["strategy"] = repaired_strategy
-    repaired["summary"] = nested_summary
-    return repaired
+    repaired_strategy = {key: value for key, value in strategy.items() if key not in moved}
+    return {**action, "strategy": repaired_strategy, **moved}
 
 
 __all__ = [
+    "MAIN_CREATOR_CONVERSATION_MAX",
     "MAIN_CREATOR_PROMPT_VERSION",
     "MainCreatorAgent",
     "MainCreatorInput",

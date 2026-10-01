@@ -65,7 +65,12 @@ from app.agents._schemas.creator_policy import (
 )
 from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
-from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCreatorOutput
+from app.agents.main_creator import (
+    MAIN_CREATOR_CONVERSATION_MAX,
+    MainCreatorAgent,
+    MainCreatorInput,
+    MainCreatorOutput,
+)
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
@@ -461,19 +466,26 @@ def _carried_brief_seed(previous_active_plan: dict[str, Any] | None, message: st
     return "\n".join(lines)[: max(budget, 0)].strip()
 
 
+# Session-event rows here carry up to CREATOR_REQUEST_MAX_CHARS each (the planner
+# truncates to 1000), so this builder keeps its own, smaller window; it must never
+# exceed the MainCreatorInput schema cap.
+_ROUTE_CONVERSATION_WINDOW = min(20, MAIN_CREATOR_CONVERSATION_MAX)
+
+
 def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
     turns = [
         {
             "role": event.role,
             "content": str((event.payload or {}).get("message") or "")[:CREATOR_REQUEST_MAX_CHARS],
         }
-        for event in sorted(events, key=lambda value: value.sequence)[-20:]
+        for event in sorted(events, key=lambda value: value.sequence)[-_ROUTE_CONVERSATION_WINDOW:]
         if (event.payload or {}).get("message")
     ]
     carried = _carried_brief(events)
     if carried:
         # The failed session's brief opens a fresh session's history.
-        return [{"role": "user", "content": carried}, *turns[-19:]]
+        keep = _ROUTE_CONVERSATION_WINDOW - 1
+        return [{"role": "user", "content": carried}, *turns[-keep:]]
     return turns
 
 

@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.36.0] - 2026-10-01
+
+### Changed
+- test(copilot): guided phone-commit coverage for copilot shorten (KRI-219/KRI-237) (#1293) <!-- release-pr: 1293 -->
+
+## [0.77.35.0] - 2026-10-01
+
+### Changed
+- feat(copilot): vague "make it shorter/longer" asks one follow-up with concrete options (prompt v64) (#1291) <!-- release-pr: 1291 -->
+
+## [0.77.34.0] - 2026-10-01
+
+### Changed
+- fix(copilot): never claim success when an op was rejected (#1289) <!-- release-pr: 1289 -->
+
+## [0.77.33.0] - 2026-10-01
+
+### Changed
+- fix(kria): cap the Main Creator conversation at its schema limit (20, not 24) (#1287) <!-- release-pr: 1287 -->
+
+## [0.77.32.0] - 2026-10-01
+
+### Fixed
+- fix(kria): "Add captions" on a one-clip iPhone Talking project no longer fails the turn (KRI-238) (#1288) <!-- release-pr: 1288 -->
+
 ## [0.77.31.0] - 2026-10-01
 
 ### Fixed
