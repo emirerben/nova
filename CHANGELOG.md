@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.44.0] - 2026-10-01
+
+### Changed
+- feat(copilot): realign_labels op — server-computed label retime after a manual trim (prompt v65) (#1298) <!-- release-pr: 1298 -->
+
 ## [0.77.43.0] - 2026-10-01
 
 ### Changed
