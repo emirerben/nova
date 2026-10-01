@@ -4865,3 +4865,65 @@ async def test_run_copilot_turn_threads_memory_and_unmet_requests(monkeypatch) -
     assert seen["input"].original_request == "20K run"
     assert seen["input"].prior_turns == [{"role": "user", "content": "hi"}]
     assert response.unmet_requests == [{"request": "label each clip", "reason": "no place data"}]
+
+
+# ── Vague "make it shorter" (no number) defaults to proportional ─────────────
+
+
+def test_vague_shorter_without_number_accepts_set_total_duration() -> None:
+    out = _parse(
+        [{"op": "set_total_duration", "target_s": 8.4, "strategy": "proportional"}],
+        snapshot={
+            "allowed_op_families": ["clip", "text", "transition"],
+            "editor_ops_version": 2,
+            "slots": [
+                {
+                    "key": f"s{i + 1}",
+                    "slot_id": f"s{i + 1}",
+                    "clip_index": i,
+                    "media_id": f"m{i}",
+                    "in_s": 0.0,
+                    "duration_s": 3,
+                    "source_duration_s": 10.0,
+                    "output_start_s": 3.0 * i,
+                    "output_end_s": 3.0 * (i + 1),
+                    "removed": False,
+                    "transition_after": "cut",
+                    "look_preset": "none",
+                    "media_kind": "video",
+                }
+                for i in range(4)
+            ],
+            "text_bars": [],
+            "total_duration_s": 12,
+            "max_duration_s": 120,
+            "remaining_duration_s": 108,
+        },
+        utterance="make it shorter",
+    )
+    assert not out.needs_clarification
+    assert [op["op"] for op in out.ops] == ["set_total_duration"]
+    assert out.ops[0]["target_s"] == 8.4
+
+
+def test_image_stack_followup_still_clarifies_after_vague_shorter_default() -> None:
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "clarify",
+                "ops": [],
+                "confidence": 0.9,
+                "reply": "How many seconds should each image be?",
+                "needs_clarification": True,
+                "pending_actions": [{"op": "stack_images"}, {"op": "set_media_duration"}],
+            }
+        ),
+        EditCopilotInput(
+            utterance="stack the images together and make them shorter",
+            prior_turns=[],
+            variant_snapshot=_bulk_snapshot(),
+        ),
+    )
+    assert out.needs_clarification
+    assert out.ops == []
+    assert out.pending_actions
