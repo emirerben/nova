@@ -592,6 +592,40 @@ def test_assemble_spine_cut_anchors_sit_on_the_rendered_picture_cuts():
     assert seen["anchors"] == [round(26 / 30, 3), round(58 / 30, 3)]
 
 
+def test_assemble_spine_cut_trims_are_not_broll_anchors():
+    # Leading and trailing trims shorten the spine without a jump cut. Only
+    # the interior removal gets an anchor; the trailing trim's point would be
+    # the video's last frame, and covering it ends the video on b-roll.
+    plan = CutPlan(
+        keep_segments=[(0.3, 0.88), (1.42, 6.2)],
+        removed=[
+            Removal(start_s=0.0, end_s=0.3, reason="silence"),
+            Removal(start_s=0.88, end_s=1.42, reason="filler_lexical"),
+            Removal(start_s=6.2, end_s=6.5, reason="silence"),
+        ],
+        time_saved_s=1.14,
+    )
+    seen: dict = {}
+    real_schedule = tha.schedule_broll
+
+    def _spy(usable_s, broll, anchors=None):
+        seen["anchors"] = anchors
+        return real_schedule(usable_s, broll, anchors=anchors)
+
+    with patch.object(tha, "schedule_broll", side_effect=_spy):
+        _calls, _cmds, events, _out_ctx = _run_assemble_with_cut(
+            silence_cut_fn=lambda p, d, **kw: _entry(plan),
+            probe_map=_probe_map("a", "b", dur=6.5),
+            target_duration_s=6.5,
+            cut_probe_dur=5.0,
+        )
+
+    # Frames [9, 26) then [43, 186): the one jump cut plays at frame 17.
+    assert seen["anchors"] == [round(17 / 30, 3)]
+    (plan_event,) = [e for e in events if e[1] == "silence_cut_plan"]
+    assert plan_event[2]["broll_anchors"] == 1
+
+
 def test_assemble_spine_cut_probe_failure_falls_back_to_the_rendered_length():
     # An unreadable cut spine falls back to arithmetic on the same frame
     # grid: 26 + 32 + 63 = 121 frames, not the raw plan's 4.06 s.

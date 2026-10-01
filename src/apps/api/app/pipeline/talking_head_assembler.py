@@ -652,7 +652,7 @@ def assemble_talking_head(
             ) from exc2
 
     # ── Cut applied: usable_s derives from the CUT spine (re-probe; the
-    # render's frame-grid arithmetic is the fallback), and each removal becomes
+    # render's frame-grid arithmetic is the fallback), and each jump cut becomes
     # a b-roll anchor at its picture cut on that grid. ──
     anchors: list[float] | None = None
     # The window _reframe_spine cut; the summary below persists its frames.
@@ -665,7 +665,19 @@ def assemble_talking_head(
             log.warning("talking_head_cut_spine_probe_failed", job_id=job_id, error=str(exc))
             cut_dur = kept_s
         usable_s = min(cut_dur, target_duration_s) if target_duration_s else cut_dur
-        anchors = [round(point, 3) for point in removal_cut_points(sc_plan, grid=grid)]
+        # Only a removal with kept speech on both sides is a jump cut. A
+        # leading or trailing trim just shortens the spine; on the grid a
+        # trailing trim's point is the video's last frame, and covering it
+        # would end the video on b-roll instead of the speaker.
+        spoken_from = sc_plan.keep_segments[0][0]
+        spoken_to = sc_plan.keep_segments[-1][1]
+        anchors = [
+            round(point, 3)
+            for removal, point in zip(
+                sc_plan.removed, removal_cut_points(sc_plan, grid=grid), strict=True
+            )
+            if spoken_from < removal.start_s and removal.end_s < spoken_to
+        ]
 
     if sc_plan is not None and sc_plan.bailout_reason is None:
         # Same persistence contract as the subtitled path (shared helpers, M2):
