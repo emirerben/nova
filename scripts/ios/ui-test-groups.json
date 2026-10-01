@@ -87,6 +87,7 @@
       "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeShrinksPreviewAndRestoresIt",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeGrowsPreviewBeyondDefault",
       "KriaUITests/NativeEditorInspectorUITests/testPanelExpansionResetsWhenPanelCloses",
+      "KriaUITests/NativeEditorInspectorUITests/testPanelHeaderDragsResizePanel",
       "KriaUITests/EditorUITests/testPreviewEmptyTapTogglesFullscreen",
       "KriaUITests/EditorUITests/testPreviewObjectTapStillSelectsNotFullscreen",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineSwipesSeekUnderFixedPlayhead",
