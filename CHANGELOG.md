@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.34.0] - 2026-10-01
+
+### Changed
+- fix(copilot): never claim success when an op was rejected (#1289) <!-- release-pr: 1289 -->
+
 ## [0.77.33.0] - 2026-10-01
 
 ### Changed
