@@ -960,6 +960,63 @@ def test_edge_graphs_render_whole_and_level(
     )
 
 
+def _decode_on_timestamps(path: Path, sample_rate: int) -> np.ndarray:
+    """Decode audio placing every sample at its timestamp from t=0.
+
+    A late start and any timestamp gap become silence, so index i is time
+    i / sample_rate whatever the container or FFmpeg version stamps.
+    """
+    pcm = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-vn",
+            "-af",
+            "aresample=async=1:min_hard_comp=0.001:first_pts=0",
+            "-f",
+            "f32le",
+            "-ac",
+            "1",
+            "-ar",
+            str(sample_rate),
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    ).stdout
+    return np.frombuffer(pcm, dtype=np.float32).astype(np.float64)
+
+
+def _max_piece_lag(
+    cut: np.ndarray,
+    reference: np.ndarray,
+    segments: list[tuple[float, float]],
+    end_s: float,
+    sample_rate: int,
+) -> tuple[int, int]:
+    """Worst (lag, first frame) of 0.1 s windows near each piece's ends."""
+    window = int(0.1 * sample_rate)
+    worst = (0, 0)
+    joint_frames = 0
+    for first, end in _frames(segments, end_s):
+        for offset_s in (0.2, (end - first) / 30 - 0.3):
+            out_at = round((joint_frames / 30 + offset_s) * sample_rate)
+            ref_at = round((first / 30 + offset_s) * sample_rate)
+            piece = cut[out_at : out_at + window]
+            lag = max(
+                range(-6000, 6001),
+                key=lambda k: float(np.dot(piece, reference[ref_at + k : ref_at + k + window])),
+            )
+            if abs(lag) > abs(worst[0]):
+                worst = (lag, first)
+        joint_frames += end - first
+    return worst
+
+
 @needs_ffmpeg
 def test_audio_starting_after_the_video_stays_aligned(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -983,8 +1040,10 @@ def test_audio_starting_after_the_video_stays_aligned(
             "lavfi",
             "-i",
             "testsrc2=duration=12:size=320x568:rate=30",
+            # Well past the AAC encoder's ~21 ms priming, which some FFmpeg
+            # versions stamp as a negative start.
             "-itsoffset",
-            "0.02",
+            "0.1",
             "-f",
             "lavfi",
             "-i",
@@ -1003,10 +1062,10 @@ def test_audio_starting_after_the_video_stays_aligned(
         capture_output=True,
         timeout=120,
     )
-    audio_start = next(
-        float(s["start_time"]) for s in _probe(fixture)["streams"] if s["codec_type"] == "audio"
-    )
-    assert audio_start > 0.01  # the fixture really starts its audio late
+    sample_rate = 48000
+    reference = _decode_on_timestamps(fixture, sample_rate)
+    # The fixture really starts its audio late: its first 50 ms are padding.
+    assert float(np.abs(reference[: int(0.05 * sample_rate)]).max()) == 0.0
     out = tmp_path / "late_cut.mp4"
     segments = [(0.0, 4.0), (5.5, 8.5), (10.0, 12.0)]
     reframe_and_export(
@@ -1019,25 +1078,12 @@ def test_audio_starting_after_the_video_stays_aligned(
         keep_segments=segments,
     )
 
-    sample_rate = 48000
-    # The source decode starts at its first audio sample, audio_start late.
-    source = _decode_mono(fixture, sample_rate)
-    cut = _decode_mono(out, sample_rate)
-    window = int(0.2 * sample_rate)
-    joint_frames = 0
-    for first, end in _frames(segments, 12.0):
-        for offset_s in (0.3, (end - first) / 30 - 0.3):  # near each end
-            out_at = round((joint_frames / 30 + offset_s - 0.1) * sample_rate)
-            src_at = round((first / 30 + offset_s - 0.1 - audio_start) * sample_rate)
-            piece = cut[out_at : out_at + window]
-            lag = max(
-                range(-3000, 3001),
-                key=lambda k: float(np.dot(piece, source[src_at + k : src_at + k + window])),
-            )
-            # Within 1 ms: Matroska stamps whole milliseconds. Unrebased, the
-            # first segment slid by the whole ~40 ms audio start.
-            assert abs(lag) <= 48, f"segment at frame {first} is {lag} samples off its picture"
-        joint_frames += end - first
+    lag, first = _max_piece_lag(
+        _decode_mono(out, sample_rate), reference, segments, 12.0, sample_rate
+    )
+    # Within 1 ms: Matroska stamps whole milliseconds. Unrebased, the first
+    # segment slid by the whole late start.
+    assert abs(lag) <= 48, f"segment at frame {first} is {lag} samples off its picture"
 
 
 @needs_ffmpeg
