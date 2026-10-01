@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.32.0] - 2026-10-01
+
+### Fixed
+- fix(kria): "Add captions" on a one-clip iPhone Talking project no longer fails the turn (KRI-238) (#1288) <!-- release-pr: 1288 -->
+
 ## [0.77.31.0] - 2026-10-01
 
 ### Fixed

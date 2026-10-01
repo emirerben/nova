@@ -218,3 +218,17 @@ def test_main_creator_eval(
             assert beat.get("visual_id") or beat.get("sound"), beat
         assert strategy.get("closing_media") is not None
         assert strategy.get("licensed_sfx") is None
+
+    if fixture.meta.get("single_clip_talking_scope"):
+        # KRI-238: "all" media on a one-clip phone Talking edit is that clip.
+        # Guided proposals never exist there, so an unrepaired "all" was
+        # refused on every attempt and the turn failed.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert strategy["edit_format"] == "subtitled"
+        assert strategy["render_program"] == "native"
+        assert strategy["media_scope"] == "selected"
+        manifest_media = fixture.input["capability_manifest"]["media"]
+        assert strategy["selected_media_ids"] == [manifest_media[0]["media_id"]]

@@ -1,0 +1,378 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-09-24-v39",
+  "input": {
+    "user_message": "Add captions",
+    "creator_request": "",
+    "creator_context": "{'summary': '', 'tone': 'casual', 'audience': '', 'content_pillars': [], 'style': {}}",
+    "creator_direction": "",
+    "item_context": "{'idea': '', 'theme': '', 'creator_notes': '', 'filming_guide': [], 'current_edit_format': 'subtitled', 'current_audio_mode': 'kria', 'has_recorded_voiceover': False}",
+    "media_context": [
+      {
+        "media_id": "analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4",
+        "kind": "video",
+        "duration_s": 14.8,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "subject": "a hooded figure on a wet street at night",
+          "summary": "Night street footage: a person in a dark hoodie stands on a rain-wet road under orange street lights.",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 4.0,
+              "description": "reflections on the wet road"
+            }
+          ]
+        }
+      }
+    ],
+    "conversation": [
+      {
+        "role": "assistant",
+        "content": "What are we making? Pick a format and we’ll shape it together."
+      },
+      {
+        "role": "user",
+        "content": "Add captions"
+      }
+    ],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-kri238",
+      "edit_format": "subtitled",
+      "render_program": "native",
+      "has_voiceover": false,
+      "narration": null,
+      "current_edit": null,
+      "media": [
+        {
+          "media_id": "analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4",
+          "kind": "video",
+          "duration_s": 14.8,
+          "label": null
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "f79b69faaab14beaa035db18ec32ac39",
+          "kind": "sound_effect",
+          "label": "Wrong buzzer"
+        },
+        {
+          "catalog_id": "4fcc09a5901f4f2eaba6571f1c183d3b",
+          "kind": "sound_effect",
+          "label": "Correct ding"
+        }
+      ],
+      "capabilities": {
+        "set_item_intent": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_story": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "native_render": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "draft_guided_proposal": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "dispatch_render": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "select_ready_variant": {
+          "available": false,
+          "reason_code": "no_ready_variant",
+          "reason": "a ready variant is required before selection"
+        },
+        "caption_style": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "caption styling is disabled by the server"
+        },
+        "automatic_cut": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "automatic speech cuts are disabled by the server"
+        },
+        "guided_voiceover": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "guided voiceover is disabled by the server"
+        },
+        "main_creator_agent": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "execution": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "execution is disabled by the server"
+        },
+        "review": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "review is disabled by the server"
+        },
+        "auto_iteration": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "auto_iteration is disabled by the server"
+        },
+        "guided_conversation": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_direction_confirmation": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_auto_design": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "transitions": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "transitions is disabled by the server"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "wide_looks cannot render on the iPhone yet"
+        },
+        "media_overlays": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "visual_blocks": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "motion_scenes": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "motion_scenes cannot render on the iPhone yet"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "sound_effects cannot render on the iPhone yet"
+        },
+        "phone_source_audio": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_still_images": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_visual_videos": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "media_overlays:video_cards": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated_ready": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated_planned": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:montage": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:talking_head": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "talking_head does not render on this iPhone yet"
+        },
+        "phone_format:day_vlog": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:single_hero": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:subtitled": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:narrated": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated does not render on this iPhone yet"
+        },
+        "phone_format:narrated_planned": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated_planned does not render on this iPhone yet"
+        },
+        "phone_format:narrated_ready": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated_ready does not render on this iPhone yet"
+        },
+        "phone_format:slides": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "slides does not render on this iPhone yet"
+        },
+        "reaction_beats": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:montage": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:talking_head": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:day_vlog": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:single_hero": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:subtitled": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:narrated": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:narrated_planned": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated_planned is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:narrated_ready": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated_ready is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:slides": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "slides is disabled or has no production renderer for this media snapshot"
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "manifest_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Add captions\",\n      \"facts\": {}\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"native\",\n      \"edit_format\": \"subtitled\",\n      \"archetype\": null,\n      \"audio_strategy\": \"original_audio\",\n      \"execution_contract\": null,\n      \"media_scope\": \"all\",\n      \"clip_intents\": [],\n      \"story_structure\": [\n        \"Present the night street footage\",\n        \"Overlay captions for any detected speech\"\n      ],\n      \"intro_hook\": null,\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 14.8,\n      \"render_program\": \"native\",\n      \"selected_media_ids\": [\n        \"analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4\"\n      ],\n      \"optional_treatments\": [],\n      \"rationale\": \"Applying the subtitled format to your footage to automatically generate and display captions for the video's original audio, playing out for the full 14.8 seconds.\",\n      \"caption_style\": \"auto\"\n    },\n    \"summary\": \"I'll update the video to include automatic captions, keeping the original 14.8-second footage and its natural audio intact.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"licensed_sfx\": null\n    }\n  }\n}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "native",
+        "edit_format": "subtitled",
+        "archetype": null,
+        "hero_media_id": null,
+        "audio_strategy": "original_audio",
+        "execution_contract": null,
+        "media_scope": "selected",
+        "story_structure": [
+          "Present the night street footage",
+          "Overlay captions for any detected speech"
+        ],
+        "caption_style": "auto",
+        "intro_hook": null,
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null,
+        "clip_intents": [],
+        "image_layout": null,
+        "pacing": "balanced",
+        "target_duration_s": 14.8,
+        "render_program": "native",
+        "selected_media_ids": [
+          "analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4"
+        ],
+        "optional_treatments": [],
+        "licensed_sfx": null,
+        "mixed_media_timing": null,
+        "montage_audio": null,
+        "video_reuse_policy": "once",
+        "rationale": "Applying the subtitled format to your footage to automatically generate and display captions for the video's original audio, playing out for the full 14.8 seconds."
+      },
+      "summary": "I'll update the video to include automatic captions, keeping the original 14.8-second footage and its natural audio intact.",
+      "render_intent_evidence": {
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null
+      }
+    },
+    "brief_updates": [
+      {
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "Add captions",
+        "facts": {}
+      }
+    ]
+  },
+  "meta": {
+    "source": "local_live_replay_2026-10-01",
+    "single_clip_talking_scope": true,
+    "notes": "KRI-238: live gemini-3.1-pro-preview answer to 'Add captions' on a one-clip iPhone Talking item (prod thread 467a02c4 shape, prod flags, CLIP_INTENTS off). The model chose media_scope 'all' for the single clip; before the fix that was refused on every attempt and the turn failed. Catalog trimmed to two entries."
+  }
+}
