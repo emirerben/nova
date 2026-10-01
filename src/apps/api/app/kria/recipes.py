@@ -121,6 +121,14 @@ class TimelineClip(_RecipeModel):
     # Requires the ``sourceCrop`` capability.
     source_crop: NormalizedSourceCrop | None = None
     volume: float = Field(default=1, ge=0, le=2)
+    # Seconds of linear gain ramp at this clip's audio start/end (KRI-139).
+    # Replaces the device's ~25ms declick edge when longer: the music bed's
+    # fade in/out and the cloud's 0.5s voiceover fade-out. Omitted when unset
+    # so every recipe digest that predates the fields is unchanged; an app
+    # build that predates them ignores the keys and plays the clip with its
+    # declick edges only.
+    audio_fade_in: float | None = Field(default=None, ge=0, le=60)
+    audio_fade_out: float | None = Field(default=None, ge=0, le=60)
 
     @model_serializer(mode="wrap")
     def _optional_look(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -134,6 +142,8 @@ class TimelineClip(_RecipeModel):
             "overlay_preserve_alpha",
             "still_layout",
             "source_crop",
+            "audio_fade_in",
+            "audio_fade_out",
         ):
             if getattr(self, key) is None:
                 result.pop(key, None)
@@ -155,6 +165,11 @@ class AudioMixRecipe(_RecipeModel):
     original_volume: float = Field(default=1, ge=0, le=2)
     fade_in: float = Field(default=0, ge=0, le=60)
     fade_out: float = Field(default=0, ge=0, le=60)
+    # Side-chain duck the footage's own audio (video-track clips) under every
+    # audio-kind track -- on the phone that is the narration voice, mirroring
+    # the cloud's narrated `sidechaincompress` bed (KRI-139). The name predates
+    # narration; nothing in the cloud ever set it for music. Requires the
+    # `audioDucking` capability (derived by the validator below).
     duck_original_during_music: bool = False
     mute_windows: list[AudioMuteWindow] = Field(default_factory=list, max_length=100)
     # Recorded-voiceover asset id (KRI-132). Additive/optional so schema v2
@@ -164,6 +179,11 @@ class AudioMixRecipe(_RecipeModel):
     # gain lives on the narration `TimelineTrack`'s clip `volume`, exactly
     # like the music bed).
     narration_asset_id: str | None = Field(default=None, max_length=160)
+    # Integrated-loudness target for the exported mix (KRI-139): the device
+    # measures the whole mix (ITU-R BS.1770) and applies one gain plus a
+    # -1.5 dBTP peak limiter, approximating the cloud's
+    # `loudnorm=I=<target>:TP=-1.5:LRA=11`. None = leave levels as mixed.
+    target_lufs: float | None = Field(default=None, ge=-40, le=-5)
 
     @model_serializer(mode="wrap")
     def preserve_legacy_shape(self, handler):
@@ -172,6 +192,8 @@ class AudioMixRecipe(_RecipeModel):
             payload.pop("mute_windows", None)
         if self.narration_asset_id is None:
             payload.pop("narration_asset_id", None)
+        if self.target_lufs is None:
+            payload.pop("target_lufs", None)
         return payload
 
 
@@ -287,6 +309,10 @@ class EditRecipeV1(_RecipeModel):
             self.required_capabilities |= {"visualBlocks"}
         if any(clip.look for clip in clips):
             self.required_capabilities = self.required_capabilities | {"goldenHourLook"}
+        if self.audio.duck_original_during_music:
+            # Mirrors `EditRecipe.effectiveCapabilities`: a device that has not
+            # verified the native side-chain duck must never receive one.
+            self.required_capabilities = self.required_capabilities | {"audioDucking"}
         if any(clip.transition and clip.transition.kind != "crossfade" for clip in clips):
             # New transition programs must not be offered as legacy crossfade
             # capability to clients that have not verified this implementation.

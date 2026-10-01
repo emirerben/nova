@@ -14,9 +14,8 @@ public struct CapabilityNegotiator: Sendable {
     public let provider: any RendererCapabilityProviding
     public init(provider: any RendererCapabilityProviding = DefaultRendererCapabilities()) { self.provider = provider }
     public func decide(for recipe: EditRecipe, freeStorageBytes: Int64? = nil, estimatedTemporaryBytes: Int64? = nil, thermalState: ThermalState = .nominal) -> CapabilityDecision {
-        if recipe.audio.duckOriginalDuringMusic {
-            return CapabilityDecision(route: .cloud, reason: "Audio ducking is not supported by this renderer")
-        }
+        // Ducking routes through the normal gate: `effectiveCapabilities` derives
+        // `.audioDucking`, which only a verified renderer declares (KRI-139).
         let missing = recipe.effectiveCapabilities.subtracting(provider.capabilities)
         if !missing.isEmpty { return CapabilityDecision(route: .cloud, missingCapabilities: missing, reason: "Renderer does not support required capabilities") }
         if let freeStorageBytes, let estimatedTemporaryBytes, freeStorageBytes < estimatedTemporaryBytes { return CapabilityDecision(route: .cloud, reason: "Insufficient temporary storage") }
