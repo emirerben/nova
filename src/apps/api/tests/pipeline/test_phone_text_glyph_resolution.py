@@ -60,19 +60,64 @@ def test_the_users_real_texts_compile_under_every_entrance_effect(text: str, eff
         assert _compile(text, effect=effect, **kwargs).text_layers
 
 
-def test_an_unmappable_character_falls_back_to_the_shaped_path_instead_of_blocking_save() -> None:
-    recipe = _compile("emoji \U0001f600 here")
-    runs = [run for layer in recipe.text_layers for run in getattr(layer, "runs", [])]
-    assert runs and all(run.shaped for run in runs)
-    ascii_runs = [run for layer in _compile("Window reflection").text_layers for run in layer.runs]
-    assert ascii_runs and not any(run.shaped for run in ascii_runs)  # unchanged for normal text
+class _StubFont:
+    """A font whose glyph map is controlled by the test (platform-independent)."""
+
+    def __init__(self, unmapped: str = "") -> None:
+        self.unmapped = unmapped
+
+    def textToGlyphs(self, text: str) -> list[int]:  # noqa: N802 - skia API name
+        return [0 if char in self.unmapped else 7 for char in text]
+
+    def getWidths(self, glyphs: list[int]) -> list[float]:  # noqa: N802
+        return [10.0 for _ in glyphs]
 
 
 def test_the_legacy_glyph_error_names_the_offending_character() -> None:
-    import skia
-
     from app.pipeline.portable_text_layout import resolve_legacy_glyphs
 
-    font = skia.Font(skia.Typeface.MakeDefault(), 40)
-    with pytest.raises(ValueError, match=r"U\+1F600 in 'a.*'"):
-        resolve_legacy_glyphs(font, "a\U0001f600b", 0.0)
+    with pytest.raises(ValueError, match=r"U\+1F600 in 'a.*b'"):
+        resolve_legacy_glyphs(_StubFont(unmapped="\U0001f600"), "a\U0001f600b", 0.0)  # type: ignore[arg-type]
+    assert len(resolve_legacy_glyphs(_StubFont(), "abc", 1.0)) == 3  # type: ignore[arg-type]
+
+
+def test_the_predicate_flags_zero_glyphs_and_count_mismatches() -> None:
+    from app.pipeline.portable_text_layout import legacy_glyphs_resolvable
+
+    assert legacy_glyphs_resolvable(_StubFont(), "abc\ndef")  # type: ignore[arg-type]
+    assert not legacy_glyphs_resolvable(_StubFont(unmapped="x"), "axb")  # type: ignore[arg-type]
+
+    class _Merged(_StubFont):
+        def textToGlyphs(self, text: str) -> list[int]:  # noqa: N802
+            return [7] * (len(text) - 1)  # e.g. a combining sequence collapsed into one glyph
+
+    assert not legacy_glyphs_resolvable(_Merged(), "ab")  # type: ignore[arg-type]
+
+
+def _shaped_flags(text: str) -> list[bool]:
+    return [run.shaped for layer in _compile(text).text_layers for run in layer.runs]
+
+
+def test_an_unmappable_text_falls_back_to_the_shaped_path(monkeypatch) -> None:  # noqa: ANN001
+    import app.pipeline.portable_text_layout as layout
+
+    monkeypatch.setattr(layout, "legacy_glyphs_resolvable", lambda _font, _text: False)
+    flags = _shaped_flags("Window reflection")
+    assert flags and all(flags)
+
+
+def test_a_mappable_text_keeps_the_unshaped_path_on_every_platform(monkeypatch) -> None:  # noqa: ANN001
+    """Simulates a skia build that maps the emoji 1:1: the fallback must not trigger."""
+    import app.pipeline.portable_text_layout as layout
+
+    monkeypatch.setattr(layout, "legacy_glyphs_resolvable", lambda _font, _text: True)
+    monkeypatch.setattr(
+        layout,
+        "resolve_legacy_glyphs",
+        lambda _f, text, _s: [
+            layout.PositionedGlyph(glyph_id=7, x=float(i), y=0) for i, _ in enumerate(text)
+        ],
+    )
+    flags = _shaped_flags("emoji \U0001f600 here")
+    assert flags and not any(flags)
+    assert not any(_shaped_flags("Window reflection"))  # real font, normal text: unshaped
