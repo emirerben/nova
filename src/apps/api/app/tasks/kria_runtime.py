@@ -113,6 +113,9 @@ class _ApprovalDispatchClaim:
     preflight_analysis_id: uuid.UUID | None = None
     speech_cleanup_analysis_id: uuid.UUID | None = None
     speech_cleanup_choice: str | None = None
+    # What the plan item pointed at BEFORE a strategy dispatch mints its new Job, so a
+    # failure after the pointer moves can put it back (never leave an orphan target).
+    prior_item_status: str | None = None
 
 
 def _snapshot(thread: CreationThread) -> dict[str, Any]:
@@ -1851,6 +1854,11 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             preflight_analysis_id=preflight_analysis_id,
             speech_cleanup_analysis_id=speech_cleanup_analysis_id,
             speech_cleanup_choice=speech_cleanup_choice,
+            prior_item_status=(
+                str(getattr(item, "item_status", None))
+                if getattr(item, "item_status", None) is not None
+                else None
+            ),
         )
 
 
@@ -1994,6 +2002,68 @@ _VISUALS_DISPATCH_REFUSALS: dict[str, str] = {
 }
 
 
+_FINISH_DEADLOCK_ATTEMPTS = 3
+
+
+def _is_deadlock(exc: BaseException) -> bool:
+    from sqlalchemy.exc import DBAPIError  # noqa: PLC0415
+
+    if not isinstance(exc, DBAPIError):
+        return False
+    return (getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)) in {
+        "40P01",
+        "40001",
+    }
+
+
+def _finish_with_deadlock_retry(
+    claim: _ApprovalDispatchClaim, **kwargs: Any
+) -> tuple[str, str | None]:
+    """`_finish_approval_dispatch` is idempotent (a dispatched execution returns early),
+    so an aborted deadlock victim may simply be retried a bounded number of times."""
+    import time  # noqa: PLC0415
+
+    for attempt in range(_FINISH_DEADLOCK_ATTEMPTS):
+        try:
+            return _finish_approval_dispatch(claim, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            if not _is_deadlock(exc) or attempt == _FINISH_DEADLOCK_ATTEMPTS - 1:
+                raise
+            log.warning("kria_approval_finish_deadlock_retry", attempt=attempt + 1)
+            time.sleep(0.15 * 2**attempt)
+    raise AssertionError("unreachable")
+
+
+def _compensate_failed_dispatch(claim: _ApprovalDispatchClaim, new_job_id: str) -> None:
+    """Undo `dispatch_item_render_for`'s pointer move when the approval could not be settled.
+
+    Only while the plan item still points at the Job this dispatch minted (anything newer
+    wins). Restores the previous Job and item status and fails the orphan Job. Lock order:
+    PlanItem -> Job (canonical).
+    """
+    new_id = uuid.UUID(str(new_job_id))
+    with sync_session() as db:
+        item = db.execute(
+            select(PlanItem).where(PlanItem.id == claim.item_id).with_for_update()
+        ).scalar_one_or_none()
+        job = db.execute(select(Job).where(Job.id == new_id).with_for_update()).scalar_one_or_none()
+        if item is None or job is None or item.current_job_id != new_id:
+            return
+        if claim.target_job_id is not None:
+            item.current_job_id = claim.target_job_id
+            if claim.prior_item_status is not None:
+                item.item_status = claim.prior_item_status
+        job.status = "failed"
+        job.failure_reason = "kria_dispatch_aborted"
+        db.commit()
+        log.warning(
+            "kria_dispatch_compensated",
+            item_id=str(claim.item_id),
+            orphan_job_id=str(new_id),
+            restored_job_id=str(claim.target_job_id),
+        )
+
+
 def _finish_approval_dispatch(
     claim: _ApprovalDispatchClaim,
     *,
@@ -2004,6 +2074,15 @@ def _finish_approval_dispatch(
     successful = outcome in {"dispatched", "already_active"} and job_id is not None
     successor_id: str | None = None
     with sync_session() as db:
+        if successful:
+            # Canonical order (db_locks): PlanItem -> Job -> Session. Pointing the session and
+            # the execution at the NEW Job takes a FOR KEY SHARE on that Job row through the
+            # foreign key, and a status poll holds that Job FOR UPDATE while it waits for the
+            # Session (`_lock_reconciliation_graph`): taking the Session first here made the
+            # two a deadlock (2026-10-01, approval 3ac08f80). Lock the same rows in the same
+            # order so the later FK check is a no-op.
+            db.execute(select(PlanItem).where(PlanItem.id == claim.item_id).with_for_update())
+            db.execute(select(Job).where(Job.id == uuid.UUID(str(job_id))).with_for_update())
         session = db.execute(
             select(CreatorAgentSession)
             .where(CreatorAgentSession.id == claim.session_id)
@@ -2249,12 +2328,26 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
         outcome = result.outcome
         result_job_id = result.job_id
         dispatch_reason = getattr(result, "reason", None)
-    status, successor_id = _finish_approval_dispatch(
-        claim,
-        outcome=outcome,
-        job_id=result_job_id,
-        **({"reason": dispatch_reason} if dispatch_reason else {}),
-    )
+    try:
+        status, successor_id = _finish_with_deadlock_retry(
+            claim,
+            outcome=outcome,
+            job_id=result_job_id,
+            **({"reason": dispatch_reason} if dispatch_reason else {}),
+        )
+    except Exception:
+        # The dispatch already minted the Job and moved the plan item to it. Leaving that
+        # half-switched strands the project on an unrendered orphan (the app shows the old
+        # video "gone"), and the reconcile sweep would then find the approval stale. Put the
+        # pointer back, fail the new Job, and settle the approval as a retryable failure.
+        log.exception("kria_approval_finish_failed", approval_id=approval_id, job_id=result_job_id)
+        if outcome == "dispatched" and result_job_id is not None:
+            _compensate_failed_dispatch(claim, result_job_id)
+            status, successor_id = _finish_approval_dispatch(
+                claim, outcome="publish_failed", job_id=None
+            )
+        else:
+            raise
     if successor_id is not None:
         run_kria_turn.apply_async(
             args=[successor_id],
@@ -2602,7 +2695,34 @@ def reconcile_kria_turns() -> dict[str, int]:
 
     if not settings.kria_runtime_v2_enabled:
         return {"published": 0, "settled": 0}
+    # One sweep at a time: beat can fire again (or a local helper loop can run) while the
+    # previous sweep is still observing renders. A second sweep would only republish the
+    # same approvals and fight the first over the same rows, so skip it.
+    from sqlalchemy import text  # noqa: PLC0415
 
+    from app.database import sync_engine  # noqa: PLC0415
+
+    with sync_engine.connect() as lock_conn:
+        got = lock_conn.execute(
+            text("select pg_try_advisory_lock(:key)"), {"key": _RECONCILE_ADVISORY_KEY}
+        ).scalar()
+        if not got:
+            log.info("kria_reconcile_skipped_overlap")
+            return {"published": 0, "settled": 0, "skipped": 1}
+        try:
+            return _reconcile_kria_turns_body()
+        finally:
+            lock_conn.execute(
+                text("select pg_advisory_unlock(:key)"), {"key": _RECONCILE_ADVISORY_KEY}
+            )
+            lock_conn.commit()
+
+
+# Arbitrary, stable advisory-lock key for the reconcile sweep ("kria rec" in hex).
+_RECONCILE_ADVISORY_KEY = 0x4B52494152454300
+
+
+def _reconcile_kria_turns_body() -> dict[str, int]:
     with sync_session() as db:
         database_now = db.execute(select(func.now())).scalar_one()
         turns = list(
