@@ -588,6 +588,134 @@ def op_set_texts_timing(state: _DraftState, op: dict[str, Any]) -> None:
     state.summary = f"Retime {_plural(len(rows), 'text')}"
 
 
+# ------------------------------------------------------------- realign_labels
+
+LABEL_ALIGN_TOLERANCE_S = 0.05
+_MIN_LABEL_BAR_S = 0.2
+
+
+def _slot_window(slot: dict[str, Any]) -> tuple[float, float] | None:
+    start = _number(slot.get("output_start_s"))
+    end = _number(slot.get("output_end_s"))
+    if start is None:
+        return None
+    if end is None:
+        duration = _number(slot.get("duration_s"))
+        if duration is None:
+            return None
+        end = start + duration
+    return (start, end) if end > start else None
+
+
+def plan_label_realign(
+    labels: list[dict[str, Any]], slots: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Which clip-bound label bars sit off their clip's CURRENT output window.
+
+    ``labels``: ``{id, media_id, segment_id?, start_s, end_s}``. ``slots``: live
+    (not removed) slot rows with an output window. A label is matched to its slot
+    by ``segment_id`` (== the slot's ``slot_id``), else by media (the slot of
+    that clip it overlaps most). Returns ``{id, start_s, end_s, segment_id}`` for
+    every label more than ``LABEL_ALIGN_TOLERANCE_S`` off, flushed to the window.
+    Pure and shared by the parser (snapshot) and the compiler (live variant).
+    """
+    windows: list[tuple[dict[str, Any], float, float]] = []
+    for slot in slots:
+        window = _slot_window(slot)
+        if window is not None and not slot.get("removed"):
+            windows.append((slot, window[0], window[1]))
+    plan: list[dict[str, Any]] = []
+    for label in labels:
+        start, end = _number(label.get("start_s")), _number(label.get("end_s"))
+        if start is None or end is None:
+            continue
+        match = None
+        seg = label.get("segment_id")
+        if seg:
+            match = next((w for w in windows if str(w[0].get("slot_id")) == str(seg)), None)
+        if match is None and label.get("media_id"):
+            candidates = [w for w in windows if w[0].get("media_id") == label["media_id"]]
+            if candidates:
+                match = max(candidates, key=lambda w: max(0.0, min(end, w[2]) - max(start, w[1])))
+        if match is None:
+            continue
+        slot, w_start, w_end = match
+        if w_end - w_start < _MIN_LABEL_BAR_S:
+            continue
+        if (
+            abs(start - w_start) <= LABEL_ALIGN_TOLERANCE_S
+            and abs(end - w_end) <= LABEL_ALIGN_TOLERANCE_S
+        ):
+            continue
+        plan.append(
+            {
+                "id": label["id"],
+                "start_s": round(w_start, 6),
+                "end_s": round(w_end, 6),
+                "segment_id": slot.get("slot_id"),
+            }
+        )
+    return plan
+
+
+def op_realign_labels(state: _DraftState, op: dict[str, Any]) -> None:
+    """Flush clip-bound label bars to their clip's current output window.
+
+    Server-computed: the model never supplies a time. Text, style and position
+    are untouched; captions, titles and non-clip bars are never matched.
+    """
+    if "timeline" in state.changed:
+        # A timeline op in the same bundle already re-windows every label
+        # (rebase_guided_text) onto the new layout; nothing left to do.
+        state.summary = "Labels follow the timeline change"
+        return
+    bars = bars_from_variant(state.job, state.variant)
+    selector = op.get("selector") if isinstance(op.get("selector"), dict) else {"group": "labels"}
+    matched = {
+        bar_id
+        for bar_id in resolve_selector(bars, selector)
+        if classify(bars).get(bar_id) == "label"
+    }
+    wanted = set(op.get("target_ids") or matched)
+    by_bar = {bar["id"]: bar for bar in bars}
+    links = _clip_label_links(state.job, state.variant)
+    labels: list[dict[str, Any]] = []
+    rows: dict[str, dict[str, Any]] = {}
+    for row in state.text:
+        row_id = row.get("id")
+        if (
+            not isinstance(row_id, str)
+            or row_id not in matched & wanted
+            or id(row) in state.removed_text_bars
+            or row.get("removed")
+            or is_caption_text_bar(row)
+        ):
+            continue
+        media = (links.get(row_id) or {}).get("clip_id") or by_bar[row_id]["clip_id"]
+        if not media:
+            continue
+        rows[row_id] = row
+        labels.append(
+            {
+                "id": row_id,
+                "media_id": media,
+                "segment_id": row.get("segment_id"),
+                "start_s": row.get("start_s"),
+                "end_s": row.get("end_s"),
+            }
+        )
+    plan = plan_label_realign(labels, state.slots)
+    if not plan:
+        raise KriaEditorOpError("The labels already line up with their clips")
+    for item in plan:
+        row = rows[item["id"]]
+        row["start_s"], row["end_s"] = item["start_s"], item["end_s"]
+        if item.get("segment_id"):
+            row["segment_id"] = item["segment_id"]
+    state.changed.add("text")
+    state.summary = f"Realign {_plural(len(plan), 'label')} to their clips"
+
+
 def _variant_total(state: _DraftState) -> float:
     try:
         return float(sum(_slot_duration(row) for row in state.slots if not row.get("removed")))

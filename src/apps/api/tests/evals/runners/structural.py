@@ -2170,6 +2170,7 @@ _EDITOR_OPS_COMPILABLE_NAMES = frozenset(
         "patch_text",
         "remove_texts",
         "set_texts_timing",
+        "realign_labels",
     }
 )
 
@@ -2200,6 +2201,7 @@ _EDITOR_OPS_NO_TIMELINE_NAMES = frozenset(
         "patch_text",
         "remove_texts",
         "set_texts_timing",
+        "realign_labels",
     }
 )
 

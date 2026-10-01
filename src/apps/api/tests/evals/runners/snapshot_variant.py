@@ -147,6 +147,8 @@ def _slots_from_snapshot(snapshot: dict) -> list[dict]:
                 "transition_duration_s": row.get("transition_duration_s"),
                 "look_preset": row.get("look_preset") or "none",
                 "media_kind": row.get("media_kind"),
+                # Clip-bound label ops (`realign_labels`) match bars to slots by media id.
+                **({"media_id": row["media_id"]} if row.get("media_id") else {}),
             }
         )
     return slots

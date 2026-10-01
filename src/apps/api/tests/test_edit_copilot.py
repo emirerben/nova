@@ -5082,3 +5082,20 @@ def test_image_stack_followup_still_clarifies_with_typed_pending() -> None:
     assert out.needs_clarification
     assert out.ops == []
     assert out.pending_actions
+
+
+def test_alignment_asks_are_recognised_and_prompt_routes_them_to_realign_labels() -> None:
+    from app.agents import editor_ops_v2
+    from app.agents.edit_copilot import _ALIGNMENT_ASK_RE
+
+    for text in (
+        "i extended the first clip, readjust all texts to fit the shift properly",
+        "the texts aren't aligned with their respective videos",
+        "the labels are too early",
+    ):
+        assert _ALIGNMENT_ASK_RE.search(text), text
+    for text in ("label each clip with the place", "add the hour to each video"):
+        assert not _ALIGNMENT_ASK_RE.search(text), text
+    fragments = editor_ops_v2.prompt_fragments()
+    assert '"op":"realign_labels"' in fragments
+    assert "do NOT re-time labels yourself" not in fragments
