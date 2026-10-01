@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.30.0] - 2026-10-01
+
+### Changed
+- fix(kria): never turn an in-flight editor Save into a render approval (KRI-237) (#1285) <!-- release-pr: 1285 -->
+
 ## [0.77.29.0] - 2026-10-01
 
 ### Changed
