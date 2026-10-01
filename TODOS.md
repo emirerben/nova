@@ -2373,3 +2373,22 @@ worth a dedicated investigation if the two-tap UX becomes a real complaint,
 but out of scope to chase further here.
 **Priority:** P2 (both fixed; the "still open" notes above are the residual
 follow-ups, not live bugs).
+
+### Kria session `target_generation_id` goes stale after an editor Save (KRI-237 secondary)
+
+**What:** After the creator taps editor Save, the variant gets a new render generation, but
+`CreatorAgentSession.target_generation_id` keeps the pre-save value. `_load_editor_target`
+resolves the head draft with `CreatorEditDraft.base_generation_id == session.target_generation_id`,
+so after a Save the head draft (and the snapshot built on it) can be resolved against the stale
+generation, and the copilot edits the wrong base.
+**Why:** Found while root-causing KRI-237 ("Add animation to the title" right after Save became a
+render approval). The primary bug (target missing while the variant is `rendering`) is fixed with a
+`render_in_flight` miss + recovery reply; the stale-generation resolution is a separate correctness
+gap that only shows once the render finishes.
+**How:** Re-sync `session.target_generation_id` to the variant's current `render_generation_id`
+when the Save render completes (the existing re-sync near `app/tasks/kria_runtime.py:~2571` only covers some
+paths), or have `_load_editor_target` read the generation from the variant instead of the session.
+Add a regression test: Save -> render ready -> ask resolves the post-Save head draft.
+**Effort:** S (human ~half day / CC ~30 min)
+**Priority:** P2
+**Depends on:** KRI-237 recovery guard (planner `render_in_flight`) landing first

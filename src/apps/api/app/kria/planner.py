@@ -7,6 +7,7 @@ cannot author risk, target pins, idempotency identities, or completion claims.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import re
 import uuid
 from dataclasses import dataclass, replace
@@ -343,34 +344,92 @@ async def _sfx_catalog_rows(db: AsyncSession) -> list[dict]:
     ]
 
 
+# Variant render_status values meaning "a render is on its way" (generative_jobs.py).
+_IN_FLIGHT_STATUSES = frozenset({"rendering", "pending"})
+# Misses that must not fall through to a re-plan; no_current_job / no_active_session are
+# legitimate (a thread without an editor session) and keep the normal path.
+_GUARDED_MISSES = frozenset(
+    {"render_in_flight", "session_job_mismatch", "no_ready_variant", "no_allowed_families"}
+)
+
+# Why the last `_load_editor_target` in this task returned None (None = it did not miss).
+_editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "kria_editor_target_miss", default=None
+)
+
+
 async def _load_editor_target(
     db: AsyncSession,
     *,
     thread_id: uuid.UUID,
     item: PlanItem,
 ) -> _EditorTarget | None:
-    if item.current_job_id is None:
+    """Load the editor target for the item's current render.
+
+    Every ``None`` exit is logged as ``kria_editor_target_unavailable`` with a reason
+    and recorded in ``_editor_target_miss`` so ``plan_live_turn`` can react to it.
+    """
+    item_id = getattr(item, "id", None)
+    job_id = item.current_job_id
+    _editor_target_miss.set(None)
+
+    def _miss(reason: str, **extra: object) -> None:
+        _editor_target_miss.set(reason)
+        log.info(
+            "kria_editor_target_unavailable",
+            reason=reason,
+            thread_id=str(thread_id),
+            item_id=str(item_id),
+            job_id=str(job_id) if job_id else None,
+            **extra,
+        )
+
+    if job_id is None:
+        _miss("no_current_job", session_id=None)
         return None
     thread = await db.get(CreationThread, thread_id)
     if thread is None or thread.active_creator_agent_session_id is None:
+        _miss("no_active_session", session_id=None)
         return None
     session = await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
-    job = await db.get(Job, item.current_job_id)
+    job = await db.get(Job, job_id)
     if session is None or job is None or session.target_job_id != job.id:
+        _miss(
+            "session_job_mismatch",
+            session_id=str(thread.active_creator_agent_session_id),
+            session_found=session is not None,
+            job_found=job is not None,
+            session_target_job_id=str(session.target_job_id) if session else None,
+        )
         return None
     variants = [
         row for row in (job.assembly_plan or {}).get("variants") or [] if isinstance(row, dict)
     ]
-    variant = next(
-        (
-            row
-            for row in variants
-            if row.get("variant_id") == session.target_variant_id
-            and row.get("render_status") == "ready"
-        ),
+    target_row = next(
+        (row for row in variants if row.get("variant_id") == session.target_variant_id),
         None,
     )
+    variant = target_row if target_row and target_row.get("render_status") == "ready" else None
+    if variant is None and target_row and target_row.get("render_status") in _IN_FLIGHT_STATUSES:
+        # The creator just saved the editor (or a render is queued): the target exists
+        # and will be ready again shortly. Not the same as a missing/failed variant.
+        _miss(
+            "render_in_flight",
+            session_id=str(session.id),
+            target_variant_id=session.target_variant_id,
+            render_status=target_row.get("render_status"),
+        )
+        return None
     if variant is None:
+        _miss(
+            "no_ready_variant",
+            session_id=str(session.id),
+            target_variant_id=session.target_variant_id,
+            variants_seen=[
+                {"variant_id": row.get("variant_id"), "render_status": row.get("render_status")}
+                for row in variants
+            ],
+        )
         return None
     head = (
         await db.execute(
@@ -390,6 +449,7 @@ async def _load_editor_target(
     )
     snapshot = build_editor_snapshot(job, variant, clip_context=clip_context)
     if not snapshot["allowed_op_families"]:
+        _miss("no_allowed_families", session_id=str(session.id))
         return None
     rows = list(
         (
@@ -812,6 +872,40 @@ def _is_fast_path_plan(plan: KriaTurnPlan | None) -> bool:
     return True
 
 
+_EDITOR_TARGET_RECOVERY_REPLY = (
+    "I couldn't open your current edit to change it in place. Try again, "
+    "or ask me for a new version."
+)
+
+
+_EDITOR_TARGET_IN_FLIGHT_REPLY = (
+    "Your edit is still rendering \u2014 give it a moment, then ask again."
+)
+
+
+def _editor_target_miss_guarded() -> bool:
+    return _editor_target_miss.get() in _GUARDED_MISSES
+
+
+def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
+    """An editor-eligible ask on a rendered item whose editor target could not be
+    loaded must not silently become a re-plan that replaces the draft with a render."""
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="recovery",
+            response=(
+                _EDITOR_TARGET_IN_FLIGHT_REPLY
+                if _editor_target_miss.get() == "render_in_flight"
+                else _EDITOR_TARGET_RECOVERY_REPLY
+            ),
+        ),
+        manifest_hash=manifest.manifest_hash,  # type: ignore[attr-defined]
+        context_hash=manifest.context_hash,  # type: ignore[attr-defined]
+        defer_brief=True,
+    )
+
+
 async def plan_live_turn(
     db: AsyncSession,
     *,
@@ -853,9 +947,12 @@ async def plan_live_turn(
         # started. Only a plan made of in-place ops is taken; anything else (a
         # question, a structural op, a refusal) falls through to the router below,
         # unchanged. The requirement extraction still runs, off the critical path.
+        _editor_target_miss.set(None)
         fast_plan = await _plan_editor_revision(
             db, thread_id=thread_id, item=item, user_message=user_message
         )
+        if fast_plan is None and _editor_target_miss_guarded():
+            return _editor_target_recovery(manifest)
         if _is_fast_path_plan(fast_plan):
             return PlannedKriaTurn(
                 plan=fast_plan,
@@ -877,6 +974,14 @@ async def plan_live_turn(
                 context_hash=manifest.context_hash,
                 defer_brief=True,
             )
+        log.info(
+            "kria_copilot_skipped_replan",
+            reason="fast_path_not_taken",
+            route="fast_path",
+            thread_id=str(thread_id),
+            item_id=str(item_id),
+            copilot_mode=fast_plan.mode if fast_plan is not None else None,
+        )
         # The copilot call rolled the session back, which EXPIRES every loaded row
         # (item, plan, persona): reading one from async code raises MissingGreenlet.
         # Re-enter the planner from the top so the extract-first path re-reads
@@ -893,12 +998,21 @@ async def plan_live_turn(
             first_editor_result=(fast_plan,),
         )
     if not extract_first:
+        has_render = item.current_job_id is not None
+        _editor_target_miss.set(None)
         editor_plan = await _plan_editor_revision(
             db,
             thread_id=thread_id,
             item=item,
             user_message=user_message,
         )
+        if (
+            editor_plan is None
+            and _editor_target_miss_guarded()
+            and has_render
+            and _fast_path_eligible(user_message)
+        ):
+            return _editor_target_recovery(manifest)
         if editor_plan is not None:
             return PlannedKriaTurn(
                 plan=editor_plan,
@@ -972,9 +1086,13 @@ async def plan_live_turn(
     # AsyncSession raises MissingGreenlet, so re-read the item before using it.
     item = await _refetch_item(db, item_id)
     if item.current_job_id is not None:
+        _editor_target_miss.set(None)
         target = await _load_editor_target(db, thread_id=thread_id, item=item)
         shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
         await db.rollback()
+        if target is None and _editor_target_miss_guarded() and _fast_path_eligible(user_message):
+            # The route below would be a re-plan caused solely by the missing target.
+            return _editor_target_recovery(manifest)
     route = route_requirements(fresh, shape, message=user_message)
     if route == "editor_ops":
         if first_editor_result is not None:
@@ -994,6 +1112,13 @@ async def plan_live_turn(
                 brief_clip_ids=clip_ids,
                 brief_manifest=manifest,
             )
+        log.info(
+            "kria_copilot_skipped_replan",
+            reason="editor_ops_route_without_editor_plan",
+            route=route,
+            thread_id=str(thread_id),
+            item_id=str(item_id),
+        )
     planned = await _plan_from_creator_output(
         db,
         thread_id=thread_id,
