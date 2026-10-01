@@ -2669,3 +2669,44 @@ trim to a long voice, or carry the intro hook; the voiceover writer does all thr
 Reversal condition. Delete the voiceover writer once the unified planner gains voice + music
 mix and long-voice trimming and a device comparison shows parity.
 
+
+## [2026-10-01] Rule 0 may carve the stretched tail of a sentence-final token — the one edge trim (KRI-236, job 62716037)
+
+Context. After KRI-234 (`mixed-gap-v3`) the night-rain TR Talking take still kept ~1.0 s
+of dead air after "alakalı.". whisper stamped the token 5.84 → 6.86 s; the 50 ms RMS
+envelope puts the voice end at ~6.15–6.20 s, and the ambient span is 6.23 → 7.12 s with
+"Abi" at 7.26 s. The stamped word gap (0.40 s) is under `MAX_PAUSE_S`, so rule 3 never
+looked, and rule 0 refused the carve because it sits on the token's edge. Edge trims are
+refused on purpose: they were ~94% of the real speech an earlier, looser guard destroyed
+(2026-09-08 entries above).
+
+Decision (2026-10-01, proposed in KRI-236). Allow exactly one edge-trim shape, V2 only
+(`_sentence_final_tail_carve` in `app/pipeline/silence_cut.py`, diagnostic kind
+`trim_sentence_tail`). All of these must hold:
+the token ends in `. ? !` and not in an ellipsis (`a...` is a trailing-off hesitation);
+it overlaps exactly ONE long (>= `TOKEN_SILENCE_MIN_S`) silence span, by at least
+`TOKEN_SILENCE_MIN_OVERLAP_S`; that span starts >= `SENTENCE_TAIL_MIN_VOICED_S` (0.3 s)
+after the token's start (start times are reliable, D16); and it covers the whole stamped
+tail and ends within `SENTENCE_TAIL_REACH_S` (PAD_S + the 80 ms ambient edge guard) of the
+next word's start, without overlapping it. The token is shortened to the silence start, and
+rule 3 then tightens the pause like any other, keeping `KEPT_GAP_S/2` on each side.
+`DETECTOR_VERSION` → `mixed-gap-v4`.
+
+Why it is safe enough. A quiet trailing syllable that the floor still hears leaves sound
+between the silence and the next word, so the reach check refuses it. Several quiet
+patches mean a mumbled word, which is refused. Starting the silence close to the token's
+start means the word has no real voiced length, which is also refused. The residual risk
+is a final syllable that is quieter than the floor all the way to the next word. That
+syllable sits inside a span of at least 0.6 s and is followed by a sentence boundary, and
+the kept `KEPT_GAP_S/2` pre-roll still covers its first 125 ms.
+
+Evidence. On the job 62716037 source the V2 plan now removes 6.355 → 7.12 s. The kept
+"alakalı." → "Abi" pause is 0.35 s from the voice end, and no audio before 6.355 s is cut.
+Every RMS frame inside the cut is at the −40 to −43 dB ambient floor. Guards:
+`TestSentenceFinalTailTrim` + the punctuated case in `TestRuleZeroCannotCutRealSpeech`
+(`tests/pipeline/test_silence_cut_asr_timestamp_golden.py`), plus the seeded rule-0
+property test, which now has to produce this kind.
+
+Reversal condition. If a "cleanup clipped the end of my sentence" report traces to a
+`trim_sentence_tail` adjustment, return `None` from `_sentence_final_tail_carve` and bump
+`DETECTOR_VERSION`. For an immediate stop, the kill switch is `SILENCE_CUT_ENABLED=false`.

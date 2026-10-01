@@ -122,7 +122,7 @@ bailout rail.
 — unintentionally — what stopped the detector cutting quiet speech that silencedetect's
 absolute −30 dBFS floor mis-reports as silence on soft-spoken and lapel-mic takes. That
 job now belongs to two guards in `app/pipeline/silence_cut.py`:
-`TOKEN_SPLIT_VOICE_RATIO = 0.5` + `TOKEN_SPLIT_PIECE_MAX_S = 0.35` (rule 0 carves ONE interior span per token, and only when both remnants are slivers whose total is at most half the carve; edge trims are refused outright — a carve at a token boundary is indistinguishable from a quiet onset, and edge trims were ~94% of the real speech an earlier, looser guard still destroyed) and `MIN_KEEP_SPEECH_SEGMENT_S = 0.6` (a short word-bearing
+`TOKEN_SPLIT_VOICE_RATIO = 0.5` + `TOKEN_SPLIT_PIECE_MAX_S = 0.35` (rule 0 carves ONE interior span per token, and only when both remnants are slivers whose total is at most half the carve; edge trims are refused — a carve at a token boundary is indistinguishable from a quiet onset, and edge trims were ~94% of the real speech an earlier, looser guard still destroyed; the one exception is `mixed-gap-v4`'s sentence-final tail carve, below) and `MIN_KEEP_SPEECH_SEGMENT_S = 0.6` (a short word-bearing
 keep segment is widened, never absorbed). So triage a report accordingly:
 
 - "cleanup left a pause in" → budget. Read the receipt: `clamped=true` with the span in
@@ -134,6 +134,13 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   log event `ambient_silence_spans` with `floor_db`/`threshold_db`). They activate only
   above a −50 dB ambient floor with ≥12 dB speech SNR and stay 80 ms clear of sound, which
   is the cut's pre/post-roll.
+- "cleanup left ~1 s of dead air after a sentence" where the stamped word gap is under
+  0.6 s → whisper stretched the sentence-final token's END over the pause. `mixed-gap-v4`
+  (KRI-236) carves that tail (`_sentence_final_tail_carve`, diagnostic kind
+  `trim_sentence_tail`) only when the token ends in `. ? !` (never `...`), one long span
+  starts ≥0.3 s into it, and the span runs to within 0.2 s of the next word. If a report
+  says a sentence's LAST syllable was clipped, check `token_adjustments` for that kind
+  first; it is the only edge trim rule 0 performs.
 - "cleanup is too aggressive for my taste" → this lever.
 - **"cleanup cut a word / clipped my speech" → a guard bug, NOT this lever.** Do not
   reach for `=0.55` to make it stop; that only hides it again, on some clips, by
