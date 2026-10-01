@@ -27420,8 +27420,9 @@ def _merge_speech_cut_prior_state(
     merged = dict(result)
     # New speech/caption/Smart analysis stays authoritative. Creator-authored
     # timing lanes are projected through the frames each cloud cut render
-    # played (or, for a prior render without frame_grid, its removals);
-    # appearance toggles are timing-free.
+    # played; a prior render that cut but has no frame_grid keeps both sides
+    # on the removals (reproject_timed_records). Appearance toggles are
+    # timing-free.
     for field in (
         "media_overlays",
         "sound_effects",

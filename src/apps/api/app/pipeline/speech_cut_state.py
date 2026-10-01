@@ -315,7 +315,7 @@ def remap_timed_records(
     ordered = sorted(removals, key=lambda r: (r.start_s, r.end_s))
     return _remap_records(
         records,
-        keep_spans=_keep_segments(ordered, math.inf),
+        keep_spans=_keep_segments(ordered),
         to_output=lambda t: t - _removed_before(t, ordered),
         anchor_to_output=lambda t: remap_time(t, ordered),
     )
@@ -376,15 +376,15 @@ def _remap_records(
     return out
 
 
-def _keep_segments(removals: list[Removal], duration_s: float) -> list[tuple[float, float]]:
+def _keep_segments(removals: list[Removal]) -> list[tuple[float, float]]:
+    """The spans sorted ``removals`` keep; the last runs open past any clip end."""
     cursor = 0.0
     keep: list[tuple[float, float]] = []
     for removal in removals:
         if removal.start_s > cursor:
             keep.append((cursor, removal.start_s))
         cursor = max(cursor, removal.end_s)
-    if duration_s > cursor:
-        keep.append((cursor, duration_s))
+    keep.append((cursor, math.inf))
     return keep
 
 
