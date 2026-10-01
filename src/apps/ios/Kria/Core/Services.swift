@@ -120,6 +120,8 @@ protocol KriaAPIClient: Sendable {
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted
+    /// `editorState` is the editor's unsaved state (server capability `editor_state_turns`); nil = omitted.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
@@ -198,6 +200,9 @@ extension KriaAPIClient {
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
         _ = clientEventID
         return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID)
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
@@ -846,7 +851,10 @@ struct KriaAPI: KriaAPIClient {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: UUID().uuidString)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
-        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision)), decode: TurnAccepted.self)
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState)), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
         try await request(
@@ -1273,7 +1281,29 @@ private enum ServerDateCoding {
         throw DecodingError.dataCorruptedError(in: try decoder.singleValueContainer(), debugDescription: "Expected ISO-8601 date")
     }
 }
-private struct SubmitTurnRequest: Encodable { let message: String; let clientEventID: String; let expectedThreadRevision: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision" } }
+private struct SubmitTurnRequest: Encodable {
+    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state" }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
+        try c.encode(expectedThreadRevision, forKey: .expectedThreadRevision)
+        try c.encodeIfPresent(editorState, forKey: .editorState)
+    }
+}
+
+/// The editor's CURRENT UNSAVED state sent with a chat turn (server `EditorStateIn`).
+/// `lanes` reuses the Save commit lane encoding; Save-only fields are never set.
+struct EditorStateRequest: Codable, Sendable, Equatable {
+    var version = 1
+    var baseGeneration: String
+    var clientStateID: String
+    var lanes: EditorCommitRequest
+    enum CodingKeys: String, CodingKey { case version; case baseGeneration = "base_generation"; case clientStateID = "client_state_id"; case lanes }
+}
+extension EditorCommitRequest: Equatable {
+    static func == (l: Self, r: Self) -> Bool { (try? JSONEncoder().encode(l)) == (try? JSONEncoder().encode(r)) }
+}
 private struct CreationActionRequest: Encodable { let action: String; let payload: [String: JSONValue]; let clientActionID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case action, payload; case clientActionID = "client_action_id"; case expectedRevision = "expected_revision" } }
 private struct ApprovalDecisionRequest: Encodable {
     let expectedThreadRevision: Int

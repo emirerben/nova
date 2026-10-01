@@ -305,6 +305,9 @@ private struct CreationWorkspaceView: View {
     @State private var previewVersion = 0
     @State private var maximumClipsByFormat: [CreationFormat: Int] = [:]
     @State private var capabilitiesAreAuthoritative = false
+    /// When capabilities were last read; the editor-state capability is re-read at send time once stale
+    /// so a server-side rollback of `editor_state_turns` takes effect without relaunching.
+    @State private var capabilitiesReadAt: Date?
     @State private var isChoosingFormat = false
     @State private var threadState: [String: JSONValue] = [:]
     @State private var afterSequence = -1
@@ -618,6 +621,9 @@ private struct CreationWorkspaceView: View {
             await pollUntilDismissed()
             await capabilities
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, capabilitiesAreAuthoritative { Task { await refreshEditorStateCapability() } }
+        }
         .onChange(of: currentProject.serverRevision) { _, revision in
             threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: revision)
         }
@@ -924,7 +930,18 @@ private struct CreationWorkspaceView: View {
         defer { isSending = false }
         // Edits staged from a chat draft already live in the server's draft head;
         // committing them here would render on every send. Only real local edits flush.
-        if editorSession.hasUnsavedChanges, !editorSession.hasOnlyChatStagedChanges {
+        // Runtime-v2 + server `editor_state_turns`: the copilot continues on top of the editor's
+        // CURRENT unsaved state, so nothing is saved or rendered here.
+        var editorState: EditorStateRequest?
+        if currentProject.runtimeVersion == 2 {
+            if Date().timeIntervalSince(capabilitiesReadAt ?? .distantPast) > 30 {
+                await refreshEditorStateCapability()
+            }
+            if capabilities?.editorStateTurnsEnabled == true {
+                editorState = editorSession.exportEditorState(maxBytes: capabilities?.editorStateMaxBytes)
+            }
+        }
+        if editorState == nil, editorSession.hasUnsavedChanges, !editorSession.hasOnlyChatStagedChanges {
             await editorSession.save()
             guard !editorSession.hasUnsavedChanges else {
                 failure = ChatFailure("Your message is still here. Save or resolve your editor changes before sending it.")
@@ -978,7 +995,8 @@ private struct CreationWorkspaceView: View {
         do {
             accepted = try await model.api.submitTurn(
                 threadID: project.id, message: message,
-                expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID
+                expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID,
+                editorState: editorState
             )
         } catch APIError.conflict {
             pendingMessages.removeAll { $0.id == optimistic.id }
@@ -1073,6 +1091,14 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// Lightweight re-read that only updates `capabilities` on success (no banner, no device-render
+    /// reconcile), so a transient failure keeps the last-known value.
+    private func refreshEditorStateCapability() async {
+        guard let response = try? await model.api.creationCapabilities() else { return }
+        capabilities = response
+        capabilitiesReadAt = Date()
+    }
+
     private func refreshCapabilities() async {
         do {
             let response = try await model.api.creationCapabilities()
@@ -1086,6 +1112,7 @@ private struct CreationWorkspaceView: View {
             // the post as the final card even if a rollout reorders its list.
             availableFormats = formats.sorted { $0.carouselOrder < $1.carouselOrder }
             capabilities = response
+            capabilitiesReadAt = Date()
             capabilitiesFailure = formats.isEmpty ? ChatFailure("No creation formats are currently available. Try again in a moment.") : nil
             maximumClipsByFormat = limits
             capabilitiesAreAuthoritative = true
