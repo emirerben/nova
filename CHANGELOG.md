@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.31.0] - 2026-10-01
+
+### Fixed
+- fix(speech-cleanup): crossfade narration cleanup cuts instead of hard splices (#1286) <!-- release-pr: 1286 -->
+
 ## [0.77.30.0] - 2026-10-01
 
 ### Changed
