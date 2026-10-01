@@ -2016,10 +2016,92 @@ def _compile_fast_cuts(
     return normalized, repaired_ids, raw_total_s
 
 
+def _quick_mixed_hold_range(
+    media: EditProposalMedia,
+    input: EditProposalAgentInput,  # noqa: A002
+) -> tuple[float, float | None]:
+    """The hold a cut of ``media`` needs under the quick-photo/long-video profile.
+
+    Returns ``(minimum_s, maximum_s)``. A video shorter than the profile's
+    minimum may show its whole length (down to 0.1s), and a pinned narration
+    owns the video budget, so its videos have no ceiling (``None``).
+    """
+
+    bounds = mixed_media_hold_bounds(media.kind, input.mixed_media_timing)
+    if media.kind == "image":
+        return bounds.minimum_s, bounds.maximum_s
+    source_duration_s = float(media.duration_s or 0.0)
+    minimum_s = (
+        bounds.minimum_s
+        if source_duration_s >= bounds.minimum_s - _FAST_DURATION_EPSILON_S
+        else 0.1
+    )
+    maximum_s = None if input.narration_duration_s is not None else bounds.maximum_s
+    return minimum_s, maximum_s
+
+
+def _clamp_quick_mixed_last_cut(
+    cuts: list[FastMontageCut],
+    input: EditProposalAgentInput,  # noqa: A002
+) -> tuple[list[FastMontageCut], list[str]]:
+    """Pull the closing cut's hold back into the profile instead of rejecting.
+
+    Providers fill the exact target by stretching or squeezing the last cut
+    (a 1.05s still under the 0.5-0.8s photo hold), which failed the whole
+    proposal (KRI-243). When the final cut is the ONLY one outside its kind's
+    hold range, clamp it to the nearest bound; the tail-first reconciliation
+    that runs next re-fits the total within the same bounds, or accepts a
+    shorter one. An earlier out-of-range cut means the profile was ignored,
+    so the timing check still rejects it.
+    """
+
+    media_by_id = {media.media_id: media for media in input.media}
+    out_of_range: list[int] = []
+    for index, cut in enumerate(cuts):
+        media = media_by_id.get(cut.media_id)
+        if media is None:
+            # The established source-identity check reports this clearly.
+            return cuts, []
+        minimum_s, maximum_s = _quick_mixed_hold_range(media, input)
+        if cut.output_duration_s < minimum_s - _FAST_DURATION_EPSILON_S or (
+            maximum_s is not None and cut.output_duration_s > maximum_s + _FAST_DURATION_EPSILON_S
+        ):
+            out_of_range.append(index)
+    last_index = len(cuts) - 1
+    if out_of_range != [last_index]:
+        return cuts, []
+    cut = cuts[last_index]
+    media = media_by_id[cut.media_id]
+    minimum_s, maximum_s = _quick_mixed_hold_range(media, input)
+    duration_s = max(minimum_s, cut.output_duration_s)
+    if maximum_s is not None:
+        duration_s = min(maximum_s, duration_s)
+    duration_s = round(duration_s, 3)
+    start_s = cut.source_start_s
+    if media.kind == "video":
+        # A longer hold slides the window earlier rather than past the clip's end.
+        source_duration_s = float(media.duration_s or 0.0)
+        if start_s + duration_s > source_duration_s + _FAST_DURATION_EPSILON_S:
+            start_s = round(max(0.0, source_duration_s - duration_s), 3)
+    try:
+        clamped = FastMontageCut.model_validate(
+            {
+                **cut.model_dump(),
+                "source_start_s": start_s,
+                "source_end_s": round(start_s + duration_s, 3),
+                "output_duration_s": duration_s,
+                "beat_align": False,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise SchemaError(f"edit_proposal: invalid clamped fast cut — {exc}") from exc
+    return [*cuts[:last_index], clamped], [f"clamped_last_cut_hold:{last_index}"]
+
+
 def _normalize_fast_montage_duration(
     payload: dict,
     input: EditProposalAgentInput,  # noqa: A002
-) -> tuple[dict, set[str], bool]:
+) -> tuple[dict, set[str], bool, list[str]]:
     """Reconcile harmless provider decimal drift to the server-owned target.
 
     Fast cuts are render-critical, so this validates their original shape and
@@ -2030,7 +2112,8 @@ def _normalize_fast_montage_duration(
     longer rejected for disagreeing with the target before its cuts are even
     examined (KRI-129). Story directions deliberately keep the legacy
     strict-integer contract. Returns whether the plan was accepted at a
-    shorter authored total (see the final tail-adjustment below).
+    shorter authored total (see the final tail-adjustment below), and the
+    repair codes for a clamped closing cut.
     """
 
     declared_duration = payload.get("duration_s")
@@ -2046,7 +2129,7 @@ def _normalize_fast_montage_duration(
     raw_cuts = payload.get("fast_cuts")
     if not isinstance(raw_cuts, list) or not raw_cuts:
         # Let the normal output model retain its established missing/shape error.
-        return payload, set(), False
+        return payload, set(), False, []
     raw_cuts = _quantize_quick_mixed_cuts_to_frames(raw_cuts, input)
     payload["fast_cuts"] = raw_cuts
     split_limit_s = (
@@ -2062,6 +2145,12 @@ def _normalize_fast_montage_duration(
         narrated=input.narration_duration_s is not None,
         single_appearance=input.video_reuse_policy in {"once", "allow_repeat"},
     )
+    timing_repairs: list[str] = []
+    if quick_mixed_timing and input.montage_cadence is None:
+        # An explicit cadence owns the cut length, so it is never clamped.
+        cuts, timing_repairs = _clamp_quick_mixed_last_cut(cuts, input)
+        if timing_repairs:
+            raw_total_s = sum(cut.output_duration_s for cut in cuts)
 
     # Reconcile against the actual cut total. Do not reject a fixable provider
     # arithmetic error merely because its declared total disagrees: each cut is
@@ -2199,6 +2288,7 @@ def _normalize_fast_montage_duration(
                 },
                 repaired_cut_ids,
                 True,
+                timing_repairs,
             )
         raise SchemaError("edit_proposal: fast montage duration cannot fit the server target")
 
@@ -2212,6 +2302,7 @@ def _normalize_fast_montage_duration(
         },
         repaired_cut_ids,
         False,
+        timing_repairs,
     )
 
 
@@ -2597,9 +2688,10 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         accepted_short_total = False
         if input.direction == "fast_montage":
             repairs.extend(_clamp_fast_cut_windows(payload, input))
-            payload, repaired_cut_ids, accepted_short_total = _normalize_fast_montage_duration(
-                payload, input
+            payload, repaired_cut_ids, accepted_short_total, timing_repairs = (
+                _normalize_fast_montage_duration(payload, input)
             )
+            repairs.extend(timing_repairs)
         if input.mixed_media_timing is not None:
             payload["mixed_media_timing"] = input.mixed_media_timing.model_dump(mode="json")
         else:
@@ -2684,25 +2776,15 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 if input.montage_cadence is not None:
                     continue
                 if uses_quick_photo_long_video_timing(input.mixed_media_timing):
-                    bounds = mixed_media_hold_bounds(media.kind, input.mixed_media_timing)
-                    if media.kind == "image":
-                        valid_timing = (
-                            bounds.minimum_s - _FAST_DURATION_EPSILON_S
-                            <= cut.output_duration_s
-                            <= bounds.maximum_s + _FAST_DURATION_EPSILON_S
+                    # Same range `_clamp_quick_mixed_last_cut` repairs the closing cut into.
+                    minimum_s, maximum_s = _quick_mixed_hold_range(media, input)
+                    valid_timing = (
+                        cut.output_duration_s >= minimum_s - _FAST_DURATION_EPSILON_S
+                        and (
+                            maximum_s is None
+                            or cut.output_duration_s <= maximum_s + _FAST_DURATION_EPSILON_S
                         )
-                    else:
-                        source_allows_longer = (
-                            source_duration >= bounds.minimum_s - _FAST_DURATION_EPSILON_S
-                        )
-                        valid_timing = (
-                            cut.output_duration_s >= bounds.minimum_s - _FAST_DURATION_EPSILON_S
-                            if source_allows_longer
-                            else cut.output_duration_s >= 0.1 - _FAST_DURATION_EPSILON_S
-                        ) and (
-                            input.narration_duration_s is not None
-                            or cut.output_duration_s <= bounds.maximum_s + _FAST_DURATION_EPSILON_S
-                        )
+                    )
                     if not valid_timing:
                         raise SchemaError(
                             "edit_proposal: mixed-media timing profile was not honored"

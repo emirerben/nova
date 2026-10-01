@@ -456,6 +456,9 @@ tail-first adjustments and fails closed if the requested runtime cannot be reach
 source time. Source variety remains required. When the typed `mixed_media_timing` profile is present,
 photos hold for 0.5–0.8s, usable videos hold for 1.5–3.0s when their source permits, boundaries are
 hard cuts, both eligible media kinds are included, and the total remains within 0.15s of the target.
+When only the closing cut breaks its hold range (the provider stretched or squeezed it to land on
+the target), parse clamps it to the nearest bound before the tail-first fit and records
+`clamped_last_cut_hold` (KRI-243); any earlier out-of-range cut still rejects the plan.
 The compiler resolves the complete mixed timeline to an exact 30fps frame budget: fractional
 remainder goes to photo holds within their typed bounds, while video windows may shrink but never
 extend or overlap. If the retained timeline contains only one media kind, the mixed profile is

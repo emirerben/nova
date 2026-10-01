@@ -16,6 +16,7 @@ from app.schemas.edit_proposal import (
     MontageAudioPlan,
     MontageCadenceConstraint,
 )
+from app.services.story_shapes import humanize_repairs
 
 
 def _input(count: int = 7) -> EditProposalAgentInput:
@@ -786,10 +787,127 @@ def test_montage_text_bindings_dedupe_after_aliases_resolve_to_owned_media() -> 
 
 
 def test_mixed_timing_parse_rejects_photo_outside_profile_bounds() -> None:
+    # The out-of-range photo is a middle cut: the profile was ignored, so this
+    # still rejects (only a closing cut is clamped, see below).
     with pytest.raises(SchemaError, match="mixed-media timing profile was not honored"):
         EditProposalAgent(None).parse(  # type: ignore[arg-type]
             json.dumps(_mixed_timing_payload(photo_duration_s=1.0)),
             _mixed_timing_input(),
+        )
+
+
+def _closing_cut_input() -> EditProposalAgentInput:
+    return EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=7,
+        mixed_media_timing=MixedMediaTimingProfile(
+            image_hold="very_fast", video_hold="longer", boundary_style="cut"
+        ),
+        media=[
+            EditProposalMedia(media_id="photo-a", lane="asset", kind="image"),
+            EditProposalMedia(media_id="video-a", lane="clip", kind="video", duration_s=8),
+            EditProposalMedia(media_id="photo-b", lane="asset", kind="image"),
+            EditProposalMedia(media_id="video-b", lane="clip", kind="video", duration_s=8),
+            EditProposalMedia(media_id="photo-c", lane="asset", kind="image"),
+            EditProposalMedia(media_id="video-c", lane="clip", kind="video", duration_s=8),
+        ],
+    )
+
+
+def _closing_cut_payload(holds: list[tuple[str, float]]) -> dict:
+    return {
+        "title": "Corfu coast",
+        "duration_s": 7,
+        "story_beats": [],
+        "fast_cuts": [
+            {
+                "cut_id": f"cut-{index + 1}",
+                "media_id": media_id,
+                "source_start_s": 0,
+                "source_end_s": hold_s,
+                "output_duration_s": hold_s,
+                "role": "build",
+            }
+            for index, (media_id, hold_s) in enumerate(holds)
+        ],
+    }
+
+
+def _assert_holds_follow_profile(output, agent_input: EditProposalAgentInput) -> None:  # noqa: ANN001
+    kinds = {media.media_id: media.kind for media in agent_input.media}
+    for cut in output.fast_cuts or []:
+        low, high = (0.5, 0.8) if kinds[cut.media_id] == "image" else (1.5, 3.0)
+        assert low - 0.001 <= cut.output_duration_s <= high + 0.001, cut
+    assert math.isclose(
+        sum(cut.output_duration_s for cut in output.fast_cuts or []), 7, abs_tol=0.01
+    )
+
+
+def test_mixed_timing_clamps_closing_photo_stretched_to_hit_the_target() -> None:
+    # KRI-243 live beach_focus shape: every hold follows the profile except the
+    # closing still, stretched to 1.7s so the total lands exactly on 7.0s.
+    agent_input = _closing_cut_input()
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(
+            _closing_cut_payload(
+                [
+                    ("photo-a", 0.65),
+                    ("video-a", 2.0),
+                    ("photo-b", 0.65),
+                    ("video-b", 2.0),
+                    ("photo-c", 1.7),
+                ]
+            )
+        ),
+        agent_input,
+    )
+
+    assert (output.fast_cuts or [])[-1].output_duration_s == 0.8
+    assert "clamped_last_cut_hold:4" in output.repairs
+    _assert_holds_follow_profile(output, agent_input)
+    assert "Adjusted the last cut to match your photo and video pacing" in humanize_repairs(
+        output.repairs
+    )
+
+
+def test_mixed_timing_clamps_closing_video_squeezed_to_hit_the_target() -> None:
+    agent_input = _closing_cut_input()
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(
+            _closing_cut_payload(
+                [
+                    ("photo-a", 0.65),
+                    ("video-a", 2.0),
+                    ("photo-b", 0.65),
+                    ("video-b", 2.75),
+                    ("video-c", 0.95),
+                ]
+            )
+        ),
+        agent_input,
+    )
+
+    assert (output.fast_cuts or [])[-1].output_duration_s == 1.5
+    assert "clamped_last_cut_hold:4" in output.repairs
+    _assert_holds_follow_profile(output, agent_input)
+
+
+def test_mixed_timing_does_not_clamp_when_an_earlier_cut_also_breaks_the_profile() -> None:
+    with pytest.raises(SchemaError, match="mixed-media timing profile was not honored"):
+        EditProposalAgent(None).parse(  # type: ignore[arg-type]
+            json.dumps(
+                _closing_cut_payload(
+                    [
+                        ("photo-a", 1.2),
+                        ("video-a", 2.0),
+                        ("photo-b", 0.65),
+                        ("video-b", 2.0),
+                        ("photo-c", 1.15),
+                    ]
+                )
+            ),
+            _closing_cut_input(),
         )
 
 
