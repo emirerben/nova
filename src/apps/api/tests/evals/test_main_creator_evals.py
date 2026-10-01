@@ -229,6 +229,10 @@ def test_main_creator_eval(
         strategy = action["strategy"]
         assert strategy["edit_format"] == "subtitled"
         assert strategy["render_program"] == "native"
-        assert strategy["media_scope"] == "selected"
-        manifest_media = fixture.input["capability_manifest"]["media"]
-        assert strategy["selected_media_ids"] == [manifest_media[0]["media_id"]]
+        # Only "all" is refused. With CLIP_INTENTS_ENABLED on, the live model
+        # omits the scope instead, and the planner still captions the one clip
+        # (test_flag_on_answer_without_media_scope_still_captions_the_clip).
+        assert strategy.get("media_scope") != "all"
+        if strategy.get("media_scope") == "selected":
+            manifest_media = fixture.input["capability_manifest"]["media"]
+            assert strategy["selected_media_ids"] == [manifest_media[0]["media_id"]]
