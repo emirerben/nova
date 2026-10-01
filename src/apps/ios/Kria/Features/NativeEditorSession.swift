@@ -1689,14 +1689,16 @@ struct NativeEditorTemporaryVideo {
                   document.revision.baseGeneration == generation else { return }
             if let phoneTalkingIndex {
                 guard let duration = sources[phoneTalkingIndex]?.asset.duration else { throw APIError.invalidResponse }
+                // Captions/lanes are on the speech-cleanup cut timeline (KRI-232).
+                let removed = NativePhoneTalkingSource.removedSpans(variant: previewVariant)
                 #if DEBUG
-                NativePreviewDiagnostics.record("phone-talking-source", fields: ["index": String(phoneTalkingIndex), "duration": String(duration)])
+                NativePreviewDiagnostics.record("phone-talking-source", fields: ["index": String(phoneTalkingIndex), "duration": String(duration), "removed": String(removed.count)])
                 #endif
-                document = try NativePhoneTalkingSource.hydrate(document, clipIndex: phoneTalkingIndex, duration: duration)
-                cleanDocument = try NativePhoneTalkingSource.hydrate(cleanDocument, clipIndex: phoneTalkingIndex, duration: duration)
-                chatStagedDocument = try chatStagedDocument.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration) }
-                undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration) }
-                redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration) }
+                document = try NativePhoneTalkingSource.hydrate(document, clipIndex: phoneTalkingIndex, duration: duration, removed: removed)
+                cleanDocument = try NativePhoneTalkingSource.hydrate(cleanDocument, clipIndex: phoneTalkingIndex, duration: duration, removed: removed)
+                chatStagedDocument = try chatStagedDocument.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
+                undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
+                redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
                 refreshDuration()
             }
             if previewVariant["resolved_archetype"] == .string("narrated") {

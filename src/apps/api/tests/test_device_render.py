@@ -231,15 +231,94 @@ def test_real_h264_aac_export_passes_verification(tmp_path):
         assert generation == "42"
         Path(local).write_bytes(data)
 
-    with patch(
-        "app.routes.device_render.storage.download_generation_to_file", side_effect=download
+    job_id = uuid.uuid4()
+    with (
+        patch("app.routes.device_render.storage.download_generation_to_file", side_effect=download),
+        patch("app.services.template_poster.upload_bytes_public_read") as upload,
     ):
-        _verify_export(
+        assert (
+            _verify_export(
+                "owned/path",
+                "42",
+                len(data),
+                hashlib.sha256(data).hexdigest(),
+                DeviceRenderStatus(phase="syncing", request=request),
+            )
+            is None
+        )
+        upload.assert_not_called()
+        # KRI-231: the same verified bytes become the gallery poster.
+        poster = _verify_export(
             "owned/path",
             "42",
             len(data),
             hashlib.sha256(data).hexdigest(),
             DeviceRenderStatus(phase="syncing", request=request),
+            poster_job_id=job_id,
+        )
+    assert poster is not None and poster.startswith(f"job-posters/{job_id}/")
+    jpeg, key = upload.call_args.args
+    assert key == poster and jpeg[:2] == b"\xff\xd8"
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg is required")
+def test_poster_failure_never_blocks_a_verified_export(tmp_path):
+    _, request = _fixture()
+    recipe = request.recipe
+    output = tmp_path / "native-contract.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=gray:s={recipe.canvas.width}x{recipe.canvas.height}:r={recipe.frame_rate}",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000",
+            "-t",
+            str(recipe.duration),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-ac",
+            "2",
+            str(output),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    data = output.read_bytes()
+
+    def download(_path, local, *, generation):
+        Path(local).write_bytes(data)
+
+    with (
+        patch("app.routes.device_render.storage.download_generation_to_file", side_effect=download),
+        patch(
+            "app.services.template_poster.upload_bytes_public_read",
+            side_effect=RuntimeError("gcs down"),
+        ),
+    ):
+        assert (
+            _verify_export(
+                "owned/path",
+                "42",
+                len(data),
+                hashlib.sha256(data).hexdigest(),
+                DeviceRenderStatus(phase="syncing", request=request),
+                poster_job_id=uuid.uuid4(),
+            )
+            is None
         )
 
 

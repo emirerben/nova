@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.25.0] - 2026-10-01
+
+### Changed
+- fix(ios): play phone Talking source as its speech-cleanup cut in the editor (KRI-232) (#1281) <!-- release-pr: 1281 -->
+
+## [0.77.24.0] - 2026-10-01
+
+### Changed
+- fix(gallery): mint posters for phone renders and stop endless tile spinner (KRI-231) (#1280) <!-- release-pr: 1280 -->
+
 ## [0.77.23.0] - 2026-10-01
 
 ### Fixed
