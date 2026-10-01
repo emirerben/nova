@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.40.0] - 2026-10-01
+
+### Changed
+- fix(reframe): crossfade speech-cleanup cuts and cut their audio on the frame grid (#1292) <!-- release-pr: 1292 -->
+
 ## [0.77.39.0] - 2026-10-01
 
 ### Fixed
