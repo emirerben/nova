@@ -9,6 +9,7 @@ Each test uses fresh UUID rows, so the module is xdist-safe without truncation.
 from __future__ import annotations
 
 import asyncio
+import copy
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -1531,7 +1532,16 @@ async def test_editor_revision_approval_atomically_stages_exact_job_generation(
                 if followup == "stale_head":
                     # A surviving head from an older render must not become input
                     # to either the planner or the next committed draft.
+                    # Freshness is the payload's own base_generation (the column
+                    # and session pointer go stale after an editor Save).
+                    snapshot = copy.deepcopy(draft.snapshot_json)
+                    snapshot["editor_payload"]["base_generation"] = "older-generation"
+                    draft.snapshot_json = snapshot
+                    # Real prod shape: column + session pointer stale together.
                     draft.base_generation_id = "older-generation"
+                    db.get(
+                        CreatorAgentSession, session_id
+                    ).target_generation_id = "older-generation"
                     db.commit()
 
             from types import SimpleNamespace

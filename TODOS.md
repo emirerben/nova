@@ -2376,6 +2376,8 @@ follow-ups, not live bugs).
 
 ### Kria session `target_generation_id` goes stale after an editor Save (KRI-237 secondary)
 
+**Completed:** 2026-10-01 (branch `feat/copilot-stale-head-draft-2026-10-01`) — resolved by not trusting the session pointer or `base_generation_id` column: a head draft is honored only if `editor_payload['base_generation'] == variant_render_baseline(variant)` (`fresh_editor_head_payload` in `kria_editor_ops.py`, shared by `planner._load_editor_target` and the `kria_runtime` draft apply path); new drafts are stamped with the variant's real generation. Tests: `tests/kria/test_stale_head_draft.py`.
+
 **What:** After the creator taps editor Save, the variant gets a new render generation, but
 `CreatorAgentSession.target_generation_id` keeps the pre-save value. `_load_editor_target`
 resolves the head draft with `CreatorEditDraft.base_generation_id == session.target_generation_id`,

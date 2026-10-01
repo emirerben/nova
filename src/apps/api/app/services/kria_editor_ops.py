@@ -949,6 +949,26 @@ def _summary(op: dict[str, Any]) -> str:
     return name[:1].upper() + name[1:]
 
 
+def fresh_editor_head_payload(head: Any, variant: dict[str, Any]) -> dict[str, Any]:
+    """The head draft's editor payload iff it was built on the variant's CURRENT render.
+
+    The session pointer and ``CreatorEditDraft.base_generation_id`` go stale after an
+    editor Save bumps ``render_generation_id``, so they cannot prove freshness. The
+    payload's own ``base_generation`` (stamped from ``variant_render_baseline``) can:
+    a mismatch means the draft predates a saved render and must not be overlaid on it.
+    Returns ``{}`` (build on the saved variant) when absent, non-editor, or stale.
+    """
+    snapshot = getattr(head, "snapshot_json", None) if head is not None else None
+    if not isinstance(snapshot, dict) or snapshot.get("kind") != "editor":
+        return {}
+    payload = snapshot.get("editor_payload")
+    if not isinstance(payload, dict) or not payload:
+        return {}
+    if str(payload.get("base_generation") or "") != variant_render_baseline(variant):
+        return {}
+    return payload
+
+
 def project_editor_draft(
     variant: dict[str, Any], payload: dict[str, Any], job: Any = None
 ) -> dict[str, Any]:

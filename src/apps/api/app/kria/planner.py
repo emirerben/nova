@@ -71,6 +71,7 @@ from app.services.kria_editor_ops import (
     clip_facts_by_media_id,
     clip_seen_by_media_id,
     coalesce_text_style_ops,
+    fresh_editor_head_payload,
     project_editor_draft,
 )
 
@@ -443,13 +444,15 @@ async def _load_editor_target(
                 CreatorEditDraft.item_id == session.plan_item_id,
                 CreatorEditDraft.variant_key == session.target_variant_id,
                 CreatorEditDraft.base_job_id == job.id,
-                CreatorEditDraft.base_generation_id == session.target_generation_id,
                 CreatorEditDraft.is_head.is_(True),
             )
         )
     ).scalar_one_or_none()
-    if head is not None and (head.snapshot_json or {}).get("kind") == "editor":
-        variant = project_editor_draft(variant, head.snapshot_json.get("editor_payload") or {}, job)
+    # Freshness is the payload's own base_generation vs the variant's current render
+    # (the session pointer / column go stale after an editor Save).
+    fresh_payload = fresh_editor_head_payload(head, variant)
+    if fresh_payload:
+        variant = project_editor_draft(variant, fresh_payload, job)
     clip_context = await _copilot_clip_context(
         db, thread=thread, thread_id=thread_id, job=job, variant=variant, item=item
     )
