@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.22.0] - 2026-10-01
+
+### Changed
+- feat(phone): multi-clip Talking head renders on the iPhone (KRI-136) (#1278) <!-- release-pr: 1278 -->
+
 ## [0.77.21.0] - 2026-10-01
 
 ### Changed
