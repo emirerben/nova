@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.43.0] - 2026-10-01
+
+### Changed
+- docs(clip-intents): record the prod flag flip and its live eval gate (#1302) <!-- release-pr: 1302 -->
+
 ## [0.77.42.0] - 2026-10-01
 
 ### Fixed
