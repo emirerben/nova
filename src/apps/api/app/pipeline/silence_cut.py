@@ -64,7 +64,7 @@ from dataclasses import dataclass
 from itertools import pairwise, product
 from typing import Any, Literal, NamedTuple
 
-from app.pipeline.cut_grid import FrameGrid, rendered_spans, snap_to_frame
+from app.pipeline.cut_grid import FrameGrid, keep_segment_frames, rendered_spans, snap_to_frame
 
 # Whisper bias prompt for the CUT path: passed as whisper-1's ``prompt`` /
 # faster-whisper's ``initial_prompt`` (transcribe(..., verbatim_prompt=…)) so the
@@ -2817,10 +2817,23 @@ def clamp_metadata(plan: CutPlan) -> dict[str, Any]:
     }
 
 
-def plan_summary(plan: CutPlan, *, original_duration_s: float | None = None) -> dict[str, Any]:
+def plan_summary(
+    plan: CutPlan,
+    *,
+    original_duration_s: float | None = None,
+    grid: FrameGrid | None = None,
+) -> dict[str, Any]:
     """Persisted ``variants[i]['silence_cut']`` shape — single source of truth
     (admin strip contract). Clamp keys are ADDITIVE and appear only on clamped
-    plans so every pre-clamp summary stays byte-identical."""
+    plans so every pre-clamp summary stays byte-identical.
+
+    ``grid`` is the frame grid a cloud render cut on (``reframe.cut_frame_grid``);
+    pass it only when the cut was applied. It adds ``frame_grid``: the exact
+    [first, end) frames each keep segment rendered. The millisecond-rounded
+    ``removed`` cannot rebuild them (a boundary near a half frame snaps the
+    other way), and ``speech_cut_state.RenderedCut`` reprojects editor lanes
+    through them. Summaries without it (phone, narration, older renders) were
+    not cut on this grid."""
     summary = {
         "removed": [
             {"start_s": round(r.start_s, 3), "end_s": round(r.end_s, 3), "reason": r.reason}
@@ -2833,6 +2846,14 @@ def plan_summary(plan: CutPlan, *, original_duration_s: float | None = None) -> 
         ),
     }
     summary.update(clamp_metadata(plan))
+    if grid is not None:
+        summary["frame_grid"] = {
+            "fps": grid.fps,
+            "frames": [
+                [first, end]
+                for first, end in keep_segment_frames(plan.keep_segments, grid.fps, grid.duration_s)
+            ],
+        }
     return summary
 
 

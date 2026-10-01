@@ -551,6 +551,9 @@ def test_assemble_spine_cut_happy_path():
         "time_saved_s": 2.44,
         "version": 1,
         "original_duration_s": 6.5,
+        # The frames the cut rendered: (0, 0.88), (1.42, 2.5), (4.4, 6.5) at
+        # 30 fps, the last reaching the clip end (speech_cut_state.RenderedCut).
+        "frame_grid": {"fps": 30, "frames": [[0, 26], [43, 75], [132, 195]]},
     }
     assert out_ctx["spine_clip_id"] == "a"
     plan_events = [e for e in events if e[1] == "silence_cut_plan"]

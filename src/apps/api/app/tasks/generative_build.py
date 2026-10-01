@@ -24304,7 +24304,13 @@ def _render_subtitled_variant(
         # silence_cut_bailout event carries the reason).
         silence_cut_summary: dict[str, Any] | None = None
         if sc_plan is not None and sc_plan.bailout_reason is None:
-            silence_cut_summary = plan_summary(sc_plan, original_duration_s=float(probe.duration_s))
+            # The frames the cut played, so an editor re-cut can reproject
+            # creator lanes off this render (speech_cut_state.RenderedCut).
+            silence_cut_summary = plan_summary(
+                sc_plan,
+                original_duration_s=float(probe.duration_s),
+                grid=sc_grid if sc_apply else None,
+            )
             if cleanup_required:
                 base["silence_cut_outcome"] = "applied" if sc_apply else "no_change"
                 silence_cut_summary["outcome"] = base["silence_cut_outcome"]
@@ -27398,16 +27404,22 @@ def _merge_speech_cut_prior_state(
     if not isinstance(prior, dict) or control.get("variant_id") != result.get("variant_id"):
         return result
 
-    from app.pipeline.speech_cut_state import reproject_variant_timing  # noqa: PLC0415
+    from app.pipeline.speech_cut_state import (  # noqa: PLC0415
+        RenderedCut,
+        reproject_variant_timing,
+    )
 
     projected = reproject_variant_timing(
         prior,
         old_removals=_removals_from_summary(prior.get("silence_cut")),
         new_removals=_removals_from_summary(result.get("silence_cut")),
+        old_render=RenderedCut.from_summary(prior.get("silence_cut")),
+        new_render=RenderedCut.from_summary(result.get("silence_cut")),
     )
     merged = dict(result)
     # New speech/caption/Smart analysis stays authoritative. Creator-authored
-    # timing lanes are projected exactly; appearance toggles are timing-free.
+    # timing lanes are projected exactly, through the frames each cloud cut
+    # render played; appearance toggles are timing-free.
     for field in (
         "media_overlays",
         "sound_effects",

@@ -1628,6 +1628,22 @@ class TestPlanSummary:
             "original_duration_s": 10.0,
         }
 
+    def test_grid_adds_the_frames_the_cut_rendered(self):
+        # 1.0166 s is 30.498 frames, so the cut ends after frame 29. The
+        # summary's rounded 1.017 s (30.51 frames) would round to 31: the
+        # frames cannot be rebuilt from `removed`.
+        plan = CutPlan(
+            keep_segments=[(0.0, 1.0166), (2.52, 10.0)],
+            removed=[Removal(start_s=1.0166, end_s=2.52, reason=REASON_SILENCE)],
+            time_saved_s=1.5034,
+        )
+        summary = plan_summary(
+            plan, original_duration_s=10.0, grid=FrameGrid(fps=30, duration_s=10.0)
+        )
+        assert summary["removed"][0]["start_s"] == 1.017
+        # 2.52 s = 75.6 frames -> 76; the last segment reaches the clip end.
+        assert summary["frame_grid"] == {"fps": 30, "frames": [[0, 30], [76, 300]]}
+
     def test_original_duration_defaults_to_none(self):
         summary = plan_summary(no_op_plan(5.0))
         assert summary == {

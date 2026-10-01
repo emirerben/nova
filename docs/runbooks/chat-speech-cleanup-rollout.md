@@ -159,6 +159,13 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   30 cuts). Persisted caption cues keep their old times through text edits; only a
   full re-render recomputes them. Phone renders keep the raw mapping on purpose: the
   phone recipe cuts at the plan's exact boundaries.
+- "my overlay / SFX / text slid off its moment after I accepted or restored a cut"
+  on a cloud render → `_merge_speech_cut_prior_state` reprojects creator lanes
+  through the frames each render played: `silence_cut.frame_grid` in the variant's
+  `silence_cut` summary, read by `speech_cut_state.RenderedCut`. A side without it
+  (a render made before the field existed) falls back to the removals, which miss
+  each cut's snap by up to half a frame per edge. Phone jobs never reach this path:
+  `require_cloud_render_job` rejects them before the re-cut task runs.
 - "cleanup is too aggressive for my taste" → this lever.
 - **"cleanup cut a word / clipped my speech" → a guard bug, NOT this lever.** Do not
   reach for `=0.55` to make it stop; that only hides it again, on some clips, by

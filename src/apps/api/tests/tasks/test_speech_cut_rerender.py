@@ -632,3 +632,49 @@ def test_timing_rerender_pins_existing_creator_hook_and_style(monkeypatch) -> No
         "user_style_knobs",
     ):
         assert merged[field] == prior[field]
+
+
+def test_timing_rerender_reprojects_creator_lanes_on_each_render_frames(monkeypatch) -> None:
+    job = _inflight_job(attempt_id="winner")
+    prior = job.assembly_plan["speech_cut_previous_variant"]
+    # The last good render cut (2.04, 2.52) at 30 fps: frames [0, 61) and
+    # [76, 300), so its output time t > 2.0333 s plays source t + 0.5 s.
+    prior["silence_cut"] = {
+        "removed": [{"start_s": 2.04, "end_s": 2.52, "reason": "silence"}],
+        "original_duration_s": 10.0,
+        "frame_grid": {"fps": 30, "frames": [[0, 61], [76, 300]]},
+    }
+    prior["media_overlays"] = [
+        {"id": "after-new-cut", "start_s": 6.0, "end_s": 6.5},
+        {"id": "inside-new-cut", "start_s": 3.6, "end_s": 4.5},
+    ]
+    prior["sound_effects"] = [{"id": "sfx-at-old-cut", "at_s": 2.033}]
+    session = _Session(job)
+    monkeypatch.setattr(gb, "_sync_session", lambda: session)
+    # The accepted cut (4.0166, 4.984) snaps outwards on both edges, 120.498
+    # -> 120 and 149.52 -> 150: the render drops a whole second where the
+    # removal says 0.9674 s.
+    result = {
+        "variant_id": "subtitled",
+        "silence_cut": {
+            "removed": [
+                {"start_s": 2.04, "end_s": 2.52, "reason": "silence"},
+                {"start_s": 4.017, "end_s": 4.984, "reason": "retake_review"},
+            ],
+            "original_duration_s": 10.0,
+            "frame_grid": {"fps": 30, "frames": [[0, 61], [76, 120], [150, 300]]},
+        },
+    }
+
+    merged = gb._merge_speech_cut_prior_state(
+        str(uuid.uuid4()),
+        result,
+        expected_operation_id="operation-a",
+        expected_attempt_id="winner",
+    )
+
+    # Source 6.5-7.0 s plays 1.5 s into the new third span, which starts at
+    # output frame 61 + 44 = 105 (3.5 s). The removals would put it at
+    # 5.033 s: the 33 ms the cut's edges snapped. Source 4.1-5.0 s is cut.
+    assert merged["media_overlays"] == [{"id": "after-new-cut", "start_s": 5.0, "end_s": 5.5}]
+    assert merged["sound_effects"] == [{"id": "sfx-at-old-cut", "at_s": 2.033}]

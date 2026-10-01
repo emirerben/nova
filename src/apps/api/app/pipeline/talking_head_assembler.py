@@ -655,8 +655,9 @@ def assemble_talking_head(
     # render's frame-grid arithmetic is the fallback), and each removal becomes
     # a b-roll anchor at its picture cut on that grid. ──
     anchors: list[float] | None = None
-    if sc_apply:
-        grid = cut_frame_grid(0.0, sc_analysis_dur)  # the window _reframe_spine cut
+    # The window _reframe_spine cut; the summary below persists its frames.
+    grid = cut_frame_grid(0.0, sc_analysis_dur) if sc_apply else None
+    if grid is not None:
         kept_s = sum(end - start for start, end in rendered_spans(sc_plan.keep_segments, grid))
         try:
             cut_dur = float(probe_video(spine_reframed).duration_s) or kept_s
@@ -689,7 +690,7 @@ def assemble_talking_head(
             ),
         )
         if sc_apply_error is None and silence_cut_out is not None:
-            summary = plan_summary(sc_plan, original_duration_s=sc_analysis_dur)
+            summary = plan_summary(sc_plan, original_duration_s=sc_analysis_dur, grid=grid)
             if strict_speech_cleanup:
                 summary["outcome"] = "applied" if sc_apply else "no_change"
             silence_cut_out["summary"] = summary
