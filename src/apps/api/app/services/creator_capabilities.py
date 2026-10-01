@@ -919,6 +919,21 @@ def compile_strategy_to_plan(
             code="unsupported_treatment",
             edit_format=strategy.edit_format,
         )
+    phone_capability = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if (
+        strategy.opening_title
+        and strategy.edit_format in NARRATED_EDIT_FORMATS
+        and strategy.render_program != "guided"
+        and phone_capability is not None
+        and phone_capability.available
+    ):
+        # KRI-142: the phone voiceover compiler (`compile_phone_narrated_plan`)
+        # has no title lane; only the cloud narrated render burns one.
+        raise CreatorStrategyError(
+            f"opening_title is not supported by the phone {strategy.edit_format} renderer",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
     if strategy.shot_labels or strategy.closing_title:
         # Exact per-shot labels and closing copy are burned by the guided
         # story-beat renderer only. Fail visibly anywhere they cannot render

@@ -7888,3 +7888,18 @@ def test_cloud_guided_story_still_requires_every_approved_text_id() -> None:
     gj._require_guided_story_text_ids(variant, [element])
     with pytest.raises(HTTPException):
         gj._require_guided_story_text_ids(variant, [])
+
+
+def test_narrated_device_variant_closes_the_text_lane(monkeypatch) -> None:
+    """KRI-142: the phone narrated compiler has no guided plan, so a text Save
+    could only fail; the phone must not offer the text lane."""
+    _arm_every_editor_lane(monkeypatch)
+    job = _job(resolved_archetype="narrated")
+    variant = job.assembly_plan["variants"][0]
+
+    cloud = gj._editor_capabilities(job, variant)
+    device = gj._editor_capabilities(job, {**variant, "render_destination": "device"})
+
+    assert cloud["text_elements"] is True  # or the clamp proves nothing
+    assert device["text_elements"] is False
+    assert device.keys() == cloud.keys()
