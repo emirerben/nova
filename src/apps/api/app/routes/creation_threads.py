@@ -5658,6 +5658,7 @@ async def attach_media(
     )
 
     current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
+    item_id_for_analysis = item.id  # read now: the commit below expires `item`
     mutation_kwargs: dict[str, Any] = {"clip_assignments": assignments}
     if any(source["kind"] == "audio" for source in verified):
         audio = next(source for source in reversed(verified) if source["kind"] == "audio")
@@ -5716,6 +5717,11 @@ async def attach_media(
         from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
 
         await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id)
+    # KRI-219: describe what the new clips show, in the background (never blocks attach).
+    if any(source["kind"] == "video" for source in verified):
+        from app.tasks.kria_clip_understanding import enqueue_clip_understanding  # noqa: PLC0415
+
+        await asyncio.to_thread(enqueue_clip_understanding, item_id_for_analysis)
     return await _response(db, thread)
 
 

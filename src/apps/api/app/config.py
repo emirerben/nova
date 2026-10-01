@@ -1519,6 +1519,10 @@ class Settings(BaseSettings):
     # BEFORE the pro-model requirement extraction (which then runs off the critical
     # path). false = the previous extract-first order for every post-render turn.
     kria_copilot_first_enabled: bool = True
+    # Analyse a thread's clips in the background after attach (KRI-219) so the copilot
+    # knows what the footage shows (`analysis["understanding"]`). Needs a Gemini key.
+    # false = no analysis; chat edits then clarify instead of describing clips.
+    kria_clip_understanding_enabled: bool = True
     # Owner-safe "Nova steps" activity feed projected from pipeline_trace +
     # phase_log + AgentRun (app/services/nova_steps.py) onto the generative
     # job status response. Ships OFF -- `steps` stays None (byte-identical
