@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.35.0] - 2026-10-01
+
+### Changed
+- feat(copilot): vague "make it shorter/longer" asks one follow-up with concrete options (prompt v64) (#1291) <!-- release-pr: 1291 -->
+
 ## [0.77.34.0] - 2026-10-01
 
 ### Changed
