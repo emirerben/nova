@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.27.0] - 2026-10-01
+
+### Changed
+- fix(speech-cleanup): ambient-adaptive silence spans for noisy Talking takes (KRI-234) (#1282) <!-- release-pr: 1282 -->
+
 ## [0.77.26.0] - 2026-10-01
 
 ### Changed
