@@ -48,7 +48,7 @@ def test_unsupported_turns_leave_the_edit_untouched_and_use_the_honest_outcome_r
     for turn_id in ("t2-recreate", "t3-keep15"):
         assert turns[turn_id].plan_after == before
         assert "copilot outcome=unsupported" in turns[turn_id].notes
-    assert turns["t3-keep15"].reply == "operation is unavailable for this draft"
+    assert turns["t3-keep15"].reply == "I can't change that on this edit yet."
 
 
 def test_style_turn_moves_the_font_through_compile_editor_ops():
@@ -137,7 +137,7 @@ def test_live_mode_uses_the_default_model_client_instead_of_the_recording(monkey
     live = [t for t in replay_turns(fixture, mode="live") if t.turn_id == "t3-keep15"][0]
     v1_turns = [t for t in fixture.turns if t.engine == "v1_copilot"]
     assert len(seen) == len(v1_turns)  # one live client per copilot turn, none from recordings
-    assert live.reply == "operation is unavailable for this draft"
+    assert live.reply == "I can't change that on this edit yet."
     with pytest.raises(Exception):  # noqa: B017 - the poisoned recording is unparseable
         replay_turns(fixture, mode="replay")
 

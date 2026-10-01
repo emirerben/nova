@@ -49,7 +49,7 @@ Turns:
 - `t0-suggest` (recorded) asked: 'Suggest an edit.' -> '(no reply recorded)'
 - `t1-brief` (v1_copilot) asked: 'This was a 20k run I completed today. Do an edit highlighting the landmarks and locations of each spot. Do it fast paced but leave enough time for the users to read where it was from. I ran from Arnavutkoy to Eminonu' -> 'Edit text. Everything else is unchanged.'
 - `t2-recreate` (v1_copilot) asked: 'Create the video again based on my prompt' -> "I can't recreate or regenerate the entire video from scratch here. You can edit the text, clip timing, title, and transitions, or start a new project from the prompt page."
-- `t3-keep15` (v1_copilot) asked: 'Keep 15 seconds and include everything with faster pacing' -> 'operation is unavailable for this draft'
+- `t3-keep15` (v1_copilot) asked: 'Keep 15 seconds and include everything with faster pacing' -> "I can't change that on this edit yet."
 - `t4-replan` (recorded) asked: '[re-plan approved; the message text is not exposed by the admin API]' -> '(no reply recorded)'
 - `t5-brief-again` (v1_copilot) asked: 'This was a 20k run I completed today. Do an edit highlighting the landmarks and locations of each spot. Do it fast paced but leave enough time for the users to read where it was from. I ran from Arnavutkoy to Eminonu' -> 'Edit text. Everything else is unchanged.'
 - `t6-no-fraunces` (v1_copilot) asked: 'Never use fraunces again in my edits' -> 'Patch text style. Everything else is unchanged.'

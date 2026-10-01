@@ -75,12 +75,23 @@ class CopilotTurnResponse(BaseModel):
     unmet_requests: list[dict[str, str]] = []
 
 
+# Edit verbs a reply uses to claim the draft changed. Stem-based so past and
+# progressive forms (shortened/shortening, trimmed/trimming...) are all caught.
 _SUCCESS_WORDS = re.compile(
-    r"\b(done|stored|saved|deleted|erased|cleared|changed|updated|applied|staged|edited|trimmed|removed|swapped|made|set)\b",
+    r"\b(?:"
+    r"done|stored|saved|made|sped|set|cut|split|put|"
+    r"(?:delet|eras|clear|chang|updat|appl|stag|edit|trimm?|remov|swapp?|shorten|"
+    r"reduc|mov|reorder|replac|add|insert|extend|lengthen|tighten|speed|slow|"
+    r"rearrang|adjust|increas|decreas|lower|rais|mut|unmut|merg|flipp?|rotat|"
+    r"crop|resiz|scal|shift|align|fix|correct|rewrit|renam|restyl|recolor|"
+    r"enabl|disabl|turn|switch|swap|convert|appl)"
+    r"(?:ed|ied|ing|ying|ting|ming|ping)"
+    r")\b",
     re.IGNORECASE,
 )
 _NEGATED_SUCCESS = re.compile(
-    r"\b(already|unchanged|cannot|can't|couldn't|unable|not|no change|nothing)\b",
+    r"\b(already|unchanged|cannot|can't|couldn't|unable|not|no change|nothing|"
+    r"didn't|did not|wasn't|weren't|haven't|hasn't|won't|never)\b",
     re.IGNORECASE,
 )
 
@@ -131,8 +142,8 @@ def _honest_outcome(
         return outcome, "I need one detail before changing the draft."
     if outcome == "stale":
         return outcome, "That edit is based on an older draft. Refresh the editor and try again."
+    detail = next((item.get("detail") for item in reasons if item.get("detail")), None)
     if outcome == "unsupported":
-        detail = next((item.get("detail") for item in reasons if item.get("detail")), None)
         if detail:
             return outcome, detail
         # With no supported operation, a negation elsewhere in the sentence
@@ -145,6 +156,10 @@ def _honest_outcome(
             # A specific reason beats the generic line (e.g. which value was not accepted).
             return outcome, f"I couldn't apply that: {output.reply_notes}"
         return outcome, "I couldn't build a valid draft change for that request. Try again."
+    if reasons and _SUCCESS_WORDS.search(reply):
+        # A structured rejection means nothing changed: never surface prose that
+        # claims it did (negation elsewhere in the sentence must not excuse it).
+        return outcome, detail or "I couldn't make that change on this edit."
     if reply and not _claims_success(reply):
         return outcome, reply
     # A request that matched nothing must say so, not claim the draft already

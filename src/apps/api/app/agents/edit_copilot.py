@@ -3469,6 +3469,10 @@ def _coerce_confidence(value: object) -> float:
     return max(0.0, min(1.0, confidence))
 
 
+# User-facing: surfaced verbatim as the reply when no op survives.
+CAPABILITY_UNAVAILABLE_DETAIL = "I can't change that on this edit yet."
+
+
 def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None:
     if not isinstance(raw_op, dict):
         log.warning("edit_copilot.drop_non_object_op", op=raw_op)
@@ -3488,7 +3492,7 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
         state.reject(
             op=name,
             reason="capability_unavailable",
-            detail="operation is unavailable for this draft",
+            detail=CAPABILITY_UNAVAILABLE_DETAIL,
         )
         return None
 
