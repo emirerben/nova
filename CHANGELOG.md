@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.41.0] - 2026-10-01
+
+### Changed
+- feat(kria): chat turns can carry the editor's unsaved state (dark, additive) (#1296) <!-- release-pr: 1296 -->
+
 ## [0.77.40.0] - 2026-10-01
 
 ### Changed
