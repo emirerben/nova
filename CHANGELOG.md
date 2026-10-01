@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.33.0] - 2026-10-01
+
+### Changed
+- fix(kria): cap the Main Creator conversation at its schema limit (20, not 24) (#1287) <!-- release-pr: 1287 -->
+
 ## [0.77.32.0] - 2026-10-01
 
 ### Fixed
