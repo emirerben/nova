@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.21.0] - 2026-10-01
+
+### Changed
+- feat(ios): phone audio mix parity — fades, loudness, ducking (KRI-139) (#1277) <!-- release-pr: 1277 -->
+
 ## [0.77.20.0] - 2026-09-30
 
 ### Changed
