@@ -218,7 +218,10 @@ async def test_long_thread_sends_the_main_creator_its_bounded_latest_history(
         )
 
     monkeypatch.setattr(planner, "_call_main_creator", creator)
-    history = [("user" if i % 2 else "assistant", f"message {i}") for i in range(30)]
+    history = [
+        ("user" if i % 2 else "assistant", f"message {i}")
+        for i in range(MAIN_CREATOR_CONVERSATION_MAX + 10)
+    ]
     user_id, thread_id, item_id = _seed(history=history)
 
     result = await _plan(user_id, thread_id, item_id)

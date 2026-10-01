@@ -48,8 +48,10 @@ MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v39"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
-# validation with "I couldn't finish that step" (KRI-238).
-MAIN_CREATOR_CONVERSATION_MAX = 20
+# validation with "I couldn't finish that step" (KRI-238). Raised 20 -> 40: 20 was
+# too small for real threads; the planner truncates each row to 1000 chars, so 40
+# rows is ~10k tokens worst case.
+MAIN_CREATOR_CONVERSATION_MAX = 40
 
 # Appended to the OWNED FOOTAGE SUMMARIES header line ONLY when CLIP_FACTS is on
 # for the account ("" otherwise, so the flag-off prompt is byte-identical). The
