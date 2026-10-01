@@ -24,7 +24,12 @@ from app.agents._schemas.creator_agent import (
     ResolvedCreatorManifest,
     ReviewDecision,
 )
-from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCreatorOutput
+from app.agents.main_creator import (
+    MAIN_CREATOR_CONVERSATION_MAX,
+    MainCreatorAgent,
+    MainCreatorInput,
+    MainCreatorOutput,
+)
 from app.config import settings
 from app.kria.brief import (
     BriefUpdate,
@@ -602,7 +607,7 @@ async def _load_creator_inputs(
                     CreationThreadEvent.content.is_not(None),
                 )
                 .order_by(CreationThreadEvent.sequence.desc())
-                .limit(24)
+                .limit(MAIN_CREATOR_CONVERSATION_MAX)
             )
         )
         .scalars()
