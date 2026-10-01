@@ -2,8 +2,17 @@
   "agent": "nova.edit.copilot",
   "prompt_version": "2026-10-01-v64",
   "input": {
-    "utterance": "all my videos are too long",
-    "prior_turns": [],
+    "utterance": "15 seconds",
+    "prior_turns": [
+      {
+        "role": "user",
+        "content": "all my videos are too long"
+      },
+      {
+        "role": "assistant",
+        "content": "It's 32 seconds right now. How short should it be: 25 seconds, 20 seconds, or 15 seconds? Or tell me a number of seconds."
+      }
+    ],
     "variant_snapshot": {
       "allowed_op_families": [
         "clip",
@@ -79,19 +88,21 @@
       "remaining_duration_s": 88
     }
   },
-  "raw_text": "{\"intent\": \"clarify\", \"ops\": [], \"confidence\": 0.9, \"reply\": \"It's 32 seconds right now. How short should it be: 25 seconds, 20 seconds, or 15 seconds? Or tell me a number of seconds.\", \"suggestions\": [\"Make it 25 seconds\", \"Make it 20 seconds\", \"Make it 15 seconds\"], \"needs_clarification\": true}",
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_total_duration\", \"target_s\": 15.0, \"strategy\": \"proportional\"}], \"confidence\": 0.9, \"reply\": \"Shortened the edit from 32s to 15s.\", \"suggestions\": [], \"needs_clarification\": false}",
   "output": {
-    "intent": "clarify",
-    "ops": [],
-    "confidence": 0.9,
-    "reply": "It's 32 seconds right now. How short should it be: 25 seconds, 20 seconds, or 15 seconds? Or tell me a number of seconds.",
-    "suggestions": [
-      "Make it 25 seconds",
-      "Make it 20 seconds",
-      "Make it 15 seconds"
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "set_total_duration",
+        "target_s": 15.0,
+        "strategy": "proportional"
+      }
     ],
-    "needs_clarification": true,
-    "outcome": "clarification",
+    "confidence": 0.9,
+    "reply": "Shortened the edit from 32s to 15s.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
     "rejection_reasons": [],
     "clarification_context": null,
     "pending_actions": [],
@@ -99,15 +110,7 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "vague 'too long' with no number never guesses: one question with the current length and concrete example lengths",
-    "lane": "copilot-vague-shorter",
-    "exact_component_ops": [],
-    "expected_intent": "clarify",
-    "needs_clarification": true,
-    "reply_contains": [
-      "32 seconds",
-      "20 seconds",
-      "number of seconds"
-    ]
+    "case": "answer to the vague-shorter question resolves to set_total_duration without another question",
+    "lane": "copilot-vague-shorter"
   }
 }
