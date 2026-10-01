@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v59"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v60"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -3915,6 +3915,22 @@ _CREATIVE_CAPTION_CLARIFICATION = (
 )
 
 
+_CAPTION_INSTRUCTION_WORDS = frozenset(
+    "add text each every clip clips video videos explain explaining explains describe describing "
+    "what happening happens write short caption captions label labels with from this that into "
+    "your have could would like please make part parts something kind sort name names".split()
+)
+
+
+def _creator_vocab(utterance: str) -> set[str]:
+    """Content words of the creator's message ("wedding", "airport", "pickup", ...)."""
+    return {
+        word
+        for word in re.findall(r"[^\W\d_]{4,}", _label_fold(utterance))
+        if word not in _CAPTION_INSTRUCTION_WORDS
+    }
+
+
 def _ground_descriptive_captions(
     ops: list[dict], snapshot: dict, utterance: str, state: _ParseState
 ) -> list[dict]:
@@ -3956,18 +3972,43 @@ def _ground_descriptive_captions(
                 best, best_overlap = str(slot["media_id"]), overlap
         return best
 
+    seen_text = {
+        str(slot["media_id"]): _label_fold(str(slot["seen"].get("text")))
+        for slot in slots
+        if str(slot["media_id"]) in seen
+    }
+    vocab = _creator_vocab(utterance)
     kept: list[dict] = []
     written: list[tuple[int, str]] = []
+    mismatched: list[tuple[int, str]] = []
     dropped = 0
     for op in ops:
         clip_id = clip_of(op) if op.get("op") == "add_text" else None
         if clip_id is None:
             kept.append(op)
         elif clip_id in seen:
+            # A caption that only repeats the creator's own event words (e.g. "pre-wedding")
+            # with none of them present in what was seen is the framing parroted onto
+            # footage that doesn't show it: drop it and say so.
+            words = {w for w in re.findall(r"[^\W\d_]{4,}", _label_fold(str(op.get("text") or "")))}
+            claimed = words & vocab
+            if claimed and not any(w in seen_text[clip_id] for w in claimed):
+                mismatched.append((number.get(clip_id, 0), sorted(claimed)[0]))
+                continue
             kept.append(op)
             written.append((number.get(clip_id, 0), str(op.get("text") or "")))
         else:
             dropped += 1
+    if mismatched:
+        names = ", ".join(str(n) for n, _w in sorted(mismatched))
+        words = ", ".join(sorted({w for _n, w in mismatched}))
+        state.reply_notes.append(
+            f"Clip{'s' if len(mismatched) != 1 else ''} {names} "
+            f'{"don" if len(mismatched) != 1 else "doesn"}\'t look like "{words}" from what I '
+            "saw, so I didn't put that wording on "
+            f"{'them' if len(mismatched) != 1 else 'it'}. Tell me what "
+            f"{'they are' if len(mismatched) != 1 else 'it is'}, or ask me to describe what I see."
+        )
     if not written:
         if dropped:
             state.reply_notes.append(
@@ -3978,7 +4019,12 @@ def _ground_descriptive_captions(
     written.sort()
     captioned = {n for n, _t in written}
     unseen = [str(n) for media, n in number.items() if n not in captioned and media not in seen]
-    skipped = [str(n) for media, n in number.items() if n not in captioned and media in seen]
+    flagged = {n for n, _w in mismatched}
+    skipped = [
+        str(n)
+        for media, n in number.items()
+        if n not in captioned and n not in flagged and media in seen
+    ]
     state.reply_notes.append(
         "I wrote these from what I saw in each clip, so tell me if any is wrong: "
         + "; ".join(f"clip {n}: {t}" for n, t in written)

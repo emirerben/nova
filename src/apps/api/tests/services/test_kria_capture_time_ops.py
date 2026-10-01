@@ -867,3 +867,39 @@ def test_other_asks_are_untouched_by_the_caption_pass(guided) -> None:
     )
     assert [op["text"] for op in out.ops] == ["See you soon"]
     assert "I wrote these" not in out.reply
+
+
+# ── captions must not parrot the creator's framing onto footage that doesn't show it ──
+
+
+def test_a_caption_repeating_the_creators_event_words_without_support_is_dropped(guided) -> None:
+    job, variant, _rev = guided
+    seen = {
+        "m0": "Playing football on an outdoor turf pitch at night",
+        "m1": "Running up stairs and celebrating in a rustic bar",
+        "m3": "Guests hugging at an airport arrivals hall",
+    }
+    out = _parse(
+        _seen_snapshot(job, variant, seen),
+        [
+            _add("Pre-wedding soccer", 0, 2),
+            _add("Running up stairs", 2, 4),
+            _add("Airport pickup", 6, 8),
+        ],
+        utterance=ASK_DESCRIBE,
+    )
+    # "wedding" is the creator's word and appears in neither football nor stairs seen text.
+    assert [op["text"] for op in out.ops] == ["Running up stairs", "Airport pickup"]
+    assert "Clip 1 doesn't look like" in out.reply and "wedding" in out.reply
+    assert "clip 2: Running up stairs" in out.reply
+
+
+def test_event_words_are_kept_when_the_footage_supports_them(guided) -> None:
+    job, variant, _rev = guided
+    seen = {"m0": "Bride getting ready for the wedding with friends"}
+    out = _parse(
+        _seen_snapshot(job, variant, seen),
+        [_add("Wedding preparations", 0, 2)],
+        utterance=ASK_DESCRIBE,
+    )
+    assert [op["text"] for op in out.ops] == ["Wedding preparations"]

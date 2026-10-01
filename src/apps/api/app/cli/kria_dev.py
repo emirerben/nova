@@ -53,6 +53,26 @@ _GUIDED_PLACES = [
 _GUIDED_CLIPS = len(_GUIDED_PLACES)
 # What the (stored) vision analysis says each seeded clip shows: `analysis["understanding"]`.
 # The LAST clip has none, so descriptive-caption asks exercise "leave it out and say so".
+# Real-footage-shaped understanding that does NOT match a "wedding" framing (--seen-mismatch).
+_GUIDED_SEEN_MISMATCH = [
+    (
+        "Playing football on an outdoor artificial turf pitch at night",
+        "outdoor turf pitch",
+        "playing football",
+    ),
+    (
+        "Playing football on an outdoor artificial turf pitch at night",
+        "outdoor turf pitch",
+        "playing football",
+    ),
+    (
+        "Running up stairs and celebrating in a rustic bar",
+        "rustic bar interior",
+        "running up stairs and celebrating",
+    ),
+    ("Working on a laptop in a home office", "home office", "working on a laptop"),
+    ("Taking a selfie video in an outdoor square", "outdoor square", "taking a selfie video"),
+]
 _GUIDED_SEEN = [
     ("Guests hugging at an airport arrivals hall", "airport terminal", "welcoming arrivals"),
     ("Family walking along a seaside promenade", "waterfront promenade", "walking and chatting"),
@@ -77,7 +97,7 @@ _GUIDED_TRACK = {
 
 
 def _guided_fixture(
-    user_id: uuid.UUID, *, seen: bool = True
+    user_id: uuid.UUID, *, seen: bool = True, mismatch: bool = False
 ) -> tuple[dict, dict, list[str], list[dict]]:
     """Synthetic East-Run-shaped guided variant with `clip-label-*` bars.
 
@@ -126,9 +146,15 @@ def _guided_fixture(
                         {
                             "understanding": {
                                 "kind": "video",
-                                "summary": _GUIDED_SEEN[i][0],
-                                "setting": _GUIDED_SEEN[i][1],
-                                "activity": _GUIDED_SEEN[i][2],
+                                "summary": (_GUIDED_SEEN_MISMATCH if mismatch else _GUIDED_SEEN)[i][
+                                    0
+                                ],
+                                "setting": (_GUIDED_SEEN_MISMATCH if mismatch else _GUIDED_SEEN)[i][
+                                    1
+                                ],
+                                "activity": (_GUIDED_SEEN_MISMATCH if mismatch else _GUIDED_SEEN)[
+                                    i
+                                ][2],
                             }
                         }
                         if seen and i < len(_GUIDED_SEEN)
@@ -173,7 +199,9 @@ def _guided_fixture(
     return plan, variant, paths, assignments
 
 
-def seed(email: str, *, guided: bool = False, seen: bool = True) -> dict[str, str]:
+def seed(
+    email: str, *, guided: bool = False, seen: bool = True, mismatch: bool = False
+) -> dict[str, str]:
     require_local_database(settings.database_url)
     with sync_session() as db:
         user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
@@ -200,7 +228,7 @@ def seed(email: str, *, guided: bool = False, seen: bool = True) -> dict[str, st
         # Protected PlanItem media fields may only be assigned by the
         # plan_item_media facade (test_protected_plan_item_media_fields_have_one_writer),
         # so the guided fixture is built first and passed to the constructor.
-        guided_fixture = _guided_fixture(user.id, seen=seen) if guided else None
+        guided_fixture = _guided_fixture(user.id, seen=seen, mismatch=mismatch) if guided else None
         item = PlanItem(
             content_plan_id=plan.id,
             position=1,
@@ -442,6 +470,11 @@ def main() -> None:
         action="store_true",
         help="with --guided: seed NO stored clip understanding (descriptive-caption clarify path)",
     )
+    seed_parser.add_argument(
+        "--seen-mismatch",
+        action="store_true",
+        help="with --guided: stored understanding that does not match a wedding framing",
+    )
     analyze_parser = commands.add_parser("analyze")
     analyze_parser.add_argument("--thread-id", required=True, type=uuid.UUID)
     analyze_parser.add_argument("--apply", action="store_true")
@@ -450,7 +483,12 @@ def main() -> None:
     reset_parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
     if args.command == "seed":
-        result = seed(args.email, guided=args.guided, seen=not args.no_seen)
+        result = seed(
+            args.email,
+            guided=args.guided,
+            seen=not args.no_seen,
+            mismatch=args.seen_mismatch,
+        )
     elif args.command == "analyze":
         result = analyze(args.thread_id, apply=args.apply)
     else:
