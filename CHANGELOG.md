@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.28.0] - 2026-10-01
+
+### Changed
+- fix(ios): editor panel resizes from its whole header, not just the grabber (KRI-235) (#1283) <!-- release-pr: 1283 -->
+
 ## [0.77.27.0] - 2026-10-01
 
 ### Changed
