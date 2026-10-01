@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.29.0] - 2026-10-01
+
+### Changed
+- fix(speech-cleanup): carve the stretched tail of a sentence-final token (KRI-236) (#1284) <!-- release-pr: 1284 -->
+
 ## [0.77.28.0] - 2026-10-01
 
 ### Changed
