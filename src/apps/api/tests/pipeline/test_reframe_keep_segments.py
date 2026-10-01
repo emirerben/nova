@@ -1,6 +1,6 @@
 """Tests for reframe_and_export(keep_segments=...) — plans/010 T4.
 
-Four layers:
+Five layers:
 
 1. Command-construction pins (subprocess mocked, no ffmpeg needed):
    - IRON RULE: keep_segments=None produces a command byte-identical to the
@@ -23,6 +23,9 @@ Four layers:
    cuts (no declick dip, no concat silence padding), every audio piece
    lines up with its own picture, and the edge graph shapes (capped
    handles, plain joins, leading/trailing trims) render whole and level.
+5. Caption-remap e2e [real ffmpeg]: words remapped on the render's frame
+   grid (silence_cut.remap_words(grid=cut_frame_grid(...))) start exactly
+   where their audio plays in the cut output; the raw float remap does not.
 
 No uuid4()/nondeterminism in parametrize (xdist collection must agree).
 """
@@ -31,6 +34,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -40,8 +44,10 @@ import numpy as np
 import pytest
 
 from app.config import settings
-from app.pipeline.reframe import reframe_and_export
-from app.pipeline.silence_cut import MAX_REMOVALS
+from app.pipeline.cut_grid import rendered_spans
+from app.pipeline.reframe import cut_frame_grid, reframe_and_export
+from app.pipeline.silence_cut import MAX_REMOVALS, CutPlan, Removal, remap_words
+from app.pipeline.transcribe import Word
 
 # ---------------------------------------------------------------------------
 # Shared expected-command fragments (hardcoded pins, NOT derived from the
@@ -399,6 +405,36 @@ class TestKeepSegmentsCommand:
             ",afade=t=in:st=0:d=0.012,afade=t=out:st=9.988000:d=0.012[a0]"
         )
         assert chains["v0"] == "[v0][a0]concat=n=1:v=1:a=1[vout][aout]"
+
+    @pytest.mark.parametrize(
+        ("start_s", "end_s", "segments"),
+        [
+            (0.0, 12.0, [(0.0, 2.013), (2.531, 12.0)]),
+            (0.0, 12.0, [(0.0, 4.0), (5.02, 5.04), (6.0, 12.0)]),
+            # A window starting mid-clip whose end is off the grid: the last
+            # segment keeps the frame the window end falls in (frame 361), so
+            # the grid is the window's length, not the clip's end time.
+            (2.0, 14.013, [(0.0, 4.0), (5.5, 12.013)]),
+        ],
+    )
+    def test_cut_frame_grid_is_the_grid_the_cut_renders(
+        self, start_s: float, end_s: float, segments: list[tuple[float, float]]
+    ) -> None:
+        # Captions and b-roll anchors are placed on cut_frame_grid; this pins
+        # it to the frames the command actually trims for the same window.
+        cmd = _capture_cmd(**_base_kwargs(start_s=start_s, end_s=end_s, keep_segments=segments))
+        chains = _filter_chains(cmd)
+        fps = settings.output_fps
+        trimmed = []
+        i = 0
+        while f"vs{i}" in chains:
+            match = re.search(r"\]trim=start=([\d.]+):end=([\d.]+),", chains[f"vs{i}"])
+            assert match, chains[f"vs{i}"]
+            # Each trim sits a quarter frame before its boundary frame.
+            first, end = (round(float(value) * fps + 0.25) for value in match.groups())
+            trimmed.append((first / fps, end / fps))
+            i += 1
+        assert trimmed == pytest.approx(rendered_spans(segments, cut_frame_grid(start_s, end_s)))
 
     def test_sub_frame_segment_is_dropped(self) -> None:
         # (5.02, 5.04) snaps to no frame (both ends snap to frame 151).
@@ -1181,3 +1217,88 @@ def test_audio_timestamp_gap_keeps_later_segments_aligned(
         )
         assert abs(lag) <= 2, f"segment at frame {first} is {lag} samples off its picture"
         joint_frames += end - first
+
+
+@needs_ffmpeg
+def test_remapped_words_start_where_their_audio_plays(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caption word remapped on the render's frame grid starts where it is heard.
+
+    Each word's source audio is found in the real cut output by
+    cross-correlation, searched widely enough to reach either mapping. The
+    raw float plan misses by up to a frame per cut before the word (15-36 ms
+    on this five-cut plan); the grid mapping lands within two samples.
+    """
+    _small_output(monkeypatch)
+    fixture = _make_fixture(
+        tmp_path / "words.mp4",
+        20,
+        audio="anoisesrc=color=white:amplitude=0.2:seed=17:sample_rate=48000",
+    )
+    out = tmp_path / "words_cut.mp4"
+    segments = [
+        (0.0, 2.013),
+        (2.531, 4.007),
+        (5.123, 7.488),
+        (8.051, 10.017),
+        (11.209, 14.111),
+        (15.07, 20.0),
+    ]
+    plan = CutPlan(
+        keep_segments=segments,
+        removed=[
+            Removal(start_s=prev_end, end_s=next_start, reason="silence")
+            for (_, prev_end), (next_start, _) in zip(segments, segments[1:])
+        ],
+        time_saved_s=20.0 - sum(b - a for a, b in segments),
+    )
+    # Two words per segment, clear of the 25 ms crossfade at either cut.
+    words = [
+        Word(
+            text=f"w{i}{j}",
+            start_s=round(a + offset, 3),
+            end_s=round(a + offset + 0.2, 3),
+            confidence=1.0,
+        )
+        for i, (a, b) in enumerate(segments)
+        for j, offset in enumerate((0.12, (b - a) / 2))
+    ]
+    reframe_and_export(
+        input_path=str(fixture),
+        start_s=0.0,
+        end_s=20.0,
+        aspect_ratio="9:16",
+        ass_subtitle_path=None,
+        output_path=str(out),
+        keep_segments=plan.keep_segments,
+    )
+    on_grid = remap_words(words, plan, grid=cut_frame_grid(0.0, 20.0))
+    raw = remap_words(words, plan)
+    assert [entry["text"] for entry in on_grid] == [word.text for word in words]
+
+    sample_rate = 44100
+    source = _decode_mono(fixture, sample_rate)
+    cut = _decode_mono(out, sample_rate)
+    window = int(0.1 * sample_rate)
+    search = int(0.1 * sample_rate)
+    raw_misses = []
+    for word, grid_entry, raw_entry in zip(words, on_grid, raw):
+        src_at = round(word.start_s * sample_rate)
+        piece = source[src_at : src_at + window]
+        lo = max(0, round(raw_entry["start_s"] * sample_rate) - search)
+        region = cut[lo : lo + 2 * search + window]
+        heard_at = lo + int(np.argmax(np.correlate(region, piece, mode="valid")))
+        # Where the grid mapping puts source sample src_at (word.start_s
+        # itself falls between samples).
+        grid_at = src_at + (grid_entry["start_s"] - word.start_s) * sample_rate
+        raw_at = src_at + (raw_entry["start_s"] - word.start_s) * sample_rate
+        # 2 samples: the cut's per-piece trims round to the sample, as in
+        # test_each_audio_piece_stays_with_its_segment.
+        assert abs(heard_at - grid_at) <= 2, (
+            f"{word.text} is heard at {heard_at / sample_rate:.5f}s, "
+            f"remapped to {grid_at / sample_rate:.5f}s"
+        )
+        raw_misses.append(abs(heard_at - raw_at) / sample_rate)
+    # The test tells the mappings apart: the raw plan misses by over 30 ms.
+    assert max(raw_misses) > 0.03
