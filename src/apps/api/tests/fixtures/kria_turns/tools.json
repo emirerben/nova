@@ -598,6 +598,2117 @@
       "type": "object"
     },
     "SubmitTurnBody": {
+      "$defs": {
+        "AssetBackground": {
+          "properties": {
+            "shot": {
+              "$ref": "#/$defs/VisualShot"
+            },
+            "type": {
+              "const": "asset",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "shot"
+          ],
+          "title": "AssetBackground",
+          "type": "object"
+        },
+        "AudioPolicy": {
+          "properties": {
+            "base": {
+              "default": "continue",
+              "enum": [
+                "continue",
+                "mute"
+              ],
+              "title": "Base",
+              "type": "string"
+            },
+            "sfx": {
+              "default": "continue",
+              "enum": [
+                "continue",
+                "mute"
+              ],
+              "title": "Sfx",
+              "type": "string"
+            }
+          },
+          "title": "AudioPolicy",
+          "type": "object"
+        },
+        "BlurPreviousBackground": {
+          "properties": {
+            "blur_px": {
+              "default": 24.0,
+              "maximum": 80.0,
+              "minimum": 1.0,
+              "title": "Blur Px",
+              "type": "number"
+            },
+            "type": {
+              "const": "blur_previous",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "BlurPreviousBackground",
+          "type": "object"
+        },
+        "CarouselMomentEditRequest": {
+          "additionalProperties": false,
+          "description": "Partial carousel-moment config for the carousel editor panel.\n\nAll fields optional \u2014 an omitted field keeps the variant's persisted\nvalue; the top-level `EditVariantRequest.carousel_moment` itself is what\ncarries the absent/null/dict tri-state (see `dispatch_edit_variant`):\nomitting `carousel_moment` entirely leaves the moment unchanged, an\nexplicit top-level `null` removes it, and a `CarouselMomentEditRequest`\nbody here partial-merges over whatever's persisted (present keys win,\nabsent keys keep). Enum/range validation happens in\n`dispatch_edit_variant`, matching every other loosely-typed field on\n`EditVariantRequest` (font_family, effect, text_color, ...).",
+          "properties": {
+            "duration_s": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration S"
+            },
+            "effect": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Effect"
+            },
+            "focus_clip_index": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Focus Clip Index"
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Mode"
+            },
+            "move_duration_s": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Move Duration S"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Position"
+            },
+            "sequence": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sequence"
+            },
+            "timing_model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timing Model"
+            },
+            "transition": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Transition"
+            },
+            "transition_in": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Transition In"
+            },
+            "transition_in_duration_s": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Transition In Duration S"
+            },
+            "transition_out": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Transition Out"
+            },
+            "transition_out_duration_s": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Transition Out Duration S"
+            },
+            "zoom_duration_s": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Zoom Duration S"
+            }
+          },
+          "title": "CarouselMomentEditRequest",
+          "type": "object"
+        },
+        "Crop": {
+          "properties": {
+            "scale": {
+              "default": 1.0,
+              "maximum": 4.0,
+              "minimum": 1.0,
+              "title": "Scale",
+              "type": "number"
+            },
+            "x_frac": {
+              "default": 0.5,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "X Frac",
+              "type": "number"
+            },
+            "y_frac": {
+              "default": 0.5,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Y Frac",
+              "type": "number"
+            }
+          },
+          "title": "Crop",
+          "type": "object"
+        },
+        "EditorCaptionAppearance": {
+          "additionalProperties": false,
+          "description": "Explicit native-editor appearance; missing values retain legacy renders.",
+          "properties": {
+            "alignment": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "left",
+                    "center",
+                    "right"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Alignment"
+            },
+            "highlight_spoken_word": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Highlight Spoken Word"
+            },
+            "shadow_color": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Shadow Color"
+            },
+            "shadow_opacity": {
+              "anyOf": [
+                {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Shadow Opacity"
+            },
+            "stroke_color": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Stroke Color"
+            }
+          },
+          "title": "EditorCaptionAppearance",
+          "type": "object"
+        },
+        "EditorCommitBackgroundMusic": {
+          "description": "Full replacement background bed for editor commits.\n\n``track_id=None`` or ``enabled=false`` clears the bed. When a track is set,\nthe persisted renderer contract remains ``smart_music_treatment``.",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "end_s": {
+              "anyOf": [
+                {
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "End S"
+            },
+            "gain_db": {
+              "anyOf": [
+                {
+                  "maximum": 0.0,
+                  "minimum": -40.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Gain Db"
+            },
+            "muted": {
+              "default": false,
+              "title": "Muted",
+              "type": "boolean"
+            },
+            "start_s": {
+              "anyOf": [
+                {
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Start S"
+            },
+            "track_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Track Id"
+            }
+          },
+          "title": "EditorCommitBackgroundMusic",
+          "type": "object"
+        },
+        "EditorCommitCaptionMeta": {
+          "properties": {
+            "appearance": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCaptionAppearance"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Color"
+            },
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Enabled"
+            },
+            "font": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Font"
+            },
+            "font_set": {
+              "default": false,
+              "title": "Font Set",
+              "type": "boolean"
+            },
+            "highlight_color": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Highlight Color"
+            },
+            "shadow_enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Shadow Enabled"
+            },
+            "size_px": {
+              "anyOf": [
+                {
+                  "maximum": 160,
+                  "minimum": 36,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Size Px"
+            },
+            "stroke_width": {
+              "anyOf": [
+                {
+                  "maximum": 12,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Stroke Width"
+            },
+            "style": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "sentence",
+                    "word"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Style"
+            },
+            "y_frac": {
+              "anyOf": [
+                {
+                  "maximum": 0.9,
+                  "minimum": 0.3,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Y Frac"
+            }
+          },
+          "title": "EditorCommitCaptionMeta",
+          "type": "object"
+        },
+        "EditorCommitMix": {
+          "description": "Editor mix section. `music_level` maps onto the existing per-variant `mix`\nsemantics (voice/bed balance \u2014 voiceover variants only). `original_level` is\npersisted for round-tripping but not yet honored by the render pipeline.",
+          "properties": {
+            "music_level": {
+              "anyOf": [
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Music Level"
+            },
+            "original_level": {
+              "anyOf": [
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Original Level"
+            }
+          },
+          "title": "EditorCommitMix",
+          "type": "object"
+        },
+        "EditorCommitMusicWindow": {
+          "properties": {
+            "alignment": {
+              "enum": [
+                "preserve_cuts",
+                "resync_beats"
+              ],
+              "title": "Alignment",
+              "type": "string"
+            },
+            "start_s": {
+              "minimum": 0.0,
+              "title": "Start S",
+              "type": "number"
+            }
+          },
+          "required": [
+            "start_s",
+            "alignment"
+          ],
+          "title": "EditorCommitMusicWindow",
+          "type": "object"
+        },
+        "EditorStateIn": {
+          "additionalProperties": false,
+          "description": "The editor's CURRENT UNSAVED state, sent with a chat turn.\n\nA lane present is the client's full current value; absent equals the saved variant.\nA present-but-empty ``lanes`` is still authoritative: \"no unsaved edits\".\nThe server never recomputes a hash; ``client_state_id`` is echoed verbatim.",
+          "properties": {
+            "base_generation": {
+              "maxLength": 128,
+              "title": "Base Generation",
+              "type": "string"
+            },
+            "client_state_id": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Client State Id",
+              "type": "string"
+            },
+            "lanes": {
+              "$ref": "#/$defs/EditorStateLanes"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "base_generation",
+            "client_state_id",
+            "lanes"
+          ],
+          "title": "EditorStateIn",
+          "type": "object"
+        },
+        "EditorStateLanes": {
+          "description": "``EditorCommitRequest`` as a turn's editor state (adds list caps).",
+          "properties": {
+            "accepted_suggestion_ids": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Accepted Suggestion Ids"
+            },
+            "background_music": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCommitBackgroundMusic"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "base_generation": {
+              "default": "",
+              "title": "Base Generation",
+              "type": "string"
+            },
+            "camera_effects": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "maxItems": 200,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Camera Effects"
+            },
+            "caption_cues": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "maxItems": 200,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Caption Cues"
+            },
+            "caption_meta": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCommitCaptionMeta"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "carousel_moment": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CarouselMomentEditRequest"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "copilot_receipt_ids": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 8,
+              "title": "Copilot Receipt Ids",
+              "type": "array"
+            },
+            "guided_revision": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guided Revision"
+            },
+            "guided_revision_number": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guided Revision Number"
+            },
+            "lyrics": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LyricsSectionRequest"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "media_overlays": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "maxItems": 100,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Media Overlays"
+            },
+            "mix": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCommitMix"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "motion_runtime_hash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Motion Runtime Hash"
+            },
+            "motion_scenes": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "maxItems": 200,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Motion Scenes"
+            },
+            "music_track_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Music Track Id"
+            },
+            "music_window": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCommitMusicWindow"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "orientation": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Orientation"
+            },
+            "remove_music": {
+              "default": false,
+              "title": "Remove Music",
+              "type": "boolean"
+            },
+            "retry_guided_revision": {
+              "default": false,
+              "title": "Retry Guided Revision",
+              "type": "boolean"
+            },
+            "sound_effects": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "maxItems": 100,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sound Effects"
+            },
+            "text_elements": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "maxItems": 200,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Text Elements"
+            },
+            "timeline_slots": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/EditorStateTimelineSlot"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeline Slots"
+            },
+            "title": {
+              "anyOf": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Title"
+            },
+            "visual_blocks": {
+              "anyOf": [
+                {
+                  "items": {
+                    "discriminator": {
+                      "mapping": {
+                        "media": "#/$defs/MediaBlock",
+                        "montage": "#/$defs/MontageBlock",
+                        "text_card": "#/$defs/TextCardBlock"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/MontageBlock"
+                      },
+                      {
+                        "$ref": "#/$defs/TextCardBlock"
+                      },
+                      {
+                        "$ref": "#/$defs/MediaBlock"
+                      }
+                    ]
+                  },
+                  "maxItems": 200,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Visual Blocks"
+            }
+          },
+          "title": "EditorStateLanes",
+          "type": "object"
+        },
+        "EditorStateTimelineSlot": {
+          "description": "A Save timeline row plus the media identity of an UNSAVED added clip.\n\nA saved row's media is recoverable from ``clip_index`` against the persisted\nsources; a clip the creator just added is not in them yet, so the client names it\nhere (all optional, ignored by the Save route which uses ``TimelineSlotEdit``).",
+          "properties": {
+            "clip_index": {
+              "title": "Clip Index",
+              "type": "integer"
+            },
+            "duration_beats": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration Beats"
+            },
+            "duration_s": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration S"
+            },
+            "in_s": {
+              "title": "In S",
+              "type": "number"
+            },
+            "layout": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "fullscreen",
+                    "supporting_card"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Layout"
+            },
+            "look_adjustments": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LookAdjustments"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "look_preset": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "none",
+                    "stadium_diffusion",
+                    "olive_film",
+                    "smoky_split_tone",
+                    "golden_hour",
+                    "faded_analog"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Look Preset"
+            },
+            "media_id": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Media Id"
+            },
+            "media_kind": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "image",
+                    "video"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Media Kind"
+            },
+            "parent_segment_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Parent Segment Id"
+            },
+            "playback_rate": {
+              "anyOf": [
+                {
+                  "maximum": 4.0,
+                  "minimum": 0.25,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Playback Rate"
+            },
+            "removed": {
+              "default": false,
+              "title": "Removed",
+              "type": "boolean"
+            },
+            "slot_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Slot Id"
+            },
+            "source_crop": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Crop"
+            },
+            "source_duration_s": {
+              "anyOf": [
+                {
+                  "maximum": 36000.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Duration S"
+            },
+            "transition_after": {
+              "default": "cut",
+              "enum": [
+                "cut",
+                "crossfade",
+                "dip_to_black",
+                "flash"
+              ],
+              "title": "Transition After",
+              "type": "string"
+            },
+            "transition_duration_s": {
+              "anyOf": [
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Transition Duration S"
+            }
+          },
+          "required": [
+            "clip_index",
+            "in_s"
+          ],
+          "title": "EditorStateTimelineSlot",
+          "type": "object"
+        },
+        "GradientBackground": {
+          "properties": {
+            "angle_deg": {
+              "default": 180.0,
+              "maximum": 360.0,
+              "minimum": 0.0,
+              "title": "Angle Deg",
+              "type": "number"
+            },
+            "from": {
+              "title": "From",
+              "type": "string"
+            },
+            "to": {
+              "title": "To",
+              "type": "string"
+            },
+            "type": {
+              "const": "gradient",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "from",
+            "to"
+          ],
+          "title": "GradientBackground",
+          "type": "object"
+        },
+        "LookAdjustments": {
+          "additionalProperties": false,
+          "description": "User-tunable controls for the two cinematic source looks.\n\nStrength scales the authored grade. Warmth and contrast are signed trims\naround that grade; grain and vignette are absolute amounts so either can\nbe removed without weakening the color treatment.",
+          "properties": {
+            "contrast": {
+              "maximum": 1.0,
+              "minimum": -1.0,
+              "title": "Contrast",
+              "type": "number"
+            },
+            "grain": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Grain",
+              "type": "number"
+            },
+            "intensity": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Intensity",
+              "type": "number"
+            },
+            "vignette": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Vignette",
+              "type": "number"
+            },
+            "warmth": {
+              "maximum": 1.0,
+              "minimum": -1.0,
+              "title": "Warmth",
+              "type": "number"
+            }
+          },
+          "required": [
+            "intensity",
+            "warmth",
+            "contrast",
+            "grain",
+            "vignette"
+          ],
+          "title": "LookAdjustments",
+          "type": "object"
+        },
+        "LyricsSectionRequest": {
+          "properties": {
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Enabled"
+            },
+            "line_overrides": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Line Overrides"
+            }
+          },
+          "title": "LyricsSectionRequest",
+          "type": "object"
+        },
+        "MediaBlock": {
+          "description": "User-authored image/video layer composed below text and captions.",
+          "properties": {
+            "asset_id": {
+              "maxLength": 80,
+              "minLength": 1,
+              "title": "Asset Id",
+              "type": "string"
+            },
+            "audio_policy": {
+              "$ref": "#/$defs/AudioPolicy"
+            },
+            "display_mode": {
+              "default": "fullscreen",
+              "enum": [
+                "fullscreen",
+                "overlay"
+              ],
+              "title": "Display Mode",
+              "type": "string"
+            },
+            "editor_style": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/VisualEditorStyle"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "effect_group_id": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Effect Group Id"
+            },
+            "end_s": {
+              "exclusiveMinimum": 0.0,
+              "title": "End S",
+              "type": "number"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "kind": {
+              "const": "media",
+              "title": "Kind",
+              "type": "string"
+            },
+            "media_kind": {
+              "enum": [
+                "image",
+                "video"
+              ],
+              "title": "Media Kind",
+              "type": "string"
+            },
+            "origin": {
+              "default": "user",
+              "enum": [
+                "ai",
+                "user"
+              ],
+              "title": "Origin",
+              "type": "string"
+            },
+            "playback_rate": {
+              "anyOf": [
+                {
+                  "maximum": 4.0,
+                  "minimum": 0.25,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Playback Rate"
+            },
+            "preview_gcs_path": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Preview Gcs Path"
+            },
+            "rationale": {
+              "anyOf": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Rationale"
+            },
+            "scale": {
+              "default": 0.35,
+              "maximum": 1.0,
+              "minimum": 0.05,
+              "title": "Scale",
+              "type": "number"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source"
+            },
+            "source_crop": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SourceCrop"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "source_duration_s": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Duration S"
+            },
+            "src_gcs_path": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "title": "Src Gcs Path",
+              "type": "string"
+            },
+            "start_s": {
+              "minimum": 0.0,
+              "title": "Start S",
+              "type": "number"
+            },
+            "timing_mode": {
+              "default": "manual",
+              "enum": [
+                "auto",
+                "manual"
+              ],
+              "title": "Timing Mode",
+              "type": "string"
+            },
+            "transform": {
+              "$ref": "#/$defs/MediaTransform"
+            },
+            "transition_in": {
+              "default": "cut",
+              "enum": [
+                "cut",
+                "fade"
+              ],
+              "title": "Transition In",
+              "type": "string"
+            },
+            "transition_out": {
+              "default": "cut",
+              "enum": [
+                "cut",
+                "fade"
+              ],
+              "title": "Transition Out",
+              "type": "string"
+            },
+            "trim_end_s": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Trim End S"
+            },
+            "trim_start_s": {
+              "anyOf": [
+                {
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Trim Start S"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            },
+            "x_frac": {
+              "default": 0.5,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "X Frac",
+              "type": "number"
+            },
+            "y_frac": {
+              "default": 0.5,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Y Frac",
+              "type": "number"
+            },
+            "z": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Z",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "start_s",
+            "end_s",
+            "kind",
+            "asset_id",
+            "src_gcs_path",
+            "media_kind"
+          ],
+          "title": "MediaBlock",
+          "type": "object"
+        },
+        "MediaTransform": {
+          "description": "Shared fullscreen transform mirrored by the editor preview.",
+          "properties": {
+            "fit_mode": {
+              "default": "contain",
+              "enum": [
+                "contain",
+                "cover"
+              ],
+              "title": "Fit Mode",
+              "type": "string"
+            },
+            "focal_x": {
+              "default": 0.5,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Focal X",
+              "type": "number"
+            },
+            "focal_y": {
+              "default": 0.5,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Focal Y",
+              "type": "number"
+            },
+            "zoom": {
+              "default": 1.0,
+              "maximum": 4.0,
+              "minimum": 1.0,
+              "title": "Zoom",
+              "type": "number"
+            }
+          },
+          "title": "MediaTransform",
+          "type": "object"
+        },
+        "MontageBlock": {
+          "properties": {
+            "audio_policy": {
+              "$ref": "#/$defs/AudioPolicy"
+            },
+            "end_s": {
+              "exclusiveMinimum": 0.0,
+              "title": "End S",
+              "type": "number"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "kind": {
+              "const": "montage",
+              "title": "Kind",
+              "type": "string"
+            },
+            "origin": {
+              "default": "user",
+              "enum": [
+                "ai",
+                "user"
+              ],
+              "title": "Origin",
+              "type": "string"
+            },
+            "rationale": {
+              "anyOf": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Rationale"
+            },
+            "shots": {
+              "items": {
+                "$ref": "#/$defs/VisualShot"
+              },
+              "maxItems": 12,
+              "minItems": 3,
+              "title": "Shots",
+              "type": "array"
+            },
+            "start_s": {
+              "minimum": 0.0,
+              "title": "Start S",
+              "type": "number"
+            },
+            "timing_mode": {
+              "default": "manual",
+              "enum": [
+                "auto",
+                "manual"
+              ],
+              "title": "Timing Mode",
+              "type": "string"
+            },
+            "transition_in": {
+              "default": "cut",
+              "enum": [
+                "cut",
+                "fade"
+              ],
+              "title": "Transition In",
+              "type": "string"
+            },
+            "transition_out": {
+              "default": "cut",
+              "enum": [
+                "cut",
+                "fade"
+              ],
+              "title": "Transition Out",
+              "type": "string"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "start_s",
+            "end_s",
+            "kind",
+            "shots"
+          ],
+          "title": "MontageBlock",
+          "type": "object"
+        },
+        "SolidBackground": {
+          "properties": {
+            "color": {
+              "default": "#111111",
+              "title": "Color",
+              "type": "string"
+            },
+            "type": {
+              "const": "solid",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "SolidBackground",
+          "type": "object"
+        },
+        "SourceCrop": {
+          "additionalProperties": false,
+          "properties": {
+            "height": {
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "title": "Height",
+              "type": "number"
+            },
+            "width": {
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "title": "Width",
+              "type": "number"
+            },
+            "x": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "X",
+              "type": "number"
+            },
+            "y": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Y",
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
+          "title": "SourceCrop",
+          "type": "object"
+        },
+        "SyncAnchor": {
+          "properties": {
+            "label": {
+              "anyOf": [
+                {
+                  "maxLength": 120,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Label"
+            },
+            "time_s": {
+              "minimum": 0.0,
+              "title": "Time S",
+              "type": "number"
+            },
+            "type": {
+              "enum": [
+                "sentence",
+                "keyword",
+                "beat",
+                "manual"
+              ],
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "time_s"
+          ],
+          "title": "SyncAnchor",
+          "type": "object"
+        },
+        "TextCardBlock": {
+          "properties": {
+            "audio_policy": {
+              "$ref": "#/$defs/AudioPolicy"
+            },
+            "background": {
+              "discriminator": {
+                "mapping": {
+                  "asset": "#/$defs/AssetBackground",
+                  "blur_previous": "#/$defs/BlurPreviousBackground",
+                  "gradient": "#/$defs/GradientBackground",
+                  "solid": "#/$defs/SolidBackground"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/SolidBackground"
+                },
+                {
+                  "$ref": "#/$defs/GradientBackground"
+                },
+                {
+                  "$ref": "#/$defs/BlurPreviousBackground"
+                },
+                {
+                  "$ref": "#/$defs/AssetBackground"
+                }
+              ],
+              "title": "Background"
+            },
+            "end_s": {
+              "exclusiveMinimum": 0.0,
+              "title": "End S",
+              "type": "number"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "kind": {
+              "const": "text_card",
+              "title": "Kind",
+              "type": "string"
+            },
+            "origin": {
+              "default": "user",
+              "enum": [
+                "ai",
+                "user"
+              ],
+              "title": "Origin",
+              "type": "string"
+            },
+            "rationale": {
+              "anyOf": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Rationale"
+            },
+            "start_s": {
+              "minimum": 0.0,
+              "title": "Start S",
+              "type": "number"
+            },
+            "style_preset_id": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Style Preset Id"
+            },
+            "timing_mode": {
+              "default": "manual",
+              "enum": [
+                "auto",
+                "manual"
+              ],
+              "title": "Timing Mode",
+              "type": "string"
+            },
+            "transition_in": {
+              "default": "cut",
+              "enum": [
+                "cut",
+                "fade"
+              ],
+              "title": "Transition In",
+              "type": "string"
+            },
+            "transition_out": {
+              "default": "cut",
+              "enum": [
+                "cut",
+                "fade"
+              ],
+              "title": "Transition Out",
+              "type": "string"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "start_s",
+            "end_s",
+            "kind",
+            "background"
+          ],
+          "title": "TextCardBlock",
+          "type": "object"
+        },
+        "VisualAnimation": {
+          "additionalProperties": false,
+          "properties": {
+            "entrance": {
+              "default": "none",
+              "enum": [
+                "none",
+                "fade",
+                "pop",
+                "slide",
+                "zoom"
+              ],
+              "title": "Entrance",
+              "type": "string"
+            },
+            "exit": {
+              "default": "none",
+              "enum": [
+                "none",
+                "fade",
+                "pop",
+                "slide",
+                "zoom"
+              ],
+              "title": "Exit",
+              "type": "string"
+            },
+            "loop": {
+              "default": "none",
+              "enum": [
+                "none",
+                "pulse",
+                "bounce",
+                "float"
+              ],
+              "title": "Loop",
+              "type": "string"
+            },
+            "speed": {
+              "default": 1,
+              "maximum": 3,
+              "minimum": 0.25,
+              "title": "Speed",
+              "type": "number"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          },
+          "title": "VisualAnimation",
+          "type": "object"
+        },
+        "VisualEditorStyle": {
+          "additionalProperties": false,
+          "properties": {
+            "animation": {
+              "$ref": "#/$defs/VisualAnimation"
+            },
+            "fit_mode": {
+              "default": "cover",
+              "enum": [
+                "contain",
+                "cover"
+              ],
+              "title": "Fit Mode",
+              "type": "string"
+            },
+            "rotation_deg": {
+              "default": 0,
+              "maximum": 360,
+              "minimum": -360,
+              "title": "Rotation Deg",
+              "type": "number"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            },
+            "zoom": {
+              "default": 1,
+              "maximum": 4,
+              "minimum": 1,
+              "title": "Zoom",
+              "type": "number"
+            }
+          },
+          "title": "VisualEditorStyle",
+          "type": "object"
+        },
+        "VisualShot": {
+          "properties": {
+            "asset_id": {
+              "maxLength": 80,
+              "minLength": 1,
+              "title": "Asset Id",
+              "type": "string"
+            },
+            "crop": {
+              "$ref": "#/$defs/Crop"
+            },
+            "duration_s": {
+              "exclusiveMinimum": 0.0,
+              "maximum": 10.0,
+              "title": "Duration S",
+              "type": "number"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "image",
+                "video"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "motion": {
+              "default": "none",
+              "enum": [
+                "none",
+                "zoom_in",
+                "zoom_out",
+                "pan_left",
+                "pan_right"
+              ],
+              "title": "Motion",
+              "type": "string"
+            },
+            "src_gcs_path": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "title": "Src Gcs Path",
+              "type": "string"
+            },
+            "start_offset_s": {
+              "minimum": 0.0,
+              "title": "Start Offset S",
+              "type": "number"
+            },
+            "sync_anchor": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SyncAnchor"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "trim_start_s": {
+              "anyOf": [
+                {
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Trim Start S"
+            }
+          },
+          "required": [
+            "asset_id",
+            "src_gcs_path",
+            "kind",
+            "start_offset_s",
+            "duration_s"
+          ],
+          "title": "VisualShot",
+          "type": "object"
+        }
+      },
       "additionalProperties": false,
       "properties": {
         "client_event_id": {
@@ -605,6 +2716,17 @@
           "minLength": 1,
           "title": "Client Event Id",
           "type": "string"
+        },
+        "editor_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EditorStateIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "expected_thread_revision": {
           "minimum": 0,

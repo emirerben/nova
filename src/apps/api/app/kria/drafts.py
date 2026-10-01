@@ -50,6 +50,9 @@ class KriaDraftDocument(BaseModel):
     editor_text_diff: list[dict[str, Any]] | None = Field(default=None, max_length=200)
     strategy: dict[str, Any] | None = None
     changes: list[str] = Field(default_factory=list, max_length=24)
+    # Opaque id of the client editor state this draft was built on (echoed, never
+    # recomputed). Absent for drafts that predate it, so their hashes do not change.
+    client_state_id: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def _shape_matches_kind(self) -> KriaDraftDocument:
@@ -80,6 +83,8 @@ def canonical_snapshot(document: KriaDraftDocument) -> tuple[dict[str, Any], str
     if snapshot.get("editor_text_diff") is None:
         # Absent stays absent so existing drafts keep their snapshot hash / ETag.
         snapshot.pop("editor_text_diff", None)
+    if snapshot.get("client_state_id") is None:
+        snapshot.pop("client_state_id", None)
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
     if len(encoded) > MAX_DRAFT_BYTES:
         raise RuntimeFailure(

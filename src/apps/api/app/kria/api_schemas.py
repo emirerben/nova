@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.agents._schemas.visual_block import VisualBlock
 from app.kria.contracts import KriaProblem
+from app.routes.generative_jobs import EditorCommitRequest, TimelineSlotEdit
 
 TurnStatus = Literal[
     "pending",
@@ -30,10 +33,74 @@ class _StrictBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+EDITOR_STATE_MAX_BYTES = 256 * 1024
+_EDITOR_STATE_LANE_MAX = 200
+# Fields that only make sense on an editor Save (receipts, suggestion resolution,
+# guided revision CAS); a turn's editor state must never carry them.
+_SAVE_ONLY_LANE_FIELDS = (
+    "copilot_receipt_ids",
+    "accepted_suggestion_ids",
+    "retry_guided_revision",
+    "guided_revision",
+    "guided_revision_number",
+)
+
+
+class EditorStateTimelineSlot(TimelineSlotEdit):
+    """A Save timeline row plus the media identity of an UNSAVED added clip.
+
+    A saved row's media is recoverable from ``clip_index`` against the persisted
+    sources; a clip the creator just added is not in them yet, so the client names it
+    here (all optional, ignored by the Save route which uses ``TimelineSlotEdit``).
+    """
+
+    media_id: str | None = Field(default=None, max_length=128)
+    media_kind: Literal["image", "video"] | None = None
+    source_duration_s: float | None = Field(default=None, ge=0.0, le=36000.0)
+
+
+class EditorStateLanes(EditorCommitRequest):
+    """``EditorCommitRequest`` as a turn's editor state (adds list caps)."""
+
+    text_elements: list[dict] | None = Field(default=None, max_length=_EDITOR_STATE_LANE_MAX)
+    caption_cues: list[dict] | None = Field(default=None, max_length=_EDITOR_STATE_LANE_MAX)
+    visual_blocks: list[VisualBlock] | None = Field(default=None, max_length=_EDITOR_STATE_LANE_MAX)
+    motion_scenes: list[dict] | None = Field(default=None, max_length=_EDITOR_STATE_LANE_MAX)
+    camera_effects: list[dict] | None = Field(default=None, max_length=_EDITOR_STATE_LANE_MAX)
+    timeline_slots: list[EditorStateTimelineSlot] | None = None  # type: ignore[assignment]
+
+
+class EditorStateIn(_StrictBody):
+    """The editor's CURRENT UNSAVED state, sent with a chat turn.
+
+    A lane present is the client's full current value; absent equals the saved variant.
+    A present-but-empty ``lanes`` is still authoritative: "no unsaved edits".
+    The server never recomputes a hash; ``client_state_id`` is echoed verbatim.
+    """
+
+    version: Literal[1] = 1
+    base_generation: str = Field(max_length=128)
+    client_state_id: str = Field(min_length=1, max_length=64)
+    lanes: EditorStateLanes
+
+    @model_validator(mode="after")
+    def _bounded_and_save_free(self) -> EditorStateIn:
+        # An explicit null / empty / false is a no-op default, not a Save-only payload.
+        offending = [k for k in _SAVE_ONLY_LANE_FIELDS if getattr(self.lanes, k, None)]
+        if offending:
+            raise ValueError(f"editor_state.lanes must not carry Save-only fields: {offending}")
+        encoded = json.dumps(self.model_dump(mode="json"), ensure_ascii=False)
+        if len(encoded.encode("utf-8")) > EDITOR_STATE_MAX_BYTES:
+            raise ValueError(f"editor_state must be at most {EDITOR_STATE_MAX_BYTES} bytes")
+        return self
+
+
 class SubmitTurnBody(_StrictBody):
     message: str = Field(min_length=1, max_length=4000)
     client_event_id: str = Field(min_length=1, max_length=160)
     expected_thread_revision: int = Field(ge=0)
+    # Additive and dark (KRIA_EDITOR_STATE_TURNS_ENABLED); old clients omit it.
+    editor_state: EditorStateIn | None = None
 
     @field_validator("message")
     @classmethod

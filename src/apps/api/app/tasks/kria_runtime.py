@@ -65,11 +65,14 @@ from app.routes.generative_jobs import (
 )
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
+    EditorStateReplyError,
+    EditorStateSpeechCutError,
     KriaEditorOpError,
     compile_editor_ops,
-    fresh_editor_head_payload,
+    editor_state_has_lanes,
     merge_editor_draft,
-    project_editor_draft,
+    parse_editor_state,
+    resolve_editor_base,
 )
 from app.worker import celery_app
 
@@ -293,6 +296,14 @@ def _useful_plan(planned: PlannedKriaTurn, *, user_message: str) -> PlannedKriaT
     return replace(planned, plan=plan.model_copy(update={"intents": intents}))
 
 
+def _state_event_fields(state_id: str | None, trace: dict[str, Any]) -> dict[str, Any]:
+    """`draft_applied` additions; empty (byte-identical event) when no state rode the turn."""
+    return {
+        **({"based_on_client_state_id": state_id} if state_id else {}),
+        **trace,
+    }
+
+
 def _complete_draft_turn(
     turn_id: uuid.UUID,
     *,
@@ -314,6 +325,11 @@ def _complete_draft_turn(
     changes: list[str] = []
     snapshot: dict[str, Any] = {}
     snapshot_hash = ""
+    # Editor-state provenance (set only when a client state rode this turn).
+    state_trace: dict[str, Any] = {}
+    state_id: str | None = None
+    your_edits_snapshot: dict[str, Any] | None = None
+    your_edits_hash = ""
     if apply_intent.tool_name == "draft.apply_strategy":
         changes = _strategy_changes(arguments)
         document = KriaDraftDocument(
@@ -414,22 +430,33 @@ def _complete_draft_turn(
             )
             if variant is None:
                 raise RuntimeError("The exact editor target is no longer available")
-            prior_payload = (
-                fresh_editor_head_payload(head, variant)
-                if head is not None and head.base_job_id == job.id
-                else {}
+            # The SAME resolver the planner used for the snapshot the model saw, re-run
+            # here under the row locks so a state that went stale during the model
+            # call is refused instead of silently rebased.
+            client_state = parse_editor_state(turn.editor_state)
+            editor_base = resolve_editor_base(
+                job,
+                variant,
+                head if head is not None and head.base_job_id == job.id else None,
+                client_state,
             )
+            prior_payload = editor_base.prior_payload
             # The session pointer goes stale after an editor Save; stamp the draft
             # with the variant's real generation so it never self-perpetuates.
             draft_generation_id = variant_render_baseline(variant) or generation_id
-            if prior_payload and any(
+            wants_speech_cut = any(
                 op.get("op") == "apply_speech_cut_candidate" for op in arguments.operations
-            ):
-                raise RuntimeError("Save the current draft before applying speech processing")
-            compiled = compile_editor_ops(
-                job, project_editor_draft(variant, prior_payload, job), arguments.operations
             )
+            if wants_speech_cut and editor_base.source == "client_state":
+                if editor_state_has_lanes(client_state):
+                    raise EditorStateSpeechCutError(EditorStateSpeechCutError.reply)
+            elif wants_speech_cut and prior_payload:
+                raise RuntimeError("Save the current draft before applying speech processing")
+            compiled = compile_editor_ops(job, editor_base.projected, arguments.operations)
             changes = compiled.changes
+            state_id = (
+                client_state.client_state_id if editor_base.source == "client_state" else None
+            )
             document = KriaDraftDocument(
                 kind="editor",
                 intent=arguments.summary,
@@ -443,8 +470,28 @@ def _complete_draft_turn(
                 ),
                 editor_text_diff=compiled.text_diff or None,
                 changes=changes,
+                client_state_id=state_id,
             )
             snapshot, snapshot_hash = canonical_snapshot(document)
+            if client_state is not None:
+                state_trace = {
+                    "editor_state_source": editor_base.source,
+                    **(
+                        {"editor_state_fallback": editor_base.fallback_reason}
+                        if editor_base.fallback_reason
+                        else {}
+                    ),
+                }
+            if editor_base.source == "client_state" and editor_state_has_lanes(client_state):
+                your_edits = KriaDraftDocument(
+                    kind="editor",
+                    intent="Your edits",
+                    edit_format=str(item.edit_format or "montage"),
+                    editor_payload=prior_payload,
+                    changes=[],
+                    client_state_id=state_id,
+                )
+                your_edits_snapshot, your_edits_hash = canonical_snapshot(your_edits)
         if document is None:
             raise RuntimeError("Kria produced an unsupported draft tool")
         reply_text = arguments.summary
@@ -518,7 +565,7 @@ def _complete_draft_turn(
             group_order=0,
             target_thread_id=thread.id,
             status="completed",
-            result={"snapshot_hash": snapshot_hash, "changes": changes},
+            result={"snapshot_hash": snapshot_hash, "changes": changes, **state_trace},
             started_at=datetime.now(UTC),
             completed_at=datetime.now(UTC),
         )
@@ -526,6 +573,29 @@ def _complete_draft_turn(
         db.flush()
         if head is not None:
             head.is_head = False
+        parent_draft = head
+        if your_edits_snapshot is not None:
+            # The creator's unsaved editor state becomes its own revision first (the
+            # chat draft's parent, so Undo returns to exactly what they had).
+            db.flush()
+            parent_draft = CreatorEditDraft(
+                creator_id=thread.creator_id,
+                thread_id=thread.id,
+                item_id=item.id,
+                variant_key=variant_key,
+                base_job_id=job.id if job is not None else None,
+                base_generation_id=draft_generation_id,
+                draft_revision=next_revision,
+                parent_draft_id=head.id if head is not None else None,
+                snapshot_json=your_edits_snapshot,
+                snapshot_hash=your_edits_hash,
+                is_head=True,
+            )
+            db.add(parent_draft)
+            db.flush()
+            parent_draft.is_head = False
+            db.flush()
+            next_revision += 1
         draft = CreatorEditDraft(
             creator_id=thread.creator_id,
             thread_id=thread.id,
@@ -534,7 +604,7 @@ def _complete_draft_turn(
             base_job_id=job.id if job is not None else None,
             base_generation_id=draft_generation_id,
             draft_revision=next_revision,
-            parent_draft_id=head.id if head is not None else None,
+            parent_draft_id=parent_draft.id if parent_draft is not None else None,
             snapshot_json=snapshot,
             snapshot_hash=snapshot_hash,
             source_execution_id=draft_execution.id,
@@ -563,9 +633,10 @@ def _complete_draft_turn(
                     "draft_revision": draft.draft_revision,
                     "snapshot_hash": draft.snapshot_hash,
                     "changes": changes,
-                    "can_undo": head is not None,
+                    "can_undo": parent_draft is not None,
                     "receipt_ids": [str(draft_execution.id)],
                     "render_requested": False,
+                    **_state_event_fields(state_id, state_trace),
                     **(
                         {"requirement_receipts": requirement_receipts}
                         if requirement_receipts
@@ -657,8 +728,9 @@ def _complete_draft_turn(
                 "draft_revision": draft.draft_revision,
                 "snapshot_hash": draft.snapshot_hash,
                 "changes": changes,
-                "can_undo": head is not None,
+                "can_undo": parent_draft is not None,
                 "receipt_ids": [str(draft_execution.id)],
+                **_state_event_fields(state_id, state_trace),
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
             },
         )
@@ -716,6 +788,7 @@ async def _plan_with_live_agent(
     turn_id: uuid.UUID,
     lease_owner: str,
     lease_epoch: int,
+    editor_state: dict[str, Any] | None = None,
 ) -> PlannedKriaTurn:
     stop = asyncio.Event()
 
@@ -752,12 +825,15 @@ async def _plan_with_live_agent(
     heartbeat = asyncio.create_task(_heartbeat())
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            parsed_state = parse_editor_state(editor_state)
             return await plan_live_turn(
                 db,
                 thread_id=uuid.UUID(str(snapshot["thread_id"])),
                 item_id=uuid.UUID(str(snapshot["item_id"])),
                 creator_id=uuid.UUID(str(snapshot["creator_id"])),
                 user_message=user_message,
+                # Only passed when present so the no-state call is byte-identical.
+                **({"editor_state": parsed_state} if parsed_state is not None else {}),
             )
     finally:
         stop.set()
@@ -817,9 +893,14 @@ def _owns_turn_lease(
     )
 
 
+def _stored_editor_state(turn: Any) -> dict[str, Any] | None:
+    state = getattr(turn, "editor_state", None)
+    return state if isinstance(state, dict) else None
+
+
 def _claim(
     turn_id: uuid.UUID, lease_owner: str
-) -> tuple[dict[str, Any], str, int, int] | _ClaimsExhausted | None:
+) -> tuple[dict[str, Any], str, int, int, dict[str, Any] | None] | _ClaimsExhausted | None:
     """Claim briefly; no lock survives tool/model/storage/broker work."""
 
     if not settings.kria_runtime_v2_enabled:
@@ -862,6 +943,7 @@ def _claim(
             str(source.content or ""),
             int(turn.lease_epoch),
             int(thread.revision),
+            _stored_editor_state(turn),
         )
 
 
@@ -1170,7 +1252,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 queue="agent-control",
             )
         return {"turn_id": turn_id, "status": "failed"}
-    snapshot, user_message, lease_epoch, claimed_thread_revision = claimed
+    snapshot, user_message, lease_epoch, claimed_thread_revision, *claimed_rest = claimed
+    editor_state = claimed_rest[0] if claimed_rest else None
     try:
         if settings.main_creator_agent_enabled and snapshot.get("item_id"):
             planned = asyncio.run(
@@ -1180,6 +1263,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     turn_id=identifier,
                     lease_owner=lease_owner,
                     lease_epoch=lease_epoch,
+                    **({"editor_state": editor_state} if editor_state else {}),
                 )
             )
             planned = _useful_plan(planned, user_message=user_message)
@@ -1200,6 +1284,23 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
                         planned=planned,
+                    )
+                except EditorStateReplyError as exc:
+                    # The creator's unsaved state is stale (video changed) or the op
+                    # cannot honour it (speech cut): an honest reply, nothing changed.
+                    log.info("kria_editor_state_refused", turn_id=turn_id, reply=exc.reply)
+                    planned = replace(
+                        planned,
+                        plan=KriaTurnPlan(
+                            mode="respond", turn_value="recovery", response=exc.reply
+                        ),
+                    )
+                    completion = _complete_response_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        plan=planned.plan,
                     )
                 except KriaEditorOpError as exc:
                     # KRI-219: an op the recipe cannot represent (e.g. speed on a

@@ -428,6 +428,11 @@ class Settings(BaseSettings):
     # runtime_version=1 project remain available when this is false; the new
     # durable turn/approval endpoints deliberately fail closed as 404.
     kria_runtime_v2_enabled: bool = False
+    # Chat copilot continues on the editor's CURRENT UNSAVED state: the client may
+    # send `editor_state` with a turn (EditorStateIn) and the planner + draft compiler
+    # build on it instead of the saved variant / stale head. Off (default) = the
+    # field is accepted and silently dropped, nothing stored, byte-identical to before.
+    kria_editor_state_turns_enabled: bool = False
     # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
     # best-guess landmark per clip, each with provenance. Gates SERVER
     # CONSUMPTION only: the landmark agent run, exposing facts to the Main

@@ -2029,7 +2029,7 @@ async def test_brief_version_is_idempotent_per_turn_and_never_written_on_requeue
         turn_id = uuid.UUID(accepted.turn_id)
         claimed = await asyncio.to_thread(_claim, turn_id, "owner-1")
         assert claimed is not None
-        _snapshot, _message, lease_epoch, revision = claimed
+        _snapshot, _message, lease_epoch, revision, _editor_state = claimed
         question = KriaTurnPlan(mode="respond", turn_value="question", response="Which order?")
         updates = (BriefUpdate(kind="order", scope="global", description="chronological"),)
 
@@ -2055,7 +2055,7 @@ async def test_brief_version_is_idempotent_per_turn_and_never_written_on_requeue
 
         claimed = await asyncio.to_thread(_claim, turn_id, "owner-2")
         assert claimed is not None
-        _snapshot, _message, lease_epoch, revision = claimed
+        _snapshot, _message, lease_epoch, revision, _editor_state = claimed
         done = await asyncio.to_thread(
             lambda: _complete_response_turn(
                 turn_id,
