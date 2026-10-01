@@ -14,6 +14,7 @@ share one definition without an import cycle.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 
@@ -57,18 +58,26 @@ def keep_segment_frames(
     return frames
 
 
+def frames_to_spans(frames: Iterable[tuple[int, int]], fps: int) -> list[tuple[float, float]]:
+    """The source seconds each [first, end) frame range covers."""
+    return [(first / fps, end / fps) for first, end in frames]
+
+
 def rendered_spans(
     keep_segments: list[tuple[float, float]], grid: FrameGrid
 ) -> list[tuple[float, float]]:
-    """The source span each rendered segment plays, in output order.
+    """The source span each rendered segment plays, in output order."""
+    return frames_to_spans(keep_segment_frames(keep_segments, grid.fps, grid.duration_s), grid.fps)
 
-    A source instant inside span k plays at the summed length of the spans
-    before it plus its offset into span k; nothing outside the spans plays.
+
+def output_time(t: float, spans: Iterable[tuple[float, float]]) -> float:
+    """Where source ``t`` plays in a render of ``spans`` (in output order).
+
+    The summed length of the spans up to ``t``: an instant inside span k
+    plays at the spans before it plus its offset into k, and one that no
+    span plays maps to the cut it falls in.
     """
-    return [
-        (first / grid.fps, end / grid.fps)
-        for first, end in keep_segment_frames(keep_segments, grid.fps, grid.duration_s)
-    ]
+    return sum(max(0.0, min(t, end) - start) for start, end in spans)
 
 
 def snap_to_frame(t: float, fps: int) -> float:

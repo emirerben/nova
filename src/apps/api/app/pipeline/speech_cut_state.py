@@ -10,15 +10,21 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
 
+from app.pipeline.cut_grid import frames_to_spans, output_time
 from app.pipeline.silence_cut import Removal
 
 SPEECH_CUT_STATE_VERSION = 1
+# Bounds for a persisted frame_grid read back from a stored summary: a row
+# outside them is treated as having no grid.
+_MAX_GRID_FPS = 240
+_MAX_GRID_FRAMES = 10_000
+_MAX_GRID_FRAME = _MAX_GRID_FPS * 86_400  # a day at the highest fps
 # Lane times and a summary's original_duration_s persist rounded to the
 # millisecond (`_round_time`), so a time within one of a span edge is at it.
 _CUT_POINT_TOL_S = 0.001
@@ -222,23 +228,31 @@ class RenderedCut:
         play the exact float segments, and older cloud renders recorded no
         grid; those keep the removal mapping.
         """
-        grid = (summary or {}).get("frame_grid")
-        if not isinstance(grid, dict):
+        if not isinstance(summary, dict) or not isinstance(summary.get("frame_grid"), dict):
             return None
+        grid = summary["frame_grid"]
         try:
-            fps = int(grid["fps"])
-            frames = [(int(first), int(end)) for first, end in grid["frames"]]
-        except (KeyError, TypeError, ValueError):
+            fps = grid["fps"]
+            frames = [(first, end) for first, end in grid["frames"]]
+            clip_end = float(summary.get("original_duration_s") or 0.0)
+        except (KeyError, TypeError, ValueError, OverflowError):
             return None
+        # A stored row is data: anything but whole, ordered, in-range frames
+        # keeps the removal mapping instead of failing the re-cut.
         if (
-            fps <= 0
-            or not frames
+            type(fps) is not int
+            or not 0 < fps <= _MAX_GRID_FPS
+            or not 0 < len(frames) <= _MAX_GRID_FRAMES
+            or any(type(v) is not int for frame in frames for v in frame)
+            or frames[0][0] < 0
             or any(end <= first for first, end in frames)
             or any(nxt[0] < prev[1] for prev, nxt in pairwise(frames))
+            or frames[-1][1] > _MAX_GRID_FRAME
+            or not math.isfinite(clip_end)
+            or clip_end < 0
         ):
             return None
-        spans = [(first / fps, end / fps) for first, end in frames]
-        clip_end = float((summary or {}).get("original_duration_s") or 0.0)
+        spans = frames_to_spans(frames, fps)
         if clip_end > spans[-1][1] + _CUT_POINT_TOL_S:
             # A trailing cut: the clip's tail does not play.
             spans.append((clip_end, math.inf))
@@ -248,14 +262,14 @@ class RenderedCut:
 
     def to_output(self, t: float) -> float:
         """Where source ``t`` plays; an instant inside a cut maps to that cut."""
-        return sum(max(0.0, min(t, end) - start) for start, end in self.spans)
+        return output_time(t, self.spans)
 
     def anchor_to_output(self, t: float) -> float | None:
         """`to_output` for one anchor, or None when the render cut it.
 
         An anchor within half a frame of a cut stays, at the cut. The grid
-        moved each edge by up to that much, so an anchor the removals put at
-        a cut (a render without a grid on the old side) is not lost.
+        moved each edge by up to that much, so an anchor at a cut's float
+        time (a lane from an uncut prior placed on the new cut) is not lost.
         """
         tol = 0.5 / self.fps
         prev_end: float | None = None
@@ -301,28 +315,16 @@ def remap_timed_records(
     ordered = sorted(removals, key=lambda r: (r.start_s, r.end_s))
     return _remap_records(
         records,
-        keep_spans=lambda end: _keep_segments(ordered, max(end, 0.0)),
+        keep_spans=_keep_segments(ordered, math.inf),
         to_output=lambda t: t - _removed_before(t, ordered),
         anchor_to_output=lambda t: remap_time(t, ordered),
-    )
-
-
-def _remap_records_on_render(
-    records: list[dict[str, Any]] | None, render: RenderedCut
-) -> list[dict[str, Any]]:
-    """`remap_timed_records` onto a cloud cut render: what survives is what it plays."""
-    return _remap_records(
-        records,
-        keep_spans=lambda _end: list(render.spans),
-        to_output=render.to_output,
-        anchor_to_output=render.anchor_to_output,
     )
 
 
 def _remap_records(
     records: list[dict[str, Any]] | None,
     *,
-    keep_spans: Callable[[float], list[tuple[float, float]]],
+    keep_spans: Sequence[tuple[float, float]],
     to_output: Callable[[float], float],
     anchor_to_output: Callable[[float], float | None],
 ) -> list[dict[str, Any]]:
@@ -346,9 +348,7 @@ def _remap_records(
         start = float(raw[start_key])
         end = float(raw[end_key])
         kept = [
-            (max(start, lo), min(end, hi))
-            for lo, hi in keep_spans(end)
-            if min(end, hi) > max(start, lo)
+            (max(start, lo), min(end, hi)) for lo, hi in keep_spans if min(end, hi) > max(start, lo)
         ]
         if not kept:
             continue
@@ -416,9 +416,14 @@ def reproject_timed_records(
 
     A side with a ``RenderedCut`` (a cloud cut render) maps through the frames
     that render played and ignores its removals; a side without one maps
-    through its removals.
+    through its removals. An old render that cut but recorded no frames (made
+    before ``frame_grid`` was persisted) keeps both sides on the removals: its
+    lanes sit where the removals put them, and only the same mapping forward
+    cancels that, so lanes the new cut never touches stay put.
     """
     old = list(old_removals)
+    if old_render is None and old:
+        new_render = None
 
     def to_source(t: float, *, prefer_post_cut: bool) -> float:
         if old_render is not None:
@@ -453,7 +458,13 @@ def reproject_timed_records(
 
     source_records = _to_source(records)
     if new_render is not None:
-        return _remap_records_on_render(source_records, new_render)
+        # What survives is what the new render plays.
+        return _remap_records(
+            source_records,
+            keep_spans=new_render.spans,
+            to_output=new_render.to_output,
+            anchor_to_output=new_render.anchor_to_output,
+        )
     return remap_timed_records(source_records, list(new_removals))
 
 

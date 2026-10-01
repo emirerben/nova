@@ -1,6 +1,6 @@
 """Tests for reframe_and_export(keep_segments=...) — plans/010 T4.
 
-Five layers:
+Six layers:
 
 1. Command-construction pins (subprocess mocked, no ffmpeg needed):
    - IRON RULE: keep_segments=None produces a command byte-identical to the

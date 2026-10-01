@@ -31,10 +31,15 @@ apply step (``reframe_and_export(keep_segments=…)``); see plans/010.
                                                 │
               ┌─────────────────────────────────┴──────────────────┐
               ▼                                                    ▼
-    reframe_and_export(keep_segments=…)            remap_words(words, plan)
+    reframe_and_export(keep_segments=…)            remap_words(words, plan, grid=…)
     (caller: ONE encode, per-segment                 → surviving words in
-     trim/atrim + concat inside the graph)             cut-timeline coords
-                                                       for caption cues
+     trim/atrim + concat inside the graph;             cut-timeline coords
+     each segment whole frames on                      for caption cues (a cloud
+     reframe.cut_frame_grid)                           cut passes that grid;
+                                                       phone/narration pass none)
+
+    plan_summary(plan, grid=…) persists the frames a cloud cut played
+    (frame_grid) for speech_cut_state's editor re-cut reprojection.
 
 Timeline-rebase siblings (eng review 4A): ``remap_words`` is deliberately NOT
 extracted into a shared utility with the two existing rebases —
@@ -64,7 +69,13 @@ from dataclasses import dataclass
 from itertools import pairwise, product
 from typing import Any, Literal, NamedTuple
 
-from app.pipeline.cut_grid import FrameGrid, keep_segment_frames, rendered_spans, snap_to_frame
+from app.pipeline.cut_grid import (
+    FrameGrid,
+    keep_segment_frames,
+    output_time,
+    rendered_spans,
+    snap_to_frame,
+)
 
 # Whisper bias prompt for the CUT path: passed as whisper-1's ``prompt`` /
 # faster-whisper's ``initial_prompt`` (transcribe(..., verbatim_prompt=…)) so the
@@ -2695,7 +2706,7 @@ def _cut_timeline(plan: CutPlan, grid: FrameGrid | None) -> Callable[[float], fl
         removals = sorted(plan.removed, key=lambda r: (r.start_s, r.end_s))
         return lambda t: t - _removed_before(t, removals)
     spans = rendered_spans(plan.keep_segments, grid)
-    return lambda t: sum(max(0.0, min(t, end) - start) for start, end in spans)
+    return lambda t: output_time(t, spans)
 
 
 def remap_time(t: float, plan: CutPlan, *, grid: FrameGrid | None = None) -> float:

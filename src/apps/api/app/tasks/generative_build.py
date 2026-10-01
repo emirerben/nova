@@ -23512,6 +23512,7 @@ def _render_subtitled_variant(
                         raise SpeechCleanupFailure("apply_failed") from exc
                     sc_apply = False
                     sc_apply_failed = True
+                    sc_grid = None
                     sc_plan = None
                     sc_words = None
                     sc_language = ""
@@ -24309,7 +24310,7 @@ def _render_subtitled_variant(
             silence_cut_summary = plan_summary(
                 sc_plan,
                 original_duration_s=float(probe.duration_s),
-                grid=sc_grid if sc_apply else None,
+                grid=sc_grid,
             )
             if cleanup_required:
                 base["silence_cut_outcome"] = "applied" if sc_apply else "no_change"
@@ -27418,8 +27419,9 @@ def _merge_speech_cut_prior_state(
     )
     merged = dict(result)
     # New speech/caption/Smart analysis stays authoritative. Creator-authored
-    # timing lanes are projected exactly, through the frames each cloud cut
-    # render played; appearance toggles are timing-free.
+    # timing lanes are projected through the frames each cloud cut render
+    # played (or, for a prior render without frame_grid, its removals);
+    # appearance toggles are timing-free.
     for field in (
         "media_overlays",
         "sound_effects",

@@ -200,6 +200,17 @@ def test_rendered_cut_keeps_a_trailing_cut_unplayed() -> None:
         {"frame_grid": {"fps": 30, "frames": [[0, 40], [30, 60]]}},
         {"frame_grid": {"fps": 30, "frames": [["a", 30]]}},
         {"frame_grid": {"fps": 30}},
+        # A stored row is data: overflowing, non-integer, negative or
+        # non-finite values keep the removal mapping instead of raising.
+        ["not", "a", "summary"],
+        {"frame_grid": {"fps": float("inf"), "frames": [[0, 30]]}},
+        {"frame_grid": {"fps": 30.0, "frames": [[0, 30]]}},
+        {"frame_grid": {"fps": True, "frames": [[0, 30]]}},
+        {"frame_grid": {"fps": 30, "frames": [[0, 10**400]]}},
+        {"frame_grid": {"fps": 30, "frames": [[-300, -30]]}},
+        {"frame_grid": {"fps": 30, "frames": [[0, 30.5]]}},
+        {"frame_grid": {"fps": 30, "frames": [[0, 30]]}, "original_duration_s": "abc"},
+        {"frame_grid": {"fps": 30, "frames": [[0, 30]]}, "original_duration_s": float("inf")},
     ],
 )
 def test_summary_without_a_usable_grid_keeps_the_removal_mapping(summary) -> None:
@@ -292,19 +303,72 @@ def test_accepted_cut_reprojects_lanes_onto_the_new_frames() -> None:
     assert raw[0]["at_s"] == 6.615
 
 
-def test_anchor_at_a_removal_timed_cut_survives_the_grid() -> None:
-    # Old render without a grid: cut 1 sits at 2.04 s and the anchor there
-    # maps to the removal end, 2.52 s. The new render's span starts half a
-    # frame later (frame 76, 2.5333 s), so 2.52 s does not play; it is still
-    # at the cut, not inside it.
+def test_prior_without_a_grid_keeps_both_sides_on_the_removals() -> None:
+    # The old render cut but recorded no frames (made before frame_grid was
+    # persisted). Mapping only the new side through its frames would move
+    # lanes the new cut never touches (3.0 s to 2.98 s); both sides on the
+    # removals cancel, as before frame_grid existed.
+    records = [
+        {"id": "lane", "start_s": 3.0, "end_s": 3.5},
+        {"id": "sfx", "at_s": 4.0},
+        {"id": "sfx-at-cut", "at_s": 2.04},
+    ]
+
     result = reproject_timed_records(
-        [{"id": "sfx-at-cut", "at_s": 2.04}],
+        records,
         old_removals=OLD_REMOVALS,
         new_removals=NEW_REMOVALS,
         new_render=RenderedCut.from_summary(NEW_SUMMARY),
     )
 
-    assert result == [{"id": "sfx-at-cut", "at_s": 2.033}]
+    assert result == records
+
+
+def test_anchor_just_inside_a_new_cut_stays_at_the_cut() -> None:
+    # An uncut prior: source time is output time. 2.04 s is 0.2 frame past the
+    # new render's first span end (61/30 s), so it stays at that cut; 2.06 s
+    # is deeper in the cut and does not play.
+    result = reproject_timed_records(
+        [{"id": "just-into-cut", "at_s": 2.04}, {"id": "deep", "at_s": 2.06}],
+        old_removals=[],
+        new_removals=NEW_REMOVALS,
+        new_render=RenderedCut.from_summary(NEW_SUMMARY),
+    )
+
+    assert result == [{"id": "just-into-cut", "at_s": 2.033}]
+
+
+def test_leading_trim_keeps_only_anchors_at_the_first_frame() -> None:
+    render = RenderedCut.from_summary(
+        {"original_duration_s": 10.0, "frame_grid": {"fps": 30, "frames": [[15, 300]]}}
+    )
+
+    assert render is not None
+    assert render.anchor_to_output(0.49) == 0.0
+    assert render.anchor_to_output(0.2) is None
+
+
+def test_render_path_remaps_nested_words_and_reveal_schedule() -> None:
+    # On the new render's frames the word ends at the first cut (61/30 s) and
+    # the reveal at 3.0 s plays at 2.5 s; the removals would give 2.04 s and
+    # 2.52 s. 2.4 s falls inside the cut and is dropped from the schedule.
+    result = reproject_timed_records(
+        [
+            {
+                "start_s": 2.0,
+                "end_s": 4.0,
+                "words": [{"text": "hi", "start_s": 2.0, "end_s": 2.4}],
+                "source_params": {"reveal_schedule_s": [2.0, 2.4, 3.0]},
+            }
+        ],
+        old_removals=[],
+        new_removals=NEW_REMOVALS,
+        new_render=RenderedCut.from_summary(NEW_SUMMARY),
+    )
+
+    assert result[0]["end_s"] == 3.5
+    assert result[0]["words"] == [{"text": "hi", "start_s": 2.0, "end_s": 2.033}]
+    assert result[0]["source_params"]["reveal_schedule_s"] == [2.0, 2.5]
 
 
 def test_trailing_cut_drops_lanes_on_the_unplayed_tail() -> None:
