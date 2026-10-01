@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.26.0] - 2026-10-01
+
+### Changed
+- v0.77.8.0 feat(copilot): full editor-op parity — selector text/timeline/audio ops, guided label-follow, honest receipts (KRI-219, KRI-218) (#1271) <!-- release-pr: 1271 -->
+
 ## [0.77.25.0] - 2026-10-01
 
 ### Changed
