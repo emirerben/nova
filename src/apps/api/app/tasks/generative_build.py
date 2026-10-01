@@ -21666,11 +21666,12 @@ def _silence_cut_analysis(
                 silence_result = detect_silences_with_status(
                     clip_path,
                     min_silence_s=0.1,
+                    ambient_adaptive=True,
                 )
                 silences = list(silence_result.spans)
                 silence_detection_status = silence_result.status
             elif silence_enabled:
-                silences = detect_silences(clip_path, min_silence_s=0.1)
+                silences = detect_silences(clip_path, min_silence_s=0.1, ambient_adaptive=True)
             else:
                 silences = []
             if not silences and silence_detection_status in {"ok", "not_run"}:

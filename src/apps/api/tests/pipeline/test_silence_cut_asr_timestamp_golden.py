@@ -508,7 +508,7 @@ def test_analysis_payload_carries_token_adjustments_and_round_trips():
 def test_detector_version_was_bumped_with_the_detector():
     # Snapshot reuse and the render-side cut cache key on this string; an
     # un-bumped detector change would keep serving pre-fix plans forever.
-    assert DETECTOR_VERSION == "mixed-gap-v2"
+    assert DETECTOR_VERSION == "mixed-gap-v3"
     assert Removal(0.0, 1.0, "silence").reason == "silence"  # import kept intentional
 
 

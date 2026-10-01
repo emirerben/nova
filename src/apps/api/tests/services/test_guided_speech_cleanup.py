@@ -178,7 +178,9 @@ def test_fixture_is_the_mixed_gap_structure_of_the_reported_voiceover() -> None:
     snapshot = hydrate_speech_cleanup_snapshot(fixture["snapshot"])
     keep = snapshot.cut_plan.keep_segments
 
-    assert snapshot.detector_version == "mixed-gap-v2"
+    from app.services.speech_cleanup_selection import DETECTOR_VERSION
+
+    assert snapshot.detector_version == DETECTOR_VERSION
     assert len(keep) == fixture["expected"]["keep_segment_count"] == 9
     assert sum(end - start for start, end in keep) == pytest.approx(41.59, abs=1e-3)
     assert len(snapshot.transcript(apply_cut=True).words) == 91

@@ -127,6 +127,13 @@ keep segment is widened, never absorbed). So triage a report accordingly:
 
 - "cleanup left a pause in" → budget. Read the receipt: `clamped=true` with the span in
   `proposed_removals` and absent from `removed` is a `MIN_OUTPUT_S` decline.
+- "cleanup left a pause / silent tail in on noisy footage" (rain, wind, traffic) → the
+  detector, not the budget. silencedetect's per-sample −30 dBFS floor sees no silence
+  when ambient transients peak above it, so `mixed-gap-v3` (KRI-234) unions in
+  noise-relative RMS spans (`_ambient_energy_silences` in `app/services/clip_speech.py`,
+  log event `ambient_silence_spans` with `floor_db`/`threshold_db`). They activate only
+  above a −50 dB ambient floor with ≥12 dB speech SNR and stay 80 ms clear of sound, which
+  is the cut's pre/post-roll.
 - "cleanup is too aggressive for my taste" → this lever.
 - **"cleanup cut a word / clipped my speech" → a guard bug, NOT this lever.** Do not
   reach for `=0.55` to make it stop; that only hides it again, on some clips, by
