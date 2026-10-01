@@ -56,6 +56,7 @@ from app.services.phone_rollout import (
     phone_subtitled_overlays_supported,
     phone_subtitled_reaction_beats_supported,
     phone_subtitled_video_overlays_supported,
+    phone_talking_head_supported,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -613,6 +614,11 @@ def resolve_creator_manifest(
                                 f"{candidate_format} does not render on this iPhone yet",
                             )
                         )
+                    elif clip_count >= 2 and phone_talking_head_supported():
+                        # KRI-136: 2+ clips resolve to `talking_head`, which
+                        # renders on the phone as the speaker clip plus
+                        # muted full-frame cutaways.
+                        phone_format_capability = _available()
                     elif clip_count >= 2:
                         # KRI-118 L1 item 3: self-narration (no recorded
                         # voiceover) across 2+ clips would need
@@ -910,6 +916,21 @@ def compile_strategy_to_plan(
         # at the plan boundary rather than silently dropping confirmed copy.
         raise CreatorStrategyError(
             f"opening_title is not supported by the {strategy.edit_format} renderer",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
+    phone_capability = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if (
+        strategy.opening_title
+        and strategy.edit_format in NARRATED_EDIT_FORMATS
+        and strategy.render_program != "guided"
+        and phone_capability is not None
+        and phone_capability.available
+    ):
+        # KRI-142: the phone voiceover compiler (`compile_phone_narrated_plan`)
+        # has no title lane; only the cloud narrated render burns one.
+        raise CreatorStrategyError(
+            f"opening_title is not supported by the phone {strategy.edit_format} renderer",
             code="unsupported_treatment",
             edit_format=strategy.edit_format,
         )

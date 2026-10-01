@@ -393,3 +393,36 @@ def test_no_recorded_voiceover_is_never_this_writers_job():
     decision, bindings = fixture(voiceover_gcs_path=None, music_track_id="t", music_start_s=0.0)
     with pytest.raises(UnsupportedPhonePlan, match="narration binding"):
         _compile(decision, bindings, music=None, narration=None)
+
+
+def test_voice_fades_out_and_music_bed_fades_both_ends():
+    """KRI-139: fades ride the audio clips; the loudness target rides the mix."""
+    music = PhoneMusicBed(
+        catalog_id="track1",
+        generation="7",
+        fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        duration_s=120.0,
+        start_s=10.0,
+        volume=1.0,
+    )
+    decision, bindings = fixture(
+        voiceover_target_s=11.4, mix=0.7, music_track_id="track1", music_start_s=10.0
+    )
+    recipe = _compile(decision, bindings, music=music, narration=_narration(), target_lufs=-14.0)
+    bed = next(t for t in recipe.tracks if t.id == "music").clips[0]
+    voice = next(t for t in recipe.tracks if t.id == "narration").clips[0]
+    assert (bed.audio_fade_in, bed.audio_fade_out) == (0.5, 0.5)
+    assert voice.audio_fade_out == pytest.approx(0.5)
+    assert voice.audio_fade_in is None
+    assert recipe.audio.target_lufs == pytest.approx(-14.0)
+    # The bed plays through its audio-track clip, never the legacy
+    # `music_asset_id` whole-file path (that would play it twice).
+    assert recipe.audio.music_asset_id is None
+    assert recipe.model_validate(recipe.model_dump(mode="json")) == recipe
+
+
+def test_short_voice_fade_never_covers_more_than_half_the_clip():
+    decision, bindings = fixture(voiceover_target_s=0.6, steps=[_step("c0", duration=0.6)])
+    recipe = compile_phone_voiceover_montage_plan(decision, bindings)
+    voice = next(t for t in recipe.tracks if t.id == "narration").clips[0]
+    assert voice.audio_fade_out == pytest.approx(0.3)

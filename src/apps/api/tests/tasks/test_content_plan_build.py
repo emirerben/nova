@@ -3670,6 +3670,29 @@ def test_phone_gate_self_narration_multi_clip_rejected(monkeypatch: pytest.Monke
     assert warning_call.kwargs["phone_gate"] == "self_narration_multi_clip"
 
 
+def test_phone_gate_self_narration_multi_clip_dispatches_as_talking_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-136: with `phone_talking_head_supported()`, 2+ self-narrated clips
+    bind phone sources and dispatch; the worker renders them as a multi-clip
+    Talking head (and re-verifies the archetype post-ingest)."""
+    import app.services.phone_rollout as phone_rollout
+
+    monkeypatch.setattr(phone_rollout, "phone_talking_head_supported", lambda: True)
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="narrated",
+        approved=False,
+        clip_count=2,
+        phone_narration_rendering_enabled=True,
+        phone_render_verified_features=["narrationAudio"],
+    )
+
+    bind_mock.assert_called_once()
+    assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
+    assert result.outcome == "dispatched"
+
+
 def test_phone_gate_self_narration_single_clip_still_dispatches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

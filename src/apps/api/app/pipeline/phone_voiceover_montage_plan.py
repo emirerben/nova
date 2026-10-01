@@ -12,7 +12,7 @@ docstring for what the decision phase (`_decide_generative_variant`) has
 already resolved by the time it reaches here. Exactly like the guided
 compiler, no media is downloaded or rendered in this module; unsupported
 montage-family lanes (masonry/collage presets, lyric overlays, carousel-
-moment splices, letterboxed landscape fit, audio ducking, an unexpressible
+moment splices, letterboxed landscape fit, music ducking, an unexpressible
 intro text style, an unpublished/unresolved music track) fail closed with
 `UnsupportedPhonePlan` until their native implementations and parity
 fixtures exist -- see docs/runbooks/phone-rendering.md.
@@ -40,6 +40,7 @@ from app.pipeline.phone_recipe_shared import (
     EXPORT_SAFETY_MARGIN_S,
     PhoneMusicBed,
     PhoneNarrationBed,
+    audio_fade,
     refit_source_window,
 )
 from app.services.phone_sources import PhoneSourceBinding
@@ -85,8 +86,14 @@ def compile_phone_voiceover_montage_plan(
     *,
     music: PhoneMusicBed | None = None,
     narration: PhoneNarrationBed | None = None,
+    target_lufs: float | None = None,
 ) -> EditRecipeV2:
     """See the module docstring for the general contract.
+
+    `target_lufs` (KRI-139): the cloud's final `loudnorm` target
+    (`settings.output_target_lufs`, passed in so this module stays
+    settings-free); the device normalizes the exported mix to it. The voice
+    fades out over the cloud's 0.5s and a matched-track bed fades in and out.
 
     `narration` (KRI-132, KRI-220): REQUIRED -- this compiler only writes the
     montage-family "voiceover" archetype (see `_specs_for_archetype`/
@@ -325,6 +332,10 @@ def compile_phone_voiceover_montage_plan(
         # footage audio in at all -- mirror that rather than inventing new
         # defaults.
         music_gain = max(0.0, min(1.0 - voice_mix, _VOICEOVER_MUSIC_BED_MAX_GAIN))
+        music_duration_s = max(total_duration_s, 0.1)
+        # The cloud trims this bed hard at `-t`; the phone fades both ends
+        # instead (KRI-139) -- a bed never starts or stops on a full sample.
+        music_fade_s = audio_fade(music_duration_s)
         tracks.append(
             TimelineTrack(
                 id="music",
@@ -334,10 +345,12 @@ def compile_phone_voiceover_montage_plan(
                         id="music-bed",
                         source_asset_id=music_asset.id,
                         source_start=max(0.0, float(music.start_s)),
-                        source_duration=max(total_duration_s, 0.1),
+                        source_duration=music_duration_s,
                         timeline_start=0.0,
                         rate=1.0,
                         volume=music_gain,
+                        audio_fade_in=music_fade_s,
+                        audio_fade_out=music_fade_s,
                     )
                 ],
             )
@@ -389,6 +402,8 @@ def compile_phone_voiceover_montage_plan(
                     timeline_start=0.0,
                     rate=1.0,
                     volume=1.0,
+                    # `_mix_user_voiceover`: `afade=t=out:st=<end-0.5>:d=0.5`.
+                    audio_fade_out=audio_fade(narration_duration_s),
                 )
             ],
         )
@@ -401,7 +416,11 @@ def compile_phone_voiceover_montage_plan(
     # branch exactly.
     footage_bed_gain = 0.0 if decision.music_track_id else max(0.0, 1.0 - voice_mix)
     audio = audio.model_copy(
-        update={"narration_asset_id": narration_asset.id, "original_volume": footage_bed_gain}
+        update={
+            "narration_asset_id": narration_asset.id,
+            "original_volume": footage_bed_gain,
+            "target_lufs": target_lufs,
+        }
     )
 
     required_capabilities = (

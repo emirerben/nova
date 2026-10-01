@@ -142,7 +142,8 @@ creator about a version they can't get).
 **Deferred, fails closed via `UnsupportedPhonePlan`:** SFX/media-overlay lanes,
 masonry/collage presets, lyric overlays, carousel-moment splices, letterboxed
 landscape fit, the editorial sequence/rhythm typographic upgrade, non-
-`golden_hour`/`none` color grades, and audio ducking.
+`golden_hour`/`none` color grades, and ducking footage under a music bed
+(no cloud producer sets it).
 
 #### Recorded voiceover (KRI-132)
 
@@ -176,19 +177,72 @@ variant was decided — is attenuated by `1 - mix` (`mix=1.0`, the
 `voiceover_only` default, fully ducks the bed; a matched-track bed is
 additionally capped at 0.5 so it can never bury the voice; a matched-track
 bed also means footage audio is never referenced at all, matching the
-cloud's `music_gcs_path` branch). **Known phone/cloud difference:** the cloud
-additionally runs `loudnorm` on the final mix; there is no phone equivalent —
-this is intentional, not a gap to close in this phase. The narration audio
+cloud's `music_gcs_path` branch). The cloud's final `loudnorm` and 0.5s voice
+fade-out now have phone equivalents — see "Audio mix parity (KRI-139)" below.
+The narration audio
 clip is capped to `voiceover_target_s` (min of footage/voice/short-form
 ceiling — the same value the decide phase already sized the footage montage
 to), further bounded by the timeline's own assembled duration; a real
 mismatch leaves trailing silence rather than truncating video, since the
 video timeline is already ~that long by construction and the phone recipe
-schema has no whole-timeline truncation primitive today. The cloud's 0.5s
-voice fade-out at the end has no phone expression yet — `TimelineClip`/
-`AudioMixRecipe` have no fade field scoped to one clip (`AudioMixRecipe.fade_in`
-/`fade_out` exist but are unused by the V2 native-track mixing path; adding a
-narration-specific fade needs schema work, a follow-up).
+schema has no whole-timeline truncation primitive today.
+
+#### Audio mix parity (KRI-139)
+
+The phone mix now reproduces the cloud's audio chain for the voiceover
+montage (`compile_phone_voiceover_montage_plan`) and narrated
+(`compile_phone_narrated_plan`) lanes:
+
+- **Fades** ride the audio clip: `TimelineClip.audio_fade_in`/`audio_fade_out`
+  (seconds, omitted when unset so older recipe digests are unchanged). The voice
+  fades out over 0.5s (`_mix_user_voiceover`'s `afade`); a matched music bed
+  fades in and out over 0.5s. The cloud trims that bed hard at `-t`, so this
+  one is a deliberate improvement rather than parity. `applyAudioGain` uses an
+  authored fade in place of its 25ms declick edge when it is longer.
+- **Loudness**: `AudioMixRecipe.target_lufs` (the worker passes
+  `settings.output_target_lufs`, -14). Before writing, the exporter reads the
+  whole mix once, measures its BS.1770 integrated loudness
+  (`LoudnessMeter`), then applies one gain (bounded to -30…+20 dB) plus an
+  instant-attack/50ms-release sample-peak limiter at -1.5 dBFS
+  (`LoudnessNormalizer`, `RecipeWriter`). Preview playback is not normalized:
+  AVAudioMix cannot boost.
+- **Ducking** (narrated only): `duck_original_during_music` asks the composer
+  to side-chain duck the footage's own audio under the audio-kind tracks (the
+  voice), using ffmpeg's `sidechaincompress` gain computer with the cloud's
+  settings (threshold 0.03, ratio 8, attack 15ms, release 300ms), applied as
+  volume ramps (`AudioDuckEnvelope`). Only then does the bed take the cloud's
+  0.6 resting cap. It requires the `audioDucking` capability, which the worker
+  requests only when it is in `phone_render_verified_features`. Without it the
+  narrated bed stays the shipped flat gain.
+
+Old app builds ignore the new keys (clip and mix decoding tolerate unknown
+fields), so they keep rendering exactly as before; only `audioDucking` needs a
+rollout step. After an app build carrying KRI-139 reaches the pilot devices, add
+`audioDucking` to `PHONE_RENDER_VERIFIED_FEATURES` on Fly (api + worker).
+Rollback is removing it again.
+
+Parity check: `scripts/ios/phone-audio-parity.py` compiles real recipes, renders
+them through `KriaMediaEngine` (`AudioParityFixtureTests`, host or simulator),
+mixes the same inputs with the real `_mix_user_voiceover`, and compares
+`ebur128` loudness, true peak, end levels and the 400ms loudness curve.
+Measured 2026-09-30 on the iPhone 17 Pro simulator (iOS 26.5; the macOS host
+run gave identical numbers), with a macOS `say` voice, a synthetic music bed
+and pink-noise footage. Phone vs cloud:
+
+| Case | Cloud LUFS | Phone LUFS | Δ | Short-term Δ median / p90 |
+| --- | --- | --- | --- | --- |
+| voiceover + music bed | -14.4 | -14.0 | +0.4 LU | 0.36 / 0.79 dB |
+| voiceover + footage bed (mix 0.4) | -13.9 | -14.0 | -0.1 LU | 0.18 / 1.12 dB |
+| narrated, ducked bed | -14.1 | -14.0 | +0.1 LU | 0.18 / 0.63 dB |
+
+Tolerance: ±1 LU integrated, true peak at or below -1 dBTP. The music bed now
+ends at -58 dB where the cloud cuts at -23 dB.
+
+Not covered yet: the guided-story narration lane (the cloud's
+`_mix_pinned_narration` has no fade or loudnorm either, so there is nothing
+to match), the subtitled/talking lanes, and the native editor's re-render
+(`NativeEditorRenderCompiler`), which does not carry fades, loudness or
+ducking into a re-render.
 
 **Fails closed BEFORE a Job is minted**, not merely in the worker: the
 dispatch gate (`app.tasks.content_plan_build._dispatch_item_render`) checks
@@ -453,9 +507,9 @@ deliberately format-agnostic now that the allowlist grows with rollout.
 
 **Known divergences from the cloud path (v1, accepted):** no silence-cut/
 speech-cleanup on either phone lane; no agentic storyboard re-ranking for
-narrated clip assignment (script/guide order only); no side-chain ducking,
-`loudnorm`, or voice fade-out (flat bed gain, same approximation the
-montage-family voiceover render already ships); no face-tracked crop
+narrated clip assignment (script/guide order only); side-chain ducking is
+gated on `audioDucking` being verified (flat bed gain until then; `loudnorm`
+and the voice fade-out ship ungated — see "Audio mix parity (KRI-139)"); no face-tracked crop
 (`subtitled` requires an already-portrait source clip instead of cropping);
 word-style captions use the device `karaoke-line` fill, so already-spoken
 words stay highlighted where the cloud ASS path recolours only the current

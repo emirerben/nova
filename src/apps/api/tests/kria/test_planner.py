@@ -24,6 +24,7 @@ from app.kria.planner import (
     plan_live_turn,
 )
 from app.kria.registry import KRIA_TOOLS
+from app.kria.strategy_policy import CheckedStrategy
 from app.models import ContentPlan, CreationThread, CreatorAgentSession, Job, Persona, PlanItem
 from app.schemas.clip_intents import ClipAssignment, ClipIntent, ResolvedClipIntent
 from app.services.clip_intent_planning import PlannedIntentResolution
@@ -474,6 +475,13 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
         side_effect=RuntimeError("cache write failed") if outcome == "cache_failure" else None
     )
     monkeypatch.setattr(planner, "persist_clip_intent_vision_answers", persist_answers)
+    # This test pins the clip-intent flow over a bare manifest; the server
+    # strategy check (KRI-142) has its own tests in test_strategy_policy.py.
+    monkeypatch.setattr(
+        planner,
+        "check_strategy_for_runtime_v2",
+        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+    )
 
     class FakeAgent:
         def __init__(self, _client) -> None:  # noqa: ANN001

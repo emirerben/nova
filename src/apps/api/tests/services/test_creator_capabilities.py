@@ -439,6 +439,25 @@ def test_phone_self_narration_two_clips_refused_with_typed_reason(monkeypatch, e
     assert "Narrating across several clips isn't on iPhone yet" in entry.reason
 
 
+@pytest.mark.parametrize("edit_format", ["narrated", "narrated_planned", "narrated_ready"])
+def test_phone_self_narration_two_clips_available_as_talking_head(monkeypatch, edit_format) -> None:
+    """KRI-136: once `phone_talking_head_supported()`, 2+ self-narrated clips
+    render on the phone as a multi-clip Talking head."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    monkeypatch.setattr(capabilities, "phone_talking_head_supported", lambda: True)
+    manifest = _phone_manifest(
+        monkeypatch,
+        edit_format,
+        [
+            {"media_id": "phone-a", "kind": "video"},
+            {"media_id": "phone-b", "kind": "video"},
+        ],
+        has_voiceover=False,
+    )
+    assert manifest.capabilities[f"phone_format:{edit_format}"].available is True
+
+
 def test_phone_self_narration_one_clip_still_available(monkeypatch) -> None:
     """The single-clip self-narration shape (unaffected by the new refusal)."""
     _enable_guided(monkeypatch)

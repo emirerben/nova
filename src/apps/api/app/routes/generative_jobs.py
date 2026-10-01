@@ -6265,6 +6265,7 @@ def _clamp_phone_editor_capabilities(
     subtitled_lanes: bool = False,
     guided_story: bool = False,
     source_crop: bool = False,
+    narrated: bool = False,
 ) -> dict:
     """Close every control a device-rendered variant cannot save, shape-preserving.
 
@@ -6314,11 +6315,13 @@ def _clamp_phone_editor_capabilities(
             clamped[lane] = False
             if f"{lane}_reason" in clamped:
                 clamped[f"{lane}_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
-    if subtitled_lanes and "text_elements" in clamped:
-        # The subtitled phone compiler has no editor text lane (captions are a
-        # separate `caption_cues` section) — advertising it open only buys a
-        # 422 `unsupported_phone_edit` at Save. Same key-preservation rule as
-        # the loop above: only touch the `*_reason` sibling if one exists.
+    if (subtitled_lanes or narrated) and "text_elements" in clamped:
+        # Neither compiler has an editor text lane: the subtitled one keeps
+        # captions in a separate `caption_cues` section, and the narrated one
+        # (KRI-142) has no guided plan for `prepare_phone_editor_commit` to
+        # swap text into — advertising it open only buys a failed Save. Same
+        # key-preservation rule as the loop above: only touch the `*_reason`
+        # sibling if one exists.
         clamped["text_elements"] = False
         if "text_elements_reason" in clamped:
             clamped["text_elements_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
@@ -6374,6 +6377,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             media_enabled=_phone_editor_media_available(job, variant),
             subtitled_lanes=_phone_subtitled_editor_lanes_available(job, variant),
             guided_story=variant.get("resolved_archetype") == "guided_story",
+            narrated=variant.get("resolved_archetype") == "narrated",
             source_crop=(
                 variant.get("resolved_archetype") == "guided_story"
                 and "sourceCrop" in settings.phone_render_verified_features

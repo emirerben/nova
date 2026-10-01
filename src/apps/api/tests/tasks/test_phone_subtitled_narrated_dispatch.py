@@ -360,6 +360,138 @@ def test_self_narrated_resolving_to_talking_head_fails_closed(monkeypatch):
         gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
 
 
+# --- KRI-136: multi-clip Talking head (speaker clip + muted cutaways) ------
+
+
+_TALKING_HEAD_FEATURES = [
+    "basicComposition",
+    "local1080Export",
+    "positionedText",
+    "animatedText",
+    "narrationAudio",
+    "audioMix",
+    "visualBlocks",
+    "visualVideos",
+]
+
+
+def _setup_talking_head(monkeypatch, *, spine="c1", enabled=True):
+    """Three self-narrated clips; ``spine`` is the one `_resolve_archetype`
+    picks. c0/c2 become cutaways."""
+    durations = {"c0": 6.0, "c1": 20.0, "c2": 2.0}
+    bindings = {cid: _binding(cid, duration_s=dur) for cid, dur in durations.items()}
+    snapshot = {
+        PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings.values()],
+        "creator_generation_id": "generation",
+    }
+    all_candidates = {
+        "clip_paths": [b.proxy_path for b in bindings.values()],
+        "edit_format": "narrated_ready",
+        "language": "en",
+    }
+    job, session = _job_and_session(
+        monkeypatch, assembly_plan=snapshot, all_candidates=all_candidates
+    )
+    monkeypatch.setattr(gb.settings, "phone_render_verified_features", _TALKING_HEAD_FEATURES)
+    monkeypatch.setattr(gb.settings, "phone_talking_head_rendering_enabled", enabled)
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *a, **k: {
+            "clip_metas": [_Meta(cid, 5.0) for cid in durations],
+            "clip_id_to_gcs": {cid: b.proxy_path for cid, b in bindings.items()},
+            "clip_id_to_local": {cid: f"/tmp/{cid}.mp4" for cid in durations},
+            "probe_map": {},
+            "hero": _Meta(spine, 5.0),
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        gb, "_resolve_archetype", lambda *a, **k: ("talking_head", spine, None), raising=False
+    )
+
+    import app.pipeline.probe as probe_mod
+    import app.pipeline.transcribe as transcribe_mod
+
+    probed: list[str] = []
+
+    def _probe(path):
+        probed.append(path)
+        return SimpleNamespace(duration_s=durations[path.rsplit("/", 1)[-1].split(".")[0]])
+
+    monkeypatch.setattr(probe_mod, "probe_video", _probe, raising=False)
+    transcribed: list[str] = []
+
+    def _transcribe(path, *a, **k):
+        transcribed.append(path)
+        return Transcript(words=_words(("Hello", 0.0, 0.5), ("there.", 0.5, 1.0)), language="en")
+
+    monkeypatch.setattr(transcribe_mod, "transcribe_whisper_cached", _transcribe, raising=False)
+    return job, snapshot, bindings, transcribed
+
+
+def test_multi_clip_talking_head_keeps_speaker_audio_and_cuts_away(monkeypatch):
+    job, _snapshot, bindings, transcribed = _setup_talking_head(monkeypatch, spine="c1")
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    recipe = device_status(job, "subtitled").request.recipe
+    tracks = {track.id: track for track in recipe.tracks}
+    # Only the speaker plays on the main track, so its audio runs the whole way.
+    assert [c.source_asset_id for c in tracks["subtitled"].clips] == ["c1"]
+    assert recipe.duration == pytest.approx(20.0)
+    assert recipe.audio.original_volume == 1.0
+    # Captions come from the SPEAKER's own speech, never a cutaway's.
+    assert transcribed == ["/tmp/c1.mp4"]
+    assert recipe.text_layers
+    cutaways = tracks["talking-head-cutaways"].clips
+    assert [c.source_asset_id for c in cutaways] == ["c0", "c2"]
+    for clip in cutaways:
+        assert clip.volume == 0
+        assert clip.visual_placement is not None
+        assert clip.visual_placement.width_fraction is None  # full frame
+        assert clip.timeline_start >= 1.5  # speaker alone first
+        assert clip.timeline_start + clip.source_duration <= 20.0
+    assert {"visualBlocks", "visualVideos", "audioMix"} <= recipe.required_capabilities
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["resolved_archetype"] == "subtitled"
+    receipt = variant[gb.PHONE_TALKING_HEAD_FIELD]
+    assert receipt["speaker_media_id"] == "c1"
+    assert [row["media_id"] for row in receipt["cutaways"]] == ["c0", "c2"]
+
+
+def test_multi_clip_talking_head_flag_off_fails_closed(monkeypatch):
+    job, snapshot, _bindings, _t = _setup_talking_head(monkeypatch, enabled=False)
+    with pytest.raises(ValueError, match="exactly one clip"):
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
+def test_multi_clip_declared_subtitled_still_fails_closed(monkeypatch):
+    """Only self-narration resolves to a Talking head; a declared
+    `subtitled` item with 2+ clips keeps the single-clip contract."""
+    job, snapshot, _bindings, _t = _setup_talking_head(monkeypatch)
+    candidates = {**job.all_candidates, "edit_format": "subtitled"}
+    with pytest.raises(ValueError, match="exactly one clip"):
+        gb._run_phone_subtitled_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+
+
+def test_multi_clip_resolving_to_montage_fails_closed(monkeypatch):
+    job, snapshot, _bindings, _t = _setup_talking_head(monkeypatch)
+    monkeypatch.setattr(
+        gb, "_resolve_archetype", lambda *a, **k: ("montage", None, "no_speech"), raising=False
+    )
+    with pytest.raises(UnsupportedPhonePlan, match="unsupported"):
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
+def test_multi_clip_required_speech_cleanup_fails_closed(monkeypatch):
+    job, snapshot, _bindings, _t = _setup_talking_head(monkeypatch)
+    snapshot["speech_cleanup_contract"] = "required_v1"
+    with pytest.raises(gb.SpeechCleanupFailure):
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
 def test_subtitled_worker_rejects_direct_format_it_does_not_own(monkeypatch):
     """`_run_phone_subtitled_job`'s own defense-in-depth: only `subtitled` or
     a no-voiceover narrated* item may reach it -- a montage-family item

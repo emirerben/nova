@@ -485,6 +485,7 @@ def _complete_draft_turn(
                         CreativeBrief(version=brief.version, requirements=checked),
                         receipts,
                         summary=arguments.summary,
+                        notices=planned.policy_notices,
                     )
         next_revision = (
             int(

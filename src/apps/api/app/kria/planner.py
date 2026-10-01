@@ -38,6 +38,7 @@ from app.kria.brief import (
     route_requirements,
 )
 from app.kria.contracts import KriaTurnPlan
+from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -89,6 +90,9 @@ class PlannedKriaTurn:
     # Main Creator requirement extraction; the completed turn schedules that
     # extraction off the critical path (`extract_deferred_brief`).
     defer_brief: bool = False
+    # KRI-142: what the server strategy check repaired or left out, so the
+    # receipts reply still says it when it replaces the model's summary.
+    policy_notices: tuple[str, ...] = ()
 
 
 def adapt_creator_action(
@@ -604,17 +608,33 @@ async def _plan_from_creator_output(
     brief_request: str | None = None,
 ) -> PlannedKriaTurn:
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
+    action = output.action
+    policy_notices: tuple[str, ...] = ()
+    if isinstance(action, ProposeStrategy):
+        # KRI-142: the same server compile v1 runs, so a phone render never
+        # silently drops what it can't draw while the reply claims it.
+        checked = check_strategy_for_runtime_v2(manifest, action.strategy)
+        if isinstance(checked, RefusedStrategy):
+            log.info("kria_strategy_refused", thread_id=str(thread_id), code=checked.code)
+            return PlannedKriaTurn(
+                plan=KriaTurnPlan(mode="respond", turn_value="question", response=checked.question),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+            )
+        policy_notices = checked.notices
+        summary = " ".join([action.summary.strip(), *policy_notices]).strip()
+        action = action.model_copy(update={"strategy": checked.strategy, "summary": summary})
     intent_clips = inputs.intent_clips
     creator_request = inputs.creator_request
     if brief_request:
         # KRI-188: the clip-intent planner reads the brief, not chat text.
         creator_request = brief_request
-    if settings.clip_intents_enabled and isinstance(output.action, ProposeStrategy):
+    if settings.clip_intents_enabled and isinstance(action, ProposeStrategy):
         try:
             planned = await plan_and_resolve_clip_intents(
                 creator_request=creator_request or user_message,
                 latest_user_message=user_message,
-                candidate_intents=output.action.strategy.clip_intents,
+                candidate_intents=action.strategy.clip_intents,
                 clips=intent_clips,
                 run_context=RunContext(
                     request_id=str(thread_id),
@@ -629,7 +649,7 @@ async def _plan_from_creator_output(
             )
         if any(intent.label_source == "transcript" for intent in planned.requested_intents) and (
             manifest.narration is None
-            or output.action.strategy.execution_contract != "guided_voiceover_v1"
+            or action.strategy.execution_contract != "guided_voiceover_v1"
         ):
             return PlannedKriaTurn(
                 plan=_clip_intent_resolution_plan(
@@ -687,22 +707,22 @@ async def _plan_from_creator_output(
             )
         return PlannedKriaTurn(
             plan=adapt_creator_action(
-                output.action,
+                action,
                 server_clip_intents=planned.requested_intents,
                 server_resolved_clip_intents=planned.resolution.intents,
             ),
             manifest_hash=manifest.manifest_hash,
             context_hash=manifest.context_hash,
+            policy_notices=policy_notices,
         )
     if (
-        isinstance(output.action, ProposeStrategy)
+        isinstance(action, ProposeStrategy)
         and any(
-            intent.label_source == "transcript"
-            for intent in output.action.strategy.clip_intents or []
+            intent.label_source == "transcript" for intent in action.strategy.clip_intents or []
         )
         and (
             manifest.narration is None
-            or output.action.strategy.execution_contract != "guided_voiceover_v1"
+            or action.strategy.execution_contract != "guided_voiceover_v1"
         )
     ):
         return PlannedKriaTurn(
@@ -714,9 +734,10 @@ async def _plan_from_creator_output(
             context_hash=manifest.context_hash,
         )
     return PlannedKriaTurn(
-        plan=adapt_creator_action(output.action),
+        plan=adapt_creator_action(action),
         manifest_hash=manifest.manifest_hash,
         context_hash=manifest.context_hash,
+        policy_notices=policy_notices,
     )
 
 

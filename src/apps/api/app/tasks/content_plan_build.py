@@ -1866,6 +1866,7 @@ def _dispatch_item_render(
         from app.services.phone_rollout import (  # noqa: PLC0415
             phone_guided_narration_supported,
             phone_render_supported_formats,
+            phone_talking_head_supported,
         )
         from app.services.phone_sources import bind_phone_sources  # noqa: PLC0415
 
@@ -1948,19 +1949,26 @@ def _dispatch_item_render(
                         # off) fails closed instead of binding phone sources
                         # for an edit that might resolve to `talking_head`.
                         if len(clip_paths) >= 2:
-                            # KRI-118 L1 item 3: defense-in-depth mirror of
-                            # `creator_capabilities.resolve_creator_manifest`'s
+                            # KRI-136: 2+ clips resolve to `talking_head`,
+                            # which now renders on the phone (speaker clip +
+                            # muted full-frame cutaways) when
+                            # `phone_talking_head_supported()`; the worker
+                            # re-verifies the real archetype post-ingest.
+                            # Otherwise (KRI-118 L1 item 3): defense-in-depth
+                            # mirror of `creator_capabilities.
+                            # resolve_creator_manifest`'s
                             # `phone_format:{format}` gate -- that check
                             # already refuses this at planning time, before a
                             # Job is minted; this catches a stale client or a
                             # replan race with a distinct reason/message
                             # rather than the generic `unsupported_format`.
-                            phone_gate = "self_narration_multi_clip"
-                            raise ValueError(
-                                f"analysis proxies cannot self-narrate '{fmt}' across "
-                                "multiple clips on iPhone yet"
-                            )
-                        if not (
+                            if not phone_talking_head_supported():
+                                phone_gate = "self_narration_multi_clip"
+                                raise ValueError(
+                                    f"analysis proxies cannot self-narrate '{fmt}' across "
+                                    "multiple clips on iPhone yet"
+                                )
+                        elif not (
                             settings.narrated_self_narration_enabled
                             and "subtitled" in supported_now
                             and len(clip_paths) == 1

@@ -7954,3 +7954,18 @@ def test_guided_timeline_commit_with_rebased_labels_has_no_tombstones_and_render
     new_generation = job.assembly_plan["variants"][0]["render_generation_id"]
     assert new_generation and new_generation != before_generation
     assert saved["revision_number"] == revision["revision_number"] + 1
+
+
+def test_narrated_device_variant_closes_the_text_lane(monkeypatch) -> None:
+    """KRI-142: the phone narrated compiler has no guided plan, so a text Save
+    could only fail; the phone must not offer the text lane."""
+    _arm_every_editor_lane(monkeypatch)
+    job = _job(resolved_archetype="narrated")
+    variant = job.assembly_plan["variants"][0]
+
+    cloud = gj._editor_capabilities(job, variant)
+    device = gj._editor_capabilities(job, {**variant, "render_destination": "device"})
+
+    assert cloud["text_elements"] is True  # or the clamp proves nothing
+    assert device["text_elements"] is False
+    assert device.keys() == cloud.keys()
