@@ -1027,6 +1027,66 @@ import KriaMediaEngine
         XCTAssertTrue(try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source]).recipe.textLayers.isEmpty)
     }
 
+    /// KRI-232: a cleaned-up phone Talking edit keeps its cues/words on the cut
+    /// timeline. Every burned word must land on the SOURCE instant it is
+    /// spoken -- cut-time + everything removed before it -- in spoken order.
+    /// Before the fix the source played whole, so "Abi" burned 0.64s and
+    /// "Yılda" 1.0s ahead of the speech.
+    func testWordCaptionsTrackSpeechAcrossSpeechCleanupCuts() throws {
+        let removed: [(start: Double, end: Double)] = [(2.55, 2.97), (4.365, 4.581), (10.97, 11.33)]
+        func spoken(_ cutTime: Double) -> Double {
+            removed.reduce(cutTime) { time, span in time >= span.start ? time + span.end - span.start : time }
+        }
+        func words(_ rows: [(String, Double, Double)]) -> JSONValue {
+            .array(rows.map { .object(["text": .string($0.0), "start_s": .number($0.1), "end_s": .number($0.2)]) })
+        }
+        let cues: [EditorCaptionCue] = [
+            .init(id: "c4", startS: 6.62, endS: 7.44, text: "Abi çok güzeldi.", raw: ["words": words([
+                ("Abi", 6.62, 6.76), ("çok", 6.76, 6.94), ("güzeldi.", 6.94, 7.44)])]),
+            .init(id: "c5", startS: 8.90, endS: 10.18, text: "Her yıl bunu en az bir kere yapalım.", raw: ["words": words([
+                ("Her", 8.90, 9.10), ("yıl", 9.10, 9.24), ("bunu", 9.24, 9.44), ("en", 9.44, 9.54),
+                ("az", 9.54, 9.62), ("bir", 9.62, 9.78), ("kere", 9.78, 9.86), ("yapalım.", 9.86, 10.18)])]),
+            .init(id: "c6", startS: 10.48, endS: 11.02, text: "Yılda bir kere.", raw: ["words": words([
+                ("Yılda", 10.48, 10.64), ("bir", 10.64, 10.84), ("kere.", 10.84, 11.02)])]),
+        ]
+        var document = EditorDocument(editFormat: "subtitled",
+            captionMeta: ["style": .string("word"), "appearance": .object(["highlight_spoken_word": .bool(false)])],
+            captionCues: cues, capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+        document = try NativePhoneTalkingSource.hydrate(document, clipIndex: 0, duration: 14.8, removed: removed)
+        let projection = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: nil)
+        let clips = projection.clipWindows.map { window -> EditorClip in
+            let slot = document.clips[window.sourceIndex]
+            return EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: window.start, end: window.end,
+                trimIn: slot.inS, trimOut: slot.inS + (slot.durationS ?? 0), sourceDuration: 14.8, slotID: slot.id)
+        }
+        XCTAssertEqual(projection.totalDuration, 13.804, accuracy: 0.001)
+        let items = cues.map { NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: $0.id), start: $0.startS, end: $0.endS) }
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100), duration: 14.8), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: document, clips: clips, items: items, sources: [0: source]).recipe
+        XCTAssertNoThrow(try recipe.validate())
+        let video = try XCTUnwrap(recipe.tracks.first { $0.kind == .video }?.clips)
+        XCTAssertEqual(video.map(\.sourceStart), [0, 2.97, 4.581, 11.33])
+        // Output instant -> source instant through the compiled video track.
+        func sourceTime(_ t: Double) throws -> Double {
+            let clip = try XCTUnwrap(video.last { $0.timelineStart <= t + 0.000_001 })
+            return clip.sourceStart + (t - clip.timelineStart) * clip.rate
+        }
+        let expected = cues.flatMap { cue -> [(String, Double)] in
+            guard case .array(let rows)? = cue.raw["words"] else { return [] }
+            return rows.compactMap { row in row.objectValue.flatMap { o in
+                o["text"]?.stringValue.flatMap { text in o["start_s"]?.numberValue.map { (text, spoken($0)) } } } }
+        }
+        let layers = recipe.textLayers.sorted { $0.start < $1.start }
+        XCTAssertEqual(layers.map { $0.runs.map(\.text).joined() }, expected.map(\.0))
+        for (layer, word) in zip(layers, expected) {
+            XCTAssertEqual(try sourceTime(layer.start), word.1, accuracy: 0.01, "\(word.0) must burn when it is spoken")
+        }
+        XCTAssertEqual(try sourceTime(layers[0].start), 7.256, accuracy: 0.01)
+        XCTAssertEqual(try sourceTime(try XCTUnwrap(layers.last { $0.runs.map(\.text).joined() == "Yılda" }).start), 11.476, accuracy: 0.01)
+    }
+
     func testClipTrimAndAuthoredTextCompileFromPublicDocument() throws {
         let id = UUID()
         let clip = EditorClip(id: id, assetID: UUID(), sourceClipIndex: 2, start: 0, end: 4,
