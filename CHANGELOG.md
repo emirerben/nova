@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.42.0] - 2026-10-01
+
+### Fixed
+- fix(kria): "Add captions" on a montage is never a chapter caption clip intent (#1301) <!-- release-pr: 1301 -->
+
 ## [0.77.41.0] - 2026-10-01
 
 ### Changed
