@@ -450,6 +450,37 @@ def phone_subtitled_video_overlays_supported() -> bool:
     )
 
 
+# KRI-136: device features a multi-clip Talking-head recipe needs -- the
+# cutaway track is placed (`visualBlocks`), video (`visualVideos`), and muted
+# under the speaker's audio (`audioMix`).
+PHONE_TALKING_HEAD_FEATURES: tuple[str, ...] = ("visualBlocks", "visualVideos", "audioMix")
+
+
+def phone_talking_head_supported() -> bool:
+    """Single source of truth for "may a self-narrated item with 2+ clips
+    render on the phone as a multi-clip Talking head right now" (KRI-136).
+
+    Consulted by the dispatch gate (`content_plan_build.py`), the planner
+    manifest (`creator_capabilities.resolve_creator_manifest`), and the
+    worker (`generative_build._run_phone_subtitled_job`), so none of them can
+    disagree about it.
+
+    True iff ALL of: `phone_talking_head_rendering_enabled`,
+    `narrated_self_narration_enabled` (the only path that resolves
+    `talking_head` on the phone), phone `subtitled` rendering (the same
+    compiler and caption lane), and every `PHONE_TALKING_HEAD_FEATURES` entry
+    in `phone_render_verified_features`.
+    """
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_talking_head_rendering_enabled
+        and settings.narrated_self_narration_enabled
+        and "subtitled" in phone_render_supported_formats()
+        and all(feature in verified for feature in PHONE_TALKING_HEAD_FEATURES)
+    )
+
+
 def phone_render_supported_formats() -> frozenset[str]:
     """The single source of truth for "which edit formats can render on the
     phone for THIS deployment, right now" -- settings-aware, unlike the
@@ -489,9 +520,11 @@ def phone_render_supported_formats() -> frozenset[str]:
     checks it earlier to fail closed before a Job is minted); a `narrated*`
     item with NO recorded voiceover only reaches the phone through a
     dispatch-gate-checked exception (self-narration onto exactly one clip,
-    which can only ever resolve to the phone-supported `subtitled` archetype
-    -- never `talking_head`, which has no phone compiler at all and is never
-    included in this set under any settings combination).
+    which resolves to `subtitled`, or -- KRI-136, when
+    `phone_talking_head_supported()` -- onto 2+ clips, which resolves to
+    `talking_head` and renders through the same Subtitled compiler with
+    cutaways). A DECLARED `talking_head` format is never included in this
+    set under any settings combination.
     """
 
     formats: set[str] = set(GUIDED_EDIT_FORMATS)

@@ -7,8 +7,10 @@ from fastapi import HTTPException
 from app.kria.device_render import make_device_request
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
 from app.pipeline.phone_subtitled_plan import (
+    CUTAWAY_TRACK_ID,
     SFX_DUCK_RECEIPT_FIELD,
     SFX_SPEECH_DUCK_GAIN,
+    PhoneCutaway,
     compile_phone_subtitled_plan,
     sfx_duck_receipt,
 )
@@ -536,3 +538,61 @@ def test_duck_off_editor_save_writes_no_receipt(monkeypatch):
     save(job, sound_effects=[_sfx_payload(at_s=1.0, gain=1.0)])
     assert _sfx_volumes(job) == {"sfx-sfx-1": pytest.approx(1.0)}
     assert SFX_DUCK_RECEIPT_FIELD not in job.assembly_plan["variants"][0]
+
+
+# --- KRI-136: multi-clip Talking head keeps its speaker + cutaways ------------
+
+
+def talking_head_job(monkeypatch):
+    """A phone Talking variant pinned as the worker pins a multi-clip Talking
+    head: every clip is a phone source, only the speaker plays on the main
+    track, the others are cutaways."""
+    _enable_subtitled_editor(monkeypatch)
+    monkeypatch.setattr(gj.settings, "phone_sfx_speech_duck_enabled", False)
+    speaker = _binding("speaker", duration_s=20.0)
+    cutaways = (
+        PhoneCutaway(binding=_binding("broll-a", duration_s=6.0), start_s=1.5, end_s=4.5),
+        PhoneCutaway(binding=_binding("broll-b", duration_s=2.0), start_s=10.0, end_s=12.0),
+    )
+    recipe = compile_phone_subtitled_plan((speaker,), caption_cues=_CUES, cutaways=cutaways)
+    bindings = (cutaways[0].binding, speaker, cutaways[1].binding)
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        status="awaiting_device",
+        current_phase=None,
+        assembly_plan={
+            PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings],
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "resolved_archetype": "subtitled",
+                    "render_destination": "device",
+                    "render_status": "awaiting_device",
+                    "render_generation_id": "first",
+                    "duration_s": recipe.duration,
+                    "caption_cues": _CUES,
+                    "voiceover_caption_style": "sentence",
+                }
+            ],
+        },
+    )
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id="subtitled", revision=1, recipe=recipe),
+        base_generation="first",
+    )
+    return job, recipe
+
+
+def test_talking_head_caption_save_keeps_speaker_and_cutaways(monkeypatch):
+    job, old_recipe = talking_head_job(monkeypatch)
+    save(job, caption_cues=[{"text": "Updated caption", "start_s": 0.0, "end_s": 1.5}])
+
+    new = device_status(job, "subtitled").request
+    assert new.identity.recipe_revision == 2
+    tracks = {track.id: track for track in new.recipe.tracks}
+    assert [c.source_asset_id for c in tracks["subtitled"].clips] == ["speaker"]
+    old_cutaways = next(t for t in old_recipe.tracks if t.id == CUTAWAY_TRACK_ID)
+    assert tracks[CUTAWAY_TRACK_ID].model_dump() == old_cutaways.model_dump()
+    assert new.recipe.duration == pytest.approx(20.0)
