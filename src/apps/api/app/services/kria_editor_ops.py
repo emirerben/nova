@@ -509,12 +509,13 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         # `_guided_title_index` in app/agents/edit_copilot.py), which the
         # family gate must let through even though intro_controls is False.
         families.append("title")
-    # Guided (story-native) variants keep text-only editing until a guided
-    # `timeline_slots` commit is verified end to end: their per-clip label bars
-    # are timed on absolute output windows and do not follow a segment through a
-    # reorder/trim/retime, and no test drives a guided timeline commit. Before
-    # KRI-191 the same ops could not resolve at all (empty slots); filling the
-    # slots must not make them reachable.
+    # Guided (story-native) variants keep text-only editing unless
+    # `kria_guided_timeline_ops` is on: their per-clip label bars are timed on
+    # absolute output windows, so the clip/transition families are only opened
+    # when the compiler rebases the labels onto their segments (below). The
+    # committed path is covered by tests/services/test_kria_editor_guided_timeline.py,
+    # tests/routes/test_editor_commit.py (cloud) and
+    # tests/routes/test_phone_guided_timeline_commit.py (device).
     guided_native = _is_guided_native(job, variant)
     # KRI-219: with `kria_guided_timeline_ops` the compiler rebases per-clip label
     # bars onto their segments (services/kria_editor_timeline.py), so the guided
