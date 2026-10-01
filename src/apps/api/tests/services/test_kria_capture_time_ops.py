@@ -779,3 +779,91 @@ def test_place_label_asks_are_not_caught_by_the_guard(guided) -> None:
     )
     assert out.ops or out.rejection_reasons  # reached the normal label path
     assert "Tell me what each clip is" not in out.reply
+
+
+# ── stored clip understanding reaches the copilot (KRI-219) ──────────────────
+
+SEEN = {
+    "m0": "Guests hugging at an airport arrivals hall; airport terminal",
+    "m1": "People dancing in a decorated hall; wedding hall; dancing",
+    "m3": "Family walking along a seaside promenade",
+}
+ASK_DESCRIBE = "Add a text to each clip explaining the part of the wedding (airport pickup etc)"
+
+
+def _seen_snapshot(job, variant, seen=SEEN):
+    return build_editor_snapshot(job, variant, clip_context={"facts": FACTS, "seen": seen})
+
+
+def _add(text, start, end, **extra):
+    return {"op": "add_text", "text": text, "start_s": start, "end_s": end, **extra}
+
+
+def test_snapshot_exposes_a_vision_description_per_slot_only_when_stored(guided) -> None:
+    job, variant, _rev = guided
+    slots = {s["media_id"]: s for s in _seen_snapshot(job, variant)["slots"]}
+    assert slots["m0"]["seen"] == {"text": SEEN["m0"], "provenance": "vision"}
+    assert "seen" not in slots["m2"]
+    assert all("seen" not in s for s in _snapshot(job, variant)["slots"])
+
+
+def test_seen_text_comes_from_the_shared_projection_and_is_bounded() -> None:
+    from app.services.kria_editor_ops import _seen_text
+
+    analysis = {
+        "understanding": {
+            "kind": "video",
+            "summary": "A" * 400,
+            "setting": "hall",
+            "notable_moments": [{"start_s": 0, "end_s": 1, "description": "toast"}],
+        }
+    }
+    text = _seen_text(analysis)
+    assert 0 < len(text) <= 220
+    assert _seen_text({"clip_facts": []}) == "" and _seen_text(None) == ""
+
+
+def test_prompt_shows_seen_next_to_the_slot(guided) -> None:
+    from app.agents.edit_copilot import _format_snapshot
+
+    job, variant, _rev = guided
+    assert "seen='Guests hugging" in _format_snapshot(_seen_snapshot(job, variant))
+
+
+def test_descriptive_captions_are_kept_only_for_clips_that_were_seen(guided) -> None:
+    job, variant, _rev = guided
+    out = _parse(
+        _seen_snapshot(job, variant),
+        [_add("Airport pickup", 0, 2), _add("Dancing", 2, 4), _add("Something", 4, 6)],
+        utterance=ASK_DESCRIBE,
+    )
+    # Slots: m0 (0-2) seen, m1 (2-4) seen, m2 (4-6) NOT seen -> invented caption dropped.
+    assert [op["text"] for op in out.ops] == ["Airport pickup", "Dancing"]
+    assert "I wrote these from what I saw" in out.reply
+    assert "clip 1: Airport pickup" in out.reply and "I left out clip 3" in out.reply
+    assert "I didn't caption clip 4" in out.reply
+
+
+def test_all_unseen_captions_are_dropped_with_an_honest_reply(guided) -> None:
+    job, variant, _rev = guided
+    out = _parse(_snapshot(job, variant), [_add("Airport pickup", 0, 2)], utterance=ASK_DESCRIBE)
+    assert out.ops == [] and "can't tell what those clips show" in out.reply
+
+
+def test_label_each_clip_is_still_refused_for_descriptions_even_with_seen(guided) -> None:
+    job, variant, _rev = guided
+    out = _parse(
+        _seen_snapshot(job, variant),
+        [{"op": "label_each_clip", "source": "facts"}],
+        utterance=ASK_DESCRIBE,
+    )
+    assert out.ops == [] and "write a short caption for each clip" in out.reply
+
+
+def test_other_asks_are_untouched_by_the_caption_pass(guided) -> None:
+    job, variant, _rev = guided
+    out = _parse(
+        _seen_snapshot(job, variant), [_add("See you soon", 6, 8)], utterance="add an end text"
+    )
+    assert [op["text"] for op in out.ops] == ["See you soon"]
+    assert "I wrote these" not in out.reply

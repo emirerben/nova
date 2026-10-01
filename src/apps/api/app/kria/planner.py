@@ -61,6 +61,7 @@ from app.services.kria_editor_ops import (
     MAX_EDITOR_OPS,
     build_editor_snapshot,
     clip_facts_by_media_id,
+    clip_seen_by_media_id,
     coalesce_text_style_ops,
     project_editor_draft,
 )
@@ -271,6 +272,13 @@ async def _copilot_clip_context(
                 context["facts"] = facts
     except Exception:  # noqa: BLE001 - fail open to no clip facts
         log.warning("kria_copilot_clip_facts_unavailable", thread_id=str(thread_id), exc_info=True)
+    try:
+        # What the vision analyzer saw in each clip (stored understanding), when any.
+        seen = clip_seen_by_media_id(job, variant, list(item.clip_assignments or []))
+        if seen:
+            context["seen"] = seen
+    except Exception:  # noqa: BLE001 - fail open to no descriptions
+        log.warning("kria_copilot_clip_seen_unavailable", thread_id=str(thread_id), exc_info=True)
     try:
         if settings.creative_brief_for(thread.creator_id):
             async with db.begin_nested():

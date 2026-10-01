@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-30-v58"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v59"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1362,6 +1362,12 @@ def _format_snapshot(snapshot: dict) -> str:
             )
             media_kind = _field(slot.get("media_kind") or slot.get("kind") or "", max_chars=12)
             facts_text = _format_slot_facts(slot.get("facts"), _field)
+            seen = slot.get("seen")
+            if isinstance(seen, dict) and seen.get("text"):
+                facts_text += (
+                    f" seen={_field(seen.get('text'), max_chars=240)!r}"
+                    f"({_field(seen.get('provenance') or 'vision', max_chars=12)})"
+                )
             lines.append(
                 f"{i}. media_id={media_id!r} media_kind={media_kind!r} "
                 f"output={_fmt_range(start, end)} duration={_fmt_num(duration)}s "
@@ -3203,6 +3209,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             ops = []
 
         ops, no_effect_reply = _drop_normalized_no_effect_ops(ops, input.variant_snapshot)
+        ops = _ground_descriptive_captions(ops, input.variant_snapshot, input.utterance, state)
 
         capacity_pending_seed = _bulk_pending_for_clarification(
             ops,
@@ -3894,7 +3901,11 @@ def _coerce_text_appearance(
 _CREATIVE_CAPTION_RE = re.compile(
     r"\b(explain\w*|describ\w*|what (is|s|was|happens|happened)|which part|"
     r"part of (the |a |my )?\w+|what each|a\u00e7\u0131kla\w*|acikla\w*|anlat\w*|"
-    r"hangi b\u00f6l\u00fcm\w*)\b"
+    r"hangi b\u00f6l\u00fcm\w*|ne(ler)? ol\w+|ne oluyor)\b"
+)
+_CREATIVE_CAPTION_USE_ADD_TEXT = (
+    "Place and time labels can't describe what each clip shows. Ask me to 'write a short "
+    "caption for each clip' and I'll write them from what I saw in the footage."
 )
 _CREATIVE_CAPTION_CLARIFICATION = (
     "I can only label clips from facts I have (their place, landmark or filming time), so I "
@@ -3902,6 +3913,89 @@ _CREATIVE_CAPTION_CLARIFICATION = (
     "'clip 1 is the airport pickup, clip 2 is the pre-wedding') and I'll write those on the "
     "clips, or I can label them with the place names or the times instead."
 )
+
+
+def _ground_descriptive_captions(
+    ops: list[dict], snapshot: dict, utterance: str, state: _ParseState
+) -> list[dict]:
+    """ "Add a text to each clip explaining what happens": captions only where grounded.
+
+    The model may write short per-clip wording (``add_text`` with ``clip_id``), but only for
+    a clip whose slot carries a vision description (``seen``). A caption for any other clip
+    is dropped (never invented), and the reply says the wording is the assistant's own
+    reading of the footage and which clips were left out.
+    """
+    if not _CREATIVE_CAPTION_RE.search(_label_fold(utterance or "")):
+        return ops
+    slots = [
+        slot
+        for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+        if isinstance(slot, dict) and not slot.get("removed") and slot.get("media_id")
+    ]
+    number = {str(slot["media_id"]): n for n, slot in enumerate(slots, start=1)}
+    seen = {
+        str(slot["media_id"])
+        for slot in slots
+        if isinstance(slot.get("seen"), dict) and slot["seen"].get("text")
+    }
+
+    def clip_of(op: dict) -> str | None:
+        """The slot a caption belongs to: its clip_id, else the slot its window overlaps most."""
+        if op.get("clip_id"):
+            return str(op["clip_id"])
+        start, end = op.get("start_s"), op.get("end_s")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+            return None
+        best, best_overlap = None, 0.0
+        for slot in slots:
+            s0, s1 = slot.get("output_start_s"), slot.get("output_end_s")
+            if not isinstance(s0, (int, float)) or not isinstance(s1, (int, float)):
+                continue
+            overlap = min(float(end), float(s1)) - max(float(start), float(s0))
+            if overlap > best_overlap:
+                best, best_overlap = str(slot["media_id"]), overlap
+        return best
+
+    kept: list[dict] = []
+    written: list[tuple[int, str]] = []
+    dropped = 0
+    for op in ops:
+        clip_id = clip_of(op) if op.get("op") == "add_text" else None
+        if clip_id is None:
+            kept.append(op)
+        elif clip_id in seen:
+            kept.append(op)
+            written.append((number.get(clip_id, 0), str(op.get("text") or "")))
+        else:
+            dropped += 1
+    if not written:
+        if dropped:
+            state.reply_notes.append(
+                "I can't tell what those clips show, so I didn't write captions for them. Tell me "
+                "what each clip is (for example 'clip 1 is the airport pickup') and I'll add them."
+            )
+        return kept
+    written.sort()
+    captioned = {n for n, _t in written}
+    unseen = [str(n) for media, n in number.items() if n not in captioned and media not in seen]
+    skipped = [str(n) for media, n in number.items() if n not in captioned and media in seen]
+    state.reply_notes.append(
+        "I wrote these from what I saw in each clip, so tell me if any is wrong: "
+        + "; ".join(f"clip {n}: {t}" for n, t in written)
+        + "."
+    )
+    if unseen:
+        plural = "s" if len(unseen) != 1 else ""
+        state.reply_notes.append(
+            f"I left out clip{plural} {', '.join(unseen)}: I can't tell what "
+            f"{'they show' if plural else 'it shows'}. Tell me and I'll add "
+            f"{'them' if plural else 'it'}."
+        )
+    if skipped:
+        state.reply_notes.append(
+            f"I didn't caption clip{'s' if len(skipped) != 1 else ''} {', '.join(skipped)}."
+        )
+    return kept
 
 
 def _label_fold(text: str) -> str:
@@ -3944,7 +4038,13 @@ def _coerce_label_each_clip(
         # "Add a text to each clip explaining the part of the wedding": the creator wants
         # wording about what each clip IS. label_each_clip only prints place / landmark /
         # filming time from facts, so running it would silently answer with place names.
-        state.selector_clarification = _CREATIVE_CAPTION_CLARIFICATION
+        has_seen = any(
+            isinstance(slot, dict) and isinstance(slot.get("seen"), dict)
+            for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+        )
+        state.selector_clarification = (
+            _CREATIVE_CAPTION_USE_ADD_TEXT if has_seen else _CREATIVE_CAPTION_CLARIFICATION
+        )
         state.reject(
             op=name,
             reason="capability_unavailable",

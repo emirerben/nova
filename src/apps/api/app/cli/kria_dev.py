@@ -51,6 +51,15 @@ _GUIDED_PLACES = [
     "Galata Tower",
 ]
 _GUIDED_CLIPS = len(_GUIDED_PLACES)
+# What the (stored) vision analysis says each seeded clip shows: `analysis["understanding"]`.
+# The LAST clip has none, so descriptive-caption asks exercise "leave it out and say so".
+_GUIDED_SEEN = [
+    ("Guests hugging at an airport arrivals hall", "airport terminal", "welcoming arrivals"),
+    ("Family walking along a seaside promenade", "waterfront promenade", "walking and chatting"),
+    ("Bride getting ready with friends", "decorated hotel room", "hair and makeup"),
+    ("Groom and friends laughing in a bar", "evening bar", "pre-wedding celebration"),
+    ("People dancing in a decorated hall", "wedding hall", "dancing"),
+]
 # Filming times (UTC hour:minute) for the seeded clips: deliberately NOT in clip order,
 # with one clip (index 2) carrying none, so "order by filming time" / "add the hour"
 # asks exercise reordering, an untimed clip and the Istanbul zone (place = Türkiye).
@@ -67,7 +76,9 @@ _GUIDED_TRACK = {
 }
 
 
-def _guided_fixture(user_id: uuid.UUID) -> tuple[dict, dict, list[str], list[dict]]:
+def _guided_fixture(
+    user_id: uuid.UUID, *, seen: bool = True
+) -> tuple[dict, dict, list[str], list[dict]]:
     """Synthetic East-Run-shaped guided variant with `clip-label-*` bars.
 
     Same construction as tests/services/test_kria_editor_clip_context.py: the
@@ -109,7 +120,21 @@ def _guided_fixture(user_id: uuid.UUID) -> tuple[dict, dict, list[str], list[dic
             {
                 "gcs_path": path,
                 "capture": capture,
-                "analysis": {"clip_facts": [{**facts[0], "confidence": 0.8}]},
+                "analysis": {
+                    "clip_facts": [{**facts[0], "confidence": 0.8}],
+                    **(
+                        {
+                            "understanding": {
+                                "kind": "video",
+                                "summary": _GUIDED_SEEN[i][0],
+                                "setting": _GUIDED_SEEN[i][1],
+                                "activity": _GUIDED_SEEN[i][2],
+                            }
+                        }
+                        if seen and i < len(_GUIDED_SEEN)
+                        else {}
+                    ),
+                },
             }
         )
     brief = CreativeBrief(
@@ -148,7 +173,7 @@ def _guided_fixture(user_id: uuid.UUID) -> tuple[dict, dict, list[str], list[dic
     return plan, variant, paths, assignments
 
 
-def seed(email: str, *, guided: bool = False) -> dict[str, str]:
+def seed(email: str, *, guided: bool = False, seen: bool = True) -> dict[str, str]:
     require_local_database(settings.database_url)
     with sync_session() as db:
         user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
@@ -175,7 +200,7 @@ def seed(email: str, *, guided: bool = False) -> dict[str, str]:
         # Protected PlanItem media fields may only be assigned by the
         # plan_item_media facade (test_protected_plan_item_media_fields_have_one_writer),
         # so the guided fixture is built first and passed to the constructor.
-        guided_fixture = _guided_fixture(user.id) if guided else None
+        guided_fixture = _guided_fixture(user.id, seen=seen) if guided else None
         item = PlanItem(
             content_plan_id=plan.id,
             position=1,
@@ -271,6 +296,77 @@ def seed(email: str, *, guided: bool = False) -> dict[str, str]:
         return out
 
 
+def analyze(thread_id: uuid.UUID, *, apply: bool) -> dict[str, object]:
+    """LOCAL ONLY: store vision `understanding` on a thread's clips (the missing producer).
+
+    Runtime-v2 threads never run the clip analyzer on their main footage (only the guided
+    proposal flow and Visuals autoplace do), so `analysis["understanding"]` stays empty.
+    This runs `analyze_clip_assignment` (one Gemini vision call per clip, roughly
+    $0.01-0.03 each; needs GEMINI_API_KEY and readable storage objects) and merges the
+    result into `clip_assignments[].analysis` through the media-mutation facade.
+    Without --apply it only lists what would be analyzed.
+    """
+    require_local_database(settings.database_url)
+    from app.models import PlanItem  # noqa: PLC0415
+    from app.services.clip_understanding import clip_record  # noqa: PLC0415
+    from app.services.creator_clip_analysis import analyze_clip_assignment  # noqa: PLC0415
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        mutate_plan_item_media,
+    )
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        mutation_current_analysis_sync,
+    )
+
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id)
+        item = db.get(PlanItem, thread.active_plan_item_id) if thread else None
+        if item is None:
+            raise SystemExit("Thread/item not found")
+        todo = [
+            dict(row)
+            for row in (item.clip_assignments or [])
+            if isinstance(row, dict)
+            and row.get("gcs_path")
+            and row.get("media_id")
+            and clip_record(row.get("analysis"), kind=str(row.get("kind") or "video")).is_empty()
+        ]
+        summary: dict[str, object] = {"clips_without_understanding": len(todo)}
+        if not apply or not todo:
+            return summary
+        analyzed: dict[str, dict] = {}
+        for raw in todo:
+            entry, _ref = analyze_clip_assignment(raw, {}, require_semantic=True)
+            analyzed[str(raw["media_id"])] = entry
+        rows = []
+        for row in item.clip_assignments or []:
+            entry = analyzed.get(str(row.get("media_id"))) if isinstance(row, dict) else None
+            if entry is None:
+                rows.append(row)
+                continue
+            old = dict(row.get("analysis") or {})
+            rows.append(
+                {
+                    **row,
+                    **{
+                        k: entry[k]
+                        for k in ("generation", "kind", "duration_s", "aspect")
+                        if k in entry
+                    },
+                    "analysis": {**old, **(entry.get("analysis") or {})},
+                }
+            )
+        mutate_plan_item_media(
+            item,
+            detector_policy=current_detector_policy(),
+            clip_assignments=rows,
+            current_analysis=mutation_current_analysis_sync(db, item.id, for_update=True),
+        )
+        db.commit()
+        summary["analyzed"] = len(analyzed)
+        return summary
+
+
 def reset(thread_id: uuid.UUID, *, apply: bool) -> dict[str, object]:
     require_local_database(settings.database_url)
     with sync_session() as db:
@@ -341,12 +437,22 @@ def main() -> None:
         action="store_true",
         help="also seed a rendered guided-native variant with clip-label-* bars",
     )
+    seed_parser.add_argument(
+        "--no-seen",
+        action="store_true",
+        help="with --guided: seed NO stored clip understanding (descriptive-caption clarify path)",
+    )
+    analyze_parser = commands.add_parser("analyze")
+    analyze_parser.add_argument("--thread-id", required=True, type=uuid.UUID)
+    analyze_parser.add_argument("--apply", action="store_true")
     reset_parser = commands.add_parser("reset")
     reset_parser.add_argument("--thread-id", required=True, type=uuid.UUID)
     reset_parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
     if args.command == "seed":
-        result = seed(args.email, guided=args.guided)
+        result = seed(args.email, guided=args.guided, seen=not args.no_seen)
+    elif args.command == "analyze":
+        result = analyze(args.thread_id, apply=args.apply)
     else:
         result = reset(args.thread_id, apply=args.apply)
     print(json.dumps(result, indent=2, sort_keys=True))

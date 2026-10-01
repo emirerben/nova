@@ -146,6 +146,7 @@ def _safe_slot(
     *,
     moment: str | None = None,
     facts: list[dict[str, Any]] | None = None,
+    seen: str | None = None,
 ) -> dict[str, Any]:
     slot: dict[str, Any] = {
         "key": str(row.get("slot_id") or f"slot-{index}"),
@@ -173,6 +174,8 @@ def _safe_slot(
         slot["moment"] = moment
     if facts:
         slot["facts"] = facts
+    if seen:
+        slot["seen"] = {"text": seen, "provenance": "vision"}
     return slot
 
 
@@ -219,6 +222,63 @@ def clip_facts_by_media_id(
         ]
         if facts:
             out[media_id] = facts[:_MAX_SLOT_FACTS]
+    return out
+
+
+_MAX_SEEN_CHARS = 220
+
+
+def _seen_text(analysis: object, *, kind: str = "video") -> str:
+    """One compact, sanitized sentence about what a clip shows (vision analysis), or "".
+
+    Read through the shared ``clip_record`` projection (its validators already strip
+    control characters and cap lengths), then trimmed again for the copilot snapshot.
+    """
+    from app.services.clip_understanding import clip_record  # noqa: PLC0415
+
+    record = clip_record(analysis if isinstance(analysis, dict) else None, kind=kind)
+    if record.is_empty():
+        return ""
+    parts: list[str] = []
+    for value in (
+        record.summary or record.subject,
+        record.setting,
+        record.activity,
+        *(m.description for m in record.notable_moments[:2]),
+    ):
+        text = " ".join(str(value or "").split())
+        if text and text.casefold() not in {p.casefold() for p in parts}:
+            parts.append(text)
+    return "; ".join(parts)[:_MAX_SEEN_CHARS]
+
+
+def clip_seen_by_media_id(
+    job: Any, variant: dict[str, Any], assignments: list[dict[str, Any]]
+) -> dict[str, str]:
+    """Path-free vision descriptions per guided clip (``analysis["understanding"]``).
+
+    Joined to guided sources by storage path exactly like ``clip_facts_by_media_id``.
+    A clip with no stored understanding is simply absent: the copilot must then say
+    it cannot tell what that clip shows, never guess.
+    """
+    guided = _guided_v2_revision(job, variant)
+    if guided is None:
+        return {}
+    media_by_path = {
+        str(source.get("gcs_path")): str(source.get("media_id"))
+        for source in guided.get("sources") or []
+        if isinstance(source, dict) and source.get("gcs_path") and source.get("media_id")
+    }
+    out: dict[str, str] = {}
+    for row in assignments:
+        if not isinstance(row, dict):
+            continue
+        media_id = media_by_path.get(str(row.get("gcs_path")))
+        if media_id is None:
+            continue
+        text = _seen_text(row.get("analysis"), kind=str(row.get("kind") or "video"))
+        if text:
+            out[media_id] = text
     return out
 
 
@@ -600,6 +660,7 @@ def build_editor_snapshot(
 
     clip_context = clip_context or {}
     facts_by_media = clip_context.get("facts") or {}
+    seen_by_media = clip_context.get("seen") or {}
     slot_rows = _variant_slots(variant, job)
     guided_source_labels = _slot_moments(job, variant, slot_rows)
     label_links = _clip_label_links(job, variant)
@@ -621,6 +682,7 @@ def build_editor_snapshot(
                     else None
                 ),
                 facts=facts_by_media.get(media_id) if isinstance(media_id, str) else None,
+                seen=seen_by_media.get(media_id) if isinstance(media_id, str) else None,
             )
         )
     duration = visual_block_variant_duration(variant)
@@ -1772,6 +1834,7 @@ __all__ = [
     "KriaEditorOpError",
     "build_editor_snapshot",
     "clip_facts_by_media_id",
+    "clip_seen_by_media_id",
     "coalesce_text_style_ops",
     "compile_editor_ops",
     "register_handler",

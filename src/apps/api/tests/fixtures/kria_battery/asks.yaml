@@ -151,8 +151,11 @@ asks:
       - {role: user, content: "add the hour to each video"}
       - {role: assistant, content: "Added the filming hour to 5 clips."}
     expect_ops: [label_each_clip, patch_text]
-  - id: descriptive-captions-clarify
+  - id: descriptive-captions-from-seen
     ask: "Add a text to each clip explaining the part of the wedding (could be airport pickup, pre wedding etc)"
-    # Facts are place/time only: never substitute place names for a description.
-    expect_ops: []
-    expect_error: "which part|tell me what|what each clip"
+    # The seed stores vision understanding for 5 of 6 clips: captions are written from it
+    # (add_text), never place names. `kria_dev seed --guided --no-seen` exercises the clarify path.
+    expect_ops: [add_text]
+  - id: descriptive-captions-tr
+    ask: "her klibede neler olduğunu kısaca yaz"
+    expect_ops: [add_text]
