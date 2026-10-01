@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.36.0] - 2026-10-01
+
+### Changed
+- test(copilot): guided phone-commit coverage for copilot shorten (KRI-219/KRI-237) (#1293) <!-- release-pr: 1293 -->
+
 ## [0.77.35.0] - 2026-10-01
 
 ### Changed
