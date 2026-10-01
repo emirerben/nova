@@ -42,6 +42,7 @@ struct NativeTextCreationPanel: View {
                 }
                 .accessibilityIdentifier("native-editor-text-done")
             }
+            .nativeEditorPanelResizeSurface()
             NativeExplicitLineTextEditor(text: Binding(
                 get: { session.pendingText?.text ?? "" },
                 set: { session.updatePendingText($0) }

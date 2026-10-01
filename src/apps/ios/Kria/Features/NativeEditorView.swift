@@ -427,13 +427,20 @@ struct NativeEditorView: View {
                         }
                         VStack(spacing: 0) {
                             if panelIsOpen {
+                                let panelRange = metrics.panelRange(areaHeight: area.size.height, previewHeight: previewHeight)
                                 panelContent
                                     .environment(\.nativeEditorPanelContentWidth, max(0, area.size.width - 72))
+                                    .environment(\.nativeEditorPanelResize, NativeEditorPanelResize(expansion: $panelExpansion, range: panelRange))
                                     .padding(.top, 18)
+                                    .overlay(alignment: .top) {
+                                        // The band beside the grabber resizes too (KRI-235).
+                                        Color.clear.frame(height: 18).contentShape(Rectangle())
+                                            .modifier(NativeEditorPanelResizeDrag(expansion: $panelExpansion, range: panelRange, minimumDistance: 8))
+                                    }
                                     .overlay(alignment: .top) {
                                         NativeEditorPanelResizeGrabber(
                                             expansion: $panelExpansion,
-                                            range: metrics.panelRange(areaHeight: area.size.height, previewHeight: previewHeight),
+                                            range: panelRange,
                                             reduceMotion: shouldReduceMotion,
                                             accessibilityIdentifier: "native-editor-panel-resize",
                                             topAligned: true,
