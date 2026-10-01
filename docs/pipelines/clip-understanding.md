@@ -93,6 +93,11 @@ Flow (flag on):
    vision answers, and returns a question/recovery response for incomplete resolution.
    Dynamic partitioning (for example, separate chapters for every discovered city)
    asks for concrete groups instead of silently treating every clip as one group.
+   Talking edits (`subtitled`, `talking_head`: `CLIP_INTENT_FREE_EDIT_FORMATS`)
+   skip the inventory. Their renderers draw no clip intents and their captions are
+   the creator's speech, so "Add captions" there is never a chapter `caption` op.
+   `compile_strategy_to_plan` strips any footage intents the Main Creator proposed
+   for them, with a notice.
 2. **Resolve, inside the chat turn** (`app/services/clip_intent_resolution.py`,
    DB-free, the session row lock is released around it): `ClipRequestResolverAgent`
    (text-only, media aliases, id set-membership) matches intents to the shared

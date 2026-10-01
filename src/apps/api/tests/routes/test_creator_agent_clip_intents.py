@@ -26,7 +26,11 @@ from app.services.clip_intent_answers import (
 )
 from app.services.clip_intent_planning import PlannedIntentResolution
 from app.services.clip_intent_resolution import ANSWERS_KEY, IntentClip, IntentResolution
-from app.services.creator_capabilities import compile_strategy_to_plan, resolve_creator_manifest
+from app.services.creator_capabilities import (
+    TALKING_CLIP_INTENTS_DROPPED_NOTICE,
+    compile_strategy_to_plan,
+    resolve_creator_manifest,
+)
 
 
 def _manifest():
@@ -873,6 +877,69 @@ async def test_transcript_source_survives_inventory_and_requires_recorded_narrat
     else:
         assert session.status == "briefing"
         assert append_event.call_args.kwargs["payload"]["reason_code"] == "clip_intent_unresolved"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_caption_intent", [False, True])
+async def test_talking_edit_never_runs_the_clip_intent_inventory(monkeypatch, model_caption_intent):
+    # "Add captions" on a Talking edit means speech captions; the inventory
+    # read it as a chapter caption op and asked about it (KRI-238 follow-up).
+    monkeypatch.setattr(creator_routes.settings, "clip_intents_enabled", True)
+    monkeypatch.setattr(creator_routes.settings, "subtitled_archetype_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-talking",
+        edit_format="subtitled",
+        media=[{"media_id": "clip-1", "kind": "video", "duration_s": 15.0}],
+    )
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = _session()
+    response = SimpleNamespace(status="awaiting_confirmation")
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            edit_format="subtitled",
+            audio_strategy="original_audio",
+            render_program="native",
+            selected_media_ids=["clip-1"],
+            rationale="Caption every spoken line.",
+            clip_intents=[
+                ClipIntent(
+                    intent_id="captions",
+                    op="caption",
+                    attribute="default",
+                    caption_attribute="authored_from_footage",
+                )
+            ]
+            if model_caption_intent
+            else None,
+        ),
+        summary="I'll add captions to your clip.",
+    )
+    _wire_common_turn_mocks(
+        monkeypatch,
+        item=item,
+        persona=SimpleNamespace(user_id=uuid.uuid4()),
+        session=session,
+        manifest=manifest,
+        action=action,
+        response=response,
+        append_event=AsyncMock(),
+    )
+    load_clips = AsyncMock()
+    inventory = AsyncMock()
+    monkeypatch.setattr(creator_routes, "load_intent_clips_for_item", load_clips)
+    monkeypatch.setattr(creator_routes, "plan_and_resolve_clip_intents", inventory)
+
+    assert await _run_turn(item, session, user_message="Add captions") is response
+
+    load_clips.assert_not_awaited()
+    inventory.assert_not_awaited()
+    strategy = session.active_plan["edit_plan"]["strategy"]
+    assert strategy["edit_format"] == "subtitled"
+    assert "clip_intents" not in strategy
+    assert "resolved_clip_intents" not in strategy
+    notices = session.active_plan.get("notices", [])
+    assert (TALKING_CLIP_INTENTS_DROPPED_NOTICE in notices) is model_caption_intent
 
 
 @pytest.mark.parametrize("queued", [True, False])
