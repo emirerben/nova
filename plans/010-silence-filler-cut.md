@@ -286,6 +286,14 @@ drift e2e (11A) remains as the permanent guard assertion, and clicks are
 prevented by construction rather than hoped away. Filtergraph size for a
 40-cut clip (~41 segments) is well within FFmpeg limits.
 
+**As built after the cloud cut-crossfade change (October 2026):** a cut between two kept segments no longer
+declicks. Each side borrows up to 25 ms of the removed audio and the two
+sides crossfade on an equal-power curve centred on the cut, so room tone
+runs through it (declicking dipped rain/traffic takes 15-20 dB at every
+cut). Audio is also cut on the video frame grid, because concat padded
+off-grid segments with up to a frame of digital silence. The declick now
+applies only to a leading or trailing trim. See `_build_keep_segments_cmd`.
+
 ### Admin cut-plan viewer (in this PR, T2=C)
 
 `/admin/jobs/{id}` gains a per-variant timeline strip rendering

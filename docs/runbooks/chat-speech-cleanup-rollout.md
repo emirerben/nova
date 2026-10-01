@@ -141,6 +141,15 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   starts ≥0.3 s into it, and the span runs to within 0.2 s of the next word. If a report
   says a sentence's LAST syllable was clipped, check `token_adjustments` for that kind
   first; it is the only edge trim rule 0 performs.
+- "the cuts sound jumpy / the background drops out at every cut" on noisy footage →
+  the render, not the detector. Cloud cuts crossfade up to 25 ms of removed audio
+  from each side and cut audio on the video frame grid (`_CUT_CROSSFADE_HANDLE_S`,
+  `_build_keep_segments_cmd` in `app/pipeline/reframe.py`). Renders made before that
+  change reached the Fly workers dipped 15-20 dB at every cut, plus up to a frame of
+  digital silence where a cut fell between frames. Only a full re-render (new
+  generation) picks up the fix: a caption or text edit fast-reburns onto the stored
+  base video and keeps its old cut audio. Nothing to flip, and no fingerprint is
+  involved.
 - "cleanup is too aggressive for my taste" → this lever.
 - **"cleanup cut a word / clipped my speech" → a guard bug, NOT this lever.** Do not
   reach for `=0.55` to make it stop; that only hides it again, on some clips, by
