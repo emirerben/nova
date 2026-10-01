@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.39.0] - 2026-10-01
+
+### Fixed
+- fix(kria): "Add captions" on a Talking edit never becomes a clip intent (KRI-238 follow-up) (#1290) <!-- release-pr: 1290 -->
+
 ## [0.77.38.0] - 2026-10-01
 
 ### Changed
