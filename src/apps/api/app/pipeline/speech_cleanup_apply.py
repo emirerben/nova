@@ -412,6 +412,14 @@ def hydrate_job_speech_cleanup_snapshot(
     )
 
 
+# Bump only when the fingerprinted identity changes meaning: which source bytes
+# are cut, or where each kept span lands in the output. How the joins sound is
+# not part of it. The cut crossfade (_cut_audio_filter) keeps every span's
+# output position and length, so a derivative pinned with hard splices still
+# plays exactly the timeline its snapshot words describe, and dispatch, the
+# device grant and the render worker keep accepting it. A bump would make
+# dispatch refuse those items (speech_cleanup_analysis_conflict) and fail
+# already-dispatched Jobs with snapshot_mismatch.
 CUT_FINGERPRINT_VERSION = 1
 
 
@@ -439,6 +447,107 @@ def cut_fingerprint(snapshot: HydratedSpeechCleanupSnapshot) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+# The cut is planned in whole samples at the output rate (the source is
+# resampled before trimming), so every crossfade overlap is exact and the WAV is
+# exactly as long as the accepted keep segments.
+_CUT_SAMPLE_RATE = 48000
+# Seconds of source audio each side of a cut between two kept segments borrows
+# from the removed span. The two sides then overlap for twice this long on an
+# equal-power (qsin) curve centred on the cut, so room tone (rain, traffic) runs
+# straight through the join instead of dropping out, and the waveform step
+# cannot click. Same rule as the cloud video cut (reframe keep segments) and the
+# phone engine's cut crossfade, so every render of a cleanup cut sounds alike.
+_CUT_CROSSFADE_HANDLE_S = 0.025
+# Fade at a leading or trailing trim: removed audio with no kept segment on its
+# other side to crossfade with. Long enough to kill the click, short enough to
+# be inaudible as a fade.
+_DECLICK_FADE_S = 0.012
+
+
+def _trim_samples(start: int, end: int) -> str:
+    # A whole-sample time at 6 decimals trims at exactly that sample: a
+    # microsecond is a twentieth of a 48 kHz sample.
+    rate = _CUT_SAMPLE_RATE
+    return f"atrim=start={start / rate:.6f}:end={end / rate:.6f},asetpts=PTS-STARTPTS"
+
+
+def _cut_audio_filter(snapshot: HydratedSpeechCleanupSnapshot) -> str:
+    """FFmpeg filter graph that renders the accepted keep segments as ``[outa]``.
+
+    Each cut between two kept segments crossfades: both sides borrow
+    h = min(_CUT_CROSSFADE_HANDLE_S, removed/2, segment/4) of the removed
+    audio, and the 2h samples centred on the cut from each side are mixed
+    under complementary quarter-sine fades (equal power). Each overlap gives
+    back exactly what its two handles added, so the output is the sum of the
+    keep segments and every kept word plays where the remapped transcript
+    says. Segments with nothing removed between them join plainly. The
+    window's own start and end are not cuts; a leading or trailing trim gets a
+    _DECLICK_FADE_S afade instead.
+
+    Every widened segment splits into head (its cut's overlap), core and tail,
+    and one concat joins core, mixed overlap, core, ... in order. Not
+    acrossfade: in FFmpeg 6.1 (CI) and 7.1 (production) it ends its output
+    early when its second input has finished before it noticed the first did,
+    which a short keep segment between short gaps triggers. Each overlap mixes
+    with amix instead, the later head first: 6.1's amix stops at once when its
+    first input ends, and with duration=first that is exactly when the mix is
+    complete (the earlier tail is already buffered by then).
+    """
+
+    rate = _CUT_SAMPLE_RATE
+    spans: list[tuple[int, int]] = []
+    for start_s, end_s in snapshot.cut_plan.keep_segments:
+        first = round((snapshot.window_start_s + float(start_s)) * rate)
+        end = round((snapshot.window_start_s + float(end_s)) * rate)
+        if end > first:
+            spans.append((first, end))
+    if not spans:
+        raise SpeechCleanupAudioApplyError("accepted CutPlan keeps no audio")
+
+    n = len(spans)
+    # handles[i]: samples borrowed each side of the cut before segment i.
+    handles = [0] * (n + 1)
+    for i in range(1, n):
+        removed = spans[i][0] - spans[i - 1][1]
+        if removed > 0:
+            handles[i] = min(
+                round(_CUT_CROSSFADE_HANDLE_S * rate),
+                removed // 2,
+                (spans[i - 1][1] - spans[i - 1][0]) // 4,
+                (spans[i][1] - spans[i][0]) // 4,
+            )
+
+    chains = [f"[0:a]aresample={rate},asplit={n}{''.join(f'[s{i}]' for i in range(n))}"]
+    pieces: list[str] = []
+    for i, (first, end) in enumerate(spans):
+        lead, tail = handles[i], handles[i + 1]
+        width = end - first + lead + tail
+        core = _trim_samples(2 * lead, width - 2 * tail)
+        declick = min(round(_DECLICK_FADE_S * rate), (end - first) // 2)
+        if i == 0 and first > round(snapshot.window_start_s * rate) and declick > 0:
+            core += f",afade=t=in:ns={declick}"
+        if i == n - 1 and end < round(snapshot.window_end_s * rate) and declick > 0:
+            core += f",afade=t=out:ss={width - 2 * lead - declick}:ns={declick}"
+        parts = [core]
+        if lead:
+            parts.insert(0, f"{_trim_samples(0, 2 * lead)},afade=t=in:ns={2 * lead}:curve=qsin")
+            pieces.append(f"[x{i}]")
+            chains.append(f"[h{i}][t{i - 1}]amix=inputs=2:duration=first:normalize=0[x{i}]")
+        if tail:
+            parts.append(
+                f"{_trim_samples(width - 2 * tail, width)},afade=t=out:ns={2 * tail}:curve=qsin"
+            )
+        labels = ([f"h{i}"] if lead else []) + [f"c{i}"] + ([f"t{i}"] if tail else [])
+        pieces.append(f"[c{i}]")
+        chains.append(
+            f"[s{i}]{_trim_samples(first - lead, end + tail)},asplit={len(parts)}"
+            + "".join(f"[p{label}]" for label in labels)
+        )
+        chains.extend(f"[p{label}]{part}[{label}]" for label, part in zip(labels, parts))
+    chains.append(f"{''.join(pieces)}concat=n={len(pieces)}:v=0:a=1[outa]")
+    return ";".join(chains)
+
+
 def apply_speech_cleanup_to_audio(
     snapshot: HydratedSpeechCleanupSnapshot,
     source_path: str,
@@ -446,26 +555,16 @@ def apply_speech_cleanup_to_audio(
     *,
     timeout_s: int = AUDIO_APPLY_TIMEOUT_S,
 ) -> str:
-    """Render the accepted keep segments into one narration-audio artifact."""
+    """Render the accepted keep segments into one narration-audio artifact.
+
+    Cuts crossfade rather than hard-splice (_cut_audio_filter); the WAV is
+    exactly as long as the keep segments.
+    """
 
     if not source_path or not output_path or timeout_s <= 0:
         raise SpeechCleanupAudioApplyError("invalid audio application input")
-    plan = snapshot.cut_plan
-    if not plan.keep_segments:
+    if not snapshot.cut_plan.keep_segments:
         raise SpeechCleanupAudioApplyError("accepted CutPlan has no keep segments")
-
-    chains: list[str] = []
-    labels: list[str] = []
-    for index, (start_s, end_s) in enumerate(plan.keep_segments):
-        absolute_start = snapshot.window_start_s + float(start_s)
-        absolute_end = snapshot.window_start_s + float(end_s)
-        label = f"keep{index}"
-        labels.append(f"[{label}]")
-        chains.append(
-            f"[0:a]atrim=start={absolute_start:.6f}:end={absolute_end:.6f},"
-            f"asetpts=PTS-STARTPTS[{label}]"
-        )
-    chains.append(f"{''.join(labels)}concat=n={len(labels)}:v=0:a=1[outa]")
     command = [
         "ffmpeg",
         "-nostdin",
@@ -475,14 +574,14 @@ def apply_speech_cleanup_to_audio(
         "-i",
         source_path,
         "-filter_complex",
-        ";".join(chains),
+        _cut_audio_filter(snapshot),
         "-map",
         "[outa]",
         "-vn",
         "-c:a",
         "pcm_s16le",
         "-ar",
-        "48000",
+        str(_CUT_SAMPLE_RATE),
         # No source tags or encoder/version stamp in the WAV (a guided
         # derivative's object path is its hash). The samples are still only
         # stable per host: the AAC decoder and resampler pick CPU-specific
