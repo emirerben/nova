@@ -290,6 +290,38 @@ def _follow_window(
     )
 
 
+def _preserve_label_offsets(
+    start: float,
+    end: float,
+    old_segment: dict[str, Any],
+    window: tuple[float, float],
+) -> tuple[float, float]:
+    """Keep a clip label's manual inset from its segment edges through a retime.
+
+    Start inset and end gap (distance from the old window edges) are scaled by
+    new_len/old_len and re-applied inside the new window, clamped so the bar
+    stays inside it with at least ``_MIN_BAR_S``. A bar flush with both old
+    edges (the default) snaps to the full new window exactly as before.
+    """
+    new_start, new_end = window
+    old_start = float(old_segment["output_start_s"])
+    old_end = float(old_segment["output_end_s"])
+    inset = max(0.0, start - old_start)
+    gap = max(0.0, old_end - end)
+    if inset <= _EDGE_S / 2 and gap <= _EDGE_S / 2:
+        return new_start, new_end
+    new_len = new_end - new_start
+    if new_len <= _MIN_BAR_S:
+        return new_start, new_end
+    old_len = old_end - old_start
+    ratio = new_len / old_len if old_len > 0 else 1.0
+    inset = inset * ratio if inset > _EDGE_S / 2 else 0.0
+    gap = gap * ratio if gap > _EDGE_S / 2 else 0.0
+    out_start = min(new_start + inset, new_end - _MIN_BAR_S)
+    out_end = max(min(new_end - gap, new_end), out_start + _MIN_BAR_S)
+    return out_start, out_end
+
+
 def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
     """Re-window ``state.text`` (and any same-bundle lanes) onto the new timeline."""
     ops = _ops()
@@ -339,7 +371,12 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
                 drop(bar, old_segment, is_label)
                 continue
             updated = dict(bar)
-            updated["start_s"], updated["end_s"] = _round(window[0]), _round(window[1])
+            new_start, new_end = window[0], window[1]
+            if is_label and old_segment is not None:
+                new_start, new_end = _preserve_label_offsets(
+                    start, end, old_segment, (window[0], window[1])
+                )
+            updated["start_s"], updated["end_s"] = _round(new_start), _round(new_end)
             updated["segment_id"] = window[2]
             rebased.append(updated)
             continue

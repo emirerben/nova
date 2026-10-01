@@ -374,3 +374,57 @@ def test_too_long_timeline_is_a_clean_op_error(guided) -> None:
                 }
             ],
         )
+
+
+def _offset_label(variant, media_id, start_s, end_s):
+    for row in variant["text_elements"]:
+        if row["id"] == f"clip-label-media-{media_id}":
+            row["start_s"], row["end_s"] = start_s, end_s
+            return
+    raise AssertionError(media_id)
+
+
+def test_manual_label_offset_scales_on_shrink(guided) -> None:
+    job, variant, _rev = guided
+    _offset_label(variant, "m1", 2.8, 4.0)  # window 2.0-4.0, inset 0.8
+    compiled = compile_editor_ops(
+        job, variant, [{"op": "set_total_duration", "target_s": 6, "strategy": "proportional"}]
+    )
+    bar = _bar(compiled, "m1")
+    assert bar["start_s"] == pytest.approx(1.5 + 0.8 * 0.75, abs=1e-3)
+    assert bar["end_s"] == pytest.approx(3.0, abs=1e-3)
+    flush = _bar(compiled, "m2")  # untouched label: today's behaviour
+    assert (flush["start_s"], flush["end_s"]) == (3.0, 4.5)
+
+
+def test_manual_label_offset_and_early_end_scale_and_stay_inside(guided) -> None:
+    job, variant, _rev = guided
+    _offset_label(variant, "m1", 2.4, 3.6)
+    compiled = compile_editor_ops(
+        job, variant, [{"op": "set_total_duration", "target_s": 4, "strategy": "proportional"}]
+    )
+    bar = _bar(compiled, "m1")  # window 1.0-2.0, ratio 0.5
+    assert bar["start_s"] == pytest.approx(1.2, abs=1e-3)
+    assert bar["end_s"] == pytest.approx(1.8, abs=1e-3)
+
+
+def test_manual_label_offset_clamped_inside_small_window(guided) -> None:
+    job, variant, _rev = guided
+    _offset_label(variant, "m1", 3.9, 4.0)  # 0.1s sliver at window end
+    compiled = compile_editor_ops(
+        job, variant, [{"op": "set_total_duration", "target_s": 4, "strategy": "proportional"}]
+    )
+    bar = _bar(compiled, "m1")  # window 1.0-2.0
+    assert bar["end_s"] <= 2.0 + 1e-6
+    assert bar["end_s"] - bar["start_s"] >= 0.2 - 1e-6
+    assert bar["start_s"] >= 1.0
+
+
+def test_manual_label_offset_travels_with_reordered_segment(guided) -> None:
+    job, variant, _rev = guided
+    _offset_label(variant, "m2", 4.5, 6.0)  # window 4.0-6.0, inset 0.5
+    compiled = compile_editor_ops(
+        job, variant, [{"op": "reorder_clip", "from_index": 2, "to_index": 0}]
+    )
+    bar = _bar(compiled, "m2")
+    assert (bar["start_s"], bar["end_s"]) == (0.5, 2.0)
