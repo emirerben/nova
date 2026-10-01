@@ -17,6 +17,7 @@ IMPORTANT: subprocess.run() is blocking -- all calls here are sync.
 CRITICAL: Never use shell=True. Always pass args as a list.
 """
 
+import math
 import os
 import re
 import subprocess
@@ -289,10 +290,13 @@ def reframe_and_export(
     color_hint: color grading preset -- "warm", "cool", "high-contrast", etc.
     keep_segments: optional [(start_s, end_s), ...] in the OUTPUT clip timeline
         (post -ss/-t, 0-based) — render only these spans, concatenated in
-        order, with _DECLICK_FADE_S audio declick fades at cut-adjacent edges
-        (plans/010 silence cut). Validated fail-loud (sorted,
-        non-overlapping, within [0, duration]); raises ValueError on
-        violation — callers own the uncut fallback. Not combinable with
+        order on the output frame grid, with each cut's audio crossfaded
+        (plans/010 silence cut; see _build_keep_segments_cmd). Validated
+        fail-loud (sorted, non-overlapping, within [0, duration]); raises
+        ValueError on violation — callers own the uncut fallback. A segment
+        with no output frame timestamp inside it renders nothing and is
+        dropped (one that does hold one renders that whole frame); only a
+        plan with no frame at all raises. Not combinable with
         text_overlay_pngs / ass_overlay_paths: cut first, then burn overlays
         on the cut output. None ⇒ byte-identical to the uncut command.
     exact_duration: add an output-side cap after CFR conversion so a source
@@ -620,13 +624,29 @@ def _build_overlay_cmd(
     return cmd
 
 
-# 12ms declick fade at cut-adjacent keep-segment edges (plans/010, eng review
-# T3=C). Long enough to kill the step discontinuity (click) an arbitrary
-# waveform cut produces, short enough to be inaudible as a fade. Never applied
-# at the clip's true start/end — those edges are not cuts.
+# 12ms declick fade at keep-segment edges that border removed audio with no
+# kept segment on the other side: a leading trim (first segment starts after
+# 0) or a trailing trim (last segment ends before the clip end). Long enough
+# to kill the step discontinuity (click) an arbitrary waveform cut produces,
+# short enough to be inaudible as a fade. Never applied at the clip's true
+# start/end — those edges are not cuts. Cuts BETWEEN two kept segments
+# crossfade instead (_CUT_CROSSFADE_HANDLE_S).
 # 12ms: still imperceptible as a fade but kills boundary clicks more reliably
 # than the original 5ms on real phone audio (local-test round 2, 2026-07-09).
 _DECLICK_FADE_S = 0.012
+
+# Seconds of source audio each side of a cut between two kept segments borrows
+# from the removed span. The two sides then overlap for twice this long on an
+# equal-power (qsin) curve centred on the cut, so room tone (rain, traffic)
+# runs straight through the join. Fading each side to silence instead dipped
+# noisy takes 15-20 dB for ~25 ms at every cut, which is what made cleanup
+# cuts sound jumpy. Same rule as the phone engine's cut crossfade
+# (AudioCutHandles / audioCutCrossfadeHandle in KriaMediaEngine's
+# VisualBlocks.swift, landing separately), so phone and cloud renders of a cut
+# sound alike; the cloud cuts on whole frames, so its cut sits up to half a
+# frame from the phone's. Only audio widens; the picture still hard-cuts on the segment
+# boundary.
+_CUT_CROSSFADE_HANDLE_S = 0.025
 
 
 def _validate_keep_segments(
@@ -658,6 +678,43 @@ def _validate_keep_segments(
         prev_end = seg_end
 
 
+def _keep_segment_frames(
+    keep_segments: list[tuple[float, float]],
+    fps: int,
+    duration: float,
+) -> list[tuple[int, int]]:
+    """Return the [first, end) CFR frame range of each keep segment that snaps to a frame.
+
+    Each boundary snaps to the nearest frame, so the audio, which follows the
+    picture, is cut at most half a frame from the plan: snapping both edges up
+    played up to a frame of removed audio (a discarded retake's onset) at
+    full level and faded the next kept word's onset. A segment reaching the
+    clip end keeps every frame up to it. A segment that snaps to no frame is
+    dropped — it would add audio over a frozen picture and nothing else.
+    """
+    frames: list[tuple[int, int]] = []
+    for seg_start, seg_end in keep_segments:
+        first = math.floor(seg_start * fps + 0.5)
+        if seg_end >= duration:
+            # The epsilon absorbs float noise (12.0 * 30 = 360.00000000000006).
+            end = math.ceil(seg_end * fps - 1e-6)
+        else:
+            end = math.floor(seg_end * fps + 0.5)
+        if end > first:
+            frames.append((first, end))
+    return frames
+
+
+def _frame_trim_s(frame: int, fps: int) -> float:
+    """A trim boundary that selects `frame` onwards, whatever the time base.
+
+    A quarter frame before the frame's timestamp: never equal to a frame
+    timestamp, so neither the trim filter's rounding to the stream time base
+    nor the 6-decimal formatting can move the boundary across a frame.
+    """
+    return max(0.0, (frame - 0.25) / fps)
+
+
 def _build_keep_segments_cmd(
     input_path: str,
     start_s: float,
@@ -677,25 +734,59 @@ def _build_keep_segments_cmd(
     `avg_frame_rate=1/0` (the CFR-before-xfade incident class; see
     single_pass.py and agents/DECISIONS.md 2026-05-18).
 
-    Chain: [0:v] -> vf filters -> [base] -> split -> per-segment
-    trim + setpts=PTS-STARTPTS + setsar=1; audio -> asplit -> per-segment
-    atrim + asetpts=PTS-STARTPTS + _DECLICK_FADE_S afade declick at
-    CUT-ADJACENT edges only (a segment starting at the clip's true start gets
-    no fade-in; one ending at the clip's true end gets no fade-out) -> concat.
-    Per-segment concat re-syncs A/V at every joint (shorter audio is
-    silence-padded to the segment max), so cumulative drift is structurally
-    impossible — the 30-cut drift e2e in
-    tests/pipeline/test_reframe_keep_segments.py is the permanent guard.
+    Video: [0:v] -> vf filters -> [base] -> split -> per-segment
+    trim + setpts=PTS-STARTPTS + setsar=1. Each segment renders whole CFR
+    frames [first, end), its boundaries snapped to the nearest frame
+    (_keep_segment_frames), trimmed a quarter frame before those frames
+    (_frame_trim_s) so the stream time base cannot move a boundary across a
+    frame. The picture always hard-cuts.
+
+    Audio is cut on the SAME frame grid: a segment's audio is exactly the
+    source span its frames show, [first/fps, end/fps), except that the last
+    segment's audio stops at the clip end when its final frame runs past it.
+    Cutting audio at the raw float boundaries left most segments up to a
+    frame shorter or longer than their picture, and concat padded each
+    shortfall with digital silence (up to 33 ms) right at the cut.
+
+    Each cut between two kept segments crossfades: both sides borrow
+    h = min(_CUT_CROSSFADE_HANDLE_S, removed/2, segment/4) of the removed
+    audio, and the two sides fade on equal-power (qsin) curves summed over
+    2h centred on the cut. Each cut is crossfaded on its own and split
+    between the two pieces it joins, so every audio piece keeps its
+    segment's length. Edges at the clip's true start or end get nothing; a
+    leading or trailing trim (removed audio with no kept segment beyond it)
+    keeps the _DECLICK_FADE_S afade. Segments whose frames are contiguous
+    join plainly — nothing was removed between them.
+
+    concat then pairs each video segment with its audio piece. Per-segment
+    concat re-syncs A/V at every joint (shorter audio is silence-padded to
+    the segment max), so cumulative drift is structurally impossible — the
+    30-cut drift e2e in tests/pipeline/test_reframe_keep_segments.py is the
+    permanent guard.
 
     Sources with no audio track mirror the uncut silent-audio contract:
     lavfi anullsrc input after the main input, concat v=1:a=0, and
     `-map 1:a:0 -shortest` truncating the silent track to the cut video.
 
-    Returns the command WITHOUT output encoding args — the caller appends
+    Raises ValueError when every segment snaps to no frame. Returns the
+    command WITHOUT output encoding args — the caller appends
     `_encoding_args(...)` itself, keeping every encoder-policy call site
     inside reframe_and_export (tests/test_encoder_policy.py allowlist).
     """
-    n = len(keep_segments)
+    fps = settings.output_fps
+    segments = _keep_segment_frames(keep_segments, fps, duration)
+    if not segments:
+        raise ValueError("keep_segments hold no video frame: every segment snaps to no frame")
+    n = len(segments)
+    # What actually renders on the frame grid, next to the plan logged by
+    # reframe_and_export: boundaries move up to half a frame and segments
+    # that snap to no frame drop out.
+    log.info(
+        "reframe_keep_segments_grid",
+        segments=n,
+        dropped=len(keep_segments) - n,
+        kept_s=round(sum(end - first for first, end in segments) / fps, 3),
+    )
     cmd = ["ffmpeg", "-ss", str(start_s), "-t", str(duration), "-i", input_path]
     if not has_audio:
         cmd += _SILENT_AUDIO_INPUT
@@ -721,24 +812,109 @@ def _build_keep_segments_cmd(
 
     split_out = "".join(f"[vs{i}]" for i in range(n))
     fc_parts.append(f"[base]split={n}{split_out}")
-    for i, (seg_start, seg_end) in enumerate(keep_segments):
+    for i, (first, end) in enumerate(segments):
         seg_punch = punch_chain if i % 2 == 1 else ""
         fc_parts.append(
-            f"[vs{i}]trim=start={seg_start:.6f}:end={seg_end:.6f},"
+            f"[vs{i}]trim=start={_frame_trim_s(first, fps):.6f}:end={_frame_trim_s(end, fps):.6f},"
             f"setpts=PTS-STARTPTS{seg_punch},setsar=1[v{i}]"
         )
 
     if has_audio:
+        # Only the last segment can run past the clip end (its final frame
+        # range rounds up past `duration`); its audio stops at the clip end.
+        spans = [(first / fps, min(end / fps, duration)) for first, end in segments]
+        # handles[i]: seconds each side borrows at the cut before segment i.
+        handles = [0.0] * (n + 1)
+        for i in range(1, n):
+            removed_s = spans[i][0] - spans[i - 1][1]
+            if removed_s > 0:
+                handles[i] = min(
+                    _CUT_CROSSFADE_HANDLE_S,
+                    removed_s / 2,
+                    (spans[i - 1][1] - spans[i - 1][0]) / 4,
+                    (spans[i][1] - spans[i][0]) / 4,
+                )
         asplit_out = "".join(f"[as{i}]" for i in range(n))
-        fc_parts.append(f"[0:a]asplit={n}{asplit_out}")
-        for i, (seg_start, seg_end) in enumerate(keep_segments):
-            chain = f"atrim=start={seg_start:.6f}:end={seg_end:.6f},asetpts=PTS-STARTPTS"
-            if seg_start > 0:
-                chain += f",afade=t=in:st=0:d={_DECLICK_FADE_S}"
-            if seg_end < duration:
-                fade_out_start = (seg_end - seg_start) - _DECLICK_FADE_S
-                chain += f",afade=t=out:st={fade_out_start:.6f}:d={_DECLICK_FADE_S}"
-            fc_parts.append(f"[as{i}]{chain}[a{i}]")
+        # first_pts=0 pads silence before audio that starts after the video,
+        # so every sample sits at its timestamp; the widened trims below are
+        # rebased to their own start, and a late first sample would
+        # otherwise misplace the first cut's crossfade by that offset.
+        # min_hard_comp=0.005 pads any later timestamp gap over 5 ms too:
+        # first_pts switches on gap compensation, whose 0.1 s default would
+        # close smaller gaps and pull every later segment early.
+        fc_parts.append(f"[0:a]aresample=first_pts=0:min_hard_comp=0.005,asplit={n}{asplit_out}")
+
+        # Each segment trims its span, widened by the handles, off the source
+        # once; its body and the crossfade windows on either side are cut
+        # from that short stream. A window is exactly its side of the 2h
+        # overlap, already faded on its qsin curve.
+        for i in range(n):
+            lead, tail = handles[i], handles[i + 1]
+            widened = (spans[i][1] + tail) - (spans[i][0] - lead)
+            body = (
+                f"atrim=start={2 * lead:.6f}:end={widened - 2 * tail:.6f},asetpts=PTS-STARTPTS"
+                if lead or tail
+                else ""
+            )
+            # On the frame-snapped spans: a segment that ends inside the
+            # clip's last frame plays to the true end and gets no fade.
+            if i == 0 and spans[0][0] > 0:
+                body += f",afade=t=in:st=0:d={_DECLICK_FADE_S}"
+            if i == n - 1 and spans[i][1] < duration:
+                fade_out_start = (spans[i][1] - spans[i][0] - lead - tail) - _DECLICK_FADE_S
+                body += f",afade=t=out:st={fade_out_start:.6f}:d={_DECLICK_FADE_S}"
+            trim = (
+                f"[as{i}]atrim=start={spans[i][0] - lead:.6f}:end={spans[i][1] + tail:.6f},"
+                "asetpts=PTS-STARTPTS"
+            )
+            if not (lead or tail):
+                fc_parts.append(f"{trim}{body}[a{i}]")
+                continue
+            outs = ["wb"] + ["wi"] * (lead > 0) + ["wo"] * (tail > 0)
+            fc_parts.append(f"{trim},asplit={len(outs)}" + "".join(f"[{o}{i}]" for o in outs))
+            fc_parts.append(f"[wb{i}]{body}[b{i}]")
+            if lead:
+                fc_parts.append(
+                    f"[wi{i}]atrim=end={2 * lead:.6f},asetpts=PTS-STARTPTS,"
+                    f"afade=t=in:st=0:d={2 * lead:.6f}:curve=qsin[xi{i}]"
+                )
+            if tail:
+                fc_parts.append(
+                    f"[wo{i}]atrim=start={widened - 2 * tail:.6f},asetpts=PTS-STARTPTS,"
+                    f"afade=t=out:st=0:d={2 * tail:.6f}:curve=qsin[xo{i + 1}]"
+                )
+
+        # Each cut is mixed on its own, never by chaining whole segments
+        # through crossfades: a chain delays the audio by every crossfade
+        # ahead of it, and concat then buffers decoded video until the audio
+        # catches up (~1 GB RSS at 320x568 for 101 cuts in review). The faded
+        # sides are summed with amix, not acrossfade: before FFmpeg 8,
+        # acrossfade ends its output without the crossfade when its second
+        # input has already ended by the first output request, which a short
+        # window decoded ahead of the video does. The incoming window goes
+        # first: amix before 7.0 drops input 0's buffered samples when input
+        # 0 ends, and the outgoing window always ends before the incoming one
+        # is decoded. [0, h] of the sum ends the outgoing piece; [h, 2h]
+        # starts the incoming one.
+        for i in range(1, n):
+            h = handles[i]
+            if not h:
+                continue
+            fc_parts.append(
+                f"[xi{i}][xo{i}]amix=inputs=2:normalize=0,asetpts=N/SR/TB,asplit=2[xa{i}][xb{i}]"
+            )
+            fc_parts.append(f"[xa{i}]atrim=end={h:.6f},asetpts=PTS-STARTPTS[t{i - 1}]")
+            fc_parts.append(f"[xb{i}]atrim=start={h:.6f},asetpts=PTS-STARTPTS[h{i}]")
+
+        # A segment's audio piece: the second half of the crossfade before
+        # it, its own untouched body, the first half of the crossfade after
+        # it. Its length is still exactly the segment's picture length.
+        for i in range(n):
+            parts = (
+                [f"[h{i}]"] * (handles[i] > 0) + [f"[b{i}]"] + [f"[t{i}]"] * (handles[i + 1] > 0)
+            )
+            if len(parts) > 1:
+                fc_parts.append(f"{''.join(parts)}concat=n={len(parts)}:v=0:a=1[a{i}]")
         pairs = "".join(f"[v{i}][a{i}]" for i in range(n))
         fc_parts.append(f"{pairs}concat=n={n}:v=1:a=1[vout][aout]")
     else:
