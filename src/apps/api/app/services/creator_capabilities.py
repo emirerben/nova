@@ -40,6 +40,7 @@ from app.agents._schemas.creator_policy import (
     repair_creator_strategy_shape,
 )
 from app.agents._schemas.edit_format import (
+    CLIP_INTENT_FREE_EDIT_FORMATS,
     EDIT_FORMATS,
     GUIDED_EDIT_FORMATS,
     NARRATED_EDIT_FORMATS,
@@ -76,6 +77,10 @@ CAPABILITY_REACTION_BEATS = "reaction_beats"
 # in `resolve_creator_manifest` for why it is omitted, not `_unavailable`,
 # otherwise.
 CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS = "media_overlays:video_cards"
+TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
+    "Talking edits caption what you say, so I didn't add separate labels or captions "
+    "to individual clips."
+)
 
 
 class CreatorSfxUnavailableError(CreatorStrategyError):
@@ -823,6 +828,30 @@ def _repair_creator_reaction_beats(
     )
 
 
+def _drop_talking_clip_intents(strategy: CreativeStrategy) -> tuple[CreativeStrategy, list[str]]:
+    """Strip footage clip intents from a Talking edit, saying so once.
+
+    Its renderers never draw them (`CLIP_INTENT_FREE_EDIT_FORMATS`), so keeping
+    them would approve labels or chapter captions the render silently drops.
+    Transcript labels stay for the narration check below. Flag off, visual
+    intents are already discarded at the model boundary, so this stays
+    byte-identical there.
+    """
+
+    if not settings.clip_intents_enabled or strategy.edit_format not in (
+        CLIP_INTENT_FREE_EDIT_FORMATS
+    ):
+        return strategy, []
+    intents = strategy.clip_intents or []
+    kept = [intent for intent in intents if intent.label_source == "transcript"]
+    if len(kept) == len(intents) and not strategy.resolved_clip_intents:
+        return strategy, []
+    stripped = strategy.model_copy(
+        update={"clip_intents": kept or None, "resolved_clip_intents": None}
+    )
+    return stripped, ([TALKING_CLIP_INTENTS_DROPPED_NOTICE] if len(kept) != len(intents) else [])
+
+
 def compile_strategy_to_plan(
     manifest: ResolvedCreatorManifest,
     strategy: CreativeStrategy,
@@ -864,6 +893,8 @@ def compile_strategy_to_plan(
                 edit_format=strategy.edit_format,
             ) from exc
         raise CreatorStrategyError(str(exc)) from exc
+    strategy, talking_notices = _drop_talking_clip_intents(strategy)
+    shape_notices = [*shape_notices, *talking_notices]
     if any(intent.label_source == "transcript" for intent in (strategy.clip_intents or [])) and (
         strategy.execution_contract != "guided_voiceover_v1" or manifest.narration is None
     ):
