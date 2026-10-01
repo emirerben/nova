@@ -3446,6 +3446,35 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// Whether a standalone text bar may be deleted from the editor, and why not.
+    /// Caption cues belong to the Captions panel; bars linked to a card go with the
+    /// card; lyric lines are generated. Everything else (title, clip labels, closing,
+    /// the creator's own text) drops out of `text_elements`, which the server treats
+    /// as a user deletion (full-replacement; guided tombstone `user_removed`).
+    enum TextDeletion: Equatable {
+        case allowed
+        case blocked(String)
+        var isAllowed: Bool { self == .allowed }
+    }
+
+    func textDeletion(id: String) -> TextDeletion {
+        guard let element = document.textElements.first(where: { $0.id == id }) else { return .blocked("This text no longer exists.") }
+        guard canEditSection(.text) else { return .blocked("Text is locked for this render.") }
+        if element.isCaption { return .blocked("Captions are managed in the Captions panel.") }
+        if element.role == "lyric_line" { return .blocked("Lyric lines follow the song’s lyrics.") }
+        if let link = element.raw["visual_block_id"], link != .null { return .blocked("This text belongs to a card. Delete the card instead.") }
+        return .allowed
+    }
+
+    /// One undo step; the live preview recompiles through the document change.
+    @discardableResult
+    func deleteText(id: String) -> Bool {
+        guard textDeletion(id: id).isAllowed else { return false }
+        transactDocument(section: .text) { $0.textElements.removeAll { $0.id == id } }
+        if selection?.id == id { select(nil) }
+        return true
+    }
+
     func removeVisualSelection(_ selected: EditorSelection) {
         switch selected.kind {
         case .mediaOverlay: removeMediaOverlay(id: selected.id)

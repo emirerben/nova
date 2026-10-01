@@ -92,6 +92,8 @@ struct NativeTextCreationPanel: View {
                         ) {
                             focused = false
                             onSelectBlock?(block.id)
+                        } onDelete: {
+                            session.deleteText(id: block.id)
                         }
                     }
                 }
@@ -110,6 +112,7 @@ struct NativeEditorTextBlockRow: View {
     let selected: Bool
     let enabled: Bool
     let onTap: () -> Void
+    var onDelete: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -132,6 +135,7 @@ struct NativeEditorTextBlockRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(named: "Edit text") { if enabled { onTap() } }
+        .accessibilityAction(named: "Delete text") { if enabled { onDelete?() } }
         .accessibilityIdentifier("native-editor-text-row-" + block.id)
         .disabled(!enabled)
     }

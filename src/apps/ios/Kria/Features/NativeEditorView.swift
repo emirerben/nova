@@ -410,7 +410,9 @@ struct NativeEditorView: View {
                             if let selection = session.selection, selection.kind == .text {
                                 NativeEditorTextContextStrip(
                                     onEdit: { changePanel(to: .text(selection.id)) },
-                                    onDeselect: { session.select(nil) }
+                                    onDeselect: { session.select(nil) },
+                                    onDelete: { session.deleteText(id: selection.id) },
+                                    deleteBlockedReason: blockedReason(session.textDeletion(id: selection.id))
                                 )
                                 .transition(panelTransition)
                             } else if let selection = session.selection, selection.kind == .clip {
@@ -666,6 +668,11 @@ struct NativeEditorView: View {
         }
         await session.refreshDeviceRender()
         if let file = deviceLocalFile { session.showDeviceOutput(file) }
+    }
+
+    private func blockedReason(_ deletion: NativeEditorSession.TextDeletion) -> String? {
+        if case let .blocked(reason) = deletion { return reason }
+        return nil
     }
 
     private func requestBack() {

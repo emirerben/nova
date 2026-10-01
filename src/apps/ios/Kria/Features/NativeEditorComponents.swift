@@ -353,6 +353,8 @@ struct NativeEditorContextStrip: View {
 struct NativeEditorTextContextStrip: View {
     let onEdit: () -> Void
     let onDeselect: () -> Void
+    var onDelete: (() -> Void)?
+    var deleteBlockedReason: String?
 
     var body: some View {
         HStack(spacing: 4) {
@@ -363,6 +365,18 @@ struct NativeEditorTextContextStrip: View {
             }
             .buttonStyle(NativeEditorContextButtonStyle(isAccent: true))
             .accessibilityIdentifier("native-editor-text-edit-action")
+            if let onDelete {
+                Button(action: onDelete) {
+                    Label("Delete", systemImage: "trash")
+                        .frame(minHeight: 44)
+                        .padding(.horizontal, 16)
+                }
+                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false, isDestructive: true))
+                .disabled(deleteBlockedReason != nil)
+                .accessibilityLabel("Delete text")
+                .accessibilityHint(deleteBlockedReason ?? "Removes this text. Undo brings it back.")
+                .accessibilityIdentifier("native-editor-text-delete")
+            }
             Button(action: onDeselect) {
                 Label("Deselect", systemImage: "xmark")
                     .frame(minHeight: 44)
@@ -391,11 +405,12 @@ struct NativeEditorTextContextStrip: View {
 
 private struct NativeEditorContextButtonStyle: ButtonStyle {
     let isAccent: Bool
+    var isDestructive = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(KriaFont.body(12).weight(.semibold))
-            .foregroundStyle(KriaColor.ink)
+            .foregroundStyle(isDestructive ? KriaColor.failureText : KriaColor.ink)
             .background(isAccent ? KriaColor.sage : Color.clear, in: Capsule())
             .opacity(configuration.isPressed ? 0.65 : 1)
     }
