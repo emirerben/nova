@@ -50,7 +50,7 @@ async def _own_pool():  # noqa: ANN202
     await async_engine.dispose()
 
 
-async def _approved_strategy(monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202
+async def _approved_strategy(monkeypatch: pytest.MonkeyPatch, *, approve: bool = True):  # noqa: ANN202
     user_id, thread_id, session_id = _seed_runtime_project()
     plan = adapt_creator_action(
         ProposeStrategy(
@@ -99,6 +99,8 @@ async def _approved_strategy(monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202
         )
         revision = db.get(CreationThread, thread_id).revision
         item_id = db.get(CreatorAgentSession, session_id).plan_item_id
+    if not approve:
+        return user_id, thread_id, session_id, item_id, approval_id
     async with AsyncSessionLocal() as db:
         await decide_approval(
             db,

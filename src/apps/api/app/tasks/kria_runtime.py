@@ -2710,7 +2710,15 @@ def reconcile_kria_turns() -> dict[str, int]:
             log.info("kria_reconcile_skipped_overlap")
             return {"published": 0, "settled": 0, "skipped": 1}
         try:
-            return _reconcile_kria_turns_body()
+            result = _reconcile_kria_turns_body()
+            try:
+                for successor_id in _expire_pending_approvals():
+                    run_kria_turn.apply_async(
+                        args=[successor_id], task_id=successor_id, queue="agent-control"
+                    )
+            except Exception:  # noqa: BLE001 - expiry is best-effort; the next sweep retries
+                log.warning("kria_approval_expiry_sweep_failed", exc_info=True)
+            return result
         finally:
             lock_conn.execute(
                 text("select pg_advisory_unlock(:key)"), {"key": _RECONCILE_ADVISORY_KEY}
@@ -2720,6 +2728,118 @@ def reconcile_kria_turns() -> dict[str, int]:
 
 # Arbitrary, stable advisory-lock key for the reconcile sweep ("kria rec" in hex).
 _RECONCILE_ADVISORY_KEY = 0x4B52494152454300
+
+
+def _expire_pending_approvals() -> list[str]:
+    """Cancel approvals past `expires_at` that nobody decided (they would block the thread
+    forever), release the queued follow-up, and say so. Returns successor turn ids to publish.
+
+    Only approvals with nothing to reverse are swept here: a strategy approval whose
+    execution carries a committed media mutation (`strategy_media_before`) keeps its
+    existing lazy path (the next approve/deny restores the item).
+    """
+    successors: list[str] = []
+    with sync_session() as db:
+        pending = list(
+            db.execute(
+                select(CreatorAgentApproval.id)
+                .where(
+                    CreatorAgentApproval.status == "pending",
+                    CreatorAgentApproval.expires_at < func.now(),
+                )
+                .order_by(CreatorAgentApproval.expires_at)
+                .limit(25)
+            ).scalars()
+        )
+    for approval_id in pending:
+        try:
+            with sync_session() as db:
+                ref = db.get(CreatorAgentApproval, approval_id)
+                if ref is None:
+                    continue
+                # Canonical order (subset): Session -> Turn -> Approval -> Execution -> Thread.
+                session = db.execute(
+                    select(CreatorAgentSession)
+                    .where(CreatorAgentSession.id == ref.session_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                turn = db.execute(
+                    select(CreatorAgentTurn)
+                    .where(CreatorAgentTurn.id == ref.turn_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                approval = db.execute(
+                    select(CreatorAgentApproval)
+                    .where(CreatorAgentApproval.id == approval_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                execution = None
+                try:
+                    execution_id = uuid.UUID(str((ref.execution_ids or [None])[0]))
+                    execution = db.execute(
+                        select(CreatorAgentExecution)
+                        .where(CreatorAgentExecution.id == execution_id)
+                        .with_for_update()
+                    ).scalar_one_or_none()
+                except (TypeError, ValueError, IndexError):
+                    execution = None
+                thread = db.execute(
+                    select(CreationThread)
+                    .where(CreationThread.id == ref.thread_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if (
+                    session is None
+                    or turn is None
+                    or approval is None
+                    or thread is None
+                    or approval.status != "pending"
+                ):
+                    continue
+                if isinstance(getattr(execution, "result", None), dict) and (
+                    "strategy_media_before" in execution.result
+                ):
+                    continue
+                now = datetime.now(UTC)
+                error = {
+                    "code": "approval_expired",
+                    "retryable": False,
+                    "recovery": "refresh_replan",
+                }
+                approval.status = "expired"
+                if execution is not None and execution.status == "awaiting_approval":
+                    execution.status = "stale"
+                    execution.error = error
+                    execution.completed_at = now
+                if turn.status == "awaiting_approval":
+                    turn.status = "failed"
+                    turn.completed_at = now
+                    turn.error = error
+                if session.status != "rendering":
+                    session.status = "awaiting_feedback"
+                _append_sync_event(
+                    db,
+                    thread,
+                    role="assistant",
+                    event_type="assistant_error",
+                    content=(
+                        "That approval expired before it was decided, so nothing was rendered. "
+                        "Tell me what you want and I'll prepare it again."
+                    ),
+                    payload={
+                        "turn_id": str(turn.id),
+                        "approval_id": str(approval.id),
+                        "code": "approval_expired",
+                        "recovery": "refresh_replan",
+                    },
+                )
+                db.commit()
+                successor = _promote_queued_successor_sync(thread.id)
+                if successor is not None:
+                    successors.append(successor)
+        except Exception:  # noqa: BLE001 - one bad approval must not stop the sweep
+            log.warning("kria_approval_expiry_failed", approval_id=str(approval_id), exc_info=True)
+    return successors
 
 
 def _reconcile_kria_turns_body() -> dict[str, int]:

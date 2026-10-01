@@ -864,17 +864,24 @@ async def test_approve_rejects_changed_session_pin() -> None:
         expected_approval_fingerprint=approval_fingerprint(approval),
     )
 
-    with pytest.raises(RuntimeFailure) as failure:
-        await decide_approval(
-            db,
-            thread_id=thread.id,
-            approval_id=approval.id,
-            creator_id=thread.creator_id,
-            decision="approve",
-            body=body,
-        )
+    cancel = AsyncMock(
+        side_effect=RuntimeFailure(409, "approval_target_stale", "stale", phase="approval")
+    )
+    with patch("app.kria.runtime._cancel_pending_approval", cancel):
+        with pytest.raises(RuntimeFailure) as failure:
+            await decide_approval(
+                db,
+                thread_id=thread.id,
+                approval_id=approval.id,
+                creator_id=thread.creator_id,
+                decision="approve",
+                body=body,
+            )
 
+    # Approving a stale approval now CANCELS it (real-Postgres coverage:
+    # tests/kria/test_stale_and_expired_approvals.py) and still reports the stale code.
     assert failure.value.code == "approval_target_stale"
+    cancel.assert_awaited_once()
 
 
 @pytest.mark.asyncio
