@@ -116,7 +116,7 @@ Text and clip:
   Whenever a font change touches MORE THAN ONE text bar ("change all fonts",
   "make every label Montserrat"), emit ONE patch_text_appearance with
   patch {"font_family":"<catalog font>"} and never one patch_text_style per bar
-  (a bundle holds at most eight operations; thirteen per-bar ops fail the turn).
+  (a bundle holds at most sixteen operations; twenty per-bar ops fail the turn).
   Use selector.group "titles" or "labels" ONLY when the creator names the title
   or the per-clip labels (group cannot be combined with target_ids or category):
   {"op":"patch_text_appearance","selector":{"scope":"editable_text","quantifier":"all","group":"labels"},"patch":{"font_family":"Montserrat"},"text_appearance_version":1}

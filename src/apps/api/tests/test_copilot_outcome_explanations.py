@@ -42,3 +42,23 @@ def test_structured_rejection_remains_authoritative() -> None:
     )
 
     assert _honest_outcome(output, []) == ("unsupported", "Text is locked.")
+
+
+def test_no_effect_with_unmet_reason_never_claims_already_reflected() -> None:
+    output = EditCopilotOutput(
+        intent="edit",
+        ops=[],
+        confidence=0.9,
+        reply="Done, I deleted the Atlantis labels.",
+        unmet_requests=[
+            {
+                "request": "delete all the labels that say Atlantis",
+                "reason": "No labels matching 'Atlantis' were found in the current draft.",
+            }
+        ],
+    )
+
+    outcome, response = _honest_outcome(output, [])
+
+    assert outcome == "no_effect"
+    assert response == "No labels matching 'Atlantis' were found in the current draft."

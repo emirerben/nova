@@ -156,7 +156,29 @@ struct NativeEditorView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
-            .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
+            // Sending from the conversation sheet must not dismiss it (only the
+            // creator closes it); `conversationAcceptedID` is intentionally unused here.
+            // A re-plan can finish as a NEW job while this editor is open: show it.
+            .onChange(of: project.activeJobID) { _, _ in Task { await loadEditor() } }
+            .safeAreaInset(edge: .top) {
+                if let newer = session.newerJobPrompt {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("A new version of your video is ready")
+                            .font(KriaFont.body().weight(.semibold))
+                        Text("Switching discards your unsaved edits.")
+                            .font(.footnote)
+                        HStack {
+                            Button("Switch") { Task { await session.switchToLatestJob(newer, api: model.api) } }
+                                .accessibilityIdentifier("native-editor-switch-job")
+                            Button("Keep editing") { session.keepEditingCurrentJob() }
+                                .accessibilityIdentifier("native-editor-keep-editing")
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(KriaColor.paper)
+                }
+            }
             .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.removeSharedFile) {
                 if let file = exporter.sharedFile { ShareSheetView(url: file) }
             }
@@ -388,7 +410,9 @@ struct NativeEditorView: View {
                             if let selection = session.selection, selection.kind == .text {
                                 NativeEditorTextContextStrip(
                                     onEdit: { changePanel(to: .text(selection.id)) },
-                                    onDeselect: { session.select(nil) }
+                                    onDeselect: { session.select(nil) },
+                                    onDelete: { session.deleteText(id: selection.id) },
+                                    deleteBlockedReason: blockedReason(session.textDeletion(id: selection.id))
                                 )
                                 .transition(panelTransition)
                             } else if let selection = session.selection, selection.kind == .clip {
@@ -628,7 +652,15 @@ struct NativeEditorView: View {
         #endif
         session.useDeviceRendering(model.deviceRenders)
         session.useMediaUploads(model.uploads)
-        guard session.needsReload(for: project) else { return }
+        if session.isBehindActiveJob(project) {
+            await session.adoptLatestJob(project, api: model.api)
+            return
+        }
+        guard session.needsReload(for: project) else {
+            // Already loaded: a chat draft may have landed while this tab was hidden.
+            if project.runtimeVersion == 2 { await session.synchronizePromptRevision() }
+            return
+        }
         if let libraryJobID {
             await session.load(libraryJobID: libraryJobID, api: model.api)
         } else {
@@ -636,6 +668,11 @@ struct NativeEditorView: View {
         }
         await session.refreshDeviceRender()
         if let file = deviceLocalFile { session.showDeviceOutput(file) }
+    }
+
+    private func blockedReason(_ deletion: NativeEditorSession.TextDeletion) -> String? {
+        if case let .blocked(reason) = deletion { return reason }
+        return nil
     }
 
     private func requestBack() {

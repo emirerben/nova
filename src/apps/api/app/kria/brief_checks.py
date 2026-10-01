@@ -23,7 +23,15 @@ from typing import TYPE_CHECKING, Any
 
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.brief import BriefRequirement, CreativeBrief
-from app.kria.brief_route import END_KEYS, START_KEYS, first_text, fold_text, loose_text
+from app.kria.brief_route import (
+    END_KEYS,
+    START_KEYS,
+    first_text,
+    fold_text,
+    loose_text,
+    wants_filming_time_text,
+    wants_hour_only_text,
+)
 from app.kria.contracts import InferredLabel, RequirementReceipt
 
 if TYPE_CHECKING:
@@ -95,9 +103,20 @@ class PlanFacts:
     # KRI-190: clips whose label is on a cut shorter than its reading time (the
     # clip itself is too short). A label the viewer cannot read is not "met".
     unreadable_label_clip_ids: tuple[str, ...] = ()
+    # KRI-219: what grounded each clip's label ("capture_time", "place", "landmark",
+    # ...; absent = unknown), and the zone filming hours were printed in ("" = none).
+    per_clip_label_kinds: dict[str, str] = field(default_factory=dict)
+    label_timezone: str = ""
+    label_timezone_basis: str = ""
     # True when the facts come from an editor payload, which carries literal
     # on-screen text only (no per-clip structure, order or duration).
     editor: bool = False
+    # KRI-218: True when the editor facts carry a per-clip text diff (`per_clip_text`,
+    # `clip_ids` filled from what the turn actually changed), so per-clip text can be
+    # judged for real instead of "can't verify".
+    has_clip_structure: bool = False
+    # True when an editor payload carries restyled/edited on-screen text elements.
+    editor_text_edited: bool = False
     # The strategy's edit format, and how many video clips it renders (None when
     # the footage list was not available to count).
     edit_format: str | None = None
@@ -334,11 +353,53 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         ),
         texts=tuple(text for text in (title, *per_clip.values()) if text),
         unreadable_label_clip_ids=tuple(str(c) for c in record.get("short_label_clip_ids") or []),
+        per_clip_label_kinds={
+            str(row["media_id"]): str(row["fact_kind"])
+            for row in labels
+            if row.get("text") and row.get("fact_kind")
+        },
+        label_timezone=str(record.get("label_timezone") or ""),
+        label_timezone_basis=str(record.get("label_timezone_basis") or ""),
     )
 
 
-def plan_facts_from_editor_payload(payload: Mapping[str, Any] | None) -> PlanFacts:
-    """Editor drafts expose only literal on-screen text to the checkers."""
+def _editor_payload_duration(payload: Mapping[str, Any]) -> float | None:
+    """Output length implied by the payload's timeline slots, or None when unprovable.
+
+    Only exact-second slots count (beat-sized slots need the audio grid) and a
+    speed change divides the window. Crossfade overlap is ignored, which the
+    tolerance absorbs.
+    """
+    slots = payload.get("timeline_slots") if isinstance(payload, Mapping) else None
+    if not isinstance(slots, list) or not slots:
+        return None
+    total = 0.0
+    for slot in slots:
+        if not isinstance(slot, Mapping):
+            return None
+        if slot.get("removed"):
+            continue
+        duration = slot.get("duration_s")
+        if not isinstance(duration, (int, float)) or duration <= 0:
+            return None
+        rate = slot.get("playback_rate")
+        total += float(duration) / (
+            float(rate) if isinstance(rate, (int, float)) and rate > 0 else 1.0
+        )
+    return total or None
+
+
+def plan_facts_from_editor_payload(
+    payload: Mapping[str, Any] | None,
+    text_diff: Iterable[Mapping[str, Any]] | None = None,
+    changes: Iterable[str] | None = None,
+) -> PlanFacts:
+    """Editor drafts expose literal on-screen text, plus (KRI-218) the turn's text diff.
+
+    ``text_diff`` is the compiler's ``[{id, clip_id, role, before, after}]``. Clip-linked
+    entries fill ``per_clip_text`` / ``clip_ids`` (only the clips this turn touched), so a
+    per-clip requirement is checked against what was really written.
+    """
     if not payload:
         return PlanFacts()
     strings: list[str] = []
@@ -354,7 +415,35 @@ def plan_facts_from_editor_payload(payload: Mapping[str, Any] | None) -> PlanFac
                 walk(item)
 
     walk(json.loads(json.dumps(payload, default=str)))
-    return PlanFacts(texts=tuple(strings), editor=True)
+    per_clip: dict[str, str] = {}
+    title: str | None = None
+    for entry in text_diff or ():
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
+            continue
+        clip = entry.get("clip_id")
+        if isinstance(clip, str) and clip:
+            per_clip[clip] = entry["after"]
+        elif entry.get("role") == "title":
+            title = entry["after"]
+    # The compiler's own change list says the timeline was re-sorted by filming time.
+    ordered_by_capture = any(
+        str(change).startswith("Order clips by filming time") for change in changes or ()
+    )
+    return PlanFacts(
+        ordering_basis="capture_time" if ordered_by_capture else None,
+        duration_s=_editor_payload_duration(payload),
+        editor_text_edited=bool(
+            isinstance(payload, Mapping)
+            and isinstance(payload.get("text_elements"), list)
+            and payload.get("text_elements")
+        ),
+        texts=tuple(strings),
+        editor=True,
+        has_clip_structure=bool(per_clip),
+        per_clip_text=per_clip,
+        clip_ids=tuple(per_clip),
+        title=title,
+    )
 
 
 def _receipt(
@@ -393,16 +482,50 @@ _CANT_CHECK_EDITOR_CLIP_TEXT = "I can't verify per-clip text on an editor edit."
 
 
 def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if (
+        req.scope == "per_clip"
+        and wants_hour_only_text(req.description, req.literal)
+        and facts.per_clip_text
+    ):
+        # "Just the hour, no minutes" is a FORMAT: met only when every label the plan
+        # actually carries is a bare hour, never because the labels merely exist.
+        bad = [c for c, t in facts.per_clip_text.items() if not re.fullmatch(r"\d{1,2}", t.strip())]
+        if bad:
+            return _receipt(
+                req,
+                "partial",
+                f"{len(bad)} of {len(facts.per_clip_text)} labels still show more than the "
+                "hour. A re-render can't reformat them; ask me again to change them in the editor.",
+            )
     wanted = _fold(req.literal or "")
-    if facts.editor:
-        # An editor payload has no per-clip structure: judge the literal if the
-        # creator wrote one (it holds every on-screen text, so a missing literal
-        # is a real miss), otherwise say it can't be checked. Never "couldn't".
+    if facts.editor and not facts.has_clip_structure:
+        # No per-clip diff for this edit: judge the literal if the creator wrote one
+        # (it holds every on-screen text, so a missing literal is a real miss),
+        # otherwise nothing was judged. Never "couldn't".
         if wanted and any(_contains_text(t, wanted) for t in facts.texts):
             return _receipt(req, "met", None)
         if wanted:
             return _receipt(req, "partial", "That exact text isn't in this edit.")
         return _receipt(req, "partial", _CANT_CHECK_EDITOR_CLIP_TEXT)
+    if facts.editor and wanted and _wants_exact_text(req):
+        # "just say X" / "X only": every clip this turn touched must read exactly X.
+        off = [c for c, t in facts.per_clip_text.items() if _fold(t) != wanted]
+        if off:
+            total = len(facts.per_clip_text)
+            return _receipt(
+                req,
+                "partial",
+                f"{len(off)} of {total} text{'s' if total != 1 else ''} "
+                f"didn't end up reading exactly \u201c{req.literal}\u201d.",
+            )
+    if (
+        not facts.editor
+        and wants_filming_time_text(req.kind, req.scope, req.literal, req.description, req.facts)
+        and facts.per_clip_text
+    ):
+        judged = _check_filming_time_text(req, facts)
+        if judged is not None:
+            return judged
     ids = facts.clip_ids
 
     def text_for(index: int, clip: str) -> str | None:
@@ -473,6 +596,35 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
             f"{'them' if repeats != 1 else 'it'} off."
         )
     return _receipt(req, "partial", reason, inferred, guessed)
+
+
+def _check_filming_time_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """ "Add the hour to each video": place names or nothing are NOT the hour (KRI-219)."""
+    kinds = facts.per_clip_label_kinds
+    if not kinds:
+        return None  # grounding unknown: fall through to the coverage check
+    total = len(facts.clip_ids) or len(facts.per_clip_text)
+    timed = [c for c in facts.per_clip_text if kinds.get(c) == "capture_time"]
+    if not timed:
+        return _receipt(
+            req,
+            "not_possible",
+            "The labels are place names, not the hour each clip was filmed.",
+        )
+    if len(timed) < total:
+        missing = total - len(timed)
+        return _receipt(
+            req,
+            "partial",
+            f"Filming hour on {len(timed)} of {total} clips; "
+            f"{missing} {'have' if missing != 1 else 'has'} no filming time.",
+        )
+    if facts.label_timezone:
+        # Delivered, but the creator must know which zone the hours are in.
+        from app.services.clip_facts import timezone_note  # noqa: PLC0415
+
+        return _receipt(req, "met", timezone_note(facts.label_timezone, facts.label_timezone_basis))
+    return None
 
 
 _NAME_IN_REASON_CHARS = 32
@@ -730,6 +882,16 @@ _NEUTRAL_REASONS = frozenset(
     }
 )
 
+# "labels just say X" / "X only" / "sadece X": the creator wants the text to BE the literal,
+# not merely contain it.
+_EXACT_TEXT_RE = re.compile(
+    r"\b(?:just|only|exactly|simply|solely|sadece|yaln[i\u0131]zca|sade)\b", re.IGNORECASE
+)
+
+
+def _wants_exact_text(req: BriefRequirement) -> bool:
+    return bool(_EXACT_TEXT_RE.search(req.description or ""))
+
 
 def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A single-clip subtitled edit renders its one clip full-length."""
@@ -807,6 +969,21 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         return _receipt(req, "met", None)
     status = "partial" if delivered else "not_possible"
     return _receipt(req, status, "; ".join(problems) + ".")
+
+
+_TEXT_STYLE_RE = re.compile(
+    r"\b(text|label|caption|title|font|bold|italic|colou?r|size|shadow|outline|stroke|"
+    r"uppercase|lowercase|yellow|red|blue|green|white|black|pink|orange|purple|renk|yaz[i\u0131])",
+    re.IGNORECASE,
+)
+
+
+def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    # Compiled editor ops only exist when they changed a text element, so a text-style
+    # ask with edited elements in the payload is proven; anything else goes unjudged.
+    if facts.editor and facts.editor_text_edited and _TEXT_STYLE_RE.search(_req_text(req)):
+        return _receipt(req, "met", None)
+    return _receipt(req, "partial", _NO_CHECKER)
 
 
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -893,6 +1070,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_order(req, facts)
     elif req.kind == "timing":
         return _check_timing(req, facts)
+    elif req.kind == "style" and facts.editor:
+        return _check_style(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _wants_closing(req)):
         return _check_reaction_beats(req, facts)
     return _receipt(req, "partial", _NO_CHECKER)
@@ -985,7 +1164,11 @@ def build_receipts(
 
 # ------------------------------------------------------------------------ reply
 
-_LABEL = {"met": "Done", "partial": "Partly", "not_possible": "Couldn't"}
+_LABEL = {
+    "met": "Done",
+    "partial": "Partly",
+    "not_possible": "Couldn't",
+}
 
 
 def reply_from_receipts(
@@ -1010,7 +1193,7 @@ def reply_from_receipts(
     guesses: list[str] = []
     for receipt in judged:
         line = f"{_LABEL[receipt.status]}: {by_id[receipt.requirement_id].text()}"
-        if receipt.reason and receipt.status != "met":
+        if receipt.reason:
             line += f" ({receipt.reason.rstrip('.')})"
         lines.append(line)
         guesses.extend(receipt.inferred)

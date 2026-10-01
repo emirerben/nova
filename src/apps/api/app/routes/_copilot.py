@@ -119,7 +119,8 @@ def _honest_outcome(
     if outcome == "proposed":
         if reply and not _claims_success(reply):
             return outcome, reply
-        return outcome, "I prepared this edit for the editor to validate and stage."
+        canned = "I prepared this edit for the editor to validate and stage."
+        return outcome, f"{canned} {output.reply_notes}".strip()
     if outcome == "applied":
         # Compatibility response for pre-v2 browser bundles during a split
         # deploy. Those clients own the historical local-apply wording.
@@ -140,9 +141,17 @@ def _honest_outcome(
             return outcome, reply
         return outcome, "That kind of edit isn't available for this draft yet."
     if outcome == "failed":
+        if output.reply_notes:
+            # A specific reason beats the generic line (e.g. which value was not accepted).
+            return outcome, f"I couldn't apply that: {output.reply_notes}"
         return outcome, "I couldn't build a valid draft change for that request. Try again."
     if reply and not _claims_success(reply):
         return outcome, reply
+    # A request that matched nothing must say so, not claim the draft already
+    # reflects it: the agent attaches the real reason as an unmet request.
+    unmet = next((u.get("reason") for u in output.unmet_requests if u.get("reason")), None)
+    if unmet:
+        return outcome, unmet
     return outcome, "That change is already reflected in the draft."
 
 

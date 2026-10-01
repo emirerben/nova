@@ -21,8 +21,10 @@ from typing import Any, ClassVar, Literal
 import structlog
 from pydantic import BaseModel, Field
 
+from app.agents import editor_ops_v2 as _v2
 from app.agents._runtime import Agent, AgentSpec, RefusalError, RunContext, SchemaError
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
+from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
@@ -36,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-29-v48"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v63"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -202,7 +204,9 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "set_caption_meta": frozenset({"patch"}),
     "set_caption_emphasis": frozenset({"cue_index", "emphasis"}),
     "swap_music": frozenset({"track_id"}),
-    "set_mix": frozenset({"music_level"}),
+    # KRI-219: at least one of music_level/original_level/music_gain_db,
+    # enforced in _coerce_payload (the union-only registry cannot drop a member).
+    "set_mix": frozenset(),
     "remove_music": frozenset(),
     "set_intro_layout": frozenset({"layout"}),
     "apply_custom_effect": frozenset({"effect"}),
@@ -233,7 +237,9 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
         {"selector", "patch", "text_appearance_version", "target_ids", "target_identities"}
     ),
     # `labels` is derived from the snapshot by the parser, never read from the model.
-    "label_each_clip": frozenset({"source"}),
+    # `label_from`/`mode`/`timezone` only SELECT which server fact is printed and
+    # how (KRI-219); the printed text is still never model-authored.
+    "label_each_clip": frozenset({"source", "label_from", "mode", "timezone", "time_format"}),
     "set_text_timing": frozenset({"bar_index", "start_s", "end_s"}),
     "add_text": frozenset({"text", "start_s", "end_s"}),
     "remove_text": frozenset({"bar_index"}),
@@ -690,6 +696,10 @@ class EditCopilotOutput(BaseModel):
     # KRI-186: parts of the user's message that did not become an op, each
     # {"request": ..., "reason": ...}. Surfaced verbatim by the chat reply.
     unmet_requests: list[dict[str, str]] = Field(default_factory=list, max_length=6)
+    # Server-authored facts about this turn (missing filming times, the time zone
+    # used). Survives the canned "I prepared this edit" reply that replaces a model
+    # reply claiming success.
+    reply_notes: str = ""
 
 
 _MAX_UNMET_REQUESTS = 6
@@ -1290,6 +1300,17 @@ def _format_snapshot(snapshot: dict) -> str:
             for key in style_keys:
                 if bar.get(key) is not None:
                     style_bits.append(f"{key}={_field(bar.get(key), max_chars=80)}")
+            phases = bar.get("animation_phases")
+            if isinstance(phases, dict):
+                style_bits.append(
+                    "animation="
+                    + ",".join(
+                        f"{name}:{_field(phases.get(name) or 'none', max_chars=20)}"
+                        for name in ("entrance", "exit", "loop")
+                    )
+                )
+            if isinstance(bar.get("shadow_enabled"), bool):
+                style_bits.append(f"shadow={'on' if bar['shadow_enabled'] else 'off'}")
             timing = (
                 f" {start:.2f}-{end:.2f}s"
                 if start is not None and end is not None
@@ -1352,6 +1373,12 @@ def _format_snapshot(snapshot: dict) -> str:
             )
             media_kind = _field(slot.get("media_kind") or slot.get("kind") or "", max_chars=12)
             facts_text = _format_slot_facts(slot.get("facts"), _field)
+            seen = slot.get("seen")
+            if isinstance(seen, dict) and seen.get("text"):
+                facts_text += (
+                    f" seen={_field(seen.get('text'), max_chars=240)!r}"
+                    f"({_field(seen.get('provenance') or 'vision', max_chars=12)})"
+                )
             lines.append(
                 f"{i}. media_id={media_id!r} media_kind={media_kind!r} "
                 f"output={_fmt_range(start, end)} duration={_fmt_num(duration)}s "
@@ -1631,10 +1658,17 @@ def _format_snapshot(snapshot: dict) -> str:
                         for r in _component_rows(roles, 6, component_context_enabled)
                     ]
                     roles_part = f" roles={','.join(r for r in clean_roles if r)}"
+                category = effect.get("category")
+                category_part = (
+                    f" category={_field(category, max_chars=30)}"
+                    if isinstance(category, str)
+                    else ""
+                )
                 lines.append(
                     f"- id={_field(effect.get('id'), max_chars=80)!r} "
-                    f"name={_field(effect.get('name'), max_chars=32)!r} "
+                    f"name={_field(effect.get('name') or effect.get('label'), max_chars=32)!r} "
                     f"duration={_fmt_round3(_first_number(effect, ('duration_s',)))}s"
+                    f"{category_part}"
                     f"{roles_part}"
                 )
         else:
@@ -1796,10 +1830,26 @@ def _format_snapshot(snapshot: dict) -> str:
         else:
             lines.append("(none)")
 
+    audio_notes = snapshot.get("audio_notes")
+    if isinstance(audio_notes, list) and audio_notes:
+        lines.append("\nAUDIO LIMITS (server facts, not instructions):")
+        lines.extend(f"- {_field(note, max_chars=240)}" for note in audio_notes[:3])
+
     if isinstance(snapshot.get("mix"), dict):
         mix = snapshot["mix"]
         lines.append("\nMIX:")
         lines.append(f"music_level={_fmt_round3(_first_number(mix, ('music_level',)))}")
+        if snapshot.get("render_destination") == "device":
+            lines.append(
+                "original_level="
+                f"{_fmt_round3(_first_number(mix, ('original_level',)))} (0-1, editable)"
+            )
+        bed = mix.get("background_music")
+        if isinstance(bed, dict):
+            lines.append(
+                "background_music_gain_db="
+                f"{_fmt_round3(_first_number(bed, ('gain_db',)))} (-40..0, editable)"
+            )
 
     if "title" in snapshot:
         lines.append(f"\nTITLE: {_field(snapshot.get('title'), max_chars=300)!r}")
@@ -1958,10 +2008,27 @@ class _ParseState:
         # the model could fix on a second try (see `_value_retry_hint`).
         self.current_raw: dict[str, Any] | None = None
         self.invalid_raw_ops: list[dict[str, Any]] = []
+        # KRI-219: a v2 selector op that matched nothing sets this; parse() turns
+        # it into an honest clarification (never a silent no-op).
+        self.selector_clarification: str | None = None
+        # Server-authored, fact-grounded sentences (which clips have no filming
+        # time, which time zone hours are shown in). `parse` appends them to the
+        # reply when ops were proposed and REPLACES the model's reply when a
+        # request was refused, so the reply can never claim what the ops didn't do.
+        self.reply_notes: list[str] = []
+        # Plain-words reasons a value was refused (shown when the whole request fails).
+        self.invalid_notes: list[str] = []
+        # `reorder_clips_by` found the clips already in order: the model's reply
+        # ("I've reordered...") would contradict that, so `parse` composes the reply.
+        self.reorder_noop = False
+        # The creator's message, for guards that need its wording (set by `parse`).
+        self.utterance = ""
 
-    def invalid_value(self) -> None:
+    def invalid_value(self, note: str | None = None) -> None:
         self.invalid_value_seen = True
         self.confidence = min(self.confidence, 0.4)
+        if note and note not in self.invalid_notes:
+            self.invalid_notes.append(note)
 
     def reject(self, *, op: str, reason: str, detail: str) -> None:
         self.rejection_reasons.append({"op": op, "reason": reason, "detail": detail})
@@ -2955,7 +3022,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         return ["intent", "reply"]
 
     def render_prompt(self, input: EditCopilotInput) -> str:  # noqa: A002
-        return load_prompt(
+        prompt = load_prompt(
             "edit_copilot",
             utterance=(
                 _clean_component_data(input.utterance)
@@ -2971,6 +3038,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             custom_effect_catalog=_custom_effect_catalog(),
             max_ops=_MAX_OPS,
         )
+        return _with_v2_fragments(prompt, input.variant_snapshot)
 
     def parse(self, raw_text: str, input: EditCopilotInput) -> EditCopilotOutput:  # noqa: A002
         try:
@@ -2987,6 +3055,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
 
         confidence = _coerce_confidence(data.get("confidence", 0.5))
         state = _ParseState(confidence)
+        state.utterance = input.utterance or ""
         raw_ops = data.get("ops") or []
         if not isinstance(raw_ops, list):
             raw_ops = []
@@ -3155,6 +3224,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             ops = []
 
         ops, no_effect_reply = _drop_normalized_no_effect_ops(ops, input.variant_snapshot)
+        ops = _ground_descriptive_captions(ops, input.variant_snapshot, input.utterance, state)
+        ops = _effect_removal_pass(ops, input.variant_snapshot, input.utterance, state)
 
         capacity_pending_seed = _bulk_pending_for_clarification(
             ops,
@@ -3177,6 +3248,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             pending_actions=capacity_pending_seed,
             utterance=input.utterance,
         )
+        if capacity_reply is None and state.selector_clarification:
+            capacity_reply = state.selector_clarification
         capacity_pending_actions: list[dict[str, Any]] = []
         capacity_context: dict[str, Any] | None = None
         if capacity_reply is not None:
@@ -3218,6 +3291,14 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 )
             else:
                 reply = f"How short should the {referent or 'clips'} be?"
+        if not ops and state.invalid_notes:
+            state.reply_notes.extend(state.invalid_notes)
+        if state.reply_notes:
+            notes = " ".join(dict.fromkeys(state.reply_notes))
+            if ops and state.reorder_noop:
+                reply = _server_reply(ops, notes)
+            else:
+                reply = f"{reply} {notes}".strip() if ops else notes
         if not reply:
             reply = "Got it. What else should we change?"
 
@@ -3323,6 +3404,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 clarification_context=clarification_context,
                 pending_actions=pending_actions,
                 unmet_requests=_sanitize_unmet_requests(data.get("unmet_requests")),
+                reply_notes=" ".join(dict.fromkeys(state.reply_notes)),
             )
         except Exception as exc:  # noqa: BLE001
             raise RefusalError(f"edit_copilot: output validation — {exc}") from exc
@@ -3351,6 +3433,32 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
 
     def refusal_clarification(self) -> str:
         return self.schema_clarification()
+
+
+def _server_reply(ops: list[dict], notes: str) -> str:
+    """Reply composed from the ops themselves (never model prose) for a mixed bundle
+    whose reorder was a no-op."""
+    parts: list[str] = []
+    for op in ops:
+        if op.get("op") == "label_each_clip" and op.get("label_from") == "capture_time":
+            count = len(op.get("labels") or [])
+            verb = "Added the filming hour to" if op.get("mode") == "append" else "Labelled"
+            parts.append(f"{verb} {count} clip{'s' if count != 1 else ''}.")
+        else:
+            parts.append("Updated the edit.")
+    return " ".join([*dict.fromkeys(parts), notes])
+
+
+def _with_v2_fragments(prompt: str, snapshot: object) -> str:
+    """Append lane prompt fragments ONLY for v2 (server-built) snapshots.
+
+    Marker-less snapshots (web drawer) and empty fragments return `prompt`
+    unchanged, byte for byte.
+    """
+    if not _v2.is_v2_snapshot(snapshot):
+        return prompt
+    fragments = _v2.prompt_fragments()
+    return f"{prompt}\n\n{fragments}" if fragments else prompt
 
 
 def _coerce_confidence(value: object) -> float:
@@ -3415,6 +3523,20 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
             detail="at least one sound property is required",
         )
         return None
+    if name == "set_mix":
+        from app.agents.editor_ops_v2.audio import has_mix_field  # noqa: PLC0415
+
+        if not _v2.is_v2_snapshot(snapshot):
+            # v2-only fields never reach the web drawer's contract.
+            payload.pop("original_level", None)
+            payload.pop("music_gain_db", None)
+        if not has_mix_field(payload):
+            state.reject(
+                op=name,
+                reason="missing_required",
+                detail="at least one of music_level, original_level, music_gain_db is required",
+            )
+            return None
     missing = _OP_REQUIRED[name] - payload.keys()
     if missing:
         log.warning("edit_copilot.drop_missing_fields", op=name, missing=sorted(missing))
@@ -3445,8 +3567,16 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
             )
             return None
 
+    clarification_before = state.selector_clarification
     parsed = _coerce_payload(name, payload, snapshot, state)
     if parsed is None:
+        if state.selector_clarification not in (None, clarification_before):
+            # A selector that matched nothing already asked the creator which
+            # text they meant. It is a clarification, not a failed value: a
+            # spurious invalid_value here made `_honest_outcome` report
+            # "failed" ("couldn't build a valid draft change") and hid the
+            # zero-match question (KRI-219 live battery, rewrite-labels-en).
+            return None
         if name == "set_edit_direction" and _guided_revision_identity(snapshot) is None:
             state.reject(
                 op=name,
@@ -3472,6 +3602,10 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
     # the `raw_allowed in (None, [])` all-ops fallback below, since an absent
     # allowed_op_families would otherwise default the op to allowed.
     if name == "apply_custom_effect" and not settings.custom_effects_enabled:
+        return False
+    if name in _v2.REGISTRY.new_ops and not _v2.is_v2_snapshot(snapshot):
+        # KRI-219 v2 ops exist only for server-built (Kria) snapshots; the web
+        # drawer never sets `editor_ops_version`, so it can never see them.
         return False
     raw_allowed = snapshot.get("allowed_op_families") if isinstance(snapshot, dict) else None
     if name in _CLIP_LABEL_OPS and not (
@@ -3541,6 +3675,8 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         aliases = {"motion", "creator_blocks", "blocks"}
     elif name in _HISTORY_OPS:
         aliases = {"history", "undo", "repeat"}
+    elif name in _v2.REGISTRY.new_ops:
+        aliases = set(_v2.REGISTRY.families[name])
     else:
         aliases = {"clip", "clips", "timeline"}
     return bool(allowed & aliases)
@@ -3689,7 +3825,15 @@ def _appearance_target_rows(snapshot: dict, selector: object) -> list[dict[str, 
         seen.add(target_id)
     eligible = [row for row in targets if category is None or row.get("kind") == category]
     if group is not None:
-        eligible = [row for row in eligible if row.get("group") == _TEXT_APPEARANCE_GROUPS[group]]
+        in_group = [row for row in eligible if row.get("group") == _TEXT_APPEARANCE_GROUPS[group]]
+        if not in_group and group == "labels":
+            # Chat-added caption bars are free texts: see resolve_selector's fallback.
+            in_group = [
+                row
+                for row in eligible
+                if str(row.get("id") or "").startswith("kria-") and not row.get("group")
+            ]
+        eligible = in_group
     target_ids = selector.get("target_ids")
     if target_ids is None:
         return eligible
@@ -3780,6 +3924,227 @@ def _coerce_text_appearance(
     }
 
 
+_CREATIVE_CAPTION_RE = re.compile(
+    r"\b(explain\w*|describ\w*|what (is|s|was|happens|happened)|which part|"
+    r"what (it|they|this|that) (is|are|shows?|looks?)|about what|"
+    r"part of (the |a |my )?\w+|what each|a\u00e7\u0131kla\w*|acikla\w*|anlat\w*|"
+    r"hangi b\u00f6l\u00fcm\w*|ne(ler)? ol\w+|ne oluyor)\b"
+)
+_CREATIVE_CAPTION_USE_ADD_TEXT = (
+    "Place and time labels can't describe what each clip shows. Ask me to 'write a short "
+    "caption for each clip' and I'll write them from what I saw in the footage."
+)
+_CREATIVE_CAPTION_CLARIFICATION = (
+    "I can only label clips from facts I have (their place, landmark or filming time), so I "
+    "can't tell which part of the day each clip shows. Tell me what each clip is (for example "
+    "'clip 1 is the airport pickup, clip 2 is the pre-wedding') and I'll write those on the "
+    "clips, or I can label them with the place names or the times instead."
+)
+
+
+_CAPTION_INSTRUCTION_WORDS = frozenset(
+    "add text each every clip clips video videos explain explaining explains describe describing "
+    "what happening happens write short caption captions label labels with from this that into "
+    "your have could would like please make part parts something kind sort name names".split()
+)
+
+
+def _creator_vocab(utterance: str) -> set[str]:
+    """Content words of the creator's message ("wedding", "airport", "pickup", ...)."""
+    return {
+        word
+        for word in re.findall(r"[^\W\d_]{4,}", _label_fold(utterance))
+        if word not in _CAPTION_INSTRUCTION_WORDS
+    }
+
+
+_EFFECT_WORDS = re.compile(
+    r"\b(effects?|animat\w*|typewriter|fade|pop|motion|efekt\w*|animasyon\w*)\b"
+)
+_SHADOW_WORDS = re.compile(
+    r"\b(shadows?|outlines?|strokes?|borders?|glow|g\u00f6lge\w*|kontur\w*)\b"
+)
+_REMOVE_WORDS = re.compile(
+    r"\b(remove|removing|no|without|turn off|disable|stop|get rid of|"
+    r"kald\u0131r\w*|sil|olmas\u0131n)\b"
+)
+_NO_PHASES = {"entrance": "none", "exit": "none", "loop": "none"}
+
+
+def _effect_removal_pass(
+    ops: list[dict], snapshot: dict, utterance: str, state: _ParseState
+) -> list[dict]:
+    """ "Remove the effect" means the ANIMATION (typewriter/fade/pop), not shadow or stroke.
+
+    Real draft: title and captions carried ``animation_phases.entrance = typewriter`` with a
+    static text effect and shadow on; the model removed the shadow. When the creator names an
+    effect/animation and no shadow/outline word, the animation is turned off on the targeted
+    bars, a shadow/stroke-only appearance op is dropped, and the reply says what changed.
+    """
+    text = _label_fold(utterance or "")
+    if not (_EFFECT_WORDS.search(text) and _REMOVE_WORDS.search(text)):
+        return ops
+    wants_shadow = _SHADOW_WORDS.search(text) is not None
+    kept: list[dict] = []
+    dropped_targets: list[str] = []
+    for op in ops:
+        patch = op.get("patch") if isinstance(op.get("patch"), dict) else {}
+        if (
+            op.get("op") == "patch_text_appearance"
+            and not wants_shadow
+            and patch
+            and set(patch) <= {"shadow_enabled", "stroke_width"}
+        ):
+            dropped_targets = list(op.get("target_ids") or dropped_targets)
+            continue
+        kept.append(op)
+    patch_ops = [op for op in kept if op.get("op") == "patch_text"]
+    if patch_ops:
+        for op in patch_ops:
+            op["patch"] = {**op["patch"], "animation_phases": dict(_NO_PHASES)}
+        targets = {t for op in patch_ops for t in op.get("target_ids") or []}
+    elif dropped_targets:
+        kept.append(
+            {
+                "op": "patch_text",
+                "selector": {"ids": dropped_targets},
+                "patch": {"animation_phases": dict(_NO_PHASES)},
+                "target_ids": dropped_targets,
+                "expected_count": len(dropped_targets),
+            }
+        )
+        targets = set(dropped_targets)
+    else:
+        return ops
+    names = {
+        str((bar.get("animation_phases") or {}).get("entrance"))
+        for bar in _snapshot_list(snapshot, _TEXT_INDEX_KEYS)
+        if isinstance(bar, dict)
+        and bar.get("id") in targets
+        and isinstance(bar.get("animation_phases"), dict)
+        and (bar["animation_phases"].get("entrance") or "none") != "none"
+    }
+    label = f"the {sorted(names)[0]} animation" if len(names) == 1 else "the text animation"
+    note = f"I turned off {label}"
+    if not wants_shadow:
+        note += "; say if you also want the shadow gone"
+    state.reply_notes.append(note + ".")
+    return kept
+
+
+def _ground_descriptive_captions(
+    ops: list[dict], snapshot: dict, utterance: str, state: _ParseState
+) -> list[dict]:
+    """ "Add a text to each clip explaining what happens": captions only where grounded.
+
+    The model may write short per-clip wording (``add_text`` with ``clip_id``), but only for
+    a clip whose slot carries a vision description (``seen``). A caption for any other clip
+    is dropped (never invented), and the reply says the wording is the assistant's own
+    reading of the footage and which clips were left out.
+    """
+    if not _CREATIVE_CAPTION_RE.search(_label_fold(utterance or "")):
+        return ops
+    slots = [
+        slot
+        for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+        if isinstance(slot, dict) and not slot.get("removed") and slot.get("media_id")
+    ]
+    number = {str(slot["media_id"]): n for n, slot in enumerate(slots, start=1)}
+    seen = {
+        str(slot["media_id"])
+        for slot in slots
+        if isinstance(slot.get("seen"), dict) and slot["seen"].get("text")
+    }
+
+    def clip_of(op: dict) -> str | None:
+        """The slot a caption belongs to: its clip_id, else the slot its window overlaps most."""
+        if op.get("clip_id"):
+            return str(op["clip_id"])
+        start, end = op.get("start_s"), op.get("end_s")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+            return None
+        best, best_overlap = None, 0.0
+        for slot in slots:
+            s0, s1 = slot.get("output_start_s"), slot.get("output_end_s")
+            if not isinstance(s0, (int, float)) or not isinstance(s1, (int, float)):
+                continue
+            overlap = min(float(end), float(s1)) - max(float(start), float(s0))
+            if overlap > best_overlap:
+                best, best_overlap = str(slot["media_id"]), overlap
+        return best
+
+    seen_text = {
+        str(slot["media_id"]): _label_fold(str(slot["seen"].get("text")))
+        for slot in slots
+        if str(slot["media_id"]) in seen
+    }
+    vocab = _creator_vocab(utterance)
+    kept: list[dict] = []
+    written: list[tuple[int, str]] = []
+    mismatched: list[tuple[int, str]] = []
+    dropped = 0
+    for op in ops:
+        clip_id = clip_of(op) if op.get("op") == "add_text" else None
+        if clip_id is None:
+            kept.append(op)
+        elif clip_id in seen:
+            # A caption that only repeats the creator's own event words (e.g. "pre-wedding")
+            # with none of them present in what was seen is the framing parroted onto
+            # footage that doesn't show it: drop it and say so.
+            words = {w for w in re.findall(r"[^\W\d_]{4,}", _label_fold(str(op.get("text") or "")))}
+            claimed = words & vocab
+            if claimed and not any(w in seen_text[clip_id] for w in claimed):
+                mismatched.append((number.get(clip_id, 0), sorted(claimed)[0]))
+                continue
+            kept.append(op)
+            written.append((number.get(clip_id, 0), str(op.get("text") or "")))
+        else:
+            dropped += 1
+    if mismatched:
+        names = ", ".join(str(n) for n, _w in sorted(mismatched))
+        words = ", ".join(sorted({w for _n, w in mismatched}))
+        state.reply_notes.append(
+            f"Clip{'s' if len(mismatched) != 1 else ''} {names} "
+            f'{"don" if len(mismatched) != 1 else "doesn"}\'t look like "{words}" from what I '
+            "saw, so I didn't put that wording on "
+            f"{'them' if len(mismatched) != 1 else 'it'}. Tell me what "
+            f"{'they are' if len(mismatched) != 1 else 'it is'}, or ask me to describe what I see."
+        )
+    if not written:
+        if dropped:
+            state.reply_notes.append(
+                "I can't tell what those clips show, so I didn't write captions for them. Tell me "
+                "what each clip is (for example 'clip 1 is the airport pickup') and I'll add them."
+            )
+        return kept
+    written.sort()
+    captioned = {n for n, _t in written}
+    unseen = [str(n) for media, n in number.items() if n not in captioned and media not in seen]
+    flagged = {n for n, _w in mismatched}
+    skipped = [
+        str(n)
+        for media, n in number.items()
+        if n not in captioned and n not in flagged and media in seen
+    ]
+    state.reply_notes.append(
+        "I wrote these from what I saw in each clip, so tell me if any is wrong: "
+        + "; ".join(f"clip {n}: {t}" for n, t in written)
+        + "."
+    )
+    if unseen:
+        plural = "s" if len(unseen) != 1 else ""
+        state.reply_notes.append(
+            f"I left out clip{plural} {', '.join(unseen)}: I can't tell what "
+            f"{'they show' if plural else 'it shows'}. Tell me and I'll add "
+            f"{'them' if plural else 'it'}."
+        )
+    if skipped:
+        state.reply_notes.append(
+            f"I didn't caption clip{'s' if len(skipped) != 1 else ''} {', '.join(skipped)}."
+        )
+    return kept
+
+
 def _label_fold(text: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
 
@@ -3804,10 +4169,60 @@ def _coerce_label_each_clip(
       clip's output window (compile step).
     """
     from app.pipeline.unified_montage import _fact_label  # noqa: PLC0415
+    from app.services.clip_facts import (  # noqa: PLC0415
+        capture_time_from_facts,
+        display_timezone,
+        format_capture_hour,
+        timezone_note,
+    )
 
     if payload.get("source") != "facts":
         state.invalid_value()
         return None
+    if payload.get("label_from", "place") == "place" and _CREATIVE_CAPTION_RE.search(
+        _label_fold(state.utterance)
+    ):
+        # "Add a text to each clip explaining the part of the wedding": the creator wants
+        # wording about what each clip IS. label_each_clip only prints place / landmark /
+        # filming time from facts, so running it would silently answer with place names.
+        has_seen = any(
+            isinstance(slot, dict) and isinstance(slot.get("seen"), dict)
+            for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+        )
+        state.selector_clarification = (
+            _CREATIVE_CAPTION_USE_ADD_TEXT if has_seen else _CREATIVE_CAPTION_CLARIFICATION
+        )
+        state.reject(
+            op=name,
+            reason="capability_unavailable",
+            detail="the request asks for descriptive captions, not facts",
+        )
+        return None
+    label_from = payload.get("label_from", "place")
+    mode = payload.get("mode", "replace")
+    time_format = payload.get("time_format", "hh_mm")
+    if (
+        label_from not in {"place", "capture_time"}
+        or mode not in {"replace", "append"}
+        or time_format not in {"hh_mm", "hour"}
+    ):
+        state.invalid_value()
+        return None
+    from_time = label_from == "capture_time"
+    append = mode == "append"
+    slot_rows = [
+        slot
+        for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+        if isinstance(slot, dict) and not slot.get("removed")
+    ]
+    zone, zone_basis = display_timezone(
+        [
+            [f for f in (slot.get("facts") or []) if isinstance(f, dict)]
+            for slot in slot_rows
+            if isinstance(slot.get("facts"), list)
+        ],
+        payload.get("timezone"),
+    )
     all_bars = [bar for bar in _snapshot_list(snapshot, _TEXT_INDEX_KEYS) if isinstance(bar, dict)]
     bars: dict[str, dict] = {}
     for bar in all_bars:
@@ -3826,32 +4241,57 @@ def _coerce_label_each_clip(
     seen_media: set[str] = set()
     already_correct = 0
     kept_edited = 0
-    for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS):
-        if not isinstance(slot, dict) or slot.get("removed"):
-            continue
+    untimed: list[str] = []
+    for number, slot in enumerate(slot_rows, start=1):
         media_id = slot.get("media_id")
         facts = slot.get("facts")
         if not isinstance(media_id, str) or not media_id or media_id in seen_media:
             continue
         seen_media.add(media_id)
         if not isinstance(facts, list):
+            if from_time:
+                untimed.append(str(number))
             continue
-        chosen = _fact_label(SimpleNamespace(facts=tuple(f for f in facts if isinstance(f, dict))))
-        if chosen is None:
-            continue
-        text = chosen[0].strip()
-        if not text or _label_fold(text) == previous:
-            continue
-        previous = _label_fold(text)
+        if from_time:
+            moment = capture_time_from_facts([f for f in facts if isinstance(f, dict)])
+            if moment is None:
+                untimed.append(str(number))
+                continue
+            text = format_capture_hour(moment, zone, time_format)
+        else:
+            chosen = _fact_label(
+                SimpleNamespace(facts=tuple(f for f in facts if isinstance(f, dict)))
+            )
+            if chosen is None:
+                continue
+            text = chosen[0].strip()
+            if not text or _label_fold(text) == previous:
+                continue
+            previous = _label_fold(text)
         entry: dict[str, Any] = {"media_id": media_id, "text": text}
         bar = bars.get(media_id)
         if bar is not None:
-            if bar.get("edited") is True:
-                kept_edited += 1
-                continue
-            if _label_fold(str(bar.get("text") or "")) == _label_fold(text):
-                already_correct += 1
-                continue
+            existing = " ".join(str(bar.get("text") or "").split())
+            if append:
+                # Adding to a label never overwrites what the creator wrote, so
+                # a hand-edited bar is fine here; one that already shows it is not.
+                shown = {_label_fold(part) for part in existing.split("\u00b7")}
+                if _label_fold(text) in shown:
+                    already_correct += 1
+                    continue
+                entry["text"] = f"{existing} \u00b7 {text}" if existing else text
+                if len(entry["text"]) > 120:
+                    continue
+            else:
+                # A bar that is only a time ("11", "17:38", even model-typed) is not
+                # the creator's own wording: the hour request may redo it.
+                only_time = from_time and bool(re.fullmatch(r"\d{1,2}([:.]\d{2})?", existing))
+                if bar.get("edited") is True and not only_time:
+                    kept_edited += 1
+                    continue
+                if _label_fold(existing) == _label_fold(text):
+                    already_correct += 1
+                    continue
             entry["bar_id"] = str(bar["id"])
         else:
             start, end = slot.get("output_start_s"), slot.get("output_end_s")
@@ -3873,6 +4313,12 @@ def _coerce_label_each_clip(
             entry["start_s"] = round(float(start), 3)
             entry["end_s"] = round(float(end), 3)
         labels.append(entry)
+    if from_time:
+        if untimed:
+            plural = "s" if len(untimed) != 1 else ""
+            state.reply_notes.append(f"No filming time for clip{plural} {', '.join(untimed)}.")
+        if labels:
+            state.reply_notes.append(timezone_note(zone, zone_basis))
     if not labels:
         state.reject(
             op=name,
@@ -3883,7 +4329,11 @@ def _coerce_label_each_clip(
                 else (
                     "the labels you edited by hand were kept, and no other clip needs one"
                     if kept_edited
-                    else "none of the clips has a grounded place, landmark or creator label"
+                    else (
+                        "none of the clips carries a filming time"
+                        if from_time
+                        else "none of the clips has a grounded place, landmark or creator label"
+                    )
                 )
             ),
         )
@@ -3891,6 +4341,12 @@ def _coerce_label_each_clip(
     if len(labels) > 80:
         labels = labels[:80]
     result: dict[str, Any] = {"source": "facts", "labels": labels}
+    if from_time:
+        result["label_from"] = "capture_time"
+        result["mode"] = mode
+        result["timezone"] = zone
+        if time_format != "hh_mm":
+            result["time_format"] = time_format
     if kept_edited:
         result["kept_edited"] = kept_edited
     return result
@@ -3919,6 +4375,10 @@ def _coerce_payload(
     state: _ParseState,
 ) -> dict | None:
     out = dict(payload)
+
+    v2_coerce = _v2.REGISTRY.coerce.get(name)
+    if v2_coerce is not None:
+        return v2_coerce(name, out, snapshot, state)
 
     if name == "remove_visual_media":
         targets = out.get("target_ids")
@@ -4013,6 +4473,11 @@ def _coerce_payload(
             state.invalid_value()
             return None
         out["text"] = text
+
+    if name == "add_text" and any(key in out for key in _v2_text.ADD_TEXT_EXTRAS):
+        out = _v2_text.coerce_add_text_extras(out, snapshot, state)
+        if out is None:
+            return None
 
     if name == "replace_caption_text":
         captions = snapshot.get("captions")
@@ -4209,6 +4674,11 @@ def _coerce_payload(
     if name == "set_mix" and not isinstance(snapshot.get("mix"), dict):
         state.invalid_value()
         return None
+    if name == "set_mix":
+        from app.agents.editor_ops_v2.audio import validate_set_mix  # noqa: PLC0415
+
+        if validate_set_mix(out, snapshot, state) is None:
+            return None
     if name == "open_tool":
         tool = out.get("tool")
         if tool not in _VALID_OPEN_TOOLS:
@@ -4830,6 +5300,25 @@ def _resolve_placement(patch: dict) -> dict:
     return resolved
 
 
+_TEXT_CASE_ALIASES = {
+    "lowercase": "lower",
+    "lower case": "lower",
+    "lower-case": "lower",
+    "all lowercase": "lower",
+    "no capitals": "lower",
+    "non capital": "lower",
+    "uppercase": "upper",
+    "upper case": "upper",
+    "all caps": "upper",
+    "capitalize": "title",
+    "capitalized": "title",
+    "titlecase": "title",
+    "title case": "title",
+    "normal": "none",
+    "original": "none",
+}
+
+
 def _coerce_patch(patch: dict, state: _ParseState) -> dict:
     out: dict[str, Any] = {}
     for key, value in _resolve_placement(patch).items():
@@ -4837,12 +5326,15 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
             continue
         if key == "font_family":
             if not isinstance(value, str) or value not in _ALLOWED_FONTS:
-                state.invalid_value()
+                state.invalid_value(f"I don't have a font called {value!r}")
                 return {}
             out[key] = value
         elif key == "effect":
             if not isinstance(value, str) or value not in _ALLOWED_EFFECTS:
-                state.invalid_value()
+                state.invalid_value(
+                    f"I couldn't set the effect to {value!r}; the options are "
+                    + ", ".join(sorted(_ALLOWED_EFFECTS))
+                )
                 return {}
             out[key] = value
         elif key in {"color", "highlight_color"}:
@@ -4856,8 +5348,13 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
                 return {}
             out[key] = value
         elif key == "text_case":
+            if isinstance(value, str):
+                value = _TEXT_CASE_ALIASES.get(" ".join(value.casefold().split()), value)
             if value not in _VALID_TEXT_CASE:
-                state.invalid_value()
+                state.invalid_value(
+                    "I couldn't set the letter case to "
+                    f"{value!r}; the options are none, upper, lower, title"
+                )
                 return {}
             out[key] = value
         elif key == "position":
@@ -5043,7 +5540,8 @@ def editor_operation_contract(snapshot: dict) -> str:
         for name, example in _DIRECTOR_OPERATION_EXAMPLES
         if _family_allowed(name, snapshot)
     ]
-    return "\n".join(examples) if examples else "(no instant draft operations available)"
+    out = "\n".join(examples) if examples else "(no instant draft operations available)"
+    return _with_v2_fragments(out, snapshot)
 
 
 def format_editor_snapshot(snapshot: dict) -> str:
@@ -5060,3 +5558,8 @@ def parse_editor_operation(
 
 def editor_snapshot_list(snapshot: dict, keys: Iterable[str]) -> list:
     return _snapshot_list(snapshot, keys)
+
+
+# KRI-219: merge lane-owned v2 op specs into the parser tables above. Must stay
+# the LAST statement so every table and helper the lanes reference is defined.
+_v2.merge_into_parser(_VALID_OPS, _OP_REQUIRED, _OP_FIELDS)

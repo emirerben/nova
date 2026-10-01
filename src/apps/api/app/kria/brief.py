@@ -39,6 +39,7 @@ from pydantic import (
 )
 from sqlalchemy import func, select
 
+from app.kria.brief_route import wants_filming_time_text
 from app.models import CreativeBriefVersion
 
 RequirementKind = Literal["text", "order", "select", "timing", "audio", "style"]
@@ -242,6 +243,14 @@ class CurrentPlanShape:
     # server-only `label_each_clip` capability (clip facts on the snapshot).
     # None = same as `has_per_clip_text_lane` (callers that never distinguish).
     can_fill_per_clip_text: bool | None = None
+    # KRI-219: the editor can reorder/remove clips on this variant (its snapshot
+    # advertises the `clip` op family). None/False = today's behaviour: order and
+    # select requirements always re-plan.
+    can_edit_timeline: bool | None = None
+    # KRI-219: the v2 `reorder_clips_by` op exists on this variant AND at least two
+    # clips carry a capture-time fact, so "order by when I filmed them" is an
+    # editor op, not a planner re-run.
+    can_order_by_capture_time: bool = False
 
 
 _PER_CLIP_LANE_ROLES = {"shot_label", "clip_label", "per_clip", "label"}
@@ -303,11 +312,139 @@ def plan_shape_from_editor_snapshot(snapshot: Mapping[str, Any] | None) -> Curre
         isinstance(bar, Mapping) and str(bar.get("id") or "").startswith("clip-label-")
         for bar in bars
     )
+    can_edit_timeline = "clip" in (snapshot.get("allowed_op_families") or [])
     return CurrentPlanShape(
         has_render=True,
-        has_per_clip_text_lane=legacy_lane or label_bars,
-        can_fill_per_clip_text=legacy_lane or snapshot.get("label_facts") is True,
+        has_per_clip_text_lane=legacy_lane or label_bars or _has_seen(snapshot),
+        # `seen` (stored clip understanding) lets the copilot write per-clip captions with
+        # add_text even where no place/time fact exists for label_each_clip (KRI-219).
+        can_fill_per_clip_text=legacy_lane
+        or snapshot.get("label_facts") is True
+        or _has_seen(snapshot),
+        can_edit_timeline=can_edit_timeline,
+        can_order_by_capture_time=can_edit_timeline and _timed_slot_count(snapshot) >= 2,
     )
+
+
+def _has_seen(snapshot: Mapping[str, Any]) -> bool:
+    return any(
+        isinstance(slot, Mapping)
+        and not slot.get("removed")
+        and isinstance(slot.get("seen"), Mapping)
+        and slot["seen"].get("text")
+        for slot in snapshot.get("slots") or []
+    )
+
+
+def _timed_slot_count(snapshot: Mapping[str, Any]) -> int:
+    """Active slots carrying a capture-time fact (v2 snapshots only)."""
+    if snapshot.get("editor_ops_version") != 2:
+        return 0
+    count = 0
+    for slot in snapshot.get("slots") or []:
+        if not isinstance(slot, Mapping) or slot.get("removed"):
+            continue
+        facts = slot.get("facts")
+        if isinstance(facts, list) and any(
+            isinstance(f, Mapping) and f.get("kind") == "capture_time" for f in facts
+        ):
+            count += 1
+    return count
+
+
+# Positional/explicit clip moves and removals an editor op can express. Semantic
+# selection ("only the funniest clips") and basis-driven ordering ("by when I
+# filmed them") are NOT matched: those need the planner.
+_MOVE_MESSAGE = re.compile(
+    r"\b(move|swap|put|place|shift|bring|send|reorder)\b.{0,80}"
+    r"\b(start|beginning|begin|first|last|end|before|after|front|back|position|spot|second|third)\b"
+)
+_REMOVE_MESSAGE = re.compile(
+    r"\b(remove|delete|drop|cut|get rid of|take out)\b.{0,20}"
+    r"\b(clip|shot|video|segment|scene)\s*(#|no\.?\s*)?\d+\b"
+    r"|\b(remove|delete|drop|cut|get rid of|take out)\b.{0,20}\b(the\s+)?"
+    r"(first|last|second|third|fourth|fifth)\s+(clip|shot|video|segment|scene)\b"
+)
+_POSITIONAL_FACT_KEYS = {
+    "index",
+    "indices",
+    "position",
+    "positions",
+    "clip_index",
+    "clip_number",
+    "clip_numbers",
+}
+
+
+def _structural_reqs_editable(
+    reqs: list[BriefRequirement | BriefUpdate], message: str | None
+) -> bool:
+    """True when every order/select requirement is an explicit clip move/removal."""
+    text = _fold_for_redo(message or "")
+    for req in reqs:
+        if req.kind == "order":
+            if not req.facts.get("key") or _MOVE_MESSAGE.search(text):
+                continue
+            return False
+        if req.kind == "select":
+            if (
+                req.scope.startswith("clip:")
+                or _POSITIONAL_FACT_KEYS & set(req.facts)
+                or _REMOVE_MESSAGE.search(text)
+            ):
+                continue
+            return False
+    return True
+
+
+_CAPTURE_ORDER_KEYS = {"capture_time", "chronological", "time"}
+_ORDER_ONLY_FACTS = {"key", "by", "direction", "order"}
+
+
+def is_capture_order_requirement(req: BriefRequirement | BriefUpdate) -> bool:
+    """An order requirement that is exactly "by when it was filmed" (no route)."""
+    if req.kind != "order":
+        return False
+    facts = req.facts or {}
+    key = str(facts.get("key") or facts.get("by") or "").casefold()
+    return key in _CAPTURE_ORDER_KEYS and set(facts) <= _ORDER_ONLY_FACTS
+
+
+def is_filming_time_label_requirement(req: BriefRequirement | BriefUpdate) -> bool:
+    """A per-clip text requirement whose text is the hour each clip was filmed."""
+    return wants_filming_time_text(req.kind, req.scope, req.literal, req.description, req.facts)
+
+
+def _capture_time_ask_editable(
+    reqs: list[BriefRequirement | BriefUpdate], current_plan: CurrentPlanShape
+) -> bool:
+    """True when EVERY requirement is an editor op over server-known capture times.
+
+    "Order them by the time they were filmed and add the hour to each" is a
+    `reorder_clips_by` + `label_each_clip` bundle, not a re-plan. Anything else in
+    the ask (selection, place labels, audio, timing) keeps the planner.
+    """
+    if not current_plan.can_order_by_capture_time:
+        return False
+    can_fill = (
+        current_plan.has_per_clip_text_lane
+        if current_plan.can_fill_per_clip_text is None
+        else current_plan.can_fill_per_clip_text
+    )
+    has_order = False
+    for req in reqs:
+        if is_capture_order_requirement(req):
+            has_order = True
+        elif is_filming_time_label_requirement(req):
+            if not can_fill:
+                return False
+        elif req.kind == "text" and req.scope == "title" and req.literal:
+            continue
+        elif req.kind == "style":
+            continue
+        else:
+            return False
+    return has_order
 
 
 def route_requirements(
@@ -325,9 +462,20 @@ def route_requirements(
     if not reqs:
         return "editor_ops"
     kinds = {req.kind for req in reqs}
+    if _capture_time_ask_editable(reqs, current_plan):
+        return "editor_ops"
     if kinds & {"order", "select"}:
-        return "replan"
-    if len(kinds) > 1:
+        if not (
+            current_plan.can_edit_timeline
+            and kinds <= {"order", "select"}
+            and _structural_reqs_editable(reqs, message)
+        ):
+            return "replan"
+        return "editor_ops"
+    if len(kinds) > 1 and not kinds <= {"text", "style"}:
+        # Text and style are both in-place label/title tweaks the editor ops express
+        # (KRI-219: "move the timestamps top left, make them smaller, just the hour");
+        # any other mix (audio, timing, ...) still needs the planner.
         return "replan"
     per_clip_text = any(
         req.kind == "text" and (req.scope == "per_clip" or req.scope.startswith("clip:"))

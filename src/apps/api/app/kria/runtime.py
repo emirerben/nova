@@ -349,7 +349,11 @@ async def submit_turn(
         raise RuntimeFailure(
             409,
             "queued_successor_exists",
-            "A follow-up is already waiting for the current turn.",
+            (
+                "A follow-up is already waiting. Approve or dismiss the pending render first."
+                if getattr(active, "status", None) == "awaiting_approval"
+                else "A follow-up is already waiting for the current turn."
+            ),
             recovery="refresh_replan",
             current_revision=int(thread.revision),
         )
@@ -949,6 +953,67 @@ async def _apply_strategy_approval_media(
     )
 
 
+async def _cancel_pending_approval(
+    db: AsyncSession,
+    *,
+    thread: CreationThread,
+    session: CreatorAgentSession,
+    turn: CreatorAgentTurn,
+    approval: CreatorAgentApproval,
+    execution: CreatorAgentExecution | None,
+    plan_item: Any,
+    code: str,
+    message: str,
+) -> None:
+    """Cancel a pending approval that can no longer be decided, then raise its 409.
+
+    Commits first (so the cancellation persists), promotes the queued follow-up (the
+    reconcile sweep publishes it), and raises the problem the client shows.
+    """
+    now = datetime.now(UTC)
+    approval.status = "cancelled"
+    if execution is not None and execution.status == "awaiting_approval":
+        execution.status = "stale"
+        execution.error = {"code": code, "retryable": False, "recovery": "refresh_replan"}
+        execution.completed_at = now
+    if turn.status == "awaiting_approval":
+        turn.status = "failed"
+        turn.completed_at = now
+        turn.error = {"code": code, "retryable": False, "recovery": "refresh_replan"}
+    session.status = "awaiting_feedback"
+    preflight_analysis_id = await _restore_strategy_media_snapshot_if_present(
+        db, item=plan_item, execution=execution
+    )
+    await _append_event(
+        db,
+        thread,
+        role="assistant",
+        event_type="assistant_error",
+        content=message,
+        payload={
+            "turn_id": str(turn.id),
+            "approval_id": str(approval.id),
+            "code": code,
+            "recovery": "refresh_replan",
+        },
+    )
+    await db.commit()
+    revision = int(thread.revision)
+    if preflight_analysis_id is not None:
+        from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+        await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id)
+    await _promote_queued_successor(db, thread_id=thread.id)
+    raise RuntimeFailure(
+        409,
+        code,
+        message,
+        phase="approval",
+        recovery="refresh_replan",
+        current_revision=revision,
+    )
+
+
 async def decide_approval(
     db: AsyncSession,
     *,
@@ -1139,16 +1204,29 @@ async def decide_approval(
             or session.target_generation_id == approval.target_generation_id
         )
     )
-    if not session_pins_match or thread.active_creator_agent_session_id != session.id:
-        raise RuntimeFailure(
-            409,
-            "approval_target_stale",
-            "The edit target changed after this approval was prepared.",
-            phase="approval",
-            recovery="refresh_replan",
-            current_revision=int(thread.revision),
+    stale_target = not session_pins_match or thread.active_creator_agent_session_id != session.id
+    if stale_target and decision == "approve" and approval.status == "pending":
+        # A stale approval can never render, so approving it must not leave it pending
+        # (it would block every later message): cancel it cleanly, release the queued
+        # follow-up, and tell the creator. Deny is unaffected (it always works).
+        await _cancel_pending_approval(
+            db,
+            thread=thread,
+            session=session,
+            turn=turn,
+            approval=approval,
+            execution=execution,
+            plan_item=plan_item,
+            code="approval_target_stale",
+            message=(
+                "That approval was prepared for an earlier version of the video, so I "
+                "cancelled it. Nothing was rendered; tell me what you want and I'll "
+                "prepare it again."
+            ),
         )
-    if not matches_conversation_revision(thread, body.expected_thread_revision):
+    if decision == "approve" and not matches_conversation_revision(
+        thread, body.expected_thread_revision
+    ):
         raise RuntimeFailure(
             409,
             "thread_revision_stale",
@@ -1176,7 +1254,7 @@ async def decide_approval(
             recovery="refresh_replan",
             current_revision=int(thread.revision),
         )
-    if approval.expires_at <= now:
+    if decision == "approve" and approval.expires_at <= now:
         approval.status = "expired"
         # An expired approval can never be approved either -- reverse any
         # strategy media mutation still pending reversal, exactly like deny.
@@ -1196,7 +1274,7 @@ async def decide_approval(
             recovery="refresh_replan",
             current_revision=int(thread.revision),
         )
-    if approval.draft_revision != body.expected_draft_revision:
+    if decision == "approve" and approval.draft_revision != body.expected_draft_revision:
         raise RuntimeFailure(
             409,
             "approval_draft_stale",
@@ -1205,7 +1283,9 @@ async def decide_approval(
             recovery="refresh_replan",
             current_revision=int(thread.revision),
         )
-    if draft.draft_revision != body.expected_draft_revision or not draft.is_head:
+    if decision == "approve" and (
+        draft.draft_revision != body.expected_draft_revision or not draft.is_head
+    ):
         raise RuntimeFailure(
             409,
             "draft_stale",

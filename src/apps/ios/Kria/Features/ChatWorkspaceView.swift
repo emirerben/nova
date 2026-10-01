@@ -922,7 +922,9 @@ private struct CreationWorkspaceView: View {
         failure = nil
         confirmationConflict = nil
         defer { isSending = false }
-        if editorSession.hasUnsavedChanges {
+        // Edits staged from a chat draft already live in the server's draft head;
+        // committing them here would render on every send. Only real local edits flush.
+        if editorSession.hasUnsavedChanges, !editorSession.hasOnlyChatStagedChanges {
             await editorSession.save()
             guard !editorSession.hasUnsavedChanges else {
                 failure = ChatFailure("Your message is still here. Save or resolve your editor changes before sending it.")
@@ -1111,7 +1113,10 @@ private struct CreationWorkspaceView: View {
         while !Task.isCancelled {
             do {
                 let changed = try await refreshDelta()
-                await refreshDeviceRender()
+                // A published device render never changes on its own; keep
+                // polling it only while it is unsettled or the thread moved.
+                let deviceSettled = deviceRenderKey.flatMap { model.deviceRenders.presentations[$0]?.phase } == .synced
+                if changed || !deviceSettled || currentProject.status == .rendering { await refreshDeviceRender() }
                 delay = changed || isSending || isActing || currentProject.status == .rendering
                     || fullThread?.preparationIsActive == true || speechCleanupIsChecking
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
@@ -1260,6 +1265,14 @@ private struct CreationWorkspaceView: View {
             isRendering: currentProject.status == .rendering
         ) {
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
+        }
+        // A re-plan can finish as a NEW render job while the editor (or its chat
+        // sheet) is open; the thread summary is the authority on the active job.
+        if currentProject.runtimeVersion == 2, editorSession.loadState == .loaded,
+           fresh.contains(where: { ["generation_ready", "assistant_review"].contains($0.eventType) && $0.payload?["job_id"]?.stringValue != nil }),
+           let thread = try? await model.api.project(threadID: project.id) {
+            apply(thread)
+            await editorSession.adoptLatestJob(thread.summary, api: model.api)
         }
         if !fresh.isEmpty, !isThinking { await editorSession.synchronizePromptRevision() }
         return !fresh.isEmpty || threadRevision > revisionBeforeDelta

@@ -1,0 +1,111 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-29-v50",
+  "input": {
+    "utterance": "all clips 2 seconds",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "clip",
+        "text",
+        "transition"
+      ],
+      "editor_ops_version": 2,
+      "slots": [
+        {
+          "key": "s1",
+          "slot_id": "s1",
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 0.0,
+          "output_end_s": 3.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s2",
+          "slot_id": "s2",
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 4,
+          "source_duration_s": 10.0,
+          "output_start_s": 3.0,
+          "output_end_s": 7.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s3",
+          "slot_id": "s3",
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 5,
+          "source_duration_s": 10.0,
+          "output_start_s": 7.0,
+          "output_end_s": 12.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s4",
+          "slot_id": "s4",
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 6,
+          "source_duration_s": 10.0,
+          "output_start_s": 12.0,
+          "output_end_s": 18.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        }
+      ],
+      "text_bars": [],
+      "total_duration_s": 18,
+      "max_duration_s": 120,
+      "remaining_duration_s": 102
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"patch_slots\", \"selector\": {\"all\": true}, \"patch\": {\"duration_s\": 2}}], \"confidence\": 0.96, \"reply\": \"Every clip is now 2 seconds.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_slots",
+        "selector": {
+          "all": true
+        },
+        "patch": {
+          "duration_s": 2.0
+        }
+      }
+    ],
+    "confidence": 0.96,
+    "reply": "Every clip is now 2 seconds.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "bulk duration is ONE patch_slots op",
+    "lane": "kria-219-timeline"
+  }
+}

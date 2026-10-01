@@ -7,6 +7,7 @@ must read the same keys, so the key tuples live here and nowhere else.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -47,3 +48,47 @@ def first_text(facts: Mapping[str, Any], keys: Iterable[str]) -> str | None:
 def route_endpoints(facts: Mapping[str, Any]) -> tuple[str | None, str | None]:
     """(start, end) the creator stated, or None for a side they did not."""
     return first_text(facts, START_KEYS), first_text(facts, END_KEYS)
+
+
+# KRI-219: per-clip text that is the HOUR each clip was filmed ("add the hour to each
+# video"). One reader for the router, the montage planner and the receipt checker, so
+# a place name can never quietly stand in for it.
+CLIP_TIME_KEYS = frozenset(
+    {"capture_time", "time", "hour", "clock", "filming_time", "capture_hour"}
+)
+# Deliberately narrow: "the time" alone could mean a clip's duration.
+_TIME_LABEL_TEXT = re.compile(
+    r"\b(hours?|saat\w*|clock|time of day|what time|(filming|capture|shot) times?|"
+    r"time\b.{0,20}\b(filmed|shot|recorded|captured)|"
+    r"(filmed|shot|recorded|captured)\b.{0,20}\btime)\b"
+)
+
+
+def wants_filming_time_text(
+    kind: str,
+    scope: str,
+    literal: str | None,
+    description: str | None,
+    facts: Mapping[str, Any] | None,
+) -> bool:
+    """A described per-clip text requirement whose text is the filming hour."""
+    if kind != "text" or scope != "per_clip" or literal:
+        return False
+    key = str((facts or {}).get("key") or "").casefold()
+    if key in CLIP_TIME_KEYS:
+        return True
+    return bool(_TIME_LABEL_TEXT.search(loose_text(description or "")))
+
+
+# "just the hour, not the minutes": the filming-time label format the creator wants.
+_HOUR_ONLY_TEXT = re.compile(
+    r"\b(just|only|sadece|yalnizca)\b.{0,25}\b(hours?|saat\w*)\b"
+    r"|\bafter the hours?\b"
+    r"|\b(don.?t|do not|dont|not|no|without|exclude|omit|hide|remove|olmadan|gosterme)\b"
+    r".{0,30}\b(minutes?|dakika\w*)\b"
+)
+
+
+def wants_hour_only_text(description: str | None, literal: str | None = None) -> bool:
+    """True when the wording asks for the hour WITHOUT the minutes."""
+    return bool(_HOUR_ONLY_TEXT.search(loose_text(f"{description or ''} {literal or ''}")))

@@ -1,0 +1,227 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-29-v49",
+  "input": {
+    "utterance": "add 'see you soon' at the end in the title's style",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "editor_ops_version": 2,
+      "allowed_op_families": [
+        "text",
+        "style"
+      ],
+      "has_narrated_captions": false,
+      "base_generation": "gen-1",
+      "text_bars": [
+        {
+          "id": "guided-title",
+          "text": "East Run",
+          "start_s": 0.0,
+          "end_s": 3.0,
+          "role": "generative_intro",
+          "font_family": "Playfair Display",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "middle",
+          "alignment": "center",
+          "effect": "static"
+        },
+        {
+          "id": "clip-label-media-m0",
+          "text": "Arnavutköy Sahili",
+          "start_s": 0.0,
+          "end_s": 4.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "size_px": 58,
+          "color": "#FFF8F0",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "alignment": "center",
+          "effect": "static",
+          "clip_id": "m0",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "arnavutkoy iskelesi",
+          "start_s": 4.0,
+          "end_s": 8.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "size_px": 58,
+          "color": "#FFF8F0",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "alignment": "center",
+          "effect": "static",
+          "clip_id": "m1",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Istanbul Bridge",
+          "start_s": 8.0,
+          "end_s": 12.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "size_px": 58,
+          "color": "#FFF8F0",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "alignment": "center",
+          "effect": "static",
+          "clip_id": "m2",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "ARNAVUTKÖY",
+          "start_s": 12.0,
+          "end_s": 16.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "size_px": 58,
+          "color": "#FFF8F0",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "alignment": "center",
+          "effect": "static",
+          "clip_id": "m3",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Galata Kulesi",
+          "start_s": 16.0,
+          "end_s": 20.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "size_px": 58,
+          "color": "#FFF8F0",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "alignment": "center",
+          "effect": "static",
+          "clip_id": "m4",
+          "inferred": true
+        },
+        {
+          "id": "clip-label-media-m5",
+          "text": "Kadıköy Rıhtım",
+          "start_s": 20.0,
+          "end_s": 24.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "size_px": 58,
+          "color": "#FFF8F0",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "alignment": "center",
+          "effect": "static",
+          "clip_id": "m5",
+          "inferred": true
+        }
+      ],
+      "slots": [
+        {
+          "index": 0,
+          "media_id": "m0",
+          "media_kind": "video",
+          "output_start_s": 0.0,
+          "output_end_s": 4.0,
+          "duration_s": 4.0,
+          "in_s": 0,
+          "source_duration_s": 9.0,
+          "moment": "Arnavutköy Sahili"
+        },
+        {
+          "index": 1,
+          "media_id": "m1",
+          "media_kind": "video",
+          "output_start_s": 4.0,
+          "output_end_s": 8.0,
+          "duration_s": 4.0,
+          "in_s": 0,
+          "source_duration_s": 9.0,
+          "moment": "arnavutkoy iskelesi"
+        },
+        {
+          "index": 2,
+          "media_id": "m2",
+          "media_kind": "video",
+          "output_start_s": 8.0,
+          "output_end_s": 12.0,
+          "duration_s": 4.0,
+          "in_s": 0,
+          "source_duration_s": 9.0,
+          "moment": "Istanbul Bridge"
+        },
+        {
+          "index": 3,
+          "media_id": "m3",
+          "media_kind": "video",
+          "output_start_s": 12.0,
+          "output_end_s": 16.0,
+          "duration_s": 4.0,
+          "in_s": 0,
+          "source_duration_s": 9.0,
+          "moment": "ARNAVUTKÖY"
+        },
+        {
+          "index": 4,
+          "media_id": "m4",
+          "media_kind": "video",
+          "output_start_s": 16.0,
+          "output_end_s": 20.0,
+          "duration_s": 4.0,
+          "in_s": 0,
+          "source_duration_s": 9.0,
+          "moment": "Galata Kulesi"
+        },
+        {
+          "index": 5,
+          "media_id": "m5",
+          "media_kind": "video",
+          "output_start_s": 20.0,
+          "output_end_s": 24.0,
+          "duration_s": 4.0,
+          "in_s": 0,
+          "source_duration_s": 9.0,
+          "moment": "Kadıköy Rıhtım"
+        }
+      ],
+      "total_duration_s": 24.0
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"add_text\", \"text\": \"see you soon\", \"start_s\": 22.0, \"end_s\": 24.0, \"style_from\": \"title\"}], \"confidence\": 0.9, \"reply\": \"Added 'see you soon' at the end in the title's style.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "add_text",
+        "text": "see you soon",
+        "start_s": 22.0,
+        "end_s": 24.0,
+        "style_from": "title"
+      }
+    ],
+    "confidence": 0.9,
+    "reply": "Added 'see you soon' at the end in the title's style.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "add_end_text_title_style",
+    "lane": "kria_v2_text"
+  }
+}

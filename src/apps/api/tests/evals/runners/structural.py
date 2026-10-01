@@ -1982,7 +1982,14 @@ def check_edit_copilot(output: Any) -> list[str]:
         "stack_images",
         "undo_last_edit",
         "repeat_last_edit",
+        # KRI-219 Lane B: server-snapshot (editor_ops_version 2) timeline bulk ops.
+        "patch_slots",
+        "set_total_duration",
     }
+    # KRI-219: lane-registered v2 ops (server-built snapshots only).
+    from app.agents import editor_ops_v2 as _v2  # noqa: PLC0415
+
+    valid_ops = valid_ops | set(_v2.REGISTRY.new_ops)
     failures: list[str] = []
 
     if output.intent not in valid_intents:
@@ -2144,6 +2151,8 @@ _EDITOR_OPS_COMPILABLE_NAMES = frozenset(
         "remove_clip",
         "split_clip",
         "set_transition",
+        "patch_slots",
+        "set_total_duration",
         "add_unused_sources",
         "set_media_duration",
         "stack_images",
@@ -2156,6 +2165,11 @@ _EDITOR_OPS_COMPILABLE_NAMES = frozenset(
         "remove_music",
         "swap_music",
         "set_title",
+        # KRI-219 Lane A (text selector ops).
+        "rewrite_text",
+        "patch_text",
+        "remove_texts",
+        "set_texts_timing",
     }
 )
 
@@ -2181,6 +2195,11 @@ _EDITOR_OPS_NO_TIMELINE_NAMES = frozenset(
         "remove_music",
         "swap_music",
         "set_title",
+        # KRI-219 Lane A (text selector ops).
+        "rewrite_text",
+        "patch_text",
+        "remove_texts",
+        "set_texts_timing",
     }
 )
 
@@ -2189,6 +2208,11 @@ _EDITOR_OPS_NO_TIMELINE_NAMES = frozenset(
 # short and reviewable — see structural.py's docstring note above for the
 # broader "different runtime" bucket, which needs no entry here at all.
 _EDITOR_OPS_ALLOWLIST: dict[str, str] = {
+    "kria_v2_timeline_speed_up_clip": (
+        "playback_rate is a guided-story-only control (the synthetic replay variant is "
+        "a plain montage); its compile path is pinned in "
+        "tests/services/test_kria_editor_guided_timeline.py."
+    ),
     "component_prices_selective": (
         "the real variant carries 150+ pre-existing generated price labels; "
         "the montage-archetype 50-element cap in validate_text_elements_payload "
@@ -2333,6 +2357,12 @@ def check_edit_copilot_compiles(
             # scope for a path-free synthetic snapshot.
             return []
 
+        if variant.get("render_destination") == "device":
+            # Device variants commit through the phone compiler, which needs a
+            # pinned recipe + receipts a synthetic snapshot cannot supply; the
+            # compile + schema checks above are the real signal here.
+            return []
+
         from app.routes import generative_jobs as gj
 
         music_track = None
@@ -2340,8 +2370,20 @@ def check_edit_copilot_compiles(
             from .snapshot_variant import build_fake_music_track
 
             music_track = build_fake_music_track(payload.music_track_id)
+        background_track = None
+        bed = getattr(payload, "background_music", None)
+        if bed is not None and bed.track_id:
+            from .snapshot_variant import build_fake_music_track
+
+            background_track = build_fake_music_track(bed.track_id)
         try:
-            gj.prepare_editor_commit(job, variant["variant_id"], payload, music_track=music_track)
+            gj.prepare_editor_commit(
+                job,
+                variant["variant_id"],
+                payload,
+                music_track=music_track,
+                background_music_track=background_track,
+            )
         except HTTPException as exc:
             return [
                 f"{label}: prepare_editor_commit rejected ops {op_names} "

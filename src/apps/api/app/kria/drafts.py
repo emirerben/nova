@@ -46,6 +46,8 @@ class KriaDraftDocument(BaseModel):
     intent: str = Field(default="", max_length=4000)
     edit_format: str = Field(default="montage", min_length=1, max_length=80)
     editor_payload: dict[str, Any] | None = None
+    # KRI-218: this turn's text before/after (compiler `text_diff`); receipts read it.
+    editor_text_diff: list[dict[str, Any]] | None = Field(default=None, max_length=200)
     strategy: dict[str, Any] | None = None
     changes: list[str] = Field(default_factory=list, max_length=24)
 
@@ -55,6 +57,8 @@ class KriaDraftDocument(BaseModel):
             raise ValueError("editor drafts require editor_payload")
         if self.kind != "editor" and self.editor_payload is not None:
             raise ValueError("only editor drafts can contain editor_payload")
+        if self.kind != "editor" and self.editor_text_diff is not None:
+            raise ValueError("only editor drafts can contain editor_text_diff")
         if self.kind == "strategy" and self.strategy is None:
             raise ValueError("strategy drafts require strategy")
         if self.kind != "strategy" and self.strategy is not None:
@@ -73,6 +77,9 @@ class DraftTarget:
 
 def canonical_snapshot(document: KriaDraftDocument) -> tuple[dict[str, Any], str]:
     snapshot = document.model_dump(mode="json")
+    if snapshot.get("editor_text_diff") is None:
+        # Absent stays absent so existing drafts keep their snapshot hash / ETag.
+        snapshot.pop("editor_text_diff", None)
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
     if len(encoded) > MAX_DRAFT_BYTES:
         raise RuntimeFailure(

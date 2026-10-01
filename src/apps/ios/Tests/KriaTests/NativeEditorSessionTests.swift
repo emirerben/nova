@@ -1876,7 +1876,8 @@ final class NativeEditorSessionTests: XCTestCase {
 
         await session.load(project: project, api: fake)
 
-        XCTAssertEqual(fake.draftCallCount, 0, "ready projects must not depend on the rollout-gated runtime draft")
+        XCTAssertLessThanOrEqual(fake.draftCallCount, 1, "the runtime draft is best-effort (staging only); its failure must never block opening")
+        XCTAssertEqual(session.loadState, .loaded)
         XCTAssertEqual(fake.projectCallCount, 1, "URL-free project-list summaries must hydrate before editor loading")
         XCTAssertNil(fake.openedJobID, "creation projects already own a plan item and must not be promoted again")
         XCTAssertEqual(fake.editorVariantsCallCount, 1, "the job status is authoritative when project projections omit variant identity")
@@ -3297,7 +3298,7 @@ private actor SessionTestStatus {
 }
 
 final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
-    let draftSnapshot: DraftSnapshot
+    var draftSnapshot: DraftSnapshot
     var draftError: APIError?
     let openReceipt: OpenInEditorResponse?
     var authoritativeVariant: [String: JSONValue]?
@@ -3323,6 +3324,8 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     var lastItemID: String?
     var draftCallCount = 0
     var lastVariantID: String?
+    var editorVariantJobIDs: [UUID] = []
+    var supersededJobIDs: Set<UUID> = []
     var projectCallCount = 0
     var editorVariantsCallCount = 0
     var sourcePoolCallCount = 0
@@ -3374,7 +3377,8 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
         return openReceipt
     }
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
-        lastVariantID = variantID
+        lastVariantID = variantID; editorVariantJobIDs.append(jobID)
+        if supersededJobIDs.contains(jobID) { throw APIError.contentPlanUnavailable }
         if let editorVariantError { throw editorVariantError }
         return authoritativeVariant ?? ["editor_revision_number": phoneDestination ? .number(7) : .null, "render_destination": .string(phoneDestination ? "device" : "cloud"), "variant_id": .string(variantID), "render_generation_id": .string("generation-1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]), "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])])]
     }

@@ -39,7 +39,7 @@ from app.kria.brief_checks import (
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.language import is_paraphrase_only
-from app.kria.planner import PlannedKriaTurn, plan_live_turn
+from app.kria.planner import PlannedKriaTurn, extract_deferred_brief, plan_live_turn
 from app.kria.registry import KRIA_TOOLS
 from app.models import (
     ContentPlan,
@@ -64,6 +64,7 @@ from app.routes.generative_jobs import (
 )
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
+    KriaEditorOpError,
     compile_editor_ops,
     merge_editor_draft,
     project_editor_draft,
@@ -112,6 +113,9 @@ class _ApprovalDispatchClaim:
     preflight_analysis_id: uuid.UUID | None = None
     speech_cleanup_analysis_id: uuid.UUID | None = None
     speech_cleanup_choice: str | None = None
+    # What the plan item pointed at BEFORE a strategy dispatch mints its new Job, so a
+    # failure after the pointer moves can put it back (never leave an orphan target).
+    prior_item_status: str | None = None
 
 
 def _snapshot(thread: CreationThread) -> dict[str, Any]:
@@ -420,7 +424,7 @@ def _complete_draft_turn(
             ):
                 raise RuntimeError("Save the current draft before applying speech processing")
             compiled = compile_editor_ops(
-                job, project_editor_draft(variant, prior_payload), arguments.operations
+                job, project_editor_draft(variant, prior_payload, job), arguments.operations
             )
             changes = compiled.changes
             document = KriaDraftDocument(
@@ -434,6 +438,7 @@ def _complete_draft_turn(
                     if isinstance(compiled.payload, EditorCommitRequest)
                     else compiled.payload
                 ),
+                editor_text_diff=compiled.text_diff or None,
                 changes=changes,
             )
             snapshot, snapshot_hash = canonical_snapshot(document)
@@ -472,7 +477,9 @@ def _complete_draft_turn(
                 else:
                     # Editor operations verify only the requirements stated in
                     # this very turn, against literal text in the editor payload.
-                    facts = plan_facts_from_editor_payload(document.editor_payload)
+                    facts = plan_facts_from_editor_payload(
+                        document.editor_payload, document.editor_text_diff, changes
+                    )
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
                 if checked:
                     receipts = build_receipts(checked, facts)
@@ -1183,13 +1190,37 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     brief_updates=planned.brief_updates,
                 )
             else:
-                completion = _complete_draft_turn(
-                    identifier,
-                    lease_owner=lease_owner,
-                    lease_epoch=lease_epoch,
-                    claimed_thread_revision=claimed_thread_revision,
-                    planned=planned,
-                )
+                try:
+                    completion = _complete_draft_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        planned=planned,
+                    )
+                except KriaEditorOpError as exc:
+                    # KRI-219: an op the recipe cannot represent (e.g. speed on a
+                    # device recipe) is a limit to explain, not a runtime crash.
+                    # The draft transaction rolled back; reply with the reason.
+                    log.info("kria_editor_op_unsupported", turn_id=turn_id, error=str(exc)[:200])
+                    planned = replace(
+                        planned,
+                        plan=KriaTurnPlan(
+                            mode="respond",
+                            turn_value="recovery",
+                            response=(
+                                f"I can't do that on this edit: {str(exc).strip().rstrip('.')}. "
+                                "Nothing was changed."
+                            ),
+                        ),
+                    )
+                    completion = _complete_response_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        plan=planned.plan,
+                    )
             if not completion.committed:
                 if completion.requeue_turn_id is not None:
                     run_kria_turn.apply_async(
@@ -1199,6 +1230,15 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     )
                     return {"turn_id": turn_id, "status": "requeued"}
                 return {"turn_id": turn_id, "status": "ignored"}
+            if planned.defer_brief:
+                try:
+                    extract_kria_brief.apply_async(
+                        args=[turn_id], task_id=f"brief-{turn_id}", queue="agent-control"
+                    )
+                except Exception:  # noqa: BLE001 - the brief is best-effort context
+                    log.warning(
+                        "kria_deferred_brief_enqueue_failed", turn_id=turn_id, exc_info=True
+                    )
             if completion.successor_turn_id is not None:
                 run_kria_turn.apply_async(
                     args=[completion.successor_turn_id],
@@ -1306,6 +1346,87 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 queue="agent-control",
             )
         raise
+
+
+async def _extract_brief_async(snapshot: dict[str, Any], user_message: str):
+    engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            return await extract_deferred_brief(
+                db,
+                thread_id=uuid.UUID(str(snapshot["thread_id"])),
+                item_id=uuid.UUID(str(snapshot["item_id"])),
+                creator_id=uuid.UUID(str(snapshot["creator_id"])),
+                user_message=user_message,
+            )
+    finally:
+        await engine.dispose()
+
+
+_DEFERRED_REPLAN_NOTE = (
+    "I made that change in the editor. Part of your request needs a fresh edit, not an "
+    "in-place tweak: tell me to redo it and I'll re-plan around your full request."
+)
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.extract_kria_brief",
+    soft_time_limit=90,
+    time_limit=120,
+    max_retries=0,
+)
+def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
+    """KRI-219: record the requirements of an in-place edit the copilot already applied.
+
+    The fast path answered the creator first; this runs the slow extraction after
+    the fact, persists the brief version for that turn (idempotent per turn), and
+    says so when the router would have re-planned (the edit covered only part of
+    the ask). Best-effort: it never touches the draft.
+    """
+    identifier = uuid.UUID(turn_id)
+    with sync_session() as db:
+        turn = db.get(CreatorAgentTurn, identifier)
+        if turn is None or turn.status != "completed":
+            return {"turn_id": turn_id, "status": "ignored"}
+        thread = db.get(CreationThread, turn.thread_id)
+        source = db.get(CreationThreadEvent, turn.source_event_id)
+        if thread is None or source is None:
+            return {"turn_id": turn_id, "status": "ignored"}
+        snapshot, message = _snapshot(thread), str(source.content or "")
+    if not snapshot.get("item_id"):
+        return {"turn_id": turn_id, "status": "ignored"}
+    try:
+        updates, route = asyncio.run(_extract_brief_async(snapshot, message))
+    except Exception:  # noqa: BLE001 - best-effort context
+        log.warning("kria_deferred_brief_failed", turn_id=turn_id, exc_info=True)
+        return {"turn_id": turn_id, "status": "failed"}
+    with sync_session() as db:
+        thread = db.execute(
+            select(CreationThread)
+            .where(CreationThread.id == uuid.UUID(str(snapshot["thread_id"])))
+            .with_for_update()
+        ).scalar_one()
+        if updates:
+            persist_brief_version_sync(db, thread_id=thread.id, turn_id=identifier, updates=updates)
+        if route == "replan":
+            log.info("kria_fast_path_route_mismatch", turn_id=turn_id)
+            _append_sync_event(
+                db,
+                thread,
+                role="assistant",
+                event_type="assistant_response",
+                content=_DEFERRED_REPLAN_NOTE,
+                payload={
+                    "turn_id": turn_id,
+                    "turn_value": "recovery",
+                    "receipt_ids": [],
+                    "next_actions": [],
+                    "schema_version": 2,
+                },
+            )
+        db.commit()
+    return {"turn_id": turn_id, "status": "done", "route": str(route)}
 
 
 def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim | None:
@@ -1733,6 +1854,11 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             preflight_analysis_id=preflight_analysis_id,
             speech_cleanup_analysis_id=speech_cleanup_analysis_id,
             speech_cleanup_choice=speech_cleanup_choice,
+            prior_item_status=(
+                str(getattr(item, "item_status", None))
+                if getattr(item, "item_status", None) is not None
+                else None
+            ),
         )
 
 
@@ -1876,6 +2002,68 @@ _VISUALS_DISPATCH_REFUSALS: dict[str, str] = {
 }
 
 
+_FINISH_DEADLOCK_ATTEMPTS = 3
+
+
+def _is_deadlock(exc: BaseException) -> bool:
+    from sqlalchemy.exc import DBAPIError  # noqa: PLC0415
+
+    if not isinstance(exc, DBAPIError):
+        return False
+    return (getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)) in {
+        "40P01",
+        "40001",
+    }
+
+
+def _finish_with_deadlock_retry(
+    claim: _ApprovalDispatchClaim, **kwargs: Any
+) -> tuple[str, str | None]:
+    """`_finish_approval_dispatch` is idempotent (a dispatched execution returns early),
+    so an aborted deadlock victim may simply be retried a bounded number of times."""
+    import time  # noqa: PLC0415
+
+    for attempt in range(_FINISH_DEADLOCK_ATTEMPTS):
+        try:
+            return _finish_approval_dispatch(claim, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            if not _is_deadlock(exc) or attempt == _FINISH_DEADLOCK_ATTEMPTS - 1:
+                raise
+            log.warning("kria_approval_finish_deadlock_retry", attempt=attempt + 1)
+            time.sleep(0.15 * 2**attempt)
+    raise AssertionError("unreachable")
+
+
+def _compensate_failed_dispatch(claim: _ApprovalDispatchClaim, new_job_id: str) -> None:
+    """Undo `dispatch_item_render_for`'s pointer move when the approval could not be settled.
+
+    Only while the plan item still points at the Job this dispatch minted (anything newer
+    wins). Restores the previous Job and item status and fails the orphan Job. Lock order:
+    PlanItem -> Job (canonical).
+    """
+    new_id = uuid.UUID(str(new_job_id))
+    with sync_session() as db:
+        item = db.execute(
+            select(PlanItem).where(PlanItem.id == claim.item_id).with_for_update()
+        ).scalar_one_or_none()
+        job = db.execute(select(Job).where(Job.id == new_id).with_for_update()).scalar_one_or_none()
+        if item is None or job is None or item.current_job_id != new_id:
+            return
+        if claim.target_job_id is not None:
+            item.current_job_id = claim.target_job_id
+            if claim.prior_item_status is not None:
+                item.item_status = claim.prior_item_status
+        job.status = "failed"
+        job.failure_reason = "kria_dispatch_aborted"
+        db.commit()
+        log.warning(
+            "kria_dispatch_compensated",
+            item_id=str(claim.item_id),
+            orphan_job_id=str(new_id),
+            restored_job_id=str(claim.target_job_id),
+        )
+
+
 def _finish_approval_dispatch(
     claim: _ApprovalDispatchClaim,
     *,
@@ -1886,6 +2074,15 @@ def _finish_approval_dispatch(
     successful = outcome in {"dispatched", "already_active"} and job_id is not None
     successor_id: str | None = None
     with sync_session() as db:
+        if successful:
+            # Canonical order (db_locks): PlanItem -> Job -> Session. Pointing the session and
+            # the execution at the NEW Job takes a FOR KEY SHARE on that Job row through the
+            # foreign key, and a status poll holds that Job FOR UPDATE while it waits for the
+            # Session (`_lock_reconciliation_graph`): taking the Session first here made the
+            # two a deadlock (2026-10-01, approval 3ac08f80). Lock the same rows in the same
+            # order so the later FK check is a no-op.
+            db.execute(select(PlanItem).where(PlanItem.id == claim.item_id).with_for_update())
+            db.execute(select(Job).where(Job.id == uuid.UUID(str(job_id))).with_for_update())
         session = db.execute(
             select(CreatorAgentSession)
             .where(CreatorAgentSession.id == claim.session_id)
@@ -2131,12 +2328,26 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
         outcome = result.outcome
         result_job_id = result.job_id
         dispatch_reason = getattr(result, "reason", None)
-    status, successor_id = _finish_approval_dispatch(
-        claim,
-        outcome=outcome,
-        job_id=result_job_id,
-        **({"reason": dispatch_reason} if dispatch_reason else {}),
-    )
+    try:
+        status, successor_id = _finish_with_deadlock_retry(
+            claim,
+            outcome=outcome,
+            job_id=result_job_id,
+            **({"reason": dispatch_reason} if dispatch_reason else {}),
+        )
+    except Exception:
+        # The dispatch already minted the Job and moved the plan item to it. Leaving that
+        # half-switched strands the project on an unrendered orphan (the app shows the old
+        # video "gone"), and the reconcile sweep would then find the approval stale. Put the
+        # pointer back, fail the new Job, and settle the approval as a retryable failure.
+        log.exception("kria_approval_finish_failed", approval_id=approval_id, job_id=result_job_id)
+        if outcome == "dispatched" and result_job_id is not None:
+            _compensate_failed_dispatch(claim, result_job_id)
+            status, successor_id = _finish_approval_dispatch(
+                claim, outcome="publish_failed", job_id=None
+            )
+        else:
+            raise
     if successor_id is not None:
         run_kria_turn.apply_async(
             args=[successor_id],
@@ -2484,7 +2695,154 @@ def reconcile_kria_turns() -> dict[str, int]:
 
     if not settings.kria_runtime_v2_enabled:
         return {"published": 0, "settled": 0}
+    # One sweep at a time: beat can fire again (or a local helper loop can run) while the
+    # previous sweep is still observing renders. A second sweep would only republish the
+    # same approvals and fight the first over the same rows, so skip it.
+    from sqlalchemy import text  # noqa: PLC0415
 
+    from app.database import sync_engine  # noqa: PLC0415
+
+    with sync_engine.connect() as lock_conn:
+        got = lock_conn.execute(
+            text("select pg_try_advisory_lock(:key)"), {"key": _RECONCILE_ADVISORY_KEY}
+        ).scalar()
+        if not got:
+            log.info("kria_reconcile_skipped_overlap")
+            return {"published": 0, "settled": 0, "skipped": 1}
+        try:
+            result = _reconcile_kria_turns_body()
+            try:
+                for successor_id in _expire_pending_approvals():
+                    run_kria_turn.apply_async(
+                        args=[successor_id], task_id=successor_id, queue="agent-control"
+                    )
+            except Exception:  # noqa: BLE001 - expiry is best-effort; the next sweep retries
+                log.warning("kria_approval_expiry_sweep_failed", exc_info=True)
+            return result
+        finally:
+            lock_conn.execute(
+                text("select pg_advisory_unlock(:key)"), {"key": _RECONCILE_ADVISORY_KEY}
+            )
+            lock_conn.commit()
+
+
+# Arbitrary, stable advisory-lock key for the reconcile sweep ("kria rec" in hex).
+_RECONCILE_ADVISORY_KEY = 0x4B52494152454300
+
+
+def _expire_pending_approvals() -> list[str]:
+    """Cancel approvals past `expires_at` that nobody decided (they would block the thread
+    forever), release the queued follow-up, and say so. Returns successor turn ids to publish.
+
+    Only approvals with nothing to reverse are swept here: a strategy approval whose
+    execution carries a committed media mutation (`strategy_media_before`) keeps its
+    existing lazy path (the next approve/deny restores the item).
+    """
+    successors: list[str] = []
+    with sync_session() as db:
+        pending = list(
+            db.execute(
+                select(CreatorAgentApproval.id)
+                .where(
+                    CreatorAgentApproval.status == "pending",
+                    CreatorAgentApproval.expires_at < func.now(),
+                )
+                .order_by(CreatorAgentApproval.expires_at)
+                .limit(25)
+            ).scalars()
+        )
+    for approval_id in pending:
+        try:
+            with sync_session() as db:
+                ref = db.get(CreatorAgentApproval, approval_id)
+                if ref is None:
+                    continue
+                # Canonical order (subset): Session -> Turn -> Approval -> Execution -> Thread.
+                session = db.execute(
+                    select(CreatorAgentSession)
+                    .where(CreatorAgentSession.id == ref.session_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                turn = db.execute(
+                    select(CreatorAgentTurn)
+                    .where(CreatorAgentTurn.id == ref.turn_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                approval = db.execute(
+                    select(CreatorAgentApproval)
+                    .where(CreatorAgentApproval.id == approval_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                execution = None
+                try:
+                    execution_id = uuid.UUID(str((ref.execution_ids or [None])[0]))
+                    execution = db.execute(
+                        select(CreatorAgentExecution)
+                        .where(CreatorAgentExecution.id == execution_id)
+                        .with_for_update()
+                    ).scalar_one_or_none()
+                except (TypeError, ValueError, IndexError):
+                    execution = None
+                thread = db.execute(
+                    select(CreationThread)
+                    .where(CreationThread.id == ref.thread_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if (
+                    session is None
+                    or turn is None
+                    or approval is None
+                    or thread is None
+                    or approval.status != "pending"
+                ):
+                    continue
+                if isinstance(getattr(execution, "result", None), dict) and (
+                    "strategy_media_before" in execution.result
+                ):
+                    continue
+                now = datetime.now(UTC)
+                error = {
+                    "code": "approval_expired",
+                    "retryable": False,
+                    "recovery": "refresh_replan",
+                }
+                approval.status = "expired"
+                if execution is not None and execution.status == "awaiting_approval":
+                    execution.status = "stale"
+                    execution.error = error
+                    execution.completed_at = now
+                if turn.status == "awaiting_approval":
+                    turn.status = "failed"
+                    turn.completed_at = now
+                    turn.error = error
+                if session.status != "rendering":
+                    session.status = "awaiting_feedback"
+                _append_sync_event(
+                    db,
+                    thread,
+                    role="assistant",
+                    event_type="assistant_error",
+                    content=(
+                        "That approval expired before it was decided, so nothing was rendered. "
+                        "Tell me what you want and I'll prepare it again."
+                    ),
+                    payload={
+                        "turn_id": str(turn.id),
+                        "approval_id": str(approval.id),
+                        "code": "approval_expired",
+                        "recovery": "refresh_replan",
+                    },
+                )
+                db.commit()
+                successor = _promote_queued_successor_sync(thread.id)
+                if successor is not None:
+                    successors.append(successor)
+        except Exception:  # noqa: BLE001 - one bad approval must not stop the sweep
+            log.warning("kria_approval_expiry_failed", approval_id=str(approval_id), exc_info=True)
+    return successors
+
+
+def _reconcile_kria_turns_body() -> dict[str, int]:
     with sync_session() as db:
         database_now = db.execute(select(func.now())).scalar_one()
         turns = list(

@@ -1,5 +1,6 @@
 import AVFoundation
 import KriaMediaEngine
+import os
 import SwiftUI
 import ImageIO
 import UIKit
@@ -502,6 +503,26 @@ struct NativeEditorTemporaryVideo {
     private var pendingPreviewGeneration: String?
     private var changedSections: Set<EditorSection> = []
     private var explicitlyDirtySections: Set<EditorSection> = []
+    /// Highest chat-draft revision already staged (or deliberately left to the
+    /// conflict path) so an undo/discard is not re-applied by the next sync.
+    private var appliedChatDraftRevision: Int?
+    /// The document exactly as staged from a chat draft, and its lanes. While
+    /// the live document still matches it lane-for-lane the only unsaved edits
+    /// are the chat's, which the server already holds in its draft head, so
+    /// they need no editor-commit before the next chat message.
+    private var chatStagedDocument: EditorDocument?
+    private var chatStagedSections: Set<EditorSection> = []
+
+    var hasOnlyChatStagedChanges: Bool {
+        guard hasUnsavedChanges, let staged = chatStagedDocument, !changedSections.isEmpty,
+              changedSections.isSubset(of: chatStagedSections), pendingText == nil else { return false }
+        for section in changedSections {
+            var probe = document
+            copy(section, from: staged, into: &probe)
+            if probe != document { return false }
+        }
+        return true
+    }
     private var pendingRenderRetrySections: Set<EditorSection> = []
     private var clipIDsBySlot: [String: UUID] = [:]
     private var compatibilityClipMetadata: [UUID: (sourceClipIndex: Int?, slotID: String?)] = [:]
@@ -1013,12 +1034,18 @@ struct NativeEditorTemporaryVideo {
             let requestedVariantKey = variantID ?? snapshot.variantKey
             if let jobID { authoritativeVariant = try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) }
             else { authoritativeVariant = nil }
-            draft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
+            let loadedDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
+            draft = loadedDraft
             configureCapabilities(from: authoritativeVariant)
             cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); pendingRenderRetrySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
+            appliedChatDraftRevision = nil; chatStagedDocument = nil; chatStagedSections = []
             itemID = snapshot.itemID; variantKey = requestedVariantKey
             durationSourcesInvalidated = false
             setAuthoritativeDuration(Self.number(authoritativeVariant?["duration_s"]))
+            if conversationRuntimeVersion == 2,
+               let staged = stagedChatDocument(snapshot: snapshot, draft: loadedDraft, variant: authoritativeVariant) {
+                applyStagedChatDocument(staged, revision: snapshot.draftRevision)
+            }
             refreshDuration()
             if let output = authoritativeVariant?["output_url"]?.stringValue, let url = URL(string: output) {
                 // See installPlayer's isCurrent doc comment: render_status
@@ -1042,9 +1069,58 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// True when the rendered variant is the generation this editor's clean
+    /// baseline was built from. Documents cannot be compared directly: each
+    /// fetch mints fresh placeholder asset ids for slots that lack one.
+    private func variantUnchanged(_ variant: [String: JSONValue]?) -> Bool {
+        guard let generation = variant?["render_generation_id"]?.stringValue, !generation.isEmpty else { return false }
+        return generation == cleanDocument.revision.baseGeneration
+    }
+
+    /// The chat draft's staged lanes as a document, or nil when the draft is
+    /// stale/absent/already applied (see `DraftSnapshot.stagedChatEdit`).
+    private func stagedChatDocument(snapshot: DraftSnapshot, draft: EditorDraft, variant: [String: JSONValue]?) -> (document: EditorDocument, sections: Set<EditorSection>)? {
+        let edit = snapshot.stagedChatEdit(over: Self.snapshotPreservingClipMetadata(draft), variant: variant, appliedRevision: appliedChatDraftRevision)
+        Self.stagingLog.debug("draft received rev=\(snapshot.draftRevision, privacy: .public) applied=\(self.appliedChatDraftRevision ?? -1, privacy: .public) gen=\(variant?["render_generation_id"]?.stringValue ?? "-", privacy: .public) staged=\(edit.map { $0.sections.map(\.rawValue).sorted().joined(separator: ",") } ?? "skipped", privacy: .public)")
+        guard let edit else { return nil }
+        var value = EditorDocument(snapshot: edit.snapshot)
+        value.revision.number = draft.revision
+        return (value, edit.sections)
+    }
+
+    /// Show a staged chat edit as unsaved changes on top of the clean document.
+    /// The clean baseline stays on the undo stack, so one Undo discards it.
+    private func applyStagedChatDocument(_ staged: (document: EditorDocument, sections: Set<EditorSection>), revision: Int) {
+        appendUndo(document); redoStack.removeAll()
+        document = staged.document
+        changedSections.formUnion(staged.sections)
+        appliedChatDraftRevision = revision
+        refreshDirtyState()
+        chatStagedDocument = staged.document
+        chatStagedSections = staged.sections
+        Self.stagingLog.debug("staged applied rev=\(revision, privacy: .public) dirty=\(self.changedSections.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); preview rebuild scheduled")
+        // Same path a local edit takes: make sure the live preview recompiles now.
+        scheduleSourcePreviewUpdate()
+    }
+
     /// Reconcile the same project after an agent turn. A response that arrives
     /// after a manual edit cannot replace it; conflict resolution remains explicit.
+    private static let stagingLog = Logger(subsystem: "com.kria.app", category: "chat-staging")
+    private var syncNeedsRetry = false
+
     func synchronizePromptRevision() async {
+        // A concurrent save/hydration can change the clean baseline while this
+        // suspends; a dropped sync would otherwise leave a chat edit invisible
+        // until the editor is reloaded (nothing else re-polls without new events).
+        for attempt in 0..<3 {
+            syncNeedsRetry = false
+            await runPromptRevisionSync()
+            guard syncNeedsRetry, !Task.isCancelled else { return }
+            Self.stagingLog.debug("sync retry attempt=\(attempt + 1, privacy: .public)")
+        }
+    }
+
+    private func runPromptRevisionSync() async {
         guard loadState == .loaded, !isSaving, let api, let threadID else { return }
         promptRefreshSequence &+= 1
         let sequence = promptRefreshSequence
@@ -1095,25 +1171,55 @@ struct NativeEditorTemporaryVideo {
             let nextVariantKey = snapshot.variantKey
             let nextDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: variant)
             let sameTarget = nextJobID == jobID && nextVariantKey == variantKey && snapshot.itemID == itemID
+            // A different job needs its video reloaded: adoptLatestJob owns that.
+            if conversationRuntimeVersion == 2, nextJobID != jobID {
+                await adoptActiveJobFromThread(api: api, threadID: threadID)
+                return
+            }
             if conversationRuntimeVersion == 1, sameTarget, nextDraft.serverSnapshot == legacyPromptSnapshot,
                sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled {
                 if let previous = saveStateBeforePromptFailure { saveState = previous }
                 return
             }
             let nextDocument = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(nextDraft))
+            // A runtime-v2 chat turn parks its editor edit in the draft head
+            // (never rendered); show it as unsaved edits instead of ignoring it.
+            let staged = conversationRuntimeVersion == 2 && sameTarget
+                ? stagedChatDocument(snapshot: snapshot, draft: nextDraft, variant: variant) : nil
             guard sequence == promptRefreshSequence, !Task.isCancelled else { return }
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
-            guard cleanDocument == baseline else { return }
+            guard cleanDocument == baseline else { syncNeedsRetry = true; return }
             if let previous = saveStateBeforePromptFailure { saveState = previous }
-            guard !sameTarget || nextDocument != cleanDocument else { return }
-            guard !hasUnsavedChanges, pendingText == nil, !isSaving else {
+            guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
+            // Only the previous chat draft is unsaved: the newer cumulative
+            // head replaces it wholesale instead of conflicting with it.
+            let onlyChatStaged = hasOnlyChatStagedChanges
+            if onlyChatStaged, staged == nil, sameTarget, variantUnchanged(variant) { return }
+            guard !hasUnsavedChanges || onlyChatStaged, pendingText == nil, !isSaving else {
+                // Unsaved local edits. When the rendered variant is unchanged
+                // and the chat touched only lanes the creator has not, both
+                // sides can be kept lane-by-lane; otherwise stay explicit.
+                if let staged, variantUnchanged(variant), pendingText == nil, !isSaving,
+                   staged.sections.isDisjoint(with: changedSections.union(explicitlyDirtySections)) {
+                    appendUndo(document); redoStack.removeAll()
+                    var merged = document
+                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
+                    document = merged
+                    changedSections.formUnion(staged.sections)
+                    appliedChatDraftRevision = snapshot.draftRevision
+                    chatStagedDocument = nil
+                    refreshDirtyState(); refreshDuration()
+                    return
+                }
+                Self.stagingLog.debug("sync conflict: local edits overlap chat draft rev=\(snapshot.draftRevision, privacy: .public)")
                 saveState = .conflict
                 return
             }
             let selected = selection
             let time = currentTime
             draft = nextDraft
+            if !sameTarget { appliedChatDraftRevision = nil }
             if conversationRuntimeVersion == 1 { legacyPromptSnapshot = nextDraft.serverSnapshot }
             cleanDocument = document
             jobID = nextJobID; variantKey = nextVariantKey; itemID = snapshot.itemID
@@ -1122,6 +1228,7 @@ struct NativeEditorTemporaryVideo {
             changedSections.removeAll(); explicitlyDirtySections.removeAll()
             durationSourcesInvalidated = false
             setAuthoritativeDuration(Self.number(variant?["duration_s"]))
+            if let staged { applyStagedChatDocument(staged, revision: snapshot.draftRevision) }
             refreshDuration()
             if let selected, selectionExists(selected) { select(selected, seekToStart: false) }
             else { select(nil) }
@@ -1129,6 +1236,15 @@ struct NativeEditorTemporaryVideo {
             await prepareSourcePreview()
         } catch {
             guard sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled else { return }
+            // The loaded job was superseded by a re-plan render (its editor
+            // routes now answer "content plan unavailable"/409): follow the
+            // thread to its current job instead of reporting a refresh failure.
+            if conversationRuntimeVersion == 2,
+               let apiError = error as? APIError, apiError == .contentPlanUnavailable || apiError == .conflict {
+                let before = jobID
+                await adoptActiveJobFromThread(api: api, threadID: threadID)
+                if jobID != before || newerJobPrompt != nil { return }
+            }
             // A refresh error temporarily owns the banner. Any intervening
             // save/render status assignment relinquishes that ownership.
             let previous = saveStateBeforePromptFailure ?? saveState
@@ -1148,6 +1264,9 @@ struct NativeEditorTemporaryVideo {
 
     func needsReload(for project: ProjectSummary) -> Bool {
         guard loadState == .loaded else { return true }
+        // A re-plan can render a NEW job for the same thread; the loaded
+        // session then still shows the old job's video.
+        if let target = project.activeJobID, let jobID, target != jobID { return true }
         guard let loadedServerRevision else { return false }
         return loadedServerRevision != project.serverRevision
     }
@@ -1190,6 +1309,58 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// A newer render job than the one loaded is waiting on a manual-edit decision.
+    @Published private(set) var newerJobPrompt: ProjectSummary?
+
+    func isBehindActiveJob(_ project: ProjectSummary) -> Bool {
+        guard loadState == .loaded, let target = project.activeJobID, let jobID else { return false }
+        return target != jobID
+    }
+
+    /// The thread's active job changed (a re-plan rendered a new video). Edits
+    /// staged from chat belong to the old job and are obsolete, so they are
+    /// dropped and the new job loads automatically. The creator's own unsaved
+    /// edits are never discarded silently: they raise `newerJobPrompt` instead.
+    func adoptLatestJob(_ project: ProjectSummary, api: any KriaAPIClient) async {
+        guard isBehindActiveJob(project), !isSaving else { return }
+        if hasUnsavedChanges, !hasOnlyChatStagedChanges {
+            newerJobPrompt = project
+            return
+        }
+        await switchToLatestJob(project, api: api)
+    }
+
+    /// Switch now; discards any unsaved edits (caller has decided).
+    func switchToLatestJob(_ project: ProjectSummary, api: any KriaAPIClient) async {
+        newerJobPrompt = nil
+        await load(project: project, api: api)
+        await refreshDeviceRender()
+    }
+
+    /// Ask the server which job the thread points at now, then run the adopt decision.
+    func adoptActiveJobFromThread(api: any KriaAPIClient, threadID: UUID) async {
+        guard let thread = try? await api.project(threadID: threadID) else { return }
+        await adoptLatestJob(thread.summary, api: api)
+    }
+
+    func keepEditingCurrentJob() { newerJobPrompt = nil }
+
+    /// The thread now points at a different render job: the old job's player,
+    /// source composition and device-render identity must not keep showing.
+    private func discardPlaybackForNewJob() {
+        sourcePreviewTask?.cancel()
+        previewRefreshTask?.cancel(); pendingPreviewGeneration = nil
+        promptRefreshSequence &+= 1
+        sourcePreviewSequence += 1
+        player?.pause()
+        player = nil
+        finishedRenderURL = nil; finishedRenderPlayer = nil; finishedRenderIsCurrent = true
+        sourcePreview = nil; sourceCompiler = nil; sourcePool = nil; resolvedSources = nil
+        sourcePreviewState = .idle; sourcePreviewGeneration = nil
+        previewVariant = [:]
+        pendingDeviceRenderIdentity = nil
+    }
+
     /// Gallery rows are render jobs, not creation-thread IDs. Promote the job
     /// through the server's idempotent editor route, then project its live
     /// variant into the same local draft model used by conversation projects.
@@ -1206,6 +1377,7 @@ struct NativeEditorTemporaryVideo {
     ) async {
         self.api = api
         self.threadID = threadID
+        if let previous = jobID, previous != editorJobID { discardPlaybackForNewJob() }
         jobID = editorJobID
         isSaving = true
         saveState = .saving
@@ -1287,6 +1459,16 @@ struct NativeEditorTemporaryVideo {
                     isCurrent: variant["render_status"]?.stringValue == "ready")
             } else if let url = try? await api.playbackURL(jobID: editorJobID) {
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
+            }
+            // A chat turn may already have drafted edits for this render:
+            // stage them as unsaved. Never let this block opening the editor.
+            appliedChatDraftRevision = nil; chatStagedDocument = nil; chatStagedSections = []
+            if conversationRuntimeVersion == 2, let threadID, let head = try? await api.draft(threadID: threadID),
+               head.itemID == resolvedPlanItemID, head.variantKey == resolved.variantID,
+               head.baseJobID.flatMap(UUID.init) == editorJobID,
+               let staged = stagedChatDocument(snapshot: head, draft: loadedDraft, variant: variant) {
+                applyStagedChatDocument(staged, revision: head.draftRevision)
+                refreshDuration()
             }
             loadState = .loaded
             await prepareSourcePreview()
@@ -1489,6 +1671,7 @@ struct NativeEditorTemporaryVideo {
                 // created while media downloaded and keep Undo's base consistent.
                 document = try base.hydrate(document, duration: duration)
                 cleanDocument = try base.hydrate(cleanDocument, duration: duration)
+                chatStagedDocument = try chatStagedDocument.map { try base.hydrate($0, duration: duration) }
                 undoStack = try undoStack.map { try base.hydrate($0, duration: duration) }
                 redoStack = try redoStack.map { try base.hydrate($0, duration: duration) }
                 let source = NativeTimelineSource(mediaID: base.mediaID, sourceURL: base.url, original: nil, localRequired: false)
@@ -1513,6 +1696,7 @@ struct NativeEditorTemporaryVideo {
                 #endif
                 document = try NativePhoneTalkingSource.hydrate(document, clipIndex: phoneTalkingIndex, duration: duration, removed: removed)
                 cleanDocument = try NativePhoneTalkingSource.hydrate(cleanDocument, clipIndex: phoneTalkingIndex, duration: duration, removed: removed)
+                chatStagedDocument = try chatStagedDocument.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
                 undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
                 redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
                 refreshDuration()
@@ -1520,6 +1704,7 @@ struct NativeEditorTemporaryVideo {
             if previewVariant["resolved_archetype"] == .string("narrated") {
                 document = try NativeNarratedSourceTiming.hydrate(document, sources: sources)
                 cleanDocument = try NativeNarratedSourceTiming.hydrate(cleanDocument, sources: sources)
+                chatStagedDocument = try chatStagedDocument.map { try NativeNarratedSourceTiming.hydrate($0, sources: sources) }
                 undoStack = try undoStack.map { try NativeNarratedSourceTiming.hydrate($0, sources: sources) }
                 redoStack = try redoStack.map { try NativeNarratedSourceTiming.hydrate($0, sources: sources) }
                 refreshDuration()
@@ -3263,6 +3448,35 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// Whether a standalone text bar may be deleted from the editor, and why not.
+    /// Caption cues belong to the Captions panel; bars linked to a card go with the
+    /// card; lyric lines are generated. Everything else (title, clip labels, closing,
+    /// the creator's own text) drops out of `text_elements`, which the server treats
+    /// as a user deletion (full-replacement; guided tombstone `user_removed`).
+    enum TextDeletion: Equatable {
+        case allowed
+        case blocked(String)
+        var isAllowed: Bool { self == .allowed }
+    }
+
+    func textDeletion(id: String) -> TextDeletion {
+        guard let element = document.textElements.first(where: { $0.id == id }) else { return .blocked("This text no longer exists.") }
+        guard canEditSection(.text) else { return .blocked("Text is locked for this render.") }
+        if element.isCaption { return .blocked("Captions are managed in the Captions panel.") }
+        if element.role == "lyric_line" { return .blocked("Lyric lines follow the song’s lyrics.") }
+        if let link = element.raw["visual_block_id"], link != .null { return .blocked("This text belongs to a card. Delete the card instead.") }
+        return .allowed
+    }
+
+    /// One undo step; the live preview recompiles through the document change.
+    @discardableResult
+    func deleteText(id: String) -> Bool {
+        guard textDeletion(id: id).isAllowed else { return false }
+        transactDocument(section: .text) { $0.textElements.removeAll { $0.id == id } }
+        if selection?.id == id { select(nil) }
+        return true
+    }
+
     func removeVisualSelection(_ selected: EditorSelection) {
         switch selected.kind {
         case .mediaOverlay: removeMediaOverlay(id: selected.id)
@@ -3655,6 +3869,7 @@ struct NativeEditorTemporaryVideo {
                 refreshDuration()
             }
             acknowledge(acknowledged, generation: response.generation, submittedDocument: submittedDocument)
+            chatStagedDocument = nil; chatStagedSections = []
             if hasPostSubmitEdits {
                 let acknowledgedRevision = document.revision
                 undoStack = postSubmitUndo.map { value in

@@ -48,6 +48,19 @@ struct NativeEditorTextPanel: View {
             HStack {
                 Text("Text").font(KriaFont.body(isConnectedPanel ? 18 : 15).weight(.semibold))
                 Spacer()
+                if session.textDeletion(id: id).isAllowed {
+                    Button {
+                        performOutgoingCleanup()
+                        if session.deleteText(id: id) { onDone() }
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                            .font(KriaFont.body(14).weight(.semibold))
+                            .foregroundStyle(KriaColor.failureText)
+                            .frame(minWidth: 64, minHeight: 44)
+                    }
+                    .accessibilityLabel("Delete text")
+                    .accessibilityIdentifier("native-editor-text-delete-panel")
+                }
                 Button { performOutgoingCleanup(); onDone() } label: {
                     Text("Done").frame(minWidth: 64, minHeight: 44)
                         .background(isConnectedPanel ? KriaColor.ink.opacity(0.06) : Color.clear, in: Capsule())

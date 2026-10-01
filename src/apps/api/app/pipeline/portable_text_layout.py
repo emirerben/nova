@@ -15,6 +15,22 @@ def resolved_font_variations(font: skia.Font) -> dict[str, float]:
     return {int(axis.axis).to_bytes(4, "big").decode("ascii"): axis.value for axis in coordinates}
 
 
+def _unresolved(font: skia.Font, text: str) -> str:
+    """Sanitised pointer to the first character the font cannot map (for logs and 422s)."""
+    for char in text:
+        glyphs = font.textToGlyphs(char)
+        if len(glyphs) != 1 or glyphs[0] == 0:
+            return f"U+{ord(char):04X} in {text[:40]!r}"
+    return f"{len(text)} characters but {len(font.textToGlyphs(text))} glyphs in {text[:40]!r}"
+
+
+def legacy_glyphs_resolvable(font: skia.Font, text: str) -> bool:
+    """True when every character maps to exactly one glyph (the unshaped model's premise)."""
+    flat = text.replace("\n", "")
+    glyphs = font.textToGlyphs(flat)
+    return len(glyphs) == len(flat) and all(glyph != 0 for glyph in glyphs)
+
+
 def resolve_legacy_glyphs(font: skia.Font, text: str, spacing_px: float) -> list[PositionedGlyph]:
     """Match Skia drawString's unshaped glyph/advance model, including tracking.
 
@@ -23,7 +39,7 @@ def resolve_legacy_glyphs(font: skia.Font, text: str, spacing_px: float) -> list
     """
     glyph_ids = font.textToGlyphs(text)
     if len(glyph_ids) != len(text) or any(glyph == 0 for glyph in glyph_ids):
-        raise ValueError("font cannot resolve every legacy text glyph")
+        raise ValueError(f"font cannot resolve every legacy text glyph ({_unresolved(font, text)})")
     widths = font.getWidths(glyph_ids)
     x = 0.0
     glyphs = []
@@ -276,6 +292,11 @@ def _compile_text_overlay(
         effect == "smooth-type" or bool(overlay.get("shape_text"))
     )
     resolved = cloud._resolve_typeface_for_overlay(overlay)
+    if not shaped and not legacy_glyphs_resolvable(skia.Font(resolved.typeface, 40), text):
+        # A character the font has no glyph for (emoji, an unusual symbol, a combining
+        # sequence) cannot be pinned to legacy glyph ids. Saving must never fail on a
+        # creator's text: lay it out through the shaped path, which the phone resolves.
+        shaped = True
     font_asset = bundled_font_asset(resolved.file, asset_id="font-" + resolved.file)
     spacing_em = cloud.resolve_letter_spacing_em(overlay.get("letter_spacing"))
     wrap = (

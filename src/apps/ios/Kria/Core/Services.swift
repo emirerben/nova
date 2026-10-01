@@ -1591,6 +1591,14 @@ extension DraftSnapshot {
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
                 "motion_runtime_hash", "camera_effects", "carousel_moment",
             ]
+            // A chat-authored editor draft (kind `editor`, flat commit-shaped
+            // lane keys) carries its edited lanes in `sections`. The rendered
+            // variant is the clean baseline, so drop those lane copies unless
+            // the variant supplies them; `stagedChatEdit` re-applies them as
+            // unsaved edits when the draft is current.
+            for lane in Self.stagedLaneKeys where lane.section != .timeline && editorPayload[lane.key] != nil {
+                for key in lane.sectionKeys where authoritativeVariant[key] == nil { sections[key] = nil }
+            }
             for key in directKeys where authoritativeVariant[key] != nil {
                 sections[key] = authoritativeVariant[key]
             }
@@ -1700,6 +1708,111 @@ extension DraftSnapshot {
             etag: etag,
             serverSnapshot: document
         )
+    }
+
+    /// Chat-authored editor changes staged on top of the rendered variant.
+    struct StagedChatEdit: Equatable {
+        /// Lanes whose overlaid content differs from `base` and must be saved.
+        var sections: Set<EditorSection>
+        /// `base` with the chat-changed lanes overlaid (decode with `EditorDocument`).
+        var snapshot: [String: JSONValue]
+    }
+
+    /// Editor-commit key (flat draft key) -> lane. The server keeps the lanes a
+    /// chat turn touched as flat commit-shaped keys beside the nested `sections`
+    /// copy (`kria_editor_ops.merge_editor_draft`), so the flat keys identify
+    /// the changed lanes and `sections` carries their full content.
+    private static let stagedLaneKeys: [(key: String, section: EditorSection, sectionKeys: [String])] = [
+        ("timeline_slots", .timeline, ["timeline_slots"]), ("text_elements", .text, ["text_elements"]),
+        ("caption_cues", .captions, ["caption_cues"]), ("caption_meta", .captionMeta, ["caption_meta"]),
+        ("mix", .mix, ["mix"]), ("music_track_id", .music, ["music_track_id", "music_window"]),
+        ("music_window", .music, ["music_track_id", "music_window"]), ("remove_music", .music, ["music_track_id", "music_window"]),
+        ("background_music", .backgroundMusic, ["background_music"]), ("lyrics", .lyrics, ["lyrics"]),
+        ("orientation", .orientation, ["orientation"]), ("sound_effects", .soundEffects, ["sound_effects"]),
+        ("media_overlays", .mediaOverlays, ["media_overlays"]), ("visual_blocks", .visualBlocks, ["visual_blocks"]),
+        ("motion_scenes", .motionScenes, ["motion_scenes", "motion_runtime_hash"]),
+        ("camera_effects", .cameraEffects, ["camera_effects"]),
+        ("carousel_moment", .carouselMoment, ["carousel_moment"]), ("title", .title, ["title"]),
+    ]
+
+    /// Overlay a runtime-v2 chat draft (`draft.apply_editor_ops`, kind `editor`)
+    /// onto `base`, the rendered-variant-authoritative snapshot. Chat edits are
+    /// UNSAVED: nothing renders until the creator saves. Returns nil when the
+    /// draft is not an editor head, is stale (its `base_generation` is not the
+    /// variant's current `render_generation_id` — a save/render happened since),
+    /// was already applied (`appliedRevision`), or changes nothing.
+    func stagedChatEdit(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?) -> StagedChatEdit? {
+        guard let variant, snapshot["kind"]?.stringValue == "editor" else { return nil }
+        if let appliedRevision, draftRevision <= appliedRevision { return nil }
+        guard let draftPayload = Self.object(snapshot["editor_payload"]),
+              let draftBase = draftPayload["base_generation"]?.stringValue, !draftBase.isEmpty,
+              draftBase == variant["render_generation_id"]?.stringValue else { return nil }
+        // The flat keys are the complete compiled lane values; `sections` may be
+        // absent (first chat edit on a non-editor head) or stale for a lane, so
+        // the flat value wins and `sections` only fills lanes it does not carry.
+        let draftSections = Self.object(draftPayload["sections"]) ?? [:]
+        func draftValue(_ key: String) -> JSONValue? { draftPayload[key] ?? draftSections[key] }
+        var payload = Self.object(base["editor_payload"]) ?? [:]
+        let baseSections = Self.object(payload["sections"]) ?? [:]
+        var sections = baseSections
+        var changed: Set<EditorSection> = []
+        for lane in Self.stagedLaneKeys where draftPayload[lane.key] != nil && !changed.contains(lane.section) {
+            var candidate = sections
+            if lane.section == .timeline {
+                guard let merged = Self.mergedTimeline(draft: Self.array(draftValue("timeline_slots")), base: Self.array(baseSections["timeline_slots"])) else { continue }
+                candidate["timeline_slots"] = .array(merged)
+            } else {
+                for key in lane.sectionKeys {
+                    if key == "music_track_id", draftPayload["remove_music"] == .bool(true) { candidate[key] = .null }
+                    else if let value = draftValue(key) { candidate[key] = value }
+                }
+            }
+            let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(baseSections[$0]) }
+            guard differs else { continue }
+            sections = candidate; changed.insert(lane.section)
+        }
+        guard !changed.isEmpty else { return nil }
+        payload["sections"] = .object(sections)
+        var next = base; next["editor_payload"] = .object(payload)
+        return StagedChatEdit(sections: changed, snapshot: next)
+    }
+
+    /// Merge chat `TimelineSlotEdit` rows (wire shape) onto the editor's richer
+    /// slot rows by identity (`slot_id`, else `clip_index`) so media/asset
+    /// metadata survives. Draft order wins (reorder); base slots the draft does
+    /// not mention keep their place at the end. Nil when nothing changed.
+    private static func mergedTimeline(draft: [JSONValue], base: [JSONValue]) -> [JSONValue]? {
+        guard !draft.isEmpty else { return nil }
+        var unmatched = base.compactMap(object)
+        func take(_ row: [String: JSONValue]) -> [String: JSONValue]? {
+            let index = row["slot_id"]?.stringValue.flatMap { id in unmatched.firstIndex { $0["slot_id"]?.stringValue == id } }
+                ?? (row["slot_id"] == nil ? unmatched.firstIndex { $0["clip_index"] == row["clip_index"] } : nil)
+            return index.map { unmatched.remove(at: $0) }
+        }
+        var merged: [[String: JSONValue]] = []
+        for value in draft {
+            guard let row = object(value) else { continue }
+            var slot = take(row) ?? [:]
+            for (key, field) in row { slot[key] = field }
+            merged.append(slot)
+        }
+        merged.append(contentsOf: unmatched)
+        // A tombstone for a slot the base never listed is not a change.
+        let baseIDs = Set(base.compactMap { object($0)?["slot_id"]?.stringValue })
+        let effective = merged.filter { $0["removed"] != .bool(true) || baseIDs.contains($0["slot_id"]?.stringValue ?? "") }
+        guard strippingNulls(.array(effective.map(JSONValue.object))) != strippingNulls(.array(base)) else { return nil }
+        return merged.map(JSONValue.object)
+    }
+
+    /// Structural comparison key that treats absent and null fields alike (the
+    /// server projects full nullable rows; the phone's rows omit unset fields).
+    private static func strippingNulls(_ value: JSONValue?) -> JSONValue? {
+        switch value {
+        case let .object(object): return .object(object.compactMapValues { strippingNulls($0) })
+        case let .array(array): return .array(array.compactMap { strippingNulls($0) })
+        case .some(.null), .none: return nil
+        default: return value
+        }
     }
 
     fileprivate static func object(_ value: JSONValue?) -> [String: JSONValue]? { if case let .object(object) = value { object } else { nil } }

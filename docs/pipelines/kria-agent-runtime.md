@@ -136,7 +136,12 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   within +/-10%, literal text (whole-word, Turkish-aware match). `clip:<id>`
   is checked against that clip only; editor payloads carry no per-clip
   structure, so per-clip text on an editor edit is judged only by its exact
-  words (missing from the edit is `partial`, never `not_possible`). A
+  words (missing from the edit is `partial`, never `not_possible`), unless the
+  compiled edit carries a `text_diff` (persisted as `document.editor_text_diff`):
+  then `plan_facts_from_editor_payload` fills the per-clip facts and the check is
+  a real before/after one (`met`/`partial` per label; "just say X" / "only" must
+  match exactly). A style ask is `met` when the payload has edited text elements,
+  and a total-length ask when the timeline slots sum to the target. A
   requirement nothing could judge gets no receipt and no reply line: no
   checker (e.g. "add captions" or "make it warm"), or a neutral reason when the
   facts were missing (beats without a manifest, a strategy draft's clip order,

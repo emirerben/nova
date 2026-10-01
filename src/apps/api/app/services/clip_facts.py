@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import unicodedata
 from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -208,6 +209,160 @@ def order_by_capture_time(
     for slot, media_id in zip(slots, ranked, strict=True):
         ordered[slot] = media_id
     return CaptureOrdering(ordered, "capture_time", untimed)
+
+
+# ── Filming-hour display (KRI-219) ────────────────────────────────────────────
+
+# Capture times are stored in UTC only (the phone's local offset is dropped at
+# ``ClipCapture``), so showing "the hour it was filmed" needs a zone. Nothing
+# per-clip or per-creator carries one, so: an explicit zone the creator named,
+# else the zone of a single-zone country read off the clips' geocoded place,
+# else UTC. The label text never guesses; the reply names the basis.
+_SINGLE_ZONE_COUNTRIES: dict[str, str] = {
+    # Keys are diacritic-stripped and case-folded; the phone's geocoder answers in the
+    # DEVICE language ("Turquia" on a Portuguese phone), so each country lists its
+    # common spellings. Only countries with exactly one civil zone belong here.
+    **dict.fromkeys(
+        ("turkiye", "turkey", "turkei", "turquia", "turquie", "turkije", "turcja", "turchia"),
+        "Europe/Istanbul",
+    ),
+    **dict.fromkeys(
+        (
+            "united kingdom",
+            "birlesik krallik",
+            "reino unido",
+            "royaume-uni",
+            "grossbritannien",
+            "verenigd koninkrijk",
+        ),
+        "Europe/London",
+    ),
+    **dict.fromkeys(
+        ("germany", "almanya", "deutschland", "alemanha", "allemagne", "alemania", "duitsland"),
+        "Europe/Berlin",
+    ),
+    **dict.fromkeys(("italy", "italya", "italia", "italie", "italien"), "Europe/Rome"),
+    **dict.fromkeys(
+        ("greece", "yunanistan", "grecia", "grece", "griechenland", "griekenland"),
+        "Europe/Athens",
+    ),
+    **dict.fromkeys(
+        ("netherlands", "hollanda", "paises baixos", "pays-bas", "niederlande", "nederland"),
+        "Europe/Amsterdam",
+    ),
+    **dict.fromkeys(("japan", "japonya", "japao", "japon"), "Asia/Tokyo"),
+}
+
+
+def _fold_place(text: str) -> str:
+    stripped = unicodedata.normalize("NFKD", text.replace("\u0130", "i").replace("\u0131", "i"))
+    stripped = "".join(ch for ch in stripped if not unicodedata.combining(ch))
+    return " ".join(stripped.casefold().split())
+
+
+def zone_for_timezone_name(name: object) -> str | None:
+    """A validated IANA zone name, or None (never raises)."""
+    if not isinstance(name, str) or not name.strip() or len(name) > 64:
+        return None
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # noqa: PLC0415
+
+    try:
+        ZoneInfo(name.strip())
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return None
+    return name.strip()
+
+
+def _zone_of_facts(facts: Iterable[Mapping[str, Any]]) -> str | None:
+    """The single-zone country zone named by one clip's place fact, if any."""
+    for fact in facts:
+        if fact.get("kind") != "place":
+            continue
+        parts = [_fold_place(part) for part in str(fact.get("value") or "").split(",")]
+        for part in reversed(parts):  # the country is the last part of the geocode
+            zone = _SINGLE_ZONE_COUNTRIES.get(part)
+            if zone is not None:
+                return zone
+    return None
+
+
+def display_timezone(
+    facts_per_clip: Iterable[Iterable[Mapping[str, Any]]], override: object = None
+) -> tuple[str, str]:
+    """``(iana_name, basis)`` used to print filming hours; basis is "creator",
+    "place" or "utc".
+
+    THE one resolver (editor ops and the planner both call it), order-independent:
+    a zone the creator named wins; otherwise a non-UTC zone is used only when every
+    timed clip that HAS a place names a country of one single zone and they all agree
+    (a clip with no place abstains; a place in an unrecognised country forces UTC).
+    Different countries get UTC, stated, never a confident guess (2026-09-30: a UK clip
+    first in one order and a Turkish clip first in another printed the same clips two
+    hours apart).
+    """
+    named = zone_for_timezone_name(override)
+    if named is not None:
+        return named, "creator"
+    zones: set[str | None] = set()
+    for facts in facts_per_clip:
+        rows = [f for f in facts if isinstance(f, Mapping)]
+        if capture_time_from_facts(rows) is None:
+            continue
+        if not any(f.get("kind") == "place" for f in rows):
+            continue  # no place recorded: abstains (cannot contradict the others)
+        zones.add(_zone_of_facts(rows))
+    if len(zones) == 1 and None not in zones:
+        return next(iter(zones)), "place"  # type: ignore[arg-type]
+    return "UTC", "utc"
+
+
+TIME_FORMATS = ("hh_mm", "hour")
+
+
+def format_capture_hour(moment: datetime, zone: str, time_format: str = "hh_mm") -> str:
+    """24-hour ``HH:MM`` (default) or the zero-padded hour alone (``"hour"``) in ``zone``.
+
+    No locale is known for a creator today, so both are 24-hour. ``hour`` is the data
+    contract for "just the hour, not the minutes"; the display is the bare "14".
+    """
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+    local = moment.astimezone(ZoneInfo(zone))
+    return local.strftime("%H") if time_format == "hour" else local.strftime("%H:%M")
+
+
+def timezone_note(zone: str, basis: str) -> str:
+    """The plain-language basis a reply must state alongside filming hours."""
+    if basis == "utc":
+        return (
+            "Times are shown in UTC (your clips were filmed in more than one time zone, or "
+            "one I can't tell)."
+        )
+    return f"Times are shown in {zone.replace('_', ' ')} time."
+
+
+def ordered_capture_media(
+    media_ids: list[str], capture_times: Mapping[str, datetime], *, descending: bool = False
+) -> CaptureOrdering:
+    """Chronological order (or newest first) with untimed clips pinned in place.
+
+    Ascending is exactly :func:`order_by_capture_time`. Descending reuses the same
+    slot-pinning; ties keep their attachment order either way.
+    """
+    ordering = order_by_capture_time(media_ids, capture_times)
+    if not descending or ordering.basis != "capture_time":
+        return ordering
+    timed_slots = [i for i, media_id in enumerate(media_ids) if media_id in capture_times]
+    attach = {media_id: i for i, media_id in enumerate(media_ids)}
+    ranked = sorted(
+        (media_id for media_id in media_ids if media_id in capture_times),
+        key=lambda media_id: (capture_times[media_id], -attach[media_id]),
+        reverse=True,
+    )
+    ordered = list(media_ids)
+    for slot, media_id in zip(timed_slots, ranked, strict=True):
+        ordered[slot] = media_id
+    return CaptureOrdering(ordered, "capture_time", ordering.fallback_ids)
 
 
 # ── Landmark enrichment (best guess, inferred) ────────────────────────────────

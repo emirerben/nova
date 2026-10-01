@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import unicodedata
 import uuid
@@ -153,6 +154,53 @@ WITH_LANE = CurrentPlanShape(has_render=True, has_per_clip_text_lane=True)
 )
 def test_router_table(reqs, shape, message, expected) -> None:  # noqa: ANN001
     assert route_requirements(reqs, shape, message=message) == expected
+
+
+CAN_EDIT = CurrentPlanShape(has_render=True, has_per_clip_text_lane=True, can_edit_timeline=True)
+
+
+@pytest.mark.parametrize(
+    ("reqs", "shape", "message", "expected"),
+    [
+        # explicit move / positional removal -> editor ops when the clip family is open
+        ([_upd("order", "global")], CAN_EDIT, "move the Galata shot to the start", "editor_ops"),
+        ([_upd("select", "global")], CAN_EDIT, "remove clip 4", "editor_ops"),
+        ([_upd("select", "clip:c4")], CAN_EDIT, "drop that one", "editor_ops"),
+        ([_upd("select", "global", facts={"index": 4})], CAN_EDIT, "x", "editor_ops"),
+        # ...but never when clip ops are withheld (default / False)
+        ([_upd("order", "global")], WITH_LANE, "move the Galata shot to the start", "replan"),
+        (
+            [_upd("select", "global")],
+            CurrentPlanShape(True, True, None, False),
+            "remove clip 4",
+            "replan",
+        ),
+        # semantic selection / basis ordering / mixed kinds / redo stay with the planner
+        ([_upd("select", "global")], CAN_EDIT, "only keep the funniest clips", "replan"),
+        (
+            [_upd("order", "global", facts={"key": "capture_time"})],
+            CAN_EDIT,
+            "order by when I filmed",
+            "replan",
+        ),
+        (
+            [_upd("order", "global"), _upd("timing", "global")],
+            CAN_EDIT,
+            "move a to the start",
+            "replan",
+        ),
+        ([_upd("order", "global")], CAN_EDIT, "do it again based on my prompt", "replan"),
+    ],
+)
+def test_router_structural_asks_follow_timeline_capability(reqs, shape, message, expected) -> None:  # noqa: ANN001
+    assert route_requirements(reqs, shape, message=message) == expected
+
+
+def test_plan_shape_reads_clip_family_from_snapshot() -> None:
+    on = plan_shape_from_editor_snapshot({"text_bars": [], "allowed_op_families": ["text", "clip"]})
+    off = plan_shape_from_editor_snapshot({"text_bars": [], "allowed_op_families": ["text"]})
+    assert on.can_edit_timeline is True
+    assert off.can_edit_timeline is False
 
 
 @pytest.mark.parametrize(
@@ -646,6 +694,8 @@ def _wire_planner(monkeypatch, *, output, editor_plan, snapshot):  # noqa: ANN00
     db, creator_id = _planner_db(item)
     monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
     monkeypatch.setattr(settings, "clip_intents_enabled", False)
+    # These tests pin the extract-first router; the copilot-first fast path has its own.
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", False)
     manifest = _MANIFEST.model_copy(update={"item_id": str(item.id)})
     monkeypatch.setattr(
         planner, "resolve_item_creator_context", AsyncMock(return_value=(manifest, []))
@@ -867,7 +917,8 @@ def test_clip_scoped_text_checks_only_that_clip() -> None:
 def test_editor_payload_facts_never_report_per_clip_text_as_not_possible() -> None:
     facts = plan_facts_from_editor_payload({"text_elements": [{"text": "Galata"}]})
     assert check_requirement(_req("text", "clip:c1", literal="Galata"), facts).status == "met"
-    assert check_requirement(_req("text", "per_clip"), facts).status == "partial"
+    req = _req("text", "per_clip")
+    assert not is_judged(req, check_requirement(req, facts))
 
 
 def test_positional_shot_labels_count_as_per_clip_text() -> None:
@@ -1038,3 +1089,190 @@ def test_main_creator_scope_recognisers_ignore_model_authored_brief_text() -> No
 
     assert run(brief_enabled=True) == "selected"
     assert run() == "all"  # brief off: legacy behaviour is untouched
+
+
+# --------------------------------------------- KRI-219 editor-turn receipts
+
+
+def test_editor_restyle_is_met_when_text_elements_were_edited() -> None:
+    req = _req("style", "global", description="make all the labels yellow")
+    facts = plan_facts_from_editor_payload({"text_elements": [{"id": "a", "color": "#FFD400"}]})
+    assert check_requirement(req, facts).status == "met"
+    # Nothing edited: nothing was judged, so no receipt and no "Partly".
+    unproven = check_requirement(req, plan_facts_from_editor_payload({"title": "x"}))
+    assert not is_judged(req, unproven)
+
+
+def test_editor_duration_met_when_slots_sum_to_target() -> None:
+    req = _req("timing", "global", facts={"duration_s": 20})
+    slots = [{"duration_s": 5.0, "clip_index": i, "in_s": 0} for i in range(4)]
+    assert (
+        check_requirement(req, plan_facts_from_editor_payload({"timeline_slots": slots})).status
+        == "met"
+    )
+    slots[0]["removed"] = True
+    assert (
+        check_requirement(req, plan_facts_from_editor_payload({"timeline_slots": slots})).status
+        == "partial"
+    )
+    # Unprovable length is unjudged (no receipt), on an editor turn or a strategy draft.
+    unproven = check_requirement(req, plan_facts_from_editor_payload({"title": "x"}))
+    assert not is_judged(req, unproven)
+    assert not is_judged(req, check_requirement(req, PlanFacts()))
+
+
+def test_editor_order_and_select_are_unjudged_not_partial() -> None:
+    facts = plan_facts_from_editor_payload({"timeline_slots": []})
+    for kind in ("order", "select"):
+        req = _req(kind, "global")
+        assert not is_judged(req, check_requirement(req, facts))
+
+
+# ── KRI-219 latency: copilot-first fast path ────────────────────────────────
+
+
+def _ops_plan(*names: str) -> KriaTurnPlan:
+    return KriaTurnPlan.model_validate(
+        {
+            "mode": "act",
+            "turn_value": "action",
+            "intents": [
+                {
+                    "intent_id": "apply-editor-ops",
+                    "tool_name": "draft.apply_editor_ops",
+                    "tool_version": 1,
+                    "arguments": {"operations": [{"op": n} for n in names], "summary": "s"},
+                }
+            ],
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_fast_path_answers_before_the_slow_extraction_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, item, creator_id, copilot, runs = _wire_planner(
+        monkeypatch,
+        output=SimpleNamespace(action=AskUser(**_ASK), brief_updates=[]),
+        editor_plan=_ops_plan("edit_text"),
+        snapshot={"text_bars": []},
+    )
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", True)
+    started = []
+
+    async def slow(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+        started.append(True)
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(planner, "_call_main_creator", slow)
+    result = await asyncio.wait_for(
+        plan_live_turn(
+            db,
+            thread_id=uuid.uuid4(),
+            item_id=item.id,
+            creator_id=creator_id,
+            user_message="Change the title to Ahmet Wedding Vlog",
+        ),
+        timeout=2,
+    )
+    assert started == [] and runs == []  # the slow extraction never blocked the turn
+    assert result.defer_brief is True and result.brief_route == "editor_ops"
+    assert result.brief_updates == () and result.brief_manifest is not None
+    copilot.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message,plan_ops",
+    [
+        ("Make it a completely different vibe, use only the best 3 clips", ["edit_text"]),
+        ("Do it again based on my prompt", ["edit_text"]),
+        ("remove clip 4", ["remove_clip"]),  # structural: keeps the router
+        ("x" * 400, ["edit_text"]),
+    ],
+)
+async def test_fast_path_declines_replan_structural_and_long_asks(
+    monkeypatch: pytest.MonkeyPatch, message: str, plan_ops: list[str]
+) -> None:
+    output = SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("select", "global")])
+    db, item, creator_id, copilot, runs = _wire_planner(
+        monkeypatch, output=output, editor_plan=_ops_plan(*plan_ops), snapshot={"text_bars": []}
+    )
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", True)
+    result = await plan_live_turn(
+        db, thread_id=uuid.uuid4(), item_id=item.id, creator_id=creator_id, user_message=message
+    )
+    assert runs, "the extraction ran on the critical path"
+    assert result.defer_brief is False and result.brief_route == "replan"
+
+
+@pytest.mark.asyncio
+async def test_fast_path_kill_switch_restores_extract_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, item, creator_id, _copilot, runs = _wire_planner(
+        monkeypatch,
+        output=SimpleNamespace(
+            action=AskUser(**_ASK), brief_updates=[_upd("text", "title", literal="N")]
+        ),
+        editor_plan=_ops_plan("edit_text"),
+        snapshot={"text_bars": []},
+    )
+    result = await plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item.id,
+        creator_id=creator_id,
+        user_message="Change the title to N",
+    )
+    assert runs and result.defer_brief is False
+    assert [u.literal for u in result.brief_updates] == ["N"]
+
+
+@pytest.mark.asyncio
+async def test_a_copilot_refusal_on_a_text_ask_is_not_turned_into_a_replan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """2026-10-01: "add a label to each video ... about what it is" was refused by the copilot
+    and then fell through to a full re-plan (labels from place facts + a re-render)."""
+    refusal = KriaTurnPlan(mode="respond", turn_value="recovery", response="I can't label those.")
+    db, item, creator_id, _copilot, runs = _wire_planner(
+        monkeypatch,
+        output=SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("text", "per_clip")]),
+        editor_plan=refusal,
+        snapshot={"text_bars": []},
+    )
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", True)
+    result = await plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item.id,
+        creator_id=creator_id,
+        user_message="Add a label to each video with the same style as the title about what it is",
+    )
+    assert result.plan is refusal and runs == [] and result.defer_brief is True
+
+
+@pytest.mark.asyncio
+async def test_router_reuses_the_first_copilot_answer_instead_of_calling_it_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Copilot-first declined, the router then said editor_ops: no second copilot call."""
+    refusal = KriaTurnPlan(mode="respond", turn_value="recovery", response="I can't do that.")
+    db, item, creator_id, copilot, _runs = _wire_planner(
+        monkeypatch,
+        output=SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("style", "global")]),
+        editor_plan=refusal,
+        snapshot={"text_bars": [], "allowed_op_families": ["text"]},
+    )
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", True)
+    result = await plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item.id,
+        creator_id=creator_id,
+        user_message="make everything feel calmer",
+    )
+    assert copilot.await_count == 1
+    assert result.plan is refusal and result.brief_route == "editor_ops"

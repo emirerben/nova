@@ -1315,6 +1315,15 @@ class Settings(BaseSettings):
             "groups."
         ),
     )
+    kria_guided_timeline_ops: bool = Field(
+        default=False,
+        description=(
+            "KRI-219: let the Kria chat copilot reorder/trim/retime/split/remove clips and "
+            "set transitions on guided-native (story) variants. Per-clip label bars follow "
+            "their segment through the edit (services/kria_editor_timeline.py). Off keeps "
+            "guided variants text-only in chat, byte-identical to before."
+        ),
+    )
     guided_story_editor_v2_enabled: bool = Field(
         default=False,
         description=(
@@ -1519,6 +1528,14 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # KRI-219 latency: serve short in-place text/label/order edits with the fast copilot
+    # BEFORE the pro-model requirement extraction (which then runs off the critical
+    # path). false = the previous extract-first order for every post-render turn.
+    kria_copilot_first_enabled: bool = True
+    # Analyse a thread's clips in the background after attach (KRI-219) so the copilot
+    # knows what the footage shows (`analysis["understanding"]`). Needs a Gemini key.
+    # false = no analysis; chat edits then clarify instead of describing clips.
+    kria_clip_understanding_enabled: bool = True
     # Owner-safe "Nova steps" activity feed projected from pipeline_trace +
     # phase_log + AgentRun (app/services/nova_steps.py) onto the generative
     # job status response. Ships OFF -- `steps` stays None (byte-identical

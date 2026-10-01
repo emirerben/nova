@@ -1,0 +1,1409 @@
+{
+ "errors_all_removed": {
+  "error": {
+   "code": "TIMELINE_EMPTY"
+  }
+ },
+ "errors_bounds": {
+  "error": {
+   "code": "TIMELINE_SOURCE_BOUNDS"
+  }
+ },
+ "errors_clip": {
+  "error": {
+   "code": "TIMELINE_UNKNOWN_CLIP"
+  }
+ },
+ "errors_duration": {
+  "error": {
+   "code": "TIMELINE_INVALID_DURATION"
+  }
+ },
+ "errors_empty": {
+  "error": {
+   "code": "TIMELINE_EMPTY"
+  }
+ },
+ "errors_parent": {
+  "error": {
+   "code": "TIMELINE_INVALID_PARENT"
+  }
+ },
+ "identity": {
+  "lanes": {
+   "media_overlays": [
+    {
+     "end_s": 4.0,
+     "id": "ov-1",
+     "segment_id": "s2",
+     "start_s": 2.0
+    }
+   ],
+   "motion_scenes": [
+    {
+     "end_frame_exclusive": 120,
+     "id": "ms-1",
+     "segment_id": "s2",
+     "start_frame": 60
+    }
+   ],
+   "sound_effects": [
+    {
+     "at_s": 3.0,
+     "id": "sfx-1",
+     "segment_id": "s2"
+    },
+    {
+     "at_s": 7.0,
+     "id": "sfx-2",
+     "segment_id": "s4"
+    }
+   ],
+   "text_elements": [
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 8.0,
+     "font_family": "DM Sans",
+     "id": "guided-title",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 76,
+     "start_s": 0.0,
+     "text": "Weekend in Lisbon",
+     "y_frac": 0.16
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 2.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m0",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 58,
+     "start_s": 0.0,
+     "text": "Label m0",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 4.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m1",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s2",
+     "size_px": 58,
+     "start_s": 2.0,
+     "text": "Label m1",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 6.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m2",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s3",
+     "size_px": 58,
+     "start_s": 4.0,
+     "text": "Label m2",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 8.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m3",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s4",
+     "size_px": 58,
+     "start_s": 6.0,
+     "text": "Label m3",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "end_s": 1.6,
+     "id": "caption-1",
+     "position": "bottom",
+     "role": "generative_intro",
+     "source_params": {
+      "source": "caption_cue"
+     },
+     "start_s": 0.4,
+     "text": "spoken line"
+    }
+   ],
+   "tombstones": [],
+   "visual_blocks": [
+    {
+     "end_s": 8.0,
+     "id": "vb-1",
+     "segment_id": "s1",
+     "start_s": 0.0
+    }
+   ]
+  },
+  "segments": [
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m0",
+    "output_end_s": 2.0,
+    "output_start_s": 0.0,
+    "parent_segment_id": null,
+    "segment_id": "s1",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m1",
+    "output_end_s": 4.0,
+    "output_start_s": 2.0,
+    "parent_segment_id": null,
+    "segment_id": "s2",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m2",
+    "output_end_s": 6.0,
+    "output_start_s": 4.0,
+    "parent_segment_id": null,
+    "segment_id": "s3",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m3",
+    "output_end_s": 8.0,
+    "output_start_s": 6.0,
+    "parent_segment_id": null,
+    "segment_id": "s4",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   }
+  ],
+  "state_hash_set": true
+ },
+ "remove": {
+  "lanes": {
+   "media_overlays": [],
+   "motion_scenes": [],
+   "sound_effects": [
+    {
+     "at_s": 5.0,
+     "id": "sfx-2",
+     "segment_id": "s4"
+    }
+   ],
+   "text_elements": [
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 6.0,
+     "font_family": "DM Sans",
+     "id": "guided-title",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 76,
+     "start_s": 0.0,
+     "text": "Weekend in Lisbon",
+     "y_frac": 0.16
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 4.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m2",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s3",
+     "size_px": 58,
+     "start_s": 2.0,
+     "text": "Label m2",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 6.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m3",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s4",
+     "size_px": 58,
+     "start_s": 4.0,
+     "text": "Label m3",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "end_s": 1.6,
+     "id": "caption-1",
+     "position": "bottom",
+     "role": "generative_intro",
+     "source_params": {
+      "source": "caption_cue"
+     },
+     "start_s": 0.4,
+     "text": "spoken line"
+    }
+   ],
+   "tombstones": [
+    {
+     "lane": "text_elements",
+     "reason": "anchored_interval_removed",
+     "record": {
+      "alignment": "center",
+      "color": "#FFF8F0",
+      "effect": "static",
+      "end_s": 2.0,
+      "font_family": "DM Sans",
+      "id": "clip-label-media-m0",
+      "position": "custom",
+      "role": "generative_intro",
+      "segment_id": "s1",
+      "size_px": 58,
+      "start_s": 0.0,
+      "text": "Label m0",
+      "x_frac": 0.5,
+      "y_frac": 0.78
+     },
+     "record_id": "clip-label-media-m0",
+     "segment_id": "s1"
+    },
+    {
+     "lane": "text_elements",
+     "reason": "anchored_interval_removed",
+     "record": {
+      "alignment": "center",
+      "color": "#FFF8F0",
+      "effect": "static",
+      "end_s": 4.0,
+      "font_family": "DM Sans",
+      "id": "clip-label-media-m1",
+      "position": "custom",
+      "role": "generative_intro",
+      "segment_id": "s2",
+      "size_px": 58,
+      "start_s": 2.0,
+      "text": "Label m1",
+      "x_frac": 0.5,
+      "y_frac": 0.78
+     },
+     "record_id": "clip-label-media-m1",
+     "segment_id": "s2"
+    },
+    {
+     "lane": "media_overlays",
+     "reason": "anchored_interval_removed",
+     "record": {
+      "end_s": 4.0,
+      "id": "ov-1",
+      "start_s": 2.0
+     },
+     "record_id": "ov-1",
+     "segment_id": null
+    },
+    {
+     "lane": "sound_effects",
+     "reason": "anchored_interval_removed",
+     "record": {
+      "at_s": 3.0,
+      "id": "sfx-1"
+     },
+     "record_id": "sfx-1",
+     "segment_id": null
+    },
+    {
+     "lane": "motion_scenes",
+     "reason": "anchored_interval_removed",
+     "record": {
+      "end_frame_exclusive": 120,
+      "id": "ms-1",
+      "start_frame": 60
+     },
+     "record_id": "ms-1",
+     "segment_id": null
+    }
+   ],
+   "visual_blocks": [
+    {
+     "end_s": 6.0,
+     "id": "vb-1",
+     "segment_id": "s1",
+     "start_s": 0.0
+    }
+   ]
+  },
+  "segments": [
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m0",
+    "output_end_s": 2.0,
+    "output_start_s": 0.0,
+    "parent_segment_id": null,
+    "segment_id": "s1",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m2",
+    "output_end_s": 4.0,
+    "output_start_s": 2.0,
+    "parent_segment_id": null,
+    "segment_id": "s3",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m3",
+    "output_end_s": 6.0,
+    "output_start_s": 4.0,
+    "parent_segment_id": null,
+    "segment_id": "s4",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   }
+  ],
+  "state_hash_set": true
+ },
+ "reorder": {
+  "lanes": {
+   "media_overlays": [
+    {
+     "end_s": 4.0,
+     "id": "ov-1",
+     "segment_id": "s2",
+     "start_s": 4.0
+    }
+   ],
+   "motion_scenes": [
+    {
+     "end_frame_exclusive": 121,
+     "id": "ms-1",
+     "segment_id": "s2",
+     "start_frame": 120
+    }
+   ],
+   "sound_effects": [
+    {
+     "at_s": 5.0,
+     "id": "sfx-1",
+     "segment_id": "s2"
+    },
+    {
+     "at_s": 7.0,
+     "id": "sfx-2",
+     "segment_id": "s4"
+    }
+   ],
+   "text_elements": [
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 8.0,
+     "font_family": "DM Sans",
+     "id": "guided-title",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 76,
+     "start_s": 2.0,
+     "text": "Weekend in Lisbon",
+     "y_frac": 0.16
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 4.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m0",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 58,
+     "start_s": 2.0,
+     "text": "Label m0",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 4.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m1",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s2",
+     "size_px": 58,
+     "start_s": 4.0,
+     "text": "Label m1",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 6.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m2",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s3",
+     "size_px": 58,
+     "start_s": 0.0,
+     "text": "Label m2",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 8.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m3",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s4",
+     "size_px": 58,
+     "start_s": 6.0,
+     "text": "Label m3",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "end_s": 1.6,
+     "id": "caption-1",
+     "position": "bottom",
+     "role": "generative_intro",
+     "source_params": {
+      "source": "caption_cue"
+     },
+     "start_s": 0.4,
+     "text": "spoken line"
+    }
+   ],
+   "tombstones": [],
+   "visual_blocks": [
+    {
+     "end_s": 8.0,
+     "id": "vb-1",
+     "segment_id": "s1",
+     "start_s": 2.0
+    }
+   ]
+  },
+  "segments": [
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m2",
+    "output_end_s": 2.0,
+    "output_start_s": 0.0,
+    "parent_segment_id": null,
+    "segment_id": "s3",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m0",
+    "output_end_s": 4.0,
+    "output_start_s": 2.0,
+    "parent_segment_id": null,
+    "segment_id": "s1",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m1",
+    "output_end_s": 6.0,
+    "output_start_s": 4.0,
+    "parent_segment_id": null,
+    "segment_id": "s2",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m3",
+    "output_end_s": 8.0,
+    "output_start_s": 6.0,
+    "parent_segment_id": null,
+    "segment_id": "s4",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   }
+  ],
+  "state_hash_set": true
+ },
+ "retime_crop_look": {
+  "lanes": {
+   "media_overlays": [
+    {
+     "end_s": 3.0,
+     "id": "ov-1",
+     "segment_id": "s2",
+     "start_s": 1.0
+    }
+   ],
+   "motion_scenes": [
+    {
+     "end_frame_exclusive": 90,
+     "id": "ms-1",
+     "segment_id": "s2",
+     "start_frame": 30
+    }
+   ],
+   "sound_effects": [
+    {
+     "at_s": 2.0,
+     "id": "sfx-1",
+     "segment_id": "s2"
+    },
+    {
+     "at_s": 6.0,
+     "id": "sfx-2",
+     "segment_id": "s4"
+    }
+   ],
+   "text_elements": [
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 7.0,
+     "font_family": "DM Sans",
+     "id": "guided-title",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 76,
+     "start_s": 0.0,
+     "text": "Weekend in Lisbon",
+     "y_frac": 0.16
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 1.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m0",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 58,
+     "start_s": 0.0,
+     "text": "Label m0",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 3.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m1",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s2",
+     "size_px": 58,
+     "start_s": 1.0,
+     "text": "Label m1",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 5.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m2",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s3",
+     "size_px": 58,
+     "start_s": 3.0,
+     "text": "Label m2",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 7.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m3",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s4",
+     "size_px": 58,
+     "start_s": 5.0,
+     "text": "Label m3",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "end_s": 1.6,
+     "id": "caption-1",
+     "position": "bottom",
+     "role": "generative_intro",
+     "source_params": {
+      "source": "caption_cue"
+     },
+     "start_s": 0.4,
+     "text": "spoken line"
+    }
+   ],
+   "tombstones": [],
+   "visual_blocks": [
+    {
+     "end_s": 7.0,
+     "id": "vb-1",
+     "segment_id": "s1",
+     "start_s": 0.0
+    }
+   ]
+  },
+  "segments": [
+   {
+    "duration_s": 1.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m0",
+    "output_end_s": 1.0,
+    "output_start_s": 0.0,
+    "parent_segment_id": null,
+    "playback_rate": 2.0,
+    "segment_id": "s1",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "golden_hour",
+    "media_id": "m1",
+    "output_end_s": 3.0,
+    "output_start_s": 1.0,
+    "parent_segment_id": null,
+    "segment_id": "s2",
+    "source_crop": {
+     "height": 0.5,
+     "width": 0.5,
+     "x": 0.1,
+     "y": 0.1
+    },
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m2",
+    "output_end_s": 5.0,
+    "output_start_s": 3.0,
+    "parent_segment_id": null,
+    "segment_id": "s3",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m3",
+    "output_end_s": 7.0,
+    "output_start_s": 5.0,
+    "parent_segment_id": null,
+    "segment_id": "s4",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   }
+  ],
+  "state_hash_set": true
+ },
+ "split": {
+  "lanes": {
+   "media_overlays": [
+    {
+     "end_s": 4.0,
+     "id": "ov-1",
+     "segment_id": "s2",
+     "start_s": 2.0
+    }
+   ],
+   "motion_scenes": [
+    {
+     "end_frame_exclusive": 120,
+     "id": "ms-1",
+     "segment_id": "s2",
+     "start_frame": 60
+    }
+   ],
+   "sound_effects": [
+    {
+     "at_s": 3.0,
+     "id": "sfx-1",
+     "segment_id": "s2"
+    },
+    {
+     "at_s": 7.0,
+     "id": "sfx-2",
+     "segment_id": "s4"
+    }
+   ],
+   "text_elements": [
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 8.0,
+     "font_family": "DM Sans",
+     "id": "guided-title",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 76,
+     "start_s": 0.0,
+     "text": "Weekend in Lisbon",
+     "y_frac": 0.16
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 2.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m0",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 58,
+     "start_s": 0.0,
+     "text": "Label m0",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 4.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m1",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s2",
+     "size_px": 58,
+     "start_s": 2.0,
+     "text": "Label m1",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 6.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m2",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s3",
+     "size_px": 58,
+     "start_s": 4.0,
+     "text": "Label m2",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 8.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m3",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s4",
+     "size_px": 58,
+     "start_s": 6.0,
+     "text": "Label m3",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "end_s": 1.6,
+     "id": "caption-1",
+     "position": "bottom",
+     "role": "generative_intro",
+     "source_params": {
+      "source": "caption_cue"
+     },
+     "start_s": 0.4,
+     "text": "spoken line"
+    }
+   ],
+   "tombstones": [],
+   "visual_blocks": [
+    {
+     "end_s": 8.0,
+     "id": "vb-1",
+     "segment_id": "s1",
+     "start_s": 0.0
+    }
+   ]
+  },
+  "segments": [
+   {
+    "duration_s": 0.8,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m0",
+    "output_end_s": 0.8,
+    "output_start_s": 0.0,
+    "parent_segment_id": null,
+    "segment_id": "s1",
+    "source_end_s": 0.8,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 1.2,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m0",
+    "output_end_s": 2.0,
+    "output_start_s": 0.8,
+    "parent_segment_id": "s1",
+    "segment_id": "s1b",
+    "source_end_s": 2.0,
+    "source_start_s": 0.8,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m1",
+    "output_end_s": 4.0,
+    "output_start_s": 2.0,
+    "parent_segment_id": null,
+    "segment_id": "s2",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m2",
+    "output_end_s": 6.0,
+    "output_start_s": 4.0,
+    "parent_segment_id": null,
+    "segment_id": "s3",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m3",
+    "output_end_s": 8.0,
+    "output_start_s": 6.0,
+    "parent_segment_id": null,
+    "segment_id": "s4",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   }
+  ],
+  "state_hash_set": true
+ },
+ "transitions": {
+  "lanes": {
+   "media_overlays": [
+    {
+     "end_s": 3.5,
+     "id": "ov-1",
+     "segment_id": "s2",
+     "start_s": 1.7
+    }
+   ],
+   "motion_scenes": [
+    {
+     "end_frame_exclusive": 105,
+     "id": "ms-1",
+     "segment_id": "s2",
+     "start_frame": 51
+    }
+   ],
+   "sound_effects": [
+    {
+     "at_s": 2.7,
+     "id": "sfx-1",
+     "segment_id": "s2"
+    },
+    {
+     "at_s": 6.4,
+     "id": "sfx-2",
+     "segment_id": "s4"
+    }
+   ],
+   "text_elements": [
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 7.4,
+     "font_family": "DM Sans",
+     "id": "guided-title",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 76,
+     "start_s": 0.0,
+     "text": "Weekend in Lisbon",
+     "y_frac": 0.16
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 1.7,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m0",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 58,
+     "start_s": 0.0,
+     "text": "Label m0",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 3.5,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m1",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s2",
+     "size_px": 58,
+     "start_s": 1.7,
+     "text": "Label m1",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 5.4,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m2",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s3",
+     "size_px": 58,
+     "start_s": 3.5,
+     "text": "Label m2",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 7.4,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m3",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s4",
+     "size_px": 58,
+     "start_s": 5.4,
+     "text": "Label m3",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "end_s": 1.6,
+     "id": "caption-1",
+     "position": "bottom",
+     "role": "generative_intro",
+     "source_params": {
+      "source": "caption_cue"
+     },
+     "start_s": 0.4,
+     "text": "spoken line"
+    }
+   ],
+   "tombstones": [],
+   "visual_blocks": [
+    {
+     "end_s": 7.4,
+     "id": "vb-1",
+     "segment_id": "s1",
+     "start_s": 0.0
+    }
+   ]
+  },
+  "segments": [
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m0",
+    "output_end_s": 2.0,
+    "output_start_s": 0.0,
+    "parent_segment_id": null,
+    "segment_id": "s1",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "crossfade",
+    "transition_duration_s": 0.3
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m1",
+    "output_end_s": 3.7,
+    "output_start_s": 1.7,
+    "parent_segment_id": null,
+    "segment_id": "s2",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "dip_to_black",
+    "transition_duration_s": 0.2
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m2",
+    "output_end_s": 5.5,
+    "output_start_s": 3.5,
+    "parent_segment_id": null,
+    "segment_id": "s3",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "flash",
+    "transition_duration_s": 0.1
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m3",
+    "output_end_s": 7.4,
+    "output_start_s": 5.4,
+    "parent_segment_id": null,
+    "segment_id": "s4",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   }
+  ],
+  "state_hash_set": true
+ },
+ "trim": {
+  "lanes": {
+   "media_overlays": [
+    {
+     "end_s": 3.0,
+     "id": "ov-1",
+     "segment_id": "s2",
+     "start_s": 1.0
+    }
+   ],
+   "motion_scenes": [
+    {
+     "end_frame_exclusive": 90,
+     "id": "ms-1",
+     "segment_id": "s2",
+     "start_frame": 30
+    }
+   ],
+   "sound_effects": [
+    {
+     "at_s": 2.0,
+     "id": "sfx-1",
+     "segment_id": "s2"
+    },
+    {
+     "at_s": 6.0,
+     "id": "sfx-2",
+     "segment_id": "s4"
+    }
+   ],
+   "text_elements": [
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 7.0,
+     "font_family": "DM Sans",
+     "id": "guided-title",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 76,
+     "start_s": 0.0,
+     "text": "Weekend in Lisbon",
+     "y_frac": 0.16
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 1.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m0",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s1",
+     "size_px": 58,
+     "start_s": 0.0,
+     "text": "Label m0",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 3.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m1",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s2",
+     "size_px": 58,
+     "start_s": 1.0,
+     "text": "Label m1",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 5.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m2",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s3",
+     "size_px": 58,
+     "start_s": 3.0,
+     "text": "Label m2",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "alignment": "center",
+     "color": "#FFF8F0",
+     "effect": "static",
+     "end_s": 7.0,
+     "font_family": "DM Sans",
+     "id": "clip-label-media-m3",
+     "position": "custom",
+     "role": "generative_intro",
+     "segment_id": "s4",
+     "size_px": 58,
+     "start_s": 5.0,
+     "text": "Label m3",
+     "x_frac": 0.5,
+     "y_frac": 0.78
+    },
+    {
+     "end_s": 1.6,
+     "id": "caption-1",
+     "position": "bottom",
+     "role": "generative_intro",
+     "source_params": {
+      "source": "caption_cue"
+     },
+     "start_s": 0.4,
+     "text": "spoken line"
+    }
+   ],
+   "tombstones": [],
+   "visual_blocks": [
+    {
+     "end_s": 7.0,
+     "id": "vb-1",
+     "segment_id": "s1",
+     "start_s": 0.0
+    }
+   ]
+  },
+  "segments": [
+   {
+    "duration_s": 1.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m0",
+    "output_end_s": 1.0,
+    "output_start_s": 0.0,
+    "parent_segment_id": null,
+    "segment_id": "s1",
+    "source_end_s": 2.0,
+    "source_start_s": 1.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m1",
+    "output_end_s": 3.0,
+    "output_start_s": 1.0,
+    "parent_segment_id": null,
+    "segment_id": "s2",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m2",
+    "output_end_s": 5.0,
+    "output_start_s": 3.0,
+    "parent_segment_id": null,
+    "segment_id": "s3",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   },
+   {
+    "duration_s": 2.0,
+    "look_adjustments": null,
+    "look_preset": "none",
+    "media_id": "m3",
+    "output_end_s": 7.0,
+    "output_start_s": 5.0,
+    "parent_segment_id": null,
+    "segment_id": "s4",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0,
+    "transition_after": "cut",
+    "transition_duration_s": 0.0
+   }
+  ],
+  "state_hash_set": true
+ }
+}

@@ -17,6 +17,7 @@ from app.agents._schemas.creator_agent import (
 from app.kria import planner
 from app.kria.planner import (
     _full_creator_request,
+    _phone_editor_reply,
     _plan_editor_revision,
     adapt_creator_action,
     adapt_editor_action,
@@ -160,6 +161,13 @@ def test_full_creator_request_preserves_all_user_messages_and_current_message_la
         )
         is None
     )
+
+
+def test_phone_editor_reply_replaces_web_validate_and_stage_wording() -> None:
+    assert "validate and stage" not in _phone_editor_reply(
+        "I prepared this edit for the editor to validate and stage."
+    )
+    assert _phone_editor_reply("I prepared a tighter opening.") == "I prepared a tighter opening."
 
 
 def test_model_cannot_author_render_target_pins() -> None:
