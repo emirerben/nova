@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.46.0] - 2026-10-01
+
+### Changed
+- feat(ios): chat turns send the editor's unsaved state; no save-before-send (flag-gated) (#1300) <!-- release-pr: 1300 -->
+
 ## [0.77.45.0] - 2026-10-01
 
 ### Changed
