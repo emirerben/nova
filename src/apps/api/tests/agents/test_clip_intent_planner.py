@@ -58,6 +58,36 @@ def test_parse_keeps_distinct_operations_for_one_attribute() -> None:
     )
     out = _agent().parse(raw, _input())
     assert [intent.op for intent in out.intents] == ["label", "group", "order", "caption"]
+
+
+def test_parse_reads_null_label_source_as_clip() -> None:
+    # Live Flash output on 2026-10-01 (golden/mixed): a null label_source failed
+    # the whole inventory, so the creator got a clarifying question instead.
+    raw = json.dumps(
+        {
+            "intents": [
+                {
+                    "intent_id": "sport",
+                    "op": "label",
+                    "attribute": "each sport",
+                    "label_source": None,
+                    "transcript_kind": None,
+                    "source_quote": "Label each sport",
+                },
+                {
+                    "intent_id": "pub-caption",
+                    "op": "caption",
+                    "attribute": "pub chapter",
+                    "label_source": None,
+                    "creator_text": "Post-match",
+                    "source_quote": 'say "Post-match" on the pub chapter',
+                },
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _input())
+    assert [intent.label_source for intent in out.intents] == ["clip", "clip"]
     assert out.intents[-1].creator_text == "Post-match"
 
 

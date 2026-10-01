@@ -1,0 +1,20 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-01.1",
+  "input": {
+    "creator_request": "Creative brief (everything the creator has asked for, still in force):\n- [style/global] fun upbeat montage of our Barcelona weekend\n- [text/global] add captions\nLatest message: Add captions",
+    "latest_user_message": "Add captions",
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\":[],\"question\":null}",
+  "output": {
+    "intents": [],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_intents": [],
+    "expect_any": false,
+    "expect_question": false
+  }
+}
