@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v60"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v61"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -3900,6 +3900,7 @@ def _coerce_text_appearance(
 
 _CREATIVE_CAPTION_RE = re.compile(
     r"\b(explain\w*|describ\w*|what (is|s|was|happens|happened)|which part|"
+    r"what (it|they|this|that) (is|are|shows?|looks?)|about what|"
     r"part of (the |a |my )?\w+|what each|a\u00e7\u0131kla\w*|acikla\w*|anlat\w*|"
     r"hangi b\u00f6l\u00fcm\w*|ne(ler)? ol\w+|ne oluyor)\b"
 )

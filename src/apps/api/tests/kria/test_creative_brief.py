@@ -1228,3 +1228,27 @@ async def test_fast_path_kill_switch_restores_extract_first(
     )
     assert runs and result.defer_brief is False
     assert [u.literal for u in result.brief_updates] == ["N"]
+
+
+@pytest.mark.asyncio
+async def test_a_copilot_refusal_on_a_text_ask_is_not_turned_into_a_replan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """2026-10-01: "add a label to each video ... about what it is" was refused by the copilot
+    and then fell through to a full re-plan (labels from place facts + a re-render)."""
+    refusal = KriaTurnPlan(mode="respond", turn_value="recovery", response="I can't label those.")
+    db, item, creator_id, _copilot, runs = _wire_planner(
+        monkeypatch,
+        output=SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("text", "per_clip")]),
+        editor_plan=refusal,
+        snapshot={"text_bars": []},
+    )
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", True)
+    result = await plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item.id,
+        creator_id=creator_id,
+        user_message="Add a label to each video with the same style as the title about what it is",
+    )
+    assert result.plan is refusal and runs == [] and result.defer_brief is True

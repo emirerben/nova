@@ -768,6 +768,9 @@ _FAST_PATH_OPS = frozenset(
     }
 )
 _FAST_PATH_MAX_CHARS = 280
+# A text/label/caption ask: when the copilot answers it with a question or a refusal, that
+# answer stands (a full re-plan would write labels from place/time facts and re-render).
+_TEXT_EDIT_ASK = re.compile(r"\b(labels?|captions?|texts?|titles?|wording|font)\b")
 # Wording that needs the planner even when the copilot could stage something.
 _REPLAN_CUES = re.compile(
     r"\b(vibe|different|another version|new (edit|video|version|cut)|recut|re-?cut|re-?do|"
@@ -860,6 +863,17 @@ async def plan_live_turn(
                 brief_route="editor_ops",
                 brief_clip_ids=tuple(str(media.media_id) for media in manifest.media),
                 brief_manifest=manifest,
+                defer_brief=True,
+            )
+        if (
+            fast_plan is not None
+            and fast_plan.mode == "respond"
+            and _TEXT_EDIT_ASK.search(" ".join(user_message.casefold().split()))
+        ):
+            return PlannedKriaTurn(
+                plan=fast_plan,
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
                 defer_brief=True,
             )
         # The copilot call rolled the session back, which EXPIRES every loaded row

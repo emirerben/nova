@@ -63,12 +63,12 @@ def _response(outcome: str, ops: list[dict] | None = None):
     [
         (
             "clarification",
-            "Add a text to each clip explaining the part of the wedding",
+            "tighten the pacing a bit",
             _response("clarification"),
         ),
         (
             "unsupported",
-            "Add a text to each clip explaining the part of the wedding",
+            "tighten the pacing a bit",
             _response("unsupported"),
         ),
         (

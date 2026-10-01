@@ -747,6 +747,7 @@ def test_zone_note_survives_the_canned_success_reply(guided) -> None:
         "Add a text to each clip explaining the part of the wedding (could be airport pickup)",
         "write what is happening in each clip",
         "her klibe düğünün hangi bölümü olduğunu yaz",
+        "Add a label to each video with the same style as the title about what it is",
     ],
 )
 def test_descriptive_caption_ask_is_a_clarification_not_place_names(guided, utterance) -> None:
