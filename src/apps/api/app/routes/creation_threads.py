@@ -43,7 +43,7 @@ from app.db_locks import (
     acquire_locked_rows,
     transient_sqlstate,
 )
-from app.kria.api_schemas import KriaProblemOut, ThreadDeltaOut
+from app.kria.api_schemas import EDITOR_STATE_MAX_BYTES, KriaProblemOut, ThreadDeltaOut
 from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.media_sources import (
@@ -319,6 +319,10 @@ class CreationCapabilitiesOut(BaseModel):
     runtime_versions: list[Literal[1, 2]] = Field(default_factory=lambda: [1])
     visuals_enabled: bool = False
     phone_rendering: DeviceRenderCapabilities = Field(default_factory=DeviceRenderCapabilities)
+    # The chat copilot continues on the editor's unsaved state when the turn body
+    # carries `editor_state` (KRIA_EDITOR_STATE_TURNS_ENABLED); max serialized size.
+    editor_state_turns: bool = False
+    editor_state_max_bytes: int = EDITOR_STATE_MAX_BYTES
 
 
 class CreateBody(StrictBody):
@@ -3323,6 +3327,8 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
         "visuals_enabled": bool(
             settings.overlay_autoplace_enabled or settings.guided_edit_capability_enabled
         ),
+        "editor_state_turns": bool(settings.kria_editor_state_turns_enabled),
+        "editor_state_max_bytes": EDITOR_STATE_MAX_BYTES,
         "formats": [
             {
                 "id": key,

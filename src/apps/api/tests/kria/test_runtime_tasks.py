@@ -537,6 +537,7 @@ def test_claim_owns_pending_turn_with_database_time_and_returns_trusted_snapshot
         "Open with the whisk",
         1,
         7,
+        None,
     )
     assert turn.status == "planning"
     assert turn.lease_owner == "task-7"

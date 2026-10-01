@@ -79,7 +79,14 @@ class RuntimeFailure(Exception):
 
 
 def request_digest(body: SubmitTurnBody) -> str:
-    encoded = json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    # `editor_state` is deliberately outside the digest: a retry of the same
+    # client_event_id carries a fresher snapshot of the editor, and the FIRST stored
+    # state wins -- it must never turn a replay into idempotency_key_reused.
+    encoded = json.dumps(
+        body.model_dump(mode="json", exclude={"editor_state"}),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -387,6 +394,16 @@ async def submit_turn(
         request_digest=digest,
         status=turn_status,
         queued_replaces_turn_id=queued_replaces_turn_id,
+        # Flag off: dropped silently, nothing stored (byte-identical to old clients).
+        **(
+            {
+                "editor_state": body.editor_state.model_dump(
+                    mode="json", exclude_unset=True, exclude_none=True
+                )
+            }
+            if body.editor_state is not None and settings.kria_editor_state_turns_enabled
+            else {}
+        ),
     )
     db.add(turn)
     await db.flush()
