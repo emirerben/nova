@@ -65,7 +65,7 @@ from app.agents._schemas.creator_policy import (
 )
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
 from app.agents.main_creator import (
-    MAIN_CREATOR_MAX_CONVERSATION,
+    MAIN_CREATOR_CONVERSATION_MAX,
     MainCreatorAgent,
     MainCreatorInput,
     MainCreatorOutput,
@@ -468,7 +468,7 @@ def _carried_brief_seed(previous_active_plan: dict[str, Any] | None, message: st
 # Session-event rows here carry up to CREATOR_REQUEST_MAX_CHARS each (the planner
 # truncates to 1000), so this builder keeps its own, smaller window; it must never
 # exceed the MainCreatorInput schema cap.
-_ROUTE_CONVERSATION_WINDOW = min(20, MAIN_CREATOR_MAX_CONVERSATION)
+_ROUTE_CONVERSATION_WINDOW = min(20, MAIN_CREATOR_CONVERSATION_MAX)
 
 
 def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:

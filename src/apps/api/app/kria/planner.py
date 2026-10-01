@@ -26,7 +26,7 @@ from app.agents._schemas.creator_agent import (
     ReviewDecision,
 )
 from app.agents.main_creator import (
-    MAIN_CREATOR_MAX_CONVERSATION,
+    MAIN_CREATOR_CONVERSATION_MAX,
     MainCreatorAgent,
     MainCreatorInput,
     MainCreatorOutput,
@@ -608,7 +608,7 @@ async def _load_creator_inputs(
                     CreationThreadEvent.content.is_not(None),
                 )
                 .order_by(CreationThreadEvent.sequence.desc())
-                .limit(MAIN_CREATOR_MAX_CONVERSATION)
+                .limit(MAIN_CREATOR_CONVERSATION_MAX)
             )
         )
         .scalars()

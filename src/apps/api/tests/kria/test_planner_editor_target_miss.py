@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 from structlog.testing import capture_logs
 
-from app.agents.main_creator import MAIN_CREATOR_MAX_CONVERSATION, MainCreatorInput
+from app.agents.main_creator import MAIN_CREATOR_CONVERSATION_MAX, MainCreatorInput
 from app.config import settings
 from app.kria import planner
 from app.models import CreationThread, CreatorAgentSession, Job
@@ -420,9 +420,9 @@ async def test_long_thread_conversation_is_most_recent_cap_rows_in_order(
         brief_on=False,
     )
     convo = inputs.agent_input.conversation
-    assert captured["limit"] == MAIN_CREATOR_MAX_CONVERSATION
+    assert captured["limit"] == MAIN_CREATOR_CONVERSATION_MAX
     assert [t["content"] for t in convo] == [
-        f"m{i}" for i in range(60 - MAIN_CREATOR_MAX_CONVERSATION, 60)
+        f"m{i}" for i in range(60 - MAIN_CREATOR_CONVERSATION_MAX, 60)
     ]
 
 
@@ -431,18 +431,18 @@ async def test_every_conversation_builder_respects_the_input_cap() -> None:
 
     from app.routes import creator_agent
 
-    assert MAIN_CREATOR_MAX_CONVERSATION <= (
+    assert MAIN_CREATOR_CONVERSATION_MAX <= (
         MainCreatorInput.model_fields["conversation"].metadata[0].max_length
     )
-    assert planner.MAIN_CREATOR_MAX_CONVERSATION is MAIN_CREATOR_MAX_CONVERSATION
-    assert "MAIN_CREATOR_MAX_CONVERSATION" in inspect.getsource(planner._load_creator_inputs)
+    assert planner.MAIN_CREATOR_CONVERSATION_MAX is MAIN_CREATOR_CONVERSATION_MAX
+    assert "MAIN_CREATOR_CONVERSATION_MAX" in inspect.getsource(planner._load_creator_inputs)
     assert "_ROUTE_CONVERSATION_WINDOW" in inspect.getsource(creator_agent._conversation)
-    assert creator_agent._ROUTE_CONVERSATION_WINDOW <= MAIN_CREATOR_MAX_CONVERSATION
+    assert creator_agent._ROUTE_CONVERSATION_WINDOW <= MAIN_CREATOR_CONVERSATION_MAX
     # The route builder caps even with a carried-brief header prepended.
     events = [
         SimpleNamespace(role="user", sequence=i, payload={"message": f"m{i}"}) for i in range(80)
     ]
-    assert len(creator_agent._conversation(events)) <= MAIN_CREATOR_MAX_CONVERSATION
+    assert len(creator_agent._conversation(events)) <= MAIN_CREATOR_CONVERSATION_MAX
 
 
 async def test_validation_error_on_first_path_falls_back_to_copilot(
