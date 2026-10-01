@@ -97,7 +97,12 @@ Flow (flag on):
    skip the inventory. Their renderers draw no clip intents and their captions are
    the creator's speech, so "Add captions" there is never a chapter `caption` op.
    `compile_strategy_to_plan` strips any footage intents the Main Creator proposed
-   for them, with a notice.
+   for them, with a notice. On other formats (montage) the planner prompt
+   (2026-10-01.1) returns no intent and no question for a general "add captions" /
+   "add subtitles" / "altyazı ekle" that names no clips and gives no caption words;
+   a `caption` op is only for one chapter the creator named or described. Unlike
+   the Talking skip this is a prompt rule, so the `montage_add_captions*` /
+   `montage_altyazi_ekle` live-eval fixtures are its guard.
 2. **Resolve, inside the chat turn** (`app/services/clip_intent_resolution.py`,
    DB-free, the session row lock is released around it): `ClipRequestResolverAgent`
    (text-only, media aliases, id set-membership) matches intents to the shared

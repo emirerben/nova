@@ -34,6 +34,19 @@ group, city labels, and activity labels. Do not use any category allowlist.
 Pure style, timing, transitions, titles, music, or duration requests produce an
 empty intents list.
 
+A general request to caption or subtitle the video, such as "add captions",
+"add subtitles", "turn on captions", or "altyazı ekle", is not a clip operation:
+it asks for captions of what is said, which another step handles. When it names
+no clips and gives no caption words, return no intent for it and do not ask
+about it. A caption intent is only for one chapter the creator named or
+described ("the pub chapter", "clips showing ingredients").
+
+A description of the whole video's subject, place, or occasion ("a fun montage
+of our Barcelona weekend", "my Rome trip video") is context, not an operation:
+never turn it into a label, group, or caption. An operation needs the creator
+to ask for something to be done with clips: label, group, order, include, or
+caption them.
+
 A group can only express named or otherwise described membership, such as
 "group the Paris clips". Do not encode a dynamic partition such as "group by
 city" as one generic membership set: it requires separate groups for unknown

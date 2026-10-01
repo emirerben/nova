@@ -61,7 +61,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_intent_planner",
         prompt_id="clip_intent_planner",
-        prompt_version="2026-09-24.1",
+        prompt_version="2026-10-01.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -132,6 +132,10 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         for index, raw_intent in enumerate(raw_intents):
             if not isinstance(raw_intent, dict):
                 raise SchemaError(f"clip_intent_planner: intents[{index}] is not an object")
+            if "label_source" in raw_intent and raw_intent["label_source"] is None:
+                # Flash copies the template's nullable neighbours and writes
+                # `"label_source": null`; null means the field's default, "clip".
+                raw_intent = {k: v for k, v in raw_intent.items() if k != "label_source"}
             try:
                 intent = PlannedClipIntent.model_validate(raw_intent)
             except ValidationError as exc:
