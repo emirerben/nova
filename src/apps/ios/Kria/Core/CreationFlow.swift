@@ -7,11 +7,16 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var runtimeVersions: [Int]? = nil
     var visualsEnabled: Bool? = nil
     var phoneRendering: PhoneRenderingCapabilities? = nil
+    /// Server accepts the editor's unsaved state with a chat turn (nil/false = legacy flush-then-send).
+    var editorStateTurns: Bool? = nil
+    var editorStateMaxBytes: Int? = nil
+    var editorStateTurnsEnabled: Bool { editorStateTurns == true }
     var preferredRuntimeVersion: Int { runtimeVersions?.contains(2) == true ? 2 : 1 }
     enum CodingKeys: String, CodingKey {
         case formats, media
         case runtimeVersions = "runtime_versions", visualsEnabled = "visuals_enabled"
         case phoneRendering = "phone_rendering"
+        case editorStateTurns = "editor_state_turns", editorStateMaxBytes = "editor_state_max_bytes"
     }
 }
 

@@ -279,6 +279,39 @@ final class KriaTests: XCTestCase {
         XCTAssertEqual(accepted.threadRevision, 4)
     }
 
+    func testEditorStateCapabilityDecodesAndDefaultsOff() throws {
+        let on = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"editor_state_turns":true,"editor_state_max_bytes":262144}"#.utf8))
+        XCTAssertTrue(on.editorStateTurnsEnabled)
+        XCTAssertEqual(on.editorStateMaxBytes, 262144)
+        let old = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[]}"#.utf8))
+        XCTAssertFalse(old.editorStateTurnsEnabled, "an old server omits the field: legacy flush")
+        XCTAssertNil(old.editorStateMaxBytes)
+    }
+
+    func testSubmitTurnSendsEditorStateOnlyWhenGivenOne() async throws {
+        final class Bodies: @unchecked Sendable { var values: [[String: Any]] = [] }
+        let captured = Bodies()
+        URLProtocolStub.handler = { request in
+            captured.values.append(try XCTUnwrap(JSONSerialization.jsonObject(with: Self.bodyData(request)) as? [String: Any]))
+            return (202, Data(#"{"turn_id":"turn-1","thread_revision":4,"status":"pending"}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let state = EditorStateRequest(baseGeneration: "g1", clientStateID: "state-1", lanes: EditorCommitRequest(title: "New title", baseGeneration: "g1"))
+        _ = try await api.submitTurn(threadID: PreviewFixtures.projectID, message: "Shorter", expectedRevision: 3, clientEventID: "e1", editorState: state)
+        _ = try await api.submitTurn(threadID: PreviewFixtures.projectID, message: "Shorter", expectedRevision: 3, clientEventID: "e2", editorState: nil)
+        _ = try await api.submitTurn(threadID: PreviewFixtures.projectID, message: "Shorter", expectedRevision: 3, clientEventID: "e3")
+
+        let bodies = captured.values
+        let sent = try XCTUnwrap(bodies[0]["editor_state"] as? [String: Any])
+        XCTAssertEqual(sent["version"] as? Int, 1)
+        XCTAssertEqual(sent["base_generation"] as? String, "g1")
+        XCTAssertEqual(sent["client_state_id"] as? String, "state-1")
+        let lanes = try XCTUnwrap(sent["lanes"] as? [String: Any])
+        XCTAssertEqual(lanes["title"] as? String, "New title")
+        XCTAssertNil(bodies[1]["editor_state"])
+        XCTAssertNil(bodies[2]["editor_state"])
+    }
+
     func testCreationThreadPreservesURLFreeListVariants() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
