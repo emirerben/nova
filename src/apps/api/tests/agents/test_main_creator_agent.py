@@ -637,3 +637,100 @@ def test_parse_accepts_propose_strategy_with_reaction_beats_and_closing_media() 
     assert [beat.beat_id for beat in strategy.reaction_beats] == ["greenwood", "greenwood-no"]
     assert strategy.closing_media is not None
     assert strategy.closing_media.from_trigger == "Salah"
+
+
+# --- KRI-238: "Add captions" on a one-clip phone Talking edit ---
+
+_PHONE_CLIP = "analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4"
+
+
+def _phone_talking_manifest(*media_ids: str) -> ResolvedCreatorManifest:
+    available = CapabilityAvailability(available=True)
+    return ResolvedCreatorManifest(
+        item_id="item-1",
+        edit_format="subtitled",
+        render_program="native",
+        media=[
+            CreatorMediaRef(media_id=media_id, kind="video", duration_s=14.8)
+            for media_id in media_ids or (_PHONE_CLIP,)
+        ],
+        # As resolved in prod: no guided proposals on a phone Talking edit.
+        capabilities={
+            "edit_format:subtitled": available,
+            "phone_source_audio": available,
+            "phone_format:subtitled": available,
+            "dispatch_render": available,
+        },
+        context_hash="a" * 64,
+        manifest_hash="b" * 64,
+    )
+
+
+def _add_captions_raw(*, media_scope: str | None, nested_evidence: bool = False) -> str:
+    """The Main Creator's answer to "Add captions" (local live run, 2026-10-01)."""
+    strategy = {
+        "direction": "native",
+        "edit_format": "subtitled",
+        "audio_strategy": "original_audio",
+        "media_scope": media_scope,
+        "caption_style": "auto",
+        "render_program": "native",
+        "selected_media_ids": [_PHONE_CLIP],
+        "target_duration_s": 14.8,
+        "rationale": "Play the whole clip so every spoken line gets a caption.",
+    }
+    evidence = {"opening_title": None, "licensed_sfx": None}
+    if nested_evidence:
+        strategy["render_intent_evidence"] = evidence
+    action = {
+        "kind": "propose_strategy",
+        "strategy": strategy,
+        "summary": "I'll add captions to your clip and keep its original audio.",
+    }
+    if not nested_evidence:
+        action["render_intent_evidence"] = evidence
+    return json.dumps({"action": action})
+
+
+def _phone_talking_input(manifest: ResolvedCreatorManifest) -> MainCreatorInput:
+    return MainCreatorInput(user_message="Add captions", capability_manifest=manifest)
+
+
+def test_all_media_scope_on_one_clip_phone_talking_edit_is_that_clip() -> None:
+    # Prod thread 467a02c4: "all" routed to guided proposals, which a phone
+    # Talking edit never has, so the answer was refused on every attempt.
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _add_captions_raw(media_scope="all"), _phone_talking_input(_phone_talking_manifest())
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    strategy = output.action.strategy
+    assert strategy.media_scope == "selected"
+    assert strategy.selected_media_ids == [_PHONE_CLIP]
+    assert strategy.render_program == "native"
+    assert strategy.edit_format == "subtitled"
+
+
+def test_all_media_scope_stays_strict_when_native_cannot_cover_every_clip() -> None:
+    from app.agents._runtime import SchemaError
+
+    manifest = _phone_talking_manifest("clip-a.mp4", "clip-b.mp4")
+    raw = _add_captions_raw(media_scope="all").replace(_PHONE_CLIP, "clip-a.mp4")
+    agent = MainCreatorAgent(None)  # type: ignore[arg-type]
+
+    with pytest.raises(SchemaError):
+        agent.parse(raw, _phone_talking_input(manifest))
+    # The retry is told which rule failed instead of repeating the answer blind.
+    assert "all-media scope requires the guided proposal capability" in (
+        agent.schema_clarification()
+    )
+
+
+def test_render_intent_evidence_nested_in_strategy_is_moved_beside_it() -> None:
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _add_captions_raw(media_scope=None, nested_evidence=True),
+        _phone_talking_input(_phone_talking_manifest()),
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.render_intent_evidence is not None

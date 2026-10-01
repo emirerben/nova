@@ -1,0 +1,97 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-01-v64",
+  "input": {
+    "utterance": "make it shorter",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "clip",
+        "text",
+        "transition"
+      ],
+      "editor_ops_version": 2,
+      "slots": [
+        {
+          "key": "s1",
+          "slot_id": "s1",
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 4,
+          "source_duration_s": 12.0,
+          "output_start_s": 0.0,
+          "output_end_s": 4.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s2",
+          "slot_id": "s2",
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 4,
+          "source_duration_s": 12.0,
+          "output_start_s": 4.0,
+          "output_end_s": 8.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s3",
+          "slot_id": "s3",
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 4,
+          "source_duration_s": 12.0,
+          "output_start_s": 8.0,
+          "output_end_s": 12.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        }
+      ],
+      "text_bars": [],
+      "total_duration_s": 12,
+      "max_duration_s": 120,
+      "remaining_duration_s": 108
+    }
+  },
+  "raw_text": "{\"intent\": \"clarify\", \"ops\": [], \"confidence\": 0.9, \"reply\": \"It's 12 seconds right now, so there isn't much to trim. Want 10 seconds or 8 seconds, or should I cut a clip instead?\", \"suggestions\": [\"Make it 10 seconds\", \"Make it 8 seconds\"], \"needs_clarification\": true}",
+  "output": {
+    "intent": "clarify",
+    "ops": [],
+    "confidence": 0.9,
+    "reply": "It's 12 seconds right now, so there isn't much to trim. Want 10 seconds or 8 seconds, or should I cut a clip instead?",
+    "suggestions": [
+      "Make it 10 seconds",
+      "Make it 8 seconds"
+    ],
+    "needs_clarification": true,
+    "outcome": "clarification",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "short video shorter with no number: only options at or above the 8s floor",
+    "lane": "copilot-vague-shorter",
+    "exact_component_ops": [],
+    "expected_intent": "clarify",
+    "needs_clarification": true,
+    "reply_contains": [
+      "12 seconds",
+      "10 seconds",
+      "8 seconds"
+    ]
+  }
+}
