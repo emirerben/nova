@@ -400,12 +400,12 @@ def _inputs_db(rows):  # noqa: ANN001, ANN202
     )
 
 
-async def test_long_thread_conversation_is_most_recent_20_in_order(
+async def test_long_thread_conversation_is_most_recent_cap_rows_in_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "clip_intents_enabled", False)
     monkeypatch.setattr(planner, "creator_context", lambda *_a: ("creator", "item"))
-    db, captured = _inputs_db(_event_rows(30))
+    db, captured = _inputs_db(_event_rows(60))
     item = SimpleNamespace(id=uuid.uuid4(), edit_format="montage")
     inputs = await planner._load_creator_inputs(
         db,
@@ -421,7 +421,9 @@ async def test_long_thread_conversation_is_most_recent_20_in_order(
     )
     convo = inputs.agent_input.conversation
     assert captured["limit"] == MAIN_CREATOR_MAX_CONVERSATION
-    assert [t["content"] for t in convo] == [f"m{i}" for i in range(10, 30)]
+    assert [t["content"] for t in convo] == [
+        f"m{i}" for i in range(60 - MAIN_CREATOR_MAX_CONVERSATION, 60)
+    ]
 
 
 async def test_every_conversation_builder_respects_the_input_cap() -> None:
@@ -434,10 +436,11 @@ async def test_every_conversation_builder_respects_the_input_cap() -> None:
     )
     assert planner.MAIN_CREATOR_MAX_CONVERSATION is MAIN_CREATOR_MAX_CONVERSATION
     assert "MAIN_CREATOR_MAX_CONVERSATION" in inspect.getsource(planner._load_creator_inputs)
-    assert "MAIN_CREATOR_MAX_CONVERSATION" in inspect.getsource(creator_agent._conversation)
+    assert "_ROUTE_CONVERSATION_WINDOW" in inspect.getsource(creator_agent._conversation)
+    assert creator_agent._ROUTE_CONVERSATION_WINDOW <= MAIN_CREATOR_MAX_CONVERSATION
     # The route builder caps even with a carried-brief header prepended.
     events = [
-        SimpleNamespace(role="user", sequence=i, payload={"message": f"m{i}"}) for i in range(40)
+        SimpleNamespace(role="user", sequence=i, payload={"message": f"m{i}"}) for i in range(80)
     ]
     assert len(creator_agent._conversation(events)) <= MAIN_CREATOR_MAX_CONVERSATION
 

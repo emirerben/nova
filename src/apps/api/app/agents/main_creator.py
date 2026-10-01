@@ -219,9 +219,10 @@ each clip", "facts": {}}, {"kind": "order", "scope": "global", "literal": null, 
 """.strip("\n")
 
 
-# Single source of truth for the conversation window; every builder of
-# MainCreatorInput.conversation must slice to this (most recent N, chronological).
-MAIN_CREATOR_MAX_CONVERSATION = 20
+# Schema cap for MainCreatorInput.conversation; every builder must slice to at most
+# this (most recent N, chronological). The planner builds up to this many rows of
+# <=1000 chars each (~10k tokens worst case); 20 was too small for long chat threads.
+MAIN_CREATOR_MAX_CONVERSATION = 40
 
 
 class MainCreatorInput(BaseModel):
