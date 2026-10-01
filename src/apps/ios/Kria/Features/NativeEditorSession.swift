@@ -2440,7 +2440,9 @@ struct NativeEditorTemporaryVideo {
             slot.durationS = nextOut - sourceIn
         }
         slot.durationBeats = nil; next.clips[index] = slot
-        reflowSlots(&next.clips, from: index + 1)
+        // Later clips ripple by construction (windows are a walk of the slot durations); the
+        // per-clip labels must ripple with them, derived from the gesture baseline every update.
+        rebaseGuidedLabels(&next, from: active.baseline)
 
         if next == active.baseline {
             if active.recordedUndo {
@@ -3958,8 +3960,11 @@ struct NativeEditorTemporaryVideo {
     private func transact(section: EditorSection, _ body: (inout EditorDraft) -> Void) {
         var next = draft; body(&next); guard next != draft else { return }
         invalidateDurationSources(for: Set([section]))
+        let before = document
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
-        replace(with: next); changedSections.insert(section); refreshDirtyState(); refreshDuration()
+        replace(with: next)
+        if section == .timeline { var rebased = document; rebaseGuidedLabels(&rebased, from: before); if rebased != document { document = rebased } }
+        changedSections.insert(section); refreshDirtyState(); refreshDuration()
     }
 
     func transactDocument(section: EditorSection, _ body: (inout EditorDocument) -> Void) {
@@ -3968,6 +3973,7 @@ struct NativeEditorTemporaryVideo {
 
     private func transactDocument(sections: Set<EditorSection>, _ body: (inout EditorDocument) -> Void) {
         var next = document; body(&next); guard next != document else { return }
+        rebaseGuidedLabels(&next, from: document)
         invalidateDurationSources(for: sections)
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
         document = next; changedSections.formUnion(sections); refreshDirtyState(); refreshDuration()
@@ -4361,6 +4367,10 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    private var carriesGuidedLabelsWithTimeline: Bool {
+        changedSections.contains(.timeline) && canEditSection(.text) && GuidedLabelRebase.hasLabels(document.textElements)
+    }
+
     private func commitRequest(sections: [String: JSONValue]?, baseGeneration: String) -> EditorCommitRequest {
         let value = sections ?? [:]
         func array(_ key: String, _ section: EditorSection) -> [JSONValue]? {
@@ -4375,7 +4385,11 @@ struct NativeEditorTemporaryVideo {
         let carouselObject = Self.object(value["carousel_moment"])
         return EditorCommitRequest(
             timelineSlots: array("timeline_slots", .timeline),
-            textElements: array("text_elements", .text),
+            // A guided timeline commit always carries the rebased label lane, like the server's
+            // copilot path: the server then treats text as authored and skips its own
+            // (right-biased, label-unaware) projection.
+            textElements: changedSections.contains(.text) || carriesGuidedLabelsWithTimeline
+                ? Self.array(value["text_elements"]) : nil,
             captionCues: array("caption_cues", .captions),
             captionMeta: object("caption_meta", .captionMeta),
             mix: changedSections.contains(.mix) ? (Self.object(value["mix"]) ?? Self.object(value["audio_mix"]) ?? [:]) : nil,
@@ -4457,8 +4471,16 @@ struct NativeEditorTemporaryVideo {
         let start = min(max(0, index), clips.count - 1)
         for i in start..<clips.count { let length = max(minimumClipDuration, clips[i].end - clips[i].start); let previousEnd = i == 0 ? 0 : clips[i - 1].end; clips[i].start = previousEnd; clips[i].end = previousEnd + length }
     }
-    private func reflowSlots(_ clips: inout [EditorTimelineSlot], from index: Int) {
-        _ = clips; _ = index
+    /// Retimes the per-clip label bars onto their clips after any change to clip
+    /// timing (trim, extend, reorder, delete, transition overlap, add). Runs inside the
+    /// same transaction as the timeline edit, so one Undo reverts both, and the text lane
+    /// then differs from the clean document and is saved alongside `timeline_slots`.
+    /// No-op unless a window actually moved and the text lane is editable.
+    private func rebaseGuidedLabels(_ next: inout EditorDocument, from previous: EditorDocument) {
+        guard GuidedLabelRebase.hasLabels(next.textElements), canEditSection(.text),
+              previous.clips != next.clips,
+              GuidedLabelRebase.windows(of: previous.clips) != GuidedLabelRebase.windows(of: next.clips) else { return }
+        next.textElements = GuidedLabelRebase.rebase(next.textElements, oldSlots: previous.clips, newSlots: next.clips)
     }
     private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil, isCurrent: Bool = true) {
         // A completed cloud render remains a useful, non-editable fallback
