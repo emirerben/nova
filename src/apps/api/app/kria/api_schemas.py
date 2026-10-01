@@ -55,7 +55,7 @@ class EditorStateTimelineSlot(TimelineSlotEdit):
     """
 
     media_id: str | None = Field(default=None, max_length=128)
-    media_kind: Literal["video", "image"] | None = None
+    media_kind: Literal["image", "video"] | None = None
     source_duration_s: float | None = Field(default=None, ge=0.0, le=36000.0)
 
 

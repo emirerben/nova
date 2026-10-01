@@ -3051,8 +3051,8 @@
           "media_kind": {
             "default": null,
             "enum": [
-              "video",
-              "image"
+              "image",
+              "video"
             ],
             "nullable": true,
             "title": "Media Kind",
