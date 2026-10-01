@@ -350,7 +350,7 @@ def _default_transcribe(
 def _default_silence_detect(path: str, *, min_silence_s: float) -> Any:
     from app.services.clip_speech import detect_silences_with_status
 
-    return detect_silences_with_status(path, min_silence_s=min_silence_s)
+    return detect_silences_with_status(path, min_silence_s=min_silence_s, ambient_adaptive=True)
 
 
 def _value(record: Any, *names: str) -> Any:

@@ -42,6 +42,32 @@ log = structlog.get_logger()
 _NOISE_FLOOR_DB = -30.0
 _MIN_SILENCE_S = 0.3
 
+# Ambient-adaptive silence (KRI-234). silencedetect compares every SAMPLE to an
+# absolute -30 dBFS floor, so rain/wind/traffic transients that peak above it
+# break every pause: a night-rain take (job 62716037) produced ZERO spans, rule 3
+# never tightened its 0.85 s pause and the 2.8 s silent tail was never trimmed.
+# The speech-cleanup callers therefore also read a short-window RMS envelope and
+# mark windows quieter than ``floor + margin`` as silent, where ``floor`` is the
+# clip's own ambient level. Only clips whose ambient floor sits above
+# _ENERGY_ACTIVE_FLOOR_DB (where the absolute floor is unreliable) and whose
+# speech clearly stands out (_ENERGY_MIN_SNR_DB) get the extra spans; quiet
+# clips keep the plain silencedetect result.
+_ENERGY_WINDOW_S = 0.05
+_ENERGY_SAMPLE_RATE = 16000
+_ENERGY_FLOOR_PERCENTILE = 0.10
+_ENERGY_SPEECH_PERCENTILE = 0.90
+_ENERGY_ACTIVE_FLOOR_DB = -50.0
+_ENERGY_MIN_SNR_DB = 12.0
+_ENERGY_MIN_MARGIN_DB = 6.0
+_ENERGY_MARGIN_FRAC = 0.35
+# Each energy span is pulled this far back from the sound on either side, so a
+# cut planned on it keeps a pre-roll before the next onset and a post-roll after
+# the last word (window-granular RMS cannot place a boundary closer than one
+# window, and ASR start times on noisy footage land late).
+_ENERGY_EDGE_GUARD_S = 0.08
+_RMS_LEVEL_RE = re.compile(r"lavfi\.astats\.Overall\.RMS_level=(\S+)")
+_PTS_TIME_RE = re.compile(r"pts_time:\s*(-?[\d.]+)")
+
 _SILENCE_START_RE = re.compile(r"silence_start:\s*(-?[\d.]+)")
 _SILENCE_END_RE = re.compile(r"silence_end:\s*(-?[\d.]+)")
 _SILENCE_MARKER_RE = re.compile(r"silence_(?P<kind>start|end):\s*(?P<value>-?[\d.]+)")
@@ -72,14 +98,19 @@ class SilenceDetectionResult:
 
 
 def detect_silences(
-    path: str, *, noise_db: float = _NOISE_FLOOR_DB, min_silence_s: float = _MIN_SILENCE_S
+    path: str,
+    *,
+    noise_db: float = _NOISE_FLOOR_DB,
+    min_silence_s: float = _MIN_SILENCE_S,
+    ambient_adaptive: bool = False,
 ) -> list[tuple[float, float]]:
     """Merged, sorted (silence_start_s, silence_end_s) ranges for `path`.
 
     Same best-effort contract as `speech_coverage`: probe failure, missing
     audio stream, ffmpeg failure/timeout, or non-zero exit returns [] rather
     than raising. An unclosed trailing `silence_start` (file ends mid-silence)
-    closes at the clip's end.
+    closes at the clip's end. ``ambient_adaptive`` unions in the noise-relative
+    energy spans (see _ENERGY_* above) — speech-cleanup callers only.
     """
     # Keep this wrapper on the original permissive parser.  In particular, a
     # trailing ``silence_start`` still closes at EOF and malformed marker
@@ -95,10 +126,15 @@ def detect_silences(
         return []
     stderr_text, duration = detected
     try:
-        return _merge_intervals(_silence_intervals(stderr_text, duration))
+        spans = _merge_intervals(_silence_intervals(stderr_text, duration))
     except (ArithmeticError, TypeError, ValueError):
         log.warning("speech_coverage_parse_failed", path=path)
         return []
+    if ambient_adaptive:
+        spans = _merge_intervals(
+            [*spans, *_ambient_energy_silences(path, duration, min_silence_s=min_silence_s)]
+        )
+    return spans
 
 
 def detect_silences_with_status(
@@ -106,12 +142,14 @@ def detect_silences_with_status(
     *,
     noise_db: float = _NOISE_FLOOR_DB,
     min_silence_s: float = _MIN_SILENCE_S,
+    ambient_adaptive: bool = False,
 ) -> SilenceDetectionResult:
     """Run the existing probe/FFmpeg pass and retain its bounded outcome.
 
     This is the status-bearing companion to :func:`detect_silences`; the
     legacy wrapper deliberately continues returning ``[]`` for every failure.
-    No retry or second media pass is performed here.
+    No retry is performed here. ``ambient_adaptive`` adds one RMS-envelope pass
+    whose spans are unioned in; its own failure only drops those extra spans.
     """
     detected, status = _run_silencedetect_with_status(
         path,
@@ -126,7 +164,133 @@ def detect_silences_with_status(
     except (ArithmeticError, TypeError, ValueError):
         log.warning("speech_coverage_parse_failed", path=path)
         return SilenceDetectionResult(spans=(), status="parse_failed")
+    if ambient_adaptive:
+        spans = tuple(
+            _merge_intervals(
+                [*spans, *_ambient_energy_silences(path, duration, min_silence_s=min_silence_s)]
+            )
+        )
     return SilenceDetectionResult(spans=spans, status="ok")
+
+
+def _ambient_energy_silences(
+    path: str, duration: float, *, min_silence_s: float
+) -> list[tuple[float, float]]:
+    """Noise-relative silence spans from a short-window RMS envelope.
+
+    Best-effort: any ffmpeg/parse failure, an ambient floor quiet enough for
+    the absolute silencedetect floor to be trusted, or speech that does not
+    clearly rise above the ambient floor returns ``[]``.
+    """
+    windows = _rms_envelope(path)
+    if len(windows) < 10:
+        return []
+    levels = sorted(level for _t, level in windows)
+    floor_db = levels[int(len(levels) * _ENERGY_FLOOR_PERCENTILE)]
+    speech_db = levels[min(len(levels) - 1, int(len(levels) * _ENERGY_SPEECH_PERCENTILE))]
+    snr_db = speech_db - floor_db
+    if floor_db <= _ENERGY_ACTIVE_FLOOR_DB or snr_db < _ENERGY_MIN_SNR_DB:
+        return []
+    threshold_db = floor_db + max(_ENERGY_MIN_MARGIN_DB, _ENERGY_MARGIN_FRAC * snr_db)
+    spans = _energy_spans(windows, duration, threshold_db=threshold_db, min_silence_s=min_silence_s)
+    log.info(
+        "ambient_silence_spans",
+        path=path,
+        floor_db=round(floor_db, 1),
+        speech_db=round(speech_db, 1),
+        threshold_db=round(threshold_db, 1),
+        spans=len(spans),
+    )
+    return spans
+
+
+def _energy_spans(
+    windows: list[tuple[float, float]],
+    duration: float,
+    *,
+    threshold_db: float,
+    min_silence_s: float,
+) -> list[tuple[float, float]]:
+    """Runs of below-threshold windows, edge-guarded where they meet sound."""
+    raw: list[tuple[float, float]] = []
+    run_start: float | None = None
+    for t, level in windows:
+        if level < threshold_db:
+            if run_start is None:
+                run_start = t
+        elif run_start is not None:
+            raw.append((run_start, t))
+            run_start = None
+    if run_start is not None:
+        raw.append((run_start, duration))
+
+    spans: list[tuple[float, float]] = []
+    for start, end in raw:
+        start = max(0.0, start)
+        end = min(duration, end)
+        # Clip edges border no sound, so only interior sides are guarded.
+        if start > 0.0:
+            start += _ENERGY_EDGE_GUARD_S
+        if end < duration:
+            end -= _ENERGY_EDGE_GUARD_S
+        if end - start >= min_silence_s:
+            spans.append((round(start, 3), round(end, 3)))
+    return spans
+
+
+def _rms_envelope(path: str) -> list[tuple[float, float]]:
+    """(window_start_s, rms_db) per _ENERGY_WINDOW_S window, mono, or []."""
+    samples = int(_ENERGY_SAMPLE_RATE * _ENERGY_WINDOW_S)
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostats",
+        "-i",
+        path,
+        "-vn",
+        "-sn",
+        "-dn",
+        "-af",
+        (
+            f"aresample={_ENERGY_SAMPLE_RATE},aformat=channel_layouts=mono,"
+            f"asetnsamples=n={samples}:p=0,astats=metadata=1:reset=1,"
+            "ametadata=print:key=lavfi.astats.Overall.RMS_level"
+        ),
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=60, check=False)
+    except Exception as exc:  # timeout or spawn failure — extra spans are optional.
+        log.warning("ambient_silence_ffmpeg_failed", path=path, error=str(exc))
+        return []
+    if result.returncode != 0:
+        log.warning("ambient_silence_ffmpeg_nonzero", path=path)
+        return []
+    try:
+        text = result.stderr.decode(errors="replace")
+    except (AttributeError, TypeError, UnicodeError):
+        return []
+
+    windows: list[tuple[float, float]] = []
+    pts: float | None = None
+    for line in text.splitlines():
+        pts_match = _PTS_TIME_RE.search(line)
+        if pts_match:
+            pts = float(pts_match.group(1))
+            continue
+        level_match = _RMS_LEVEL_RE.search(line)
+        if level_match and pts is not None:
+            try:
+                level = float(level_match.group(1))
+            except ValueError:
+                pts = None
+                continue
+            # Digital silence reports -inf; clamp so percentiles stay finite.
+            windows.append((max(0.0, pts), level if math.isfinite(level) else -120.0))
+            pts = None
+    return windows
 
 
 def speech_coverage(path: str) -> float:
