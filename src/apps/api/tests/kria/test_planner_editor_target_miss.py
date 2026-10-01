@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 from structlog.testing import capture_logs
 
+from app.agents.main_creator import MAIN_CREATOR_MAX_CONVERSATION, MainCreatorInput
 from app.config import settings
 from app.kria import planner
 from app.models import CreationThread, CreatorAgentSession, Job
@@ -373,3 +374,93 @@ async def test_router_path_recovers_when_target_missing_without_copilot_first(
     assert result.plan.turn_value == "recovery"
     assert "still rendering" in result.plan.response
     copilot.assert_not_called()
+
+
+# --- conversation cap: MainCreatorInput.conversation is max 20 --------------------------
+
+
+def _event_rows(n):  # noqa: ANN001, ANN202
+    # Newest first, as the `ORDER BY sequence DESC LIMIT` query returns them.
+    return [
+        SimpleNamespace(role="user" if i % 2 == 0 else "assistant", content=f"m{i}", sequence=i)
+        for i in reversed(range(n))
+    ]
+
+
+def _inputs_db(rows):  # noqa: ANN001, ANN202
+    captured = {}
+
+    async def execute(stmt):  # noqa: ANN001, ANN202
+        captured["limit"] = stmt._limit
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows[: stmt._limit]))
+
+    return (
+        SimpleNamespace(execute=AsyncMock(side_effect=execute), rollback=AsyncMock()),
+        captured,
+    )
+
+
+async def test_long_thread_conversation_is_most_recent_20_in_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "clip_intents_enabled", False)
+    monkeypatch.setattr(planner, "creator_context", lambda *_a: ("creator", "item"))
+    db, captured = _inputs_db(_event_rows(30))
+    item = SimpleNamespace(id=uuid.uuid4(), edit_format="montage")
+    inputs = await planner._load_creator_inputs(
+        db,
+        thread_id=uuid.uuid4(),
+        item=item,
+        persona=SimpleNamespace(),
+        creator_id=uuid.uuid4(),
+        user_message="make them shorter",
+        manifest=_MANIFEST,
+        media_context=[],
+        prior_brief=None,
+        brief_on=False,
+    )
+    convo = inputs.agent_input.conversation
+    assert captured["limit"] == MAIN_CREATOR_MAX_CONVERSATION
+    assert [t["content"] for t in convo] == [f"m{i}" for i in range(10, 30)]
+
+
+async def test_every_conversation_builder_respects_the_input_cap() -> None:
+    import inspect
+
+    from app.routes import creator_agent
+
+    assert MAIN_CREATOR_MAX_CONVERSATION <= (
+        MainCreatorInput.model_fields["conversation"].metadata[0].max_length
+    )
+    assert planner.MAIN_CREATOR_MAX_CONVERSATION is MAIN_CREATOR_MAX_CONVERSATION
+    assert "MAIN_CREATOR_MAX_CONVERSATION" in inspect.getsource(planner._load_creator_inputs)
+    assert "MAIN_CREATOR_MAX_CONVERSATION" in inspect.getsource(creator_agent._conversation)
+    # The route builder caps even with a carried-brief header prepended.
+    events = [
+        SimpleNamespace(role="user", sequence=i, payload={"message": f"m{i}"}) for i in range(40)
+    ]
+    assert len(creator_agent._conversation(events)) <= MAIN_CREATOR_MAX_CONVERSATION
+
+
+async def test_validation_error_on_first_path_falls_back_to_copilot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pydantic import ValidationError
+
+    db, item, creator_id, _runs = _wire(monkeypatch, miss="no_ready_variant")
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", False)
+    try:
+        MainCreatorInput(user_message="", capability_manifest=_MANIFEST)
+    except ValidationError as exc:
+        err = exc
+    monkeypatch.setattr(planner, "_load_creator_inputs", AsyncMock(side_effect=err))
+    fallback = SimpleNamespace(mode="respond", turn_value="recovery", response="ok", intents=())
+    monkeypatch.setattr(planner, "_plan_editor_revision", AsyncMock(return_value=fallback))
+    result = await planner.plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item._fields["id"],
+        creator_id=creator_id,
+        user_message="make the title bigger",
+    )
+    assert result.plan is fallback

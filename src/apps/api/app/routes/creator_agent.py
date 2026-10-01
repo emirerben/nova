@@ -64,7 +64,12 @@ from app.agents._schemas.creator_policy import (
     states_explicit_media_narrowing_cue,
 )
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
-from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCreatorOutput
+from app.agents.main_creator import (
+    MAIN_CREATOR_MAX_CONVERSATION,
+    MainCreatorAgent,
+    MainCreatorInput,
+    MainCreatorOutput,
+)
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
@@ -466,13 +471,16 @@ def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
             "role": event.role,
             "content": str((event.payload or {}).get("message") or "")[:CREATOR_REQUEST_MAX_CHARS],
         }
-        for event in sorted(events, key=lambda value: value.sequence)[-20:]
+        for event in sorted(events, key=lambda value: value.sequence)[
+            -MAIN_CREATOR_MAX_CONVERSATION:
+        ]
         if (event.payload or {}).get("message")
     ]
     carried = _carried_brief(events)
     if carried:
         # The failed session's brief opens a fresh session's history.
-        return [{"role": "user", "content": carried}, *turns[-19:]]
+        keep = MAIN_CREATOR_MAX_CONVERSATION - 1
+        return [{"role": "user", "content": carried}, *turns[-keep:]]
     return turns
 
 

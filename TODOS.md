@@ -2392,3 +2392,11 @@ Add a regression test: Save -> render ready -> ask resolves the post-Save head d
 **Effort:** S (human ~half day / CC ~30 min)
 **Priority:** P2
 **Depends on:** KRI-237 recovery guard (planner `render_in_flight`) landing first
+
+### Copilot reply claims success on an `unsupported` outcome
+**What:** When the copilot's editor plan is rejected as `unsupported` (e.g. `patch_slots capability_unavailable`), the user-facing reply is still the model's optimistic text ("I shortened all the clips...") instead of an honest "I can't do that yet".
+**Why:** Prod thread e798da2: "All videos are too long, make them shorter" was rejected with `patch_slots capability_unavailable`, yet the reply told the user the clips were shortened. A false success is worse than a refusal (see KRI-129 no-silent-overrides rules).
+**How:** In the copilot/planner path that consumes the op-validation result (`app/kria/planner.py` editor-revision flow + `app/routes/_copilot.py`), when any op is rejected as `unsupported`/`capability_unavailable`, replace or prefix the reply with a deterministic "I can't do that yet" message naming the capability gap. Add a regression test with a rejected `patch_slots` op asserting the reply never claims success.
+**Effort:** S (human ~half day / CC ~30 min)
+**Priority:** P2
+**Depends on:** None

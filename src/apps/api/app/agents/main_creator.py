@@ -219,6 +219,11 @@ each clip", "facts": {}}, {"kind": "order", "scope": "global", "literal": null, 
 """.strip("\n")
 
 
+# Single source of truth for the conversation window; every builder of
+# MainCreatorInput.conversation must slice to this (most recent N, chronological).
+MAIN_CREATOR_MAX_CONVERSATION = 20
+
+
 class MainCreatorInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -228,7 +233,7 @@ class MainCreatorInput(BaseModel):
     creator_direction: str = Field(default="", max_length=4000)
     item_context: str = Field(default="", max_length=4000)
     media_context: list[dict] = Field(default_factory=list, max_length=50)
-    conversation: list[dict] = Field(default_factory=list, max_length=20)
+    conversation: list[dict] = Field(default_factory=list, max_length=MAIN_CREATOR_MAX_CONVERSATION)
     capability_manifest: ResolvedCreatorManifest
     # KRI-188: True only when the Creative Brief is on for this creator. Off =>
     # the prompt is byte-identical and no `brief_updates` are read from output.

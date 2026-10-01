@@ -13,6 +13,7 @@ import uuid
 from dataclasses import dataclass, replace
 
 import structlog
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +25,12 @@ from app.agents._schemas.creator_agent import (
     ResolvedCreatorManifest,
     ReviewDecision,
 )
-from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCreatorOutput
+from app.agents.main_creator import (
+    MAIN_CREATOR_MAX_CONVERSATION,
+    MainCreatorAgent,
+    MainCreatorInput,
+    MainCreatorOutput,
+)
 from app.config import settings
 from app.kria.brief import (
     BriefUpdate,
@@ -602,7 +608,7 @@ async def _load_creator_inputs(
                     CreationThreadEvent.content.is_not(None),
                 )
                 .order_by(CreationThreadEvent.sequence.desc())
-                .limit(24)
+                .limit(MAIN_CREATOR_MAX_CONVERSATION)
             )
         )
         .scalars()
@@ -1032,23 +1038,23 @@ async def plan_live_turn(
             context_hash=manifest.context_hash,
         )
     prior_brief = await load_latest_brief(db, thread_id) if brief_on else None
-    inputs = await _load_creator_inputs(
-        db,
-        thread_id=thread_id,
-        item=item,
-        persona=persona,
-        creator_id=creator_id,
-        user_message=user_message,
-        manifest=manifest,
-        media_context=media_context,
-        prior_brief=prior_brief,
-        brief_on=brief_on,
-    )
-    if isinstance(inputs, PlannedKriaTurn):
-        return inputs
     try:
+        inputs = await _load_creator_inputs(
+            db,
+            thread_id=thread_id,
+            item=item,
+            persona=persona,
+            creator_id=creator_id,
+            user_message=user_message,
+            manifest=manifest,
+            media_context=media_context,
+            prior_brief=prior_brief,
+            brief_on=brief_on,
+        )
+        if isinstance(inputs, PlannedKriaTurn):
+            return inputs
         output = await _call_main_creator(inputs, thread_id=thread_id, creator_id=creator_id)
-    except RuntimeError:
+    except (RuntimeError, ValidationError):
         if not extract_first:
             raise
         # KRI-188: the Main Creator now runs before the copilot only to extract
