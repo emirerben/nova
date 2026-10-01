@@ -150,6 +150,15 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   generation) picks up the fix: a caption or text edit fast-reburns onto the stored
   base video and keeps its old cut audio. Nothing to flip, and no fingerprint is
   involved.
+- "captions drift off the speech after a few cuts" on a cloud subtitled render, or
+  b-roll misses the jump cuts on cloud Talking → check whether the render predates
+  the frame-grid remap. Cloud captions and anchors are now placed on the cut's frame
+  grid (`silence_cut.remap_words(..., grid=reframe.cut_frame_grid(...))`,
+  `removal_cut_points`). The raw float plan put them up to a frame off per earlier
+  cut, since each cut snaps two boundaries (about 150 ms at the 95th percentile by
+  30 cuts). Persisted caption cues keep their old times through text edits; only a
+  full re-render recomputes them. Phone renders keep the raw mapping on purpose: the
+  phone recipe cuts at the plan's exact boundaries.
 - "cleanup is too aggressive for my taste" → this lever.
 - **"cleanup cut a word / clipped my speech" → a guard bug, NOT this lever.** Do not
   reach for `=0.55` to make it stop; that only hides it again, on some clips, by

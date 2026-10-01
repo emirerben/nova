@@ -5393,6 +5393,8 @@ def _run_phone_subtitled_job(
                         }
                         for word in words
                     ]
+                # Raw float mapping, no frame grid: the phone recipe plays
+                # each keep segment at its exact float offsets.
                 cut_words = [
                     Word(
                         text=item["text"],
@@ -22714,7 +22716,11 @@ def _render_subtitled_variant(
         resolve_caption_font,
     )
     from app.pipeline.probe import probe_video  # noqa: PLC0415
-    from app.pipeline.reframe import reframe_and_export, resolve_output_fit  # noqa: PLC0415
+    from app.pipeline.reframe import (  # noqa: PLC0415
+        cut_frame_grid,
+        reframe_and_export,
+        resolve_output_fit,
+    )
     from app.pipeline.silence_cut import is_filler_token, remap_words  # noqa: PLC0415
     from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
     from app.pipeline.transcribe import (  # noqa: PLC0415
@@ -22787,8 +22793,11 @@ def _render_subtitled_variant(
             error_class=error_class,
         )
 
-    def _cut_caption_words(words: list, plan: Any) -> list:
-        """Build caption words from the cut timeline, excluding vocal fillers."""
+    def _cut_caption_words(words: list, plan: Any, grid: Any) -> list:
+        """Build caption words from the cut timeline, excluding vocal fillers.
+
+        ``grid`` is the cut render's frame grid, or None when no cut renders.
+        """
         from app.pipeline.transcribe import Word  # noqa: PLC0415
 
         return [
@@ -22798,7 +22807,7 @@ def _render_subtitled_variant(
                 end_s=word["end_s"],
                 confidence=1.0,
             )
-            for word in remap_words(words, plan)
+            for word in remap_words(words, plan, grid=grid)
             if not is_filler_token(word["text"])
         ]
 
@@ -23325,7 +23334,11 @@ def _render_subtitled_variant(
 
         # V2 prerequisites are deliberately resolved before the only reframe
         # encode. The original clip and the reframe share a 1:1 timeline unless
-        # silence-cut is active; that path already supplies exactly remapped words.
+        # silence-cut is active; that path supplies words remapped onto the cut.
+        # Caption words land on the cut's frame grid, where its audio plays. If
+        # the cut encode fails, both caption paths below rebuild from the uncut
+        # base instead.
+        sc_grid = cut_frame_grid(0.0, float(probe.duration_s)) if sc_apply else None
         detected_lang = language or "en"
         cues: list[dict[str, Any]] = []
         smart_compiled = None
@@ -23334,7 +23347,7 @@ def _render_subtitled_variant(
                 detected_lang, resolved_sc_words = _resolve_verbatim_caption_language(
                     sc_language, words=sc_words
                 )
-                caption_words = _cut_caption_words(resolved_sc_words, sc_plan)
+                caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
                 cues = build_plain_cues(caption_words, attach_words=True)
             elif checked_uncut_words is not None:
                 detected_lang, resolved_uncut_words = _resolve_verbatim_caption_language(
@@ -23600,8 +23613,8 @@ def _render_subtitled_variant(
 
         if not smart_v2 and sc_words is not None:
             # NO second transcription (plans/010): cues come from the verbatim
-            # original-clip transcript remapped into the cut timeline (exact
-            # arithmetic — see silence_cut.remap_words), MINUS every lexicon
+            # original-clip transcript remapped onto the cut render's frame grid
+            # (sc_grid — see silence_cut.remap_words), MINUS every lexicon
             # filler token. Caption hygiene (15A): fillers never reach captions
             # even when they were NOT cut from the video (e.g. blocked by the
             # segment-signal guard or below MIN_CUT_S). An explicit creator
@@ -23611,7 +23624,7 @@ def _render_subtitled_variant(
             detected_lang, resolved_sc_words = _resolve_verbatim_caption_language(
                 sc_language, words=sc_words
             )
-            caption_words = _cut_caption_words(resolved_sc_words, sc_plan)
+            caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
             cues = build_plain_cues(caption_words, attach_words=True)
         elif not smart_v2 and checked_uncut_words is not None:
             # Explicit keep-original means the exact accepted words and source

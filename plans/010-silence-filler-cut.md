@@ -293,6 +293,11 @@ runs through it (declicking dipped rain/traffic takes 15-20 dB at every
 cut). Audio is also cut on the video frame grid, because concat padded
 off-grid segments with up to a frame of digital silence. The declick now
 applies only to a leading or trailing trim. See `_build_keep_segments_cmd`.
+Caption words and talking-head b-roll anchors follow the same grid
+(`remap_words(..., grid=reframe.cut_frame_grid(...))`,
+`removal_cut_points`; the grid lives in `app/pipeline/cut_grid.py`). The
+phone recipe and the narration-audio cut play the plan's exact float
+boundaries, so they keep the raw remap.
 
 ### Admin cut-plan viewer (in this PR, T2=C)
 
