@@ -34,7 +34,6 @@ struct NativeEditorPanelResizeGrabber: View {
     }
     /// Signed fraction of the span added by a VoiceOver "increment".
     var incrementFraction: CGFloat = 0.25
-    @State private var dragOrigin: CGFloat?
     @State private var feedback = 0
 
     private func clamp(_ value: CGFloat) -> CGFloat {
@@ -48,8 +47,43 @@ struct NativeEditorPanelResizeGrabber: View {
             .padding(.top, topAligned ? 8 : 0)
             .frame(width: 80, height: 44, alignment: topAligned ? .top : .center)
             .contentShape(Rectangle())
+            .modifier(NativeEditorPanelResizeDrag(expansion: $expansion, range: range, bounds: bounds))
+            .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: feedback)
+            .accessibilityElement()
+            .accessibilityLabel(accessibilityTitle)
+            .accessibilityValue(describe(expansion, bounds))
+            .accessibilityHint(accessibilityHint)
+            .accessibilityAdjustableAction { direction in
+                let span = bounds.upperBound - bounds.lowerBound
+                let step = (direction == .increment ? incrementFraction : -incrementFraction) * span
+                let next = clamp(expansion + step)
+                guard next != expansion else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { expansion = next }
+                feedback += 1
+            }
+            .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
+/// The finger-tracking resize drag shared by the grabbers and the panel's
+/// header surface. Each attachment keeps its own origin; only one drag runs at
+/// a time.
+struct NativeEditorPanelResizeDrag: ViewModifier {
+    @Binding var expansion: CGFloat
+    let range: CGFloat
+    var bounds: ClosedRange<CGFloat> = 0...1
+    var minimumDistance: CGFloat = 3
+    @State private var dragOrigin: CGFloat?
+    @State private var feedback = 0
+
+    private func clamp(_ value: CGFloat) -> CGFloat {
+        min(bounds.upperBound, max(bounds.lowerBound, value))
+    }
+
+    func body(content: Content) -> some View {
+        content
             .gesture(
-                DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                DragGesture(minimumDistance: minimumDistance, coordinateSpace: .global)
                     .onChanged { value in
                         guard range > 0 else { return }
                         if dragOrigin == nil {
@@ -66,20 +100,35 @@ struct NativeEditorPanelResizeGrabber: View {
                     }
             )
             .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: feedback)
-            .accessibilityElement()
-            .accessibilityLabel(accessibilityTitle)
-            .accessibilityValue(describe(expansion, bounds))
-            .accessibilityHint(accessibilityHint)
-            .accessibilityAdjustableAction { direction in
-                let span = bounds.upperBound - bounds.lowerBound
-                let step = (direction == .increment ? incrementFraction : -incrementFraction) * span
-                let next = clamp(expansion + step)
-                guard next != expansion else { return }
-                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { expansion = next }
-                feedback += 1
-            }
-            .accessibilityIdentifier(accessibilityIdentifier)
     }
+}
+
+/// What the connected panel's header needs to resize the panel (KRI-235).
+struct NativeEditorPanelResize {
+    let expansion: Binding<CGFloat>
+    let range: CGFloat
+}
+
+/// The whole fixed header of a connected panel (top band, title row, tabs)
+/// resizes the panel, not just the grabber line (KRI-235). The scrolling body
+/// is deliberately excluded so lists, sliders and text fields keep their own
+/// gestures. The larger slop keeps header buttons tappable.
+private struct NativeEditorPanelResizeSurface: ViewModifier {
+    @Environment(\.nativeEditorPanelResize) private var resize
+
+    func body(content: Content) -> some View {
+        if let resize {
+            content
+                .contentShape(Rectangle())
+                .modifier(NativeEditorPanelResizeDrag(expansion: resize.expansion, range: resize.range, minimumDistance: 8))
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func nativeEditorPanelResizeSurface() -> some View { modifier(NativeEditorPanelResizeSurface()) }
 }
 
 /// Flush view-local drafts before changing destinations. Owner tokens keep an
@@ -120,6 +169,10 @@ private struct NativeEditorPanelLifecycleKey: EnvironmentKey {
     static let defaultValue: NativeEditorPanelLifecycle? = nil
 }
 
+private struct NativeEditorPanelResizeKey: EnvironmentKey {
+    static let defaultValue: NativeEditorPanelResize? = nil
+}
+
 extension EnvironmentValues {
     var nativeEditorPanelContentWidth: CGFloat {
         get { self[NativeEditorPanelContentWidthKey.self] }
@@ -132,6 +185,10 @@ extension EnvironmentValues {
     var nativeEditorPanelLifecycle: NativeEditorPanelLifecycle? {
         get { self[NativeEditorPanelLifecycleKey.self] }
         set { self[NativeEditorPanelLifecycleKey.self] = newValue }
+    }
+    var nativeEditorPanelResize: NativeEditorPanelResize? {
+        get { self[NativeEditorPanelResizeKey.self] }
+        set { self[NativeEditorPanelResizeKey.self] = newValue }
     }
 }
 

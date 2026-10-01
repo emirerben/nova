@@ -557,6 +557,48 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(panel.frame.height, initial, accuracy: 2, "a reopened panel starts at its default height")
     }
 
+    /// KRI-235: the panel's whole header resizes it, not only the grabber line.
+    func testPanelHeaderDragsResizePanel() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let captions = app.buttons["native-editor-tool-captions"]
+        XCTAssertTrue(captions.waitForExistence(timeout: 20))
+        captions.tap()
+        let panel = app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch
+        let done = app.buttons["native-editor-captions-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        let initial = panel.frame.height
+        // Blank header space between the title and Done, well clear of the grabber.
+        let start = done.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: -40, dy: 0))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -160)))
+        XCTAssertGreaterThan(panel.frame.height, initial + 80, "dragging up from the header must raise the panel")
+        captions.tap() // close; the next panel starts at its default height
+        XCTAssertFalse(panel.waitForExistence(timeout: 2))
+
+        let text = app.buttons["native-editor-tool-text"]
+        text.tap()
+        let input = app.textViews["native-editor-new-text-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        input.typeText("Header drag")
+        app.buttons["native-editor-text-done"].tap()
+        let editTab = app.buttons["Edit text"]
+        let animationTab = app.buttons["Animation"]
+        let styleTab = app.buttons["Style"]
+        XCTAssertTrue(editTab.waitForExistence(timeout: 5))
+        animationTab.tap()
+        XCTAssertTrue(animationTab.isSelected, "header buttons must stay tappable")
+        styleTab.tap()
+        XCTAssertTrue(styleTab.isSelected, "header buttons must stay tappable")
+        let before = panel.frame.height
+        let tabStart = editTab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        tabStart.press(forDuration: 0.1, thenDragTo: tabStart.withOffset(CGVector(dx: 0, dy: -160)))
+        XCTAssertGreaterThan(panel.frame.height, before + 80, "dragging up from the tab strip must raise the panel")
+        XCTAssertTrue(styleTab.isSelected, "a drag from a tab must not select it")
+    }
+
     func testPreviewResizeIsAvailableAcrossEditorPanels() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text", "-ui-testing-editor-analyzing-gallery"]

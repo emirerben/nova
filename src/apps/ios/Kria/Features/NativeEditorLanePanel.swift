@@ -14,33 +14,36 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
 
     var body: some View {
         VStack(spacing: 6) {
-            HStack {
-                Text(heading ?? title).font(KriaFont.body(connected ? 18 : 15).weight(.semibold))
-                Spacer()
-                if let onAdd {
-                    Button(action: onAdd) {
-                        Image(systemName: "plus").frame(width: 44, height: 44)
+            VStack(spacing: 6) {
+                HStack {
+                    Text(heading ?? title).font(KriaFont.body(connected ? 18 : 15).weight(.semibold))
+                    Spacer()
+                    if let onAdd {
+                        Button(action: onAdd) {
+                            Image(systemName: "plus").frame(width: 44, height: 44)
+                        }
+                        .frame(minHeight: 44)
+                        .accessibilityLabel("Add visual")
+                        .accessibilityIdentifier("native-editor-add-another-visual")
                     }
-                    .frame(minHeight: 44)
-                    .accessibilityLabel("Add visual")
-                    .accessibilityIdentifier("native-editor-add-another-visual")
-                }
-                if let onDelete {
-                    Button(role: .destructive, action: onDelete) {
-                        Image(systemName: "trash").frame(minWidth: 44, minHeight: 44)
+                    if let onDelete {
+                        Button(role: .destructive, action: onDelete) {
+                            Image(systemName: "trash").frame(minWidth: 44, minHeight: 44)
+                        }
+                        .accessibilityLabel("Remove visual")
+                        .accessibilityIdentifier("native-editor-remove-visual")
                     }
-                    .accessibilityLabel("Remove visual")
-                    .accessibilityIdentifier("native-editor-remove-visual")
+                    Button(action: onDone) {
+                        Text("Done").frame(minWidth: 64, minHeight: 44)
+                            .background(KriaColor.ink.opacity(0.06), in: Capsule())
+                    }
+                        .accessibilityIdentifier("native-editor-\(title.lowercased())-done")
                 }
-                Button(action: onDone) {
-                    Text("Done").frame(minWidth: 64, minHeight: 44)
-                        .background(KriaColor.ink.opacity(0.06), in: Capsule())
+                if tabs.count > 1 {
+                    NativeEditorPanelTabs(tabs: tabs, selection: $tab, accessibilityPrefix: "native-editor-\(title.lowercased())")
                 }
-                    .accessibilityIdentifier("native-editor-\(title.lowercased())-done")
             }
-            if tabs.count > 1 {
-                NativeEditorPanelTabs(tabs: tabs, selection: $tab, accessibilityPrefix: "native-editor-\(title.lowercased())")
-            }
+            .nativeEditorPanelResizeSurface()
             ScrollView { content().padding(.top, 8).padding(.bottom, 12) }
                 .scrollDismissesKeyboard(.interactively)
                 .accessibilityIdentifier("native-editor-\(title.lowercased())-scroll")
