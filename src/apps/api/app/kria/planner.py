@@ -24,6 +24,7 @@ from app.agents._schemas.creator_agent import (
     ResolvedCreatorManifest,
     ReviewDecision,
 )
+from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCreatorOutput
 from app.config import settings
 from app.kria.brief import (
@@ -689,7 +690,15 @@ async def _plan_from_creator_output(
     if brief_request:
         # KRI-188: the clip-intent planner reads the brief, not chat text.
         creator_request = brief_request
-    if settings.clip_intents_enabled and isinstance(action, ProposeStrategy):
+    if (
+        settings.clip_intents_enabled
+        and isinstance(action, ProposeStrategy)
+        # A Talking edit renders no clip intents, and its "captions" are speech
+        # captions: the inventory would only misread "Add captions" as a chapter
+        # caption and ask about it. The strategy check above already stripped
+        # any footage intents with a notice.
+        and action.strategy.edit_format not in CLIP_INTENT_FREE_EDIT_FORMATS
+    ):
         try:
             planned = await plan_and_resolve_clip_intents(
                 creator_request=creator_request or user_message,

@@ -78,6 +78,14 @@ AUDIO_LED_EDIT_FORMATS: frozenset[str] = frozenset(
     set(NARRATED_EDIT_FORMATS) | {"subtitled", "talking_head"}
 )
 
+# Talking edits draw no clip intents (labels, groups, orders, includes, chapter
+# captions): neither the cloud subtitled/talking-head renderers nor the phone
+# subtitled job receive them. Their captions are what the creator SAYS, so "add
+# captions" there is a caption-style request, never a clip operation, and
+# clip-intent planning skips these formats. Locked by
+# `tests/kria/test_talking_clip_intents.py::test_talking_renderers_take_no_clip_intents`.
+CLIP_INTENT_FREE_EDIT_FORMATS: frozenset[str] = frozenset({"subtitled", "talking_head"})
+
 # Positive allowlist of EditFormat values whose decisions have a phone-recipe
 # compiler (app/pipeline/phone_<archetype>_plan.py) and can therefore render
 # directly from on-device analysis-proxy sources. Guided-story approval is a
