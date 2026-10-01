@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.45.0] - 2026-10-01
+
+### Changed
+- feat(ios): clip labels follow their clip when you trim, extend, reorder or delete (no server) (#1299) <!-- release-pr: 1299 -->
+
 ## [0.77.44.0] - 2026-10-01
 
 ### Changed
