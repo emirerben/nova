@@ -158,7 +158,9 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   cut, since each cut snaps two boundaries (about 150 ms at the 95th percentile by
   30 cuts). Persisted caption cues keep their old times through text edits; only a
   full re-render recomputes them. Phone renders keep the raw mapping on purpose: the
-  phone recipe cuts at the plan's exact boundaries.
+  phone recipe cuts at the plan's exact boundaries. Only jump cuts (kept speech on
+  both sides) anchor b-roll; a leading or trailing trim is not an anchor, so it can
+  no longer slide the last cutaway onto the video's final frame.
 - "my overlay / SFX / text slid off its moment after I accepted or restored a cut"
   on a cloud render → `_merge_speech_cut_prior_state` reprojects creator lanes
   through the frames each render played: `silence_cut.frame_grid` in the variant's
