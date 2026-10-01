@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.38.0] - 2026-10-01
+
+### Changed
+- fix(kria): keep a guided label's manual start offset through a timeline change (#1294) <!-- release-pr: 1294 -->
+
+## [0.77.37.0] - 2026-10-01
+
+### Changed
+- fix(kria): never overlay a stale chat draft onto the creator's saved edits (#1295) <!-- release-pr: 1295 -->
+
 ## [0.77.36.0] - 2026-10-01
 
 ### Changed
