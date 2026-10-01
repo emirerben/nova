@@ -319,7 +319,11 @@ enum AccountIdentity {
         while current() {
             let candidates = libraryProjects.filter(eligible)
             guard !candidates.isEmpty else { return }
-            recoveringPosterIDs = Set(candidates.map(\.id))
+            // Spin only while the first repair round is in flight. Later
+            // rounds keep retrying quietly behind the unavailable fallback,
+            // so a poster that never arrives can't hold a spinner for minutes
+            // (KRI-231); a late success still swaps in via the load revision.
+            recoveringPosterIDs = Set(candidates.filter { posterAttempts[LibraryPosterKey($0), default: 0] == 0 }.map(\.id))
             // Coalesce image failures, then allow asynchronous server repairs
             // to finish. Every eligible row gets its turn before another round.
             let attempt = candidates.map { posterAttempts[LibraryPosterKey($0), default: 0] }.max() ?? 0

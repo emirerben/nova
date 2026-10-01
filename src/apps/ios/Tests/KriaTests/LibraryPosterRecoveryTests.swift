@@ -171,6 +171,32 @@ import XCTest
         XCTAssertEqual(recorded, [0.25, 2, 5, 10, 20, 30, 45, 60])
     }
 
+    /// KRI-231: a phone render published without a poster stayed "repairing"
+    /// forever, so the tile spun through the whole ~3-minute backoff on every
+    /// Gallery visit. Only the first round may show the loading state.
+    func testPosterThatNeverArrivesFallsBackAfterFirstRound() async {
+        let project = readyProject()
+        let spinning = PosterSpinnerRecorder()
+        NativeEditorURLProtocol.handler = { _ in
+            (200, Self.posterResponse(project.id, url: nil, status: "repairing"))
+        }
+        let model = AppModel(api: NativeEditorTestSupport.api())
+        model.libraryProjects = [project]
+        model.beginLibraryPosterRecovery()
+        let recordSleep: @Sendable (TimeInterval) async throws -> Void = { _ in
+            let isSpinning = await MainActor.run { model.recoveringPosterIDs.contains(project.id) }
+            await spinning.record(isSpinning)
+        }
+
+        await model.recoverLibraryPosters(sleep: recordSleep)
+
+        let rounds = await spinning.values()
+        XCTAssertEqual(rounds.count, 8)
+        XCTAssertEqual(rounds.first, true)
+        XCTAssertEqual(Array(rounds.dropFirst()), Array(repeating: false, count: 7))
+        XCTAssertTrue(model.recoveringPosterIDs.isEmpty)
+    }
+
     func testOldImageFailureCallbackRevisionIsIgnored() async {
         let project = readyProject()
         NativeEditorURLProtocol.handler = { _ in
@@ -290,4 +316,10 @@ final class LibraryPosterDeferredProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
     }
+}
+
+private actor PosterSpinnerRecorder {
+    private var recorded: [Bool] = []
+    func record(_ value: Bool) { recorded.append(value) }
+    func values() -> [Bool] { recorded }
 }
