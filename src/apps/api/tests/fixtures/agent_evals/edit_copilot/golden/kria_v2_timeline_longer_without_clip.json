@@ -1,0 +1,45 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-02-v66",
+  "input": {
+    "utterance": "make it longer",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["title"],
+      "editor_ops_version": 2,
+      "slots": [],
+      "text_bars": [],
+      "total_duration_s": 8,
+      "max_duration_s": 120,
+      "title": "Old title"
+    }
+  },
+  "raw_text": "{\"intent\":\"reject\",\"ops\":[],\"confidence\":0.95,\"reply\":\"I can't change the length on this edit. I can still help with the title.\",\"suggestions\":[\"Change the title\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "reject",
+    "ops": [],
+    "confidence": 0.95,
+    "reply": "I can't change the length on this edit. I can still help with the title.",
+    "suggestions": ["Change the title"],
+    "needs_clarification": false,
+    "outcome": "rejection",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "vague longer request refuses when clip family is unavailable and offers title only",
+    "lane": "copilot-vague-longer",
+    "exact_component_ops": [],
+    "expected_intent": "reject",
+    "needs_clarification": false,
+    "capability_contract": {
+      "intent": "reject",
+      "needs_clarification": false,
+      "reply_contains": ["length", "title"],
+      "reply_excludes": ["text"]
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-02-v66",
+  "input": {
+    "utterance": "make it longer",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [],
+      "editor_ops_version": 2,
+      "slots": [],
+      "text_bars": [],
+      "total_duration_s": 8,
+      "max_duration_s": 120
+    }
+  },
+  "raw_text": "{\"intent\":\"reject\",\"ops\":[],\"confidence\":0.95,\"reply\":\"I can't change the length on this edit. Text and title changes aren't available for this edit either.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "reject",
+    "ops": [],
+    "confidence": 0.95,
+    "reply": "I can't change the length on this edit. Text and title changes aren't available for this edit either.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "rejection",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "vague longer request refuses with no alternatives when clip, text, and title are unavailable",
+    "lane": "copilot-vague-longer",
+    "exact_component_ops": [],
+    "expected_intent": "reject",
+    "needs_clarification": false,
+    "capability_contract": {
+      "intent": "reject",
+      "needs_clarification": false,
+      "reply_contains": ["length"],
+      "suggestions_empty": true
+    }
+  }
+}

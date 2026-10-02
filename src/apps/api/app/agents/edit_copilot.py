@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v65"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-02-v66"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1155,11 +1155,17 @@ def _format_snapshot(snapshot: dict) -> str:
             return _clean_component_data(value)
         return _clean_prompt_data(value, max_chars=max_chars)
 
-    allowed = snapshot.get("allowed_op_families") or []
+    allowed_value = snapshot.get("allowed_op_families")
+    allowed = allowed_value if isinstance(allowed_value, list) else []
     has_captions = bool(snapshot.get("has_narrated_captions"))
     total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
 
-    empty_families = "(none; read-only inspection)" if component_context_enabled else "(all v1 ops)"
+    if component_context_enabled:
+        empty_families = "(none; read-only inspection)"
+    elif "allowed_op_families" not in snapshot:
+        empty_families = "(all v1 ops)"
+    else:
+        empty_families = "(none; no editable operations)"
     lines = [
         f"allowed_op_families: {', '.join(str(x) for x in allowed) if allowed else empty_families}",
         f"has_narrated_captions: {has_captions}",
