@@ -59,6 +59,9 @@ struct NativeEditorLayoutMetrics: Equatable {
     static let minTimelineStrip: CGFloat = 96
     static let maxPreviewScreenFraction: CGFloat = 0.6
     static let fullscreenScreenFraction: CGFloat = 0.9
+    /// A posting-song reference must leave the video large enough to remain
+    /// useful, even after its own collapsed bar takes vertical space.
+    static let songReferenceMinimumPreviewScreenFraction: CGFloat = 0.25
 
     var viewportSize: CGSize
     var safeAreaTop: CGFloat
@@ -67,12 +70,15 @@ struct NativeEditorLayoutMetrics: Equatable {
     var previewAspectRatio: CGFloat
     var keyboardVisible: Bool
     var isAccessibilitySize: Bool
+    /// Only the posting-song layout reserves a full-window preview floor; the
+    /// ordinary editor keeps its established preview budget unchanged.
+    var reservesSongReferencePreviewFloor = false
     /// A text panel that is being typed into gets the room the preview would otherwise
     /// keep: with the keyboard up the preview shrinks to `typingPreviewHeight` and the
     /// panel grows into the space (KRI-185). The preview never goes away, so it still sits
     /// above the panel. Other panels keep today's split, so this is `false` unless opted in.
     var shrinksPreviewWhileTyping = false
-    /// KRI-240 (plan 025, Variant A): while a caption line is open in the caption
+    /// KRI-240 (plan 026, Variant A): while a caption line is open in the caption
     /// editor, the panel shrinks to the edit bar (this height) and the preview takes
     /// the space above it. The header and top chrome stay; the timeline handle, the
     /// transport and the tool rail are hidden. `nil` everywhere else.
@@ -102,7 +108,11 @@ struct NativeEditorLayoutMetrics: Equatable {
         // their measured height comes out of the preview so the timeline and
         // tool rail stay on screen.
         let budget = max(Self.minPreviewHeight, portrait - topChromeHeight)
-        let preferred = previewAspectRatio > 1 ? min(124, budget) : budget
+        let songReferenceFloor = reservesSongReferencePreviewFloor && !keyboardVisible
+            ? referenceHeight * Self.songReferenceMinimumPreviewScreenFraction
+            : Self.minPreviewHeight
+        let protectedBudget = max(budget, songReferenceFloor)
+        let preferred = previewAspectRatio > 1 ? min(124, protectedBudget) : protectedBudget
         // With the keyboard up, reserve room for the header, divider and usable
         // text controls rather than letting their minimum heights overflow.
         guard keyboardVisible else { return preferred }

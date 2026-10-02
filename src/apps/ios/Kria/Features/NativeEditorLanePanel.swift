@@ -81,7 +81,7 @@ struct NativeCaptionPanel: View {
     @State private var lifecycleOwner = UUID()
     enum Tab: String, CaseIterable { case edit = "Edit captions", style = "Style", settings = "Settings" }
     @ObservedObject var session: NativeEditorSession
-    /// KRI-240 (plan 025 D27): the caption line open in the edit bar. Owned by
+    /// KRI-240 (plan 026 D27): the caption line open in the edit bar. Owned by
     /// `NativeEditorView`, which lays the editor out around it (Variant A). A row tap
     /// sets it; keyboard focus is requested from it, never the other way round, so a
     /// refused focus leaves a usable bar instead of a stuck screen. The old two-tap
@@ -117,7 +117,7 @@ struct NativeCaptionPanel: View {
                         // phone variant with only one lane editable doesn't show
                         // Save-refusing controls as enabled — or block a lane that
                         // IS editable just because the other one isn't. Read-only
-                        // caption lines still seek (plan 025 D16).
+                        // caption lines still seek (plan 026 D16).
                         case .edit: transcript
                         case .style: style.disabled(!session.canEditCaptionMeta)
                         case .settings: settings.disabled(!session.canEditCaptionMeta)
@@ -182,7 +182,7 @@ struct NativeCaptionPanel: View {
             }
             .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { _ in followSuspended = true })
             .onChange(of: playingID) { _, id in
-                // Follow the playing line (plan 025 D15): never while the creator is
+                // Follow the playing line (plan 026 D15): never while the creator is
                 // scrolling, editing, or using VoiceOver.
                 guard let id, session.isPlaying, !followSuspended, !voiceOverEnabled, editingCueID == nil else { return }
                 withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
@@ -292,7 +292,7 @@ struct NativeCaptionPanel: View {
         }
     }
 
-    /// Commits the open line (plan 025 D5): an emptied line is removed inside the
+    /// Commits the open line (plan 026 D5): an emptied line is removed inside the
     /// line's own transaction, so one Undo restores it with its text and timings (R12).
     private func leaveLine(to destination: String?) {
         loopingCueID = nil
@@ -338,7 +338,7 @@ struct NativeCaptionPanel: View {
                                  onUndo: undoRemoval, onExpire: { if removal == notice { removal = nil } })
     }
 
-    // MARK: Loop-play (plan 025 D6)
+    // MARK: Loop-play (plan 026 D6)
 
     @State private var loopRestarting = false
 
@@ -475,7 +475,7 @@ struct NativeCaptionPanel: View {
     }
 }
 
-/// "Line 4 removed · Undo" after a caption line is removed (plan 025 D3, R12).
+/// "Line 4 removed · Undo" after a caption line is removed (plan 026 D3, R12).
 struct CaptionRemovalNotice: Equatable {
     let id = UUID()
     let lineNumber: Int
@@ -510,7 +510,7 @@ struct CaptionRemovalNoticeView: View {
 }
 
 /// VoiceOver announcements for the caption editor; tests swap `post` (XCUITest
-/// can't observe announcements, plan 025 F15).
+/// can't observe announcements, plan 026 F15).
 enum CaptionLineAnnouncer {
     @MainActor static var post: (String) -> Void = { message in
         UIAccessibility.post(notification: .announcement, argument: message)

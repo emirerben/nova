@@ -26,6 +26,9 @@ final class RecipeWriter: @unchecked Sendable {
         duration = preview.description.duration
         guard duration.isFinite, duration > 0, duration <= 1800 else { throw RecipeError.invalidTimeline }
         reader = try AVAssetReader(asset: asset)
+        // Retimed source audio can drain time-pitch buffers beyond the video
+        // timeline. The recipe, including any composed outro, owns the end.
+        reader.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: duration, preferredTimescale: 60_000))
         writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
         video = AVAssetReaderVideoCompositionOutput(videoTracks: try await asset.loadTracks(withMediaType: .video), videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
         video.videoComposition = preview.playerItem.videoComposition
@@ -119,6 +122,9 @@ final class RecipeWriter: @unchecked Sendable {
             guard reader.status == .completed else { throw reader.error ?? MediaEngineError.exportFailed }
             try Task.checkCancellation()
             traceDeviceExportPhase("finish_writing")
+            // Also bound the encoded session: an audio buffer may straddle the
+            // final sample. Preserve its valid prefix and trim only the tail.
+            writer.endSession(atSourceTime: CMTime(seconds: duration, preferredTimescale: 60_000))
             await writer.finishWriting()
             try Task.checkCancellation()
             guard writer.status == .completed else { throw writer.error ?? MediaEngineError.exportFailed }

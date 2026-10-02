@@ -1,4 +1,4 @@
-# Plan 025 — KRI-240: iPhone editor caption text editing redesign
+# Plan 026 — KRI-240: iPhone editor caption text editing redesign
 
 **Linear:** [KRI-240](https://linear.app/kria/issue/KRI-240) · **Status:** In Progress (design review stage) · **Owner:** Yasin Berk · **Label:** iOS
 **Related:** KRI-216 (phone caption edits save), KRI-110 (guided-story captions via `text_elements`), KRI-230 (TR word-by-word timing), KRI-241 (silent preview after caption edit, separate), KRI-148 (connected editor panels contract, `docs/runbooks/ios-development.md`).
@@ -347,7 +347,7 @@ _Found during `/plan-design-review` 2026-10-01/02. Each numbered item was decide
 
 ## 10. Engineering review (`/plan-eng-review`, 2026-10-02)
 
-**Target:** this plan (`plans/025-kri-240-caption-text-editing.md`). **Code base:** origin/main `7672ded66` (42 commits after the design review's `572d02d1d`). Primary reviewer: Opus 5.5; code maps by two Sonnet explorers (iOS save/render path; server language + word timing).
+**Target:** this plan (`plans/026-kri-240-caption-text-editing.md`). **Code base:** origin/main `7672ded66` (42 commits after the design review's `572d02d1d`). Primary reviewer: Opus 5.5; code maps by two Sonnet explorers (iOS save/render path; server language + word timing).
 
 ### 10.1 Scope record (Step 0 complexity gate)
 
@@ -1299,7 +1299,7 @@ _Reconciled by the eng review (2026-10-02). Supersedes the design review's T1–
 - [ ] **T12 (P2, human: ~20min / CC: ~5min)** — Linear — Sync KRI-240
   - Surfaced by: process (issue text is now stale against D2–D34)
   - Files: Linear KRI-240
-  - Verify: issue links `plans/025-kri-240-caption-text-editing.md` and summarises the PR0–PR3 plan
+  - Verify: issue links `plans/026-kri-240-caption-text-editing.md` and summarises the PR0–PR3 plan
 
 ### Failure modes (eng review)
 

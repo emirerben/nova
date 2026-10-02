@@ -16,11 +16,11 @@ struct NativeEditorView: View {
     @StateObject private var panelDrafts = NativeEditorPanelDrafts()
     @StateObject private var panelLifecycle = NativeEditorPanelLifecycle()
     @State private var panel: NativeEditorPanel?
-    /// KRI-240: the caption line open in the caption editor (plan 025 D27: the
+    /// KRI-240: the caption line open in the caption editor (plan 026 D27: the
     /// source of truth for caption edit state; keyboard focus only follows it).
     @State private var captionEditingCueID: String?
     @State private var headerHeight: CGFloat = 0
-    /// Preview taps while a caption line is open toggle its loop (plan 025 D5).
+    /// Preview taps while a caption line is open toggle its loop (plan 026 D5).
     @State private var captionLoopRequest = 0
     @ScaledMetric(relativeTo: .body) private var captionLineHeight: CGFloat = 22
     @State private var inspector: NativeEditorInspector?
@@ -241,6 +241,7 @@ struct NativeEditorView: View {
             previewAspectRatio: session.previewAspectRatio,
             keyboardVisible: keyboardVisible,
             isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
+            reservesSongReferencePreviewFloor: session.editorSongReferencePresentation != nil,
             shrinksPreviewWhileTyping: panel?.tool == .text,
             captionEditBarHeight: captionEditing ? CaptionEditBar.height(lineHeight: captionLineHeight, lines: captionEditLines(viewport: viewport)) : nil,
             measuredHeaderHeight: headerHeight > 0 ? headerHeight : nil
@@ -288,7 +289,7 @@ struct NativeEditorView: View {
                 .clipped()
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { previewGlobalFrame = $0 }
                 .overlay {
-                    // KRI-240 (plan 025 R10): the finished render still shows the old
+                    // KRI-240 (plan 026 R10): the finished render still shows the old
                     // caption, so say so instead of looking like the fix didn't take.
                     if captionEditing, session.sourcePreviewState.isFailure || session.sourcePreviewState == .originalsUnavailable {
                         ZStack {
@@ -334,7 +335,7 @@ struct NativeEditorView: View {
     /// KRI-240: a caption line is open in the caption editor (Variant A edit state).
     private var captionEditing: Bool { panel?.tool == .captions && captionEditingCueID != nil }
 
-    /// Two field lines on small phones and at accessibility text sizes, three otherwise (plan 025 D8, D12).
+    /// Two field lines on small phones and at accessibility text sizes, three otherwise (plan 026 D8, D12).
     private func captionEditLines(viewport: GeometryProxy) -> Int {
         let screenHeight = viewport.size.height + viewport.safeAreaInsets.top + viewport.safeAreaInsets.bottom
         return dynamicTypeSize.isAccessibilitySize || screenHeight < 700 ? 2 : 3

@@ -413,7 +413,7 @@ the line under the playhead is highlighted with a sky bar and followed while
 playing (a drag on the list stops following until the next play), and unsaved
 lines carry a sky dot. One tap on a line opens the edit bar with the keyboard up
 and the caret at the end; the bar replaces the list while the app header, the
-Chat/Editor switch and the top banners stay (Variant A, `plans/025-kri-240-caption-text-editing.md`).
+Chat/Editor switch and the top banners stay (Variant A, `plans/026-kri-240-caption-text-editing.md`).
 While a line is open the timeline handle, transport, tool rail and Kria sparkles
 button are hidden and the preview takes the space above the bar
 (`NativeEditorLayoutMetrics.captionEditBarHeight`). The open line

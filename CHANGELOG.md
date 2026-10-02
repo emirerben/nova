@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.19.0] - 2026-10-02
+
+### Fixed
+- fix(ios): qualify device-only rendering and preserve editor audio (KRI-256) (#1329) <!-- release-pr: 1329 -->
+
 ## [0.78.18.0] - 2026-10-02
 
 ### Changed

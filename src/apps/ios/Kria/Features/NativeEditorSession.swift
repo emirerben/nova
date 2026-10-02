@@ -3887,7 +3887,7 @@ struct NativeEditorTemporaryVideo {
 
     /// Where the preview parks for a caption line: 0.15s after it starts (word
     /// styles: after its last word starts), clamped inside the line. Captions
-    /// pop in over 0.12s, so the exact start is a blank frame (plan 025 R5).
+    /// pop in over 0.12s, so the exact start is a blank frame (plan 026 R5).
     func captionParkTime(id: String) -> TimeInterval? {
         guard let unit = document.captionUnits.first(where: { $0.id == id }) else { return nil }
         var anchor = unit.startS

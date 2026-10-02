@@ -2469,14 +2469,14 @@ Add a regression test: Save -> render ready -> ask resolves the post-Save head d
 **Priority:** P2
 **Depends on:** None
 
-## Plan 025 — KRI-240 caption edit bar (deferred from the 2026-10-02 design review)
+## Plan 026 — KRI-240 caption edit bar (deferred from the 2026-10-02 design review)
 
 ### T-CAP025-1 — Text tool: adopt the fill-above-bar typing layout?
 **What:** Evaluate moving the native editor's Text tool from `TypingLayout.compactPreview(120)` to `.fillsAboveEditBar(minPreviewHeight: 220)` (the enum introduced by plan 025 / D10) and relocate its presets + KRI-185 "On screen" list while the keyboard is up.
 **Why:** The Text tool has the same readability problem KRI-240 fixed for captions: a 120pt preview can't show you the title you're typing. Once the enum lands, the mechanism is shared.
 **Pros:** One typing behaviour across Text and Captions; titles verifiable live while typing; the KRI-148 runbook line simplifies.
 **Cons:** The Text panel's presets list and the "On screen" block list need a new home with the keyboard up; touches a tool KRI-240 never mentioned; regression surface in `NativeEditorInspectorUITests` text cases.
-**Context:** `plans/025-kri-240-caption-text-editing.md` D10; `docs/runbooks/ios-development.md` "Connected editor panels (KRI-148)"; `NativeEditorView.swift` `shrinksPreviewWhileTyping` (→ enum). Decided 2026-10-02 to keep Text at 120pt in KRI-240 (clarity over consistency) and revisit separately.
+**Context:** `plans/026-kri-240-caption-text-editing.md` D10; `docs/runbooks/ios-development.md` "Connected editor panels (KRI-148)"; `NativeEditorView.swift` `shrinksPreviewWhileTyping` (→ enum). Decided 2026-10-02 to keep Text at 120pt in KRI-240 (clarity over consistency) and revisit separately.
 **Effort:** M (human: ~2 days / CC: ~1.5h) **Priority:** P3 **Depends on:** KRI-240 shipped with the `TypingLayout` enum.
 
 ### T-CAP025-2 — Locale-aware `text_case: upper` across Python, web and iOS
@@ -2484,7 +2484,7 @@ Add a regression test: Save -> render ready -> ask resolves the post-Save head d
 **Why:** Today `apply_text_case` (`src/apps/api/app/agents/_schemas/text_element.py:175-190`, `text.upper()`), the web mirror (`src/apps/web/src/lib/overlay-layout.ts:447-453`, `toUpperCase()`) and iOS (`src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift:394-398`, `uppercased()`) are all locale-blind; Turkish titles render with dotless capitals. `unified_montage.py:237-254` already works around it by leaving dotted-i words alone.
 **Pros:** Correct Turkish (and Azeri) uppercase titles; one rule across renderers, guarded by the existing parity fixture.
 **Cons:** Text blocks carry no language of their own; needs a source (variant `caption_language`, plan/persona language, or a per-element field) and a renderer-parity change in three codebases.
-**Context:** Deferred from plan 025 (KRI-240) by eng-review decision D19 (2026-10-02); the design review's D11 item 4 assumed an uppercase caption style that does not exist. Shared fixture: `tests/fixtures/text-element-parity/text_case.json` (Python + web; no Swift test reads it) has no i/ı/İ case — add `"iyi ılık"` → `"İYİ ILIK"` under `tr`.
+**Context:** Deferred from plan 026 (KRI-240) by eng-review decision D19 (2026-10-02); the design review's D11 item 4 assumed an uppercase caption style that does not exist. Shared fixture: `tests/fixtures/text-element-parity/text_case.json` (Python + web; no Swift test reads it) has no i/ı/İ case — add `"iyi ılık"` → `"İYİ ILIK"` under `tr`.
 **Effort:** M (human: ~1 day / CC: ~40 min) **Priority:** P3 **Depends on:** choosing the language source for text blocks.
 
 ### T-CAP025-3 — Run the KriaMediaEngine package tests in CI
@@ -2492,5 +2492,5 @@ Add a regression test: Save -> render ready -> ask resolves the post-Save head d
 **Why:** The Xcode scheme tests only `KriaTests` and `KriaUITests` (`src/apps/ios/project.yml:111-114`) and no workflow or `scripts/ios/verify.sh` runs `swift test`, so `KriaMediaEngineTests` (including the Swift side of shared parity fixtures such as `phone_dissolve_timing.json` via `DissolveTimingTests` and `phone_karaoke_layout.json` via `KaraokePainterTests`) never run in CI. A phone/server mismatch those fixtures exist to catch can ship unnoticed.
 **Pros:** Parity fixtures protect every relevant PR; package regressions surface before TestFlight.
 **Cons:** Extra macOS CI minutes (~3 min per the local timing); may surface existing failures; needs a full (non-sparse) checkout so fixture paths resolve (52 tests fail otherwise).
-**Context:** Found during the plan 025 (KRI-240) eng review, 2026-10-02 (decision D34). Plan 025 keeps its own caption-word fixture test in `KriaTests`, so it does not depend on this.
+**Context:** Found during the plan 026 (KRI-240) eng review, 2026-10-02 (decision D34). Plan 025 keeps its own caption-word fixture test in `KriaTests`, so it does not depend on this.
 **Effort:** S (human: ~3h / CC: ~20 min) **Priority:** P2 **Depends on:** none.

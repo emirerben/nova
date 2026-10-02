@@ -116,7 +116,7 @@ struct EditorTextElement: Codable, Equatable, Sendable {
     }
 }
 
-/// KRI-240 (plan 025 D6, R1, R11): a caption cue's per-word timings
+/// KRI-240 (plan 026 D6, R1, R11): a caption cue's per-word timings
 /// (`raw["words"]`, `[{text, start_s, end_s, …}]`) must keep spelling its text.
 /// Renderers that trust the stored words (the server's phone caption compiler)
 /// otherwise burn the pre-edit words. The rewrite is a pure function of the

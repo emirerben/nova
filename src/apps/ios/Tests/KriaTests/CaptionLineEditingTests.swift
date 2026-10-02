@@ -2,11 +2,11 @@ import UIKit
 import XCTest
 @testable import Kria
 
-/// KRI-240 (plan 025): caption line editing — word-timing rewrite, line editor
+/// KRI-240 (plan 026): caption line editing — word-timing rewrite, line editor
 /// configuration, the Variant A edit layout and the session's line lifecycle.
 final class CaptionLineEditingTests: XCTestCase {
 
-    // MARK: CaptionWordRewrite (plan 025 D6, R1, R11)
+    // MARK: CaptionWordRewrite (plan 026 D6, R1, R11)
 
     private func word(_ text: String, _ start: Double, _ end: Double, quality: String? = nil) -> JSONValue {
         var object: [String: JSONValue] = ["text": .string(text), "start_s": .number(start), "end_s": .number(end)]
@@ -62,7 +62,7 @@ final class CaptionLineEditingTests: XCTestCase {
         XCTAssertEqual(CaptionWordRewrite.words(entryText: "a b", entryWords: entryWords, text: "   ", startS: 0, endS: 1), [])
     }
 
-    // MARK: LineEditorConfiguration (plan 025 D20; R4 preserve-assertion 1)
+    // MARK: LineEditorConfiguration (plan 026 D20; R4 preserve-assertion 1)
 
     @MainActor
     func testDefaultConfigurationIsTheTextToolsEditorUnchanged() {
@@ -107,7 +107,7 @@ final class CaptionLineEditingTests: XCTestCase {
         XCTAssertFalse(LineEditorConfiguration.language("tr-TR", matches: ""))
     }
 
-    // MARK: Variant A layout (plan 025 D2 as changed to Variant A)
+    // MARK: Variant A layout (plan 026 D2 as changed to Variant A)
 
     private func metrics(bar: CGFloat?, header: CGFloat? = 102, keyboard: Bool = true,
                          height: CGFloat = 457, chrome: CGFloat = 0) -> NativeEditorLayoutMetrics {

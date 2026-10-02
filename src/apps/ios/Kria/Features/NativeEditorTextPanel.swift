@@ -519,7 +519,7 @@ struct LineEditorConfiguration: Equatable {
     /// KRI-240 caption line: wraps, Return moves to the next line (Done on the last),
     /// never auto-replaces words, and asks for a keyboard in the caption language.
     /// Spell-check underlines only make sense on a keyboard in that language, so
-    /// they are turned off when no matching keyboard is installed (plan 025 D11).
+    /// they are turned off when no matching keyboard is installed (plan 026 D11).
     @MainActor static func captionLine(language: String?, isLast: Bool,
                             installedLanguages: [String] = LineEditorConfiguration.installedKeyboardLanguages()) -> LineEditorConfiguration {
         var config = LineEditorConfiguration()
@@ -570,7 +570,7 @@ struct LineEditorConfiguration: Equatable {
     }
 }
 
-/// Return and hardware-keyboard handlers for a line editor (KRI-240, plan 025 D14).
+/// Return and hardware-keyboard handlers for a line editor (KRI-240, plan 026 D14).
 struct LineEditorActions {
     var onReturn: (() -> Void)? = nil
     var onNextLine: (() -> Void)? = nil
