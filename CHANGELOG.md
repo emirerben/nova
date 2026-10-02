@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.12.0] - 2026-10-02
+
+### Changed
+- ci: cap every remaining job's runtime with timeout-minutes (#1317) <!-- release-pr: 1317 -->
+
 ## [0.78.11.0] - 2026-10-02
 
 ### Changed
