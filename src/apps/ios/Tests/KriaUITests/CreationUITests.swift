@@ -179,11 +179,44 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 10))
         let video = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Video'")).firstMatch
         XCTAssertTrue(video.waitForExistence(timeout: 10), app.debugDescription)
-        // The picker grid lives in a remote view, whose cells report themselves as not hittable.
-        video.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        let backInChat = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: photos)
+        // Inline Photos reports this remote image in picker-local coordinates.
+        // Its scroll-view host has a screen frame, so translate through that
+        // host instead of tapping the image's unadjusted accessibility center.
+        let picker = app.scrollViews["photosView_content_scroll_view"]
+        XCTAssertTrue(picker.exists)
+        let videoFrame = video.frame
+        let selectionPoint = CGPoint(x: picker.frame.minX + videoFrame.midX,
+            y: picker.frame.minY + videoFrame.midY)
+        XCTAssertTrue(picker.frame.contains(selectionPoint), "The selected video must be inside the visible Photos picker")
+        picker.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: videoFrame.midX, dy: videoFrame.midY)).tap()
+        // `photos` disappears immediately when the picker covers its host sheet,
+        // so it cannot prove the post-selection dismissal completed. Require the
+        // picker toolbar to disappear too, then the host sheet must be gone.
+        let backInChat = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in !done.exists && !photos.exists },
+            object: app
+        )
         XCTAssertEqual(XCTWaiter.wait(for: [backInChat], timeout: 10), .completed, "picking the one clip returns to chat")
         XCTAssertFalse(done.exists)
+        // This offline chat fixture does not implement upload reservations. The
+        // imported asset must still be retained as a named, dismissible failure;
+        // closing the picker alone would also pass if the selection were lost.
+        XCTAssertTrue(app.staticTexts["footage-upload-failures-message"].waitForExistence(timeout: 10))
+        chooseVideos.tap()
+        XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        let selectedClipFailure = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH 'kria-outro-paper.mp4: '")
+        ).firstMatch
+        XCTAssertTrue(selectedClipFailure.waitForExistence(timeout: 3),
+            "The selected Photos asset remains available as a named upload failure")
+        let dismissFailure = app.buttons.matching(NSPredicate(
+            format: "label == 'Dismiss' AND identifier != 'footage-upload-failures-dismiss'"
+        )).firstMatch
+        XCTAssertTrue(dismissFailure.isHittable)
+        dismissFailure.tap()
+        XCTAssertFalse(selectedClipFailure.exists)
+        XCTAssertTrue(photos.isHittable, "The user can choose the clip again after dismissing the failure")
     }
 
     func testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes() {
@@ -363,7 +396,33 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_SLOW_CREATION"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        let montage = app.buttons["format-montage"]
+        // The format heading appears before the independent capabilities
+        // request completes. Wait until this card accepts selection so the
+        // fixture’s select_format action cannot be dropped while disabled.
+        let formatReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in montage.isEnabled && montage.isHittable },
+            object: montage
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [formatReady], timeout: 5), .completed)
+        // With long history, the card's accessibility center can sit behind
+        // the composer even though its upper portion is hittable. Tap inside
+        // the visible carousel, above the composer's 19pt surrounding padding.
+        let cardFrame = montage.frame
+        let historyFrame = app.scrollViews.firstMatch.frame
+        let composerTop = app.buttons["chat-send-message"].frame.minY - 24
+        let unobscuredHistory = CGRect(x: historyFrame.minX, y: historyFrame.minY,
+            width: historyFrame.width, height: max(0, composerTop - historyFrame.minY))
+        let visibleCard = cardFrame.intersection(app.scrollViews["format-carousel"].frame)
+            .intersection(unobscuredHistory)
+        guard !visibleCard.isNull, visibleCard.width >= 20, visibleCard.height >= 20 else {
+            XCTFail("Expected a visible montage card area above the composer")
+            return
+        }
+        montage.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: visibleCard.midX - cardFrame.minX,
+                dy: visibleCard.minY + min(20, visibleCard.height / 2) - cardFrame.minY))
+            .tap()
 
         let send = app.buttons["Send clips"]
         XCTAssertTrue(send.waitForExistence(timeout: 5))

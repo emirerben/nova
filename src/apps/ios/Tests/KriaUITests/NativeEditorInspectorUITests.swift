@@ -88,9 +88,12 @@ final class NativeEditorInspectorUITests: XCTestCase {
             let headerY = app.buttons["native-editor-back"].frame.minY
             // Start on the visible capsule near the panel's top edge, not
             // merely somewhere inside its larger accessibility target.
+            // Keep the original minimum expansion, then rise 40pt into the
+            // preview even when a taller device leaves a larger transport gap.
+            let expansionDistance = max(160, initialPanel.minY - initialPreview.maxY + 40)
             let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
                 .withOffset(CGVector(dx: 0, dy: 10))
-            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -160)))
+            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -expansionDistance)))
             XCTAssertGreaterThan(panel.frame.height, initialPanel.height + 80, tool)
             XCTAssertLessThan(panel.frame.minY, initialPanel.minY - 80, tool)
             // KRI-170: the panel handle no longer shrinks the preview; the panel
@@ -109,7 +112,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
             add(capture)
             let raised = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
                 .withOffset(CGVector(dx: 0, dy: 10))
-            raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: 320)))
+            let restoreDistance = max(320, expansionDistance)
+            raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: restoreDistance)))
             XCTAssertEqual(panel.frame.height, initialPanel.height, accuracy: 2, tool)
             XCTAssertEqual(preview.frame.height, initialPreview.height, accuracy: 2, tool)
         }

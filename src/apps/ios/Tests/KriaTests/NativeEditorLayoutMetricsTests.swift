@@ -66,6 +66,65 @@ final class NativeEditorLayoutMetricsTests: XCTestCase {
         XCTAssertEqual(pro(keyboard: true).defaultPreviewHeight, 258.06, accuracy: 0.01)
     }
 
+    func testSongReferenceRetainsQuarterScreenPreviewAfterCollapsedBar() {
+        // iPhone 17 Pro Max: 860pt viewport + 62/34pt safe areas = 956pt window.
+        // Its 44pt song bar plus 4pt spacing previously reduced the 284pt cap to 236pt.
+        let base = NativeEditorLayoutMetrics(
+            viewportSize: CGSize(width: 440, height: 860), safeAreaTop: 62, safeAreaBottom: 34,
+            topChromeHeight: 48, previewAspectRatio: 9.0 / 16,
+            keyboardVisible: false, isAccessibilitySize: false
+        )
+        let withSongReference = NativeEditorLayoutMetrics(
+            viewportSize: CGSize(width: 440, height: 860), safeAreaTop: 62, safeAreaBottom: 34,
+            topChromeHeight: 48, previewAspectRatio: 9.0 / 16,
+            keyboardVisible: false, isAccessibilitySize: false,
+            reservesSongReferencePreviewFloor: true
+        )
+
+        XCTAssertEqual(base.defaultPreviewHeight, 236, accuracy: 0.01)
+        XCTAssertEqual(withSongReference.defaultPreviewHeight, 239, accuracy: 0.01)
+        XCTAssertGreaterThanOrEqual(
+            withSongReference.defaultPreviewHeight,
+            956 * NativeEditorLayoutMetrics.songReferenceMinimumPreviewScreenFraction
+        )
+    }
+
+    func testSongReferenceFloorIsBypassedWhileKeyboardIsVisible() {
+        let keyboardWithSongReference = NativeEditorLayoutMetrics(
+            viewportSize: CGSize(width: 440, height: 860), safeAreaTop: 62, safeAreaBottom: 34,
+            topChromeHeight: 100, previewAspectRatio: 9.0 / 16,
+            keyboardVisible: true, isAccessibilitySize: false,
+            reservesSongReferencePreviewFloor: true
+        )
+        let keyboardWithoutSongReference = NativeEditorLayoutMetrics(
+            viewportSize: CGSize(width: 440, height: 860), safeAreaTop: 62, safeAreaBottom: 34,
+            topChromeHeight: 100, previewAspectRatio: 9.0 / 16,
+            keyboardVisible: true, isAccessibilitySize: false
+        )
+
+        // With the keyboard visible, the floor must not raise the 184pt
+        // budget to 215pt. This catches removal of the `!keyboardVisible`
+        // guard directly.
+        XCTAssertEqual(keyboardWithSongReference.defaultPreviewHeight, 184, accuracy: 0.01)
+        XCTAssertEqual(
+            keyboardWithSongReference.defaultPreviewHeight,
+            keyboardWithoutSongReference.defaultPreviewHeight,
+            accuracy: 0.01
+        )
+
+        let typing = NativeEditorLayoutMetrics(
+            viewportSize: CGSize(width: 440, height: 860), safeAreaTop: 62, safeAreaBottom: 34,
+            topChromeHeight: 48, previewAspectRatio: 9.0 / 16,
+            keyboardVisible: true, isAccessibilitySize: false,
+            reservesSongReferencePreviewFloor: true, shrinksPreviewWhileTyping: true
+        )
+        XCTAssertEqual(typing.defaultPreviewHeight, NativeEditorLayoutMetrics.typingPreviewHeight, accuracy: 0.01)
+        XCTAssertLessThan(
+            typing.defaultPreviewHeight,
+            956 * NativeEditorLayoutMetrics.songReferenceMinimumPreviewScreenFraction
+        )
+    }
+
     // MARK: preview grow / shrink
 
     func testPreviewGrowsBeyondDefaultButStaysBounded() {
