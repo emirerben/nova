@@ -623,6 +623,77 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
         persist_answers.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_generic_montage_context_with_empty_inventory_stays_actionable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-244: context-only chronology must not become a resolver question."""
+    request = (
+        "I took the sunset pictures walking to the bus to go to the pub and the night ones "
+        "cycling to go back home in London. Come up with crative ideas"
+    )
+    creator_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    thread_id = uuid.uuid4()
+    manifest = ResolvedCreatorManifest(
+        item_id=str(item_id),
+        edit_format="montage",
+        render_program="guided",
+        capabilities={"dispatch_render": CapabilityAvailability(available=True)},
+        context_hash="a" * 64,
+        manifest_hash="b" * 64,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            direction="guided_story",
+            edit_format="montage",
+            audio_strategy="licensed_music",
+            pacing="fast",
+            render_program="guided",
+            selected_media_ids=[],
+            rationale="Build a London evening story from the strongest moments.",
+        ),
+        summary="A London sunset-to-night montage.",
+    )
+    inventory = AsyncMock(return_value=PlannedIntentResolution([], IntentResolution()))
+    monkeypatch.setattr(planner.settings, "clip_intents_enabled", True)
+    monkeypatch.setattr(planner, "plan_and_resolve_clip_intents", inventory)
+    monkeypatch.setattr(
+        planner,
+        "check_strategy_for_runtime_v2",
+        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+    )
+
+    result = await planner._plan_from_creator_output(
+        SimpleNamespace(),
+        thread_id=thread_id,
+        item_id=item_id,
+        creator_id=creator_id,
+        user_message=request,
+        manifest=manifest,
+        inputs=planner._CreatorInputs(
+            agent_input=SimpleNamespace(), intent_clips=[], creator_request=request
+        ),
+        output=SimpleNamespace(action=action),
+        brief_request=(
+            "Creative brief (everything the creator has asked for, still in force):\n"
+            "- [order/global] chronological order from sunset walk to night cycle\n"
+            f"Latest message: {request}"
+        ),
+    )
+
+    assert result.plan.turn_value == "action"
+    assert [intent.tool_name for intent in result.plan.intents] == [
+        "draft.apply_strategy",
+        "render.request",
+    ]
+    inventory.assert_awaited_once()
+    assert inventory.await_args.kwargs["creator_request"] == request
+    assert inventory.await_args.kwargs["latest_user_message"] == request
+    assert "[order/global]" in inventory.await_args.kwargs["generated_brief"]
+
+
 def test_explicit_server_editor_action_retains_exact_render_approval() -> None:
     plan = adapt_editor_action(
         reply="Apply the reviewed speech cut.",
