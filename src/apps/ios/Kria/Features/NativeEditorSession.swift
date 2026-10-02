@@ -132,9 +132,12 @@ struct NativeEditorTemporaryVideo {
     /// as long as the async rebuild is actually pending, not just while a
     /// finger is on screen.
     var timelineScrubDuration: TimeInterval {
-        (sourcePreviewUpdateDeferred || sourcePreviewSequence != sourcePreviewSettledSequence)
-            ? max(playbackDuration, timelineProjection.totalDuration)
-            : playbackDuration
+        sourcePreviewSettled ? playbackDuration : max(playbackDuration, timelineProjection.totalDuration)
+    }
+    /// The source preview reflects the latest document edit. False while a
+    /// rebuild is pending, which for audio edits is a full one (KRI-241).
+    private var sourcePreviewSettled: Bool {
+        !sourcePreviewUpdateDeferred && sourcePreviewSequence == sourcePreviewSettledSequence
     }
     /// KRI-166: true while the player shows the branded source preview
     /// (always built with `branding: .standard`, see `scheduleSourcePreviewUpdate`)
@@ -582,7 +585,9 @@ struct NativeEditorTemporaryVideo {
         let displayedVideoIsCurrent: Bool
         switch sourcePreviewState {
         case .ready:
-            displayedVideoIsCurrent = sourcePreview.map { player?.currentItem === $0.preview.playerItem } ?? false
+            // An undo back to the saved document clears `hasUnsavedChanges`
+            // before the rebuild lands; never export the composition it replaces.
+            displayedVideoIsCurrent = sourcePreviewSettled && (sourcePreview.map { player?.currentItem === $0.preview.playerItem } ?? false)
         case .failed, .originalsUnavailable:
             displayedVideoIsCurrent = player != nil && player === finishedRenderPlayer
         case .idle, .preparing:
@@ -599,7 +604,9 @@ struct NativeEditorTemporaryVideo {
         guard !canDownloadCurrentVideo else { return nil }
         if isSaving { return "Saving your changes…" }
         if hasUnsavedChanges { return "Save your changes to export the current video." }
-        if pendingPreviewGeneration != nil { return "Kria is updating the preview. Try again in a moment." }
+        if pendingPreviewGeneration != nil || (sourcePreviewState == .ready && !sourcePreviewSettled) {
+            return "Kria is updating the preview. Try again in a moment."
+        }
         switch sourcePreviewState {
         case .idle, .preparing:
             return "Preparing the preview…"
@@ -614,7 +621,7 @@ struct NativeEditorTemporaryVideo {
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
         switch sourcePreviewState {
         case .ready:
-            guard let sourcePreview,
+            guard sourcePreviewSettled, let sourcePreview,
                   player?.currentItem === sourcePreview.preview.playerItem else {
                 throw NativeEditorVideoDownloadError.unavailable
             }
@@ -645,7 +652,7 @@ struct NativeEditorTemporaryVideo {
     /// throws through to the caller rather than falling back to the last
     /// cloud render. The user must always get what the preview shows.
     func exportDisplayedSourcePreview() async throws -> NativeEditorTemporaryVideo {
-        guard sourcePreviewState == .ready,
+        guard sourcePreviewState == .ready, sourcePreviewSettled,
               let sourcePreview,
               player?.currentItem === sourcePreview.preview.playerItem else {
             throw NativeEditorVideoDownloadError.unavailable
@@ -2033,7 +2040,7 @@ struct NativeEditorTemporaryVideo {
             // to the live edit — otherwise every later edit lands off-screen
             // while the user keeps watching the stale cloud render (KRI-110).
             if let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
-               (try? preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)) != nil {
+               updatePreviewInPlace(preview, program: program) {
                 sourcePreviewState = .ready
                 sourcePreviewSettledSequence = sequence
                 if !isPlaying { seek(to: currentTime) }
@@ -2079,6 +2086,21 @@ struct NativeEditorTemporaryVideo {
             // has nothing to re-clamp it once the widened scrub bound above
             // narrows back — the transport would sit past the actual end.
             if currentTime > playbackDuration { seek(to: playbackDuration) }
+        }
+    }
+
+    /// Any refusal (an audio edit since KRI-241, timing, sources) takes the full
+    /// rebuild. DEBUG builds log the refusal, so an edit that should have stayed
+    /// in place, such as a caption keystroke, shows up in the diagnostics file.
+    private func updatePreviewInPlace(_ preview: LivePreviewComposition, program: NativeEditorRenderProgram) -> Bool {
+        do {
+            try preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)
+            return true
+        } catch {
+            #if DEBUG
+            NativePreviewDiagnostics.failure("live-update-refused", error: error)
+            #endif
+            return false
         }
     }
 
