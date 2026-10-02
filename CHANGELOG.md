@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.9.0] - 2026-10-02
+
+### Changed
+- ci: fail fast and retry when an apt mirror stalls (#1315) <!-- release-pr: 1315 -->
+
 ## [0.78.8.0] - 2026-10-02
 
 ### Changed
