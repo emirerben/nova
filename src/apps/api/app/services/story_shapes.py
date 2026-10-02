@@ -277,6 +277,7 @@ _REPAIR_MESSAGES: dict[str, str] = {
     "caption_applied": "Applied your requested caption to its clips",
     "blanked_thought_for_caption": "Removed an on-screen line that conflicted with your caption",
     "clamped_cut_window": "Adjusted a cut to fit inside its source clip",
+    "clamped_last_cut_hold": "Adjusted the last cut to match your photo and video pacing",
     "split_beat": "Split an oversized chapter across multiple beats",
     "merged_beat": "Combined two small chapters to fit the beat limit",
     "reordered_adjacent_sources": "Reordered clips to avoid repeating the same source back-to-back",

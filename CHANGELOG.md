@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.4.0] - 2026-10-02
+
+### Changed
+- fix(ios): deliver committed-variant reconciliation to main (#1312) <!-- release-pr: 1312 -->
+
+## [0.78.3.0] - 2026-10-02
+
+### Fixed
+- fix(edit-proposal): clamp a closing cut stretched to hit the target (KRI-243) (#1304) <!-- release-pr: 1304 -->
+
+## [0.78.2.0] - 2026-10-02
+
+### Changed
+- feat(ios): blur the chat above its header block, floating header and composer, drop the Kria sheet titles (KRI-197) (#1230) <!-- release-pr: 1230 -->
+
 ## [0.78.1.0] - 2026-10-02
 
 ### Changed

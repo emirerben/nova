@@ -751,8 +751,10 @@ struct NativeEditorTemporaryVideo {
     private struct ActiveTrim {
         let clipID: UUID
         let edge: NativeTrimEdge
-        let baseline: EditorDocument
-        let redoBaseline: [EditorDocument]
+        var baseline: EditorDocument
+        var redoBaseline: [EditorDocument]
+        var translationOrigin: TimeInterval = 0
+        var lastTranslation: TimeInterval = 0
         var recordedUndo = false
     }
 
@@ -761,9 +763,11 @@ struct NativeEditorTemporaryVideo {
         let selection: EditorSelection
         let edge: NativeTrimEdge?
         let kind: TimedEditKind
-        let baseline: EditorDocument
-        let redoBaseline: [EditorDocument]
-        let projection: NativeEditorTimelineProjection
+        var baseline: EditorDocument
+        var redoBaseline: [EditorDocument]
+        var projection: NativeEditorTimelineProjection
+        var translationOrigin: TimeInterval = 0
+        var lastTranslation: TimeInterval = 0
         var recordedUndo = false
     }
 
@@ -2506,6 +2510,8 @@ struct NativeEditorTemporaryVideo {
 
     func updateTrim(by translation: TimeInterval) {
         guard translation.isFinite, var active = activeTrim else { return }
+        active.lastTranslation = translation
+        let translation = translation - active.translationOrigin
         guard let index = clipSlotIndex(active.clipID.uuidString, in: active.baseline) else { return }
         var next = active.baseline
         var slot = next.clips[index]
@@ -4066,11 +4072,17 @@ struct NativeEditorTemporaryVideo {
         let submittedDocument = document
         let submittedSections = changedSections
         let submittedUndoCount = undoStack.count
+        let saveItemID = itemID
+        let saveJobID = jobID
+        let saveVariantKey = variantKey
+        let saveThreadID = threadID
+        let saveDocumentGeneration = document.revision.baseGeneration
         let snapshot = document.encodeSnapshot()
         let payload = Self.object(snapshot["editor_payload"]); let sections = Self.object(payload?["sections"])
         let request = commitRequest(sections: sections, baseGeneration: payload?["base_generation"]?.stringValue ?? document.revision.baseGeneration)
         do {
             let response = try await api.editorCommit(itemID: itemID, variantID: variantKey, request: request)
+            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             let acknowledged = acknowledgedSections(response.sections, submittedSections: submittedSections)
             let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
             let hasPostSubmitEdits = document != submittedDocument
@@ -4121,6 +4133,41 @@ struct NativeEditorTemporaryVideo {
                 document.deletions.removeAll()
                 cleanDocument.deletions.removeAll()
             }
+            // A durable save invalidates the pre-save gesture history too.
+            // Rebase active gestures independently of read-after-write text
+            // reconciliation, so a later zero-delta sample cannot pop an
+            // undo entry that the save just cleared.
+            rebaseActiveGestureHistoryAfterDurableSave()
+            // A prior generation's poll must lose ownership as soon as this
+            // commit is durable. The replacement generation is installed
+            // only after its read-after-write reconciliation completes.
+            previewRefreshTask?.cancel()
+            pendingPreviewGeneration = nil
+            pendingDeviceRenderIdentity = nil
+            // The commit response acknowledges the submitted lanes, but the
+            // renderer may project text differently (for example after a
+            // timeline-only save). Reconcile the committed variant as soon as
+            // it is durable; polling remains the fallback when this read is
+            // unavailable or still stale.
+            if let saveJobID,
+               response.generation == document.revision.baseGeneration {
+                do {
+                    let committedVariant = try await api.editorVariant(jobID: saveJobID, variantID: saveVariantKey)
+                    _ = reconcileAuthoritativeText(
+                        from: committedVariant,
+                        generation: response.generation,
+                        expectedItemID: saveItemID,
+                        expectedJobID: saveJobID,
+                        expectedVariantKey: saveVariantKey,
+                        expectedThreadID: saveThreadID,
+                        expectedDocumentGeneration: response.generation
+                    )
+                } catch {
+                    // A durable save must remain successful even when the
+                    // read-after-write reconciliation is temporarily down.
+                }
+            }
+            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
             if response.ok {
                 // The commit is durable even while its render is pending. Keep
                 // the acknowledged sections retryable until a matching ready
@@ -4128,14 +4175,39 @@ struct NativeEditorTemporaryVideo {
                 pendingRenderRetrySections = acknowledged
                 saveState = .previewPending
                 await refreshDeviceRender()
+                guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 pendingDeviceRenderIdentity = deviceRenderKey.flatMap { deviceRenders?.request(for: $0)?.identity }
                 startPreviewRefresh(generation: response.generation)
             } else {
                 pendingRenderRetrySections = acknowledged
                 saveState = .renderRetryNeeded("Your edit is saved. Its preview render did not start, so you can retry it safely.")
             }
-        } catch APIError.conflict { saveState = .conflict }
-        catch { saveState = .failed(error.localizedDescription) }
+        } catch APIError.conflict {
+            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            saveState = .conflict
+        } catch {
+            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            saveState = .failed(error.localizedDescription)
+        }
+    }
+
+    private func rebaseActiveGestureHistoryAfterDurableSave() {
+        if transactionBaseline != nil { transactionBaseline = document }
+        if var activeTrim {
+            activeTrim.baseline = document
+            activeTrim.translationOrigin = activeTrim.lastTranslation
+            activeTrim.redoBaseline = redoStack
+            activeTrim.recordedUndo = false
+            self.activeTrim = activeTrim
+        }
+        if var activeTimedEdit {
+            activeTimedEdit.baseline = document
+            activeTimedEdit.translationOrigin = activeTimedEdit.lastTranslation
+            activeTimedEdit.projection = timelineProjection
+            activeTimedEdit.redoBaseline = redoStack
+            activeTimedEdit.recordedUndo = false
+            self.activeTimedEdit = activeTimedEdit
+        }
     }
 
     /// Refresh a conflicted baseline without discarding the creator's local
@@ -4307,6 +4379,8 @@ struct NativeEditorTemporaryVideo {
 
     private func updateTimedEdit(by translation: TimeInterval) {
         guard translation.isFinite, var active = activeTimedEdit else { return }
+        active.lastTranslation = translation
+        let translation = translation - active.translationOrigin
         var next = active.baseline
         guard let section = section(for: active.selection.kind) else { return }
         guard let bounds = timedBounds(active.selection, in: next) else { return }
@@ -4339,7 +4413,7 @@ struct NativeEditorTemporaryVideo {
                 redoStack = active.redoBaseline
                 active.recordedUndo = false
             }
-            document = active.baseline
+            document = next
             refreshDirtyState()
             refreshDuration()
             activeTimedEdit = active
@@ -5138,6 +5212,14 @@ struct NativeEditorTemporaryVideo {
                   let expectedIdentity = pendingDeviceRenderIdentity,
                   deviceRenders?.request(for: key)?.identity == expectedIdentity else { return false }
         }
+        _ = reconcileAuthoritativeText(
+            from: variant,
+            generation: currentGeneration,
+            expectedItemID: itemID,
+            expectedJobID: jobID,
+            expectedVariantKey: variantKey,
+            expectedThreadID: threadID
+        )
         if let key = deviceRenderKey,
            let presentation = deviceRenders?.presentations[key],
            presentation.requiresServerRetry {
@@ -5163,6 +5245,86 @@ struct NativeEditorTemporaryVideo {
             return true
         }
         return false
+    }
+
+    /// Adopt only renderer-owned text returned for the exact current
+    /// generation. The other lanes stay untouched, and text changed after the
+    /// save continues to win over the server projection.
+    @discardableResult
+    private func reconcileAuthoritativeText(
+        from variant: [String: JSONValue],
+        generation: String,
+        expectedItemID: String?,
+        expectedJobID: UUID?,
+        expectedVariantKey: String?,
+        expectedThreadID: UUID?,
+        expectedDocumentGeneration: String? = nil
+    ) -> Bool {
+        guard let returnedGeneration = variant["render_generation_id"]?.stringValue
+                ?? variant["render_finished_at"]?.stringValue,
+              returnedGeneration == generation,
+              expectedDocumentGeneration == nil || document.revision.baseGeneration == expectedDocumentGeneration,
+              itemID == expectedItemID,
+              jobID == expectedJobID,
+              variantKey == expectedVariantKey,
+              threadID == expectedThreadID,
+              let textValue = variant["text_elements"],
+              case .array = textValue else { return false }
+        if let returnedVariantKey = variant["variant_id"]?.stringValue,
+           returnedVariantKey != expectedVariantKey { return false }
+
+        let oldCleanText = cleanDocument.textElements
+        let authoritativeText = authoritativeTextElements(from: variant, generation: generation)
+        let currentWasClean = document.textElements == oldCleanText
+
+        cleanDocument.textElements = authoritativeText
+        cleanDocument.revision.baseGeneration = generation
+        if currentWasClean { document.textElements = authoritativeText }
+
+        func rebase(_ value: EditorDocument) -> EditorDocument {
+            guard value.textElements == oldCleanText else { return value }
+            var rebased = value
+            rebased.textElements = authoritativeText
+            return rebased
+        }
+        undoStack = undoStack.map(rebase)
+        redoStack = redoStack.map(rebase)
+        if let transactionBaseline { self.transactionBaseline = rebase(transactionBaseline) }
+        if var activeTrim {
+            activeTrim.baseline = rebase(activeTrim.baseline)
+            activeTrim.redoBaseline = activeTrim.redoBaseline.map(rebase)
+            self.activeTrim = activeTrim
+        }
+        if var activeTimedEdit {
+            activeTimedEdit.baseline = rebase(activeTimedEdit.baseline)
+            activeTimedEdit.redoBaseline = activeTimedEdit.redoBaseline.map(rebase)
+            self.activeTimedEdit = activeTimedEdit
+        }
+        refreshDirtyState()
+        if let selected = selection, !selectionExists(selected) { selection = nil }
+        return true
+    }
+
+    private func authoritativeTextElements(from variant: [String: JSONValue], generation: String) -> [EditorTextElement] {
+        let snapshot = DraftSnapshot(
+            draftID: "reconciled-\(projectID.uuidString)",
+            itemID: itemID ?? "",
+            variantKey: variantKey ?? "",
+            draftRevision: document.revision.number ?? 0,
+            snapshotHash: "",
+            etag: etag,
+            baseJobID: jobID?.uuidString,
+            baseGenerationID: generation,
+            snapshot: document.encodeSnapshot(),
+            canUndo: false,
+            createdAt: .now
+        )
+        let draft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
+        return EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft)).textElements
+    }
+
+    private func saveIdentityMatches(itemID: String?, jobID: UUID?, variantKey: String?, threadID: UUID?, documentGeneration: String) -> Bool {
+        self.itemID == itemID && self.jobID == jobID && self.variantKey == variantKey && self.threadID == threadID && document.revision.baseGeneration == documentGeneration
     }
 
     func retryDeviceRender() async {
