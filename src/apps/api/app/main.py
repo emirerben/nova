@@ -103,6 +103,7 @@ async def ios_device_only_creation_admission(request: Request, call_next):  # no
     """Retire legacy web/cloud creation before any route opens a transaction."""
 
     if rejected := http_creation_mutation_admission(request):
+        rejected.headers.update(_cors_headers_for(request))
         return rejected
     return await call_next(request)
 

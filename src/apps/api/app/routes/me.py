@@ -41,6 +41,7 @@ from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK
+from app.kria.api_schemas import KriaProblemOut
 from app.kria.recipes import EditRecipeV1, adapt_authoritative_job_snapshot
 from app.models import (
     VIDEO_FEEDBACK_THUMB_SIGNALS,
@@ -2322,6 +2323,7 @@ async def retry_failed_job(
     "/jobs/{job_id}/open-in-editor",
     response_model=OpenInEditorResponse,
     response_model_exclude_none=True,
+    responses={410: {"model": KriaProblemOut}, 426: {"model": KriaProblemOut}},
 )
 async def open_job_in_editor(
     job_id: str,

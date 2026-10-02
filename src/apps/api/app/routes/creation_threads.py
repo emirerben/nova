@@ -3604,7 +3604,11 @@ async def list_threads(
     return summaries
 
 
-@router.post("/for-editor", response_model=CreationThreadOut)
+@router.post(
+    "/for-editor",
+    response_model=CreationThreadOut,
+    responses={410: {"model": KriaProblemOut}, 426: {"model": KriaProblemOut}},
+)
 async def open_editor_thread(
     request: Request,
     body: OpenEditorBody,
@@ -3612,7 +3616,7 @@ async def open_editor_thread(
     db: Annotated[AsyncSession, Depends(get_db)],
     native_client: NativeClient = False,
     client_protocol: KriaClientProtocol = None,
-) -> CreationThreadOut:
+) -> CreationThreadOut | JSONResponse:
     """Resolve a direct editor link without creating a second conversation.
 
     Serialize on the account before lookup so concurrent legacy deep links

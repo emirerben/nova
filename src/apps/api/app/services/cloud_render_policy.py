@@ -9,10 +9,9 @@ the execution kill switch is off.  Ready outputs are never rewritten.
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -74,13 +73,29 @@ def cloud_render_mutation_block_reason(
     return None
 
 
-def _terminalize_if_active(job: Any) -> bool:
-    if str(getattr(job, "status", "")) not in _ACTIVE_CLOUD_STATUSES:
-        return False
-    job.status = "processing_failed"
-    job.failure_reason = CLOUD_RENDER_DISABLED_REASON
-    job.error_detail = CLOUD_RENDER_DISABLED_DETAIL
-    return True
+def _terminalize_active_cloud_job_statement(job_id: uuid.UUID):
+    """Build the compare-and-set used by both dispatch-side guards.
+
+    The initial ORM read is only used to determine whether this is a device
+    Job.  It must never be used as the authority for the terminal transition:
+    a worker may have completed the cloud Job between that read and this
+    write.  Keeping the active-state predicate in SQL makes that interleaving
+    a no-op instead of replacing a ready output with ``processing_failed``.
+    """
+
+    return (
+        update(Job)
+        .where(Job.id == job_id, Job.status.in_(_ACTIVE_CLOUD_STATUSES))
+        .values(
+            status="processing_failed",
+            failure_reason=CLOUD_RENDER_DISABLED_REASON,
+            error_detail=CLOUD_RENDER_DISABLED_DETAIL,
+        )
+        # Reload the row explicitly after this write.  In particular, a
+        # zero-row CAS must evict a stale active ORM snapshot before this
+        # session can do any subsequent work with the Job.
+        .execution_options(synchronize_session=False)
+    )
 
 
 async def block_cloud_render_before_publish(
@@ -98,10 +113,18 @@ async def block_cloud_render_before_publish(
 
     if settings.cloud_render_execution_enabled:
         return False
-    job = (await db.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
+    job = (
+        await db.execute(
+            select(Job).where(Job.id == job_id).execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
     if job is None or not cloud_render_is_blocked(job):
         return False
-    terminalized = _terminalize_if_active(job)
+    terminalized = False
+    if str(getattr(job, "status", "")) in _ACTIVE_CLOUD_STATUSES:
+        result = await db.execute(_terminalize_active_cloud_job_statement(job_id))
+        terminalized = int(getattr(result, "rowcount", 0) or 0) == 1
+        await db.refresh(job)
     if terminalized:
         await db.commit()
     log.warning(
@@ -126,10 +149,16 @@ def block_cloud_render_before_publish_sync(
     from app.database import sync_session  # noqa: PLC0415
 
     with sync_session() as db:
-        job = db.execute(select(Job).where(Job.id == job_id)).scalar_one_or_none()
+        job = db.execute(
+            select(Job).where(Job.id == job_id).execution_options(populate_existing=True)
+        ).scalar_one_or_none()
         if job is None or not cloud_render_is_blocked(job):
             return False
-        terminalized = _terminalize_if_active(job)
+        terminalized = False
+        if str(getattr(job, "status", "")) in _ACTIVE_CLOUD_STATUSES:
+            result = db.execute(_terminalize_active_cloud_job_statement(job_id))
+            terminalized = int(getattr(result, "rowcount", 0) or 0) == 1
+            db.refresh(job)
         if terminalized:
             db.commit()
         log.warning(

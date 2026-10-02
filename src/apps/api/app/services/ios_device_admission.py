@@ -9,6 +9,7 @@ import structlog
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from app.auth import parse_kria_client_protocol
 from app.config import settings
 from app.kria.http import problem_response
 
@@ -41,8 +42,14 @@ def is_state_changing_method(method: str) -> bool:
 def is_legacy_creation_path(path: str) -> bool:
     """Match a legacy creation router without catching similarly named paths."""
 
-    return any(
-        path == prefix or path.startswith(f"{prefix}/") for prefix in _LEGACY_CREATION_PREFIXES
+    if any(path == prefix or path.startswith(f"{prefix}/") for prefix in _LEGACY_CREATION_PREFIXES):
+        return True
+    parts = path.split("/")
+    return (
+        len(parts) == 5
+        and parts[0:3] == ["", "me", "jobs"]
+        and bool(parts[3])
+        and parts[4] == "open-in-editor"
     )
 
 
@@ -68,6 +75,15 @@ def is_native_cloud_only_path(path: str) -> bool:
     """Paths with no device-rendering contract, even for a current native app."""
 
     parts = path.split("/")
+    if path == "/plan-items/manual-drafts":
+        return True
+    if (
+        len(parts) == 5
+        and parts[1] == "plan-items"
+        and bool(parts[2])
+        and parts[3:] == ["manual-draft", "initialize"]
+    ):
+        return True
     if path == "/generative-jobs":
         return True
     if len(parts) >= 3 and parts[1] == "generative-jobs":
@@ -98,18 +114,6 @@ def is_native_candidate(authorization: str | None, x_user_id: str | None) -> boo
     return bool(
         authorization and authorization.startswith("Bearer ") and not (x_user_id or "").strip()
     )
-
-
-def parse_client_protocol(value: str | None) -> int | None:
-    """Parse the native protocol header without turning bad input into a 422."""
-
-    if value is None:
-        return None
-    try:
-        protocol = int(value)
-    except (TypeError, ValueError):
-        return None
-    return protocol if protocol >= 0 else None
 
 
 def web_creation_retired_response(request: Request) -> JSONResponse:
@@ -188,7 +192,7 @@ def http_creation_mutation_admission(request: Request) -> JSONResponse | None:
         native_client=is_native_candidate(
             request.headers.get("authorization"), request.headers.get("x-user-id")
         ),
-        client_protocol=parse_client_protocol(request.headers.get("x-kria-client-protocol")),
+        client_protocol=parse_kria_client_protocol(request.headers.get("x-kria-client-protocol")),
     )
     if rejected is not None:
         code = "native_update_required" if rejected.status_code == 426 else "web_creation_retired"
@@ -199,7 +203,9 @@ def http_creation_mutation_admission(request: Request) -> JSONResponse | None:
             method=request.method,
             path=path,
             client_kind=("native" if code == "native_update_required" else "web"),
-            client_protocol=parse_client_protocol(request.headers.get("x-kria-client-protocol")),
+            client_protocol=parse_kria_client_protocol(
+                request.headers.get("x-kria-client-protocol")
+            ),
         )
         return rejected
     if is_native_cloud_only_path(path):
@@ -210,7 +216,9 @@ def http_creation_mutation_admission(request: Request) -> JSONResponse | None:
             method=request.method,
             path=path,
             client_kind="native",
-            client_protocol=parse_client_protocol(request.headers.get("x-kria-client-protocol")),
+            client_protocol=parse_kria_client_protocol(
+                request.headers.get("x-kria-client-protocol")
+            ),
         )
         return device_render_unsupported_response(request)
     log.info(
@@ -220,6 +228,6 @@ def http_creation_mutation_admission(request: Request) -> JSONResponse | None:
         method=request.method,
         path=path,
         client_kind="native",
-        client_protocol=parse_client_protocol(request.headers.get("x-kria-client-protocol")),
+        client_protocol=parse_kria_client_protocol(request.headers.get("x-kria-client-protocol")),
     )
     return None

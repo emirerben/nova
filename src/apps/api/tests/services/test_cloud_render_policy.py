@@ -35,12 +35,22 @@ def _job(*, status: str = "queued", device: bool = False, **extra):
     )
 
 
-def _async_db(job):
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = job
+def _async_db(job, *, terminalized: bool = True):
+    select_result = MagicMock()
+    select_result.scalar_one_or_none.return_value = job
+    write_result = MagicMock()
+    write_result.rowcount = 1 if terminalized else 0
     db = MagicMock()
-    db.execute = AsyncMock(return_value=result)
+    db.execute = AsyncMock(side_effect=[select_result, write_result])
     db.commit = AsyncMock()
+
+    async def refresh_from_database(instance):
+        if terminalized:
+            instance.status = "processing_failed"
+            instance.failure_reason = CLOUD_RENDER_DISABLED_REASON
+            instance.error_detail = CLOUD_RENDER_DISABLED_DETAIL
+
+    db.refresh = AsyncMock(side_effect=refresh_from_database)
     return db
 
 
@@ -105,6 +115,40 @@ async def test_async_policy_preserves_ready_cloud_job_and_output(monkeypatch):
     db.commit.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_async_policy_does_not_overwrite_a_job_completed_after_its_initial_read(monkeypatch):
+    """The active snapshot can be stale while another transaction finishes the Job."""
+    monkeypatch.setattr(
+        "app.services.cloud_render_policy.settings.cloud_render_execution_enabled", False
+    )
+    job = _job(status="queued", output_url=None)
+    db = _async_db(job, terminalized=False)
+
+    async def refresh_completed_job(instance):
+        instance.status = "done"
+        instance.output_url = "https://signed.example/finished.mp4"
+
+    db.refresh.side_effect = refresh_completed_job
+
+    assert await block_cloud_render_before_publish(db, job.id, task_name="test") is True
+    assert job.status == "done"
+    assert job.output_url == "https://signed.example/finished.mp4"
+    assert job.failure_reason is None
+    db.commit.assert_not_awaited()
+
+    statement = db.execute.await_args_list[1].args[0]
+    assert statement.get_execution_options()["synchronize_session"] is False
+    assert set(statement.compile().params["status_1"]) == {
+        "queued",
+        "processing",
+        "matching",
+        "rendering",
+        "posting",
+    }
+    initial_read = db.execute.await_args_list[0].args[0]
+    assert initial_read.get_execution_options()["populate_existing"] is True
+
+
 def test_sync_policy_allows_device_job_when_disabled(monkeypatch):
     monkeypatch.setattr(
         "app.services.cloud_render_policy.settings.cloud_render_execution_enabled", False
@@ -123,6 +167,34 @@ def test_sync_policy_allows_device_job_when_disabled(monkeypatch):
     session.commit.assert_not_called()
 
 
+def test_sync_policy_does_not_overwrite_a_job_completed_after_its_initial_read(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.cloud_render_policy.settings.cloud_render_execution_enabled", False
+    )
+    job = _job(status="queued", output_url=None)
+    select_result = MagicMock()
+    select_result.scalar_one_or_none.return_value = job
+    write_result = MagicMock()
+    write_result.rowcount = 0
+    session = MagicMock()
+    session.execute.side_effect = [select_result, write_result]
+
+    def refresh_completed_job(instance):
+        instance.status = "done"
+        instance.output_url = "https://signed.example/finished.mp4"
+
+    session.refresh.side_effect = refresh_completed_job
+    context = MagicMock()
+    context.__enter__.return_value = session
+    context.__exit__.return_value = False
+
+    with patch("app.database.sync_session", return_value=context):
+        assert block_cloud_render_before_publish_sync(job.id, task_name="test") is True
+    assert job.status == "done"
+    assert job.output_url == "https://signed.example/finished.mp4"
+    session.commit.assert_not_called()
+
+
 def test_task_entry_guard_terminalizes_queued_cloud_job(monkeypatch):
     monkeypatch.setattr(
         "app.services.cloud_render_policy.settings.cloud_render_execution_enabled", False
@@ -130,8 +202,17 @@ def test_task_entry_guard_terminalizes_queued_cloud_job(monkeypatch):
     job = _job()
     result = MagicMock()
     result.scalar_one_or_none.return_value = job
+    write_result = MagicMock()
+    write_result.rowcount = 1
     session = MagicMock()
-    session.execute.return_value = result
+    session.execute.side_effect = [result, write_result]
+
+    def refresh_from_database(instance):
+        instance.status = "processing_failed"
+        instance.failure_reason = CLOUD_RENDER_DISABLED_REASON
+        instance.error_detail = CLOUD_RENDER_DISABLED_DETAIL
+
+    session.refresh.side_effect = refresh_from_database
     context = MagicMock()
     context.__enter__.return_value = session
     context.__exit__.return_value = False
@@ -149,8 +230,17 @@ def test_sync_dispatch_does_not_publish_disabled_cloud_job(monkeypatch):
     job = _job()
     result = MagicMock()
     result.scalar_one_or_none.return_value = job
+    write_result = MagicMock()
+    write_result.rowcount = 1
     session = MagicMock()
-    session.execute.return_value = result
+    session.execute.side_effect = [result, write_result]
+
+    def refresh_from_database(instance):
+        instance.status = "processing_failed"
+        instance.failure_reason = CLOUD_RENDER_DISABLED_REASON
+        instance.error_detail = CLOUD_RENDER_DISABLED_DETAIL
+
+    session.refresh.side_effect = refresh_from_database
     context = MagicMock()
     context.__enter__.return_value = session
     context.__exit__.return_value = False
@@ -204,10 +294,12 @@ async def test_async_dispatch_allows_device_job_and_publishes(monkeypatch):
         "app.services.cloud_render_policy.settings.cloud_render_execution_enabled", False
     )
     job = _job(device=True)
+    select_result = MagicMock()
+    select_result.scalar_one_or_none.return_value = job
     status = MagicMock()
     status.scalar_one_or_none.return_value = "queued"
     db = MagicMock()
-    db.execute = AsyncMock(side_effect=[_async_db(job).execute.return_value, status, MagicMock()])
+    db.execute = AsyncMock(side_effect=[select_result, status, MagicMock()])
     db.commit = AsyncMock()
     task = MagicMock()
     task.name = "orchestrate_generative_job"

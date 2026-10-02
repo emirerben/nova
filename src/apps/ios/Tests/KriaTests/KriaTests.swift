@@ -281,12 +281,16 @@ final class KriaTests: XCTestCase {
     }
 
     func testEditorStateCapabilityDecodesAndDefaultsOff() throws {
-        let on = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"editor_state_turns":true,"editor_state_max_bytes":262144}"#.utf8))
+        let on = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"editor_state_turns":true,"editor_state_max_bytes":262144,"creation_mode":"device_only","minimum_client_protocol":2}"#.utf8))
         XCTAssertTrue(on.editorStateTurnsEnabled)
         XCTAssertEqual(on.editorStateMaxBytes, 262144)
+        XCTAssertEqual(on.creationMode, .deviceOnly)
+        XCTAssertEqual(on.minimumClientProtocol, 2)
         let old = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[]}"#.utf8))
         XCTAssertFalse(old.editorStateTurnsEnabled, "an old server omits the field: legacy flush")
         XCTAssertNil(old.editorStateMaxBytes)
+        XCTAssertNil(old.creationMode)
+        XCTAssertNil(old.minimumClientProtocol)
     }
 
     func testNativeUpdateRequiredProblemIsBlockingAPIError() async throws {

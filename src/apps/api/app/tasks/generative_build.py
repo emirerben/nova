@@ -29,6 +29,7 @@ from __future__ import annotations
 import contextvars
 import copy
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -1028,6 +1029,97 @@ def _wait_for_required_speech_soft_deadline(*, now: datetime | None = None) -> b
     return True
 
 
+_VARIANT_RERENDER_TASKS = {
+    "rebuild_slide_post_variant": "slides",
+    "regenerate_generative_variant": None,
+    "reburn_narrated_captions": None,
+    "rerender_caption_camera_effects": None,
+    "reburn_narrated_bed_level": None,
+    "retranscribe_subtitled_captions": None,
+}
+
+
+def _has_last_good_variant_artifact(variant: dict[str, Any]) -> bool:
+    """Whether a blocked in-place rerender can truthfully return to ready."""
+    if variant.get("variant_id") == "slides":
+        # A slide preview is only useful when its matching export bundle still
+        # exists. `_build_slide_post_result` publishes both atomically.
+        slide_post = variant.get("slide_post")
+        return bool(
+            variant.get("video_path")
+            and isinstance(slide_post, dict)
+            and slide_post.get("bundle_gcs_path")
+        )
+    return bool(variant.get("video_path") or variant.get("output_url"))
+
+
+def _clear_blocked_variant_rerender(fn, self, job_id: str, args: tuple, kwargs: dict) -> None:  # noqa: ANN001
+    """Terminalize a blocked in-place rerender without touching newer work.
+
+    Cloud policy is checked before a task's usual exception cleanup.  Only
+    named in-place variant rerenders have a generation token to reconcile;
+    initial job orchestration and speech-operation tasks deliberately remain
+    terminalized by the policy.
+    """
+    fixed_variant_id = _VARIANT_RERENDER_TASKS.get(fn.__name__)
+    if fn.__name__ not in _VARIANT_RERENDER_TASKS:
+        return
+    bound = inspect.signature(fn).bind_partial(self, job_id, *args, **kwargs)
+    render_gen_id = bound.arguments.get("render_gen_id")
+    variant_id = fixed_variant_id or bound.arguments.get("variant_id")
+    # Tokenless legacy deliveries predate the mint/stamp contract. Do not let
+    # a policy flip mutate a variant they cannot prove they still own.
+    if not isinstance(variant_id, str) or not variant_id or not render_gen_id:
+        return
+    from app.services.cloud_render_policy import CLOUD_RENDER_DISABLED_DETAIL  # noqa: PLC0415
+
+    # Unlike `_update_variant_entry`, this needs to choose the terminal state
+    # from the *currently locked* variant. A failed first render has no
+    # last-good artifact, so changing it to ready would manufacture a playable
+    # state. The exact generation comparison also makes a newer queued task
+    # entirely invisible to this older blocked delivery.
+    with _sync_session() as db:
+        entry = _lock_owned_entry_job(db, job_id)
+        if entry is None:
+            return
+        job, _ownership_epoch = entry
+        if getattr(job, "status", None) == _CANCELLED_JOB_STATUS:
+            return
+        plan = copy.deepcopy(job.assembly_plan or {})
+        variants = list(plan.get("variants") or [])
+        index = next(
+            (i for i, variant in enumerate(variants) if variant.get("variant_id") == variant_id),
+            None,
+        )
+        if index is None:
+            return
+        current = dict(variants[index])
+        if current.get("render_generation_id") != str(render_gen_id):
+            log.warning(
+                "stale_render_write_discarded",
+                job_id=job_id,
+                variant_id=variant_id,
+                outcome="variant_rerender_cloud_disabled",
+                expected_gen_id=render_gen_id,
+                actual_gen_id=current.get("render_generation_id"),
+            )
+            return
+        has_last_good = _has_last_good_variant_artifact(current)
+        variants[index] = {
+            **current,
+            "render_status": "ready" if has_last_good else "failed",
+            "ok": has_last_good,
+            "render_error": CLOUD_RENDER_DISABLED_DETAIL,
+        }
+        job.assembly_plan = {**plan, "variants": variants}
+        db.commit()
+
+
+def _phone_rendering_globally_available() -> bool:
+    """Global compiler gate; per-user cohort validation happens at publish."""
+    return settings.ios_device_only_mode or settings.phone_rendering_enabled
+
+
 def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
     """Wrap every generative task entry in the same owner/cancellation gate."""
 
@@ -1037,6 +1129,7 @@ def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
         from app.services.creator_direction_snapshot import renderer_policy_scope
 
         if block_cloud_render_task(job_id, task_name=fn.__name__):
+            _clear_blocked_variant_rerender(fn, self, job_id, args, kwargs)
             log.info("generative_cloud_render_blocked", job_id=job_id, task=fn.__name__)
             return None
         fence = (
@@ -3750,7 +3843,7 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
     existing = (snapshot.get(DEVICE_RENDER_FIELD) or {}).get("guided_story")
     if existing is not None and existing.get("base_generation") == generation:
         return  # A delivery cannot rewrite an already issued device revision.
-    if not settings.phone_rendering_enabled:
+    if not _phone_rendering_globally_available():
         raise ValueError(
             "Phone rendering is currently unavailable; originals remain on the device."
         )
@@ -4170,7 +4263,7 @@ def _run_phone_voiceover_montage_job(
         for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
     ):
         return
-    if not settings.phone_rendering_enabled:
+    if not _phone_rendering_globally_available():
         raise ValueError(
             "Phone rendering is currently unavailable; originals remain on the device."
         )
@@ -4732,7 +4825,7 @@ def _run_phone_unified_montage_job(
         for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
     ):
         return None
-    if not settings.phone_rendering_enabled:
+    if not _phone_rendering_globally_available():
         raise ValueError(
             "Phone rendering is currently unavailable; originals remain on the device."
         )
@@ -5034,7 +5127,7 @@ def _run_phone_subtitled_job(
         for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
     ):
         return
-    if not settings.phone_rendering_enabled:
+    if not _phone_rendering_globally_available():
         raise ValueError(
             "Phone rendering is currently unavailable; originals remain on the device."
         )
@@ -6209,7 +6302,7 @@ def _run_phone_narrated_job(
         for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
     ):
         return
-    if not settings.phone_rendering_enabled:
+    if not _phone_rendering_globally_available():
         raise ValueError(
             "Phone rendering is currently unavailable; originals remain on the device."
         )

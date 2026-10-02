@@ -49,6 +49,17 @@ def test_anonymous_and_web_proxy_legacy_mutations_are_retired(client: TestClient
         assert response.json()["problem"]["code"] == "web_creation_retired"
 
 
+def test_retired_web_mutation_keeps_allowed_origin_cors_headers(client: TestClient) -> None:
+    response = client.post(
+        "/plan-items/not-a-route",
+        headers={"Origin": "https://www.usekria.com"},
+    )
+
+    assert response.status_code == 410
+    assert response.headers["access-control-allow-origin"] == "https://www.usekria.com"
+    assert response.headers["access-control-allow-credentials"] == "true"
+
+
 @pytest.mark.parametrize("protocol", [None, "malformed", "1", "-1"])
 def test_old_or_malformed_native_protocol_requires_update(
     client: TestClient, protocol: str | None
@@ -76,6 +87,43 @@ def test_current_native_protocol_reaches_normal_auth(client: TestClient) -> None
     assert response.status_code == 401
 
 
+def test_open_in_editor_promotion_uses_creation_admission(client: TestClient) -> None:
+    web = client.post("/me/jobs/job-id/open-in-editor")
+    old_native = client.post(
+        "/me/jobs/job-id/open-in-editor",
+        headers={"Authorization": "Bearer not-a-real-jwt", "X-Kria-Client-Protocol": "1"},
+    )
+    current_native = client.post(
+        "/me/jobs/job-id/open-in-editor",
+        headers={
+            "Authorization": "Bearer not-a-real-jwt",
+            "X-Kria-Client-Protocol": str(settings.kria_minimum_client_protocol),
+        },
+    )
+
+    assert web.status_code == 410
+    assert web.json()["problem"]["code"] == "web_creation_retired"
+    assert old_native.status_code == 426
+    assert old_native.json()["problem"]["code"] == "native_update_required"
+    assert current_native.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/me/jobs/job-id/retry",
+        "/me/jobs/job-id/open-in-editor/extra",
+        "/me/jobs//open-in-editor",
+    ],
+)
+def test_open_in_editor_admission_does_not_catch_near_matches(
+    client: TestClient, path: str
+) -> None:
+    response = client.post(path)
+
+    assert response.status_code != 410
+
+
 @pytest.mark.parametrize(
     "path",
     [
@@ -101,6 +149,47 @@ def test_current_native_cloud_only_creation_is_unsupported(client: TestClient, p
 
     assert response.status_code == 422
     assert response.json()["problem"]["code"] == "device_render_unsupported"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/plan-items/manual-drafts",
+        "/plan-items/item-id/manual-draft/initialize",
+    ],
+)
+def test_current_native_manual_draft_creation_is_unsupported(client: TestClient, path: str) -> None:
+    response = client.post(
+        path,
+        headers={
+            "Authorization": "Bearer not-a-real-jwt",
+            "X-Kria-Client-Protocol": str(settings.kria_minimum_client_protocol),
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["problem"]["code"] == "device_render_unsupported"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/plan-items/manual-drafts/extra",
+        "/plan-items//manual-draft/initialize",
+        "/plan-items/item-id/manual-draft/initialize/extra",
+        "/plan-items/item-id/manual-drafts/initialize",
+    ],
+)
+def test_manual_draft_admission_does_not_catch_near_matches(client: TestClient, path: str) -> None:
+    response = client.post(
+        path,
+        headers={
+            "Authorization": "Bearer not-a-real-jwt",
+            "X-Kria-Client-Protocol": str(settings.kria_minimum_client_protocol),
+        },
+    )
+
+    assert response.status_code != 422
 
 
 @pytest.mark.parametrize(

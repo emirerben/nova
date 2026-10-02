@@ -163,6 +163,18 @@ async def is_native_client(
     )
 
 
+def parse_kria_client_protocol(value: str | None) -> int | None:
+    """Parse the native protocol without producing a generic validation error."""
+
+    if value is None:
+        return None
+    try:
+        protocol = int(value)
+    except (TypeError, ValueError):
+        return None
+    return protocol if protocol >= 0 else None
+
+
 async def kria_client_protocol(
     x_kria_client_protocol: Annotated[str | None, Header(alias="X-Kria-Client-Protocol")] = None,
 ) -> int | None:
@@ -173,13 +185,7 @@ async def kria_client_protocol(
     failure into FastAPI's generic validation envelope.
     """
 
-    if x_kria_client_protocol is None:
-        return None
-    try:
-        value = int(x_kria_client_protocol)
-    except (TypeError, ValueError):
-        return None
-    return value if value >= 0 else None
+    return parse_kria_client_protocol(x_kria_client_protocol)
 
 
 async def get_current_user_or_synthetic(
@@ -225,4 +231,5 @@ __all__ = [
     "get_current_user_or_synthetic",
     "is_native_client",
     "kria_client_protocol",
+    "parse_kria_client_protocol",
 ]

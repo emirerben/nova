@@ -112,28 +112,43 @@ struct RootView: View {
 }
 
 private struct NativeUpdateRequiredView: View {
+    private let appStoreURL = URL(string: "https://apps.apple.com/")!
+
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: "arrow.down.app.fill")
-                .font(.system(size: 40, weight: .semibold))
-                .foregroundStyle(KriaColor.ink)
-                .frame(width: 76, height: 76)
-                .background(KriaColor.sky, in: Circle())
-            Text("Update Kria to continue")
-                .font(KriaFont.display(30))
-                .multilineTextAlignment(.center)
-            Text("This version of Kria is no longer supported. Update the app from the App Store, then reopen it.")
-                .font(KriaFont.body(16))
-                .foregroundStyle(KriaColor.zinc)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 20) {
+                    Spacer(minLength: 28)
+                    Image(systemName: "arrow.down.app.fill")
+                        .font(.system(size: 40, weight: .semibold))
+                        .foregroundStyle(KriaColor.ink)
+                        .frame(width: 76, height: 76)
+                        .background(KriaColor.sky, in: Circle())
+                    Text("Update Kria to continue")
+                        .font(KriaFont.display(30))
+                        .multilineTextAlignment(.center)
+                    Text("This version of Kria is no longer supported. Update the app from the App Store, then reopen it.")
+                        .font(KriaFont.body(16))
+                        .foregroundStyle(KriaColor.zinc)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(spacing: 12) {
+                        Link("Open the App Store", destination: appStoreURL)
+                            .buttonStyle(KriaPrimaryButtonStyle())
+                            .accessibilityIdentifier("kria-update-app-store-link")
+                        Link("Contact support", destination: KriaLegal.supportURL)
+                            .buttonStyle(KriaSecondaryButtonStyle())
+                            .accessibilityIdentifier("kria-update-support-link")
+                    }
+                    .frame(maxWidth: 320)
+                    Spacer(minLength: 28)
+                }
+                .padding(.horizontal, 28)
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+            }
         }
-        .padding(28)
-        .frame(maxWidth: 520)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
     }
 }
 
