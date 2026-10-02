@@ -177,51 +177,52 @@ let audioEdgeFade: TimeInterval = 0.025
 /// volume per render buffer, so a clip whose first point sits exactly on its cut
 /// leaks the first few milliseconds at full level even when muted. Seeding the
 /// timeline origin with 0 closes that; the edge ramps stop hard cuts clicking.
-/// Ramps never overlap a `setVolume` point: mute-window edges inside an edge
-/// zone are ignored (at most 25 ms of a window edge, or of an authored fade).
+///
+/// AVAudioMix interpolates a `setVolume` point into the next point (measured:
+/// a mute window written as a 0 point then a full point faded back in across
+/// the whole window), so every level after the leading zero is an explicit
+/// ramp, back to back. Mute windows gate the steady region between the edge
+/// fades: silent inside a window, with a declick ramp on the audible side of
+/// each window edge. Window edges inside an edge zone are ignored (at most
+/// 25 ms of a window edge, or of an authored fade).
 ///
 /// KRI-139: an authored `audioFadeIn`/`audioFadeOut` longer than the declick
 /// edge replaces it, and a `duck` envelope scales the steady region between the
-/// edges (the side-chain ducked footage bed) as consecutive ramps.
+/// edges (the side-chain ducked footage bed).
 func applyAudioGain(_ parameter: AVMutableAudioMixInputParameters, clip: TimelineClip, gain: Double, windows: [AudioMuteWindow], duck: AudioDuckEnvelope? = nil) {
     func cm(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 60_000) }
+    func ramp(_ from: Float, _ to: Float, _ start: Double, _ end: Double) {
+        let range = CMTimeRange(start: cm(start), end: cm(end))
+        if range.duration > .zero { parameter.setVolumeRamp(fromStartVolume: from, toEndVolume: to, timeRange: range) }
+    }
     let start = clip.timelineStart
     // Audio stops with the moving segment; a held video tail carries no sound.
     let audioEnd = start + clip.sourceDuration / clip.rate
     let edge = max(0, min(audioEdgeFade, (audioEnd - start) / 4))
     let half = (audioEnd - start) / 2
     let fadeIn = max(edge, min(clip.audioFadeIn ?? 0, half)), fadeOut = max(edge, min(clip.audioFadeOut ?? 0, half))
-    let affected = windows.filter { $0.clipIDs.contains(clip.id) && $0.start < clip.timelineStart + clip.duration && $0.end > clip.timelineStart }
-    let boundaries = Set([start] + affected.flatMap { [max(clip.timelineStart, $0.start), min(clip.timelineStart + clip.duration, $0.end)] }).sorted()
-    func level(at time: Double) -> Float {
-        affected.contains { $0.start <= time && $0.end > time } ? 0 : Float(gain * clip.volume)
-    }
-    func ducked(_ time: Double) -> Float { Float(duck?.gain(at: time) ?? 1) }
-    // Nothing plays before the clip: keep the implicit unity default away from it.
-    if start > 0 { parameter.setVolume(0, at: .zero) }
     let steadyStart = start + fadeIn, steadyEnd = audioEnd - fadeOut
-    let initial = level(at: start)
-    if initial > 0, fadeIn > 0 {
-        parameter.setVolumeRamp(fromStartVolume: 0, toEndVolume: initial * ducked(steadyStart), timeRange: CMTimeRange(start: cm(start), duration: cm(fadeIn)))
-    } else {
-        parameter.setVolume(initial, at: cm(start))
+    let affected = windows.filter { $0.clipIDs.contains(clip.id) && $0.start < clip.timelineStart + clip.duration && $0.end > clip.timelineStart }
+    // Window edges split the steady region into runs: a muted run holds 0, an
+    // audible run ramps from and to 0 at each window edge it touches.
+    let edges = Set(affected.flatMap { [$0.start, $0.end] }.filter { $0 > steadyStart && $0 < steadyEnd }).sorted()
+    let cuts = [steadyStart] + edges + [steadyEnd]
+    var corners: [(time: Double, gain: Double)] = []
+    for (from, to) in zip(cuts, cuts.dropFirst()) {
+        if affected.contains(where: { $0.start <= from && $0.end > from }) { corners += [(from, 0), (to, 0)]; continue }
+        let declick = min(audioEdgeFade, (to - from) / 2)
+        corners += from > steadyStart ? [(from, 0), (from + declick, 1)] : [(from, 1)]
+        corners += to < steadyEnd ? [(to - declick, 1), (to, 0)] : [(to, 1)]
     }
-    if let duck, steadyEnd > steadyStart {
-        // Ramp between every duck breakpoint and mute-window edge; a window edge
-        // is a step, so each segment ramps at its own window level.
-        let marks = Set([steadyStart, steadyEnd] + boundaries.filter { $0 > steadyStart && $0 < steadyEnd } + duck.times(in: steadyStart...steadyEnd)).sorted()
-        for (from, to) in zip(marks, marks.dropFirst()) where to - from > 0.000_001 {
-            let held = level(at: from)
-            parameter.setVolumeRamp(fromStartVolume: held * ducked(from), toEndVolume: held * ducked(to), timeRange: CMTimeRange(start: cm(from), end: cm(to)))
-        }
-    } else {
-        for time in boundaries where time >= steadyStart && time < steadyEnd {
-            parameter.setVolume(level(at: time), at: cm(time))
-        }
-    }
-    let last = level(at: max(start, min(steadyEnd, boundaries.last(where: { $0 < steadyEnd }) ?? start)))
-    if last > 0, fadeOut > 0 {
-        parameter.setVolumeRamp(fromStartVolume: last * ducked(steadyEnd), toEndVolume: 0, timeRange: CMTimeRange(start: cm(steadyEnd), duration: cm(fadeOut)))
-    }
+    // Piecewise linear like the duck curve, so the two multiply corner by corner.
+    let gate = AudioDuckEnvelope(points: corners)
+    func level(_ time: Double) -> Float { Float(gain * clip.volume * gate.gain(at: time) * (duck?.gain(at: time) ?? 1)) }
+    // Nothing plays before the clip: keep the implicit unity default away from it.
+    // The fade-in ramp starts at 0, so the point has nothing to interpolate toward.
+    if start > 0 { parameter.setVolume(0, at: .zero) }
+    ramp(0, level(steadyStart), start, steadyStart)
+    let marks = Set(corners.map(\.time) + (duck?.times(in: steadyStart...steadyEnd) ?? [])).sorted()
+    for (from, to) in zip(marks, marks.dropFirst()) { ramp(level(from), level(to), from, to) }
+    ramp(level(steadyEnd), 0, steadyEnd, audioEnd)
 }
 #endif

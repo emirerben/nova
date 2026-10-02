@@ -33,7 +33,29 @@ final class AudioEdgeEnvelopeTests: XCTestCase {
         }
     }
 
-    @MainActor private func render(originalVolume: Double) async throws -> [(String, [Float])] {
+    /// A cutaway with `audio_policy.base == "mute"` silences the footage under it.
+    /// Consecutive `setVolume` points ramp into each other, so a window built from
+    /// them faded 0 -> full across its whole span instead of holding silence.
+    @MainActor func testMuteWindowHoldsSilenceAndDeclicksItsEdges() async throws {
+        // One window inside clip a, one spanning the cut (it starts clip b muted).
+        let windows = [AudioMuteWindow(start: 0.3, end: 0.6, clipIDs: ["a"]), AudioMuteWindow(start: 0.85, end: 1.4, clipIDs: ["a", "b"])]
+        for (label, pcm) in try await render(originalVolume: 1, muteWindows: windows) {
+            let steady = rms(pcm, 0.1, 0.25)
+            XCTAssertGreaterThan(steady, 0.25, "\(label) tone is present")
+            for (from, to) in [(0.35, 0.55), (0.9, 1.35)] {
+                let bins = stride(from: from, to: to, by: 0.05).map { rms(pcm, $0, min(to, $0 + 0.05)) }
+                XCTAssertLessThan(bins.max() ?? 1, 0.002, "\(label) window \(from)-\(to) not silent: \(bins)")
+            }
+            // Full level returns between and after the windows.
+            XCTAssertEqual(rms(pcm, 0.66, 0.79), steady, accuracy: 0.03 * steady, "\(label) between windows")
+            XCTAssertEqual(rms(pcm, 1.46, 1.9), steady, accuracy: 0.03 * steady, "\(label) after the cut window")
+            // Each window edge ramps instead of stepping.
+            for edge in [0.3, 0.85] { XCTAssertLessThan(rms(pcm, edge - 0.001, edge), 0.3 * steady, "\(label) into window at \(edge)") }
+            for edge in [0.6, 1.4] { XCTAssertLessThan(rms(pcm, edge, edge + 0.001), 0.3 * steady, "\(label) out of window at \(edge)") }
+        }
+    }
+
+    @MainActor private func render(originalVolume: Double, muteWindows: [AudioMuteWindow] = []) async throws -> [(String, [Float])] {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -45,10 +67,13 @@ final class AudioEdgeEnvelopeTests: XCTestCase {
             TimelineClip(id: "a", sourceAssetID: "first", sourceStart: 0.5, sourceDuration: 1, timelineStart: 0, volume: 1),
             TimelineClip(id: "b", sourceAssetID: "second", sourceStart: 0.5, sourceDuration: 1, timelineStart: cut, volume: 1),
         ]
-        let recipe = EditRecipe(canvas: Canvas(width: 96, height: 160),
-            assets: urls.keys.sorted().map { MediaAsset(id: $0, relativePath: $0) },
+        // Schema 2 (what the phone compiler emits) carries mute windows.
+        let assets = try urls.sorted(by: { $0.key < $1.key }).map { MediaAsset(id: $0.key, relativePath: $0.key, fingerprint: try SHA256Fingerprinter().fingerprint(file: $0.value)) }
+        let references = try assets.map { RenderAssetReference(id: $0.id, fingerprint: try RenderFingerprint($0.fingerprint!), source: .original(mediaID: $0.id)) }
+        let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 96, height: 160), assets: assets,
             tracks: [TimelineTrack(id: "video", kind: .video, clips: clips)],
-            audio: AudioMixRecipe(originalVolume: originalVolume))
+            audio: AudioMixRecipe(originalVolume: originalVolume, muteWindows: muteWindows),
+            assetManifest: RenderAssetManifest(assets: references))
         let preview = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
         let output = directory.appendingPathComponent("edge.mp4")
         _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
