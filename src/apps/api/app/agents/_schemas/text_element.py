@@ -1284,7 +1284,9 @@ def text_elements_for_variant(
         suppressed = {
             str(key).strip()
             for key in (
-                overrides.get("_suppressed_line_keys") if isinstance(overrides, dict) else []
+                (overrides.get("_suppressed_line_keys") or [])
+                if isinstance(overrides, dict)
+                else []
             )
             if str(key).strip()
         }
@@ -1293,6 +1295,7 @@ def text_elements_for_variant(
             lyric_elems = [
                 elem
                 for entry in snapshot
+                if isinstance(entry, dict)
                 if str(entry.get("line_key") or "").strip() not in suppressed
                 if (elem := _element_from_lyric_snapshot(entry))
             ]

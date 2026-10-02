@@ -1366,6 +1366,24 @@ def test_lyric_projection_flag_off_returns_no_elements():
     assert text_elements_for_variant(_lyric_snapshot_variant()) == []
 
 
+@pytest.mark.parametrize(
+    "overrides", [{}, {"L14": {"text": "Edited"}}, {"_suppressed_line_keys": None}]
+)
+def test_lyric_projection_without_deletion_marker_keeps_snapshot(overrides):
+    variant = {**_lyric_snapshot_variant(), "lyric_line_overrides": overrides}
+    variant["lyric_overlay_snapshot"].extend([None, "invalid"])
+    [element] = text_elements_for_variant(variant, include_lyric_projection=True)
+    assert element.id == "lyric_L14"
+
+
+def test_lyric_projection_honors_persisted_line_deletion():
+    variant = {
+        **_lyric_snapshot_variant(),
+        "lyric_line_overrides": {"_suppressed_line_keys": ["L14"]},
+    }
+    assert text_elements_for_variant(variant, include_lyric_projection=True) == []
+
+
 def test_lyric_snapshot_projects_on_agent_text_variant_alongside_intro():
     # Feature contract: a song_text (agent_text) variant with lyrics toggled ON
     # carries a lyric_overlay_snapshot and must expose its lines as editable
