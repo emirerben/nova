@@ -496,11 +496,99 @@ func nativeEditorHex(_ color: Color) -> String {
     return String(format: "#%02X%02X%02X", Int((red * 255).rounded()), Int((green * 255).rounded()), Int((blue * 255).rounded()))
 }
 
+/// Input behaviour for `NativeExplicitLineTextEditor`. The default value is the Text
+/// tool's long-standing editor (explicit lines, UIKit keyboard defaults); KRI-240's
+/// caption line editor opts into wrapping, Return = Next and transcript-safe input.
+struct LineEditorConfiguration: Equatable {
+    var wrapsLines = false
+    var returnKeyType: UIReturnKeyType = .default
+    /// Return calls `LineEditorActions.onReturn` instead of inserting a newline.
+    var interceptsReturn = false
+    var autocorrectionType: UITextAutocorrectionType = .default
+    var spellCheckingType: UITextSpellCheckingType = .default
+    var autocapitalizationType: UITextAutocapitalizationType = .sentences
+    var smartQuotesType: UITextSmartQuotesType = .default
+    var smartDashesType: UITextSmartDashesType = .default
+    /// BCP-47 language whose installed keyboard is requested (`textInputMode`).
+    var preferredLanguage: String? = nil
+    /// Pasted newlines become spaces (a caption is one line of speech).
+    var flattensNewlines = false
+    var usesKriaBodyFont = false
+    var accessibilityLabel = "Text"
+
+    /// KRI-240 caption line: wraps, Return moves to the next line (Done on the last),
+    /// never auto-replaces words, and asks for a keyboard in the caption language.
+    /// Spell-check underlines only make sense on a keyboard in that language, so
+    /// they are turned off when no matching keyboard is installed (plan 025 D11).
+    @MainActor static func captionLine(language: String?, isLast: Bool,
+                            installedLanguages: [String] = LineEditorConfiguration.installedKeyboardLanguages()) -> LineEditorConfiguration {
+        var config = LineEditorConfiguration()
+        config.wrapsLines = true
+        config.returnKeyType = isLast ? .done : .next
+        config.interceptsReturn = true
+        config.autocorrectionType = .no
+        if let language, !installedLanguages.contains(where: { Self.language($0, matches: language) }) {
+            config.spellCheckingType = .no
+        }
+        config.smartQuotesType = .no
+        config.smartDashesType = .no
+        config.preferredLanguage = language
+        config.flattensNewlines = true
+        config.usesKriaBodyFont = true
+        config.accessibilityLabel = "Caption"
+        return config
+    }
+
+    @MainActor static func installedKeyboardLanguages() -> [String] {
+        UITextInputMode.activeInputModes.compactMap { $0.primaryLanguage }
+    }
+
+    /// "tr" matches "tr-TR" / "tr_TR"; only the language subtag is compared.
+    static func language(_ candidate: String, matches language: String) -> Bool {
+        func subtag(_ value: String) -> String {
+            String(value.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).first ?? "")
+        }
+        let wanted = subtag(language)
+        return !wanted.isEmpty && subtag(candidate) == wanted
+    }
+
+    @MainActor func apply(to view: ExplicitLineTextView) {
+        view.wrapsLines = wrapsLines
+        view.textContainer.widthTracksTextView = wrapsLines
+        view.returnKeyType = returnKeyType
+        view.autocorrectionType = autocorrectionType
+        view.spellCheckingType = spellCheckingType
+        view.autocapitalizationType = autocapitalizationType
+        view.smartQuotesType = smartQuotesType
+        view.smartDashesType = smartDashesType
+        view.preferredLanguage = preferredLanguage
+        view.accessibilityLabel = accessibilityLabel
+        if usesKriaBodyFont {
+            let base = UIFont(name: "Inter-Regular", size: 17) ?? .systemFont(ofSize: 17)
+            view.font = UIFontMetrics(forTextStyle: .body).scaledFont(for: base)
+        }
+    }
+}
+
+/// Return and hardware-keyboard handlers for a line editor (KRI-240, plan 025 D14).
+struct LineEditorActions {
+    var onReturn: (() -> Void)? = nil
+    var onNextLine: (() -> Void)? = nil
+    var onPreviousLine: (() -> Void)? = nil
+    var onEscape: (() -> Void)? = nil
+}
+
 /// The editor and canvas share explicit line breaks. Long lines scroll sideways.
+/// (`LineEditorConfiguration.captionLine` switches to wrapping for caption lines.)
 struct NativeExplicitLineTextEditor: UIViewRepresentable {
     @Binding var text: String
     var focused: Binding<Bool>
     let identifier: String
+    var configuration = LineEditorConfiguration()
+    var actions = LineEditorActions()
+    /// Changing this re-arms the editor for a different line: its undo history is
+    /// cleared (so shake-to-undo can't edit the previous line) and the caret moves to the end.
+    var lineID: String? = nil
 
     func makeUIView(context: Context) -> ExplicitLineTextView {
         let view = ExplicitLineTextView()
@@ -515,12 +603,29 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
         view.textContainer.heightTracksTextView = false
         view.accessibilityLabel = "Text"
         view.accessibilityIdentifier = identifier
+        configuration.apply(to: view)
+        view.appliedConfiguration = configuration
+        view.lineID = lineID
         return view
     }
 
     func updateUIView(_ view: ExplicitLineTextView, context: Context) {
         context.coordinator.parent = self
+        view.lineActions = actions
+        if view.appliedConfiguration != configuration {
+            let inputChanged = view.appliedConfiguration.returnKeyType != configuration.returnKeyType
+                || view.appliedConfiguration.preferredLanguage != configuration.preferredLanguage
+            configuration.apply(to: view)
+            view.appliedConfiguration = configuration
+            if inputChanged && view.isFirstResponder { view.reloadInputViews() }
+        }
         if view.text != text { view.text = text }
+        if view.lineID != lineID {
+            view.lineID = lineID
+            view.undoManager?.removeAllActions()
+            let end = (view.text ?? "").utf16.count
+            view.selectedRange = NSRange(location: end, length: 0)
+        }
         view.updateLineWidth()
         view.wantsKeyboardFocus = focused.wrappedValue
         if focused.wrappedValue && view.window != nil && !view.isFirstResponder { view.becomeFirstResponder() }
@@ -537,11 +642,38 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
         }
         func textViewDidBeginEditing(_ textView: UITextView) { parent.focused.wrappedValue = true }
         func textViewDidEndEditing(_ textView: UITextView) { parent.focused.wrappedValue = false }
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            let config = parent.configuration
+            if let view = textView as? ExplicitLineTextView, view.allowsNextNewline {
+                view.allowsNextNewline = false
+                return true
+            }
+            if config.interceptsReturn, text == "\n" {
+                parent.actions.onReturn?()
+                return false
+            }
+            if config.flattensNewlines, text.contains(where: \.isNewline),
+               let start = textView.position(from: textView.beginningOfDocument, offset: range.location),
+               let end = textView.position(from: start, offset: range.length),
+               let target = textView.textRange(from: start, to: end) {
+                textView.replace(target, withText: text.components(separatedBy: .newlines).joined(separator: " "))
+                return false
+            }
+            return true
+        }
     }
 }
 
 final class ExplicitLineTextView: UITextView {
     var wantsKeyboardFocus = false
+    var wrapsLines = false
+    var preferredLanguage: String?
+    var appliedConfiguration = LineEditorConfiguration()
+    var lineActions = LineEditorActions()
+    var lineID: String?
+    /// Set by Shift-Return so the one newline it inserts passes the Return intercept.
+    var allowsNextNewline = false
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window != nil && wantsKeyboardFocus { becomeFirstResponder() }
@@ -550,7 +682,40 @@ final class ExplicitLineTextView: UITextView {
         updateLineWidth()
         super.layoutSubviews()
     }
+
+    /// KRI-240: request the caption language's keyboard when one is installed.
+    override var textInputMode: UITextInputMode? {
+        if let preferredLanguage,
+           let mode = UITextInputMode.activeInputModes.first(where: {
+               LineEditorConfiguration.language($0.primaryLanguage ?? "", matches: preferredLanguage)
+           }) {
+            return mode
+        }
+        return super.textInputMode
+    }
+
+    override var keyCommands: [UIKeyCommand]? {
+        var commands = super.keyCommands ?? []
+        guard lineActions.onNextLine != nil || lineActions.onEscape != nil else { return commands }
+        let next = UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(nextLineCommand))
+        let previous = UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(previousLineCommand))
+        let escape = UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(escapeCommand))
+        let newline = UIKeyCommand(input: "\r", modifierFlags: .shift, action: #selector(newlineCommand))
+        for command in [next, previous, escape, newline] { command.wantsPriorityOverSystemBehavior = true }
+        commands.append(contentsOf: [next, previous, escape, newline])
+        return commands
+    }
+    @objc private func nextLineCommand() { lineActions.onNextLine?() }
+    @objc private func previousLineCommand() { lineActions.onPreviousLine?() }
+    @objc private func escapeCommand() { lineActions.onEscape?() }
+    @objc private func newlineCommand() {
+        allowsNextNewline = true
+        insertText("\n")
+        allowsNextNewline = false
+    }
+
     func updateLineWidth() {
+        guard !wrapsLines else { return }
         let font = font ?? .systemFont(ofSize: 17)
         let longest = (text ?? "").components(separatedBy: .newlines).map {
             ($0 as NSString).size(withAttributes: [.font: font]).width

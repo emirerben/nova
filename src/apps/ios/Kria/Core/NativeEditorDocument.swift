@@ -116,6 +116,50 @@ struct EditorTextElement: Codable, Equatable, Sendable {
     }
 }
 
+/// KRI-240 (plan 025 D6, R1, R11): a caption cue's per-word timings
+/// (`raw["words"]`, `[{text, start_s, end_s, …}]`) must keep spelling its text.
+/// Renderers that trust the stored words (the server's phone caption compiler)
+/// otherwise burn the pre-edit words. The rewrite is a pure function of the
+/// words captured when the line was entered and the current text, so typing a
+/// space and deleting it restores the original timings exactly.
+enum CaptionWordRewrite {
+    /// `nil` when the cue carried no word list (nothing to keep in sync).
+    static func words(entryText: String, entryWords: [JSONValue]?, text: String,
+                      startS: Double, endS: Double) -> [JSONValue]? {
+        guard let entryWords else { return nil }
+        if text == entryText { return entryWords }
+        let tokens = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !tokens.isEmpty else { return [] }
+        let entries = entryWords.compactMap(\.objectValue)
+        if entries.count == tokens.count {
+            // Same word count: each word keeps its own timing by position.
+            return zip(entries, tokens).map { word, token in
+                var word = word
+                word["text"] = .string(token)
+                return .object(word)
+            }
+        }
+        // Different count: spread across the cue window by character weight.
+        let weights = tokens.map { Double(max(1, $0.count)) }
+        let total = weights.reduce(0, +)
+        let span = max(0, endS - startS)
+        var cursor = startS
+        return tokens.enumerated().map { index, token in
+            let end = index == tokens.count - 1 ? endS : cursor + span * weights[index] / total
+            let word: [String: JSONValue] = [
+                "text": .string(token),
+                "start_s": .number(rounded(cursor)),
+                "end_s": .number(rounded(end)),
+                "timing_quality": .string("segment_estimate")
+            ]
+            cursor = end
+            return .object(word)
+        }
+    }
+
+    private static func rounded(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
+}
+
 struct EditorCaptionCue: Codable, Equatable, Sendable {
     var id: String
     var startS: Double

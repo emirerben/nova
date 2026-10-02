@@ -406,6 +406,34 @@ well as revisions because reconciliation can change a projection without
 appending an event. `testSlowDirectionAndPreJobFailureNeverReturnToUploading`
 exercises the delayed response, pre-job failure, retry and ready transition.
 
+### Caption line editing (KRI-240)
+
+Captions → Edit captions lists lines with their start time; there is no chevron,
+the line under the playhead is highlighted with a sky bar and followed while
+playing (a drag on the list stops following until the next play), and unsaved
+lines carry a sky dot. One tap on a line opens the edit bar with the keyboard up
+and the caret at the end; the bar replaces the list while the app header, the
+Chat/Editor switch and the top banners stay (Variant A, `plans/025-kri-240-caption-text-editing.md`).
+While a line is open the timeline handle, transport, tool rail and Kria sparkles
+button are hidden and the preview takes the space above the bar
+(`NativeEditorLayoutMetrics.captionEditBarHeight`). The open line
+(`NativeEditorView.captionEditingCueID`) is the source of truth; keyboard focus
+only follows it, so a dismissed or refused keyboard leaves a usable bar.
+
+The line field is `NativeExplicitLineTextEditor` with
+`LineEditorConfiguration.captionLine`: it wraps, Return moves to the next line
+(Done on the last), autocorrection is off, and it asks for a keyboard in the
+variant's `caption_language` when one is installed (spell-check underlines are
+off when it is not). Hardware keys: Tab / Shift-Tab move between lines, Esc is
+Done, Shift-Return inserts a newline. Unlike the web editor, Return does not
+leave the line. Editing a cue rewrites its `raw["words"]` so the stored word
+list keeps spelling the text (`CaptionWordRewrite`); returning to the original
+text restores the original timings and leaves no undo step. An emptied line is
+removed on commit inside the line's own transaction, so one Undo restores it;
+rows also offer a long-press Delete. The preview parks 0.15s into the line
+because caption pop-in is invisible at its first frame. The Text tool keeps its
+compact 120pt typing preview.
+
 ### Change-based CI
 
 The iOS workflow always reports `build-and-test`. The shared

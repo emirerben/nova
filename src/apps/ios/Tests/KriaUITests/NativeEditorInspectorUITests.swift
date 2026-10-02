@@ -1257,25 +1257,26 @@ final class NativeEditorInspectorUITests: XCTestCase {
 
         let row = app.descendants(matching: .any)["native-editor-caption-row-cue-all"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 3))
+        // KRI-240: ONE tap opens the edit bar with the keyboard up and the caret
+        // at the end of the line. No second tap on the field.
         row.tap()
 
-        let field = app.textFields.matching(identifier: "native-editor-caption-row-cue-all").firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 3), "TextField never appeared after tapping the row")
-        field.tap()
+        let field = app.textViews["native-editor-caption-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3), "the caption edit bar never appeared after one row tap")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "one row tap must bring up the keyboard")
+        XCTAssertEqual(app.staticTexts["native-editor-caption-position"].label, "Line 1 of 1")
         field.typeText(" edited")
-        app.buttons["native-editor-captions-done"].tap()
+        app.buttons["native-editor-caption-edit-done"].tap()
 
-        // Reopen and confirm the edit persisted in the document, not just
-        // transiently in the now-dismissed TextField.
+        // Done returns to the list; close and reopen to prove the edit reached the
+        // document and survived a full close/reopen cycle.
+        let panelDone = app.buttons["native-editor-captions-done"]
+        XCTAssertTrue(panelDone.waitForExistence(timeout: 3))
+        panelDone.tap()
         captions.tap()
         let reopenedRow = app.descendants(matching: .any)["native-editor-caption-row-cue-all"].firstMatch
         XCTAssertTrue(reopenedRow.waitForExistence(timeout: 3))
-        // Cursor placement on a freshly-focused multi-line TextField isn't
-        // guaranteed to be at the end, so the typed text may land before or
-        // after the original "caption" — either order proves the edit
-        // reached the document and survived a full close/reopen cycle.
-        let editedRow = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'edited' AND label CONTAINS 'caption'")).firstMatch
-        XCTAssertTrue(editedRow.waitForExistence(timeout: 3), "Typed edit did not persist across close/reopen")
+        XCTAssertTrue(reopenedRow.label.contains("caption edited"), "typed edit did not persist: \(reopenedRow.label)")
     }
 
     func testAllPersistedLanesExposeStableTimelineIdentityAndInspector() {
