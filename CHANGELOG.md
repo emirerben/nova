@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.17.0] - 2026-10-02
+
+### Changed
+- fix(ios): crossfade speech-cleanup cut audio and drag the preview band anywhere (#1326) <!-- release-pr: 1326 -->
+
 ## [0.78.16.0] - 2026-10-02
 
 ### Changed
