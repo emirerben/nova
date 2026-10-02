@@ -129,10 +129,19 @@ struct NativeEditorLayoutMetrics: Equatable {
 
     /// The panel may rise over the transport and the preview, up to the
     /// header/top chrome. The transport stays where it is and is simply covered.
+    /// With the keyboard up (typing into a text panel), the preview is already
+    /// shrunk to `typingPreviewHeight`: a text block positioned away from the
+    /// frame's center can land illegibly small there, so the panel must still be
+    /// able to grow over it, not get stuck at its default height.
     func panelMaxHeight(areaHeight: CGFloat, previewHeight: CGFloat) -> CGFloat {
         let budget = panelBudget(areaHeight: areaHeight)
-        guard !keyboardVisible, !isAccessibilitySize else { return budget }
-        return budget + Self.transportHeight + previewHeight
+        guard !isAccessibilitySize else { return budget }
+        // `panelBudget` reserves `transportHeight` only when the keyboard is
+        // hidden (the transport is covered, not shown, once the keyboard is
+        // up) -- add it back only in that case, or the ceiling overshoots the
+        // header by one `transportHeight`.
+        let reclaimedTransport = keyboardVisible ? 0 : Self.transportHeight
+        return budget + reclaimedTransport + previewHeight
             + Self.previewVerticalPadding + Self.resizeHandleHeight
     }
 

@@ -45,9 +45,12 @@ final class NativeEditorLayoutMetricsTests: XCTestCase {
         XCTAssertEqual(
             pro(shrinksWhileTyping: true).defaultPreviewHeight, pro().defaultPreviewHeight, accuracy: 0.001
         )
-        // The panel's own ceiling with the keyboard up is untouched.
+        // The panel can still rise over the (now-shrunk) preview with the
+        // keyboard up: a text block positioned away from the frame's center
+        // can land illegibly small in that shrunk preview, so the panel must
+        // be able to grow past its default to cover it, not get stuck there.
         let kb = pro(keyboard: true, shrinksWhileTyping: true)
-        XCTAssertEqual(kb.panelMaxHeight(areaHeight: 300, previewHeight: 80), kb.panelBudget(areaHeight: 300), accuracy: 0.01)
+        XCTAssertEqual(kb.panelMaxHeight(areaHeight: 300, previewHeight: 80), 428, accuracy: 0.01)
     }
 
     // MARK: default preview (unchanged from before KRI-170)
@@ -150,12 +153,17 @@ final class NativeEditorLayoutMetricsTests: XCTestCase {
                        m.panelHeight(areaHeight: 327, previewHeight: 284, expansion: 0), accuracy: 0.01)
     }
 
-    func testKeyboardAndAccessibilityKeepLegacyPanelBudget() {
+    func testAccessibilitySizeKeepsLegacyPanelBudgetButKeyboardCanNowGrow() {
+        // A text block editable while the keyboard is up must be able to rise
+        // over the shrunk preview, same as any other panel (see the dedicated
+        // panelMaxHeight assertion above) -- it is no longer stuck at budget.
         let kb = pro(keyboard: true)
-        XCTAssertEqual(kb.panelHeight(areaHeight: 300, previewHeight: 258, expansion: 1), 294, accuracy: 0.01)
+        XCTAssertEqual(kb.panelHeight(areaHeight: 300, previewHeight: 258, expansion: 1), 606, accuracy: 0.01)
+        XCTAssertEqual(kb.panelRange(areaHeight: 300, previewHeight: 258), 312, accuracy: 0.01)
+        // Accessibility sizing is unaffected: still capped at budget.
         let ax = pro(accessibility: true)
         XCTAssertEqual(ax.panelHeight(areaHeight: 500, previewHeight: 150, expansion: 1), 440, accuracy: 0.01)
-        XCTAssertEqual(kb.panelRange(areaHeight: 300, previewHeight: 258), 0, accuracy: 0.01)
+        XCTAssertEqual(ax.panelRange(areaHeight: 500, previewHeight: 150), 0, accuracy: 0.01)
     }
 
     // MARK: fullscreen
