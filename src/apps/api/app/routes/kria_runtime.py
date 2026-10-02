@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import CurrentUser
+from app.auth import CurrentUser, KriaClientProtocol, NativeClient
 from app.config import settings
 from app.database import get_db
 from app.kria.api_schemas import (
@@ -40,6 +40,7 @@ from app.kria.runtime import (
     submit_turn,
 )
 from app.limiter import limiter
+from app.services.ios_device_admission import creation_mutation_admission
 
 router = APIRouter(
     route_class=KriaRuntimeRoute,
@@ -50,6 +51,7 @@ router = APIRouter(
         409: {"model": KriaProblemOut},
         410: {"model": KriaProblemOut},
         422: {"model": KriaProblemOut},
+        426: {"model": KriaProblemOut},
         428: {"model": KriaProblemOut},
         429: {"model": KriaProblemOut},
         500: {"model": KriaProblemOut},
@@ -118,7 +120,13 @@ async def create_turn(
     body: SubmitTurnBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> TurnAccepted | JSONResponse:
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     try:
         _runtime_enabled(user)
         response, should_publish = await submit_turn(
@@ -192,7 +200,13 @@ async def cancel_runtime_turn(
     body: TurnCancelBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> TurnCancelled | JSONResponse:
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     try:
         _runtime_enabled(user)
         response, successor_turn_id = await cancel_turn(
@@ -233,7 +247,13 @@ async def decide_runtime_approval(
     body: ApprovalDecisionBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> ApprovalDecisionOut | JSONResponse:
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     try:
         _runtime_enabled(user)
         response, successor_turn_id = await decide_approval(
@@ -361,7 +381,13 @@ async def put_runtime_draft(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> DraftSnapshotOut | JSONResponse:
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     try:
         _runtime_enabled(user)
         if if_match is None:
@@ -399,7 +425,13 @@ async def undo_runtime_draft(
     body: DraftUndoBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> DraftSnapshotOut | JSONResponse:
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     try:
         _runtime_enabled(user)
         draft, successor_turn_id = await undo_draft(

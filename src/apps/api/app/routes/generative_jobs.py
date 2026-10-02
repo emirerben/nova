@@ -86,6 +86,7 @@ from app.schemas.guided_edit_revision import (
     validate_guided_revision_lane_identities,
 )
 from app.schemas.montage_preset import MASONRY_MONTAGE_PRESET, is_collage_montage_preset
+from app.services.cloud_render_policy import cloud_render_mutation_block_reason
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
     PlanPersonaOwnershipError,
@@ -2481,6 +2482,37 @@ _SLIDE_POST_EDIT_ERROR = {
     "message": "Edit the slide order, cover, or caption in the slides panel instead.",
 }
 
+_DEVICE_RENDER_UNSUPPORTED_ERROR = {
+    "code": "device_render_unsupported",
+    "message": (
+        "This project cannot render entirely on this iPhone. Its existing video is unchanged."
+    ),
+}
+_CLOUD_RENDER_DISABLED_ERROR = {
+    "code": "cloud_render_disabled",
+    "message": "Server video rendering is disabled. The existing video is unchanged.",
+}
+
+
+def _require_render_affecting_mutation_allowed(job: Job, variant: dict) -> None:
+    """Reject a cloud replacement before any variant state is changed."""
+
+    reason = cloud_render_mutation_block_reason(job, variant=variant)
+    if reason is None:
+        return
+    raise HTTPException(
+        status_code=(
+            status.HTTP_422_UNPROCESSABLE_ENTITY
+            if reason == "device_render_unsupported"
+            else status.HTTP_503_SERVICE_UNAVAILABLE
+        ),
+        detail=(
+            _DEVICE_RENDER_UNSUPPORTED_ERROR
+            if reason == "device_render_unsupported"
+            else _CLOUD_RENDER_DISABLED_ERROR
+        ),
+    )
+
 
 def _assert_variant_generation_editable_or_409(job: Job, variant_id: str) -> None:
     """Map the private generation barrier onto the stable public route error."""
@@ -2513,6 +2545,11 @@ def require_editable_variant(job: Job, variant_id: str, *, allow_guided_text: bo
             status_code=status.HTTP_409_CONFLICT,
             detail="Cancelled videos cannot be edited.",
         )
+    _assert_variant_generation_editable_or_409(job, variant_id)
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    _require_render_affecting_mutation_allowed(job, variant)
     from app.kria.media_sources import require_cloud_render_job  # noqa: PLC0415
 
     try:
@@ -2522,10 +2559,6 @@ def require_editable_variant(job: Job, variant_id: str, *, allow_guided_text: bo
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "phone_editor_required"},
         ) from exc
-    _assert_variant_generation_editable_or_409(job, variant_id)
-    variant = _find_variant(job, variant_id)
-    if variant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
     if variant.get("render_status") == "rendering" or variant.get("speech_cut_in_flight"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
@@ -2733,6 +2766,7 @@ def _require_slides_variant(job: Job, variant_id: str) -> dict:
     variant = _find_variant(job, variant_id)
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    _require_render_affecting_mutation_allowed(job, variant)
     if variant.get("render_status") == "rendering":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
@@ -8979,6 +9013,8 @@ def prepare_editor_commit(
         speech_cut_owner=speech_cut_owner,
     )
     variant = _find_variant(job, variant_id)
+    if variant is not None:
+        _require_render_affecting_mutation_allowed(job, variant)
     if variant is not None and variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit  # noqa: PLC0415
         from app.services.phone_editor_sources import editor_sources_for_variant

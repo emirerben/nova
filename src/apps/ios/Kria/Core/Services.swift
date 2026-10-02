@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Security
 import AuthenticationServices
 import Photos
@@ -10,6 +11,35 @@ import KriaMediaEngine
 
 extension Notification.Name {
     static let kriaSessionExpired = Notification.Name("kria.session-expired")
+    static let kriaNativeUpdateRequired = Notification.Name("kria.native-update-required")
+}
+
+/// Process-wide, deliberately one-way state for a server-enforced native
+/// upgrade. Keeping this outside a view means a 426 received before the root
+/// view subscribes is still reflected when it is first rendered.
+@MainActor final class NativeUpdateState: ObservableObject {
+    static let shared = NativeUpdateState()
+
+    @Published private(set) var isUpdateRequired = false
+
+    func requireUpdate() {
+        isUpdateRequired = true
+        NotificationCenter.default.post(name: .kriaNativeUpdateRequired, object: nil)
+    }
+}
+
+/// Centralize the 426 contract so ordinary requests and the silent token
+/// refresh path both flip the same durable, app-wide state before throwing.
+private func signalNativeUpdateRequiredIfNeeded(data: Data, response: HTTPURLResponse) async -> Bool {
+    guard response.statusCode == 426,
+          let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+          let problem = body["problem"] as? [String: Any],
+          problem["code"] as? String == "native_update_required"
+    else { return false }
+    await MainActor.run {
+        NativeUpdateState.shared.requireUpdate()
+    }
+    return true
 }
 
 enum KriaEnvironment: Sendable {
@@ -696,6 +726,11 @@ struct RecipeAsset: Codable, Sendable, Identifiable { let id: String; let relati
 struct RecipeTrack: Codable, Sendable, Identifiable { let id: String; let kind: String; let clips: [RecipeClip] }
 struct RecipeClip: Codable, Sendable, Identifiable { let id: String; let sourceAssetID: String; let sourceStart: Double; let sourceDuration: Double; let timelineStart: Double; let rate: Double; enum CodingKeys: String, CodingKey { case id, rate; case sourceAssetID = "source_asset_id"; case sourceStart = "source_start"; case sourceDuration = "source_duration"; case timelineStart = "timeline_start" } }
 
+private enum KriaClientProtocolContract {
+    static let version = 2
+    static let header = "X-Kria-Client-Protocol"
+}
+
 /// Process-wide: every `KriaAPI` instance (AuthModel, AppModel, the library
 /// audit) shares one Keychain, so they must share one in-flight refresh too.
 /// Per-instance coordinators let two instances replay the same single-use
@@ -727,9 +762,13 @@ private actor MobileSessionRefreshCoordinator {
             var request = URLRequest(url: baseURL.appending(path: "auth/mobile/refresh"))
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
             request.httpBody = try JSONEncoder().encode(["refresh_token": current.refreshToken])
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            if await signalNativeUpdateRequiredIfNeeded(data: data, response: http) {
+                throw APIError.nativeUpdateRequired
+            }
             guard (200..<300).contains(http.statusCode) else {
                 // The token we presented may have been rotated by another
                 // process (a relaunch mid-rotation) or, on older servers,
@@ -981,6 +1020,7 @@ struct KriaAPI: KriaAPIClient {
         var request = URLRequest(url: url); request.httpMethod = method; request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let timeoutInterval { request.timeoutInterval = timeoutInterval }
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
         let storedSession = requiresAuth ? try tokenStore.read() : nil
         if let token = storedSession?.accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let bodyData { request.httpBody = bodyData; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
@@ -1035,6 +1075,9 @@ struct KriaAPI: KriaAPIClient {
             throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message, code: problem?.code))
         }
         guard (200..<300).contains(http.statusCode) else {
+            if await signalNativeUpdateRequiredIfNeeded(data: data, response: http) {
+                throw APIError.nativeUpdateRequired
+            }
             if http.statusCode == 422, path.hasSuffix("/editor-commit") {
                 let saveError = EditorSaveError.from(responseData: data)
                 NativePreviewDiagnostics.record("editor-save-rejected", fields: [
@@ -1354,6 +1397,9 @@ enum APIError: Error, LocalizedError, Equatable {
     /// regardless of what the body decoded to.
     case requestFailed(status: Int, detail: RequestFailureDetail = RequestFailureDetail(nil))
     case offline, invalidResponse, sessionExpired, unsupported, contentPlanUnavailable, editorNotReady
+    /// The server retired this client protocol; callers should block creation
+    /// and direct the user to update rather than retrying the mutation.
+    case nativeUpdateRequired
     /// A 409/412. `detail` carries the server's `detail` string when it sent one.
     case conflict(detail: ConflictDetail)
     /// Detail-free conflict. Keeps `throw APIError.conflict`, `== .conflict`,
@@ -1374,6 +1420,7 @@ enum APIError: Error, LocalizedError, Equatable {
         case .conflict: "This edit changed elsewhere. Review your local changes before saving again."
         case .contentPlanUnavailable: "This video’s content plan is unavailable. Its editor cannot be opened."
         case .editorNotReady: "This video has no ready edit to open."
+        case .nativeUpdateRequired: "Update Kria to continue creating projects."
         case .unsupported: "This API client does not support native editor saves."
         case .offline: "Kria couldn’t complete that request. Check your connection and try again."
         case let .requestFailed(status, _) where RequestFailureCause(status: status) == .server:

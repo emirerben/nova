@@ -376,6 +376,10 @@ def cleanup_unclaimed_omni_asset(*, job_id: str, asset_id: str) -> None:
 )
 def generate_omni_asset(self, *, job_id: str, asset_id: str) -> None:  # noqa: ANN001
     """Generate, normalize, and register one optional editor source clip."""
+    from app.services.cloud_render_policy import block_cloud_render_task  # noqa: PLC0415
+
+    if block_cloud_render_task(job_id, task_name="tasks.generate_omni_asset"):
+        return
     storage_path: str | None = None
     provider_client: Any = None
     provider_input_names: list[str] = []

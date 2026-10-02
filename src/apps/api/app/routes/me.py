@@ -41,6 +41,7 @@ from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK
+from app.kria.api_schemas import KriaProblemOut
 from app.kria.recipes import EditRecipeV1, adapt_authoritative_job_snapshot
 from app.models import (
     VIDEO_FEEDBACK_THUMB_SIGNALS,
@@ -70,6 +71,7 @@ from app.services.apple_account_revocation import (
     validate_apple_revocation_configuration,
 )
 from app.services.auth_locks import account_lifecycle_lock_key, acquire_auth_locks
+from app.services.cloud_render_policy import cloud_render_mutation_block_reason
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
     PlanPersonaOwnershipError,
@@ -2264,6 +2266,25 @@ async def retry_failed_job(
             detail="Only a failed video can be retried.",
         )
 
+    block_reason = cloud_render_mutation_block_reason(locked_job)
+    if block_reason is not None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_422_UNPROCESSABLE_ENTITY
+                if block_reason == "device_render_unsupported"
+                else status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail={
+                "code": block_reason,
+                "message": (
+                    "This project cannot render entirely on this iPhone. "
+                    "Its existing video is unchanged."
+                    if block_reason == "device_render_unsupported"
+                    else "Server video rendering is disabled. The existing video is unchanged."
+                ),
+            },
+        )
+
     locked_job.status = "queued"
     locked_job.error_detail = None
     locked_job.failure_reason = None
@@ -2302,6 +2323,7 @@ async def retry_failed_job(
     "/jobs/{job_id}/open-in-editor",
     response_model=OpenInEditorResponse,
     response_model_exclude_none=True,
+    responses={410: {"model": KriaProblemOut}, 426: {"model": KriaProblemOut}},
 )
 async def open_job_in_editor(
     job_id: str,

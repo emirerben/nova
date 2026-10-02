@@ -11,6 +11,7 @@ from app.kria.media_sources import (
     AnalysisProxyDescriptor,
     MediaUploadContract,
     OriginalMediaDescriptor,
+    is_device_render_job,
     require_cloud_source_paths,
 )
 from app.services.generative_jobs import build_generative_job
@@ -119,6 +120,29 @@ def test_cloud_job_constructor_rejects_proxy_before_minting_job():
     with pytest.raises(ValueError, match="analysis proxies"):
         build_generative_job(user_id=user_id, clip_paths=[path])
     require_cloud_source_paths([f"users/{user_id}/creation-threads/a/original.mp4"])
+
+
+@pytest.mark.parametrize(
+    "assembly_plan",
+    [
+        {"_phone_sources_v1": [{"media_id": "m1"}]},
+        {"_device_render_v1": {"variant_id": "v1"}},
+        {"variants": [{"variant_id": "v1", "render_destination": "device"}]},
+        {"variants": [{"variant_id": "v1", "render_destination": "phone"}]},
+    ],
+)
+def test_is_device_render_job_accepts_each_durable_device_marker(assembly_plan):
+    assert is_device_render_job(SimpleNamespace(assembly_plan=assembly_plan)) is True
+
+
+def test_is_device_render_job_does_not_infer_device_from_shared_job_metadata():
+    """Mode/type are shared with cloud rows and must not bypass cloud policy."""
+    job = SimpleNamespace(
+        mode="generative",
+        job_type="default",
+        assembly_plan={"variants": [{"variant_id": "v1", "render_destination": "cloud"}]},
+    )
+    assert is_device_render_job(job) is False
 
 
 @pytest.mark.parametrize("cancelled", [False, True])
