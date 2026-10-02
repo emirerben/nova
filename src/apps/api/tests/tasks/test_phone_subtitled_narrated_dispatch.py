@@ -2071,7 +2071,7 @@ def test_narrated_applies_required_speech_cleanup_to_the_recorded_voiceover(monk
 
     cleaned = NarrationTrack(
         gcs_path="users/u/plan/i/speech-cleanup/analysis/deadbeef.wav",
-        generation="42",
+        generation="9",
         duration_s=9.0,
         words=[
             NarrationWord(text="First", start_s=0.0, end_s=0.5),
@@ -2106,6 +2106,9 @@ def test_narrated_applies_required_speech_cleanup_to_the_recorded_voiceover(monk
     # The compiled recipe follows the CLEANED (shorter) voiceover duration,
     # not the mocked `_probe_duration`/`split_phrases` fixture's own 12.0s.
     assert status.request.recipe.duration == pytest.approx(9.0)
+    binding = job.assembly_plan["_device_render_v1"]["narrated"]["narration_binding"]
+    assert binding["narration"] == cleaned.model_dump(mode="json")
+    assert binding["asset_id"] == status.request.recipe.audio.narration_asset_id
 
 
 def test_narrated_bed_level_mix_math_matches_montage_convention(monkeypatch):

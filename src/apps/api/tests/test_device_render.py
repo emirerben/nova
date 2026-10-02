@@ -68,6 +68,14 @@ def test_planning_redelivery_cannot_change_approved_recipe():
 
 def test_device_receipts_never_escape_public_assembly_projection():
     job, _ = _fixture()
+    job.assembly_plan["_device_render_v1"]["original_text"]["narration_binding"] = {
+        "version": 1,
+        "narration": {
+            "gcs_path": (
+                "users/owner/plan/item/speech-cleanup/analysis/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav"
+            )
+        },
+    }
     public = project_public_assembly_plan(job.assembly_plan)
     assert "_device_render_v1" not in public
     assert "variants" in public
