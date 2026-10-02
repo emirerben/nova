@@ -24,7 +24,7 @@ from tests.services.test_kria_editor_ops import _job, _variant
 
 
 def test_prompt_version_pinned() -> None:
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-10-01-v65"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-10-02-v66"
 
 
 def test_op_cap_is_a_single_shared_constant() -> None:
@@ -154,24 +154,33 @@ def test_new_op_without_coerce_is_rejected() -> None:
 
 
 def test_register_handler_dispatch_duplicate_and_unregistered(monkeypatch) -> None:
-    table = dict(ops_mod._OP_HANDLERS)
-    monkeypatch.setattr(ops_mod, "_OP_HANDLERS", table)
+    # Lazy registration must populate the original table before we replace it:
+    # otherwise compile sets the global loaded flag only for the temporary table.
+    ops_mod._load_lane_handlers()
+    original = ops_mod._OP_HANDLERS
+    table = dict(original)
     variant = _variant()
     job = _job(variant)
-
-    with pytest.raises(KriaEditorOpError, match="not portable to Kria yet"):
-        compile_editor_ops(job, variant, [{"op": "zz_test_op"}])
 
     def handler(state, op):  # noqa: ANN001, ANN202
         state.text[0]["text"] = "handled"
         state.changed.add("text")
 
-    ops_mod.register_handler("zz_test_op", handler)
-    compiled = compile_editor_ops(job, variant, [{"op": "zz_test_op"}])
-    assert compiled.payload.text_elements[0]["text"] == "handled"
-    with pytest.raises(ValueError):
+    with monkeypatch.context() as isolated:
+        isolated.setattr(ops_mod, "_OP_HANDLERS", table)
+        with pytest.raises(KriaEditorOpError, match="not portable to Kria yet"):
+            compile_editor_ops(job, variant, [{"op": "zz_test_op"}])
+
         ops_mod.register_handler("zz_test_op", handler)
-    ops_mod.register_handler("zz_test_op", handler, replace=True)
+        compiled = compile_editor_ops(job, variant, [{"op": "zz_test_op"}])
+        assert compiled.payload.text_elements[0]["text"] == "handled"
+        with pytest.raises(ValueError):
+            ops_mod.register_handler("zz_test_op", handler)
+        ops_mod.register_handler("zz_test_op", handler, replace=True)
+
+    assert ops_mod._OP_HANDLERS is original
+    assert "zz_test_op" not in original
+    assert {"patch_slots", "realign_labels", "rewrite_text"} <= original.keys()
 
 
 def test_built_in_ops_all_have_handlers() -> None:

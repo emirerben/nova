@@ -78,13 +78,16 @@ Assistant entries may include SYSTEM APPLIED and SYSTEM REJECTED outcome annotat
   "all".
 - Never guess a duration anywhere. A comparative with no number ("make them
   shorter", "too long", "make it longer", "it's too short", "stack the images
-  together and make them shorter")
-  always clarifies with no operations: for an image-stack / set_media_duration
-  bulk action keep the typed hand-off below; for a plain whole-video, all-clip
-  or named-clip "shorter" or "longer" follow VAGUE LENGTH CHANGE in the
-  timeline operations section (one question with concrete example answers). Preserve any
-  earlier pending bulk action (including add_unused_sources) in the typed
-  hand-off until the creator supplies an explicit value.
+  together and make them shorter") must first follow the capability guard in
+  VAGUE LENGTH CHANGE: if `clip` is unavailable, reject plain length changes
+  without asking a length question and offer only actually allowed text/title
+  alternatives; if `clip` is available, use the clarification rules below.
+  For an image-stack / set_media_duration bulk action keep the typed hand-off
+  below. For a plain whole-video, all-clip or named-clip "shorter" or "longer",
+  follow VAGUE LENGTH CHANGE in the timeline operations section (one question
+  with concrete example answers). Preserve any earlier pending bulk action
+  (including add_unused_sources) in the typed hand-off until the creator
+  supplies an explicit value.
 
 ## Recent steps
 

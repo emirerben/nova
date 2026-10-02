@@ -748,6 +748,18 @@ def test_format_snapshot_renders_beat_marks() -> None:
     assert "median interval between listed marks" in rendered
 
 
+def test_format_snapshot_distinguishes_no_families_from_legacy_missing_field() -> None:
+    from app.agents.edit_copilot import _format_snapshot
+
+    no_families = _format_snapshot({"allowed_op_families": []})
+    legacy = _format_snapshot({"total_duration_s": 8})
+    component = _format_snapshot({"component_context_version": 1, "total_duration_s": 8})
+
+    assert "allowed_op_families: (none; no editable operations)" in no_families
+    assert "allowed_op_families: (all v1 ops)" in legacy
+    assert "allowed_op_families: (none; read-only inspection)" in component
+
+
 def test_compact_timeline_uses_source_summary_for_bulk_integrity() -> None:
     selector = {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
     full = _bulk_snapshot()
