@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.4.0] - 2026-10-02
+
+### Changed
+- fix(ios): deliver committed-variant reconciliation to main (#1312) <!-- release-pr: 1312 -->
+
 ## [0.78.3.0] - 2026-10-02
 
 ### Fixed
