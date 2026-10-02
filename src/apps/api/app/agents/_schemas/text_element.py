@@ -1280,10 +1280,24 @@ def text_elements_for_variant(
     """
     lyric_elems: list[TextElement] = []
     if include_lyric_projection:
+        overrides = v.get("lyric_line_overrides")
+        suppressed = {
+            str(key).strip()
+            for key in (
+                (overrides.get("_suppressed_line_keys") or [])
+                if isinstance(overrides, dict)
+                else []
+            )
+            if str(key).strip()
+        }
         snapshot = v.get("lyric_overlay_snapshot")
         if isinstance(snapshot, list) and snapshot:
             lyric_elems = [
-                elem for entry in snapshot if (elem := _element_from_lyric_snapshot(entry))
+                elem
+                for entry in snapshot
+                if isinstance(entry, dict)
+                if str(entry.get("line_key") or "").strip() not in suppressed
+                if (elem := _element_from_lyric_snapshot(entry))
             ]
     context_elems = coerce_text_elements(v.get("context_label_text_elements") or []) or []
     return (

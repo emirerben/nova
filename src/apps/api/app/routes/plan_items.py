@@ -127,8 +127,10 @@ from app.routes.generative_jobs import (
     dispatch_set_text_elements,
     dispatch_slide_post_edit,
     dispatch_swap_song,
+    editor_deletion_timeline,
     enqueue_editor_commit_render,
     guided_timeline_image_preview_paths,
+    normalize_editor_deletion_request,
     persist_variant_caption_font,
     persist_variant_caption_style,
     persist_variant_captions,
@@ -140,6 +142,7 @@ from app.routes.generative_jobs import (
     speech_cut_director_context,
     validate_media_overlays_for_user,
     validate_sound_effects_for_user,
+    variant_render_baseline,
     visual_block_variant_duration,
 )
 from app.routes.music_jobs import classify_slot_kind
@@ -184,6 +187,14 @@ from app.services.edit_interaction_receipts import (
 from app.services.edit_proposal_limits import (
     edit_proposal_task_id,
     queue_for_guided_contract,
+)
+from app.services.editor_empty_drafts import (
+    attach_saved_editor_drafts,
+    is_empty_editor_variant,
+    prepare_empty_editor_sections,
+    stage_empty_editor_commit,
+    stage_initial_authored_baseline,
+    stage_saved_draft_baseline,
 )
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
@@ -5989,6 +6000,7 @@ async def get_item_timeline(
         if variant and variant.get("resolved_archetype") == "guided_story"
         else {}
     )
+    await attach_saved_editor_drafts(db, job)
     return TimelineResponse(
         **dispatch_get_timeline(
             job,
@@ -6814,10 +6826,6 @@ async def editor_commit_item(
             detail="Cancelled videos cannot be edited.",
         )
     _assert_variant_generation_editable_or_409(locked_job, variant_id)
-    # Guided stories accept TextElement-only reburns. Run this policy before
-    # media/SFX/music/title validation so every unsupported section gets the
-    # same stable 422 without performing unrelated lookups or mutations.
-    require_guided_story_editor_commit(locked_job, variant_id, body)
     locked_variant = next(
         (
             candidate
@@ -6826,9 +6834,44 @@ async def editor_commit_item(
         ),
         None,
     )
+    if not isinstance(locked_variant, dict):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    # An all-removed timeline does not enter the normal nonempty validator, so
+    # enforce the same compare-and-fail fence before creating its draft.
+    if body.base_generation != variant_render_baseline(locked_variant):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+    initial_deletions = list(body.deletions)
+    if is_empty_editor_variant(locked_variant) and any(
+        deletion.kind == "clip" for deletion in initial_deletions
+    ):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="deletion_target_stale")
+    # Normalize tombstones before guided/source policy checks. Empty drafts use
+    # their pinned snapshot as the deletion baseline because public reads
+    # intentionally project zero timeline rows.
+    has_clip_deletions = any(deletion.kind == "clip" for deletion in initial_deletions)
+    needs_authored_deletion_baseline = has_clip_deletions or (
+        bool(initial_deletions) and locked_variant.get("resolved_archetype") == "guided_story"
+    )
+    if is_empty_editor_variant(locked_variant):
+        await attach_saved_editor_drafts(db, locked_job)
+        draft_baseline = stage_saved_draft_baseline(locked_job, variant_id, body)
+    elif needs_authored_deletion_baseline:
+        draft_baseline = stage_initial_authored_baseline(
+            locked_job, variant_id, editor_deletion_timeline(locked_job, locked_variant)
+        )
+    else:
+        draft_baseline = None
+    body = normalize_editor_deletion_request(draft_baseline or locked_job, variant_id, body)
+    # Guided stories accept TextElement-only reburns. Run this policy before
+    # media/SFX/music/title validation so every unsupported section gets the
+    # same stable 422 without performing unrelated lookups or mutations.
+    require_guided_story_editor_commit(draft_baseline or locked_job, variant_id, body)
+    source_job = draft_baseline or locked_job
+    source_variant = _find_variant(source_job, variant_id) or locked_variant
     if (
         isinstance(locked_variant, dict)
         and locked_variant.get("resolved_archetype") == "guided_story"
+        and source_variant.get("editor_timeline_mode") != "authored"
         and settings.guided_story_editor_v2_enabled
     ):
         from app.pipeline.guided_story import (  # noqa: PLC0415
@@ -6883,6 +6926,42 @@ async def editor_commit_item(
             await validate_editor_sources(
                 db, job=locked_job, variant=locked_variant, used_media_ids=used_media_ids
             )
+    if (
+        source_variant.get("render_destination") == "device"
+        and source_variant.get("editor_timeline_mode") == "authored"
+    ):
+        from app.routes.editor_sources import validate_editor_sources
+        from app.services.phone_editor_sources import phone_editor_source_revision
+        from app.services.phone_sources import PHONE_VISUALS_FIELD
+
+        source_catalog = (phone_editor_source_revision(source_job, source_variant) or {})["sources"]
+        source_slots = (
+            [slot.model_dump() for slot in body.timeline_slots]
+            if body.timeline_slots is not None
+            else (source_variant.get("user_timeline") or {}).get("slots") or []
+        )
+        used_media_ids = {
+            source_catalog[slot["clip_index"]]["media_id"]
+            for slot in source_slots
+            if not slot.get("removed") and 0 <= slot.get("clip_index", -1) < len(source_catalog)
+        }
+        visual_receipts = list(source_job.assembly_plan.get(PHONE_VISUALS_FIELD) or [])
+        path_ids = {row.get("gcs_path"): row.get("media_id") for row in visual_receipts}
+        path_ids.update({row.get("gcs_path"): row.get("media_id") for row in source_catalog})
+        for section in ("visual_blocks", "media_overlays"):
+            posted = getattr(body, section)
+            section_rows = (
+                [row.model_dump() for row in posted]
+                if posted is not None
+                else source_variant.get(section) or []
+            )
+            for row in section_rows:
+                media_id = row.get("asset_id") or path_ids.get(row.get("src_gcs_path"))
+                if media_id:
+                    used_media_ids.add(str(media_id))
+        await validate_editor_sources(
+            db, job=source_job, variant=source_variant, used_media_ids=used_media_ids
+        )
     if body.media_overlays is not None:
         await _require_verified_pool_paths(
             item_id=item_id,
@@ -6991,22 +7070,125 @@ async def editor_commit_item(
             }
         )
 
-    prep = prepare_editor_commit(
-        locked_job,
-        variant_id,
-        commit_body,
-        user_id=str(user.id),
-        music_track=selected_music_track,
-        music_track_generation=selected_music_track_generation,
-        background_music_track=selected_background_music_track,
-        plan_item_id=str(item.id),
-        visual_assets=visual_assets,
+    active_slots = (
+        [slot for slot in (commit_body.timeline_slots or []) if not slot.removed]
+        if commit_body.timeline_slots is not None
+        else None
+    )
+    saving_empty = (commit_body.timeline_slots is not None and not active_slots) or (
+        is_empty_editor_variant(locked_variant) and active_slots is None
+    )
+    if saving_empty:
+        if not is_empty_editor_variant(locked_variant):
+            if commit_body.editor_state_version != 1:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="editor_draft_requires_supported_client",
+                )
+            deletion_ids = {
+                deletion.id for deletion in initial_deletions if deletion.kind == "clip"
+            }
+            baseline_timeline = editor_deletion_timeline(locked_job, locked_variant)
+            active_ids = {
+                str(slot.get("slot_id"))
+                for slot in baseline_timeline
+                if isinstance(slot, dict) and not slot.get("removed") and slot.get("slot_id")
+            }
+            if not active_ids or deletion_ids != active_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="explicit deletion intents are required for every active clip",
+                )
+        sections, section_flags = prepare_empty_editor_sections(
+            draft_baseline or locked_job,
+            variant_id,
+            commit_body,
+            validation_arguments={
+                "user_id": str(user.id),
+                "music_track": selected_music_track,
+                "music_track_generation": selected_music_track_generation,
+                "background_music_track": selected_background_music_track,
+                "plan_item_id": str(item.id),
+                "visual_assets": visual_assets,
+            },
+        )
+        if cleaned_title is not None:
+            item.theme = cleaned_title
+            item.user_edited = True
+        prep, draft = await stage_empty_editor_commit(
+            db,
+            item=item,
+            job=locked_job,
+            variant_id=variant_id,
+            creator_id=user.id,
+            sections=sections,
+            section_flags=section_flags,
+        )
+        await db.commit()
+        log.info(
+            "plan_item_editor_commit_empty_draft",
+            item_id=item_id,
+            variant_id=variant_id,
+            generation=prep["generation"],
+        )
+        return EditorCommitResponse(
+            ok=True,
+            generation=prep["generation"],
+            expected_duration_s=0.0,
+            sections=EditorCommitSections(
+                text_elements=section_flags["text_elements"],
+                caption_cues=section_flags["caption_cues"],
+                caption_meta=section_flags["caption_meta"],
+                timeline=True,
+                mix=section_flags["mix"],
+                music=section_flags["music"],
+                background_music=section_flags["background_music"],
+                lyrics=section_flags["lyrics"],
+                orientation=section_flags["orientation"],
+                sound_effects=section_flags["sound_effects"],
+                media_overlays=section_flags["media_overlays"],
+                visual_blocks=section_flags["visual_blocks"],
+                motion_scenes=section_flags.get("motion_scenes", False),
+                camera_effects=section_flags.get("camera_effects", False),
+                carousel_moment=section_flags.get("carousel_moment", False),
+                title=cleaned_title is not None,
+            ),
+            editor_state="empty",
+            draft=draft,
+        )
+
+    validation_arguments = {
+        "user_id": str(user.id),
+        "music_track": selected_music_track,
+        "music_track_generation": selected_music_track_generation,
+        "background_music_track": selected_background_music_track,
+        "plan_item_id": str(item.id),
+        "visual_assets": visual_assets,
         # iOS commits only changed sections: a phone Talking Save that leaves
         # the sound lane untouched still persists its effects' real paths.
-        phone_sfx_catalog_paths=await _phone_subtitled_sfx_paths(
+        "phone_sfx_catalog_paths": await _phone_subtitled_sfx_paths(
             db, locked_job, _find_variant(locked_job, variant_id) or {}
         ),
-    )
+    }
+    if draft_baseline is not None:
+        from app.services.authored_editor import prepare_authored_editor_commit  # noqa: PLC0415
+
+        prep = prepare_authored_editor_commit(
+            draft_baseline,
+            variant_id,
+            commit_body,
+            validation_arguments={
+                key: value
+                for key, value in validation_arguments.items()
+                if key != "phone_sfx_catalog_paths"
+            },
+        )
+        # The authored compiler only mutates the isolated baseline. Publish it
+        # atomically with the item/title update after every validator succeeds.
+        locked_job.assembly_plan = draft_baseline.assembly_plan
+        locked_job.status = draft_baseline.status
+    else:
+        prep = prepare_editor_commit(locked_job, variant_id, commit_body, **validation_arguments)
 
     canonical_revision_hash = str(
         (prep.get("guided_revision") or {}).get("state_hash") or prep["generation"]

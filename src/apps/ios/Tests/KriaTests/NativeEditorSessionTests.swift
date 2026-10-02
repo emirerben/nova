@@ -1578,6 +1578,297 @@ final class NativeEditorSessionTests: XCTestCase {
         session.deleteSelectedClip(); XCTAssertEqual(session.draft.clips.count, 1); XCTAssertEqual(session.draft.clips[0].start, 0)
     }
 
+    func testDeletingLastClipIsExplicitEmptyAndUndoRestoresIt() {
+        let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 2, trimIn: 0, trimOut: 2, sourceDuration: 2, slotID: "server-slot")
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+
+        session.selectClip(clip.id)
+        session.deleteSelectedClip()
+
+        XCTAssertEqual(session.document.editorState, "empty")
+        XCTAssertTrue(session.document.clips.isEmpty)
+        XCTAssertEqual(session.document.deletions, [EditorDeletion(kind: "clip", id: "server-slot")])
+        XCTAssertFalse(session.canDownloadCurrentVideo)
+        session.undo()
+        XCTAssertEqual(session.document.editorState, "renderable")
+        XCTAssertEqual(session.document.clips.count, 1)
+        XCTAssertTrue(session.document.deletions.isEmpty)
+    }
+
+    func testFailedSaveOfEmptyTimelineRetainsIntentAndUndoRestoresRenderableDocument() async {
+        let threadID = UUID()
+        let snapshot: [String: JSONValue] = ["editor_payload": .object([
+            "base_generation": .string("g1"),
+            "sections": .object(["timeline_slots": .array([.object([
+                "slot_id": .string("server-slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2),
+            ])])]),
+        ])]
+        let variant: [String: JSONValue] = [
+            "variant_id": .string("initial"), "render_generation_id": .string("g1"), "render_status": .string("ready"),
+            "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
+            "editor_capabilities": .object(["timeline": .bool(true)]),
+            "user_timeline": .object(["slots": .array([.object([
+                "slot_id": .string("server-slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2),
+            ])])]),
+        ]
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: variant,
+            commitError: .offline
+        )
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+
+        XCTAssertTrue(session.deleteSelection(.init(kind: .clip, id: "server-slot")))
+        await session.save()
+
+        XCTAssertEqual(session.document.editorState, "empty")
+        XCTAssertTrue(session.document.clips.isEmpty)
+        XCTAssertEqual(session.document.deletions, [.init(kind: "clip", id: "server-slot")])
+        XCTAssertEqual(fake.lastRequest?.deletions, [.init(kind: "clip", id: "server-slot")])
+        session.undo()
+        XCTAssertEqual(session.document.editorState, "renderable")
+        XCTAssertEqual(session.document.clips.count, 1)
+        XCTAssertTrue(session.document.deletions.isEmpty)
+    }
+
+    private func loadDeletionSaveFixture(clipCount: Int = 1, suspendCommit: Bool = false) async -> (NativeEditorSession, EditorCommitSpy) {
+        let threadID = UUID()
+        let slots: [JSONValue] = (0..<clipCount).map { index in .object([
+            "slot_id": .string("slot-\(index)"), "clip_index": .number(Double(index)),
+            "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(8),
+        ]) }
+        let text: [JSONValue] = ["keep", "later"].map { id in .object([
+            "id": .string(id), "text": .string(id), "start_s": .number(0), "end_s": .number(2),
+        ]) }
+        let snapshot: [String: JSONValue] = ["editor_payload": .object([
+            "base_generation": .string("g1"),
+            "sections": .object(["timeline_slots": .array(slots), "text_elements": .array(text)]),
+        ])]
+        let variant: [String: JSONValue] = [
+            "variant_id": .string("variant"), "render_generation_id": .string("g1"), "render_status": .string("ready"),
+            "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
+            "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true)]),
+            "user_timeline": .object(["slots": .array(slots)]), "text_elements": .array(text),
+        ]
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: variant, suspendNextCommit: suspendCommit
+        )
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        return (session, fake)
+    }
+
+    private func emptyCommitResponse(_ session: NativeEditorSession, generation: String) -> EditorCommitResponse {
+        var saved = session.document
+        saved.editorState = "empty"
+        saved.revision.baseGeneration = generation
+        saved.deletions.removeAll()
+        let draft = DraftSnapshot(draftID: "empty-\(generation)", itemID: "item", variantKey: "variant", draftRevision: 2, snapshotHash: "h", etag: "e", baseJobID: nil, baseGenerationID: generation, snapshot: saved.encodeSnapshot(), canUndo: true, createdAt: .now)
+        return EditorCommitResponse(ok: true, generation: generation, sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: true, mix: false), revisionNumber: 2, revisionHash: "h", expectedDuration: 0, editorState: "empty", draft: draft)
+    }
+
+    func testSecondEmptySaveAdvertisesSupportWithoutDeletionIntents() async {
+        let (session, fake) = await loadDeletionSaveFixture()
+        XCTAssertTrue(session.deleteSelection(.init(kind: .clip, id: "slot-0")))
+        fake.commitResponse = emptyCommitResponse(session, generation: "g2")
+        await session.save()
+        XCTAssertTrue(session.document.deletions.isEmpty)
+        XCTAssertFalse(session.hasUnsavedChanges)
+
+        session.updateTextContent(id: "keep", content: "Edited while empty")
+        fake.commitResponse = emptyCommitResponse(session, generation: "g3")
+        await session.save()
+
+        XCTAssertEqual(fake.commitCount, 2)
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
+        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 1)
+        XCTAssertNil(fake.lastRequest?.deletions)
+        XCTAssertEqual(session.document.editorState, "empty")
+        XCTAssertEqual(session.document.textElements.first?.text, "Edited while empty")
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    func testClipAddedAfterEmptySaveAdvertisesSupportAtSavedGeneration() async throws {
+        let (session, fake) = await loadDeletionSaveFixture()
+        XCTAssertTrue(session.deleteSelection(.init(kind: .clip, id: "slot-0")))
+        fake.commitResponse = emptyCommitResponse(session, generation: "g2")
+        await session.save()
+        let file = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
+        try Data("fixture upload".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        fake.reserveUploadResult = UploadReservation(uploadURL: URL(string: "https://storage.example/upload")!, gcsPath: "users/u/new.mp4", kind: "video", contentType: "video/mp4", uploadHeaders: [:], purpose: nil, reservationID: nil, retentionExpiresAt: nil)
+        fake.addClipResult = AddClipResult(jobID: "job", clipIndex: 1, kind: "video")
+        await session.addClip(fileURL: file)
+        XCTAssertNil(session.addClipError)
+        XCTAssertEqual(session.document.editorState, "renderable")
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 3, revisionHash: "h3", expectedDuration: 4)
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
+        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 1)
+        XCTAssertNil(fake.lastRequest?.deletions)
+        XCTAssertEqual(fake.lastRequest?.timelineSlots?.count, 1)
+    }
+
+    func testEditDuringEmptySaveKeepsNewGenerationAndUndo() async {
+        let (session, fake) = await loadDeletionSaveFixture(suspendCommit: true)
+        XCTAssertTrue(session.deleteSelection(.init(kind: .clip, id: "slot-0")))
+        session.markDirty(.timeline)
+        fake.commitResponse = emptyCommitResponse(session, generation: "g2")
+        let save = Task { await session.save() }
+        for _ in 0..<100 where !fake.commitIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(fake.commitIsSuspended)
+        session.updateTextContent(id: "keep", content: "Later edit")
+        fake.resumeCommit()
+        await save.value
+
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertEqual(session.document.textElements.first?.text, "Later edit")
+        XCTAssertTrue(session.document.deletions.isEmpty)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        session.undo()
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertEqual(session.document.textElements.first?.text, "keep")
+        XCTAssertTrue(session.document.clips.isEmpty)
+        XCTAssertTrue(session.document.deletions.isEmpty)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        session.redo()
+        XCTAssertEqual(session.document.textElements.first?.text, "Later edit")
+        fake.commitResponse = emptyCommitResponse(session, generation: "g3")
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
+        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 1)
+    }
+
+    func testEmptySaveRejectsPreviouslyPendingRenderCompletion() async {
+        let (session, fake) = await loadDeletionSaveFixture()
+        session.updateTextContent(id: "keep", content: "Submitted")
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "h2", expectedDuration: 2)
+        await session.save()
+        XCTAssertEqual(session.saveState, .previewPending)
+        XCTAssertTrue(session.deleteSelection(.init(kind: .clip, id: "slot-0")))
+        fake.commitResponse = emptyCommitResponse(session, generation: "g3")
+        await session.save()
+        XCTAssertFalse(session.applyPreviewVariant([
+            "render_generation_id": .string("g2"), "render_status": .string("ready"),
+            "output_url": .string("https://storage.example/old.mp4"),
+        ], generation: "g2"))
+        XCTAssertEqual(session.document.editorState, "empty")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g3")
+        XCTAssertFalse(session.canDownloadCurrentVideo)
+    }
+
+    func testClipAddedDuringEmptySaveRemainsRenderableAndUndoUsesSavedEmptyBaseline() async throws {
+        let (session, fake) = await loadDeletionSaveFixture(suspendCommit: true)
+        XCTAssertTrue(session.deleteSelection(.init(kind: .clip, id: "slot-0")))
+        fake.commitResponse = emptyCommitResponse(session, generation: "g2")
+        let save = Task { await session.save() }
+        for _ in 0..<100 where !fake.commitIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(fake.commitIsSuspended)
+        let file = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
+        try Data("fixture upload".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        fake.reserveUploadResult = UploadReservation(uploadURL: URL(string: "https://storage.example/upload")!, gcsPath: "users/u/new.mp4", kind: "video", contentType: "video/mp4", uploadHeaders: [:], purpose: nil, reservationID: nil, retentionExpiresAt: nil)
+        fake.addClipResult = AddClipResult(jobID: "job", clipIndex: 1, kind: "video")
+        await session.addClip(fileURL: file)
+        fake.resumeCommit()
+        await save.value
+
+        XCTAssertNil(session.addClipError)
+        XCTAssertEqual(session.document.editorState, "renderable")
+        XCTAssertEqual(session.document.clips.count, 1)
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertTrue(session.document.deletions.isEmpty)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        session.undo()
+        XCTAssertEqual(session.document.editorState, "empty")
+        XCTAssertTrue(session.document.clips.isEmpty)
+        XCTAssertTrue(session.document.deletions.isEmpty)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        session.redo()
+        XCTAssertEqual(session.document.editorState, "renderable")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+    }
+
+    func testDeleteSaveConsumesAcceptedIntentAndPreservesLaterDeletionAndUndo() async {
+        let (session, fake) = await loadDeletionSaveFixture(clipCount: 2, suspendCommit: true)
+        XCTAssertTrue(session.deleteSelection(.init(kind: .clip, id: "slot-0")))
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 2, revisionHash: "h2", expectedDuration: 2)
+        let save = Task { await session.save() }
+        for _ in 0..<100 where !fake.commitIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(fake.commitIsSuspended)
+        XCTAssertTrue(session.deleteSelection(.init(kind: .text, id: "later")))
+        session.updateTextContent(id: "keep", content: "Later edit")
+        fake.resumeCommit()
+        await save.value
+
+        XCTAssertEqual(session.document.deletions, [.init(kind: "text", id: "later")])
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        session.undo()
+        XCTAssertEqual(session.document.deletions, [.init(kind: "text", id: "later")])
+        session.undo()
+        XCTAssertTrue(session.document.deletions.isEmpty)
+        XCTAssertEqual(session.document.clips.count, 1)
+        session.redo(); session.redo()
+        XCTAssertEqual(session.document.deletions, [.init(kind: "text", id: "later")])
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 3, revisionHash: "h3", expectedDuration: nil)
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
+        XCTAssertEqual(fake.lastRequest?.deletions, [.init(kind: "text", id: "later")])
+    }
+
+    func testVisibleGeneratedLanesDeleteWithoutEditCapabilitiesAndUndoRedoTheirIntents() {
+        var draft = NativeEditorUITestFixtures.captionVisuals
+        var document = EditorDocument(snapshot: draft.serverSnapshot)
+        document.music = EditorMusic(trackID: "song-1")
+        document.soundEffects = [EditorTimedEffect(id: "sfx-1", startS: 0, endS: 1)]
+        document.mediaOverlays = [EditorTimedEffect(id: "overlay-1", startS: 0, endS: 1)]
+        document.motionScenes = [EditorMotionScene(id: "motion-1", startS: 0, endS: 1)]
+        document.cameraEffects = [EditorCameraEffect(id: "camera-1", startS: 0, endS: 1)]
+        document.carouselMoment = ["id": .string("carousel-1"), "position": .string("middle")]
+        draft.serverSnapshot = document.encodeSnapshot()
+        draft.serverSnapshot["editor_capabilities"] = .object([
+            "music": .bool(false), "sound_effects": .bool(false), "media_overlays": .bool(false),
+            "visual_blocks": .bool(false), "motion_scenes": .bool(false), "camera_effects": .bool(false),
+            "carousel_moment": .bool(false),
+        ])
+        let session = NativeEditorSession(draft: draft)
+        let cases: [(EditorSelection, EditorDeletion)] = [
+            (.init(kind: .music, id: "song-1"), .init(kind: "music", id: "song-1")),
+            (.init(kind: .soundEffect, id: "sfx-1"), .init(kind: "sound_effect", id: "sfx-1")),
+            (.init(kind: .mediaOverlay, id: "overlay-1"), .init(kind: "media_overlay", id: "overlay-1")),
+            (.init(kind: .visualBlock, id: "paper-media"), .init(kind: "visual_block", id: "paper-media")),
+            (.init(kind: .motionScene, id: "motion-1"), .init(kind: "motion_scene", id: "motion-1")),
+            (.init(kind: .cameraEffect, id: "camera-1"), .init(kind: "camera_effect", id: "camera-1")),
+            (.init(kind: .carousel, id: "carousel-1"), .init(kind: "carousel", id: "carousel-1")),
+        ]
+
+        for (selection, intent) in cases {
+            XCTAssertTrue(session.deleteSelection(selection), "delete \(selection.kind)")
+            XCTAssertTrue(session.document.deletions.contains(intent))
+            session.undo()
+            XCTAssertFalse(session.document.deletions.contains(intent), "undo restores \(selection.kind)")
+            session.redo()
+            XCTAssertTrue(session.document.deletions.contains(intent), "redo repeats \(selection.kind)")
+        }
+    }
+
+    func testDeletingUnsavedAdditionDoesNotSendServerDeletionIntent() {
+        var draft = NativeEditorUITestFixtures.captionVisuals
+        draft.serverSnapshot["editor_capabilities"] = .object(["music": .bool(true)])
+        let session = NativeEditorSession(draft: draft)
+
+        session.setMusic(trackID: "new-local-song")
+        XCTAssertTrue(session.deleteSelection(.init(kind: .music, id: "new-local-song")))
+        XCTAssertTrue(session.document.deletions.isEmpty)
+        session.undo()
+        XCTAssertEqual(session.document.music?.trackID, "new-local-song")
+        session.redo()
+        XCTAssertNil(session.document.music)
+        XCTAssertTrue(session.document.deletions.isEmpty)
+    }
+
     func testSerializationKeepsUnknownServerKeysAndUsesProductionSections() {
         let projectID = UUID(); let clipID = UUID(); let assetID = UUID()
         let snapshot: [String: JSONValue] = ["schema_version": .number(2), "kind": .string("editor"), "future": .object(["keep": .bool(true)]), "editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["timeline_slots": .array([.object(["slot_id": .string("slot-a"), "clip_index": .number(0), "in_s": .number(1), "duration_s": .number(2), "removed": .bool(false)])]), "future_section": .string("untouched")])])]
@@ -2008,6 +2299,29 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document.clips.count, 2)
         XCTAssertEqual(session.document.clips.last?.clipIndex, 1)
         XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    func testAddClipUsesGuidedVariantSourceIndexWhenProvided() async throws {
+        let threadID = UUID(); let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 0, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        let tempURL = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
+        try Data("clip-bytes".utf8).write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        fake.reserveUploadResult = UploadReservation(uploadURL: URL(string: "https://storage.example/signed-put")!, gcsPath: "users/u/generative/abc123def456/clip.mp4", kind: "video", contentType: "video/mp4", uploadHeaders: [:], purpose: nil, reservationID: nil, retentionExpiresAt: nil)
+        fake.addClipResult = AddClipResult(jobID: jobID.uuidString, clipIndex: 1, kind: "video", variantClipIndices: ["variant": 7])
+
+        await session.addClip(fileURL: tempURL)
+
+        XCTAssertNil(session.addClipError)
+        XCTAssertEqual(session.document.clips.last?.clipIndex, 7)
+    }
+
+    func testAddClipResultDecodesGuidedVariantSourceIndices() throws {
+        let data = Data(#"{"job_id":"job","clip_index":1,"kind":"video","variant_clip_indices":{"song_lyrics":7}}"#.utf8)
+        let result = try JSONDecoder().decode(AddClipResult.self, from: data)
+        XCTAssertEqual(result.variantClipIndices?["song_lyrics"], 7)
     }
 
     func testAddClipSurfacesUploadFailureWithoutMutatingTimeline() async throws {
@@ -2714,12 +3028,14 @@ final class NativeEditorSessionTests: XCTestCase {
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
         await session.load(api: fake, threadID: threadID)
         let loadedTextID = try! XCTUnwrap(session.document.textElements.first?.id)
-        session.updateTextContent(id: loadedTextID, content: "Unsaved")
+        XCTAssertTrue(session.deleteText(id: loadedTextID))
 
         await session.save()
 
         XCTAssertEqual(session.saveState, .failed("Kria couldn’t complete that request. Check your connection and try again."))
-        XCTAssertEqual(session.document.textElements.first?.text, "Unsaved")
+        XCTAssertTrue(session.document.textElements.isEmpty)
+        XCTAssertEqual(fake.lastRequest?.deletions, [EditorDeletion(kind: "text", id: textID)])
+        XCTAssertEqual(session.document.deletions, [EditorDeletion(kind: "text", id: textID)], "a failed request must retain the deletion intent for the next save")
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertTrue(session.canUndo)
     }

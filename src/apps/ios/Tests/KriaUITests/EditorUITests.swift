@@ -2,6 +2,42 @@ import XCTest
 
 @MainActor
 final class EditorUITests: XCTestCase {
+    func testDeletingFinalClipShowsEmptyCanvasAndUndoRestoresPlayback() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            clip.tap()
+            let delete = app.buttons["native-editor-delete"]
+            XCTAssertTrue(delete.waitForExistence(timeout: 5))
+            let context = app.scrollViews.containing(.button, identifier: "native-editor-delete").firstMatch
+            if !delete.isHittable { context.swipeLeft() }
+            XCTAssertTrue(delete.isEnabled)
+            delete.tap()
+        }
+
+        let addClip = app.buttons["native-editor-empty-add-clip"]
+        XCTAssertTrue(addClip.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["native-editor-play-pause"].isEnabled)
+        XCTAssertFalse(app.buttons["native-editor-export"].isEnabled)
+        XCTAssertFalse(clip.exists)
+
+        app.buttons["native-editor-undo"].tap()
+        XCTAssertTrue(clip.waitForExistence(timeout: 5))
+        XCTAssertFalse(addClip.exists)
+        XCTAssertTrue(app.buttons["native-editor-play-pause"].isEnabled)
+
+        app.buttons["native-editor-redo"].tap()
+        XCTAssertTrue(addClip.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["native-editor-play-pause"].isEnabled)
+        addClip.tap()
+        XCTAssertTrue(app.buttons["native-editor-add-clip-files"].waitForExistence(timeout: 5))
+    }
+
     func testNativeEditorStagesLocalEditsAndGatesUnavailableTools() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor"]

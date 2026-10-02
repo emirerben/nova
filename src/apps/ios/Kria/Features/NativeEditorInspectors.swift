@@ -103,7 +103,7 @@ struct NativeDocumentInspector: View {
                 .disabled(!canEditBackground)
             } else {
                 Text("No background music lane")
-                    .foregroundStyle(KriaColor.zinc)
+                        .foregroundStyle(KriaColor.zinc)
             }
             LabeledContent("Title", value: session.document.title ?? "Untitled")
             LabeledContent("Orientation", value: session.document.orientation ?? "9:16")
@@ -315,10 +315,8 @@ private struct NativeSelectedClipInspector: View {
             }
             Section {
                 Button("Delete clip", role: .destructive) {
-                    session.removeClip(clipID: selection.id)
-                    session.select(nil, seekToStart: false)
+                    _ = session.deleteSelection(selection)
                 }
-                .disabled(!session.canEditTimeline || session.draft.clips.count <= 1)
                 .accessibilityIdentifier("native-editor-selected-clip-delete")
             }
         }
@@ -616,11 +614,14 @@ private struct NativeSelectedMusicInspector: View {
                 }
                 .accessibilityIdentifier("native-editor-selected-music-volume")
                 .disabled(!session.canEditMix)
-                Button("Remove music", role: .destructive) { session.removeMusic(); session.select(nil, seekToStart: false) }
-                    .disabled(!session.canEditMix)
-                    .accessibilityIdentifier("native-editor-selected-music-remove")
             }
             .disabled(!session.canEditMix)
+            Section {
+                Button("Remove music", role: .destructive) {
+                    _ = session.deleteSelection(selection)
+                }
+                .accessibilityIdentifier("native-editor-selected-music-remove")
+            }
             Section("Original mix") {
                 NativeEditorSlider(session: session, value: $originalVolume, in: 0...1, step: 0.01) { Text("Original audio level") }
                     .onChange(of: originalVolume) { _, value in session.setOriginalMixLevel(value) }
@@ -803,10 +804,8 @@ private struct NativeSelectedEffectInspector: View {
         .disabled(!editable)
         Section {
             Button("Remove sound effect", role: .destructive) {
-                session.removeSoundEffect(id: selection.id)
-                session.select(nil, seekToStart: false)
+                _ = session.deleteSelection(selection)
             }
-            .disabled(!editable)
             .accessibilityIdentifier("native-editor-selected-sfx-remove")
         }
     }
@@ -834,10 +833,8 @@ private struct NativeSelectedEffectInspector: View {
         layerOrderSection
         Section {
             Button("Remove overlay", role: .destructive) {
-                session.removeMediaOverlay(id: selection.id)
-                session.select(nil, seekToStart: false)
+                _ = session.deleteSelection(selection)
             }
-            .disabled(!editable)
             .accessibilityIdentifier("native-editor-selected-overlay-remove")
         }
     }
@@ -893,10 +890,8 @@ private struct NativeSelectedEffectInspector: View {
         }
         Section {
             Button("Remove visual block", role: .destructive) {
-                session.removeVisualBlock(id: selection.id)
-                session.select(nil, seekToStart: false)
+                _ = session.deleteSelection(selection)
             }
-            .disabled(!editable)
             .accessibilityIdentifier("native-editor-selected-visual-remove")
         }
     }
@@ -920,8 +915,12 @@ private struct NativeSelectedEffectInspector: View {
                 LabeledContent("Preset", value: preset)
                 if let reason = session.motionRuntimeMismatchReason(id: selection.id) {
                     Label(reason, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(KriaColor.zinc)
+                    .foregroundStyle(KriaColor.zinc)
                 }
+            }
+            Section {
+                Button("Remove motion", role: .destructive) { _ = session.deleteSelection(selection) }
+                    .accessibilityIdentifier("native-editor-selected-motion-remove")
             }
         case .cameraEffect:
             Section("Camera effect") {
@@ -936,6 +935,10 @@ private struct NativeSelectedEffectInspector: View {
                 .accessibilityIdentifier("native-editor-selected-camera-easing")
             }
             .disabled(!editable)
+            Section {
+                Button("Remove camera effect", role: .destructive) { _ = session.deleteSelection(selection) }
+                    .accessibilityIdentifier("native-editor-selected-camera-remove")
+            }
         case .carousel:
             Section("Carousel moment") {
                 Picker("Position", selection: $carouselPosition) {
@@ -943,14 +946,12 @@ private struct NativeSelectedEffectInspector: View {
                 }
                 .onChange(of: carouselPosition) { _, value in session.setCarouselMomentPosition(value) }
                 .accessibilityIdentifier("native-editor-selected-carousel-position")
-                Button("Remove carousel moment", role: .destructive) {
-                    session.removeCarouselMoment()
-                    session.select(nil, seekToStart: false)
-                }
-                .disabled(!editable)
-                .accessibilityIdentifier("native-editor-selected-carousel-remove")
             }
             .disabled(!editable)
+            Section {
+                Button("Remove carousel moment", role: .destructive) { _ = session.deleteSelection(selection) }
+                    .accessibilityIdentifier("native-editor-selected-carousel-remove")
+            }
         default: EmptyView()
         }
     }

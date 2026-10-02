@@ -80,6 +80,16 @@ def test_publication_requires_exact_job_recipe_and_editor_generation():
     with pytest.raises(HTTPException) as error:
         _record(job, changed)
     assert error.value.status_code == 409
+
+
+def test_empty_editor_draft_rejects_late_device_completion_identity():
+    job, request = _fixture()
+    job.assembly_plan["variants"][0]["editor_state"] = "empty"
+
+    with pytest.raises(HTTPException) as error:
+        _record(job, request.identity)
+
+    assert error.value.status_code == 409
     job.assembly_plan["variants"][0]["render_generation_id"] = "new-editor-save"
     with pytest.raises(HTTPException) as error:
         _record(job, request.identity)

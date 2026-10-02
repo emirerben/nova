@@ -13294,6 +13294,7 @@ def _insert_carousel_moment_step(
     variant_dir: str,
     clip_metas: list | None = None,
     inserted_duration_out: dict[str, float] | None = None,
+    source_steps: list | None = None,
 ) -> list:
     """Splice a rendered Blossom-carousel moment into the montage `steps` list.
 
@@ -13366,7 +13367,7 @@ def _insert_carousel_moment_step(
     moment_path = _maybe_render_carousel_moment(
         moment_cfg,
         clip_id_to_local=clip_id_to_local,
-        steps=steps,
+        steps=source_steps if source_steps is not None else steps,
         variant_dir=variant_dir,
         probe_map=probe_map,
         variant_id=variant_id,
@@ -14799,6 +14800,11 @@ def _run_regenerate_variant(
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
             log.error("generative_regenerate_variant_unknown", job_id=job_id, variant_id=variant_id)
+            return
+        if existing.get("editor_timeline_mode") == "authored":
+            from app.pipeline.authored_timeline import rerender_authored_timeline
+
+            rerender_authored_timeline(job_id, variant_id, render_gen_id)
             return
         if existing.get("resolved_archetype") == "guided_story" and (
             guided_revision is not None or isinstance(existing.get("guided_edit_revision"), dict)

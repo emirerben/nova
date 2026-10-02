@@ -236,6 +236,74 @@ async def _head(
     return (await db.execute(statement)).scalar_one_or_none()
 
 
+async def editor_variant_target(
+    db: AsyncSession,
+    *,
+    item: PlanItem,
+    job: Job,
+    creator_id: uuid.UUID,
+    variant_key: str,
+) -> DraftTarget:
+    """Resolve an already-locked, owned editor target without thread selection.
+
+    The editor-commit route owns the PlanItem/Job locks. A direct legacy editor
+    link may not have an owning conversation yet; linking it here follows the
+    same item-scoped rule as ``creation-threads/for-editor`` and dispatches no
+    agent or render. The explicit variant is never inferred from chat state.
+    """
+    if (
+        job.user_id != creator_id
+        or job.content_plan_item_id != item.id
+        or item.current_job_id != job.id
+        or _variant(job, variant_key) is None
+    ):
+        raise RuntimeFailure(404, "draft_target_missing", "Editable video not found", phase="tool")
+    thread = (
+        await db.execute(
+            select(CreationThread)
+            .where(
+                CreationThread.creator_id == creator_id,
+                CreationThread.active_plan_item_id == item.id,
+            )
+            .order_by(CreationThread.created_at.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if thread is None:
+        thread = CreationThread(
+            creator_id=creator_id,
+            runtime_version=1,
+            content_plan_id=item.content_plan_id,
+            active_plan_item_id=item.id,
+            active_job_id=job.id,
+            title=str(item.idea or "Untitled video")[:200],
+            state={"edit_format": item.edit_format or "montage"},
+        )
+        db.add(thread)
+        await db.flush()
+    elif thread.active_job_id not in (None, job.id):
+        raise RuntimeFailure(
+            409, "draft_target_stale", "The project changed. Reopen it before saving.", phase="tool"
+        )
+    variant = _variant(job, variant_key) or {}
+    return DraftTarget(
+        thread=thread,
+        item=item,
+        job=job,
+        variant_key=variant_key,
+        generation_id=str(variant.get("render_generation_id") or "") or None,
+    )
+
+
+async def stage_editor_variant_draft(
+    db: AsyncSession, *, target: DraftTarget, document: KriaDraftDocument
+) -> DraftSnapshotOut:
+    """Stage a saved editor draft in the caller's transaction; never render."""
+    parent = await _head(db, item_id=target.item.id, variant_key=target.variant_key, lock=True)
+    row = await _insert_revision(db, target=target, document=document, parent=parent)
+    return _out(row, can_undo=parent is not None)
+
+
 async def _insert_revision(
     db: AsyncSession,
     *,

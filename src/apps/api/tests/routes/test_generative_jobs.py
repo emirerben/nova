@@ -4095,12 +4095,24 @@ def _add_clip_job(*, clip_paths: list[str] | None = None, status: str = "variant
 
 
 @pytest.mark.asyncio
-async def test_add_clip_appends_to_pool_and_consumes_reservation(monkeypatch):
+@pytest.mark.parametrize("guided_catalog", [False, True])
+async def test_add_clip_appends_to_pool_and_consumes_reservation(monkeypatch, guided_catalog):
     from app.storage import ObjectMetadata
 
     user = SimpleNamespace(id=uuid.uuid4())
     path = f"users/{user.id}/generative/abc123def456/clip.mp4"
     job = _add_clip_job(clip_paths=["users/other/generative/aaa111aaa111/clip.mp4"])
+    if guided_catalog:
+        job.assembly_plan["variants"][0]["resolved_archetype"] = "guided_story"
+        monkeypatch.setattr(
+            "app.routes.generative_jobs._guided_v2_revision",
+            lambda *_: {
+                "sources": [
+                    {"gcs_path": "saved-asset.png", "kind": "image", "generation": "1"},
+                    {"gcs_path": job.all_candidates["clip_paths"][0], "kind": "video"},
+                ]
+            },
+        )
     db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
     consumed: list[list[str]] = []
 
@@ -4126,6 +4138,11 @@ async def test_add_clip_appends_to_pool_and_consumes_reservation(monkeypatch):
     # overwrite index 0, so an in-flight AI timeline referencing index 0 stays valid.
     assert response.clip_index == 1
     assert response.kind == "video"
+    assert response.variant_clip_indices == {"song_text": 2 if guided_catalog else 1}
+    assert job.all_candidates["editor_source_metadata"][path] == {
+        "source_kind": "video",
+        "source_generation": "1",
+    }
     assert job.all_candidates["clip_paths"] == [
         "users/other/generative/aaa111aaa111/clip.mp4",
         path,

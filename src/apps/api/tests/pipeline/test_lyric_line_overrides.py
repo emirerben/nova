@@ -131,6 +131,26 @@ def test_rematerialize_keeps_only_active_same_fingerprint_overrides() -> None:
     assert rematerialize_lyric_line_overrides(_cache(), overrides, {"L1"}) is None
 
 
+def test_suppressed_absolute_line_never_resurrects_on_injection() -> None:
+    overrides = {"_suppressed_line_keys": ["L0"]}
+    cache = apply_lyric_line_overrides(_cache(), overrides)
+    recipe = {"slots": [{"position": 1, "target_duration_s": 4.0, "text_overlays": []}]}
+
+    rendered = inject_lyric_overlays(
+        recipe, cache, 10.0, 16.0, {"enabled": True, "style": "karaoke"}
+    )
+
+    keys = {
+        row.get("lyric_line_key")
+        for row in rendered["slots"][0]["text_overlays"]
+        if isinstance(row, dict)
+    }
+    assert "L0" not in keys
+    assert "L1" in keys
+    retained = rematerialize_lyric_line_overrides(_cache(), overrides, set())
+    assert retained == {"_suppressed_line_keys": ["L0"]}
+
+
 def test_malformed_entries_never_raise_and_valid_entries_still_apply() -> None:
     cache = _cache()
     out = apply_lyric_line_overrides(

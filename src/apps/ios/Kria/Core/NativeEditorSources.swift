@@ -137,6 +137,7 @@ struct NativeEditorBaseSource: Sendable {
 
     func hydrate(_ document: EditorDocument, duration: Double) throws -> EditorDocument {
         guard duration.isFinite, duration > 0, document.revision.baseGeneration == generation else { throw APIError.conflict }
+        guard document.editorState != "empty" else { return document }
         guard document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return document }
         var result = document
         result.clips = [.init(id: "native-composite-base", clipIndex: 0, inS: 0, durationS: duration,
@@ -205,6 +206,7 @@ enum NativePhoneTalkingSource {
     static func hydrate(_ document: EditorDocument, clipIndex: Int, duration: Double,
                         removed: [(start: Double, end: Double)] = []) throws -> EditorDocument {
         guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
+        guard document.editorState != "empty" else { return document }
         guard document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return document }
         let kept = keptSegments(duration: duration, removed: removed)
         guard !kept.isEmpty else { throw RecipeError.invalidTimeline }

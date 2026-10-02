@@ -16,6 +16,13 @@ struct EditorSelection: Codable, Equatable, Hashable, Sendable {
     let id: String
 }
 
+/// A server-validated removal.  These live with the document so undo/redo and
+/// a saved draft cannot accidentally resurrect generated content.
+struct EditorDeletion: Codable, Equatable, Hashable, Sendable {
+    let kind: String
+    let id: String
+}
+
 enum EditorSection: String, Codable, CaseIterable, Hashable, Sendable {
     case timeline, text, captions, captionMeta = "caption_meta", mix, music, backgroundMusic = "background_music"
     case lyrics, orientation, soundEffects = "sound_effects"
@@ -229,6 +236,10 @@ struct EditorDocument: Equatable, Sendable {
     var orientation: String?
     var capabilities: [String: EditorCapability]
     var revision: EditorRevision
+    /// `empty` is an explicit creator decision, distinct from legacy snapshots
+    /// that happen to omit a timeline and need local source hydration.
+    var editorState: String
+    var deletions: [EditorDeletion]
     var opaqueRecords: [EditorSection: [EditorOpaqueRecord]]
 
     /// Captions regardless of persisted representation: `caption_cues` for
@@ -274,10 +285,11 @@ struct EditorDocument: Equatable, Sendable {
         let mix: [String: JSONValue]; let soundEffects: [EditorTimedEffect]; let mediaOverlays: [EditorTimedEffect]; let visualBlocks: [EditorVisualBlock]
         let motionScenes: [EditorMotionScene]; let motionRuntimeHash: String?; let cameraEffects: [EditorCameraEffect]; let carouselMoment: [String: JSONValue]?; let lyrics: [String: JSONValue]?
         let title: String?; let orientation: String?; let capabilities: [String: EditorCapability]; let revision: EditorRevision
+        let editorState: String; let deletions: [EditorDeletion]
     }
 
-    init(schemaVersion: Int = 2, kind: String = "editor", editFormat: String = "montage", clips: [EditorTimelineSlot] = [], tombstones: [EditorTimelineSlot] = [], textElements: [EditorTextElement] = [], captionMeta: [String: JSONValue] = [:], captionCues: [EditorCaptionCue] = [], music: EditorMusic? = nil, backgroundMusic: EditorBackgroundMusic? = nil, mix: [String: JSONValue] = [:], soundEffects: [EditorTimedEffect] = [], mediaOverlays: [EditorTimedEffect] = [], visualBlocks: [EditorVisualBlock] = [], motionScenes: [EditorMotionScene] = [], motionRuntimeHash: String? = nil, cameraEffects: [EditorCameraEffect] = [], carouselMoment: [String: JSONValue]? = nil, lyrics: [String: JSONValue]? = nil, title: String? = nil, orientation: String? = nil, capabilities: [String: EditorCapability] = [:], revision: EditorRevision = EditorRevision(), opaqueRecords: [EditorSection: [EditorOpaqueRecord]] = [:]) {
-        self.schemaVersion = schemaVersion; self.kind = kind; self.editFormat = editFormat; self.clips = clips; self.tombstones = tombstones; self.textElements = textElements; self.captionMeta = captionMeta; self.captionCues = captionCues; self.music = music; self.backgroundMusic = backgroundMusic; self.mix = mix; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.lyrics = lyrics; self.title = title; self.orientation = orientation; self.capabilities = capabilities; self.revision = revision; self.opaqueRecords = opaqueRecords; self.rawRoot = [:]; self.rawSections = [:]; self.sectionPresence = [:]; self.loadedState = nil
+    init(schemaVersion: Int = 2, kind: String = "editor", editFormat: String = "montage", clips: [EditorTimelineSlot] = [], tombstones: [EditorTimelineSlot] = [], textElements: [EditorTextElement] = [], captionMeta: [String: JSONValue] = [:], captionCues: [EditorCaptionCue] = [], music: EditorMusic? = nil, backgroundMusic: EditorBackgroundMusic? = nil, mix: [String: JSONValue] = [:], soundEffects: [EditorTimedEffect] = [], mediaOverlays: [EditorTimedEffect] = [], visualBlocks: [EditorVisualBlock] = [], motionScenes: [EditorMotionScene] = [], motionRuntimeHash: String? = nil, cameraEffects: [EditorCameraEffect] = [], carouselMoment: [String: JSONValue]? = nil, lyrics: [String: JSONValue]? = nil, title: String? = nil, orientation: String? = nil, capabilities: [String: EditorCapability] = [:], revision: EditorRevision = EditorRevision(), editorState: String = "renderable", deletions: [EditorDeletion] = [], opaqueRecords: [EditorSection: [EditorOpaqueRecord]] = [:]) {
+        self.schemaVersion = schemaVersion; self.kind = kind; self.editFormat = editFormat; self.clips = clips; self.tombstones = tombstones; self.textElements = textElements; self.captionMeta = captionMeta; self.captionCues = captionCues; self.music = music; self.backgroundMusic = backgroundMusic; self.mix = mix; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.lyrics = lyrics; self.title = title; self.orientation = orientation; self.capabilities = capabilities; self.revision = revision; self.editorState = editorState; self.deletions = deletions; self.opaqueRecords = opaqueRecords; self.rawRoot = [:]; self.rawSections = [:]; self.sectionPresence = [:]; self.loadedState = nil
     }
 
     init(snapshot: [String: JSONValue]) { self = Self.decode(snapshot: snapshot) }
@@ -287,6 +299,8 @@ struct EditorDocument: Equatable, Sendable {
         let sections = object(rootPayload?["sections"]) ?? rootPayload ?? snapshot
         var document = EditorDocument(schemaVersion: integer(snapshot["schema_version"]) ?? 2, kind: snapshot["kind"]?.stringValue ?? "editor", editFormat: snapshot["edit_format"]?.stringValue ?? "montage")
         document.rawRoot = snapshot; document.rawSections = sections
+        document.editorState = rootPayload?["editor_state"]?.stringValue == "empty" ? "empty" : "renderable"
+        document.deletions = Self.decodeDeletions(array(rootPayload?["deletions"]) ?? [])
         document.revision = EditorRevision(baseGeneration: string(rootPayload?["base_generation"]) ?? string(snapshot["base_generation"]) ?? "", number: integer(sections["revision_number"]), hash: string(sections["revision_hash"]), snapshotHash: string(snapshot["snapshot_hash"]))
         document.title = string(sections["title"] ?? snapshot["title"]); document.orientation = string(sections["orientation"] ?? snapshot["orientation"])
         // Caption archetypes historically exposed their appearance as variant-
@@ -370,6 +384,10 @@ struct EditorDocument: Equatable, Sendable {
             else if sectionPresence[.orientation] != .absent { sections[EditorSection.orientation.wireKey] = .null }
         }
         if let base = revision.baseGeneration.nilIfEmpty { payload["base_generation"] = .string(base) }
+        if editorState == "empty" { payload["editor_state"] = .string("empty") }
+        else { payload.removeValue(forKey: "editor_state") }
+        if deletions.isEmpty { payload.removeValue(forKey: "deletions") }
+        else { payload["deletions"] = .array(deletions.map { .object(["kind": .string($0.kind), "id": .string($0.id)]) }) }
         if canonical {
             payload["sections"] = .object(sections)
             root["editor_payload"] = .object(payload)
@@ -401,7 +419,7 @@ struct EditorDocument: Equatable, Sendable {
     }
 
     private func currentState() -> LoadedState {
-        LoadedState(schemaVersion: schemaVersion, kind: kind, editFormat: editFormat, clips: clips, tombstones: tombstones, textElements: textElements, captionMeta: captionMeta, captionCues: captionCues, music: music, backgroundMusic: backgroundMusic, mix: mix, soundEffects: soundEffects, mediaOverlays: mediaOverlays, visualBlocks: visualBlocks, motionScenes: motionScenes, motionRuntimeHash: motionRuntimeHash, cameraEffects: cameraEffects, carouselMoment: carouselMoment, lyrics: lyrics, title: title, orientation: orientation, capabilities: capabilities, revision: revision)
+        LoadedState(schemaVersion: schemaVersion, kind: kind, editFormat: editFormat, clips: clips, tombstones: tombstones, textElements: textElements, captionMeta: captionMeta, captionCues: captionCues, music: music, backgroundMusic: backgroundMusic, mix: mix, soundEffects: soundEffects, mediaOverlays: mediaOverlays, visualBlocks: visualBlocks, motionScenes: motionScenes, motionRuntimeHash: motionRuntimeHash, cameraEffects: cameraEffects, carouselMoment: carouselMoment, lyrics: lyrics, title: title, orientation: orientation, capabilities: capabilities, revision: revision, editorState: editorState, deletions: deletions)
     }
 
     private mutating func makeOpaqueRecords(_ sections: [String: JSONValue]) -> [EditorSection: [EditorOpaqueRecord]] {
@@ -429,6 +447,13 @@ private extension EditorSection {
 }
 
 private extension EditorDocument {
+    static func decodeDeletions(_ rows: [JSONValue]) -> [EditorDeletion] {
+        rows.compactMap { value in
+            guard let row = object(value), let kind = string(row["kind"]), let id = string(row["id"]),
+                  !kind.isEmpty, !id.isEmpty else { return nil }
+            return EditorDeletion(kind: kind, id: id)
+        }
+    }
     typealias RawRecordEncoder<T> = (T) -> JSONValue
 
     func sectionChanged(_ section: EditorSection) -> Bool {

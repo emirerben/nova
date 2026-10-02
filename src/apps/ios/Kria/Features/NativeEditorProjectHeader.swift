@@ -60,7 +60,7 @@ struct NativeEditorProjectHeader: View {
             .frame(width: 44, height: 44)
             .kriaFloatingSurface(Circle())
         }
-        .disabled(exporter.phase == .preparing)
+        .disabled(exporter.phase == .preparing || session.document.editorState == "empty")
         .accessibilityLabel(exporter.phase == .preparing ? "Preparing video" : "Export video")
         .accessibilityIdentifier("native-editor-export")
     }

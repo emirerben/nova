@@ -103,6 +103,7 @@ FINAL_OUTPUT_REQUIRED: set[tuple[str, str]] = {
     # an already-validated FFmpeg filter chain onto the variant's video — the
     # bytes that ship for `apply_custom_effect`, so final-output budget.
     ("app/tasks/custom_effects_render.py", "_build_custom_effect_command"),
+    ("app/pipeline/authored_timeline.py", "_finalize_camera_base"),
 }
 
 # libx264 presets ordered from fastest to slowest. Anything at or stricter
@@ -131,6 +132,7 @@ FILES_TO_AUDIT: list[str] = [
     "app/pipeline/masonry_montage.py",
     "app/pipeline/carousel/encode.py",
     "app/tasks/custom_effects_render.py",
+    "app/pipeline/authored_timeline.py",
 ]
 
 
