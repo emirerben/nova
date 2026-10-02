@@ -535,6 +535,24 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertLessThan(preview.frame.height, originalHeight - 40, "dragging up still shrinks it")
     }
 
+    /// The preview handle resizes from anywhere in its row, not only the
+    /// 80 pt around the grabber line.
+    func testTimelineResizeWorksFromTheBandBesideTheGrabber() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]
+        app.launch()
+        let handle = app.descendants(matching: .any)["native-editor-timeline-resize"].firstMatch
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 8))
+        let window = app.windows.firstMatch
+        XCTAssertGreaterThan(handle.frame.width, window.frame.width - 40, "the handle spans its row")
+        let originalHeight = preview.frame.height
+        // Well left of the line, where the old 80 pt target never reached.
+        let start = window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 36, dy: handle.frame.midY))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -140)))
+        XCTAssertLessThan(preview.frame.height, originalHeight - 80, "dragging the band beside the grabber shrinks the preview")
+    }
+
     func testPanelExpansionResetsWhenPanelCloses() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]

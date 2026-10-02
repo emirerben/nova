@@ -77,9 +77,13 @@ public struct PreviewComposition: @unchecked Sendable {
                 return (clip, url)
             }, duration: total)
             : nil
-        func addAudio(asset: AVURLAsset, clip: TimelineClip, gain: Double, originalGain: Bool = false) async throws {
+        // Speech-cleanup cuts crossfade their audio across the join.
+        let cutHandles = AudioCutHandles.plan(recipe.tracks)
+        func addAudio(asset: AVURLAsset, clip recipeClip: TimelineClip, gain: Double, originalGain: Bool = false) async throws {
             guard let source = try await asset.loadTracks(withMediaType: .audio).first else { return }
             guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw MediaEngineError.exportUnavailable }
+            let cut = cutHandles[recipeClip.id] ?? .none
+            let clip = recipeClip.widened(by: cut)
             let sourceRange = CMTimeRange(start: time(clip.sourceStart), duration: time(clip.sourceDuration))
             try track.insertTimeRange(sourceRange, of: source, at: time(clip.timelineStart))
             // A held video tail is visual-only. Keep source/narration audio on
@@ -88,7 +92,7 @@ public struct PreviewComposition: @unchecked Sendable {
             track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration),
                                  toDuration: time(clip.sourceDuration / clip.rate))
             let parameter = AVMutableAudioMixInputParameters(track: track)
-            applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows, duck: originalGain ? duck : nil)
+            applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows, duck: originalGain ? duck : nil, cut: cut)
             audioParameters.append(parameter)
         }
         let overlayOrders = Self.overlayOrders(in: recipe)
