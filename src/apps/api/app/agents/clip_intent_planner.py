@@ -7,7 +7,7 @@ import re
 from hashlib import sha256
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
@@ -25,9 +25,12 @@ _ORDER_BY_NOTE = (
     '\n  A request to arrange ALL the clips by when or where they were filmed ("in the order'
     ' I filmed them", "chronological", "in the order of my route", "from first stop to last")'
     ' is an order intent with `order_by`: "capture_time" for filming order, "route" for a'
-    " route walked or driven. Leave `position` null for it; it is never combined with"
-    " first/last. Attribute: the creator's own words for the order."
+    " route walked or driven. You MUST include that `order_by` value on the returned intent;"
+    " never omit it. Leave `position` null for it; it is never combined with first/last."
+    " Attribute: the creator's own words for the order."
 )
+
+_ORDER_BY_FIELD = ',"order_by":"capture_time|route|null"'
 
 
 def _sanitize_text(value: str) -> str:
@@ -41,10 +44,23 @@ class PlannedClipIntent(ClipIntent):
 
     source_quote: str = Field(min_length=1, max_length=600)
 
+    @model_validator(mode="after")
+    def _validate_caption_shape(self) -> PlannedClipIntent:
+        if self.op != "caption":
+            return self
+        if self.creator_text is None and self.caption_attribute is None:
+            raise ValueError("authored captions require caption_attribute")
+        if self.creator_text is not None and self.caption_attribute is not None:
+            raise ValueError("exact creator caption copy requires caption_attribute=null")
+        return self
+
 
 class ClipIntentPlannerInput(BaseModel):
     creator_request: str = Field(min_length=1, max_length=CREATOR_REQUEST_MAX_CHARS)
     latest_user_message: str | None = Field(default=None, max_length=CREATOR_REQUEST_MAX_CHARS)
+    # A generated Creative Brief can aid recall but is not creator-authored
+    # provenance. Quotes from it never satisfy the parser's source fence.
+    generated_brief: str | None = Field(default=None, max_length=CREATOR_REQUEST_MAX_CHARS)
     # Strategy-produced candidates can aid recall, but never authorize output.
     candidate_intents: list[ClipIntent] | None = Field(default=None, max_length=MAX_CLIP_INTENTS)
     # KRI-189: CLIP_FACTS is on for this creator, so the prompt also teaches the
@@ -61,7 +77,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_intent_planner",
         prompt_id="clip_intent_planner",
-        prompt_version="2026-10-01.1",
+        prompt_version="2026-10-02.2",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -97,6 +113,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         return {
             "creator_request": redact(input_dict.get("creator_request")),
             "latest_user_message": redact(input_dict.get("latest_user_message")),
+            "generated_brief": redact(input_dict.get("generated_brief")),
             "candidate_intents_count": len(candidates) if isinstance(candidates, list) else 0,
         }
 
@@ -106,9 +123,11 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             "clip_intent_planner",
             creator_request=_sanitize_text(input.creator_request),
             latest_user_message=_sanitize_text(input.latest_user_message or ""),
+            generated_brief=_sanitize_text(input.generated_brief or ""),
             candidate_intents=json.dumps(candidates, ensure_ascii=False),
             max_intents=str(MAX_CLIP_INTENTS),
             order_by_note=_ORDER_BY_NOTE if input.clip_facts else "",
+            order_by_field=_ORDER_BY_FIELD if input.clip_facts else "",
         )
 
     def parse(self, raw_text: str, input: ClipIntentPlannerInput) -> ClipIntentPlannerOutput:  # noqa: A002
@@ -199,8 +218,11 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
     def schema_clarification(self) -> str:
         return (
             "\n\nReturn only the requested JSON. Every intent needs an exact "
-            "source_quote copied from the creator text; do not emit a partial "
-            "inventory or invent clip facts."
+            "source_quote copied from the creator text and a non-empty attribute; "
+            "do not emit a partial inventory or invent clip facts. For caption, "
+            "attribute is always the target clips/chapter. When creator_text has "
+            "exact copy, caption_attribute must be null; otherwise caption_attribute "
+            "is only the factual topic to author."
         )
 
     def refusal_clarification(self) -> str:
