@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.5.0] - 2026-10-02
+
+### Changed
+- refactor: remove shallow compatibility modules (#1314) <!-- release-pr: 1314 -->
+
 ## [0.78.4.0] - 2026-10-02
 
 ### Changed
