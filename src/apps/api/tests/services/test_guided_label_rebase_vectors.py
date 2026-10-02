@@ -99,25 +99,68 @@ def _untouched_bars() -> list[dict[str, Any]]:
     ]
 
 
+def _anchored_title_bars(
+    *,
+    opening_start: float = 0.0,
+    opening_end: float = 10.0,
+    closing_start: float = 7.25,
+    closing_end: float = 10.0,
+    opening_segment: str = "s3",
+    closing_segment: str = "s2",
+) -> list[dict[str, Any]]:
+    return [
+        # The segment_id is deliberately stale: title IDs must be recognized
+        # before the clip-segment matching branch.
+        {
+            "id": "guided-title",
+            "text": "Opening",
+            "start_s": opening_start,
+            "end_s": opening_end,
+            "segment_id": opening_segment,
+        },
+        {
+            "id": "guided-closing-title",
+            "text": "Closing",
+            "start_s": closing_start,
+            "end_s": closing_end,
+            "segment_id": closing_segment,
+        },
+    ]
+
+
 def _cases() -> list[dict[str, Any]]:
     base = _base_slots()
     flush = _windows(base)
     cases: list[dict[str, Any]] = []
 
-    def add(name: str, old: list, new: list, labels: list, note: str = "") -> None:
+    def add(
+        name: str,
+        old: list,
+        new: list,
+        labels: list,
+        note: str = "",
+        extra: list | None = None,
+    ) -> None:
         cases.append(
             {
                 "name": name,
                 "note": note,
                 "old_slots": old,
                 "new_slots": new,
-                "labels_before": labels + _untouched_bars(),
+                "labels_before": labels + (extra or []) + _untouched_bars(),
             }
         )
 
     # The prod incident: clip 1 extended by 0.533 s, every later label stayed put.
     extend = _base_slots([2.533, 2.0, 2.0, 2.0, 2.0])
-    add("extend_clip1_by_0_533", base, extend, flush, "prod incident: later labels must ripple")
+    add(
+        "extend_clip1_by_0_533",
+        base,
+        extend,
+        flush,
+        "prod incident: later labels must ripple",
+        [_anchored_title_bars(opening_end=2.0, closing_start=1.0)[0]],
+    )
 
     shrink = _base_slots([1.0, 2.0, 2.0, 2.0, 2.0])
     delayed = copy.deepcopy(flush)
@@ -128,13 +171,26 @@ def _cases() -> list[dict[str, Any]]:
         shrink,
         delayed,
         "inset 0.6 / gap 0.2 scale by new_len/old_len = 0.5",
+        _anchored_title_bars(opening_end=3.0, closing_start=8.0),
     )
 
     reorder = [base[0], base[2], base[1], base[3], base[4]]
-    add("reorder_clips_2_and_3", base, reorder, flush)
+    add(
+        "reorder_clips_2_and_3",
+        base,
+        reorder,
+        flush,
+        extra=_anchored_title_bars(opening_end=3.0, closing_start=6.0),
+    )
 
     delete = [base[0], base[2], base[3], base[4]]
-    add("delete_clip_2_drops_its_label", base, delete, flush)
+    add(
+        "delete_clip_2_drops_its_label",
+        base,
+        delete,
+        flush,
+        extra=[_anchored_title_bars(closing_start=8.0)[1]],
+    )
 
     split_old = _base_slots()
     split_new = [
@@ -180,6 +236,44 @@ def _cases() -> list[dict[str, Any]]:
     for bar in media_only:
         bar.pop("segment_id")
     add("media_link_without_segment_id_follows_by_overlap", base, extend, media_only)
+
+    add(
+        "tiny_total_title_min_duration",
+        _base_slots([0.1, 0.1, 0.1, 0.1, 0.1]),
+        _base_slots([0.1, 0.1, 0.1, 0.1, 0.1]),
+        _windows(_base_slots([0.1, 0.1, 0.1, 0.1, 0.1])),
+        "anchored titles keep the server minimum bar duration in a tiny timeline",
+        _anchored_title_bars(opening_end=0.05, closing_start=0.45, closing_end=0.5),
+    )
+
+    add("full_duration_and_closing_titles_extend", base, extend, _anchored_title_bars())
+    inset_titles = _anchored_title_bars(
+        opening_start=2.5,
+        opening_end=3.5,
+        closing_start=6.5,
+        closing_end=7.5,
+    )
+    for name, slots in [
+        ("extend", extend),
+        ("shrink", shrink),
+        ("reorder", reorder),
+        ("delete_anchor", delete),
+        ("split", split_new),
+        ("crossfade", dissolve_new),
+    ]:
+        add(f"inset_titles_project_{name}", base, slots, inset_titles)
+    trimmed_source = copy.deepcopy(base)
+    trimmed_source[1]["in_s"] = 1.0
+    trimmed_source[1]["duration_s"] = 1.0
+    add("inset_title_source_trim_clamps", base, trimmed_source, inset_titles)
+    add(
+        "title_ids_use_actual_edges",
+        base,
+        extend,
+        _anchored_title_bars(
+            opening_start=8.0, opening_end=10.0, closing_start=0.0, closing_end=2.0
+        ),
+    )
 
     return cases
 
