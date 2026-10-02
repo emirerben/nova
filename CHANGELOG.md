@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.10.0] - 2026-10-02
+
+### Changed
+- fix(ios): hold silence across cutaway mute windows instead of fading back in (#1318) <!-- release-pr: 1318 -->
+
 ## [0.78.9.0] - 2026-10-02
 
 ### Changed
