@@ -91,6 +91,62 @@ public struct AudioMuteWindow: Codable, Equatable, Sendable {
     public init(start: Double, end: Double, clipIDs: [String]) { self.start = start; self.end = end; self.clipIDs = clipIDs }
 }
 
+/// Seconds of source audio each side of a same-source cut borrows across it.
+/// The two sides then overlap for twice this long, so the room tone (rain,
+/// traffic) runs straight through the join instead of dipping to silence for
+/// the two edge declicks, which is what made speech-cleanup cuts sound jumpy.
+let audioCutCrossfadeHandle: TimeInterval = 0.025
+
+/// The audio a clip borrows past its edges at a speech-cleanup style cut: two
+/// clips of the SAME source laid back to back with a removed span between them
+/// in the source. The outgoing clip's audio runs `tail` into that span and the
+/// incoming clip's starts `lead` before its window, crossfading over the cut.
+/// Only audio widens; the picture still hard-cuts on the original boundary.
+struct AudioCutHandles: Equatable, Sendable {
+    var lead: TimeInterval = 0
+    var tail: TimeInterval = 0
+    static let none = AudioCutHandles()
+
+    /// Handles per clip ID. A cut qualifies only when both sides play their
+    /// source at 1x with no hold, no transition and no authored audio fade, and
+    /// the source jumps forward: the borrowed audio is then removed material
+    /// (pause, breath, filler edge), never a kept word. Each handle stays
+    /// inside half the removed span and a quarter of either clip.
+    static func plan(_ tracks: [TimelineTrack]) -> [String: AudioCutHandles] {
+        var result: [String: AudioCutHandles] = [:]
+        for track in tracks where track.kind == .video {
+            let clips = track.clips.sorted { $0.timelineStart < $1.timelineStart }
+            for (outgoing, incoming) in zip(clips, clips.dropFirst()) {
+                let removed = incoming.sourceStart - (outgoing.sourceStart + outgoing.sourceDuration)
+                guard outgoing.sourceAssetID == incoming.sourceAssetID,
+                      outgoing.rate == 1, incoming.rate == 1,
+                      outgoing.holdDuration == nil, incoming.holdDuration == nil,
+                      (incoming.transition?.duration ?? 0) == 0,
+                      (outgoing.audioFadeOut ?? 0) == 0, (incoming.audioFadeIn ?? 0) == 0,
+                      abs(incoming.timelineStart - (outgoing.timelineStart + outgoing.duration)) < 0.001,
+                      removed > 0.001 else { continue }
+                let handle = min(audioCutCrossfadeHandle, removed / 2, outgoing.sourceDuration / 4, incoming.sourceDuration / 4)
+                result[outgoing.id, default: .none].tail = handle
+                result[incoming.id, default: .none].lead = handle
+            }
+        }
+        return result
+    }
+}
+
+extension TimelineClip {
+    /// The window this clip's audio track plays once a cut's handles widen it.
+    /// Handles are only planned for 1x clips, so source and timeline move together.
+    func widened(by handles: AudioCutHandles) -> TimelineClip {
+        guard handles != .none else { return self }
+        var clip = self
+        clip.sourceStart -= handles.lead
+        clip.timelineStart -= handles.lead
+        clip.sourceDuration += handles.lead + handles.tail
+        return clip
+    }
+}
+
 #if canImport(AVFoundation)
 import AVFoundation
 import CoreImage
@@ -189,7 +245,12 @@ let audioEdgeFade: TimeInterval = 0.025
 /// KRI-139: an authored `audioFadeIn`/`audioFadeOut` longer than the declick
 /// edge replaces it, and a `duck` envelope scales the steady region between the
 /// edges (the side-chain ducked footage bed).
-func applyAudioGain(_ parameter: AVMutableAudioMixInputParameters, clip: TimelineClip, gain: Double, windows: [AudioMuteWindow], duck: AudioDuckEnvelope? = nil) {
+///
+/// `cut` crossfades a same-source cut: `clip` is already `widened(by: cut)`, and
+/// each borrowed edge fades over twice its handle on an equal-power curve,
+/// centred on the original boundary, so the two sides overlap instead of each
+/// declicking to silence.
+func applyAudioGain(_ parameter: AVMutableAudioMixInputParameters, clip: TimelineClip, gain: Double, windows: [AudioMuteWindow], duck: AudioDuckEnvelope? = nil, cut: AudioCutHandles = .none) {
     func cm(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 60_000) }
     func ramp(_ from: Float, _ to: Float, _ start: Double, _ end: Double) {
         let range = CMTimeRange(start: cm(start), end: cm(end))
@@ -200,8 +261,19 @@ func applyAudioGain(_ parameter: AVMutableAudioMixInputParameters, clip: Timelin
     let audioEnd = start + clip.sourceDuration / clip.rate
     let edge = max(0, min(audioEdgeFade, (audioEnd - start) / 4))
     let half = (audioEnd - start) / 2
-    let fadeIn = max(edge, min(clip.audioFadeIn ?? 0, half)), fadeOut = max(edge, min(clip.audioFadeOut ?? 0, half))
+    let fadeIn = cut.lead > 0 ? 2 * cut.lead : max(edge, min(clip.audioFadeIn ?? 0, half))
+    let fadeOut = cut.tail > 0 ? 2 * cut.tail : max(edge, min(clip.audioFadeOut ?? 0, half))
     let steadyStart = start + fadeIn, steadyEnd = audioEnd - fadeOut
+    // A crossfade edge follows sin/cos so the overlapped power stays level;
+    // AVAudioMix ramps are linear, so the curve is a few linear pieces.
+    func edgeRamp(_ level: Float, _ from: Double, _ to: Double, rising: Bool, curved: Bool) {
+        let pieces = curved ? 3 : 1, piece = (to - from) / Double(pieces)
+        func share(_ step: Int) -> Float {
+            let progress = Double(step) / Double(pieces), reached = rising ? progress : 1 - progress
+            return level * Float(curved ? sin(reached * .pi / 2) : reached)
+        }
+        for step in 0..<pieces { ramp(share(step), share(step + 1), from + piece * Double(step), from + piece * Double(step + 1)) }
+    }
     let affected = windows.filter { $0.clipIDs.contains(clip.id) && $0.start < clip.timelineStart + clip.duration && $0.end > clip.timelineStart }
     // Window edges split the steady region into runs: a muted run holds 0, an
     // audible run ramps from and to 0 at each window edge it touches.
@@ -220,9 +292,9 @@ func applyAudioGain(_ parameter: AVMutableAudioMixInputParameters, clip: Timelin
     // Nothing plays before the clip: keep the implicit unity default away from it.
     // The fade-in ramp starts at 0, so the point has nothing to interpolate toward.
     if start > 0 { parameter.setVolume(0, at: .zero) }
-    ramp(0, level(steadyStart), start, steadyStart)
+    edgeRamp(level(steadyStart), start, steadyStart, rising: true, curved: cut.lead > 0)
     let marks = Set(corners.map(\.time) + (duck?.times(in: steadyStart...steadyEnd) ?? [])).sorted()
     for (from, to) in zip(marks, marks.dropFirst()) { ramp(level(from), level(to), from, to) }
-    ramp(level(steadyEnd), 0, steadyEnd, audioEnd)
+    edgeRamp(level(steadyEnd), steadyEnd, audioEnd, rising: false, curved: cut.tail > 0)
 }
 #endif
