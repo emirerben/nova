@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.13.0] - 2026-10-02
+
+### Changed
+- ci: remove the weekly paid-eval smoke and fail fast on missing secrets (#1320) <!-- release-pr: 1320 -->
+
 ## [0.78.12.0] - 2026-10-02
 
 ### Changed
