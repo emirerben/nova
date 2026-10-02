@@ -258,23 +258,35 @@ public struct LivePreviewExportSnapshot: Sendable {
             RecipeVideoInstruction(timeRange: range, layers: active, text: painted, canvas: current.renderSize,
                 cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore)
         }
-        let mix = AVMutableAudioMix()
+        // Visual edits must not reset the player's running audio pipeline (KRI-241).
+        // Track timing has already been checked above; only these gain inputs can
+        // change the mix on the fast path.
+        let audioChanged = recipe.audio != next.audio
+            || recipe.tracks.flatMap(\.clips).map(\.volume) != next.tracks.flatMap(\.clips).map(\.volume)
+        var replacementMix: AVAudioMix?
         if recipe.audio.musicAssetID != nil {
             guard next.audio == recipe.audio, next.tracks == recipe.tracks else { throw NativePreviewFeatureError("LivePreviewComposition-176") }
-            mix.inputParameters = preview.playerItem.audioMix?.inputParameters ?? []
-        } else {
+        } else if audioChanged {
+            let mix = AVMutableAudioMix()
             let clips = Dictionary(uniqueKeysWithValues: next.tracks.flatMap(\.clips).map { ($0.id, $0) })
+            guard let composition = preview.playerItem.asset as? AVComposition else {
+                throw NativePreviewFeatureError("LivePreviewComposition-audio-composition")
+            }
             mix.inputParameters = try preview.audioBindings.map { binding in
-                guard let clip = clips[binding.clipID] else { throw NativePreviewFeatureError("LivePreviewComposition-181") }
-                let parameter = AVMutableAudioMixInputParameters()
-                parameter.trackID = binding.trackID
+                guard let clip = clips[binding.clipID],
+                      let track = composition.track(withTrackID: binding.trackID), track.mediaType == .audio else {
+                    throw NativePreviewFeatureError("LivePreviewComposition-181")
+                }
+                // Match the full builder: bind to the actual composition track.
+                let parameter = AVMutableAudioMixInputParameters(track: track)
                 applyAudioGain(parameter, clip: clip, gain: binding.usesOriginalGain ? next.audio.originalVolume : 1, windows: next.audio.muteWindows, duck: binding.usesOriginalGain ? preview.duckEnvelope : nil)
                 return parameter
             }
+            replacementMix = mix
         }
         // Publish only after every layer and audio binding validates successfully.
         preview.playerItem.videoComposition = replacement
-        preview.playerItem.audioMix = mix
+        if let replacementMix { preview.playerItem.audioMix = replacementMix }
         assetURLs = urls
         recipe = next
     }
