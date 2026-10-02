@@ -257,7 +257,8 @@ struct NativeEditorView: View {
                 title: project.workspaceTitle, session: session, exporter: exporter,
                 onBack: requestBack, onChat: conversation == nil ? requestBack : onBack,
                 onSaveToPhotos: { Task { await exporter.saveToPhotos(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
-                onShare: { Task { await exporter.share(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } }
+                onShare: { Task { await exporter.share(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
+                beforeSave: { if captionEditing { panelLifecycle.prepareToClose(); resignKeyboard() } }
             )
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
             VStack(spacing: 0) {
@@ -298,6 +299,7 @@ struct NativeEditorView: View {
                                 .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                                 .multilineTextAlignment(.center).padding(12)
                         }
+                        .allowsHitTesting(false)
                         .accessibilityIdentifier("native-editor-caption-stale-preview")
                     }
                 }
@@ -333,12 +335,23 @@ struct NativeEditorView: View {
     private var panelIsOpen: Bool { panel != nil }
 
     /// KRI-240: a caption line is open in the caption editor (Variant A edit state).
-    private var captionEditing: Bool { panel?.tool == .captions && captionEditingCueID != nil }
+    /// The line must still exist: if a save or reload drops it, the chrome comes back
+    /// in the same pass rather than staying hidden over the caption list.
+    private var captionEditing: Bool {
+        guard panel?.tool == .captions, let id = captionEditingCueID else { return false }
+        return session.document.captionUnits.contains { $0.id == id }
+    }
 
-    /// Two field lines on small phones and at accessibility text sizes, three otherwise (plan 026 D8, D12).
+    /// Field lines in the caption edit bar. Computed once here and handed to the panel,
+    /// so the height the layout reserves is the height the bar draws.
     private func captionEditLines(viewport: GeometryProxy) -> Int {
-        let screenHeight = viewport.size.height + viewport.safeAreaInsets.top + viewport.safeAreaInsets.bottom
-        return dynamicTypeSize.isAccessibilitySize || screenHeight < 700 ? 2 : 3
+        // The screen, not the viewport: the viewport shrinks by the keyboard, which
+        // would make every phone "short" the moment the keyboard rises.
+        CaptionEditBar.fieldLineCount(
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
+            screenHeight: UIScreen.main.bounds.height,
+            contentWidth: max(0, viewport.size.width - 72)
+        )
     }
 
     private var fullscreenSpring: Animation {
@@ -471,7 +484,7 @@ struct NativeEditorView: View {
                             if panelIsOpen {
                                 let panelRange = metrics.panelRange(areaHeight: area.size.height, previewHeight: previewHeight)
                                 let panelDismiss = NativeEditorPanelDismiss(pull: $panelDismissPull, complete: completePanel)
-                                panelContent
+                                panelContent(captionEditLines: captionEditLines(viewport: viewport))
                                     .environment(\.nativeEditorPanelContentWidth, max(0, area.size.width - 72))
                                     .environment(\.nativeEditorPanelResize, NativeEditorPanelResize(
                                         expansion: $panelExpansion, range: panelRange, dismiss: panelDismiss
@@ -480,24 +493,24 @@ struct NativeEditorView: View {
                                     .overlay(alignment: .top) {
                                         // The band beside the grabber resizes too (KRI-235).
                                         if !captionEditing {
-                                        Color.clear.frame(height: 18).contentShape(Rectangle())
-                                            .modifier(NativeEditorPanelResizeDrag(
-                                                expansion: $panelExpansion, range: panelRange, minimumDistance: 8, dismiss: panelDismiss
-                                            ))
+                                            Color.clear.frame(height: 18).contentShape(Rectangle())
+                                                .modifier(NativeEditorPanelResizeDrag(
+                                                    expansion: $panelExpansion, range: panelRange, minimumDistance: 8, dismiss: panelDismiss
+                                                ))
                                         }
                                     }
                                     .overlay(alignment: .top) {
                                         if !captionEditing {
-                                        NativeEditorPanelResizeGrabber(
-                                            expansion: $panelExpansion,
-                                            range: panelRange,
-                                            reduceMotion: shouldReduceMotion,
-                                            accessibilityIdentifier: "native-editor-panel-resize",
-                                            topAligned: true,
-                                            accessibilityTitle: "Editor panel size",
-                                            accessibilityHint: "Swipe up or down to resize the editor panel",
-                                            dismiss: panelDismiss
-                                        )
+                                            NativeEditorPanelResizeGrabber(
+                                                expansion: $panelExpansion,
+                                                range: panelRange,
+                                                reduceMotion: shouldReduceMotion,
+                                                accessibilityIdentifier: "native-editor-panel-resize",
+                                                topAligned: true,
+                                                accessibilityTitle: "Editor panel size",
+                                                accessibilityHint: "Swipe up or down to resize the editor panel",
+                                                dismiss: panelDismiss
+                                            )
                                         }
                                     }
                                     .transition(panelTransition)
@@ -536,7 +549,7 @@ struct NativeEditorView: View {
         .layoutPriority(1)
     }
 
-    @ViewBuilder private var panelContent: some View {
+    @ViewBuilder private func panelContent(captionEditLines: Int) -> some View {
         switch panel {
         case .textCreation:
             NativeTextCreationPanel(session: session, onDone: textCreated, onSelectBlock: { openTextBlock($0) })
@@ -546,7 +559,10 @@ struct NativeEditorView: View {
                 onDone: textEditingDone
             ).id(id)
         case .captions:
-            NativeCaptionPanel(session: session, editingCueID: $captionEditingCueID, loopToggleRequest: captionLoopRequest) { changePanel(to: nil) }
+            NativeCaptionPanel(
+                session: session, editingCueID: $captionEditingCueID,
+                loopToggleRequest: captionLoopRequest, editLines: captionEditLines, editLineHeight: captionLineHeight
+            ) { changePanel(to: nil) }
         case .visuals:
             NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .sounds:

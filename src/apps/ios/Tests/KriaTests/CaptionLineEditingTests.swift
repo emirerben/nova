@@ -99,6 +99,48 @@ final class CaptionLineEditingTests: XCTestCase {
         XCTAssertEqual(unknown.spellCheckingType, .default)
     }
 
+    // Value: protects=Return = next line and newline-free captions; fails_when=the Return intercept or paste flattening regresses and a newline lands in a transcript line; why_new=config tests only check flags; seam=none
+    @MainActor
+    func testCaptionReturnMovesOnAndPastedNewlinesBecomeSpaces() {
+        var returns = 0
+        let caption = NativeExplicitLineTextEditor(
+            text: .constant("ab"), focused: .constant(false), identifier: "caption",
+            configuration: .captionLine(language: nil, isLast: false, installedLanguages: []),
+            actions: LineEditorActions(onReturn: { returns += 1 })
+        ).makeCoordinator()
+        let view = ExplicitLineTextView()
+        view.text = "ab"
+        XCTAssertFalse(caption.textView(view, shouldChangeTextIn: NSRange(location: 2, length: 0), replacementText: "\n"))
+        XCTAssertEqual(returns, 1, "Return moves to the next line")
+        XCTAssertEqual(view.text, "ab")
+        XCTAssertFalse(caption.textView(view, shouldChangeTextIn: NSRange(location: 2, length: 0), replacementText: "x\ny"))
+        XCTAssertEqual(view.text, "abx y", "a pasted newline becomes a space")
+        view.allowsNextNewline = true
+        XCTAssertTrue(caption.textView(view, shouldChangeTextIn: NSRange(location: 0, length: 0), replacementText: "\n"),
+                      "Shift-Return still inserts one newline")
+        XCTAssertEqual(returns, 1)
+
+        let text = NativeExplicitLineTextEditor(text: .constant(""), focused: .constant(false), identifier: "text").makeCoordinator()
+        XCTAssertTrue(text.textView(view, shouldChangeTextIn: NSRange(location: 0, length: 0), replacementText: "\n"),
+                      "the Text tool keeps Return as a newline")
+    }
+
+    // Value: protects=caption lines stay within the server's 600-character cue limit; fails_when=a long paste reaches Save and the whole commit is rejected; why_new=the limit is new; seam=none
+    @MainActor
+    func testCaptionLinesStopAtTheServersLengthLimit() {
+        let coordinator = NativeExplicitLineTextEditor(
+            text: .constant(""), focused: .constant(false), identifier: "caption",
+            configuration: .captionLine(language: nil, isLast: true, installedLanguages: [])
+        ).makeCoordinator()
+        let view = ExplicitLineTextView()
+        view.text = String(repeating: "a", count: 599)
+        XCTAssertTrue(coordinator.textView(view, shouldChangeTextIn: NSRange(location: 599, length: 0), replacementText: "ç"))
+        view.text = String(repeating: "a", count: 600)
+        XCTAssertFalse(coordinator.textView(view, shouldChangeTextIn: NSRange(location: 600, length: 0), replacementText: "b"))
+        XCTAssertTrue(coordinator.textView(view, shouldChangeTextIn: NSRange(location: 599, length: 1), replacementText: ""),
+                      "deleting stays allowed")
+    }
+
     func testKeyboardLanguageMatchingComparesTheLanguageSubtag() {
         XCTAssertTrue(LineEditorConfiguration.language("tr-TR", matches: "tr"))
         XCTAssertTrue(LineEditorConfiguration.language("tr_TR", matches: "TR"))
@@ -133,6 +175,26 @@ final class CaptionLineEditingTests: XCTestCase {
                              "Variant A still shows a larger preview than today's keyboard-up split")
     }
 
+    // Value: protects=the edit bar's field line count on short, narrow and AX layouts; fails_when=the SE (667pt tall, 303pt panel) gets 3 lines again; why_new=the reserve and draw sites used different rules; seam=none
+    func testShortNarrowAndAccessibilityLayoutsGetATwoLineField() {
+        // iPhone SE: short screen, 303pt panel. Reserving 2 lines but drawing 3 put
+        // the field's last line under the keyboard.
+        XCTAssertEqual(CaptionEditBar.fieldLineCount(isAccessibilitySize: false, screenHeight: 667, contentWidth: 303), 2)
+        XCTAssertEqual(CaptionEditBar.fieldLineCount(isAccessibilitySize: false, screenHeight: 852, contentWidth: 321), 3, "iPhone 15")
+        XCTAssertEqual(CaptionEditBar.fieldLineCount(isAccessibilitySize: false, screenHeight: 932, contentWidth: 358), 3, "Pro Max")
+        XCTAssertEqual(CaptionEditBar.fieldLineCount(isAccessibilitySize: true, screenHeight: 932, contentWidth: 358), 2, "accessibility text size")
+        XCTAssertEqual(CaptionEditBar.fieldLineCount(isAccessibilitySize: false, screenHeight: 874, contentWidth: 280), 2, "narrow panel")
+    }
+
+    // Value: protects=the Variant A preview height while a line is open; fails_when=a stored timeline-handle resize shrinks the preview under the bar; why_new=the layout test only tried resize 0; seam=none
+    func testAStoredPreviewResizeDoesNotShrinkThePreviewWhileEditingALine() {
+        let editing = metrics(bar: CaptionEditBar.height(lineHeight: 22, lines: 3), chrome: 24)
+        XCTAssertEqual(editing.previewHeight(resize: 40), editing.defaultPreviewHeight, accuracy: 0.001)
+        XCTAssertEqual(editing.previewHeight(resize: -40), editing.defaultPreviewHeight, accuracy: 0.001)
+        let browse = metrics(bar: nil, chrome: 24)
+        XCTAssertLessThan(browse.previewHeight(resize: 40), browse.defaultPreviewHeight, "browse keeps the handle's resize")
+    }
+
     func testEditingACaptionLineWithAHardwareKeyboardHidesTheTransportReservation() {
         let bar = CaptionEditBar.height(lineHeight: 22, lines: 2)
         let editing = metrics(bar: bar, keyboard: false, height: 759)
@@ -154,7 +216,7 @@ final class CaptionLineEditingTests: XCTestCase {
     // MARK: Session line lifecycle
 
     @MainActor
-    private func loadedSession(words: Bool = true, language: String? = "tr") async -> NativeEditorSession {
+    private func loadedSession(words: Bool = true, language: String? = "tr", mirrors: Bool = false) async -> NativeEditorSession {
         let threadID = UUID()
         var first: [String: JSONValue] = [
             "id": .string("cue-1"), "text": .string("Simit ve cay"), "start_s": .number(0), "end_s": .number(1),
@@ -173,6 +235,13 @@ final class CaptionLineEditingTests: XCTestCase {
             ]),
         ]
         if let language { variant["caption_language"] = .string(language) }
+        if mirrors {
+            // The API mirrors every cue into a caption-tagged text element with its own id.
+            variant["text_elements"] = .array([("Simit ve cay", 0.0, 1.0), ("Fiyatlar uygun", 1.0, 2.0)].enumerated().map { index, cue in
+                .object(["id": .string("mirror-\(index)"), "text": .string(cue.0), "start_s": .number(cue.1), "end_s": .number(cue.2),
+                         "source_params": .object(["source": .string("caption_cue"), "key": .string(String(index))])])
+            })
+        }
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h",
                                          etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:],
@@ -213,6 +282,26 @@ final class CaptionLineEditingTests: XCTestCase {
         XCTAssertFalse(session.isCaptionUnitEdited(id: "cue-1"))
     }
 
+    // Value: protects=one undo step per edited line; fails_when=each keystroke becomes its own undo step or the transaction leaks; why_new=the revert test only covers the no-op case; seam=none
+    @MainActor
+    func testManyKeystrokesInOneLineAreOneUndoStep() async {
+        let session = await loadedSession()
+        let before = session.undoHistoryCount
+        session.beginCaptionLineEdit(id: "cue-1")
+        for text in ["Simit ve ca", "Simit ve çay", "Simit ve çay çok"] { session.updateCaptionCue(id: "cue-1", text: text) }
+        session.endCaptionLineEdit()
+        XCTAssertEqual(session.undoHistoryCount, before + 1)
+        session.beginCaptionLineEdit(id: "cue-2")
+        session.updateCaptionCue(id: "cue-2", text: "Fiyatlar çok uygun")
+        session.endCaptionLineEdit()
+        XCTAssertEqual(session.undoHistoryCount, before + 2, "the next line is its own step")
+        session.undo()
+        session.undo()
+        let cue = session.document.captionCues.first { $0.id == "cue-1" }
+        XCTAssertEqual(cue?.text, "Simit ve cay")
+        XCTAssertEqual(cue?.raw["words"]?.arrayValue, entryWords, "undo restores the original word timings")
+    }
+
     @MainActor
     func testRemovingAnEmptiedLineIsOneUndoStepThatRestoresTheOriginal() async {
         let session = await loadedSession()
@@ -227,6 +316,31 @@ final class CaptionLineEditingTests: XCTestCase {
         XCTAssertEqual(restored?.raw["words"]?.arrayValue, entryWords)
     }
 
+    // Value: protects=deleting every cue leaves no captions; fails_when=the API's cue mirrors turn back into captions once caption_cues is empty; why_new=no test deleted the last cue of a mirrored document; seam=none
+    @MainActor
+    func testDeletingTheLastCueDoesNotBringBackItsMirrors() async {
+        let session = await loadedSession(mirrors: true)
+        XCTAssertEqual(session.document.captionUnits.map(\.id), ["cue-1", "cue-2"])
+        XCTAssertEqual(session.document.textElements.filter(\.isCaption).count, 2, "fixture carries the mirrors")
+        _ = session.deleteSelection(EditorSelection(kind: .captionCue, id: "cue-1"))
+        _ = session.deleteSelection(EditorSelection(kind: .captionCue, id: "cue-2"))
+        XCTAssertTrue(session.document.captionUnits.isEmpty, "the mirrors must not become captions of their own")
+        XCTAssertTrue(session.document.textElements.filter(\.isCaption).allSatisfy { session.document.isCaptionCueMirror($0) },
+                      "the timeline and the render compiler keep skipping them")
+    }
+
+    // Value: protects=the Undo notice never reverts a newer edit; fails_when=the staleness check uses the undo count, which stops moving at the 100-step limit; why_new=found by the coverage audit; seam=none
+    @MainActor
+    func testUndoHistoryVersionMovesEvenWhenTheHistoryIsFull() async {
+        let session = await loadedSession()
+        for index in 0..<105 { session.updateCaptionCue(id: "cue-2", text: "Fiyatlar \(index)") }
+        XCTAssertEqual(session.undoHistoryCount, 100, "history is at its limit")
+        let version = session.undoHistoryVersion
+        session.updateCaptionCue(id: "cue-2", text: "Fiyatlar son")
+        XCTAssertEqual(session.undoHistoryCount, 100, "the count no longer moves")
+        XCTAssertNotEqual(session.undoHistoryVersion, version, "the version still sees the newer step")
+    }
+
     @MainActor
     func testThePreviewParksAfterThePopInSoTheCaptionIsVisible() async throws {
         let session = await loadedSession()
@@ -235,5 +349,9 @@ final class CaptionLineEditingTests: XCTestCase {
         let range = try XCTUnwrap(session.captionTimelineRange(id: "cue-2"))
         XCTAssertEqual(range.lowerBound, 1, accuracy: 0.001)
         XCTAssertEqual(range.upperBound, 2, accuracy: 0.001)
+        // Value: protects=the playing-line lookup's one-pass ranges; fails_when=the batch ranges drift from the per-line range; why_new=captionTimelineRanges is new; seam=none
+        let all = session.captionTimelineRanges()
+        XCTAssertEqual(all.map(\.id), ["cue-1", "cue-2"])
+        XCTAssertEqual(all.last?.range, range)
     }
 }

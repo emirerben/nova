@@ -513,6 +513,9 @@ struct LineEditorConfiguration: Equatable {
     var preferredLanguage: String? = nil
     /// Pasted newlines become spaces (a caption is one line of speech).
     var flattensNewlines = false
+    /// Longest text the field accepts, in Unicode scalars (Python `len`, the
+    /// server's unit). `nil` = unlimited.
+    var maxLength: Int? = nil
     var usesKriaBodyFont = false
     var accessibilityLabel = "Text"
 
@@ -534,6 +537,8 @@ struct LineEditorConfiguration: Equatable {
         config.smartDashesType = .no
         config.preferredLanguage = language
         config.flattensNewlines = true
+        // The server's caption cue limit: a longer line fails the whole Save.
+        config.maxLength = 600
         config.usesKriaBodyFont = true
         config.accessibilityLabel = "Caption"
         return config
@@ -652,11 +657,19 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
                 parent.actions.onReturn?()
                 return false
             }
-            if config.flattensNewlines, text.contains(where: \.isNewline),
+            let flattened = config.flattensNewlines && text.contains(where: \.isNewline)
+            let incoming = flattened ? text.components(separatedBy: .newlines).joined(separator: " ") : text
+            if let maxLength = config.maxLength {
+                let current = textView.text ?? ""
+                let after = (current as NSString).replacingCharacters(in: range, with: incoming).unicodeScalars.count
+                // Refuse growth past the limit; deleting from an over-long line stays allowed.
+                if after > maxLength, after > current.unicodeScalars.count { return false }
+            }
+            if flattened,
                let start = textView.position(from: textView.beginningOfDocument, offset: range.location),
                let end = textView.position(from: start, offset: range.length),
                let target = textView.textRange(from: start, to: end) {
-                textView.replace(target, withText: text.components(separatedBy: .newlines).joined(separator: " "))
+                textView.replace(target, withText: incoming)
                 return false
             }
             return true

@@ -295,7 +295,7 @@ struct EditorDocument: Equatable, Sendable {
     /// sites (e.g. `documentCaptionsEnabled`'s fallback) rely on as narrow and
     /// cue-native only.
     var captionUnits: [EditorCaptionCue] {
-        if !captionCues.isEmpty { return captionCues }
+        if isCueNative { return captionCues }
         return textElements.filter(\.isCaption)
             .sorted { ($0.startS, $0.id) < ($1.startS, $1.id) }
             .map { EditorCaptionCue(id: $0.id, startS: $0.startS, endS: $0.endS, text: $0.text, raw: $0.raw) }
@@ -307,10 +307,17 @@ struct EditorDocument: Equatable, Sendable {
     /// path), and the cue is the caption the editor edits and the compiler
     /// burns. The mirror must not become a second copy anywhere: the timeline
     /// drops it and the render compiler skips it, so the two stay in step.
-    /// Guided-story captions have no cues and are never mirrors. The editor
-    /// cannot add or delete cues, so this stays stable for a whole session.
+    /// Guided-story captions have no cues and are never mirrors.
     func isCaptionCueMirror(_ element: EditorTextElement) -> Bool {
-        element.isCaption && !captionCues.isEmpty
+        element.isCaption && isCueNative
+    }
+
+    /// Captions live in `caption_cues`: the document has cues now or was loaded
+    /// with them. The editor can delete cues (KRI-240), and deleting the last one
+    /// must not turn the API's mirror text elements into captions of their own,
+    /// which would list and burn every pre-edit caption again.
+    private var isCueNative: Bool {
+        !captionCues.isEmpty || !(loadedState?.captionCues.isEmpty ?? true)
     }
 
     /// The original root is retained as an AST-like JSON envelope. This is

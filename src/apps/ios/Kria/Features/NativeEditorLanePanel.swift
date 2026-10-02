@@ -75,7 +75,7 @@ struct NativeCaptionPanel: View {
     @Environment(\.nativeEditorPanelContentWidth) private var contentWidth
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.scenePhase) private var scenePhase
-    @ScaledMetric(relativeTo: .body) private var lineHeight: CGFloat = 22
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var stacksControls: Bool { dynamicTypeSize.isAccessibilitySize || contentWidth < 300 }
     @Environment(\.nativeEditorPanelLifecycle) private var panelLifecycle
     @State private var lifecycleOwner = UUID()
@@ -90,6 +90,11 @@ struct NativeCaptionPanel: View {
     @Binding var editingCueID: String?
     /// Bumped by the editor when the preview is tapped during caption editing (D5).
     var loopToggleRequest = 0
+    /// Field lines in the edit bar. `NativeEditorView` reserves the bar's height from
+    /// this same number, so the drawn bar always matches the space above the keyboard.
+    var editLines = 3
+    /// Field line height, scaled by the editor alongside `editLines` for the same reason.
+    var editLineHeight: CGFloat = 22
     let onDone: () -> Void
     @State private var tab: Tab = .edit
     @State private var fieldFocused = false
@@ -97,12 +102,20 @@ struct NativeCaptionPanel: View {
     @State private var loopingCueID: String?
     @State private var followSuspended = false
     @State private var removal: CaptionRemovalNotice?
+    /// The line under the playhead (plan 026 D15). Set from the playback clock, which
+    /// the session keeps off its own publisher, so the panel re-renders when the
+    /// playing line changes rather than on every clock tick.
+    @State private var playingID: String?
+    /// The line just closed, scrolled back into view when the list returns (D4).
+    @State private var returnRowID: String?
     private var meta: [String: JSONValue] { session.document.captionMeta }
     private var appearance: [String: JSONValue] { meta["appearance"]?.objectValue ?? [:] }
     private var units: [EditorCaptionCue] { session.document.captionUnits }
 
     var body: some View {
-        Group {
+        // A container, not a Group: a Group copies onAppear/onDisappear onto each
+        // branch, so swapping the list for the bar ended the line's transaction.
+        VStack(spacing: 0) {
             if let id = editingCueID, let index = units.firstIndex(where: { $0.id == id }) {
                 editBar(id: id, index: index)
             } else {
@@ -133,15 +146,30 @@ struct NativeCaptionPanel: View {
             // Cleared from outside (tool change, reload): close the open line once.
             if new == nil, lineOpen { session.endCaptionLineEdit(); lineOpen = false; loopingCueID = nil }
         }
+        .onChange(of: units.map(\.id)) { _, ids in
+            // The open line left the document (save, reload, rebase): close the bar so
+            // the editor brings its chrome back instead of hiding it over the list.
+            if let id = editingCueID, !ids.contains(id) { editingCueID = nil }
+            playingID = playingLine(at: session.currentTime)
+        }
+        .onChange(of: session.canEditCaptionLines) { _, editable in
+            if !editable, editingCueID != nil { leaveLine(to: nil) }
+        }
         .onChange(of: tab) { _, _ in leaveLine(to: nil) }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background, editingCueID != nil { leaveLine(to: nil) }
         }
         .onChange(of: loopToggleRequest) { _, _ in toggleLoop() }
         .onChange(of: session.isPlaying) { _, playing in
-            if playing { followSuspended = false } else if loopingCueID != nil, !loopRestarting { loopingCueID = nil }
+            // A loop restart seeks (which pauses) and resumes in the same turn; onChange
+            // sees only the settled value, so a real pause is what ends the loop.
+            if playing { followSuspended = false } else if loopingCueID != nil, !loopRestartPending { loopingCueID = nil }
         }
-        .onChange(of: session.currentTime) { _, time in continueLoop(at: time) }
+        .onReceive(session.playbackClock.$currentTime) { time in
+            let line = playingLine(at: time)
+            if line != playingID { playingID = line }
+            continueLoop(at: time)
+        }
         .onAppear {
             panelLifecycle?.register(owner: lifecycleOwner) { leaveLine(to: nil) }
         }
@@ -153,12 +181,8 @@ struct NativeCaptionPanel: View {
 
     // MARK: Browse (keyboard down)
 
-    private var playingID: String? {
-        let time = session.currentTime
-        return units.last { unit in
-            guard let range = session.captionTimelineRange(id: unit.id) else { return false }
-            return range.lowerBound <= time && time < range.upperBound
-        }?.id
+    private func playingLine(at time: TimeInterval) -> String? {
+        session.captionTimelineRanges().last { $0.range.lowerBound <= time && time < $0.range.upperBound }?.id
     }
 
     private var transcript: some View {
@@ -185,7 +209,12 @@ struct NativeCaptionPanel: View {
                 // Follow the playing line (plan 026 D15): never while the creator is
                 // scrolling, editing, or using VoiceOver.
                 guard let id, session.isPlaying, !followSuspended, !voiceOverEnabled, editingCueID == nil else { return }
-                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
+            }
+            .onAppear {
+                guard let id = returnRowID else { return }
+                returnRowID = nil
+                DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
             }
         }
     }
@@ -198,9 +227,10 @@ struct NativeCaptionPanel: View {
         return HStack(alignment: .top, spacing: 10) {
             ZStack(alignment: .leading) {
                 if edited { Circle().fill(KriaColor.sky).frame(width: 6, height: 6).offset(x: -9, y: 1) }
-                Text(String(index + 1)).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                Text(String(index + 1)).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
             }
-            .frame(width: 22, alignment: .leading)
+            .frame(minWidth: 22, alignment: .leading)
+            .fixedSize(horizontal: true, vertical: false)
             VStack(alignment: .leading, spacing: 4) {
                 Text(cue.text.isEmpty ? " " : cue.text)
                     .font(KriaFont.body(16).weight(playing ? .semibold : .regular))
@@ -228,7 +258,9 @@ struct NativeCaptionPanel: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { open(cue.id) }
         .accessibilityAction(named: editable ? "Edit caption" : "Play from here") { open(cue.id) }
-        .accessibilityAction(named: "Delete") { if editable { remove(cue.id, lineNumber: index + 1) } }
+        .accessibilityActions {
+            if editable { Button("Delete") { remove(cue.id, lineNumber: index + 1) } }
+        }
         .accessibilityIdentifier("native-editor-caption-row-" + cue.id)
     }
 
@@ -241,8 +273,8 @@ struct NativeCaptionPanel: View {
             lineCount: units.count,
             timeRange: "\(time(units[index].startS))–\(time(units[index].endS))",
             spokenTimeRange: "\(spokenTime(units[index].startS)) to \(spokenTime(units[index].endS))",
-            lineHeight: lineHeight,
-            lines: dynamicTypeSize.isAccessibilitySize || contentWidth < 300 ? 2 : 3,
+            lineHeight: editLineHeight,
+            lines: editLines,
             text: Binding(
                 get: { units.first { $0.id == id }?.text ?? "" },
                 set: { new in
@@ -260,12 +292,20 @@ struct NativeCaptionPanel: View {
             canGoPrevious: index > 0,
             canGoNext: !isLast,
             removal: removal,
+            canUndoRemoval: removal.map { session.undoHistoryVersion == $0.undoVersion } ?? false,
             onUndoRemoval: undoRemoval,
             onRemovalExpired: { expired in if removal == expired { removal = nil } },
-            onPrevious: { if index > 0 { leaveLine(to: units[index - 1].id) } },
-            onNext: { leaveLine(to: isLast ? nil : units[index + 1].id) },
+            onPrevious: { if let previous = neighbour(of: id, offset: -1) { leaveLine(to: previous) } },
+            onNext: { leaveLine(to: neighbour(of: id, offset: 1)) },
             onDone: { leaveLine(to: nil) }
         )
+    }
+
+    /// The line `offset` places from `id`, looked up when the key is pressed: two
+    /// queued Tabs can arrive after the first one removed an emptied line.
+    private func neighbour(of id: String, offset: Int) -> String? {
+        guard let index = units.firstIndex(where: { $0.id == id }), units.indices.contains(index + offset) else { return nil }
+        return units[index + offset].id
     }
 
     /// Row tap: seek to the line and, when lines are editable, open it in the bar
@@ -280,6 +320,9 @@ struct NativeCaptionPanel: View {
     }
 
     private func enter(_ id: String) {
+        // Save and tool changes flush the open line through the lifecycle (which
+        // drops the registration once used), so every opened line re-registers.
+        panelLifecycle?.register(owner: lifecycleOwner) { leaveLine(to: nil) }
         session.beginCaptionLineEdit(id: id)
         lineOpen = true
         editingCueID = id
@@ -301,7 +344,7 @@ struct NativeCaptionPanel: View {
             if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, session.canEditCaptionLines {
                 session.deleteSelection(EditorSelection(kind: .captionCue, id: current))
                 session.endCaptionLineEdit()
-                removal = CaptionRemovalNotice(lineNumber: (index ?? 0) + 1, undoDepth: session.undoHistoryCount)
+                removal = CaptionRemovalNotice(lineNumber: (index ?? 0) + 1, undoVersion: session.undoHistoryVersion)
             } else {
                 session.endCaptionLineEdit()
             }
@@ -310,6 +353,7 @@ struct NativeCaptionPanel: View {
         if let destination, units.contains(where: { $0.id == destination }) {
             enter(destination)
         } else {
+            if let left = editingCueID, units.contains(where: { $0.id == left }) { returnRowID = left }
             fieldFocused = false
             editingCueID = nil
         }
@@ -318,11 +362,11 @@ struct NativeCaptionPanel: View {
     private func remove(_ id: String, lineNumber: Int) {
         if editingCueID == id { leaveLine(to: nil) }
         session.deleteSelection(EditorSelection(kind: .captionCue, id: id))
-        removal = CaptionRemovalNotice(lineNumber: lineNumber, undoDepth: session.undoHistoryCount)
+        removal = CaptionRemovalNotice(lineNumber: lineNumber, undoVersion: session.undoHistoryVersion)
     }
 
     private func undoRemoval() {
-        guard let removal, session.undoHistoryCount == removal.undoDepth else { self.removal = nil; return }
+        guard let removal, session.undoHistoryVersion == removal.undoVersion else { self.removal = nil; return }
         let open = editingCueID
         if lineOpen { session.endCaptionLineEdit(); lineOpen = false }
         session.undo()
@@ -333,13 +377,13 @@ struct NativeCaptionPanel: View {
     }
 
     private func removalNotice(_ notice: CaptionRemovalNotice) -> some View {
-        CaptionRemovalNoticeView(notice: notice, canUndo: session.undoHistoryCount == notice.undoDepth,
+        CaptionRemovalNoticeView(notice: notice, canUndo: session.undoHistoryVersion == notice.undoVersion,
                                  onUndo: undoRemoval, onExpire: { if removal == notice { removal = nil } })
     }
 
     // MARK: Loop-play (plan 026 D6)
 
-    @State private var loopRestarting = false
+    @State private var loopRestartPending = false
 
     private func toggleLoop() {
         guard let id = editingCueID, let range = session.captionTimelineRange(id: id) else { return }
@@ -353,21 +397,28 @@ struct NativeCaptionPanel: View {
     }
 
     private func restartLoop(_ range: ClosedRange<TimeInterval>) {
-        loopRestarting = true
         session.seek(to: range.lowerBound)
         if !session.isPlaying { session.togglePlayback() }
-        loopRestarting = false
     }
 
     private func continueLoop(at time: TimeInterval) {
-        guard let id = loopingCueID, session.isPlaying,
-              let range = session.captionTimelineRange(id: id), time >= range.upperBound - 0.03 else { return }
-        restartLoop(range)
+        guard let id = loopingCueID, session.isPlaying, !loopRestartPending,
+              let range = session.captionTimelineRange(id: id),
+              time >= min(range.upperBound, session.duration) - 0.03 else { return }
+        // Not inside the clock's publish: seeking re-sets the clock, and the outer
+        // write would land last. A line ending at the video's end also pauses
+        // playback first; the pending flag keeps that pause from ending the loop.
+        loopRestartPending = true
+        DispatchQueue.main.async {
+            loopRestartPending = false
+            guard loopingCueID == id, let range = session.captionTimelineRange(id: id) else { return }
+            restartLoop(range)
+        }
     }
 
     private func spokenTime(_ base: Double) -> String {
         let seconds = Int(session.timelineProjection.projectBaseTime(base).rounded())
-        return seconds >= 60 ? "\(seconds / 60) minutes \(seconds % 60) seconds" : "\(seconds) seconds"
+        return Duration.seconds(seconds).formatted(.units(allowed: [.minutes, .seconds], width: .wide))
     }
 
     private var style: some View {
@@ -478,8 +529,8 @@ struct NativeCaptionPanel: View {
 struct CaptionRemovalNotice: Equatable {
     let id = UUID()
     let lineNumber: Int
-    /// Undo-stack depth right after the removal; Undo is offered only while it still matches.
-    let undoDepth: Int
+    /// `undoHistoryVersion` right after the removal; Undo is offered only while it still matches.
+    let undoVersion: Int
 }
 
 struct CaptionRemovalNoticeView: View {
@@ -493,25 +544,30 @@ struct CaptionRemovalNoticeView: View {
             Text("Line \(notice.lineNumber) removed").font(KriaFont.body(13)).foregroundStyle(KriaColor.ink)
                 .lineLimit(1).minimumScaleFactor(0.8)
             if canUndo {
-                Button("Undo", action: onUndo)
-                    .font(KriaFont.body(13).weight(.semibold))
-                    .frame(minWidth: 44, minHeight: 44)
+                Button(action: onUndo) {
+                    Text("Undo").font(KriaFont.body(13).weight(.semibold))
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
                     .accessibilityIdentifier("native-editor-caption-undo-removal")
             }
         }
-        .accessibilityElement(children: .combine)
+        // Grouped, not combined: Undo stays its own button for VoiceOver and tests.
+        .accessibilityElement(children: .contain)
         .task(id: notice.id) {
             CaptionLineAnnouncer.post("Line \(notice.lineNumber) removed")
-            try? await Task.sleep(for: .seconds(4))
-            onExpire()
+            do {
+                try await Task.sleep(for: .seconds(4))
+                onExpire()
+            } catch {
+                // Cancelled: the notice moved between the list and the bar.
+            }
         }
     }
 }
 
-/// VoiceOver announcements for the caption editor; tests swap `post` (XCUITest
-/// can't observe announcements, plan 026 F15).
+/// VoiceOver announcements for the caption editor (plan 026 D13).
 enum CaptionLineAnnouncer {
-    @MainActor static var post: (String) -> Void = { message in
+    @MainActor static func post(_ message: String) {
         UIAccessibility.post(notification: .announcement, argument: message)
     }
 }
@@ -530,6 +586,12 @@ struct CaptionEditBar: View {
     static let buttonSize: CGFloat = 44
     static let cornerRadius: CGFloat = 12
 
+    /// Two field lines on short or narrow screens and at accessibility text sizes,
+    /// three otherwise (plan 026 D8, D12). One rule for both the reserved height and
+    /// the drawn field: an iPhone SE is short (667pt) but its panel is 303pt wide.
+    static func fieldLineCount(isAccessibilitySize: Bool, screenHeight: CGFloat, contentWidth: CGFloat) -> Int {
+        isAccessibilitySize || screenHeight < 700 || contentWidth < 300 ? 2 : 3
+    }
     static func fieldHeight(lineHeight: CGFloat, lines: Int) -> CGFloat { CGFloat(lines) * lineHeight + 16 }
     static func height(lineHeight: CGFloat, lines: Int) -> CGFloat {
         topPadding + navigationHeight + rowSpacing + fieldHeight(lineHeight: lineHeight, lines: lines) + bottomPadding
@@ -548,6 +610,7 @@ struct CaptionEditBar: View {
     let canGoPrevious: Bool
     let canGoNext: Bool
     let removal: CaptionRemovalNotice?
+    let canUndoRemoval: Bool
     let onUndoRemoval: () -> Void
     let onRemovalExpired: (CaptionRemovalNotice) -> Void
     let onPrevious: () -> Void
@@ -558,7 +621,7 @@ struct CaptionEditBar: View {
         VStack(spacing: Self.rowSpacing) {
             HStack(spacing: 8) {
                 if let removal {
-                    CaptionRemovalNoticeView(notice: removal, canUndo: true, onUndo: onUndoRemoval,
+                    CaptionRemovalNoticeView(notice: removal, canUndo: canUndoRemoval, onUndo: onUndoRemoval,
                                              onExpire: { onRemovalExpired(removal) })
                 } else {
                     Text("#\(lineNumber) · \(timeRange)")

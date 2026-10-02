@@ -457,7 +457,11 @@ struct NativeEditorTemporaryVideo {
 
     private let minimumClipDuration: TimeInterval = 0.1
     private let historyLimit = 100
-    private var undoStack: [EditorDocument] = []
+    private var undoStack: [EditorDocument] = [] { didSet { undoHistoryVersion &+= 1 } }
+    /// KRI-240: changes on every undo-history change (new step, undo, trim at the
+    /// limit, clear), so the caption editor's Undo notice can tell its removal is
+    /// still the newest step. A count can't: it saturates at `historyLimit`.
+    private(set) var undoHistoryVersion = 0
     private var redoStack: [EditorDocument] = []
     private var cleanDocument: EditorDocument
     private var api: (any KriaAPIClient)?
@@ -884,7 +888,6 @@ struct NativeEditorTemporaryVideo {
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
-    /// KRI-240: lets the caption editor's Undo notice check its removal is still the newest step.
     var undoHistoryCount: Int { undoStack.count }
     var isTimingGestureActive: Bool { activeTimedEdit != nil || activeTrim != nil }
     var canRedo: Bool { !redoStack.isEmpty }
@@ -3908,6 +3911,16 @@ struct NativeEditorTemporaryVideo {
         return end > start ? start...end : nil
     }
 
+    /// Every caption line's timeline range from one read of the document, for callers
+    /// that scan all lines (the caption panel's playing-line lookup runs per clock tick).
+    func captionTimelineRanges() -> [(id: String, range: ClosedRange<TimeInterval>)] {
+        document.captionUnits.compactMap { unit in
+            let start = timelineProjection.projectBaseTime(unit.startS)
+            let end = timelineProjection.projectBaseTime(unit.endS)
+            return end > start ? (unit.id, start...end) : nil
+        }
+    }
+
     /// True when the line's text differs from the last saved version (unsaved dot).
     func isCaptionUnitEdited(id: String) -> Bool {
         document.captionUnits.first { $0.id == id }?.text != cleanDocument.captionUnits.first { $0.id == id }?.text
@@ -3916,8 +3929,7 @@ struct NativeEditorTemporaryVideo {
     /// The language the captions were transcribed in (`caption_language` on the
     /// loaded variant), e.g. "tr". `nil` for variants without it.
     var captionLanguage: String? {
-        ProcessInfo.processInfo.environment["UI_TEST_CAPTION_LANGUAGE"]?.nilIfEmpty
-            ?? previewVariant["caption_language"]?.stringValue?.nilIfEmpty
+        previewVariant["caption_language"]?.stringValue?.nilIfEmpty
     }
 
     // MARK: - Timed visual and sound lanes

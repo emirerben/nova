@@ -8,6 +8,8 @@ struct NativeEditorProjectHeader: View {
     let onChat: () -> Void
     let onSaveToPhotos: () -> Void
     let onShare: () -> Void
+    /// Runs before Save, so an open caption line commits (and an emptied one is removed) first.
+    var beforeSave: () -> Void = {}
 
     /// Same floating header as the chat (`WorkspaceTopRow` + `WorkspaceModeSwitch`),
     /// in the same place, so switching Chat <-> Editor feels like a tab switch.
@@ -67,7 +69,7 @@ struct NativeEditorProjectHeader: View {
 
     private var saveButton: some View {
         let control = NativeEditorSaveControl(isSaving: session.isSaving, hasUnsavedChanges: session.hasUnsavedChanges)
-        return Button { Task { await session.save() } } label: {
+        return Button { beforeSave(); Task { await session.save() } } label: {
             Group {
                 switch control {
                 case .saved:

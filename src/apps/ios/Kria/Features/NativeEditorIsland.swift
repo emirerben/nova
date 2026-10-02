@@ -141,7 +141,10 @@ struct NativeEditorLayoutMetrics: Equatable {
     /// `previewResize` is stored raw and clamped here, so a banner appearing or
     /// the keyboard rising can never leave the preview out of range.
     func previewHeight(resize: CGFloat) -> CGFloat {
-        min(maxPreviewHeight, max(Self.minPreviewHeight, defaultPreviewHeight - resize))
+        // An open caption line owns the split: a size left over from an earlier
+        // timeline-handle drag must not shrink the preview under the bar.
+        if editsCaptionLine { return defaultPreviewHeight }
+        return min(maxPreviewHeight, max(Self.minPreviewHeight, defaultPreviewHeight - resize))
     }
 
     /// Room for the panel below the transport and above the island's bottom padding.
