@@ -1,0 +1,44 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-02-v66",
+  "input": {
+    "utterance": "make it shorter",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text"],
+      "editor_ops_version": 2,
+      "slots": [],
+      "text_bars": [{"text": "old hook", "start_s": 0, "end_s": 8, "size_px": 64}],
+      "total_duration_s": 8,
+      "max_duration_s": 120
+    }
+  },
+  "raw_text": "{\"intent\":\"reject\",\"ops\":[],\"confidence\":0.95,\"reply\":\"I can't change the length on this edit. I can still help with the text.\",\"suggestions\":[\"Rewrite the text\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "reject",
+    "ops": [],
+    "confidence": 0.95,
+    "reply": "I can't change the length on this edit. I can still help with the text.",
+    "suggestions": ["Rewrite the text"],
+    "needs_clarification": false,
+    "outcome": "rejection",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "vague shorter request refuses when clip family is unavailable and offers text only",
+    "lane": "copilot-vague-shorter",
+    "exact_component_ops": [],
+    "expected_intent": "reject",
+    "needs_clarification": false,
+    "capability_contract": {
+      "intent": "reject",
+      "needs_clarification": false,
+      "reply_contains": ["length", "text"],
+      "reply_excludes": ["title"]
+    }
+  }
+}

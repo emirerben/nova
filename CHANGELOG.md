@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.50.0] - 2026-10-02
+
+### Changed
+- fix(kria): keep render approvals current after editor Save (#1308) <!-- release-pr: 1308 -->
+
+## [0.77.49.0] - 2026-10-02
+
+### Changed
+- fix(copilot): refuse unsupported length changes before asking follow-ups (#1307) <!-- release-pr: 1307 -->
+
+## [0.77.48.0] - 2026-10-02
+
+### Changed
+- fix(ios): keep guided titles aligned with manual timeline edits (#1306) <!-- release-pr: 1306 -->
+
 ## [0.77.47.0] - 2026-10-02
 
 ### Changed

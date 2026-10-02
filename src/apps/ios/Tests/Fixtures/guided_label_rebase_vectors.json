@@ -200,6 +200,13 @@
           "alignment": "center"
         },
         {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s3"
+        },
+        {
           "id": "caption-1",
           "text": "spoken",
           "start_s": 0.4,
@@ -254,6 +261,12 @@
           "start_s": 8.533,
           "end_s": 10.533,
           "segment_id": "s5"
+        },
+        {
+          "id": "guided-title",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s3"
         },
         {
           "id": "caption-1",
@@ -471,6 +484,20 @@
           "alignment": "center"
         },
         {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 0.0,
+          "end_s": 3.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s2"
+        },
+        {
           "id": "caption-1",
           "text": "spoken",
           "start_s": 0.4,
@@ -525,6 +552,18 @@
           "start_s": 7.0,
           "end_s": 9.0,
           "segment_id": "s5"
+        },
+        {
+          "id": "guided-title",
+          "start_s": 0.0,
+          "end_s": 3.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 7.0,
+          "end_s": 9.0,
+          "segment_id": "s2"
         },
         {
           "id": "caption-1",
@@ -742,6 +781,20 @@
           "alignment": "center"
         },
         {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 0.0,
+          "end_s": 3.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 6.0,
+          "end_s": 10.0,
+          "segment_id": "s2"
+        },
+        {
           "id": "caption-1",
           "text": "spoken",
           "start_s": 0.4,
@@ -796,6 +849,18 @@
           "start_s": 8.0,
           "end_s": 10.0,
           "segment_id": "s5"
+        },
+        {
+          "id": "guided-title",
+          "start_s": 0.0,
+          "end_s": 3.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 6.0,
+          "end_s": 10.0,
+          "segment_id": "s2"
         },
         {
           "id": "caption-1",
@@ -1002,6 +1067,13 @@
           "alignment": "center"
         },
         {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s2"
+        },
+        {
           "id": "caption-1",
           "text": "spoken",
           "start_s": 0.4,
@@ -1050,6 +1122,12 @@
           "start_s": 6.0,
           "end_s": 8.0,
           "segment_id": "s5"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 6.0,
+          "end_s": 8.0,
+          "segment_id": "s2"
         },
         {
           "id": "caption-1",
@@ -2964,6 +3042,1980 @@
           "start_s": 8.533,
           "end_s": 10.533,
           "segment_id": "s5"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "tiny_total_title_min_duration",
+      "note": "anchored titles keep the server minimum bar duration in a tiny timeline",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 0.1,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 0.1,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 0.1,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 0.1,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 0.1,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 0.1,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 0.1,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 0.1,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 0.1,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 0.1,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "clip-label-media-m0",
+          "text": "Label m0",
+          "start_s": 0.0,
+          "end_s": 0.1,
+          "segment_id": "s1",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "text": "Label m1",
+          "start_s": 0.1,
+          "end_s": 0.2,
+          "segment_id": "s2",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "text": "Label m2",
+          "start_s": 0.2,
+          "end_s": 0.3,
+          "segment_id": "s3",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "text": "Label m3",
+          "start_s": 0.3,
+          "end_s": 0.4,
+          "segment_id": "s4",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "text": "Label m4",
+          "start_s": 0.4,
+          "end_s": 0.5,
+          "segment_id": "s5",
+          "role": "generative_intro",
+          "position": "custom",
+          "x_frac": 0.5,
+          "y_frac": 0.78,
+          "size_px": 58,
+          "font_family": "DM Sans",
+          "color": "#FFF8F0",
+          "effect": "static",
+          "alignment": "center"
+        },
+        {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 0.0,
+          "end_s": 0.05,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 0.45,
+          "end_s": 0.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "clip-label-media-m0",
+          "start_s": 0.0,
+          "end_s": 0.1,
+          "segment_id": "s1"
+        },
+        {
+          "id": "clip-label-media-m1",
+          "start_s": 0.1,
+          "end_s": 0.2,
+          "segment_id": "s2"
+        },
+        {
+          "id": "clip-label-media-m2",
+          "start_s": 0.2,
+          "end_s": 0.3,
+          "segment_id": "s3"
+        },
+        {
+          "id": "clip-label-media-m3",
+          "start_s": 0.3,
+          "end_s": 0.4,
+          "segment_id": "s4"
+        },
+        {
+          "id": "clip-label-media-m4",
+          "start_s": 0.4,
+          "end_s": 0.5,
+          "segment_id": "s5"
+        },
+        {
+          "id": "guided-title",
+          "start_s": 0.0,
+          "end_s": 0.2,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 0.3,
+          "end_s": 0.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "full_duration_and_closing_titles_extend",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.533,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 0.0,
+          "end_s": 10.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 7.25,
+          "end_s": 10.0,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "guided-title",
+          "start_s": 0.0,
+          "end_s": 10.533,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 7.783,
+          "end_s": 10.533,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "inset_titles_project_extend",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.533,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 6.5,
+          "end_s": 7.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "guided-title",
+          "start_s": 3.033,
+          "end_s": 4.033,
+          "segment_id": "s2"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 7.033,
+          "end_s": 8.033,
+          "segment_id": "s4"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "inset_titles_project_shrink",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 6.5,
+          "end_s": 7.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "guided-title",
+          "start_s": 1.5,
+          "end_s": 2.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 5.5,
+          "end_s": 6.5,
+          "segment_id": "s4"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "inset_titles_project_reorder",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 6.5,
+          "end_s": 7.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "guided-title",
+          "start_s": 4.5,
+          "end_s": 5.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 6.5,
+          "end_s": 7.5,
+          "segment_id": "s4"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "inset_titles_project_delete_anchor",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 6.5,
+          "end_s": 7.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "guided-closing-title",
+          "start_s": 4.5,
+          "end_s": 5.5,
+          "segment_id": "s4"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "inset_titles_project_split",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2b",
+          "parent_segment_id": "s2",
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 1.5,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 6.5,
+          "end_s": 7.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "guided-title",
+          "start_s": 3.5,
+          "end_s": 4.5,
+          "segment_id": "s2b"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 7.0,
+          "end_s": 8.0,
+          "segment_id": "s4"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "inset_titles_project_crossfade",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "crossfade",
+          "transition_duration_s": 0.3
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 6.5,
+          "end_s": 7.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "guided-title",
+          "start_s": 2.2,
+          "end_s": 3.2,
+          "segment_id": "s2"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 6.2,
+          "end_s": 7.2,
+          "segment_id": "s4"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "inset_title_source_trim_clamps",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 1.0,
+          "duration_s": 1.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 6.5,
+          "end_s": 7.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "guided-title",
+          "start_s": 2.0,
+          "end_s": 2.5,
+          "segment_id": "s2"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 5.5,
+          "end_s": 6.5,
+          "segment_id": "s4"
+        },
+        {
+          "id": "caption-1",
+          "start_s": 0.4,
+          "end_s": 1.6
+        },
+        {
+          "id": "clip-label-narr",
+          "start_s": 2.5,
+          "end_s": 3.5
+        },
+        {
+          "id": "lyric_3",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ]
+    },
+    {
+      "name": "title_ids_use_actual_edges",
+      "note": "",
+      "old_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "new_slots": [
+        {
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 2.533,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        },
+        {
+          "slot_id": "s5",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "media_id": "m4",
+          "in_s": 0.0,
+          "duration_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null
+        }
+      ],
+      "labels_before": [
+        {
+          "id": "guided-title",
+          "text": "Opening",
+          "start_s": 8.0,
+          "end_s": 10.0,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "text": "Closing",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s2"
+        },
+        {
+          "id": "caption-1",
+          "text": "spoken",
+          "start_s": 0.4,
+          "end_s": 1.6,
+          "source_params": {
+            "source": "caption_cue"
+          }
+        },
+        {
+          "id": "clip-label-narr",
+          "text": "narrated",
+          "start_s": 2.5,
+          "end_s": 3.5,
+          "source_params": {
+            "narration_label_kind": "landmark"
+          }
+        },
+        {
+          "id": "lyric_3",
+          "text": "la la",
+          "start_s": 4.0,
+          "end_s": 5.0
+        }
+      ],
+      "labels_after": [
+        {
+          "id": "guided-title",
+          "start_s": 8.533,
+          "end_s": 10.533,
+          "segment_id": "s3"
+        },
+        {
+          "id": "guided-closing-title",
+          "start_s": 0.0,
+          "end_s": 2.0,
+          "segment_id": "s2"
         },
         {
           "id": "caption-1",
