@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.0.0] - 2026-10-02
+
+### Added
+- feat: move production creation to on-device rendering (#1310) <!-- release-pr: 1310 -->
+
 ## [0.77.50.0] - 2026-10-02
 
 ### Changed
