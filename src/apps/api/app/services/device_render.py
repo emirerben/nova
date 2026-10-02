@@ -12,6 +12,7 @@ from app.kria.device_render import (
     DeviceRenderStatus,
     make_device_request,
 )
+from app.kria.render_assets import VoiceoverRenderAsset
 
 DEVICE_RENDER_FIELD = "_device_render_v1"
 
@@ -60,7 +61,13 @@ def save_device_record(job: Any, variant_id: str, record: dict) -> None:
     job.assembly_plan = assembly
 
 
-def pin_device_request(job: Any, request: DeviceRenderRequest, *, base_generation: str) -> bool:
+def pin_device_request(
+    job: Any,
+    request: DeviceRenderRequest,
+    *,
+    base_generation: str,
+    narration_binding: dict | None = None,
+) -> bool:
     """Pin one approved recipe once. A redelivery cannot rewrite that revision's decisions."""
     if request.identity.job_id != job.id:
         raise ValueError("recipe job identity mismatch")
@@ -68,25 +75,53 @@ def pin_device_request(job: Any, request: DeviceRenderRequest, *, base_generatio
         previous = device_status(job, request.identity.variant_id).request
     except KeyError:
         previous = None
+    previous_record: dict | None = None
     if previous is not None:
         if previous == request:
             return False
         if request.identity.recipe_revision <= previous.identity.recipe_revision:
             raise ValueError("recipe revision already pinned")
+        previous_record = device_record(job, request.identity.variant_id)
+    if narration_binding is None and previous_record is not None:
+        prior_binding = previous_record.get("narration_binding")
+        manifest = getattr(request.recipe, "asset_manifest", None)
+        voiceover = next(
+            (
+                asset
+                for asset in (manifest.assets if manifest else ())
+                if isinstance(asset, VoiceoverRenderAsset)
+            ),
+            None,
+        )
+        if (
+            isinstance(prior_binding, dict)
+            and voiceover is not None
+            and (
+                prior_binding.get("asset_id") == voiceover.id
+                and prior_binding.get("plan_item_id") == voiceover.plan_item_id
+                and prior_binding.get("sha256") == voiceover.fingerprint.sha256
+                and prior_binding.get("byte_count") == voiceover.fingerprint.byte_count
+                and (prior_binding.get("narration") or {}).get("generation") == voiceover.generation
+            )
+        ):
+            narration_binding = prior_binding
+    record = {
+        "status": DeviceRenderStatus(phase="awaiting_device", request=request).model_dump(
+            mode="json"
+        ),
+        "base_generation": base_generation,
+        "attempts": {},
+        # ISO pin timestamp — the reaper's staleness fallback when a record
+        # has never been polled (`last_polled_at` absent). See
+        # app/tasks/device_render_reaper.py.
+        "pinned_at": datetime.now(UTC).isoformat(),
+    }
+    if narration_binding is not None:
+        record["narration_binding"] = copy.deepcopy(narration_binding)
     save_device_record(
         job,
         request.identity.variant_id,
-        {
-            "status": DeviceRenderStatus(phase="awaiting_device", request=request).model_dump(
-                mode="json"
-            ),
-            "base_generation": base_generation,
-            "attempts": {},
-            # ISO pin timestamp — the reaper's staleness fallback when a record
-            # has never been polled (`last_polled_at` absent). See
-            # app/tasks/device_render_reaper.py.
-            "pinned_at": datetime.now(UTC).isoformat(),
-        },
+        record,
     )
     return True
 
@@ -158,7 +193,12 @@ def retry_device_render(job: Any, variant_id: str) -> DeviceRenderStatus:
         revision=status.request.identity.recipe_revision + 1,
         recipe=status.request.recipe,
     )
-    pin_device_request(job, new_request, base_generation=record["base_generation"])
+    pin_device_request(
+        job,
+        new_request,
+        base_generation=record["base_generation"],
+        narration_binding=record.get("narration_binding"),
+    )
     return device_status(job, variant_id)
 
 

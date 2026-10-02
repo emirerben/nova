@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.20.0] - 2026-10-02
+
+### Changed
+- fix: deliver approved cleaned narration to phone renders (KRI-277) (#1330) <!-- release-pr: 1330 -->
+
 ## [0.78.19.0] - 2026-10-02
 
 ### Fixed

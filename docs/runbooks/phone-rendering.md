@@ -484,6 +484,24 @@ recording. **Rollback:**
 `fly secrets set PHONE_NARRATED_RENDERING_ENABLED=false --app nova-video` +
 `fly machine restart <id>` (api + worker).
 
+**Cleaned narration delivery (KRI-277).** Guided and narrated phone jobs pin a
+private `narration_binding` beside the device request. It binds the recipe's
+voiceover asset and fingerprint to the cleaned `NarrationTrack`, including its
+original recording and accepted cleanup provenance. The download grant checks
+that binding against the current owning item and the job's accepted snapshot;
+the cleaned file's generation must not be compared with the original file's
+generation. Retry and editor re-export retain the binding only while the
+recipe references the same narration asset. Public assembly responses omit the
+private device record; retention still walks its storage references.
+
+For pre-binding narrated jobs, the grant can recover the content-addressed
+derivative from the accepted analysis and pinned fingerprint, after verifying
+the original-source binding and the derivative's exact generation, size, and
+hash. It never regenerates the edit or substitutes the raw recording. Missing
+or changed evidence keeps the existing conflict response. Deploy the API and
+worker change together, then use the existing device-render retry flow for a
+failed job; no new mobile protocol or client build is required.
+
 **Self-narration (no recorded voiceover).** A `narrated*` item with NO
 voiceover is spined by the footage's OWN speech —
 `_resolve_archetype` (generative_build.py) decides `subtitled` (exactly one
@@ -978,9 +996,12 @@ A card keeps the fade the worker gave it; a card the creator adds is static
   sources. Neither manifest contains download URLs or storage paths. V2 device
   requests carry this manifest in their digest; the coordinator's source resolver
   uses it before composition. The owner/revision-fenced `device-render/assets`
-  route grants short-lived generation-pinned downloads only for published,
-  ready music/SFX named in that recipe. It verifies the bytes and rechecks the
-  owner, revision, and catalog after verification. The native authorized resolver
+  route grants short-lived generation-pinned downloads for published, ready
+  music/SFX, owned plan-item Visuals, and recorded narration named in that recipe.
+  Each asset kind has its own ownership and freshness checks; cleaned narration
+  also requires the source and cleanup evidence described under KRI-277 above.
+  Library grants verify bytes and recheck the owner, revision, and catalog.
+  The native authorized resolver
   downloads through a separate ephemeral session and verifies cache installation.
   Existing renderer fonts ship in the app bundle with their license files and
   enter the same verified cache only when the recipe's filename/hash matches.
@@ -1349,9 +1370,11 @@ device performance and full preview/export visual parity remain release gates.
 
 ## Remaining implementation gates
 
-1. Extend local bindings to narration assets and the rest of the visual pool
-   (photos with motion or looks; pool videos as cards, cropped or retimed),
-   with separately consented cloud recovery and source relinking. Pool photos
+1. Extend device-local original bindings and source relinking to narration
+   assets and the rest of the visual pool (photos with motion or looks; pool
+   videos as cards, cropped or retimed), with separately consented cloud
+   recovery. KRI-277's server-side narration receipts and grants do not yet
+   provide local capture storage or relinking. Pool photos
    (fullscreen or supporting card) render on the phone behind `stillImages` and
    pool videos behind `visualVideos` (KRI-121); compare their framing, card
    blur, audio and still/video crossfades against cloud on a device.

@@ -1,8 +1,10 @@
 """HTTP owner fences, upload idempotency, and finalization races."""
 
 import copy
+import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,6 +23,7 @@ from app.services.device_render import (
     device_record,
     device_status,
     pin_device_request,
+    retry_device_render,
     save_device_record,
 )
 from tests.services.test_guided_speech_cleanup import fixture_ids as cleanup_fixture_ids
@@ -483,7 +486,7 @@ def test_visual_download_signs_exactly_the_pinned_pool_generation(fixture, monke
     # A cached identity-map row could hide a concurrent removal or replacement.
     assert fixture.db.get.await_args.kwargs == {"populate_existing": True}
     # The owner lock is released before the (network-free) signing call.
-    fixture.db.rollback.assert_awaited_once()
+    assert fixture.db.rollback.await_count == 1
 
 
 @pytest.mark.parametrize("mutation", ["owner", "other_item", "no_item", "missing", "bad_uuid"])
@@ -677,7 +680,7 @@ def test_voiceover_download_signs_exactly_the_pinned_generation(fixture, monkeyp
     signer.assert_called_once_with(item.voiceover_gcs_path, generation="42")
     assert response.json()["asset_id"] == asset.id
     assert response.json()["download_url"] == "https://storage.example/pinned"
-    fixture.db.rollback.assert_awaited_once()
+    assert fixture.db.rollback.await_count == 2
 
 
 @pytest.mark.parametrize("mutation", ["other_item", "no_item"])
@@ -804,7 +807,251 @@ def test_cleaned_voiceover_download_signs_only_the_derivative(fixture, monkeypat
     assert response.status_code == 200, response.text
     signer.assert_called_once_with(narration["gcs_path"], generation="42")
     assert item.voiceover_gcs_path != narration["gcs_path"]
-    fixture.db.rollback.assert_awaited_once()
+    assert fixture.db.rollback.await_count == 2
+
+
+def test_narrated_cleaned_binding_grants_derivative_without_guided_proposal(fixture, monkeypatch):
+    """KRI-277: narrated jobs retain their clean receipt next to the recipe."""
+    from app.schemas.edit_proposal import NarrationTrack
+    from app.services.device_narration_binding import make_device_narration_binding
+
+    asset, _item, signer, narration = cleaned_voiceover_recipe(fixture, monkeypatch)
+    record = device_record(fixture.job, "first")
+    record["narration_binding"] = make_device_narration_binding(
+        NarrationTrack.model_validate(narration), asset
+    ).model_dump(mode="json")
+    save_device_record(fixture.job, "first", record)
+    fixture.job.assembly_plan.pop("guided_edit")
+
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with(narration["gcs_path"], generation="42")
+
+
+def test_narrated_binding_fingerprint_mismatch_fails_closed(fixture, monkeypatch):
+    from app.schemas.edit_proposal import NarrationTrack
+    from app.services.device_narration_binding import make_device_narration_binding
+
+    asset, _item, signer, narration = cleaned_voiceover_recipe(fixture, monkeypatch)
+    record = device_record(fixture.job, "first")
+    binding = make_device_narration_binding(
+        NarrationTrack.model_validate(narration), asset
+    ).model_dump(mode="json")
+    binding["sha256"] = "b" * 64
+    record["narration_binding"] = binding
+    save_device_record(fixture.job, "first", record)
+    fixture.job.assembly_plan.pop("guided_edit")
+
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    signer.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["generation", "size", "hash", "raw_source"],
+)
+def test_legacy_narrated_cleanup_recovery_validates_snapshot_and_derivative(
+    fixture, monkeypatch, mutation
+):
+    """Exercise legacy recovery from the immutable preflight snapshot, not a stub."""
+    from app.kria.render_assets import VoiceoverRenderAsset
+    from app.services.device_narration_binding import _legacy_cleaned_narration
+
+    owner_id, item_id, _analysis_id = cleanup_fixture_ids(load_cleanup_fixture())
+    payload = b"legacy-cleaned-wav"
+    digest = hashlib.sha256(payload).hexdigest()
+    asset = VoiceoverRenderAsset(
+        id=f"voiceover-{item_id}",
+        plan_item_id=str(item_id),
+        generation="42",
+        fingerprint={"sha256": digest, "byte_count": len(payload)},
+    )
+    item = SimpleNamespace(
+        id=item_id,
+        audio_mode="voiceover",
+        voiceover_gcs_path=cleanup_snapshot()["source"]["storage_path"],
+        voiceover_generation="42",
+        voiceover_duration_s=cleanup_snapshot()["source"]["window_end_s"],
+    )
+    if mutation == "raw_source":
+        item.voiceover_generation = "43"
+    metadata = SimpleNamespace(
+        generation="43" if mutation == "generation" else "42",
+        size=len(payload) + 1 if mutation == "size" else len(payload),
+    )
+    monkeypatch.setattr(routes.storage, "object_metadata", lambda _path: metadata)
+    monkeypatch.setattr(
+        routes.storage,
+        "download_generation_to_file",
+        lambda _path, local, *, generation: Path(local).write_bytes(
+            b"wrong" if mutation == "hash" else payload
+        ),
+    )
+    plan = {
+        "speech_cleanup_contract": "required_v1",
+        "speech_cleanup_preflight_contract": "snapshot_v1",
+        "_speech_cleanup_internal": {"preflight_snapshot": cleanup_snapshot()},
+    }
+    if mutation == "raw_source":
+        with pytest.raises(ValueError, match="source generation"):
+            _legacy_cleaned_narration(plan, owner_id=owner_id, item=item, asset=asset)
+    elif mutation in {"generation", "size"}:
+        with pytest.raises(ValueError, match="metadata"):
+            _legacy_cleaned_narration(plan, owner_id=owner_id, item=item, asset=asset)
+    elif mutation == "hash":
+        with pytest.raises(ValueError, match="fingerprint"):
+            _legacy_cleaned_narration(plan, owner_id=owner_id, item=item, asset=asset)
+
+
+@pytest.mark.parametrize("no_removal", [False, True])
+def test_legacy_narrated_cleanup_recovery_reconstructs_matching_derivative(
+    fixture, monkeypatch, no_removal
+):
+    from app.kria.render_assets import VoiceoverRenderAsset
+    from app.services.device_narration_binding import _legacy_cleaned_narration
+
+    owner_id, item_id, _analysis_id = cleanup_fixture_ids(load_cleanup_fixture())
+    payload = b"legacy-cleaned-wav"
+    asset = VoiceoverRenderAsset(
+        id=f"voiceover-{item_id}",
+        plan_item_id=str(item_id),
+        generation="42",
+        fingerprint={"sha256": hashlib.sha256(payload).hexdigest(), "byte_count": len(payload)},
+    )
+    snapshot = cleanup_snapshot()
+    if no_removal:
+        duration = snapshot["source"]["window_end_s"]
+        snapshot["analysis"]["cut_plan"].update(
+            keep_segments=[{"start_s": 0.0, "end_s": duration}],
+            removed=[],
+            time_saved_s=0.0,
+        )
+        snapshot["analysis"]["findings"] = []
+        snapshot["analysis"]["public_receipt"].update(
+            candidate_count=0,
+            category_counts={"filler_sounds": 0, "long_pauses": 0, "retakes": 0},
+            estimated_removed_ms=0,
+            result_duration_ms=round(duration * 1000),
+        )
+    item = SimpleNamespace(
+        id=item_id,
+        audio_mode="voiceover",
+        voiceover_gcs_path=snapshot["source"]["storage_path"],
+        voiceover_generation="42",
+        voiceover_duration_s=snapshot["source"]["window_end_s"],
+    )
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda _path: SimpleNamespace(generation="42", size=len(payload)),
+    )
+    monkeypatch.setattr(
+        routes.storage,
+        "download_generation_to_file",
+        lambda _path, local, *, generation: Path(local).write_bytes(payload),
+    )
+    narration = _legacy_cleaned_narration(
+        {
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+            "_speech_cleanup_internal": {"preflight_snapshot": snapshot},
+        },
+        owner_id=owner_id,
+        item=item,
+        asset=asset,
+    )
+    assert narration is not None
+    assert narration.generation == "42"
+    assert narration.speech_cleanup is not None
+    assert narration.speech_cleanup.source_gcs_path == item.voiceover_gcs_path
+
+
+def test_retry_preserves_matching_narrated_cleaned_binding(fixture, monkeypatch):
+    from app.schemas.edit_proposal import NarrationTrack
+    from app.services.device_narration_binding import make_device_narration_binding
+
+    asset, _item, _signer, narration = cleaned_voiceover_recipe(fixture, monkeypatch)
+    record = device_record(fixture.job, "first")
+    record["status"]["phase"] = "needs_attention"
+    binding = make_device_narration_binding(
+        NarrationTrack.model_validate(narration), asset
+    ).model_dump(mode="json")
+    record["narration_binding"] = binding
+    save_device_record(fixture.job, "first", record)
+
+    retry_device_render(fixture.job, "first")
+    assert device_record(fixture.job, "first")["narration_binding"] == binding
+
+
+@pytest.mark.parametrize("change", [None, "generation", "item"])
+def test_editor_repin_keeps_only_an_identical_narration_binding(fixture, monkeypatch, change):
+    from app.schemas.edit_proposal import NarrationTrack
+    from app.services.device_narration_binding import make_device_narration_binding
+
+    asset, _item, _signer, narration = cleaned_voiceover_recipe(fixture, monkeypatch)
+    record = device_record(fixture.job, "first")
+    binding = make_device_narration_binding(
+        NarrationTrack.model_validate(narration), asset
+    ).model_dump(mode="json")
+    record["narration_binding"] = binding
+    save_device_record(fixture.job, "first", record)
+    recipe = fixture.request.recipe
+    assets = list(recipe.asset_manifest.assets)
+    if change is not None:
+        update = {"plan_item_id" if change == "item" else "generation": "changed"}
+        assets = [
+            asset.model_copy(update=update) if entry.id == asset.id else entry for entry in assets
+        ]
+    recipe = recipe.model_copy(
+        update={
+            "asset_manifest": recipe.asset_manifest.model_copy(update={"assets": tuple(assets)})
+        }
+    )
+    request = make_device_request(
+        job_id=fixture.job.id, variant_id="first", revision=3, recipe=recipe
+    )
+    pin_device_request(fixture.job, request, base_generation="approved")
+    persisted = device_record(fixture.job, "first")
+    assert ("narration_binding" in persisted) is (change is None)
+
+
+def test_narrated_binding_rechecks_the_source_after_external_grant_work(fixture, monkeypatch):
+    from app.schemas.edit_proposal import NarrationTrack
+    from app.services.device_narration_binding import make_device_narration_binding
+
+    asset, item, signer, narration = cleaned_voiceover_recipe(fixture, monkeypatch)
+    record = device_record(fixture.job, "first")
+    record["narration_binding"] = make_device_narration_binding(
+        NarrationTrack.model_validate(narration), asset
+    ).model_dump(mode="json")
+    save_device_record(fixture.job, "first", record)
+    original = routes._authorized_cleaned_narration
+
+    def change_source(*args, **kwargs):
+        result = original(*args, **kwargs)
+        item.voiceover_generation = "43"
+        return result
+
+    monkeypatch.setattr(routes, "_authorized_cleaned_narration", change_source)
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    signer.assert_not_called()
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError("missing"), routes.NotFound("missing")])
+def test_legacy_cleaned_derivative_missing_fails_closed_as_recipe_conflict(
+    fixture, monkeypatch, error
+):
+    asset, _item, signer, _narration = cleaned_voiceover_recipe(fixture, monkeypatch)
+    monkeypatch.setattr(
+        routes, "_authorized_cleaned_narration", lambda *_args: (_ for _ in ()).throw(error)
+    )
+
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Voiceover changed; refresh the recipe"
+    signer.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -851,6 +1098,20 @@ def test_raw_guided_narration_keeps_the_raw_voiceover_grant(fixture, monkeypatch
     asset, item, signer = voiceover_recipe(fixture, monkeypatch)
     raw = {"gcs_path": item.voiceover_gcs_path, "generation": "42", "duration_s": 12.0}
     fixture.job.assembly_plan.update(cleanup_job_plan(raw, contract="off_v1"))
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with(item.voiceover_gcs_path, generation="42")
+
+
+def test_markerless_required_raw_narration_keeps_legacy_voiceover_grant(fixture, monkeypatch):
+    asset, item, signer = voiceover_recipe(fixture, monkeypatch)
+    raw = {"gcs_path": item.voiceover_gcs_path, "generation": "42", "duration_s": 12.0}
+    plan = cleanup_job_plan(raw)
+    plan.pop("_speech_cleanup_internal")
+    plan.pop("speech_cleanup_preflight_contract")
+    fixture.job.assembly_plan.update(plan)
+    fixture.job.assembly_plan.pop("guided_edit")
+
     response = download_asset(fixture, asset_id=asset.id)
     assert response.status_code == 200, response.text
     signer.assert_called_once_with(item.voiceover_gcs_path, generation="42")
