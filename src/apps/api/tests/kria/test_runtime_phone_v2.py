@@ -418,6 +418,10 @@ def test_editor_approval_on_a_device_variant_enqueues_no_cloud_render() -> None:
 
 def _claim_fixture(job: SimpleNamespace) -> tuple[_Db, SimpleNamespace, SimpleNamespace, list]:
     user_id = job.user_id
+    # Approve the current variant: phone publication replaces the edit token
+    # with its upload-attempt ID, which is also the next editor draft's baseline.
+    variant = next(row for row in job.assembly_plan["variants"] if row["variant_id"] == VARIANT)
+    generation = kria_runtime.variant_render_baseline(variant)
     approval_id, execution_id = uuid.uuid4(), uuid.uuid4()
     plan = SimpleNamespace(id=uuid.uuid4(), user_id=user_id, ownership_epoch=1)
     item = SimpleNamespace(id=uuid.uuid4(), content_plan_id=plan.id, current_job_id=job.id)
@@ -427,7 +431,7 @@ def _claim_fixture(job: SimpleNamespace) -> tuple[_Db, SimpleNamespace, SimpleNa
         ownership_epoch=1,
         target_job_id=job.id,
         target_variant_id=VARIANT,
-        target_generation_id="edit-gen-1",
+        target_generation_id=generation,
         manifest_hash="m",
         status="awaiting_approval",
     )
@@ -451,7 +455,7 @@ def _claim_fixture(job: SimpleNamespace) -> tuple[_Db, SimpleNamespace, SimpleNa
         target_ownership_epoch=1,
         target_job_id=job.id,
         target_variant_id=VARIANT,
-        target_generation_id="edit-gen-1",
+        target_generation_id=generation,
         target_manifest_hash="m",
     )
     thread = SimpleNamespace(
@@ -466,7 +470,7 @@ def _claim_fixture(job: SimpleNamespace) -> tuple[_Db, SimpleNamespace, SimpleNa
         target_draft_id=draft.id,
         target_draft_revision=3,
         target_variant_id=VARIANT,
-        target_generation_id="edit-gen-1",
+        target_generation_id=generation,
         result={},
         error=None,
         completed_at=None,
@@ -500,7 +504,10 @@ def _claim(job: SimpleNamespace, prepare) -> tuple[object, SimpleNamespace, Simp
         yield db
 
     document = SimpleNamespace(
-        kind="editor", editor_payload={"base_generation": "edit-gen-1"}, strategy=None, intent="x"
+        kind="editor",
+        editor_payload={"base_generation": approval.target_generation_id},
+        strategy=None,
+        intent="x",
     )
     payload = SimpleNamespace(music_track_id=None)
     with (
