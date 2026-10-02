@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.15.0] - 2026-10-02
+
+### Changed
+- fix(ios): keep the editor preview voice after caption and audio edits (KRI-241) (#1322) <!-- release-pr: 1322 -->
+
 ## [0.78.14.0] - 2026-10-02
 
 ### Changed
