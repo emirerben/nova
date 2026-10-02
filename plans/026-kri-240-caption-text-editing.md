@@ -1,10 +1,12 @@
 # Plan 026 — KRI-240: iPhone editor caption text editing redesign
 
-**Linear:** [KRI-240](https://linear.app/kria/issue/KRI-240) · **Status:** In Progress (design review stage) · **Owner:** Yasin Berk · **Label:** iOS
+**Linear:** [KRI-240](https://linear.app/kria/issue/KRI-240) · **Status:** In Progress (design and eng review done; iOS caption edit bar built on the branch, see §11) · **Owner:** Yasin Berk · **Label:** iOS
 **Related:** KRI-216 (phone caption edits save), KRI-110 (guided-story captions via `text_elements`), KRI-230 (TR word-by-word timing), KRI-241 (silent preview after caption edit, separate), KRI-148 (connected editor panels contract, `docs/runbooks/ios-development.md`).
 **Base:** origin/main `572d02d1d` (2026-10-01). Code facts below are from that commit.
 
 > This file is the plan under review by `/plan-design-review`. §6 holds the approved decisions (D2–D16); §7 keeps the findings as evidence; the review report is the last section.
+>
+> Later notes: the edit-state layout that was built is Variant A, not the Variant B of D2 and the approved mockup (see §11). This plan was written as 025 and renumbered to 026 on 2026-10-02 (025 is now the iOS device-only rollout plan), so "plan 025" and the `T-CAP025-*` TODO ids in the body mean this plan.
 
 ## 1. Problem (verbatim from KRI-240)
 
@@ -1405,19 +1407,24 @@ Design-review unresolved decisions: none (every finding in §7.2 has an individu
 **Layout switched to Variant A by the user** ("ship design option A", 2026-10-02, after the side-by-side board), superseding D2's Variant B. The app header, Chat/Editor switch and top banners stay while a line is open; the edit bar replaces the caption list; the timeline handle, transport, tool rail and sparkles button hide and the preview fills the space above the bar (`captionEditBarHeight` in `NativeEditorLayoutMetrics`). R7 (edit state = `editingCueID`), R8 (no swipe-down exit) and R10 still apply; R9's header-hiding no longer applies.
 
 **Built on branch `ybyesilyurt/kri-240-iphone-editor-editing-a-caption-line-takes-two-taps-and-the` (PR3 scope, Variant A):**
-- One-tap editing via `NativeExplicitLineTextEditor` + `LineEditorConfiguration.captionLine` (wrap, Return = Next / Done on last, autocorrect off, `caption_language` keyboard via `textInputMode`, spell-check off without a matching keyboard, pasted newlines flattened, Tab / Shift-Tab / Esc / Shift-Return, per-line undo reset). Default configuration is unchanged for the Text tool.
+- One-tap editing via `NativeExplicitLineTextEditor` + `LineEditorConfiguration.captionLine` (wrap, Return = Next / Done on last, autocorrect off, `caption_language` keyboard via `textInputMode`, spell-check off without a matching keyboard, pasted newlines flattened, smart quotes and dashes off, a 600-scalar length cap (the server's `CaptionCue.text` limit; a longer line fails the whole Save), Tab / Shift-Tab / Esc / Shift-Return, per-line undo reset). Default configuration is unchanged for the Text tool.
 - Edit bar (board frame A): "#N · start–end" on the left; ‹, › and ✓ as equal 44pt squares (✓ in Butter) aligned to the field's trailing edge; full-width wrapping field below. No loop-play button (board A has none); tapping the preview still loops the line.
-- Session: `beginCaptionLineEdit` / `endCaptionLineEdit`, `CaptionWordRewrite` (positional keep, character-weight spread, exact restore), `captionParkTime` (start + 0.15s), `captionTimelineRange`, `isCaptionUnitEdited`, `captionLanguage` (from the loaded variant).
+- Session: `beginCaptionLineEdit` / `endCaptionLineEdit`, `CaptionWordRewrite` (positional keep, character-weight spread, exact restore), `captionParkTime` (start + 0.15s), `captionTimelineRange` / `captionTimelineRanges` (the playing-line lookup reads the document once per clock tick), `isCaptionUnitEdited`, `captionLanguage` (from the loaded variant), `undoHistoryVersion` (moves on every undo-history change, so the removal notice can tell its removal is still the newest step even when the 100-step history is full).
+- Save with a line open commits it first: the header's `beforeSave` flushes the line (an emptied one is removed) and closes the bar and keyboard, then saves.
+- Cue mirrors: `EditorDocument.isCaptionCueMirror` keys on `isCueNative` (cues now, or when loaded), so deleting the last cue does not turn the API's mirror text elements back into captions that would list and burn every pre-edit line.
 - List: no chevron, playing-line highlight + follow (suspended by a drag, off under VoiceOver / while editing), unsaved dot, combined VoiceOver row with Edit / Delete actions, long-press Delete, read-only rows still seek with a reason line, empty state copy, helper sentence removed.
-- Emptied line removed on commit inside the line's transaction (one Undo restores it); "Line N removed · Undo" notice; stale-preview notice when the live preview is unavailable.
-- Tests: `CaptionLineEditingTests` (14), rewritten `testTappingCaptionRowEntersEditModeAndPersistsTypedText` (asserts the keyboard after ONE tap). Verified: full `KriaTests` 907 pass; 10 caption / Text-tool UI tests pass; simulator walk-through on iPhone 17 Pro (Turkish keyboard selected, Next, Done, dots).
+- Emptied line removed on commit inside the line's transaction (one Undo restores it); "Line N removed" notice with an Undo button (4s; in the bar's top row while a line is open, above the rows in the list; it ends at the first keystroke, and Undo is offered only while the removal is still the newest undo step); stale-preview notice when the live preview is unavailable.
+- Tests: `CaptionLineEditingTests` (21 unit tests: word rewrite, line-editor configuration incl. the length cap and Return/paste handling, edit-bar layout metrics, one undo step per line, removal as one step, cue mirrors after the last cue is deleted, `undoHistoryVersion` with a full history, park frame). `NativeEditorInspectorUITests`: rewritten `testTappingCaptionRowEntersEditModeAndPersistsTypedText` (asserts the keyboard after ONE tap) plus four new tests (emptying a line and Undo, Next/Previous, Save with a line open, long-press Delete), registered in the `editor` group of `scripts/ios/ui-test-groups.json` with entries in `scripts/ios/ui-test-durations.json`.
+- Verification snapshot, taken before the last additions above (the 600-scalar cap, `beforeSave`, `isCueNative`, `undoHistoryVersion` and the four new UI tests): full `KriaTests` 907 run, 0 failures (15 skipped); 10 caption / Text-tool UI tests pass; simulator walk-through on iPhone 17 Pro (Turkish keyboard selected, Next, Done, dots). A fresh full run covering the final code is the ship gate's evidence, not recorded here.
 
 **Deviations from the reviewed plan (implementation choices):**
-- The field is a fixed 3-line box (2 on small phones and accessibility sizes) that scrolls inside, instead of growing 1→3 lines (D8); the bar height is fixed anyway, so growth would only move empty space.
+- The field is a fixed 3-line box (2 on short or narrow screens and at accessibility sizes) that scrolls inside, instead of growing 1→3 lines (D8); the bar height is fixed anyway, so growth would only move empty space.
+- The removal notice (D3, R12) is not a toast over the preview: it replaces the bar's "#N · start–end" label while a line is open and sits above the rows in the list. A line change alone does not end it (the Undo button disappears once the removal is no longer the newest undo step).
 - At accessibility sizes the counter stays in the top row (scales down) rather than moving above the field (D12).
 - No loading skeleton (D4): the editor has no "captions still transcribing" signal to drive it.
 - The save-failure "Try saving again" button (R3 / PR2) and the server word rewrite + phone compiler guard (R1/R11 / PR1) are not in this branch.
-- No device spike (PR0) yet; the real-iPhone check (T11) is still open.
+- Not built or tested in this branch: the accessibility-size UI test at 320pt (T8, `AppleTextAccessibilityUITests` is untouched), a test for the VoiceOver announcements (F15), a test that the hardware-key commands dispatch the same calls as the buttons (D14), and the shared word-rewrite fixture test (it needs PR1's fixture JSON).
+- No device spike (PR0) yet; the real-iPhone check (T11) is still open. The Implementation Tasks checkboxes above are not ticked; this section is the status of record.
 
 ## GSTACK REVIEW REPORT
 
