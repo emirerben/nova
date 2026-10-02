@@ -74,23 +74,27 @@ test exercises tapping "Editor" from chat or "Chat" from the editor header.
 `native-editor-chat-tab`; that tap returns to the chat header's `Editor`
 segment; no intermediate blank/black frame during the crossfade.
 
-### `testPreviewResizeIsAvailableAcrossEditorPanels` fails on `main` locally
-**Priority:** P3
+### `testPreviewResizeIsAvailableAcrossEditorPanels` fails locally — simulator artifact, not an app bug
+**Priority:** P4 (downgraded — root-caused)
 **What:** Discovered while merging `origin/main` into this branch (118 commits
-behind). Fails deterministically (not flaky, 3/3) with
+behind). Failed deterministically (3/3) with
 `XCTAssertEqualWithAccuracy failed: ("284.0") is not equal to ("120.0")` and
-`("184.0") is not equal to ("80.0")` for the "text-edit" panel case — i.e. the
-preview isn't shrinking to `NativeEditorLayoutMetrics.typingPreviewHeight`
-(KRI-185) while a text panel is being typed into, even though the call site
-(`NativeEditorView.swift`) does pass `shrinksPreviewWhileTyping: panel?.tool
-== .text`. Confirmed failing identically (same two assertions, same values) on
-a fresh `origin/main` checkout (commit c17f89a60) with no KRI-197 changes
-present at all, so this is a pre-existing bug on `main`, not caused by this
-branch or its merge.
-**Acceptance:** Investigate why `shrinksPreviewWhileTyping` doesn't take effect
-for the text-edit panel (timing of `keyboardVisible` vs `panel?.tool`? a second
-call site constructing `NativeEditorLayoutMetrics` without the flag?); fix or
-adjust the test.
+`("184.0") is not equal to ("80.0")` for the "text-edit" panel case. Initially
+looked like a pre-existing product bug (reproduced identically on a fresh
+`origin/main` checkout, commit c17f89a60, with no KRI-197 changes present).
+Root-caused later (while investigating the KRI-197 follow-up "text block stuck
+under keyboard" bug): this is the simulator's "hardware keyboard passthrough"
+setting (`ConnectHardwareKeyboard`) causing
+`UIResponder.keyboardWillShowNotification` to not fire reliably, so
+`keyboardVisible`/`shrinksPreviewWhileTyping` never flips in the test run even
+though the product code and call site are correct. Confirmed by toggling
+`defaults -currentHost write com.apple.iphonesimulator
+ConnectHardwareKeyboard -bool NO` and rerunning — passes.
+**Acceptance:** Either pin `ConnectHardwareKeyboard=NO` in the CI/local
+simulator setup script, or have the UI test explicitly dismiss the software
+keyboard toggle / assert on `app.keyboards.firstMatch` existence before relying
+on the notification-driven preview shrink, so the test doesn't depend on host
+simulator defaults.
 
 ## SFX picker search — deferred follow-ups (2026-09-24)
 
