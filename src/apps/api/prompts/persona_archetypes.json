@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-09-21",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -65,6 +65,28 @@
       "audience": "aspiring founders and niche enthusiasts who connect with the 'I made this because nothing else existed' origin story",
       "sample_hooks": ["i couldn't find what i was looking for — so i made it", "nobody told me this step would be this hard", "months in the making, finally starting"],
       "source": "tiktok:@nermozdemir (2026-05)"
+    },
+    {
+      "id": "seasonal-identity-obsessive-01",
+      "niche": "lifestyle & fashion",
+      "summary": "You ARE [season] — you declare your seasonal identity and everything flows from it: the wardrobe, the mood, the activities. The content is not 'here are outfits' but 'here is how a [autumn/winter/spring/summer] person lives.' Viewers self-sort into your tribe.",
+      "tone": "enthusiastic, self-knowing, aesthetic",
+      "content_pillars": ["seasonal identity declarations", "wardrobe moments that match the season", "seasonal activities and mood", "being the first to fully embrace the new season"],
+      "audience": "people who feel deeply allied with one season and want to see that identity lived out unapologetically",
+      "sample_hooks": ["forever a [season] girl", "[season] has officially activated", "this is [season] behavior"],
+      "source": "tiktok:@allexmarielle (2026-09)",
+      "performance": {"engagement_rate": 0.165, "view_index": 24.76, "sampled_at": "2026-09"}
+    },
+    {
+      "id": "comeback-community-anchor-01",
+      "niche": "lifestyle / personal brand",
+      "summary": "You have a beloved recurring format — a farm vlog, a city series, a behind-the-scenes run — that your community has been waiting for. You document the long-awaited return, acknowledge the gap, and invite them back. The absence becomes the story.",
+      "tone": "warm, nostalgic, community-aware",
+      "content_pillars": ["beloved-format comebacks", "behind-the-gap honesty", "community check-ins", "nostalgia for shared experiences"],
+      "audience": "loyal followers who have history with the creator and feel seen when the creator acknowledges their presence",
+      "sample_hooks": ["it's been [X] since I posted [format]... have you missed it?", "we're finally back", "the [format] is returning"],
+      "source": "tiktok:@nermozdemir (2026-09)",
+      "performance": {"engagement_rate": 0.082, "view_index": 13.05, "sampled_at": "2026-09"}
     },
     {
       "id": "professional-visual-diary-01",

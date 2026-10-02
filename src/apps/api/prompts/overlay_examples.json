@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-05",
+  "version": "2026-09-21",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -309,6 +309,32 @@
       "text_color": "#FFFFFF",
       "highlight_color": "#FFE08A",
       "layout": "cluster"
+    },
+    {
+      "id": "seasonal-identity-static-01",
+      "content_profile": "aesthetic lifestyle moment tied to a season — a single clip of fall light, winter textures, spring blossoms — where the creator's identity IS the season, not just the backdrop",
+      "effect": "static",
+      "text": "forever an autumn girl",
+      "highlight_word": "autumn",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFE08A",
+      "niche": "lifestyle & fashion",
+      "source": "tiktok market research 2026-09"
+    },
+    {
+      "id": "early-effort-popin-01",
+      "content_profile": "early-morning fitness or outdoor effort — dark-to-light reveal, the physical cost of getting somewhere beautiful before the world wakes up",
+      "effect": "pop-in",
+      "text": "woke up at 5am for this",
+      "highlight_word": "5am",
+      "position": "top",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#7FD1FF",
+      "niche": "solo travel & outdoors",
+      "source": "tiktok market research 2026-09"
     },
     {
       "id": "professional-ootd-static-01",
