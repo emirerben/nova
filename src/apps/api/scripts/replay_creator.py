@@ -613,8 +613,8 @@ def analyze_replay_media(*, item_id: uuid.UUID) -> dict[str, Any]:
 
     from app.database import sync_session
     from app.models import PlanItem, PlanItemAsset
+    from app.services.creator_clip_analysis import analyze_clip_assignment
     from app.tasks.autoplace import analyze_pool_asset
-    from app.tasks.edit_proposal_build import _analyze_clip_assignment
 
     with sync_session() as db:
         item = db.get(PlanItem, item_id)
@@ -654,7 +654,7 @@ def analyze_replay_media(*, item_id: uuid.UUID) -> dict[str, Any]:
         cached_clip_count = 0
         for assignment in assignments:
             before = assignment.get("analysis")
-            updated, _ref = _analyze_clip_assignment(assignment, {})
+            updated, _ref = analyze_clip_assignment(assignment, {})
             if isinstance(before, dict) and before:
                 cached_clip_count += 1
             else:

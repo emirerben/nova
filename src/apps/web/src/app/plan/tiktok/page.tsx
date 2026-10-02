@@ -7,7 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import SignInPrompt from "../_components/SignInPrompt";
 import TikTokConnectionPanel from "../_components/TikTokConnectionPanel";
-import { LightShell } from "../_components/ui/LightShell";
+import { LightShell } from "@/components/ui/LightShell";
 
 export default function TikTokConnectionPage() {
   return (

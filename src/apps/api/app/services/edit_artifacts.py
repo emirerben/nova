@@ -21,7 +21,10 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import EditArtifact, Job, PlanItem, TrainingArtifactRetentionEvent
 from app.services.edit_training_dataset import dataset_split
-from app.services.training_eligibility import TrainingEligibility, resolve_training_eligibility
+from app.services.training_eligibility import (
+    TrainingEligibilityDecision,
+    evaluate_training_eligibility,
+)
 
 FINAL_RENDER_KIND = "final_render"
 COPY_EVENT = "copy"
@@ -43,7 +46,7 @@ class RenderCaptureSnapshot:
     render_generation_id: str
     source_path: str
     artifact_kind: str
-    eligibility: TrainingEligibility
+    eligibility: TrainingEligibilityDecision
     direction_snapshot: dict[str, Any]
     media_manifest: list[dict[str, Any]]
     render_receipt: dict[str, Any]
@@ -189,7 +192,7 @@ def load_render_capture_snapshot(
     if render_generation_id is not None and generation != render_generation_id:
         return None
 
-    eligibility = resolve_training_eligibility(db, job.user_id)
+    eligibility = evaluate_training_eligibility(db, job.user_id)
     if not eligibility.eligible:
         return None
     receipt = variant.get("render_receipt")

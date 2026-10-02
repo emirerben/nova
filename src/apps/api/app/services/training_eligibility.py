@@ -40,10 +40,6 @@ class TrainingEligibilityDecision:
     reason: str | None = None
 
 
-# Stable public name for capture/admin/export integrations.
-TrainingEligibility = TrainingEligibilityDecision
-
-
 def _now(now: datetime | None) -> datetime:
     current = now or datetime.now(UTC)
     return current if current.tzinfo is not None else current.replace(tzinfo=UTC)
@@ -162,13 +158,6 @@ def evaluate_training_eligibility(
     current = _now(now)
     grant, consent = _latest_sync(db, creator_id, current)
     return _decision(creator_id, internal_grant=grant, consent_event=consent, now=current)
-
-
-def resolve_training_eligibility(
-    db: Session, creator_id: uuid.UUID, *, at: datetime | None = None
-) -> TrainingEligibility:
-    """Resolve current eligibility using the integration-facing API name."""
-    return evaluate_training_eligibility(db, creator_id, now=at)
 
 
 async def evaluate_training_eligibility_async(
