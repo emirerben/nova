@@ -52,9 +52,20 @@ from typing import Any
 
 import structlog
 
+from app.pipeline.cut_grid import rendered_spans
 from app.pipeline.probe import probe_video
-from app.pipeline.reframe import _encoding_args, reframe_and_export, resolve_output_fit
-from app.pipeline.silence_cut import KEEP_SEGMENTS_PUNCH_IN, plan_event_payload, plan_summary
+from app.pipeline.reframe import (
+    _encoding_args,
+    cut_frame_grid,
+    reframe_and_export,
+    resolve_output_fit,
+)
+from app.pipeline.silence_cut import (
+    KEEP_SEGMENTS_PUNCH_IN,
+    plan_event_payload,
+    plan_summary,
+    removal_cut_points,
+)
 from app.services.clip_speech import speech_coverage
 from app.services.pipeline_trace import record_pipeline_event
 
@@ -640,23 +651,33 @@ def assemble_talking_head(
                 f"failed to reframe spine clip {selection.spine_clip_id}: {exc2}"
             ) from exc2
 
-    # ── Cut applied: usable_s derives from the CUT spine (re-probe; plan
-    # arithmetic is the fallback), and each removal becomes a b-roll anchor at
-    # its position in the cut timeline (start minus removed-time-before-it). ──
+    # ── Cut applied: usable_s derives from the CUT spine (re-probe; the
+    # render's frame-grid arithmetic is the fallback), and each jump cut becomes
+    # a b-roll anchor at its picture cut on that grid. ──
     anchors: list[float] | None = None
-    if sc_apply:
-        kept_s = sum(b - a for a, b in sc_plan.keep_segments)
+    # The window _reframe_spine cut; the summary below persists its frames.
+    grid = cut_frame_grid(0.0, sc_analysis_dur) if sc_apply else None
+    if grid is not None:
+        kept_s = sum(end - start for start, end in rendered_spans(sc_plan.keep_segments, grid))
         try:
             cut_dur = float(probe_video(spine_reframed).duration_s) or kept_s
-        except Exception as exc:  # noqa: BLE001 — fall back to exact plan arithmetic
+        except Exception as exc:  # noqa: BLE001 — fall back to the grid arithmetic
             log.warning("talking_head_cut_spine_probe_failed", job_id=job_id, error=str(exc))
             cut_dur = kept_s
         usable_s = min(cut_dur, target_duration_s) if target_duration_s else cut_dur
-        anchors = []
-        removed_before = 0.0
-        for r in sc_plan.removed:
-            anchors.append(round(r.start_s - removed_before, 3))
-            removed_before += r.end_s - r.start_s
+        # Only a removal with kept speech on both sides is a jump cut. A
+        # leading or trailing trim just shortens the spine; on the grid a
+        # trailing trim's point is the video's last frame, and covering it
+        # would end the video on b-roll instead of the speaker.
+        spoken_from = sc_plan.keep_segments[0][0]
+        spoken_to = sc_plan.keep_segments[-1][1]
+        anchors = [
+            round(point, 3)
+            for removal, point in zip(
+                sc_plan.removed, removal_cut_points(sc_plan, grid=grid), strict=True
+            )
+            if spoken_from < removal.start_s and removal.end_s < spoken_to
+        ]
 
     if sc_plan is not None and sc_plan.bailout_reason is None:
         # Same persistence contract as the subtitled path (shared helpers, M2):
@@ -681,7 +702,7 @@ def assemble_talking_head(
             ),
         )
         if sc_apply_error is None and silence_cut_out is not None:
-            summary = plan_summary(sc_plan, original_duration_s=sc_analysis_dur)
+            summary = plan_summary(sc_plan, original_duration_s=sc_analysis_dur, grid=grid)
             if strict_speech_cleanup:
                 summary["outcome"] = "applied" if sc_apply else "no_change"
             silence_cut_out["summary"] = summary

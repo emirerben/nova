@@ -55,7 +55,7 @@ def test_capture_uses_canonical_revision_and_rejects_raw_upload(monkeypatch) -> 
     )
     item = SimpleNamespace(id=item_id, edit_proposal={})
     monkeypatch.setattr(
-        "app.services.edit_artifacts.resolve_training_eligibility",
+        "app.services.edit_artifacts.evaluate_training_eligibility",
         lambda *_args, **_kwargs: _eligible(creator_id),
     )
 

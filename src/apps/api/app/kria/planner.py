@@ -747,9 +747,6 @@ async def _plan_from_creator_output(
         action = action.model_copy(update={"strategy": checked.strategy, "summary": summary})
     intent_clips = inputs.intent_clips
     creator_request = inputs.creator_request
-    if brief_request:
-        # KRI-188: the clip-intent planner reads the brief, not chat text.
-        creator_request = brief_request
     if (
         settings.clip_intents_enabled
         and isinstance(action, ProposeStrategy)
@@ -763,6 +760,7 @@ async def _plan_from_creator_output(
             planned = await plan_and_resolve_clip_intents(
                 creator_request=creator_request or user_message,
                 latest_user_message=user_message,
+                generated_brief=brief_request,
                 candidate_intents=action.strategy.clip_intents,
                 clips=intent_clips,
                 run_context=RunContext(
@@ -892,6 +890,7 @@ _FAST_PATH_OPS = frozenset(
         "add_text",
         "set_text_timing",
         "set_texts_timing",
+        "realign_labels",
         "label_each_clip",
         "reorder_clips_by",
     }

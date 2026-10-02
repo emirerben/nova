@@ -781,6 +781,10 @@ def orchestrate_template_job(
     ``.apply_async(args=[job_id], kwargs={"force_single_pass": True})`` without
     bouncing workers.
     """
+    from app.services.cloud_render_policy import block_cloud_render_task  # noqa: PLC0415
+
+    if block_cloud_render_task(job_id, task_name="tasks.orchestrate_template_job"):
+        return
     log.info("template_job_start", job_id=job_id, force_single_pass=force_single_pass)
 
     # Defensive: validate job_id BEFORE entering try/except. A stale Redis
@@ -7880,6 +7884,10 @@ _SINGLE_VIDEO_HARD_TIMEOUT_S = 720
 )
 def orchestrate_single_video_job(self, job_id: str) -> None:
     """single_video pipeline. Never raises — all errors → processing_failed."""
+    from app.services.cloud_render_policy import block_cloud_render_task  # noqa: PLC0415
+
+    if block_cloud_render_task(job_id, task_name="tasks.orchestrate_single_video_job"):
+        return
     log.info("single_video_job_start", job_id=job_id)
 
     try:

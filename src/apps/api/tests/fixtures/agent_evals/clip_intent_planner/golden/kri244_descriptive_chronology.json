@@ -1,0 +1,32 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-02.2",
+  "input": {
+    "creator_request": "I took the sunset pictures walking to the bus to go to the pub and the night ones cycling to go back home in London. Come up with crative ideas",
+    "latest_user_message": "I took the sunset pictures walking to the bus to go to the pub and the night ones cycling to go back home in London. Come up with crative ideas",
+    "generated_brief": "Creative brief (everything the creator has asked for, still in force):\n- [order/global] chronological order from sunset walk to night cycle\nLatest message: I took the sunset pictures walking to the bus to go to the pub and the night ones cycling to go back home in London. Come up with crative ideas",
+    "candidate_intents": [
+      {
+        "intent_id": "sunset-night-order",
+        "op": "order",
+        "attribute": "chronological order from sunset walk to night cycle",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "order_by": "capture_time"
+      }
+    ],
+    "clip_facts": true
+  },
+  "raw_text": "{\"intents\":[],\"question\":null}",
+  "output": {
+    "intents": [],
+    "question": null
+  },
+  "meta": {
+    "source": "KRI-244 production wording plus polluted v1 brief",
+    "expect_intents": [],
+    "expect_any": false,
+    "expect_question": false
+  }
+}

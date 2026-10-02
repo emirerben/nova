@@ -92,15 +92,16 @@ def test_draft_plan_rejects_render_not_pinned_to_the_exact_draft_group() -> None
 def test_draft_pruning_preserves_every_approval_protected_body() -> None:
     now = datetime.now(UTC)
     protected = [
-        SimpleNamespace(id=uuid.uuid4(), snapshot_json={"kind": "strategy"})
+        SimpleNamespace(id=uuid.uuid4(), base_job_id=None, snapshot_json={"kind": "strategy"})
         for _status in ("pending", "approved", "consumed")
     ]
-    free = SimpleNamespace(id=uuid.uuid4(), snapshot_json={"kind": "strategy"})
+    free = SimpleNamespace(id=uuid.uuid4(), base_job_id=None, snapshot_json={"kind": "strategy"})
     db = MagicMock()
     db.execute.side_effect = [
         _Result(scalar=now),
         _Result(scalars=[*protected, free]),
         _Result(scalars=[row.id for row in protected]),
+        _Result(scalars=[]),
     ]
 
     with patch("app.tasks.kria_runtime.sync_session", return_value=nullcontext(db)):
@@ -116,6 +117,40 @@ def test_draft_pruning_preserves_every_approval_protected_body() -> None:
     assert "approved" in protected_query
     assert "consumed" in protected_query
     db.commit.assert_called_once_with()
+
+
+def test_draft_pruning_preserves_a_job_pinned_empty_editor_snapshot() -> None:
+    now = datetime.now(UTC)
+    job_id = uuid.uuid4()
+    pinned = SimpleNamespace(id=uuid.uuid4(), base_job_id=job_id, snapshot_json={"kind": "editor"})
+    free = SimpleNamespace(id=uuid.uuid4(), base_job_id=job_id, snapshot_json={"kind": "editor"})
+    db = MagicMock()
+    db.execute.side_effect = [
+        _Result(scalar=now),
+        _Result(scalars=[pinned, free]),
+        _Result(scalars=[]),
+        _Result(
+            scalars=[
+                {
+                    "variants": [
+                        {"editor_draft": {"draft_id": str(pinned.id)}},
+                    ]
+                }
+            ]
+        ),
+    ]
+
+    with patch("app.tasks.kria_runtime.sync_session", return_value=nullcontext(db)):
+        result = prune_kria_drafts.run()
+
+    assert result == {"pruned": 1}
+    assert pinned.snapshot_json is not None
+    assert free.snapshot_json is None
+    job_query = str(
+        db.execute.call_args_list[3].args[0].compile(compile_kwargs={"literal_binds": True})
+    )
+    assert "jobs.id IN" in job_query
+    assert job_id.hex in job_query.replace("-", "")
 
 
 def test_reconciler_selects_only_recoverable_turns_and_publishes_stable_task_ids() -> None:

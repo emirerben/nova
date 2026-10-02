@@ -254,6 +254,9 @@ def remap_lanes_for_cut(
     Returns ``(lanes, frozenset())`` unchanged when ``lanes`` is ``None`` or
     the plan removed nothing (byte-identical fast path for every render that
     never applies a cut).
+
+    No frame grid: the phone recipe places each keep segment at its exact
+    float offsets (`compile_phone_subtitled_plan`), unlike the cloud cut.
     """
     if lanes is None or not plan.removed:
         return lanes, frozenset()

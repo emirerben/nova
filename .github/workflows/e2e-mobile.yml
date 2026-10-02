@@ -4,41 +4,48 @@ on:
   pull_request:
     paths:
       - "src/apps/web/**"
+      - "src/packages/motion-runtime/**"
+      - ".github/workflows/e2e-mobile.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   mobile-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      options: --ipc=host --init
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 9
-      - name: Get pnpm store directory
-        id: pnpm-store
-        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('src/apps/web/package.json') }}
-          restore-keys: pnpm-store-${{ runner.os }}-
+          cache: npm
+          cache-dependency-path: src/apps/web/package-lock.json
       - name: Install web dependencies
         working-directory: src/apps/web
-        run: pnpm install --no-frozen-lockfile
-      - name: Disable unused Chrome apt source
-        run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
-      - name: Install Playwright Chromium
+        run: npm ci --no-audit --no-fund
+      - name: Check Playwright browser executable
         working-directory: src/apps/web
-        run: pnpm exec playwright install --with-deps chromium
+        run: node -e "const fs = require('fs'); const { chromium } = require('playwright'); const executablePath = chromium.executablePath(); fs.accessSync(executablePath, fs.constants.X_OK); console.log(executablePath)"
       - name: Run mobile Playwright tests
         working-directory: src/apps/web
-        run: pnpm exec playwright test
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/e2e-results.json
+        run: npm exec -- playwright test --workers=2 --reporter=html,list,json
       - name: Upload Playwright report
-        if: failure()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: src/apps/web/playwright-report
+          path: |
+            src/apps/web/playwright-report
+            src/apps/web/test-results
           if-no-files-found: ignore
+          retention-days: 7

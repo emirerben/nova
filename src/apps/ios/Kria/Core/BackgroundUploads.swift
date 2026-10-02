@@ -1076,7 +1076,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             switch apiError {
             case .offline: return true
             case .requestFailed(let status, _): return status >= 500 || status == 429
-            case .invalidResponse, .sessionExpired, .conflict, .unsupported, .contentPlanUnavailable, .editorNotReady: return false
+            case .invalidResponse, .sessionExpired, .conflict, .unsupported,
+                 .contentPlanUnavailable, .editorNotReady, .nativeUpdateRequired:
+                return false
             }
         }
         // `CreationUploadError`, `UploadConsentError`, `SourceAssetError`, and any

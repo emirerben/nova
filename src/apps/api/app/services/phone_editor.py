@@ -102,7 +102,24 @@ def prepare_phone_editor_commit(
         previous = device_status(job, variant_id).request
         assembly = staged.assembly_plan
         variant = next(v for v in assembly["variants"] if v.get("variant_id") == variant_id)
-        if is_phone_subtitled_editor_variant(variant):
+        if variant.get("editor_timeline_mode") == "authored":
+            from app.pipeline.phone_authored_timeline import compile_phone_authored_timeline
+
+            recipe = compile_phone_authored_timeline(staged, variant, previous.recipe)
+            validate_phone_pilot_recipe(recipe, allow_editor_media=True)
+            request = make_device_request(
+                job_id=job.id,
+                variant_id=variant_id,
+                revision=previous.identity.recipe_revision + 1,
+                recipe=recipe,
+            )
+            pin_device_request(staged, request, base_generation=prep["generation"])
+            variant = next(
+                v for v in staged.assembly_plan["variants"] if v.get("variant_id") == variant_id
+            )
+            variant["render_status"] = "awaiting_device"
+            variant["duration_s"] = recipe.duration
+        elif is_phone_subtitled_editor_variant(variant):
             _compile_subtitled_editor_commit(
                 staged,
                 assembly,

@@ -4586,6 +4586,38 @@ def test_unknown_variant_404(monkeypatch):
     assert exc.value.status_code == 404
 
 
+@pytest.mark.parametrize(
+    ("ios_device_only", "cloud_execution", "expected_status", "expected_code"),
+    [
+        (True, True, 422, "device_render_unsupported"),
+        (False, False, 503, "cloud_render_disabled"),
+    ],
+)
+def test_cloud_editor_commit_is_rejected_before_mutation(
+    monkeypatch,
+    ios_device_only,
+    cloud_execution,
+    expected_status,
+    expected_code,
+):
+    _arm(monkeypatch)
+    monkeypatch.setattr(gj.settings, "ios_device_only_mode", ios_device_only)
+    monkeypatch.setattr(gj.settings, "cloud_render_execution_enabled", cloud_execution)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(text_elements=[dict(_VALID_ELEMENT)]),
+        )
+
+    assert exc.value.status_code == expected_status
+    assert exc.value.detail["code"] == expected_code
+    assert job.assembly_plan == before
+
+
 def test_title_only_commit_kicks_no_render(monkeypatch):
     """A title-only commit persists nothing on the variant and enqueues nothing."""
     _arm(monkeypatch)
@@ -4829,6 +4861,131 @@ def test_endpoint_enqueue_failure_returns_committed_generation_for_retry(
     assert variant["error"] == "The saved render could not be queued."
     assert job.status == "variants_ready_partial"
     assert db.commit.await_count == 2
+
+
+def test_endpoint_empty_timeline_save_creates_and_updates_a_draft_without_enqueue(
+    client: TestClient, monkeypatch
+) -> None:
+    """The public Save path can turn every clip into a durable empty draft.
+
+    The draft repository is faked at its lookup/insert seam; normalization,
+    empty-section preparation, empty-commit staging, and the HTTP response are
+    all the real route code.
+    """
+    from datetime import UTC, datetime
+
+    from app.kria.api_schemas import DraftSnapshotOut
+    from app.kria.drafts import DraftTarget, canonical_snapshot
+    from app.routes import plan_items as plan_item_routes
+    from app.services import editor_empty_drafts
+
+    _arm(monkeypatch)
+    user = _user()
+    job = _job(text_elements=[dict(_VALID_ELEMENT)])
+    job.user_id = user.id
+    item, plan = _owned_item(user.id, job=job)
+    item.edit_format = "montage"
+    job.content_plan_item_id = item.id
+    db = _db([item], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    drafts: dict[str, DraftSnapshotOut] = {}
+
+    async def fake_target(_db, *, item, job, creator_id, variant_key):
+        return DraftTarget(
+            thread=types.SimpleNamespace(creator_id=creator_id, id=uuid.uuid4()),
+            item=item,
+            job=job,
+            variant_key=variant_key,
+            generation_id=gj.variant_render_baseline(job.assembly_plan["variants"][0]),
+        )
+
+    async def fake_insert(_db, *, target, document):
+        snapshot, snapshot_hash = canonical_snapshot(document)
+        draft = DraftSnapshotOut(
+            draft_id=str(uuid.uuid4()),
+            item_id=str(target.item.id),
+            variant_key=target.variant_key,
+            draft_revision=len(drafts) + 1,
+            snapshot_hash=snapshot_hash,
+            etag=f'"{snapshot_hash}"',
+            can_undo=bool(drafts),
+            base_generation_id=target.generation_id,
+            created_at=datetime.now(UTC),
+            snapshot=snapshot,
+        )
+        drafts[target.variant_key] = draft
+        target.job._saved_editor_drafts = dict(drafts)
+        return draft
+
+    async def fake_attach(_db, target_job):
+        target_job._saved_editor_drafts = dict(drafts)
+
+    monkeypatch.setattr(editor_empty_drafts, "editor_variant_target", fake_target)
+    monkeypatch.setattr(editor_empty_drafts, "stage_editor_variant_draft", fake_insert)
+    monkeypatch.setattr(plan_item_routes, "attach_saved_editor_drafts", fake_attach)
+
+    with patch(REGEN) as regen:
+        regen.apply_async = MagicMock()
+        first = client.post(
+            f"/plan-items/{item.id}/variants/song_text/editor-commit",
+            json={
+                "base_generation": "2026-07-01T00:00:00Z",
+                "editor_state_version": 1,
+                "deletions": [
+                    {"kind": "clip", "id": "s1"},
+                    {"kind": "clip", "id": "s2"},
+                ],
+            },
+        )
+
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        assert first_body["editor_state"] == "empty"
+        assert first_body["expected_duration_s"] == 0
+        assert first_body["draft"]["snapshot"]["editor_payload"]["sections"]["timeline_slots"] == []
+        first_text = first_body["draft"]["snapshot"]["editor_payload"]["sections"]["text_elements"]
+        assert [(row["id"], row["text"]) for row in first_text] == [("abc123", "Hello world")]
+        first_generation = first_body["generation"]
+        assert first_generation != "2026-07-01T00:00:00Z"
+        assert job.assembly_plan["variants"][0]["render_status"] == "draft"
+        regen.apply_async.assert_not_called()
+
+        second = client.post(
+            f"/plan-items/{item.id}/variants/song_text/editor-commit",
+            json={
+                "base_generation": first_generation,
+                "editor_state_version": 1,
+                "title": "Still empty",
+            },
+        )
+        second_generation = second.json()["generation"]
+        restored = client.post(
+            f"/plan-items/{item.id}/variants/song_text/editor-commit",
+            json={
+                "base_generation": second_generation,
+                "editor_state_version": 1,
+                "timeline_slots": [{"clip_index": 0, "in_s": 0, "duration_s": 1}],
+            },
+        )
+
+    assert second.status_code == 200, second.text
+    second_body = second.json()
+    assert second_body["editor_state"] == "empty"
+    assert second_body["generation"] != first_generation
+    saved = second_body["draft"]["snapshot"]["editor_payload"]["sections"]
+    assert saved["timeline_slots"] == []
+    assert [(row["id"], row["text"]) for row in saved["text_elements"]] == [
+        ("abc123", "Hello world")
+    ]
+    assert item.theme == "Still empty"
+    assert restored.status_code == 200, restored.text
+    variant = job.assembly_plan["variants"][0]
+    assert variant["editor_timeline_mode"] == "authored"
+    assert len(variant["user_timeline"]["slots"]) == 1
+    assert variant["user_timeline"]["slots"][0]["clip_index"] == 0
+    assert db.commit.await_count == 3
+    regen.apply_async.assert_called_once()
 
 
 def test_endpoint_media_motion_loads_asset_pool_without_visual_block_edit(
@@ -5096,6 +5253,35 @@ def test_media_overlays_flag_off_rejects_editor_section(monkeypatch):
     assert exc.value.status_code == 422
     assert "Media overlays are not available" in str(exc.value.detail)
     assert job.assembly_plan == before
+
+
+def test_flagged_off_lane_allows_only_the_exact_deletion_survivors(monkeypatch):
+    """A deletion exception cannot also add or alter a hidden SFX lane."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "sound_effects_enabled", False, raising=False)
+    first = {"id": "sfx-a", "src_gcs_path": "users/u/a.mp3", "at_s": 0.2, "gain": 1}
+    second = {"id": "sfx-b", "src_gcs_path": "users/u/b.mp3", "at_s": 1.2, "gain": 1}
+    job = _job(sound_effects=[first, second])
+
+    accepted = _commit_req(
+        editor_state_version=1,
+        deletions=[{"kind": "sound_effect", "id": "sfx-a"}],
+    )
+    gj.prepare_editor_commit(job, "song_text", accepted, user_id="u123")
+    assert job.assembly_plan["variants"][0]["sound_effects"] == [second]
+
+    job = _job(sound_effects=[first, second])
+    forged = _commit_req(
+        editor_state_version=1,
+        deletions=[{"kind": "sound_effect", "id": "sfx-a"}],
+        sound_effects=[{**second, "gain": 0.2}],
+    )
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(job, "song_text", forged, user_id="u123")
+    assert exc.value.status_code == 422
+    assert job.assembly_plan["variants"][0]["sound_effects"] == [first, second]
 
 
 # ── undo/redo blanket-dirty defense: ignore untouched empty-list echoes ────────
@@ -5458,6 +5644,38 @@ def test_track_swap_clears_lyric_overrides_even_if_stale_client_echoes_them(
     assert variant["lyric_line_overrides"] is None
     assert variant["lyric_overlay_snapshot"] is None
     assert [element["id"] for element in variant["text_elements"]] == ["intro"]
+
+
+def test_sequential_lyric_deletions_accumulate_and_never_reproject(monkeypatch) -> None:
+    _arm(monkeypatch)
+    monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", True)
+    snapshot = [
+        {"line_key": "L0", "text": "first line", "start_s": 0, "end_s": 1},
+        {"line_key": "L1", "text": "second line", "start_s": 1, "end_s": 2},
+    ]
+    job = _job(lyric_overlay_snapshot=snapshot)
+
+    first = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(editor_state_version=1, deletions=[{"kind": "lyric_line", "id": "L0"}]),
+    )
+    variant = job.assembly_plan["variants"][0]
+    assert variant["lyric_line_overrides"]["_suppressed_line_keys"] == ["L0"]
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        gj.EditorCommitRequest(
+            base_generation=first["generation"],
+            editor_state_version=1,
+            deletions=[{"kind": "lyric_line", "id": "lyric_L1"}],
+        ),
+    )
+    variant = job.assembly_plan["variants"][0]
+    assert variant["lyric_line_overrides"]["_suppressed_line_keys"] == ["L0", "L1"]
+    projected = gj._variants_for_response(job)[0]["text_elements"] or []
+    assert all(element.get("role") != "lyric_line" for element in projected)
 
 
 def _caps(job, variant_id: str) -> dict:
@@ -7969,3 +8187,121 @@ def test_narrated_device_variant_closes_the_text_lane(monkeypatch) -> None:
     assert cloud["text_elements"] is True  # or the clamp proves nothing
     assert device["text_elements"] is False
     assert device.keys() == cloud.keys()
+
+
+def test_endpoint_deletion_stale_generation_is_atomic(client: TestClient, monkeypatch) -> None:
+    _arm(monkeypatch)
+    user = _user()
+    job = _job()
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    response = client.post(
+        f"/plan-items/{item.id}/variants/song_text/editor-commit",
+        json={
+            "base_generation": "stale",
+            "editor_state_version": 1,
+            "deletions": [{"kind": "clip", "id": "slot-0"}],
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "baseline_conflict"
+    db.commit.assert_not_awaited()
+
+
+def test_endpoint_deletion_requires_native_editor_version(client: TestClient, monkeypatch) -> None:
+    _arm(monkeypatch)
+    user = _user()
+    job = _job()
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    response = client.post(
+        f"/plan-items/{item.id}/variants/song_text/editor-commit",
+        json={
+            "base_generation": "2026-07-01T00:00:00Z",
+            "deletions": [{"kind": "clip", "id": "slot-0"}],
+        },
+    )
+    assert response.status_code == 422
+    assert "editor_state_version=1" in response.json()["detail"]
+    db.commit.assert_not_awaited()
+
+
+def test_endpoint_empty_timeline_requires_deletion_intents_for_every_clip(
+    client: TestClient, monkeypatch
+) -> None:
+    _arm(monkeypatch)
+    user = _user()
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch(REGEN) as regen:
+        regen.apply_async = MagicMock()
+        response = client.post(
+            f"/plan-items/{item.id}/variants/song_text/editor-commit",
+            json={
+                "base_generation": "2026-07-01T00:00:00Z",
+                "editor_state_version": 1,
+                "timeline_slots": [],
+                "deletions": [{"kind": "clip", "id": "s1"}],
+            },
+        )
+
+    assert response.status_code == 422
+    assert (
+        response.json()["detail"] == "explicit deletion intents are required for every active clip"
+    )
+    assert job.assembly_plan == before
+    db.commit.assert_not_awaited()
+    regen.apply_async.assert_not_called()
+
+
+def test_endpoint_first_device_restore_checks_staged_source_before_commit(client, monkeypatch):
+    from app.routes import plan_items as routes
+    from app.services.phone_editor import _StagedJob
+
+    _arm(monkeypatch)
+    user = _user()
+    job = _job(render_destination="device", editor_state="empty")
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    async def attach(_db, _job):
+        _job._saved_editor_drafts = {}
+
+    def staged(_job, _variant_id, _body):
+        copy_job = _StagedJob(_job)
+        copy_job.assembly_plan["variants"][0].update(editor_timeline_mode="authored")
+        return copy_job
+
+    async def guard(_db, *, job, variant, used_media_ids):
+        assert variant["editor_timeline_mode"] == "authored"
+        assert used_media_ids == {"source-0"}
+        raise HTTPException(422, detail="stale source")
+
+    monkeypatch.setattr(routes, "attach_saved_editor_drafts", attach)
+    monkeypatch.setattr(routes, "stage_saved_draft_baseline", staged)
+    monkeypatch.setattr(
+        "app.services.phone_editor_sources.phone_editor_source_revision",
+        lambda *_: {"sources": [{"media_id": "source-0"}]},
+    )
+    monkeypatch.setattr("app.routes.editor_sources.validate_editor_sources", guard)
+    response = client.post(
+        f"/plan-items/{item.id}/variants/song_text/editor-commit",
+        json={
+            "base_generation": "2026-07-01T00:00:00Z",
+            "editor_state_version": 1,
+            "timeline_slots": [{"clip_index": 0, "in_s": 0, "duration_s": 1}],
+        },
+    )
+    assert response.status_code == 422 and response.json()["detail"] == "stale source"
+    db.commit.assert_not_awaited()

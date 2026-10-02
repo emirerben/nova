@@ -36,6 +36,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Job
+from app.services.cloud_render_policy import (
+    block_cloud_render_before_publish,
+    block_cloud_render_before_publish_sync,
+)
 
 log = structlog.get_logger()
 
@@ -188,6 +192,13 @@ async def enqueue_orchestrator(
     task_id = str(job_id)
     job_uuid = job_id if isinstance(job_id, uuid.UUID) else uuid.UUID(task_id)
 
+    if await block_cloud_render_before_publish(
+        db,
+        job_uuid,
+        task_name=task.name,
+    ):
+        return task_id
+
     try:
         current_status = (
             await db.execute(select(Job.status).where(Job.id == job_uuid))
@@ -266,6 +277,9 @@ def enqueue_orchestrator_sync(
     job_uuid = job_id if isinstance(job_id, uuid.UUID) else uuid.UUID(task_id)
     from app.database import sync_session  # noqa: PLC0415
 
+    if block_cloud_render_before_publish_sync(job_uuid, task_name=task.name):
+        return task_id
+
     try:
         with sync_session() as db:
             current_status = db.execute(
@@ -329,6 +343,9 @@ def claim_and_enqueue_orchestrator_sync(
     task_id = str(job_id)
     job_uuid = job_id if isinstance(job_id, uuid.UUID) else uuid.UUID(task_id)
     from app.database import sync_session  # noqa: PLC0415
+
+    if block_cloud_render_before_publish_sync(job_uuid, task_name=task.name):
+        return False
 
     with sync_session() as db:
         claimed = db.execute(

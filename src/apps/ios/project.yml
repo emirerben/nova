@@ -121,6 +121,8 @@ targets:
       - path: Tests/KriaTests
       - path: Tests/Fixtures/editor-commit-picker-contract.json
         buildPhase: resources
+      - path: Tests/Fixtures/guided_label_rebase_vectors.json
+        buildPhase: resources
     dependencies:
       - target: Kria
     settings:

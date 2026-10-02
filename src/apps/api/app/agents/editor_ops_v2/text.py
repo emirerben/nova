@@ -6,6 +6,7 @@ Selector ops that change many texts in one turn:
     patch_text{selector, patch}
     remove_texts{selector}
     set_texts_timing{selector, start_s?, end_s?, shift_s?}
+    realign_labels{selector?}   (server-computed windows; the model supplies no time)
 
 plus an extension of the existing ``add_text`` (style_from / patch / position /
 animation_phases / clip_id). The parser half lives here; the compile half and the
@@ -233,6 +234,67 @@ def _coerce_set_texts_timing(name: str, payload: dict, snapshot: dict, state: An
     return {**out, "selector": selector, "target_ids": matched, "expected_count": len(matched)}
 
 
+def _coerce_realign_labels(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
+    """``realign_labels``: the SERVER computes every time; the model supplies none.
+
+    Optional ``selector`` limits which labels (default: all clip labels). The op
+    carries only the labels that are actually off, so "nothing to do" is an
+    honest clarification-style answer instead of a silent no-op.
+    """
+    from app.services.kria_editor_ops_text import (  # noqa: PLC0415
+        bars_from_snapshot,
+        classify,
+        normalize_selector,
+        plan_label_realign,
+        resolve_selector,
+    )
+
+    raw = payload.get("selector")
+    selector = {"group": "labels"} if raw is None else normalize_selector(raw, snapshot)
+    if selector is None:
+        state.invalid_value()
+        return None
+    bars = bars_from_snapshot(snapshot)
+    kinds = classify(bars)
+    ids = [bar_id for bar_id in resolve_selector(bars, selector) if kinds.get(bar_id) == "label"]
+    if not ids:
+        _clarify(state, "There are no clip labels on this video to realign.")
+        return None
+    rows = {
+        str(row["id"]): row
+        for row in snapshot.get("text_bars") or []
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    labels = [
+        {
+            "id": bar_id,
+            "media_id": rows[bar_id].get("clip_id"),
+            "segment_id": rows[bar_id].get("segment_id"),
+            "start_s": rows[bar_id].get("start_s"),
+            "end_s": rows[bar_id].get("end_s"),
+        }
+        for bar_id in ids
+        if bar_id in rows and rows[bar_id].get("clip_id")
+    ]
+    slots = [
+        slot
+        for slot in snapshot.get("slots") or []
+        if isinstance(slot, dict) and not slot.get("removed")
+    ]
+    plan = plan_label_realign(labels, slots)
+    if not plan:
+        _clarify(
+            state,
+            "The labels already line up with their clips, so I left them as they are.",
+        )
+        return None
+    return {
+        "selector": selector,
+        "target_ids": [item["id"] for item in plan],
+        "expected_count": len(plan),
+    }
+
+
 def coerce_add_text_extras(out: dict, snapshot: dict, state: Any) -> dict | None:
     """Validate the v2 fields of ``add_text``; on a non-v2 snapshot they are ignored."""
     result = {key: value for key, value in out.items() if key not in ADD_TEXT_EXTRAS}
@@ -313,6 +375,12 @@ SPECS: list[OpSpec] = [
         family=_FAMILY,
         coerce=_coerce_set_texts_timing,
     ),
+    OpSpec(
+        name="realign_labels",
+        fields=frozenset({"selector"}),
+        family=_FAMILY,
+        coerce=_coerce_realign_labels,
+    ),
     # Extension of the existing op (no coerce): the extras are validated by
     # `coerce_add_text_extras`, called from edit_copilot._coerce_payload.
     OpSpec(name="add_text", fields=frozenset(ADD_TEXT_EXTRAS)),
@@ -327,3 +395,4 @@ def register_handlers() -> None:
     ops.register_handler("patch_text", text.op_patch_text)
     ops.register_handler("remove_texts", text.op_remove_texts)
     ops.register_handler("set_texts_timing", text.op_set_texts_timing)
+    ops.register_handler("realign_labels", text.op_realign_labels)

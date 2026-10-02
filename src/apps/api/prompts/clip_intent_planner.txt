@@ -10,10 +10,26 @@ Latest creator message (a later explicit correction overrides an earlier
 conflicting operation; an unrelated clarification preserves earlier operations):
 $latest_user_message
 
+Non-authoritative generated Creative Brief (use only to remember an operation
+that Creator request or Latest creator message independently supports; never
+copy wording from this section into source_quote):
+$generated_brief
+
 Non-authoritative candidate hints from another planner (use only to remember an
 operation that the creator text itself supports; never copy a hint that lacks
 creator wording):
 $candidate_intents
+
+The generated Creative Brief may contain labels such as `[order/global]`.
+Those labels and paraphrases are not creator wording. Use Creator request and
+Latest creator message to verify that the creator actually requested the
+operation; a generated label or candidate hint cannot turn descriptive context
+into an instruction.
+
+A later message cancels an earlier operation only when it explicitly corrects
+or removes that operation. A membership clarification preserves the operation:
+`Label each sport and group the pub clips` followed by `Use the selected clips
+for the pub chapter` still contains both the sport label and pub group requests.
 
 Return every distinct requested operation as one of:
 - label: a factual label. By default label_source is "clip" and its value is
@@ -25,14 +41,52 @@ Return every distinct requested operation as one of:
 - group: chapter/membership grouping
 - order: membership moved first or last$order_by_note
 - include: membership explicitly included
-- caption: one chapter caption. If the creator supplied exact caption words,
-  put those exact words in creator_text. Otherwise caption_attribute says what
-  the later resolver may author from footage.
+- caption: one chapter caption. `attribute` ALWAYS names the target clips or
+  chapter. If the creator supplied exact caption words, put those exact words
+  in `creator_text` and leave `caption_attribute` null. Otherwise leave
+  `creator_text` null and use `caption_attribute` only for the factual TOPIC the
+  later resolver may author from footage -- never for the target chapter.
 
 Keep separate operations even when they refer to the same clips, such as a city
 group, city labels, and activity labels. Do not use any category allowlist.
 Pure style, timing, transitions, titles, music, or duration requests produce an
 empty intents list.
+
+A general request to caption or subtitle the video, such as "add captions",
+"add subtitles", "turn on captions", or "altyazı ekle", is not a clip operation:
+it asks for captions of what is said, which another step handles. When it names
+no clips and gives no caption words, return no intent for it and do not ask
+about it. A caption intent is only for one chapter the creator named or
+described ("the pub chapter", "clips showing ingredients").
+
+A description of the whole video's subject, place, or occasion ("a fun montage
+of our Barcelona weekend", "my Rome trip video") is context, not an operation:
+never turn it into a label, group, or caption. An operation needs the creator
+to ask for something to be done with clips: label, group, order, include, or
+caption them.
+
+Descriptions of multiple subsets, travel, activities, or chronology are also
+context unless the creator asks the edit to act on them. For example, "I took
+the sunset pictures walking to the bus and the night ones cycling home; come up
+with creative ideas" asks for creative direction, not a sunset/night group or
+order. An order intent requires an explicit arrangement request such as "put",
+"order", "arrange", "move", "start/end the edit with", or "use them in the
+order I filmed them". Observations such as "from A to B", "sunset then night",
+or "walking there and cycling home" do not become order intents by themselves.
+Return an empty intents list with a null question for contextual descriptions;
+do not ask the creator to restate them.
+
+The same descriptive subset IS an operation when an explicit command governs
+it: `say "Kitchen notes" on clips showing ingredients` is a caption request,
+and its required `attribute` is `clips showing ingredients`. Every intent must
+have a non-empty `attribute`. In particular, a caption's `attribute` is always
+the clips/chapter it applies to, even when `creator_text` supplies exact copy;
+never return a null attribute.
+
+For `label`, `attribute` instead names WHAT factual value to label, not the
+membership phrase. `label each city` has attribute `city`; `label the activity
+in each clip` has attribute `activity`. Keep both as separate intents and never
+collapse them into duplicate `each clip` attributes.
 
 A group can only express named or otherwise described membership, such as
 "group the Paris clips". Do not encode a dynamic partition such as "group by
@@ -46,7 +100,8 @@ Every intent must contain:
   narration label); transcript_kind is required only for label_source
   "transcript" and must be participant, score, or topic
 - source_quote: an EXACT contiguous substring copied from Creator request or
-  Latest creator message that supports this operation
+  Latest creator message that supports this operation. Generated Creative Brief
+  and candidate-hint wording is never valid provenance.
 - creator_text only when it is exact creator-written on-screen caption copy;
   never author it yourself.
 
@@ -56,4 +111,4 @@ question. Do not ask because a factual answer is unknown; the resolver handles
 that. Never return a subset.
 
 Return only JSON:
-{"intents":[{"intent_id":"...","op":"label|group|order|include|caption","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null,"source_quote":"exact creator quote"}],"question":null}
+{"intents":[{"intent_id":"...","op":"label|group|order|include|caption","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null$order_by_field,"source_quote":"exact creator quote"}],"question":null}

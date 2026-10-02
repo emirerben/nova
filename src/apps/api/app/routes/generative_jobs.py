@@ -37,7 +37,7 @@ from typing import Any, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +50,7 @@ from app.agents._schemas.visual_block import VisualBlock
 from app.auth import CurrentUser, CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
+from app.kria.draft_schemas import DraftSnapshotOut
 from app.kria.media_sources import OriginalMediaDescriptor
 from app.limiter import limiter
 from app.models import (
@@ -86,12 +87,19 @@ from app.schemas.guided_edit_revision import (
     validate_guided_revision_lane_identities,
 )
 from app.schemas.montage_preset import MASONRY_MONTAGE_PRESET, is_collage_montage_preset
+from app.services.cloud_render_policy import cloud_render_mutation_block_reason
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
     PlanPersonaOwnershipError,
     load_owned_plan_persona,
 )
 from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
+from app.services.editor_deletions import (
+    EditorDeletion,
+    EditorDeletionError,
+    apply_editor_deletions,
+    canonical_caption_rows,
+)
 from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS
 from app.services.generative_upload_paths import (
     DIRECT_VOICEOVER_PREFIX,
@@ -340,6 +348,7 @@ class AddClipResponse(BaseModel):
     job_id: str
     clip_index: int
     kind: Literal["video", "image"]
+    variant_clip_indices: dict[str, int] = Field(default_factory=dict)
 
 
 async def validate_direct_uploads(
@@ -1087,6 +1096,8 @@ class NativeEditorAssetOut(BaseModel):
 
 
 class TimelineResponse(BaseModel):
+    editor_state: Literal["renderable", "empty"] = "renderable"
+    draft: DraftSnapshotOut | None = None
     native_assets: list[NativeEditorAssetOut] = Field(default_factory=list)
     editable: bool
     reason: str | None = None
@@ -1247,6 +1258,18 @@ class EditorCommitRequest(BaseModel):
     guided_revision: dict[str, Any] | None = None
     guided_revision_number: int | None = Field(default=None, ge=1)
     retry_guided_revision: bool = False
+    # Additive wire-version marker. Missing is the legacy client contract;
+    # version 1 enables explicit deletion intents without overloading [] (which
+    # older clients use for untouched, feature-gated lanes).
+    editor_state_version: int | None = Field(default=None, ge=1)
+    deletions: list[EditorDeletionRequest] = Field(default_factory=list, max_length=100)
+    _lyric_line_suppressions: list[str] | None = PrivateAttr(default=None)
+    _deleted_kinds: frozenset[str] = PrivateAttr(default_factory=frozenset)
+    # The normalized, baseline-derived survivor lanes are deliberately private.
+    # They fence removal-only writes while a feature gate is off: a client may
+    # delete a row it can no longer render, but may not smuggle an edit or a
+    # new row through that exception.
+    _deletion_survivors: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     @field_validator("timeline_slots")
     @classmethod
@@ -1258,6 +1281,229 @@ class EditorCommitRequest(BaseModel):
         if v is not None and len(v) > _TIMELINE_MAX_SLOTS * 2:
             raise ValueError(f"Maximum {_TIMELINE_MAX_SLOTS * 2} timeline rows allowed")
         return v
+
+
+class EditorDeletionRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    kind: Literal[
+        "clip",
+        "text",
+        "caption_cue",
+        "music",
+        "sound_effect",
+        "media_overlay",
+        "visual_block",
+        "motion_scene",
+        "camera_effect",
+        "carousel",
+        "lyric_line",
+    ]
+    id: str = Field(min_length=1, max_length=200)
+
+
+# Resolve the forward reference on import, including OpenAPI generation.
+EditorCommitRequest.model_rebuild()
+
+
+def editor_deletion_timeline(job: Job, variant: dict) -> list[dict]:
+    """Server-owned IDs matching the native editor's visible visual placements."""
+    if variant.get("editor_state") == "empty":
+        return []
+    timeline = variant.get("user_timeline")
+    if isinstance(timeline, dict) and isinstance(timeline.get("slots"), list):
+        return copy.deepcopy(timeline["slots"])
+    if variant.get("resolved_archetype") == "guided_story":
+        revision = _guided_v2_revision(job, variant)
+        if revision is not None:
+            segment_layout, _ = _guided_v2_layouts(job, variant)
+            return _guided_v2_slot_rows(revision, segment_layout)
+    rows = (variant.get("ai_timeline") or {}).get("slots") or []
+    if rows:
+        return copy.deepcopy(rows)
+    if (
+        variant.get("resolved_archetype") == "talking_head"
+        and variant.get("render_destination") != "device"
+        and variant.get("base_video_path")
+    ):
+        return [
+            {
+                "slot_id": "native-composite-base",
+                "clip_index": 0,
+                "in_s": 0.0,
+                "duration_s": float(variant.get("duration_s") or 0),
+                "removed": False,
+            }
+        ]
+    if (
+        variant.get("resolved_archetype") != "subtitled"
+        or variant.get("render_destination") != "device"
+    ):
+        return []
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+
+    paths = (job.all_candidates or {}).get("clip_paths") or []
+    if len(paths) != 1:
+        return []
+    bindings = [
+        PhoneSourceBinding.model_validate(row)
+        for row in (job.assembly_plan or {}).get(PHONE_SOURCES_FIELD) or []
+        if isinstance(row, dict) and row.get("proxy_path") == paths[0]
+    ]
+    if len(bindings) != 1:
+        return []
+    duration = bindings[0].original.duration_s
+    removed = sorted(
+        (float(row["start_s"]), float(row["end_s"]))
+        for row in (variant.get("silence_cut") or {}).get("removed") or []
+        if isinstance(row, dict)
+        and row.get("start_s") is not None
+        and row.get("end_s") is not None
+        and math.isfinite(float(row["start_s"]))
+        and math.isfinite(float(row["end_s"]))
+        and float(row["end_s"]) > float(row["start_s"])
+    )
+    cursor = 0.0
+    kept = []
+    for start, end in removed:
+        start, end = min(max(start, 0), duration), min(max(end, 0), duration)
+        if start - cursor > 0.001:
+            kept.append((cursor, start))
+        cursor = max(cursor, end)
+    if duration - cursor > 0.001:
+        kept.append((cursor, duration))
+    return [
+        {
+            "slot_id": "native-phone-talking-source" + (f"-{index}" if index else ""),
+            "clip_index": 0,
+            "in_s": start,
+            "duration_s": end - start,
+            "removed": False,
+            "source_gcs_path": paths[0],
+            "source_duration_s": duration,
+            "transition_after": "cut",
+        }
+        for index, (start, end) in enumerate(kept)
+    ]
+
+
+def normalize_editor_deletion_request(
+    job: Job, variant_id: str, body: EditorCommitRequest
+) -> EditorCommitRequest:
+    """Materialize explicit tombstones into complete commit lanes.
+
+    This is intentionally idempotent: callers can retain ``deletions`` while
+    passing the normalized body to another layer without re-filtering rows.
+    It does not validate ownership or additions; ordinary commit validators do
+    that after this narrow baseline-derived removal step.
+    """
+    if not body.deletions:
+        return body
+    if body.editor_state_version != 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="editor_state_version=1 is required for deletions",
+        )
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    baseline_timeline = editor_deletion_timeline(job, variant)
+    # Deletions use what the native editor actually displayed, including lazy
+    # generated text and stable IDs synthesized for legacy caption rows.
+    baseline_sections = {
+        "timeline_slots": baseline_timeline,
+        "text_elements": merge_projected_text_elements_for_variant(
+            variant, include_lyric_projection=_LYRICS_EDITOR_ENABLED
+        )
+        or [],
+        "caption_cues": canonical_caption_rows(variant.get("caption_cues")),
+        "sound_effects": variant.get("sound_effects") or [],
+        "media_overlays": variant.get("media_overlays") or [],
+        "visual_blocks": variant.get("visual_blocks") or [],
+        "motion_scenes": variant.get("motion_scenes") or [],
+        "camera_effects": variant.get("camera_effects") or [],
+    }
+    sections = {
+        "text_elements": body.text_elements,
+        "caption_cues": body.caption_cues,
+        "timeline_slots": [slot.model_dump(exclude_none=True) for slot in body.timeline_slots]
+        if body.timeline_slots is not None
+        else None,
+        "sound_effects": body.sound_effects,
+        "media_overlays": body.media_overlays,
+        "visual_blocks": [block.model_dump(exclude_none=True) for block in body.visual_blocks]
+        if body.visual_blocks is not None
+        else None,
+        "motion_scenes": body.motion_scenes,
+        "camera_effects": body.camera_effects,
+    }
+    try:
+        result = apply_editor_deletions(
+            variant,
+            deletions=[EditorDeletion(item.kind, item.id) for item in body.deletions],
+            sections=sections,
+            baseline_sections=baseline_sections,
+        )
+    except EditorDeletionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="deletion_target_stale"
+        ) from exc
+    # Re-run solely from the canonical projection.  ``result`` intentionally
+    # preserves a supplied complete lane, which is necessary for normal
+    # feature-on saves that delete one row while editing another.  A feature
+    # gate, however, permits only the exact canonical survivors below.
+    canonical_result = apply_editor_deletions(
+        variant,
+        deletions=[EditorDeletion(item.kind, item.id) for item in body.deletions],
+        sections={},
+        baseline_sections=baseline_sections,
+    )
+    values = result.sections
+    updates: dict[str, Any] = {
+        key: values[key]
+        for key in (
+            "text_elements",
+            "caption_cues",
+            "sound_effects",
+            "media_overlays",
+            "motion_scenes",
+            "camera_effects",
+        )
+        if key in values and values[key] is not None
+    }
+    if values.get("visual_blocks") is not None:
+        updates["visual_blocks"] = [
+            VisualBlock.model_validate(row) for row in values["visual_blocks"]
+        ]
+    if values.get("timeline_slots") is not None:
+        updates["timeline_slots"] = [
+            TimelineSlotEdit.model_validate(row) for row in values["timeline_slots"]
+        ]
+    if values.get("remove_music"):
+        updates["remove_music"] = True
+    if values.get("carousel_moment_touched"):
+        updates["carousel_moment"] = None
+    # The suppression list is server-owned and is staged separately below; keep
+    # it private rather than adding an editable wire field.
+    updates["deletions"] = []  # normalized requests are safe to pass through twice
+    normalized = body.model_copy(update=updates)
+    normalized._lyric_line_suppressions = values.get("lyric_line_suppressions")
+    normalized._deleted_kinds = result.deleted_kinds
+    normalized._deletion_survivors = canonical_result.sections
+    return normalized
+
+
+def _is_exact_deletion_survivor(payload: EditorCommitRequest, lane: str, submitted: object) -> bool:
+    """Whether a gated lane contains precisely its server-derived survivors."""
+    expected = payload._deletion_survivors.get(lane)
+    if expected is None:
+        return False
+    if isinstance(submitted, list):
+        submitted = [
+            row.model_dump(exclude_none=True) if isinstance(row, BaseModel) else row
+            for row in submitted
+        ]
+    return submitted == expected
 
 
 class EditorCommitSections(BaseModel):
@@ -1280,6 +1526,8 @@ class EditorCommitSections(BaseModel):
 
 
 class EditorCommitResponse(BaseModel):
+    editor_state: Literal["renderable", "empty"] = "renderable"
+    draft: DraftSnapshotOut | None = None
     ok: bool
     generation: str
     sections: EditorCommitSections
@@ -1729,7 +1977,10 @@ def _guided_text_state_for_response(
     also persisted the renderer lane cannot surface or submit a label twice.
     """
 
-    if variant.get("resolved_archetype") != "guided_story":
+    if (
+        variant.get("resolved_archetype") != "guided_story"
+        or variant.get("editor_timeline_mode") == "authored"
+    ):
         return None
     from app.config import settings as _settings  # noqa: PLC0415
 
@@ -1923,6 +2174,22 @@ def _variants_for_response(job: Job) -> list[dict]:
     public_plan = projection.value
     public_variants = public_plan.get("variants") if isinstance(public_plan, dict) else None
     for v in public_variants if isinstance(public_variants, list) else []:
+        if v.get("editor_state") == "empty":
+            from app.services.editor_empty_drafts import (
+                public_empty_editor_variant,  # noqa: PLC0415
+            )
+
+            empty = public_empty_editor_variant(job, v)
+            empty["editor_capabilities"] = _editor_capabilities(job, v)
+            if v.get("render_destination") == "device":
+                from app.services.phone_editor_sources import (
+                    phone_editor_source_revision,  # noqa: PLC0415
+                )
+
+                revision = phone_editor_source_revision(job, v)
+                empty["editor_revision_number"] = (revision or {}).get("revision_number")
+            out.append(empty)
+            continue
         if v.get("music_playback_mode") == "reference_only":
             # Reference-only songs never have a server audio asset. Prevent
             # stale legacy fields from exposing or signing an old preview.
@@ -2267,7 +2534,7 @@ def _variants_for_response(job: Job) -> list[dict]:
         # TextElement overlay (plan-item-timeline feature).  Surfaced when the
         # kill switch is on so the FE can populate its timeline editor from the
         # persisted state (both the AI-snapshot and user-authored lists).
-        if _TEXT_ELEMENTS_ENABLED:
+        if _TEXT_ELEMENTS_ENABLED and v.get("editor_timeline_mode") != "authored":
             guided_text_state = _guided_text_state_for_response(job, v)
             if guided_text_state is not None:
                 text_elements, label_elements, label_receipt = guided_text_state
@@ -2324,6 +2591,13 @@ def _variants_for_response(job: Job) -> list[dict]:
             "speech_cut_revision": cut_revision(v),
             "editor_capabilities": _editor_capabilities(job, v),
         }
+        if v.get("editor_timeline_mode") == "authored" and v.get("render_destination") == "device":
+            from app.services.phone_editor_sources import (
+                phone_editor_source_revision,  # noqa: PLC0415
+            )
+
+            source_revision = phone_editor_source_revision(job, v) or {}
+            v["editor_revision_number"] = source_revision.get("revision_number")
         out.append(v)
     return project_public_assembly_plan(out)
 
@@ -2481,6 +2755,47 @@ _SLIDE_POST_EDIT_ERROR = {
     "message": "Edit the slide order, cover, or caption in the slides panel instead.",
 }
 
+_DEVICE_RENDER_UNSUPPORTED_ERROR = {
+    "code": "device_render_unsupported",
+    "message": (
+        "This project cannot render entirely on this iPhone. Its existing video is unchanged."
+    ),
+}
+_CLOUD_RENDER_DISABLED_ERROR = {
+    "code": "cloud_render_disabled",
+    "message": "Server video rendering is disabled. The existing video is unchanged.",
+}
+
+
+def _require_render_affecting_mutation_allowed(
+    job: Job, variant: dict, *, allow_authored: bool = False
+) -> None:
+    """Reject a cloud replacement before any variant state is changed."""
+
+    if variant.get("editor_state") == "empty" or (
+        variant.get("editor_timeline_mode") == "authored" and not allow_authored
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="editor_draft_requires_supported_client",
+        )
+
+    reason = cloud_render_mutation_block_reason(job, variant=variant)
+    if reason is None:
+        return
+    raise HTTPException(
+        status_code=(
+            status.HTTP_422_UNPROCESSABLE_ENTITY
+            if reason == "device_render_unsupported"
+            else status.HTTP_503_SERVICE_UNAVAILABLE
+        ),
+        detail=(
+            _DEVICE_RENDER_UNSUPPORTED_ERROR
+            if reason == "device_render_unsupported"
+            else _CLOUD_RENDER_DISABLED_ERROR
+        ),
+    )
+
 
 def _assert_variant_generation_editable_or_409(job: Job, variant_id: str) -> None:
     """Map the private generation barrier onto the stable public route error."""
@@ -2513,6 +2828,11 @@ def require_editable_variant(job: Job, variant_id: str, *, allow_guided_text: bo
             status_code=status.HTTP_409_CONFLICT,
             detail="Cancelled videos cannot be edited.",
         )
+    _assert_variant_generation_editable_or_409(job, variant_id)
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    _require_render_affecting_mutation_allowed(job, variant)
     from app.kria.media_sources import require_cloud_render_job  # noqa: PLC0415
 
     try:
@@ -2522,10 +2842,6 @@ def require_editable_variant(job: Job, variant_id: str, *, allow_guided_text: bo
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "phone_editor_required"},
         ) from exc
-    _assert_variant_generation_editable_or_409(job, variant_id)
-    variant = _find_variant(job, variant_id)
-    if variant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
     if variant.get("render_status") == "rendering" or variant.get("speech_cut_in_flight"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
@@ -2733,6 +3049,7 @@ def _require_slides_variant(job: Job, variant_id: str) -> dict:
     variant = _find_variant(job, variant_id)
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    _require_render_affecting_mutation_allowed(job, variant)
     if variant.get("render_status") == "rendering":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
@@ -2820,6 +3137,7 @@ class CaptionCue(BaseModel):
     # carrying the full line (O(tokens²) chars per cue) — an unbounded text field
     # would let one captions PATCH build a multi-GB ASS on the worker. Cues are
     # ≤ ~14 words by construction, so 600 chars is generous.
+    id: str | None = Field(default=None, max_length=160)
     text: str = Field(max_length=600)
     start_s: float
     end_s: float
@@ -5851,6 +6169,8 @@ def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
 
     if not settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
         return "disabled"
+    if variant.get("editor_timeline_mode") == "authored":
+        return None
     vid = str(variant.get("variant_id") or "")
     if (vid == "song_lyrics" or variant.get("text_mode") == "lyrics") and variant.get(
         "lyrics_baked"
@@ -6388,6 +6708,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
 
 def _phone_editor_media_available(job: Job, variant: dict) -> bool:
     from app.config import settings
+    from app.services.phone_editor_sources import authored_phone_sources_available
+
+    if authored_phone_sources_available(job, variant):
+        return True
 
     return bool(
         settings.phone_editor_media_enabled
@@ -6501,7 +6825,7 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
             "caption_meta": caption_meta_capability,
         }
 
-    if archetype == "guided_story":
+    if archetype == "guided_story" and variant.get("editor_timeline_mode") != "authored":
         # A guided story is an approved, immutable editorial plan. Until an
         # operation has a story-native implementation, advertising the legacy
         # montage control is worse than hiding it: the async worker must reject
@@ -7133,6 +7457,95 @@ def dispatch_get_timeline(
     image_preview_paths: dict[str, str] | None = None,
     sign_url: Callable[[str, int], str] | None = None,
 ) -> dict:
+    """Keep the authorized source pool while projecting the saved visual state."""
+    timeline = _dispatch_rendered_timeline(
+        job, variant_id, image_preview_paths=image_preview_paths, sign_url=sign_url
+    )
+    variant = _find_variant(job, variant_id)
+    if (
+        variant
+        and variant.get("render_destination") == "device"
+        and (
+            variant.get("editor_state") == "empty"
+            or variant.get("editor_timeline_mode") == "authored"
+        )
+    ):
+        from app.services.phone_editor_sources import phone_editor_source_revision  # noqa: PLC0415
+
+        projection = project_public_assembly_plan_with_metadata(job.assembly_plan)
+        if (
+            variant_id not in projection.media_unavailable_variant_ids
+            and variant_id not in projection.masked_last_good_variant_ids
+        ):
+            revision = phone_editor_source_revision(job, variant) or {}
+            used = {
+                row.get("clip_index")
+                for row in timeline.get("slots") or []
+                if not row.get("removed")
+            }
+            timeline["clips"] = [
+                {
+                    "clip_index": index,
+                    "native_source": _native_timeline_source(
+                        job,
+                        source["gcs_path"],
+                        source["media_id"],
+                        sign_url=sign_url,
+                        variant=variant,
+                    ),
+                    "duration_s": source.get("duration_s"),
+                    "media_id": source["media_id"],
+                    "generation": source.get("generation"),
+                    "kind": source.get("kind"),
+                    "used": index in used,
+                }
+                for index, source in enumerate(revision.get("sources") or [])
+            ]
+            timeline["revision_number"] = revision.get("revision_number")
+    if (
+        variant
+        and variant.get("render_destination") != "device"
+        and (
+            variant.get("editor_state") == "empty"
+            or variant.get("editor_timeline_mode") == "authored"
+        )
+    ):
+        from app.services.authored_editor import authored_cloud_timeline_clips
+
+        projection = project_public_assembly_plan_with_metadata(job.assembly_plan)
+        if (
+            variant_id not in projection.media_unavailable_variant_ids
+            and variant_id not in projection.masked_last_good_variant_ids
+        ):
+            timeline["clips"] = authored_cloud_timeline_clips(
+                job,
+                variant,
+                sign_url=sign_url or _timeline_url_signer(),
+                image_preview_paths=image_preview_paths,
+            )
+    if variant and variant.get("editor_state") == "empty":
+        from app.services.editor_empty_drafts import saved_editor_draft  # noqa: PLC0415
+
+        draft = saved_editor_draft(job, variant_id)
+        timeline.update(
+            slots=[],
+            beat_grid=[],
+            total_duration_s=0.0,
+            has_user_edits=True,
+            editor_state="empty",
+            draft=draft.model_dump(mode="json"),
+            base_generation=variant_render_baseline(variant),
+        )
+    return timeline
+
+
+def _dispatch_rendered_timeline(
+    job: Job,
+    variant_id: str,
+    *,
+    image_preview_paths: dict[str, str] | None = None,
+    sign_url: Callable[[str, int], str] | None = None,
+) -> dict:
     """Effective timeline (user_timeline if present, else ai_timeline) + clip pool.
 
     Read-only and side-effect free; never raises for an ineligible variant — it
@@ -7172,6 +7585,7 @@ def dispatch_get_timeline(
         }
     if (
         variant_id not in projection.masked_last_good_variant_ids
+        and variant.get("editor_timeline_mode") != "authored"
         and variant.get("resolved_archetype") == "guided_story"
         and (
             getattr(settings, "guided_story_editor_v2_enabled", False)
@@ -7870,6 +8284,18 @@ def resolve_timeline_slots_for_edit(
     ceiling checks, and a hard existence check on every durable source. Raises
     HTTPException on any violation; never writes.
     """
+    if variant.get("editor_timeline_mode") == "authored":
+        from app.services.authored_editor import (  # noqa: PLC0415
+            resolve_authored_cloud_slots,
+            resolve_authored_phone_slots,
+        )
+
+        resolver = (
+            resolve_authored_phone_slots
+            if variant.get("render_destination") == "device"
+            else resolve_authored_cloud_slots
+        )
+        return resolver(job, variant, slots)
     reason = _timeline_ineligibility(job, variant)
     if reason is not None:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, reason)
@@ -8866,6 +9292,8 @@ def require_guided_story_editor_commit(
         or payload.mix is not None
     ):
         raise HTTPException(status_code=422, detail="song_added_when_posting")
+    if variant.get("editor_timeline_mode") == "authored":
+        return
     if getattr(settings, "guided_story_editor_v2_enabled", False):
         # V2 accepts the conventional Save sections and atomically projects
         # them into the revision. Captions/lyrics/speech cuts/intro/carousel
@@ -8979,6 +9407,10 @@ def prepare_editor_commit(
         speech_cut_owner=speech_cut_owner,
     )
     variant = _find_variant(job, variant_id)
+    if variant is not None:
+        _require_render_affecting_mutation_allowed(
+            job, variant, allow_authored=payload.editor_state_version == 1
+        )
     if variant is not None and variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit  # noqa: PLC0415
         from app.services.phone_editor_sources import editor_sources_for_variant
@@ -9065,10 +9497,13 @@ def _prepare_editor_commit(
     variant = _find_variant(job, variant_id)
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    payload = normalize_editor_deletion_request(job, variant_id, payload)
     require_guided_story_editor_commit(job, variant_id, payload)
 
-    guided_v2 = variant.get("resolved_archetype") == "guided_story" and getattr(
-        settings, "guided_story_editor_v2_enabled", False
+    guided_v2 = (
+        variant.get("resolved_archetype") == "guided_story"
+        and variant.get("editor_timeline_mode") != "authored"
+        and getattr(settings, "guided_story_editor_v2_enabled", False)
     )
 
     if guided_v2 and payload.retry_guided_revision:
@@ -9225,6 +9660,10 @@ def _prepare_editor_commit(
     if payload.text_elements is not None:
         from app.config import settings as _settings_text  # noqa: PLC0415
 
+        lyric_deletion_only = (
+            "lyric_line" in payload._deleted_kinds
+            and _is_exact_deletion_survivor(payload, "text_elements", payload.text_elements)
+        )
         # OV-1 (plan 010): the API half of the dual text-elements gate —
         # `_text_elements_allowed` is the same predicate `_editor_capabilities`
         # derives `text_elements` from (lyrics/flag-off are 422/404 in
@@ -9234,7 +9673,17 @@ def _prepare_editor_commit(
             and payload.visual_blocks is not None
             and all(element.get("visual_block_id") for element in payload.text_elements)
         )
-        if not _text_elements_allowed(variant) and not visual_card_text_only:
+        if (
+            not _text_elements_allowed(variant)
+            and not visual_card_text_only
+            and not (
+                lyric_deletion_only
+                or (
+                    "text" in payload._deleted_kinds
+                    and _is_exact_deletion_survivor(payload, "text_elements", payload.text_elements)
+                )
+            )
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{CAPTION_TAB_COPY}.",
@@ -9245,18 +9694,25 @@ def _prepare_editor_commit(
             not bool(variant.get("base_video_path"))
             or (_LYRICS_EDITOR_ENABLED and _variant_lyrics_enabled(variant))
         )
-        validated_elements, materialized_from_sequence = validate_text_elements_payload(
-            variant,
-            payload.text_elements,
-            require_base=payload.timeline_slots is None and not text_requires_full_render,
-            strict_drop=True,
-            # Guided v2 owns text identity and deletions in the canonical
-            # revision/tombstone document.  The legacy variant projection can
-            # synthesize a second intro identity for the same guided title,
-            # which makes an unchanged full-lane Save fail the revision's
-            # exact-ID guard.
-            append_projection_tombstones=not guided_v2,
-        )
+        if lyric_deletion_only:
+            # A line removal is a server-derived tombstone, not an editable
+            # text write. Keep it durable during a flag rollback without
+            # routing projected remaining lyric rows through the ordinary
+            # timing-locked text validator.
+            validated_elements = payload.text_elements
+        else:
+            validated_elements, materialized_from_sequence = validate_text_elements_payload(
+                variant,
+                payload.text_elements,
+                require_base=payload.timeline_slots is None and not text_requires_full_render,
+                strict_drop=True,
+                # Guided v2 owns text identity and deletions in the canonical
+                # revision/tombstone document.  The legacy variant projection can
+                # synthesize a second intro identity for the same guided title,
+                # which makes an unchanged full-lane Save fail the revision's
+                # exact-ID guard.
+                append_projection_tombstones=not guided_v2,
+            )
         if not guided_v2:
             _require_guided_story_text_ids(variant, validated_elements)
 
@@ -9266,6 +9722,10 @@ def _prepare_editor_commit(
             _is_editable_caption_variant(variant)
             or guided_v2
             or _phone_subtitled_editor_lanes_available(job, variant)
+            or (
+                "caption_cue" in payload._deleted_kinds
+                and _is_exact_deletion_survivor(payload, "caption_cues", payload.caption_cues)
+            )
         ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -9500,7 +9960,7 @@ def _prepare_editor_commit(
         from app.config import settings as _settings  # noqa: PLC0415
 
         if not _settings.sound_effects_enabled:
-            if not payload.sound_effects:
+            if not payload.sound_effects and "sound_effect" not in payload._deleted_kinds:
                 # Untouched echo (e.g. undo/redo blanket-dirtied every section
                 # regardless of capability) riding a commit where sfx is
                 # flag-gated off for this deploy. An empty list carries no
@@ -9512,6 +9972,10 @@ def _prepare_editor_commit(
                     job_id=str(job.id),
                     variant_id=variant_id,
                 )
+            elif "sound_effect" in payload._deleted_kinds and _is_exact_deletion_survivor(
+                payload, "sound_effects", payload.sound_effects
+            ):
+                validated_sfx = payload.sound_effects
             else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -9534,7 +9998,7 @@ def _prepare_editor_commit(
         from app.config import settings as _settings  # noqa: PLC0415
 
         if not _settings.media_overlays_enabled:
-            if not payload.media_overlays:
+            if not payload.media_overlays and "media_overlay" not in payload._deleted_kinds:
                 # See sound_effects above — untouched empty-list echo, not a
                 # real request to write this flag-gated-off section.
                 log.debug(
@@ -9543,6 +10007,10 @@ def _prepare_editor_commit(
                     job_id=str(job.id),
                     variant_id=variant_id,
                 )
+            elif "media_overlay" in payload._deleted_kinds and _is_exact_deletion_survivor(
+                payload, "media_overlays", payload.media_overlays
+            ):
+                validated_overlays = payload.media_overlays
             else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -9569,13 +10037,17 @@ def _prepare_editor_commit(
         )
         from app.config import settings as _settings_visual  # noqa: PLC0415
 
-        if not _settings_visual.visual_blocks_enabled:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
         phone_guided = guided_v2 and variant.get("render_destination") == "device"
-        if variant.get("text_mode") == "lyrics" or (
+        if not _settings_visual.visual_blocks_enabled:
+            if "visual_block" not in payload._deleted_kinds or not _is_exact_deletion_survivor(
+                payload, "visual_blocks", payload.visual_blocks
+            ):
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+            validated_visual_blocks = payload.visual_blocks
+        elif variant.get("text_mode") == "lyrics" or (
             not variant.get("base_video_path") and not phone_guided
         ):
-            if not payload.visual_blocks:
+            if not payload.visual_blocks and "visual_block" not in payload._deleted_kinds:
                 # Untouched empty-list echo on a variant that can never accept
                 # blocks (lyrics variant, or no clean base yet) — undo/redo
                 # (or any stale client) blanket-dirtied this section without
@@ -9588,6 +10060,10 @@ def _prepare_editor_commit(
                     job_id=str(job.id),
                     variant_id=variant_id,
                 )
+            elif "visual_block" in payload._deleted_kinds and _is_exact_deletion_survivor(
+                payload, "visual_blocks", payload.visual_blocks
+            ):
+                validated_visual_blocks = payload.visual_blocks
             else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -9724,12 +10200,17 @@ def _prepare_editor_commit(
             validate_motion_instances,
         )
 
-        if not _settings_motion.motion_scenes_enabled:
+        removal_only = "motion_scene" in payload._deleted_kinds and _is_exact_deletion_survivor(
+            payload, "motion_scenes", payload.motion_scenes
+        )
+        if not _settings_motion.motion_scenes_enabled and not removal_only:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
         legacy_route_only = payload.motion_runtime_hash == LEGACY_MOTION_RUNTIME_HASH and all(
             scene.get("preset_id") == "route_trace" for scene in payload.motion_scenes
         )
-        compatible_hash = payload.motion_runtime_hash in COMPATIBLE_MOTION_RUNTIME_HASHES
+        compatible_hash = payload.motion_runtime_hash in COMPATIBLE_MOTION_RUNTIME_HASHES or (
+            removal_only and not _settings_motion.motion_scenes_enabled
+        )
         if not compatible_hash and not legacy_route_only:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -9742,7 +10223,9 @@ def _prepare_editor_commit(
         if duration_s <= 0:
             motion_reason = motion_reason or "duration_unknown"
         if motion_reason is not None:
-            if not payload.motion_scenes:
+            if removal_only:
+                validated_motion_scenes = payload.motion_scenes
+            elif not payload.motion_scenes:
                 log.debug(
                     "editor_commit_ignored_empty_section",
                     section="motion_scenes",
@@ -9801,26 +10284,34 @@ def _prepare_editor_commit(
         from app.pipeline.camera_effects import normalize_camera_effects  # noqa: PLC0415
 
         if variant.get("resolved_archetype") != "subtitled":
-            if not payload.camera_effects:
+            if not payload.camera_effects and "camera_effect" not in payload._deleted_kinds:
                 log.debug(
                     "editor_commit_ignored_empty_section",
                     section="camera_effects",
                     job_id=str(job.id),
                     variant_id=variant_id,
                 )
+            elif "camera_effect" in payload._deleted_kinds and _is_exact_deletion_survivor(
+                payload, "camera_effects", payload.camera_effects
+            ):
+                validated_camera_effects = payload.camera_effects
             else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Camera effects are editable on subtitled variants.",
                 )
         elif not variant.get("base_video_path"):
-            if not payload.camera_effects:
+            if not payload.camera_effects and "camera_effect" not in payload._deleted_kinds:
                 log.debug(
                     "editor_commit_ignored_empty_section",
                     section="camera_effects",
                     job_id=str(job.id),
                     variant_id=variant_id,
                 )
+            elif "camera_effect" in payload._deleted_kinds and _is_exact_deletion_survivor(
+                payload, "camera_effects", payload.camera_effects
+            ):
+                validated_camera_effects = payload.camera_effects
             else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -9941,6 +10432,7 @@ def _prepare_editor_commit(
         or validated_camera_effects is not None
         or carousel_moment_touched
         or guided_timeline_commit
+        or payload._lyric_line_suppressions is not None
     )
     new_gen = uuid.uuid4().hex if has_render_section else None
     base_affecting_commit = (
@@ -9958,6 +10450,7 @@ def _prepare_editor_commit(
         # the cached fast-reburn base (clean, pre-text-burn footage) no longer
         # matches once this lands, same invariant as a timeline/mix/track edit.
         or carousel_moment_touched
+        or payload._lyric_line_suppressions is not None
     )
 
     variants = list((job.assembly_plan or {}).get("variants") or [])
@@ -10045,6 +10538,10 @@ def _prepare_editor_commit(
                 updated["lyrics_enabled"] = bool(validated_lyrics["enabled"])
             if "line_overrides" in payload.lyrics.model_fields_set and not track_changed:
                 updated["lyric_line_overrides"] = validated_lyrics["line_overrides"]
+        if payload._lyric_line_suppressions is not None and not track_changed:
+            overrides = dict(updated.get("lyric_line_overrides") or {})
+            overrides["_suppressed_line_keys"] = list(payload._lyric_line_suppressions)
+            updated["lyric_line_overrides"] = overrides
         if validated_orientation is not None:
             updated["orientation"] = validated_orientation
         if validated_sfx is not None:
@@ -10160,6 +10657,7 @@ def _prepare_editor_commit(
 
     return {
         "generation": new_gen or payload.base_generation,
+        "authored_timeline": variant.get("editor_timeline_mode") == "authored",
         "render_task_id": render_task_id if new_gen is not None else None,
         "guided_revision": guided_revision if guided_v2 else None,
         "guided_revision_render": bool(guided_v2 and guided_revision),
@@ -10211,7 +10709,7 @@ def _prepare_editor_commit(
                 or payload.remove_music
             ),
             "background_music": payload.background_music is not None,
-            "lyrics": payload.lyrics is not None,
+            "lyrics": payload.lyrics is not None or payload._lyric_line_suppressions is not None,
             "orientation": payload.orientation is not None,
             # validated_* (not raw payload presence) so an ignored empty-list
             # echo (see editor_commit_ignored_empty_section above) correctly
@@ -10253,6 +10751,15 @@ def enqueue_editor_commit_render(
             str(prep["generation"]),
         )
     )
+    if prep.get("authored_timeline"):
+        from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+        regenerate_generative_variant.apply_async(
+            args=[job_id, variant_id],
+            kwargs={"render_gen_id": prep["generation"], "force_full_render": True},
+            task_id=task_id,
+        )
+        return
     if prep.get("guided_revision_render"):
         from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -10895,6 +11402,9 @@ async def get_generative_job_status(
     if baselines and pending_count > 0:
         baselines = scale_render_variants(baselines, pending_count)
 
+    from app.services.editor_empty_drafts import attach_saved_editor_drafts  # noqa: PLC0415
+
+    await attach_saved_editor_drafts(db, job)
     variants = _variants_for_response(job)
     await _attach_music_previews(variants, db, job=job)
 
@@ -11271,6 +11781,9 @@ async def get_variant_timeline(
         allowed_modes=_READABLE_MODES,
         with_for_update=False,
     )
+    from app.services.editor_empty_drafts import attach_saved_editor_drafts  # noqa: PLC0415
+
+    await attach_saved_editor_drafts(db, job)
     variant = _find_variant(job, variant_id)
     image_preview_paths = (
         await guided_timeline_image_preview_paths(db, job.content_plan_item_id)
@@ -11504,11 +12017,35 @@ async def add_clip(
         )
     clip_index = len(clip_paths)
     clip_paths.append(path)
-    job.all_candidates = {**(job.all_candidates or {}), "clip_paths": clip_paths}
+    source_metadata = dict((job.all_candidates or {}).get("editor_source_metadata") or {})
+    source_metadata[path] = {
+        "source_kind": kind,
+        "source_generation": str(metadata.generation),
+    }
+    job.all_candidates = {
+        **(job.all_candidates or {}),
+        "clip_paths": clip_paths,
+        "editor_source_metadata": source_metadata,
+    }
+    from app.services.authored_editor import authored_cloud_source_catalog  # noqa: PLC0415
+
+    variant_clip_indices = {}
+    for variant in _variants_of(job):
+        if not variant.get("variant_id"):
+            continue
+        for index, source in enumerate(authored_cloud_source_catalog(job, variant)):
+            if source["source_gcs_path"] == path:
+                variant_clip_indices[str(variant["variant_id"])] = index
+                break
     await db.commit()
 
     log.info("generative_add_clip", job_id=str(job.id), clip_index=clip_index, kind=kind)
-    return AddClipResponse(job_id=str(job.id), clip_index=clip_index, kind=kind)
+    return AddClipResponse(
+        job_id=str(job.id),
+        clip_index=clip_index,
+        kind=kind,
+        variant_clip_indices=variant_clip_indices,
+    )
 
 
 @router.post("/{job_id}/variants/{variant_id}/mix", response_model=GenerativeJobResponse)

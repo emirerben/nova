@@ -19,8 +19,10 @@ from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA
 from app.services.phone_editor_sources import (
     EDITOR_SOURCES_FIELD,
     attempt_matches,
+    authored_phone_sources_available,
     canonical_source,
     merge_editor_sources,
+    phone_editor_source_revision,
 )
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, PhoneSourceBinding
 from app.services.phone_visuals import bind_phone_visual_assets, phone_composable_video
@@ -45,14 +47,16 @@ def _registry(variant: dict[str, Any]) -> dict[str, Any]:
 
 def _guard_matches(job: Job, variant: dict[str, Any], record: dict[str, Any]) -> bool:
     from app.routes.generative_jobs import (
-        _guided_v2_revision,
         _phone_editor_media_available,
         variant_render_baseline,
     )
 
-    revision = _guided_v2_revision(job, variant) or {}
+    revision = phone_editor_source_revision(job, variant) or {}
     return (
-        _phone_editor_media_available(job, variant)
+        (
+            _phone_editor_media_available(job, variant)
+            or authored_phone_sources_available(job, variant)
+        )
         and str(job.user_id) == record["user_id"]
         and record.get("base_generation") == variant_render_baseline(variant)
         and record.get("guided_revision_number") == revision.get("revision_number")
@@ -290,7 +294,6 @@ def prepare_phone_editor_source(
     self: Any, job_id: str, variant_id: str, import_id: str, attempt_id: str
 ) -> None:
     """Slow preparation is outside locks; attempt tokens fence stale workers."""
-    from app.routes.generative_jobs import _guided_v2_revision
 
     with sync_session() as db:
         job = db.get(Job, job_id)
@@ -346,7 +349,7 @@ def prepare_phone_editor_source(
             reservation = _recheck_source(
                 db, job, current, source, receipt, visual_asset=visual_asset
             )
-            catalog = (_guided_v2_revision(job, variant) or {})["sources"]
+            catalog = (phone_editor_source_revision(job, variant) or {})["sources"]
             index, source = _admit(
                 registry,
                 catalog=catalog,

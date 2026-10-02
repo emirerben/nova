@@ -33,6 +33,10 @@ MAX_ERROR_DETAIL_LEN = 2000
     time_limit=660,
 )
 def render_lyrics_preview_task(self, job_id: str) -> None:
+    from app.services.cloud_render_policy import block_cloud_render_task  # noqa: PLC0415
+
+    if block_cloud_render_task(job_id, task_name="tasks.render_lyrics_preview_task"):
+        return
     log.info("lyrics_preview_start", job_id=job_id)
     # Bind job_id to the pipeline-trace contextvar for the duration of this
     # task. Without this wrapper, every `record_pipeline_event(...)` call

@@ -404,9 +404,13 @@ AI's assembly decisions, not pixels.
   and restore with `POST /plan-items/{item}/variants/{vid}/speech-cuts/restore`, passing
   the current `expected_revision`; both return 202 and dispatch a full source rebuild.
   Publication remaps captions, Smart text, speech maps, overlays, SFX, camera/boundary
-  effects, and Director freshness. Publication validates that the final cut covers the
-  requested candidate before writing its server-backed receipt. Stale revisions return
-  409; enqueue/render/publication failures restore the last-good video and timing state.
+  effects, and Director freshness. Cloud cut renders play frame-snapped segments, so
+  lanes reproject through the frames each render played (`frame_grid` in the variant's
+  `silence_cut` summary, read by `speech_cut_state.RenderedCut`); a prior render
+  without it keeps the removal mapping (`docs/runbooks/chat-speech-cleanup-rollout.md`).
+  Publication validates that the final cut covers the requested candidate before
+  writing its server-backed receipt. Stale revisions return 409;
+  enqueue/render/publication failures restore the last-good video and timing state.
 - **Kill switch:** `GENERATIVE_TIMELINE_EDITOR_ENABLED=false` (Fly secret + restart) —
   GET returns `editable:false reason:"disabled"`, POST 403.
 - **Guards:** window-parity test (`tests/pipeline/test_exact_window_steps.py`) pins that
@@ -420,6 +424,30 @@ AI's assembly decisions, not pixels.
   fallback for prose), then timed sequentially across the remaining edit. The editor
   enforces the API's 50-element / 500-character limits before mutating the timeline,
   so rejected drafts never create empty or unsavable bars.
+
+### Explicit deletion and empty editor drafts (KRI-264)
+
+Native editor saves send `editor_state_version: 1` and stable `{kind, id}`
+deletion intents. The API validates every identity against the current variant
+before changing any lane. Existing blocks can be removed when creation of that
+lane is disabled; additions or changes still require the lane's normal capability.
+Caption identities and lyric suppressions survive later projection and rendering.
+
+Removing every active clip saves a full `CreatorEditDraft` snapshot with
+`editor_payload.editor_state: "empty"` and `sections.timeline_slots: []`. The Job
+keeps only the draft reference and a new render generation. No render is queued;
+old device completions and unsupported clients cannot restore the previous cut.
+Reads return the saved layers without playback URLs. Draft pruning preserves the
+referenced snapshot even when it is no longer the thread's head draft.
+
+Adding footage again enters persistent `editor_timeline_mode: "authored"`.
+Cloud and phone compilers use only the saved explicit placements and retain the
+independent presentation lanes. They never regenerate the old speaker or AI cut.
+Phone sources require current owner-bound original/admitted receipts; analysis
+proxies cannot become cloud render inputs. Deploy the API contract before the
+native client. Coverage: `test_editor_deletions.py`, `test_editor_empty_drafts.py`,
+`test_empty_editor_projection.py`, `test_authored_timeline.py`, and the native
+`NativeEditorSessionTests`/`TextDeletionTests`.
 
 ### Edit-copilot beat marks (creative direction)
 

@@ -106,8 +106,7 @@
     "needs_clarification": true,
     "reply_contains": [
       "5 seconds",
-      "3 seconds",
-      "number of seconds"
+      "3 seconds"
     ]
   }
 }

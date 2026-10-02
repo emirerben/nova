@@ -44,6 +44,42 @@ def _fixture(name: str):
     return load_fixture(path)
 
 
+def _assert_capability_contract(fixture, output: dict) -> None:
+    contract = fixture.meta.get("capability_contract")
+    if not contract:
+        return
+    assert output["intent"] == contract["intent"]
+    assert output["ops"] == []
+    assert output["needs_clarification"] is contract["needs_clarification"]
+    reply_and_suggestions = " ".join([output["reply"], *output["suggestions"]]).lower()
+    for term in contract.get("reply_contains", []):
+        assert term.lower() in reply_and_suggestions
+    for term in contract.get("reply_excludes", []):
+        assert term.lower() not in reply_and_suggestions
+    if contract.get("suggestions_empty"):
+        assert output["suggestions"] == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "kria_v2_timeline_shorter_without_clip",
+        "kria_v2_timeline_longer_without_clip",
+        "kria_v2_timeline_without_clip_families",
+        "kria_v2_timeline_shorter_no_number",
+        "kria_v2_timeline_longer_no_number",
+    ],
+)
+def test_vague_length_capability_contract_runs_through_eval(name: str) -> None:
+    from app.agents.edit_copilot import EditCopilotAgent
+
+    fixture = _fixture(name)
+    input_model = EditCopilotAgent.Input.model_validate(fixture.input)
+    prompt = EditCopilotAgent(None).render_prompt(input_model)
+    assert "VAGUE LENGTH CHANGE" in prompt
+    assert "allowed_op_families" in prompt
+
+
 def test_kria_bulk_followup_replays_typed_image_selector() -> None:
     """The fourth turn must preserve the image referent and stay bulk/atomic."""
     fixture = _fixture("kria_bulk_followup_satisfiable")
@@ -179,6 +215,8 @@ def test_edit_copilot_eval(
         f"  judge: {result.judge.reasoning if result.judge else ''}\n"
         f"  output: {result.output}"
     )
+    if result.output is not None:
+        _assert_capability_contract(fixture, result.output)
 
     if "exact_edit_ops" in fixture.meta:
         assert result.output is not None

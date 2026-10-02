@@ -436,15 +436,24 @@ format must be enabled at all, phone or not). Server-side transcription
 mirrors the cloud lean path exactly: `transcribe_whisper_cached` →
 `build_plain_cues(words, attach_words=True)` → `correct_caption_cues` →
 `resplit_cues_into_sentences`; caption style ("sentence" vs "word") comes
-from the item's `voiceover_caption_style`. **No silence-cut/speech-cleanup
-runs on the phone path at all** — if the item's own contract is `required_v1`
-(the creator explicitly opted into cleanup and it's available), skipping it
-would silently ship uncut footage that contradicts what was approved, so the
-worker fails closed with `UnsupportedPhonePlan` instead
-(`_phone_speech_cleanup_contract_guard`) rather than quietly rendering
-something different. **Rollback:** `fly secrets set
+from the item's `voiceover_caption_style`. **Rollback:** `fly secrets set
 PHONE_SUBTITLED_RENDERING_ENABLED=false --app nova-video` + `fly machine
 restart <id>` (api + worker).
+
+*Speech cleanup on phone Talking.* Only an accepted `required_v1` plan is
+applied; `legacy_auto` and `off_v1` render uncut, because the phone never runs
+the cloud's render-time detector. The worker reuses the preflight snapshot's
+own words and CutPlan (no second transcription) and passes the plan to
+`compile_phone_subtitled_plan(cut_plan=...)`, which plays each keep segment
+as a hard cut at the plan's exact float boundaries. Captions and media lanes
+follow that timeline through the raw float mapping (`silence_cut.remap_words`,
+`phone_subtitled_lanes.remap_lanes_for_cut`), not the cloud render's 30 fps
+frame grid. A snapshot that doesn't match the clip, or a plan that removes
+everything, fails the job with `SpeechCleanupFailure` instead of shipping
+footage the creator asked to cut. Multi-clip Talking (`talking_head`, below)
+can't apply cleanup yet. The dispatch gate refuses it as
+`speech_cleanup_unavailable_on_phone`, and the worker fails a `required_v1`
+multi-clip job that gets past the gate.
 
 **Narrated walkthrough (`narrated` / `narrated_planned` / `narrated_ready`)
 WITH a recorded voiceover.** Compiles through
@@ -465,7 +474,13 @@ narrative/guide order (no agentic storyboard re-ranking, unlike the cloud
 path), and burns the same caption-cue pipeline as `subtitled`. The gain math
 mirrors the montage-family voiceover render: `mix = 1.0 - bed_level`
 (`voiceover_bed_level`, default `0.25`), converting the cloud's direct
-bed-gain knob into this compiler's voice-prominence convention. **Rollback:**
+bed-gain knob into this compiler's voice-prominence convention. With an
+accepted `required_v1` plan the recorded voiceover is cleaned before compiling:
+`_phone_narrated_cleaned_narration` binds the snapshot to the item's current
+voiceover and cuts it with `guided_speech_cleanup.build_cleaned_narration`,
+the same content-addressed derivative the guided-story flow pins. A replaced
+voiceover or a stale snapshot fails the job instead of rendering the raw
+recording. **Rollback:**
 `fly secrets set PHONE_NARRATED_RENDERING_ENABLED=false --app nova-video` +
 `fly machine restart <id>` (api + worker).
 
@@ -473,15 +488,21 @@ bed-gain knob into this compiler's voice-prominence convention. **Rollback:**
 voiceover is spined by the footage's OWN speech —
 `_resolve_archetype` (generative_build.py) decides `subtitled` (exactly one
 clip) or `talking_head` (2+ clips) only once the footage is actually probed,
-which the dispatch gate cannot do. So the dispatch gate only lets the
-single-clip shape through (gated by `settings.narrated_self_narration_enabled`
-+ `subtitled` being phone-supported), and routes it to
+which the dispatch gate cannot do. The dispatch gate lets the single-clip
+shape through (gated by `settings.narrated_self_narration_enabled` +
+`subtitled` being phone-supported). It lets 2+ clips through only when
+`phone_rollout.phone_talking_head_supported()` holds (KRI-136, env
+`PHONE_TALKING_HEAD_RENDERING_ENABLED`, default `false`); otherwise it refuses
+them as `self_narration_multi_clip`. Both shapes route to
 `_run_phone_subtitled_job`, which re-runs the REAL `_resolve_archetype`
-post-ingest and only proceeds when it lands on `subtitled` — a no-speech clip
-(→ `montage` fallback) or, for the impossible-here 2+-clip case,
-`talking_head`, both fail closed with `UnsupportedPhonePlan` instead of
-silently rendering the wrong shape. **`talking_head` has no phone compiler at
-all**, under any settings combination.
+post-ingest and only proceeds when it lands on the expected archetype
+(`subtitled` for one clip, `talking_head` for 2+). A no-speech clip
+(→ `montage` fallback) or any other mismatch fails closed with
+`UnsupportedPhonePlan` instead of silently rendering the wrong shape. A
+phone `talking_head` keeps the speaker clip as the main track, with its audio
+and editable captions, and covers the picture with the other clips as muted
+full-frame cutaways (`_phone_talking_head_cutaways`, scheduled with the cloud
+assembler's `schedule_broll`, then `compile_phone_subtitled_plan(cutaways=...)`).
 
 **Single source of truth.** `app.services.phone_rollout
 .phone_render_supported_formats()` is the settings-aware function every
@@ -505,8 +526,10 @@ compilers stay independently traceable) and `subtitled_clip_count_unsupported`
 `unsupported_format` copy no longer hard-codes "Only Montage videos" — it's
 deliberately format-agnostic now that the allowlist grows with rollout.
 
-**Known divergences from the cloud path (v1, accepted):** no silence-cut/
-speech-cleanup on either phone lane; no agentic storyboard re-ranking for
+**Known divergences from the cloud path (v1, accepted):** speech cleanup
+applies only an accepted `required_v1` plan (no render-time detector), cuts at
+the plan's exact float boundaries rather than the cloud's 30 fps frame grid,
+and is unavailable for multi-clip Talking; no agentic storyboard re-ranking for
 narrated clip assignment (script/guide order only); side-chain ducking is
 gated on `audioDucking` being verified (flat bed gain until then; `loudnorm`
 and the voice fade-out ship ungated — see "Audio mix parity (KRI-139)"); no face-tracked crop
@@ -514,8 +537,9 @@ and the voice fade-out ship ungated — see "Audio mix parity (KRI-139)"); no fa
 word-style captions use the device `karaoke-line` fill, so already-spoken
 words stay highlighted where the cloud ASS path recolours only the current
 word (seen in the simulator render of the `subtitled_word` E2E case);
-`talking_head` (self-narration onto 2+ clips) remains entirely unsupported on
-the phone.
+`talking_head` (self-narration onto 2+ clips) renders on the phone only
+behind `PHONE_TALKING_HEAD_RENDERING_ENABLED` (KRI-136), as cutaways over the
+speaker clip and without speech cleanup.
 
 #### Talking-to-camera media lanes: stickers, photo cards, SFX, ending clip (KRI-174 Phase 1)
 

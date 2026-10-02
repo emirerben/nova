@@ -430,6 +430,17 @@ def _complete_draft_turn(
             )
             if variant is None:
                 raise RuntimeError("The exact editor target is no longer available")
+            if (
+                thread.active_creator_agent_session_id != session.id
+                or session.plan_item_id != item.id
+                or session.target_job_id != job.id
+                or item.current_job_id != job.id
+                or job.content_plan_item_id != item.id
+                or job.user_id != thread.creator_id
+                or session.creator_id != thread.creator_id
+                or variant.get("variant_id") != session.target_variant_id
+            ):
+                raise RuntimeError("The exact editor target is no longer available")
             # The SAME resolver the planner used for the snapshot the model saw, re-run
             # here under the row locks so a state that went stale during the model
             # call is refused instead of silently rebased.
@@ -443,7 +454,14 @@ def _complete_draft_turn(
             prior_payload = editor_base.prior_payload
             # The session pointer goes stale after an editor Save; stamp the draft
             # with the variant's real generation so it never self-perpetuates.
-            draft_generation_id = variant_render_baseline(variant) or generation_id
+            canonical_generation_id = variant_render_baseline(variant) or generation_id
+            generation_id = canonical_generation_id
+            draft_generation_id = canonical_generation_id
+            # The editor Save is an external Job mutation. Keep this exact
+            # session target aligned with the locked variant before minting a
+            # later approval, while the existing Job -> Session lock order is
+            # held. A failed transaction rolls this pointer back with the Job.
+            session.target_generation_id = canonical_generation_id
             wants_speech_cut = any(
                 op.get("op") == "apply_speech_cut_candidate" for op in arguments.operations
             )
@@ -1694,10 +1712,30 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             target_valid = False
 
         if target_valid and execution.status == "awaiting_approval":
-            target_valid = (
-                approval.target_generation_id == session.target_generation_id
-                and approval.target_generation_id == execution.target_generation_id
-            )
+            if document is not None and document.kind == "editor" and current_job is not None:
+                current_variant = next(
+                    (
+                        row
+                        for row in (current_job.assembly_plan or {}).get("variants") or []
+                        if isinstance(row, dict)
+                        and row.get("variant_id") == execution.target_variant_id
+                    ),
+                    None,
+                )
+                current_generation = (
+                    variant_render_baseline(current_variant)
+                    if isinstance(current_variant, dict)
+                    else ""
+                )
+                target_valid = bool(current_generation) and (
+                    approval.target_generation_id == current_generation
+                    and execution.target_generation_id == current_generation
+                )
+            else:
+                target_valid = (
+                    approval.target_generation_id == session.target_generation_id
+                    and approval.target_generation_id == execution.target_generation_id
+                )
 
         now = datetime.now(UTC)
         if not target_valid:
@@ -3084,6 +3122,24 @@ def prune_kria_drafts() -> dict[str, int]:
                 )
             ).scalars()
         )
+        # Empty editor drafts are pinned by a Job variant rather than an
+        # approval. A subsequent ordinary draft can make that row non-head;
+        # pruning its snapshot would leave the empty editor with no canonical
+        # restore source. Inspect only candidate ids and keep those references.
+        candidate_ids = {str(row.id) for row in candidates}
+        candidate_job_ids = {row.base_job_id for row in candidates if row.base_job_id is not None}
+        assemblies = db.execute(
+            select(Job.assembly_plan).where(Job.id.in_(candidate_job_ids))
+        ).scalars()
+        for assembly in assemblies:
+            for variant in (assembly or {}).get("variants") or []:
+                reference = variant.get("editor_draft") if isinstance(variant, dict) else None
+                draft_id = reference.get("draft_id") if isinstance(reference, dict) else None
+                if str(draft_id) in candidate_ids:
+                    try:
+                        protected.add(uuid.UUID(str(draft_id)))
+                    except (TypeError, ValueError):
+                        continue
         pruned = 0
         for draft in candidates:
             if draft.id in protected:

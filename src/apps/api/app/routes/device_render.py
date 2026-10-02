@@ -147,6 +147,11 @@ def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRende
         "base_generation"
     ):
         raise HTTPException(409, "Device recipe changed")
+    if variant.get("editor_state") == "empty":
+        # The pinned device record is retained internally for source provenance,
+        # but an empty draft has no renderable program to poll, retry, upload,
+        # fail, or complete.
+        raise HTTPException(409, "Editor draft has no video to render")
     return record, status
 
 

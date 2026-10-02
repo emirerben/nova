@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.agents._schemas.visual_block import VisualBlock
 from app.kria.contracts import KriaProblem
+from app.kria.draft_schemas import DraftSnapshotOut as DraftSnapshotOut
 from app.routes.generative_jobs import EditorCommitRequest, TimelineSlotEdit
 
 TurnStatus = Literal[
@@ -180,20 +181,6 @@ class ApprovalSnapshotOut(BaseModel):
     cost_summary: str | None = None
     expires_at: datetime
     approval_fingerprint: str = Field(min_length=64, max_length=64)
-
-
-class DraftSnapshotOut(BaseModel):
-    draft_id: str
-    item_id: str
-    variant_key: str
-    draft_revision: int = Field(ge=0)
-    snapshot_hash: str = Field(min_length=64, max_length=64)
-    etag: str
-    base_job_id: str | None = None
-    base_generation_id: str | None = None
-    snapshot: dict[str, Any]
-    can_undo: bool
-    created_at: datetime
 
 
 class DraftWriteBody(_StrictBody):

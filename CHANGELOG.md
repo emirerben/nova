@@ -2,6 +2,111 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.11.0] - 2026-10-02
+
+### Changed
+- fix(ios): delete every timeline block and save empty drafts (#1319) <!-- release-pr: 1319 -->
+
+## [0.78.10.0] - 2026-10-02
+
+### Changed
+- fix(ios): hold silence across cutaway mute windows instead of fading back in (#1318) <!-- release-pr: 1318 -->
+
+## [0.78.9.0] - 2026-10-02
+
+### Changed
+- ci: fail fast and retry when an apt mirror stalls (#1315) <!-- release-pr: 1315 -->
+
+## [0.78.8.0] - 2026-10-02
+
+### Changed
+- fix(speech-cut): put cloud cut captions, b-roll and re-cut lanes on the frame grid (#1303) <!-- release-pr: 1303 -->
+
+## [0.78.7.0] - 2026-10-02
+
+### Changed
+- test(kria): share the prod-shaped Talking thread seed between planner tests (#1297) <!-- release-pr: 1297 -->
+
+## [0.78.6.0] - 2026-10-02
+
+### Changed
+- fix(devex): make agent navigation and runtime checks repeatable (#1313) <!-- release-pr: 1313 -->
+
+## [0.78.5.0] - 2026-10-02
+
+### Changed
+- refactor: remove shallow compatibility modules (#1314) <!-- release-pr: 1314 -->
+
+## [0.78.4.0] - 2026-10-02
+
+### Changed
+- fix(ios): deliver committed-variant reconciliation to main (#1312) <!-- release-pr: 1312 -->
+
+## [0.78.3.0] - 2026-10-02
+
+### Fixed
+- fix(edit-proposal): clamp a closing cut stretched to hit the target (KRI-243) (#1304) <!-- release-pr: 1304 -->
+
+## [0.78.2.0] - 2026-10-02
+
+### Changed
+- feat(ios): blur the chat above its header block, floating header and composer, drop the Kria sheet titles (KRI-197) (#1230) <!-- release-pr: 1230 -->
+
+## [0.78.1.0] - 2026-10-02
+
+### Changed
+- ci: stabilize Playwright setup and evaluate Tester Army (KRI-254) (#1311) <!-- release-pr: 1311 -->
+
+## [0.78.0.0] - 2026-10-02
+
+### Added
+- feat: move production creation to on-device rendering (#1310) <!-- release-pr: 1310 -->
+
+## [0.77.50.0] - 2026-10-02
+
+### Changed
+- fix(kria): keep render approvals current after editor Save (#1308) <!-- release-pr: 1308 -->
+
+## [0.77.49.0] - 2026-10-02
+
+### Changed
+- fix(copilot): refuse unsupported length changes before asking follow-ups (#1307) <!-- release-pr: 1307 -->
+
+## [0.77.48.0] - 2026-10-02
+
+### Changed
+- fix(ios): keep guided titles aligned with manual timeline edits (#1306) <!-- release-pr: 1306 -->
+
+## [0.77.47.0] - 2026-10-02
+
+### Changed
+- fix: keep footage context out of clip commands (KRI-244) (#1305) <!-- release-pr: 1305 -->
+
+## [0.77.46.0] - 2026-10-01
+
+### Changed
+- feat(ios): chat turns send the editor's unsaved state; no save-before-send (flag-gated) (#1300) <!-- release-pr: 1300 -->
+
+## [0.77.45.0] - 2026-10-01
+
+### Changed
+- feat(ios): clip labels follow their clip when you trim, extend, reorder or delete (no server) (#1299) <!-- release-pr: 1299 -->
+
+## [0.77.44.0] - 2026-10-01
+
+### Changed
+- feat(copilot): realign_labels op — server-computed label retime after a manual trim (prompt v65) (#1298) <!-- release-pr: 1298 -->
+
+## [0.77.43.0] - 2026-10-01
+
+### Changed
+- docs(clip-intents): record the prod flag flip and its live eval gate (#1302) <!-- release-pr: 1302 -->
+
+## [0.77.42.0] - 2026-10-01
+
+### Fixed
+- fix(kria): "Add captions" on a montage is never a chapter caption clip intent (#1301) <!-- release-pr: 1301 -->
+
 ## [0.77.41.0] - 2026-10-01
 
 ### Changed

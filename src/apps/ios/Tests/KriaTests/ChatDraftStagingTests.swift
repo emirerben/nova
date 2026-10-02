@@ -454,4 +454,196 @@ final class ChatDraftStagingTests: XCTestCase {
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document.textElements.first?.text, "Ahmet Wedding Vlog")
     }
+
+    // MARK: - Editor-state turns (the user never saves mid-flow)
+
+    private static func echoing(_ stateID: String, _ snapshot: DraftSnapshot) -> DraftSnapshot {
+        var value = snapshot.snapshot
+        value["client_state_id"] = .string(stateID)
+        return DraftSnapshot(draftID: snapshot.draftID, itemID: snapshot.itemID, variantKey: snapshot.variantKey,
+            draftRevision: snapshot.draftRevision, snapshotHash: snapshot.snapshotHash, etag: snapshot.etag,
+            baseJobID: snapshot.baseJobID, baseGenerationID: snapshot.baseGenerationID, snapshot: value,
+            canUndo: snapshot.canUndo, createdAt: snapshot.createdAt)
+    }
+
+    private func laneJSON(_ request: EditorStateRequest) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(request)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return try XCTUnwrap(root["lanes"] as? [String: Any])
+    }
+
+    func testExportOfACleanEditorIsAnEmptyLanesObject() async throws {
+        let (session, _) = await loaded(Self.bootstrapSnapshot())
+        let state = try XCTUnwrap(session.exportEditorState())
+        XCTAssertEqual(state.version, 1)
+        XCTAssertEqual(state.baseGeneration, "g1")
+        XCTAssertFalse(state.clientStateID.isEmpty)
+        let lanes = try laneJSON(state)
+        XCTAssertEqual(
+            Set(lanes.keys), ["remove_music", "base_generation", "editor_state_version"],
+            "A clean editor exports request metadata without any changed lanes"
+        )
+        XCTAssertEqual(lanes["editor_state_version"] as? Int, 1)
+    }
+
+    func testExportCarriesOnlyChangedLanesAndNeverSaveOnlyFields() async throws {
+        let (session, _) = await loaded(Self.bootstrapSnapshot())
+        session.setClipTiming(clipID: "s1", durationS: 1.2)
+        let state = try XCTUnwrap(session.exportEditorState())
+        XCTAssertNotNil(state.lanes.timelineSlots)
+        XCTAssertNil(state.lanes.textElements)
+        XCTAssertNil(state.lanes.mix)
+        let lanes = try laneJSON(state)
+        for key in ["guided_revision_number", "guided_revision", "copilot_receipt_ids", "accepted_suggestion_ids", "retry_guided_revision"] {
+            XCTAssertNil(lanes[key], key)
+        }
+    }
+
+    func testExportIncludesStagedChatLanesBecauseTheyAreUnsavedToo() async throws {
+        let (session, _) = await loaded(Self.chatSnapshot(shape: .flatOnly))
+        let state = try XCTUnwrap(session.exportEditorState())
+        XCTAssertNotNil(state.lanes.timelineSlots)
+        XCTAssertNotNil(state.lanes.textElements)
+        XCTAssertNotNil(state.lanes.mix)
+        XCTAssertTrue(state.lanes.removeMusic)
+        XCTAssertNil(state.lanes.captionCues)
+        let lanes = try laneJSON(state)
+        XCTAssertNil(lanes["guided_revision_number"])
+    }
+
+    func testExportFlushesAnInProgressTextFieldAndHonoursTheByteCap() async throws {
+        let (session, _) = await loaded(Self.bootstrapSnapshot())
+        session.beginTextCreation()
+        session.updatePendingText("typing…")
+        let state = try XCTUnwrap(session.exportEditorState())
+        XCTAssertNil(session.pendingText)
+        XCTAssertTrue(session.document.textElements.contains { $0.text == "typing…" })
+        XCTAssertNotNil(state.lanes.textElements)
+        XCTAssertNil(session.exportEditorState(maxBytes: 10), "over the cap falls back to the legacy flush")
+    }
+
+    /// Capability-on twin of `testChatStagedEditsAloneNeedNoFlushButLocalEditsDo`: even real local
+    /// edits are exported, never committed (no save, no render) before the turn.
+    func testExportingLocalEditsNeverCommitsOrRenders() async throws {
+        let (session, fake) = await loaded(Self.chatSnapshot(shape: .flatOnly))
+        session.setClipTiming(clipID: "s1", durationS: 1.1)
+        XCTAssertFalse(session.hasOnlyChatStagedChanges, "legacy path would have flushed here")
+        let state = try XCTUnwrap(session.exportEditorState())
+        XCTAssertNotNil(state.lanes.timelineSlots)
+        XCTAssertEqual(fake.commitCount, 0)
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    func testUnloadedEditorCannotExport() async throws {
+        XCTAssertNil(NativeEditorSession().exportEditorState())
+    }
+
+    /// The bug: a second cumulative chat draft left Undo on chat #1 and Save disabled.
+    func testSecondChatDraftUndoReturnsToThePreChatUnsavedState() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        let first = try XCTUnwrap(session.exportEditorState())
+        fake.draftSnapshot = Self.echoing(first.clientStateID, Self.textDraft(revision: 2, texts: [("t1", "hello A")]))
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "hello A")
+        XCTAssertTrue(session.hasUnsavedChanges)
+
+        let second = try XCTUnwrap(session.exportEditorState())
+        XCTAssertNotNil(second.lanes.textElements, "chat #1's staged lane is unsaved and is sent")
+        fake.draftSnapshot = Self.echoing(second.clientStateID, Self.textDraft(revision: 3, texts: [("t1", "Final")]))
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements.first?.text, "Final")
+        XCTAssertNotEqual(session.saveState, .conflict)
+
+        session.undo()
+        XCTAssertEqual(session.document.textElements.first?.text, "hello A", "one Undo = the state sent with the turn")
+        XCTAssertTrue(session.hasUnsavedChanges, "still unsaved against the rendered baseline (Save stays enabled)")
+        session.undo()
+        XCTAssertEqual(session.document.textElements.first?.text, "hello")
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    func testEditDuringTurnOnADisjointLaneKeepsBothSides() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        let sent = try XCTUnwrap(session.exportEditorState())
+        session.setClipTiming(clipID: "s1", durationS: 1.2)
+        let local = session.document.clips.first { $0.id == "s1" }?.durationS
+        fake.draftSnapshot = Self.echoing(sent.clientStateID, Self.textDraft(revision: 2, texts: [("t1", "from chat")]))
+        await session.synchronizePromptRevision()
+        XCTAssertNotEqual(session.saveState, .conflict)
+        XCTAssertEqual(session.document.textElements.first?.text, "from chat")
+        XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, local)
+        XCTAssertEqual(session.dirtySections, [.timeline, .text])
+        session.undo()
+        XCTAssertEqual(session.document.textElements.first?.text, "hello")
+        XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, local, "undo restores the state at apply time")
+    }
+
+    func testEditDuringTurnOnTheSameLaneIsAConflictThatKeepsLocalEdits() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        let sent = try XCTUnwrap(session.exportEditorState())
+        session.setTextStyle(id: "t1", style: "Inter")
+        let local = session.document.textElements
+        fake.draftSnapshot = Self.echoing(sent.clientStateID, Self.textDraft(revision: 2, texts: [("t1", "from chat")]))
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.saveState, .conflict)
+        XCTAssertEqual(session.document.textElements, local, "never overwritten silently")
+    }
+
+    func testDraftWithAnUnknownStateIDFallsBackToTheLegacyHeadLogic() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        fake.draftSnapshot = Self.echoing("not-ours", Self.chatSnapshot())
+        await session.synchronizePromptRevision()
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertTrue(session.hasOnlyChatStagedChanges, "legacy staging path")
+    }
+
+    func testStaleGenerationDraftWithAStateIDIsStillIgnored() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        let sent = try XCTUnwrap(session.exportEditorState())
+        fake.draftSnapshot = Self.echoing(sent.clientStateID, Self.chatSnapshot(base: "g0"))
+        await session.synchronizePromptRevision()
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.document.textElements.first?.text, "hello")
+    }
+
+    /// Incident replay: title moved + label text + label start delayed (all unsaved) must survive a
+    /// chat turn that only shortens the timeline, and one Undo must restore the pre-chat state.
+    func testIncidentReplayChatBuiltOnUnsavedEditsKeepsAllOfThemAndUndoRestoresThem() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        session.setTextPosition(id: "t1", x: 0.3, y: 0.7)
+        session.updateTextContent(id: "t1", content: "Label edited")
+        session.updateTextTiming(id: "t1", startS: 0.5)
+        let before = session.document
+        XCTAssertEqual(session.dirtySections, [.text])
+        let sent = try XCTUnwrap(session.exportEditorState())
+        let sentText = try XCTUnwrap(sent.lanes.textElements)
+
+        let shortened: [JSONValue] = [
+            .object(["slot_id": .string("s1"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(1), "removed": .bool(false), "transition_after": .string("cut")]),
+            .object(["slot_id": .string("s2"), "clip_index": .number(1), "in_s": .number(0), "duration_s": .number(2), "removed": .bool(true), "transition_after": .string("cut")]),
+            .object(["slot_id": .string("s3"), "clip_index": .number(2), "in_s": .number(0), "duration_s": .number(2), "removed": .bool(true), "transition_after": .string("cut")]),
+        ]
+        let draft = DraftSnapshot(draftID: "d2", itemID: "item", variantKey: "initial", draftRevision: 2, snapshotHash: "h", etag: "e",
+            baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "client_state_id": .string(sent.clientStateID),
+                       "editor_payload": .object(["base_generation": .string("g1"), "text_elements": .array(sentText),
+                                                  "timeline_slots": .array(shortened)])], canUndo: true, createdAt: .now)
+        fake.draftSnapshot = draft
+        await session.synchronizePromptRevision()
+
+        XCTAssertNotEqual(session.saveState, .conflict)
+        let text = try XCTUnwrap(session.document.textElements.first)
+        XCTAssertEqual(text.text, "Label edited")
+        XCTAssertEqual(text.startS, 0.5)
+        XCTAssertEqual(text.raw["x_frac"], .number(0.3))
+        XCTAssertEqual(text.raw["y_frac"], .number(0.7))
+        XCTAssertEqual(session.document.clips.count, 1, "chat's shortened timeline applied")
+        XCTAssertEqual(session.document.clips.first?.durationS, 1)
+
+        session.undo()
+        XCTAssertEqual(session.document.textElements, before.textElements)
+        XCTAssertEqual(session.document.clips, before.clips)
+        XCTAssertTrue(session.hasUnsavedChanges, "the creator's own edits are still unsaved")
+        XCTAssertEqual(session.dirtySections, [.text])
+    }
 }

@@ -1,0 +1,40 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-01.1",
+  "input": {
+    "creator_request": "Add subtitles and label the city in each clip.",
+    "latest_user_message": null,
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\":[{\"intent_id\":\"i1\",\"op\":\"label\",\"attribute\":\"city in each clip\",\"creator_text\":null,\"caption_attribute\":null,\"position\":null,\"source_quote\":\"label the city in each clip\"}],\"question\":null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i1",
+        "op": "label",
+        "attribute": "city in each clip",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "label the city in each clip"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_intents": [
+      {
+        "op": "label",
+        "source_quote_keywords": [
+          "label",
+          "city"
+        ]
+      }
+    ],
+    "expect_absent_ops": [
+      "caption"
+    ],
+    "expect_any": true
+  }
+}

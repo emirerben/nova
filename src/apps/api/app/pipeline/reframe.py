@@ -17,7 +17,6 @@ IMPORTANT: subprocess.run() is blocking -- all calls here are sync.
 CRITICAL: Never use shell=True. Always pass args as a list.
 """
 
-import math
 import os
 import re
 import subprocess
@@ -40,6 +39,7 @@ from app.pipeline.camera_effects import (
     resolve_easing,
 )
 from app.pipeline.canvas import Canvas
+from app.pipeline.cut_grid import FrameGrid, keep_segment_frames
 from app.pipeline.probe import probe_video
 from app.pipeline.text_overlay import FONTS_DIR
 
@@ -678,33 +678,6 @@ def _validate_keep_segments(
         prev_end = seg_end
 
 
-def _keep_segment_frames(
-    keep_segments: list[tuple[float, float]],
-    fps: int,
-    duration: float,
-) -> list[tuple[int, int]]:
-    """Return the [first, end) CFR frame range of each keep segment that snaps to a frame.
-
-    Each boundary snaps to the nearest frame, so the audio, which follows the
-    picture, is cut at most half a frame from the plan: snapping both edges up
-    played up to a frame of removed audio (a discarded retake's onset) at
-    full level and faded the next kept word's onset. A segment reaching the
-    clip end keeps every frame up to it. A segment that snaps to no frame is
-    dropped — it would add audio over a frozen picture and nothing else.
-    """
-    frames: list[tuple[int, int]] = []
-    for seg_start, seg_end in keep_segments:
-        first = math.floor(seg_start * fps + 0.5)
-        if seg_end >= duration:
-            # The epsilon absorbs float noise (12.0 * 30 = 360.00000000000006).
-            end = math.ceil(seg_end * fps - 1e-6)
-        else:
-            end = math.floor(seg_end * fps + 0.5)
-        if end > first:
-            frames.append((first, end))
-    return frames
-
-
 def _frame_trim_s(frame: int, fps: int) -> float:
     """A trim boundary that selects `frame` onwards, whatever the time base.
 
@@ -713,6 +686,15 @@ def _frame_trim_s(frame: int, fps: int) -> float:
     nor the 6-decimal formatting can move the boundary across a frame.
     """
     return max(0.0, (frame - 0.25) / fps)
+
+
+def cut_frame_grid(start_s: float, end_s: float) -> FrameGrid:
+    """The frame grid ``reframe_and_export(start_s, end_s, keep_segments=...)`` cuts on.
+
+    Pass it to ``silence_cut.remap_*`` for anything placed on that cut output,
+    so captions and anchors land where the cut audio actually plays.
+    """
+    return FrameGrid(fps=settings.output_fps, duration_s=end_s - start_s)
 
 
 def _build_keep_segments_cmd(
@@ -737,7 +719,7 @@ def _build_keep_segments_cmd(
     Video: [0:v] -> vf filters -> [base] -> split -> per-segment
     trim + setpts=PTS-STARTPTS + setsar=1. Each segment renders whole CFR
     frames [first, end), its boundaries snapped to the nearest frame
-    (_keep_segment_frames), trimmed a quarter frame before those frames
+    (cut_grid.keep_segment_frames), trimmed a quarter frame before those frames
     (_frame_trim_s) so the stream time base cannot move a boundary across a
     frame. The picture always hard-cuts.
 
@@ -774,7 +756,7 @@ def _build_keep_segments_cmd(
     inside reframe_and_export (tests/test_encoder_policy.py allowlist).
     """
     fps = settings.output_fps
-    segments = _keep_segment_frames(keep_segments, fps, duration)
+    segments = keep_segment_frames(keep_segments, fps, duration)
     if not segments:
         raise ValueError("keep_segments hold no video frame: every segment snaps to no frame")
     n = len(segments)

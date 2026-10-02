@@ -1,0 +1,20 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-01.1",
+  "input": {
+    "creator_request": "Make a fun montage of our Barcelona weekend.\nAdd captions",
+    "latest_user_message": "Add captions",
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\":[],\"question\":null}",
+  "output": {
+    "intents": [],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_intents": [],
+    "expect_any": false,
+    "expect_question": false
+  }
+}

@@ -16,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { LightShell } from "../_components/ui/LightShell";
+import { LightShell } from "@/components/ui/LightShell";
 import SignInPrompt from "../_components/SignInPrompt";
 import { Switch } from "@/components/ui/switch";
 import {

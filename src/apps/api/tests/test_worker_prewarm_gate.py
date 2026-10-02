@@ -105,12 +105,13 @@ def test_light_queues_stay_disjoint_from_render_queues():
     assert _fly_toml_queues("light").isdisjoint(RENDER_WORKER_QUEUES)
 
 
-def test_autoplace_worker_uses_only_the_dedicated_queue():
-    """Pool analysis must neither wait behind nor prewarm render work."""
+def test_autoplace_queue_has_dedicated_and_transitional_worker_consumers():
+    """Release 1 preserves the dedicated consumer while preparing cutover."""
     from app.services.queue_state import RENDER_WORKER_QUEUES
 
     assert _fly_toml_queues("autoplace") == {"autoplace-jobs"}
-    assert _fly_toml_queues("autoplace").isdisjoint(RENDER_WORKER_QUEUES)
+    assert {"autoplace-jobs", "speech-analysis"}.issubset(RENDER_WORKER_QUEUES)
+    assert {"autoplace-jobs", "speech-analysis"}.issubset(_fly_toml_queues("worker"))
 
 
 def test_real_celery_app_exposes_the_introspection_surface():

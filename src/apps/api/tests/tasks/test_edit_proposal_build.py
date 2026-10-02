@@ -155,7 +155,7 @@ def test_clip_analysis_uses_three_workers_and_preserves_assignment_order(monkeyp
             duration_s=2,
         )
 
-    monkeypatch.setattr(proposal_build, "_analyze_clip_assignment", _analyze)
+    monkeypatch.setattr(proposal_build, "analyze_clip_assignment", _analyze)
     completed: list[str] = []
 
     results = proposal_build._analyze_clip_assignments(
@@ -211,7 +211,7 @@ def test_clip_analysis_stops_submitting_after_a_terminal_failure(monkeypatch) ->
             duration_s=2,
         )
 
-    monkeypatch.setattr(proposal_build, "_analyze_clip_assignment", _analyze)
+    monkeypatch.setattr(proposal_build, "analyze_clip_assignment", _analyze)
 
     with pytest.raises(AssetUnreadableError, match="unreadable"):
         proposal_build._analyze_clip_assignments(
@@ -250,7 +250,7 @@ def test_clip_analysis_failure_does_not_wait_for_sibling_workers(monkeypatch) ->
             duration_s=2,
         )
 
-    monkeypatch.setattr(proposal_build, "_analyze_clip_assignment", _analyze)
+    monkeypatch.setattr(proposal_build, "analyze_clip_assignment", _analyze)
 
     with pytest.raises(AssetUnreadableError, match="unreadable"):
         proposal_build._analyze_clip_assignments(
@@ -608,7 +608,7 @@ def test_clip_video_analysis_uses_privacy_safe_reuse_boundary(monkeypatch) -> No
     )
     monkeypatch.setattr("app.storage.download_generation_to_file", lambda *_a, **_kw: None)
 
-    entry, ref = proposal_build._analyze_clip_assignment(
+    entry, ref = proposal_build.analyze_clip_assignment(
         {"media_id": media_id, "gcs_path": path},
         {},
     )
@@ -685,7 +685,7 @@ def _prod_item(
 def test_transient_pool_video_analysis_error_retries_instead_of_wedging(monkeypatch) -> None:
     """Regression for the prod wedge on item 85d1de16-ba11-4533-9290-927a45819cd3.
 
-    Root cause: _analyze_clip_assignment's cache-miss path calls
+    Root cause: analyze_clip_assignment's cache-miss path calls
     analyze_pool_video, a raw Gemini call outside the Agent framework (no
     agent_run row on failure — matches the prod evidence of zero agent_run
     rows in the failure window). A transient AnalysisTemporarilyUnavailableError
@@ -711,7 +711,7 @@ def test_transient_pool_video_analysis_error_retries_instead_of_wedging(monkeypa
         "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
     )
     # Force a cache MISS (generation differs from the persisted "1787000010652201")
-    # so _analyze_clip_assignment re-downloads and re-analyzes the clip.
+    # so analyze_clip_assignment re-downloads and re-analyzes the clip.
     monkeypatch.setattr(
         "app.storage.object_metadata",
         lambda _path: SimpleNamespace(content_type="video/quicktime", generation="999999999"),
@@ -2977,7 +2977,7 @@ def test_clip_assignment_reanalyzes_rotation_naive_cached_analysis(monkeypatch) 
     stale_entry = dict(_PROD_CLIP_ASSIGNMENT)
     stale_entry["analysis"] = {**stale_entry["analysis"], "analysis_version": 5}
 
-    entry, ref = proposal_build._analyze_clip_assignment(stale_entry, {})
+    entry, ref = proposal_build.analyze_clip_assignment(stale_entry, {})
 
     assert len(calls) == 1
     assert entry["analysis"]["analysis_version"] == ANALYSIS_VERSION
@@ -3005,7 +3005,7 @@ def test_clip_assignment_reuses_current_version_cached_analysis(monkeypatch) -> 
 
     monkeypatch.setattr("app.tasks.autoplace.analyze_pool_video", _boom)
 
-    entry, ref = proposal_build._analyze_clip_assignment(fresh_entry, {})
+    entry, ref = proposal_build.analyze_clip_assignment(fresh_entry, {})
 
     assert entry["analysis"]["analysis_version"] == ANALYSIS_VERSION
     assert ref.analysis["subject"] == "Acropolis of Athens"
@@ -3033,7 +3033,7 @@ def test_keyless_clip_analysis_stamps_version_so_it_never_reanalyzes(monkeypatch
     )
     monkeypatch.setattr("app.storage.download_generation_to_file", lambda *_a, **_kw: None)
 
-    entry, _ref = proposal_build._analyze_clip_assignment(
+    entry, _ref = proposal_build.analyze_clip_assignment(
         {"media_id": media_id, "gcs_path": path},
         {},
     )
@@ -3043,7 +3043,7 @@ def test_keyless_clip_analysis_stamps_version_so_it_never_reanalyzes(monkeypatch
 
     # Re-run with the persisted entry as the incoming cache row: same
     # generation, now-stamped analysis_version -> must be a cache HIT.
-    entry2, _ref2 = proposal_build._analyze_clip_assignment(entry, {})
+    entry2, _ref2 = proposal_build.analyze_clip_assignment(entry, {})
 
     assert len(calls) == 1
     assert entry2["analysis"]["analysis_version"] == ANALYSIS_VERSION

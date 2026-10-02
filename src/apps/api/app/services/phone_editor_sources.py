@@ -111,3 +111,63 @@ def editor_source_bindings(variant: dict) -> tuple[PhoneSourceBinding, ...]:
 
 def editor_visual_bindings(variant: dict) -> tuple[PhoneVisualBinding, ...]:
     return _bindings(variant, "visual_binding", PhoneVisualBinding)
+
+
+def authored_phone_sources_available(job: Any, variant: dict) -> bool:
+    """Source admission for saved empty/authored device edits, never cloud fallback."""
+    from app.config import settings
+
+    return bool(
+        variant.get("render_destination") == "device"
+        and (
+            variant.get("editor_state") == "empty"
+            or variant.get("editor_timeline_mode") == "authored"
+        )
+        and settings.phone_editor_media_enabled
+        and settings.phone_rendering_for(job.user_id)
+        and {"stillImages", "visualVideos", "visualBlocks", "alphaOverlay", "audioMix"}.issubset(
+            settings.phone_render_verified_features
+        )
+    )
+
+
+def phone_editor_source_revision(job: Any, variant: dict) -> dict | None:
+    """Stable source indexes independent of a speech recipe's generated clips.
+
+    Guided edits keep their approval-bound catalog. Other device edits derive
+    the catalog exclusively from server-pinned original receipts, in the same
+    order as the public source pool. The base-generation fence versions edits;
+    revision 1 supplies the existing source-registration wire contract.
+    """
+    from app.routes.generative_jobs import _guided_v2_revision
+    from app.services.phone_sources import PHONE_SOURCES_FIELD
+
+    if (
+        variant.get("resolved_archetype") == "guided_story"
+        or variant.get("render_destination") != "device"
+    ):
+        return _guided_v2_revision(job, variant)
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row)
+        for row in (job.assembly_plan or {}).get(PHONE_SOURCES_FIELD) or []
+    )
+    by_path = {binding.proxy_path: binding for binding in bindings}
+    if len(by_path) != len(bindings):
+        raise ValueError("editor_source_identity_conflict")
+    paths = list((job.all_candidates or {}).get("clip_paths") or [])
+    if not paths or any(path not in by_path for path in paths):
+        raise ValueError("editor_source_catalog_invalid")
+    sources = [
+        canonical_source(
+            {
+                "media_id": by_path[path].media_id,
+                "lane": "clip",
+                "gcs_path": path,
+                "generation": by_path[path].generation,
+                "kind": "video",
+                "duration_s": by_path[path].original.duration_s,
+            }
+        )
+        for path in paths
+    ]
+    return {"revision_number": 1, "sources": merge_editor_sources(sources, variant)}

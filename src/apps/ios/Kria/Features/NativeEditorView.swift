@@ -21,6 +21,7 @@ struct NativeEditorView: View {
     @State private var showsDeviceRender = false
     @State private var showsOriginalsRecovery = false
     @State private var showsConversation = false
+    @State private var showsEmptyAddClip = false
     @State private var selectedTextForActions: String?
     /// KRI-185: a block opened from the Text tab's list edits its words first and
     /// returns to that list; one opened from the timeline keeps the old behaviour.
@@ -88,6 +89,7 @@ struct NativeEditorView: View {
                         NativeEditorLoadSurface(
                             title: "Opening the editor…",
                             detail: "Loading the latest cut and its editing controls.",
+                            projectTitle: project.workspaceTitle,
                             isLoading: true,
                             onBack: requestBack,
                             retry: nil
@@ -97,6 +99,7 @@ struct NativeEditorView: View {
                     NativeEditorLoadSurface(
                         title: "The editor couldn’t open",
                         detail: message,
+                        projectTitle: project.workspaceTitle,
                         isLoading: false,
                         onBack: requestBack,
                         retry: { Task { await loadEditor() } }
@@ -144,6 +147,7 @@ struct NativeEditorView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
+            .sheet(isPresented: $showsEmptyAddClip) { NativeEditorAddClipSheet(session: session) }
             .onChange(of: deviceLocalFile) { _, file in
                 if let file { session.showDeviceOutput(file) }
             }
@@ -263,7 +267,8 @@ struct NativeEditorView: View {
 
             NativeVideoPreview(
                 session: session, onEmptyTap: enterFullscreen,
-                onFindOriginals: { showsOriginalsRecovery = true }
+                onFindOriginals: { showsOriginalsRecovery = true },
+                onAddClip: { showsEmptyAddClip = true }
             )
                 .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
                 .clipped()
@@ -705,13 +710,14 @@ struct NativeEditorView: View {
 private struct NativeEditorLoadSurface: View {
     let title: String
     let detail: String
+    let projectTitle: String
     let isLoading: Bool
     let onBack: () -> Void
     let retry: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
-            NativeEditorTopBar(onBack: onBack)
+            NativeEditorTopBar(title: projectTitle, onBack: onBack)
             VStack(alignment: .leading, spacing: 14) {
                 if isLoading { ProgressView().tint(KriaColor.ink) }
                 Text(title).font(KriaFont.display(29))

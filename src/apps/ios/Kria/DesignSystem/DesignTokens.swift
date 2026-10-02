@@ -21,6 +21,16 @@ enum KriaColor {
     static let failureSoft = Color(hex: 0xFFF0ED)
 }
 
+enum KriaTransparency {
+    /// Neither `xcrun simctl ui` nor the `com.apple.Accessibility` defaults flip
+    /// `UIAccessibility.isReduceTransparencyEnabled` for a simulator app process,
+    /// so UI tests and screenshots force the reduced branch with this env var
+    /// (same pattern as `UI_TEST_REDUCE_MOTION`).
+    static func isReduced(_ systemValue: Bool) -> Bool {
+        systemValue || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_TRANSPARENCY"] == "1"
+    }
+}
+
 private extension Color {
     init(hex: UInt32) {
         self.init(red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255)

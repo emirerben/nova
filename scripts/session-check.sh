@@ -28,8 +28,8 @@ main_tip="$(git log -1 --format='%h %s' origin/main 2>/dev/null || echo 'unknown
 
 if [ "$branch" = "main" ]; then
   # Clean tree → auto fast-forward to the freshly-fetched origin/main so the
-  # shared checkout never drifts. Dirty tree or a diverged history → warn only
-  # (never discard local work or rewrite history from a SessionStart hook).
+  # shared checkout never drifts. Dirty tree or a diverged history → route new
+  # work to an isolated worktree; never discard local work or rewrite history.
   if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
     if git merge --ff-only origin/main --quiet >/dev/null 2>&1; then
       echo "Auto-updated local main to origin/main ($main_tip)."
@@ -38,14 +38,16 @@ if [ "$branch" = "main" ]; then
     cat <<EOF
 WARNING: local main is $behind commit(s) behind origin/main and could NOT fast-forward (history diverged).
   Origin tip: $main_tip
-  Resolve manually: git pull --rebase  (inspect with: git log --oneline main..origin/main)
+  Preserve this checkout and start new work in a fresh worktree:
+    bash scripts/new-session.sh <topic>
 EOF
     exit 0
   fi
   cat <<EOF
 WARNING: local main is $behind commit(s) behind origin/main (working tree dirty — not auto-updating).
   Origin tip: $main_tip
-  Commit or stash, then: git pull --ff-only
+  Preserve all local changes and start new work in a fresh worktree:
+    bash scripts/new-session.sh <topic>
 EOF
   exit 0
 fi
@@ -53,7 +55,7 @@ fi
 cat <<EOF
 WARNING: STALE WORKTREE — on branch '$branch', $behind commit(s) behind origin/main.
   Origin tip: $main_tip
-  To start fresh work off main: bash scripts/new-session.sh <topic>
-  To update this branch:        git merge --ff-only origin/main  (or rebase)
+  Preserve this checkout and start new work in a fresh worktree:
+    bash scripts/new-session.sh <topic>
 EOF
 exit 0

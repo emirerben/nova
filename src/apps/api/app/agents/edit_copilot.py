@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-01-v64"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-02-v66"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1155,11 +1155,17 @@ def _format_snapshot(snapshot: dict) -> str:
             return _clean_component_data(value)
         return _clean_prompt_data(value, max_chars=max_chars)
 
-    allowed = snapshot.get("allowed_op_families") or []
+    allowed_value = snapshot.get("allowed_op_families")
+    allowed = allowed_value if isinstance(allowed_value, list) else []
     has_captions = bool(snapshot.get("has_narrated_captions"))
     total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
 
-    empty_families = "(none; read-only inspection)" if component_context_enabled else "(all v1 ops)"
+    if component_context_enabled:
+        empty_families = "(none; read-only inspection)"
+    elif "allowed_op_families" not in snapshot:
+        empty_families = "(all v1 ops)"
+    else:
+        empty_families = "(none; no editable operations)"
     lines = [
         f"allowed_op_families: {', '.join(str(x) for x in allowed) if allowed else empty_families}",
         f"has_narrated_captions: {has_captions}",
@@ -4153,6 +4159,20 @@ def _label_fold(text: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
 
 
+# An ask about label TIMING ("texts aren't aligned with their videos", "readjust all
+# texts to fit the shift"). label_each_clip only writes label WORDING, so refusing it
+# must never read as if the labels were fixed or as an internal note.
+_ALIGNMENT_ASK_RE = re.compile(
+    r"\b(align\w*|out of sync|in sync|sync\w*|shift\w*|too early|too late|early|late|"
+    r"re-?time\w*|readjust\w*|re-?adjust\w*|line[sd]? up|fit the|respective|"
+    r"hizala\w*|senkron\w*|kayd\w*)\b"
+)
+_LABEL_ALIGNMENT_NOT_WORDING = (
+    "I can't fix label timing that way: that tool only changes label wording. "
+    "Ask me to realign the labels to their clips and I'll line them up."
+)
+
+
 def _coerce_label_each_clip(
     name: str, payload: dict, snapshot: dict, state: _ParseState
 ) -> dict | None:
@@ -4327,11 +4347,13 @@ def _coerce_label_each_clip(
         state.reject(
             op=name,
             reason="capability_unavailable",
-            detail=(
+            detail=_LABEL_ALIGNMENT_NOT_WORDING
+            if _ALIGNMENT_ASK_RE.search(_label_fold(state.utterance))
+            else (
                 "every clip already has its label"
                 if already_correct
                 else (
-                    "the labels you edited by hand were kept, and no other clip needs one"
+                    "The labels you edited by hand were kept, and no other clip needs a label."
                     if kept_edited
                     else (
                         "none of the clips carries a filming time"

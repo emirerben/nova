@@ -784,6 +784,15 @@
       },
       "CreationCapabilitiesOut": {
         "properties": {
+          "creation_mode": {
+            "default": "hybrid",
+            "enum": [
+              "hybrid",
+              "device_only"
+            ],
+            "title": "Creation Mode",
+            "type": "string"
+          },
           "editor_state_max_bytes": {
             "default": 262144,
             "title": "Editor State Max Bytes",
@@ -803,6 +812,11 @@
           },
           "media": {
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
+          },
+          "minimum_client_protocol": {
+            "default": 2,
+            "title": "Minimum Client Protocol",
+            "type": "integer"
           },
           "phone_rendering": {
             "$ref": "#/components/schemas/DeviceRenderCapabilities"
@@ -2365,6 +2379,21 @@
             "title": "Copilot Receipt Ids",
             "type": "array"
           },
+          "deletions": {
+            "items": {
+              "$ref": "#/components/schemas/EditorDeletionRequest"
+            },
+            "maxItems": 100,
+            "title": "Deletions",
+            "type": "array"
+          },
+          "editor_state_version": {
+            "default": null,
+            "minimum": 1,
+            "nullable": true,
+            "title": "Editor State Version",
+            "type": "integer"
+          },
           "guided_revision": {
             "additionalProperties": true,
             "default": null,
@@ -2513,6 +2542,20 @@
       },
       "EditorCommitResponse": {
         "properties": {
+          "draft": {
+            "$ref": "#/components/schemas/DraftSnapshotOut",
+            "default": null,
+            "nullable": true
+          },
+          "editor_state": {
+            "default": "renderable",
+            "enum": [
+              "renderable",
+              "empty"
+            ],
+            "title": "Editor State",
+            "type": "string"
+          },
           "expected_duration_s": {
             "default": null,
             "minimum": 0,
@@ -2638,6 +2681,40 @@
           "title"
         ],
         "title": "EditorCommitSections",
+        "type": "object"
+      },
+      "EditorDeletionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "clip",
+              "text",
+              "caption_cue",
+              "music",
+              "sound_effect",
+              "media_overlay",
+              "visual_block",
+              "motion_scene",
+              "camera_effect",
+              "carousel",
+              "lyric_line"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "EditorDeletionRequest",
         "type": "object"
       },
       "EditorSourceOut": {
@@ -2839,6 +2916,21 @@
             "maxItems": 8,
             "title": "Copilot Receipt Ids",
             "type": "array"
+          },
+          "deletions": {
+            "items": {
+              "$ref": "#/components/schemas/EditorDeletionRequest"
+            },
+            "maxItems": 100,
+            "title": "Deletions",
+            "type": "array"
+          },
+          "editor_state_version": {
+            "default": null,
+            "minimum": 1,
+            "nullable": true,
+            "title": "Editor State Version",
+            "type": "integer"
           },
           "guided_revision": {
             "additionalProperties": true,
@@ -8868,8 +8960,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -9006,8 +9118,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -9130,8 +9262,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -9316,8 +9468,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -9368,8 +9540,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -9420,8 +9612,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -9472,8 +9684,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -9524,8 +9756,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -9579,8 +9831,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -9620,8 +9892,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -9651,8 +9943,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -10154,8 +10466,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -10347,8 +10679,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -10399,8 +10751,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -10416,6 +10788,26 @@
         "responses": {
           "200": {
             "description": "Visual removed"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -10485,8 +10877,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -10566,8 +10978,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -10618,8 +11050,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -10670,8 +11122,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -10731,8 +11203,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [
@@ -10802,8 +11294,28 @@
           "409": {
             "description": "Revision or identity conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
           "422": {
             "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
           }
         },
         "security": [

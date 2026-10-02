@@ -12,6 +12,8 @@ import json
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.services.queue_state import (
     RENDER_WORKER_QUEUES,
     get_job_runtime_state,
@@ -359,6 +361,30 @@ def test_render_worker_idle_false_when_render_queue_has_depth() -> None:
     assert render_worker_idle(celery_app) is False
 
 
+@pytest.mark.parametrize("queue", ["autoplace-jobs", "speech-analysis"])
+def test_render_worker_idle_false_for_unified_analysis_queue_work(queue: str) -> None:
+    redis = MagicMock()
+    redis.llen.side_effect = lambda name: 1 if name == queue else 0
+    celery_app = _fake_celery(active={}, reserved={}, active_queues={}, redis=redis)
+    assert render_worker_idle(celery_app) is False
+
+
+@pytest.mark.parametrize("queue", ["autoplace-jobs", "speech-analysis"])
+@pytest.mark.parametrize("state", ["active", "reserved"])
+def test_render_worker_idle_false_for_unified_analysis_inflight_work(
+    queue: str, state: str
+) -> None:
+    active = {"celery@worker-1": [{"args": ["job-x"]}]} if state == "active" else {}
+    reserved = {"celery@worker-1": [{"args": ["job-x"]}]} if state == "reserved" else {}
+    celery_app = _fake_celery(
+        active=active,
+        reserved=reserved,
+        active_queues={"celery@worker-1": [{"name": queue}]},
+        redis=_zero_llen_redis(),
+    )
+    assert render_worker_idle(celery_app) is False
+
+
 def test_render_worker_idle_none_on_inspect_failure() -> None:
     """Broker hiccup → None, never True. Callers must treat None as 'not
     idle' — a stop decision made on missing information could stop a
@@ -389,6 +415,8 @@ def test_render_worker_queues_constant_matches_fly_toml_worker_queues() -> None:
             "creator-guided-jobs",
             "creator-render-v2",
             "creator-fidelity-v1",
+            "autoplace-jobs",
+            "speech-analysis",
         }
     )
 

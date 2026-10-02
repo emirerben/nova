@@ -29,6 +29,7 @@ from __future__ import annotations
 import contextvars
 import copy
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -1028,13 +1029,109 @@ def _wait_for_required_speech_soft_deadline(*, now: datetime | None = None) -> b
     return True
 
 
+_VARIANT_RERENDER_TASKS = {
+    "rebuild_slide_post_variant": "slides",
+    "regenerate_generative_variant": None,
+    "reburn_narrated_captions": None,
+    "rerender_caption_camera_effects": None,
+    "reburn_narrated_bed_level": None,
+    "retranscribe_subtitled_captions": None,
+}
+
+
+def _has_last_good_variant_artifact(variant: dict[str, Any]) -> bool:
+    """Whether a blocked in-place rerender can truthfully return to ready."""
+    if variant.get("variant_id") == "slides":
+        # A slide preview is only useful when its matching export bundle still
+        # exists. `_build_slide_post_result` publishes both atomically.
+        slide_post = variant.get("slide_post")
+        return bool(
+            variant.get("video_path")
+            and isinstance(slide_post, dict)
+            and slide_post.get("bundle_gcs_path")
+        )
+    return bool(variant.get("video_path") or variant.get("output_url"))
+
+
+def _clear_blocked_variant_rerender(fn, self, job_id: str, args: tuple, kwargs: dict) -> None:  # noqa: ANN001
+    """Terminalize a blocked in-place rerender without touching newer work.
+
+    Cloud policy is checked before a task's usual exception cleanup.  Only
+    named in-place variant rerenders have a generation token to reconcile;
+    initial job orchestration and speech-operation tasks deliberately remain
+    terminalized by the policy.
+    """
+    fixed_variant_id = _VARIANT_RERENDER_TASKS.get(fn.__name__)
+    if fn.__name__ not in _VARIANT_RERENDER_TASKS:
+        return
+    bound = inspect.signature(fn).bind_partial(self, job_id, *args, **kwargs)
+    render_gen_id = bound.arguments.get("render_gen_id")
+    variant_id = fixed_variant_id or bound.arguments.get("variant_id")
+    # Tokenless legacy deliveries predate the mint/stamp contract. Do not let
+    # a policy flip mutate a variant they cannot prove they still own.
+    if not isinstance(variant_id, str) or not variant_id or not render_gen_id:
+        return
+    from app.services.cloud_render_policy import CLOUD_RENDER_DISABLED_DETAIL  # noqa: PLC0415
+
+    # Unlike `_update_variant_entry`, this needs to choose the terminal state
+    # from the *currently locked* variant. A failed first render has no
+    # last-good artifact, so changing it to ready would manufacture a playable
+    # state. The exact generation comparison also makes a newer queued task
+    # entirely invisible to this older blocked delivery.
+    with _sync_session() as db:
+        entry = _lock_owned_entry_job(db, job_id)
+        if entry is None:
+            return
+        job, _ownership_epoch = entry
+        if getattr(job, "status", None) == _CANCELLED_JOB_STATUS:
+            return
+        plan = copy.deepcopy(job.assembly_plan or {})
+        variants = list(plan.get("variants") or [])
+        index = next(
+            (i for i, variant in enumerate(variants) if variant.get("variant_id") == variant_id),
+            None,
+        )
+        if index is None:
+            return
+        current = dict(variants[index])
+        if current.get("render_generation_id") != str(render_gen_id):
+            log.warning(
+                "stale_render_write_discarded",
+                job_id=job_id,
+                variant_id=variant_id,
+                outcome="variant_rerender_cloud_disabled",
+                expected_gen_id=render_gen_id,
+                actual_gen_id=current.get("render_generation_id"),
+            )
+            return
+        has_last_good = _has_last_good_variant_artifact(current)
+        variants[index] = {
+            **current,
+            "render_status": "ready" if has_last_good else "failed",
+            "ok": has_last_good,
+            "render_error": CLOUD_RENDER_DISABLED_DETAIL,
+        }
+        job.assembly_plan = {**plan, "variants": variants}
+        db.commit()
+
+
+def _phone_rendering_globally_available() -> bool:
+    """Global compiler gate; per-user cohort validation happens at publish."""
+    return settings.ios_device_only_mode or settings.phone_rendering_enabled
+
+
 def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
     """Wrap every generative task entry in the same owner/cancellation gate."""
 
     @wraps(fn)
     def wrapped(self, job_id: str, *args, **kwargs):  # noqa: ANN001, ANN202
+        from app.services.cloud_render_policy import block_cloud_render_task  # noqa: PLC0415
         from app.services.creator_direction_snapshot import renderer_policy_scope
 
+        if block_cloud_render_task(job_id, task_name=fn.__name__):
+            _clear_blocked_variant_rerender(fn, self, job_id, args, kwargs)
+            log.info("generative_cloud_render_blocked", job_id=job_id, task=fn.__name__)
+            return None
         fence = (
             _owned_job_task_fence(job_id, allow_phone_planning=True)
             if fn.__name__ == "orchestrate_generative_job"
@@ -3746,7 +3843,7 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
     existing = (snapshot.get(DEVICE_RENDER_FIELD) or {}).get("guided_story")
     if existing is not None and existing.get("base_generation") == generation:
         return  # A delivery cannot rewrite an already issued device revision.
-    if not settings.phone_rendering_enabled:
+    if not _phone_rendering_globally_available():
         raise ValueError(
             "Phone rendering is currently unavailable; originals remain on the device."
         )
@@ -4166,7 +4263,7 @@ def _run_phone_voiceover_montage_job(
         for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
     ):
         return
-    if not settings.phone_rendering_enabled:
+    if not _phone_rendering_globally_available():
         raise ValueError(
             "Phone rendering is currently unavailable; originals remain on the device."
         )
@@ -4728,7 +4825,7 @@ def _run_phone_unified_montage_job(
         for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
     ):
         return None
-    if not settings.phone_rendering_enabled:
+    if not _phone_rendering_globally_available():
         raise ValueError(
             "Phone rendering is currently unavailable; originals remain on the device."
         )
@@ -5030,7 +5127,7 @@ def _run_phone_subtitled_job(
         for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
     ):
         return
-    if not settings.phone_rendering_enabled:
+    if not _phone_rendering_globally_available():
         raise ValueError(
             "Phone rendering is currently unavailable; originals remain on the device."
         )
@@ -5393,6 +5490,8 @@ def _run_phone_subtitled_job(
                         }
                         for word in words
                     ]
+                # Raw float mapping, no frame grid: the phone recipe plays
+                # each keep segment at its exact float offsets.
                 cut_words = [
                     Word(
                         text=item["text"],
@@ -6205,7 +6304,7 @@ def _run_phone_narrated_job(
         for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
     ):
         return
-    if not settings.phone_rendering_enabled:
+    if not _phone_rendering_globally_available():
         raise ValueError(
             "Phone rendering is currently unavailable; originals remain on the device."
         )
@@ -13195,6 +13294,7 @@ def _insert_carousel_moment_step(
     variant_dir: str,
     clip_metas: list | None = None,
     inserted_duration_out: dict[str, float] | None = None,
+    source_steps: list | None = None,
 ) -> list:
     """Splice a rendered Blossom-carousel moment into the montage `steps` list.
 
@@ -13267,7 +13367,7 @@ def _insert_carousel_moment_step(
     moment_path = _maybe_render_carousel_moment(
         moment_cfg,
         clip_id_to_local=clip_id_to_local,
-        steps=steps,
+        steps=source_steps if source_steps is not None else steps,
         variant_dir=variant_dir,
         probe_map=probe_map,
         variant_id=variant_id,
@@ -14700,6 +14800,11 @@ def _run_regenerate_variant(
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
             log.error("generative_regenerate_variant_unknown", job_id=job_id, variant_id=variant_id)
+            return
+        if existing.get("editor_timeline_mode") == "authored":
+            from app.pipeline.authored_timeline import rerender_authored_timeline
+
+            rerender_authored_timeline(job_id, variant_id, render_gen_id)
             return
         if existing.get("resolved_archetype") == "guided_story" and (
             guided_revision is not None or isinstance(existing.get("guided_edit_revision"), dict)
@@ -22714,7 +22819,11 @@ def _render_subtitled_variant(
         resolve_caption_font,
     )
     from app.pipeline.probe import probe_video  # noqa: PLC0415
-    from app.pipeline.reframe import reframe_and_export, resolve_output_fit  # noqa: PLC0415
+    from app.pipeline.reframe import (  # noqa: PLC0415
+        cut_frame_grid,
+        reframe_and_export,
+        resolve_output_fit,
+    )
     from app.pipeline.silence_cut import is_filler_token, remap_words  # noqa: PLC0415
     from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
     from app.pipeline.transcribe import (  # noqa: PLC0415
@@ -22787,8 +22896,11 @@ def _render_subtitled_variant(
             error_class=error_class,
         )
 
-    def _cut_caption_words(words: list, plan: Any) -> list:
-        """Build caption words from the cut timeline, excluding vocal fillers."""
+    def _cut_caption_words(words: list, plan: Any, grid: Any) -> list:
+        """Build caption words from the cut timeline, excluding vocal fillers.
+
+        ``grid`` is the cut render's frame grid, or None when no cut renders.
+        """
         from app.pipeline.transcribe import Word  # noqa: PLC0415
 
         return [
@@ -22798,7 +22910,7 @@ def _render_subtitled_variant(
                 end_s=word["end_s"],
                 confidence=1.0,
             )
-            for word in remap_words(words, plan)
+            for word in remap_words(words, plan, grid=grid)
             if not is_filler_token(word["text"])
         ]
 
@@ -23325,7 +23437,11 @@ def _render_subtitled_variant(
 
         # V2 prerequisites are deliberately resolved before the only reframe
         # encode. The original clip and the reframe share a 1:1 timeline unless
-        # silence-cut is active; that path already supplies exactly remapped words.
+        # silence-cut is active; that path supplies words remapped onto the cut.
+        # Caption words land on the cut's frame grid, where its audio plays. If
+        # the cut encode fails, both caption paths below rebuild from the uncut
+        # base instead.
+        sc_grid = cut_frame_grid(0.0, float(probe.duration_s)) if sc_apply else None
         detected_lang = language or "en"
         cues: list[dict[str, Any]] = []
         smart_compiled = None
@@ -23334,7 +23450,7 @@ def _render_subtitled_variant(
                 detected_lang, resolved_sc_words = _resolve_verbatim_caption_language(
                     sc_language, words=sc_words
                 )
-                caption_words = _cut_caption_words(resolved_sc_words, sc_plan)
+                caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
                 cues = build_plain_cues(caption_words, attach_words=True)
             elif checked_uncut_words is not None:
                 detected_lang, resolved_uncut_words = _resolve_verbatim_caption_language(
@@ -23499,6 +23615,7 @@ def _render_subtitled_variant(
                         raise SpeechCleanupFailure("apply_failed") from exc
                     sc_apply = False
                     sc_apply_failed = True
+                    sc_grid = None
                     sc_plan = None
                     sc_words = None
                     sc_language = ""
@@ -23600,8 +23717,8 @@ def _render_subtitled_variant(
 
         if not smart_v2 and sc_words is not None:
             # NO second transcription (plans/010): cues come from the verbatim
-            # original-clip transcript remapped into the cut timeline (exact
-            # arithmetic — see silence_cut.remap_words), MINUS every lexicon
+            # original-clip transcript remapped onto the cut render's frame grid
+            # (sc_grid — see silence_cut.remap_words), MINUS every lexicon
             # filler token. Caption hygiene (15A): fillers never reach captions
             # even when they were NOT cut from the video (e.g. blocked by the
             # segment-signal guard or below MIN_CUT_S). An explicit creator
@@ -23611,7 +23728,7 @@ def _render_subtitled_variant(
             detected_lang, resolved_sc_words = _resolve_verbatim_caption_language(
                 sc_language, words=sc_words
             )
-            caption_words = _cut_caption_words(resolved_sc_words, sc_plan)
+            caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
             cues = build_plain_cues(caption_words, attach_words=True)
         elif not smart_v2 and checked_uncut_words is not None:
             # Explicit keep-original means the exact accepted words and source
@@ -24291,7 +24408,13 @@ def _render_subtitled_variant(
         # silence_cut_bailout event carries the reason).
         silence_cut_summary: dict[str, Any] | None = None
         if sc_plan is not None and sc_plan.bailout_reason is None:
-            silence_cut_summary = plan_summary(sc_plan, original_duration_s=float(probe.duration_s))
+            # The frames the cut played, so an editor re-cut can reproject
+            # creator lanes off this render (speech_cut_state.RenderedCut).
+            silence_cut_summary = plan_summary(
+                sc_plan,
+                original_duration_s=float(probe.duration_s),
+                grid=sc_grid,
+            )
             if cleanup_required:
                 base["silence_cut_outcome"] = "applied" if sc_apply else "no_change"
                 silence_cut_summary["outcome"] = base["silence_cut_outcome"]
@@ -27385,16 +27508,24 @@ def _merge_speech_cut_prior_state(
     if not isinstance(prior, dict) or control.get("variant_id") != result.get("variant_id"):
         return result
 
-    from app.pipeline.speech_cut_state import reproject_variant_timing  # noqa: PLC0415
+    from app.pipeline.speech_cut_state import (  # noqa: PLC0415
+        RenderedCut,
+        reproject_variant_timing,
+    )
 
     projected = reproject_variant_timing(
         prior,
         old_removals=_removals_from_summary(prior.get("silence_cut")),
         new_removals=_removals_from_summary(result.get("silence_cut")),
+        old_render=RenderedCut.from_summary(prior.get("silence_cut")),
+        new_render=RenderedCut.from_summary(result.get("silence_cut")),
     )
     merged = dict(result)
     # New speech/caption/Smart analysis stays authoritative. Creator-authored
-    # timing lanes are projected exactly; appearance toggles are timing-free.
+    # timing lanes are projected through the frames each cloud cut render
+    # played; a prior render that cut but has no frame_grid keeps both sides
+    # on the removals (reproject_timed_records). Appearance toggles are
+    # timing-free.
     for field in (
         "media_overlays",
         "sound_effects",

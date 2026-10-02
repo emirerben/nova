@@ -247,6 +247,7 @@ final class KriaTests: XCTestCase {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(request.url?.path, "/creation-threads/capabilities")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "2")
             return (200, Data(#"{"formats":[{"id":"montage","edit_format":"montage","max_clips":20},{"id":"narrated","edit_format":"narrated_planned","max_clips":20}]}"#.utf8))
         }
         let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
@@ -277,6 +278,101 @@ final class KriaTests: XCTestCase {
         )
 
         XCTAssertEqual(accepted.threadRevision, 4)
+    }
+
+    func testEditorStateCapabilityDecodesAndDefaultsOff() throws {
+        let on = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"editor_state_turns":true,"editor_state_max_bytes":262144,"creation_mode":"device_only","minimum_client_protocol":2}"#.utf8))
+        XCTAssertTrue(on.editorStateTurnsEnabled)
+        XCTAssertEqual(on.editorStateMaxBytes, 262144)
+        XCTAssertEqual(on.creationMode, .deviceOnly)
+        XCTAssertEqual(on.minimumClientProtocol, 2)
+        let old = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[]}"#.utf8))
+        XCTAssertFalse(old.editorStateTurnsEnabled, "an old server omits the field: legacy flush")
+        XCTAssertNil(old.editorStateMaxBytes)
+        XCTAssertNil(old.creationMode)
+        XCTAssertNil(old.minimumClientProtocol)
+    }
+
+    func testNativeUpdateRequiredProblemIsBlockingAPIError() async throws {
+        let updateRequired = expectation(description: "native update required signal")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .kriaNativeUpdateRequired,
+            object: nil,
+            queue: nil
+        ) { _ in
+            updateRequired.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "2")
+            return (426, Data(#"{"problem":{"code":"native_update_required","message":"Update Kria"}}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+
+        do {
+            _ = try await api.creationCapabilities()
+            XCTFail("Expected native update requirement")
+        } catch let error as APIError {
+            XCTAssertEqual(error, .nativeUpdateRequired)
+        }
+        await fulfillment(of: [updateRequired], timeout: 1)
+        let isUpdateRequired = await MainActor.run { NativeUpdateState.shared.isUpdateRequired }
+        XCTAssertTrue(isUpdateRequired)
+    }
+
+    func testNativeUpdateRequiredDuringTokenRefreshIsBlockingAPIError() async throws {
+        let updateRequired = expectation(description: "native update required from refresh")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .kriaNativeUpdateRequired,
+            object: nil,
+            queue: nil
+        ) { _ in
+            updateRequired.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        let store = MemoryTokenStore(MobileSession(accessToken: "expired", refreshToken: "refresh", expiresIn: 1))
+        URLProtocolStub.handler = { request in
+            if request.url?.path == "/auth/mobile/refresh" {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "2")
+                return (426, Data(#"{"problem":{"code":"native_update_required","message":"Update Kria"}}"#.utf8))
+            }
+            return (401, Data())
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: stubSession())
+
+        do {
+            _ = try await api.projects()
+            XCTFail("Expected native update requirement")
+        } catch let error as APIError {
+            XCTAssertEqual(error, .nativeUpdateRequired)
+        }
+        await fulfillment(of: [updateRequired], timeout: 1)
+        let isUpdateRequired = await MainActor.run { NativeUpdateState.shared.isUpdateRequired }
+        XCTAssertTrue(isUpdateRequired)
+    }
+
+    func testSubmitTurnSendsEditorStateOnlyWhenGivenOne() async throws {
+        final class Bodies: @unchecked Sendable { var values: [[String: Any]] = [] }
+        let captured = Bodies()
+        URLProtocolStub.handler = { request in
+            captured.values.append(try XCTUnwrap(JSONSerialization.jsonObject(with: Self.bodyData(request)) as? [String: Any]))
+            return (202, Data(#"{"turn_id":"turn-1","thread_revision":4,"status":"pending"}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let state = EditorStateRequest(baseGeneration: "g1", clientStateID: "state-1", lanes: EditorCommitRequest(title: "New title", baseGeneration: "g1"))
+        _ = try await api.submitTurn(threadID: PreviewFixtures.projectID, message: "Shorter", expectedRevision: 3, clientEventID: "e1", editorState: state)
+        _ = try await api.submitTurn(threadID: PreviewFixtures.projectID, message: "Shorter", expectedRevision: 3, clientEventID: "e2", editorState: nil)
+        _ = try await api.submitTurn(threadID: PreviewFixtures.projectID, message: "Shorter", expectedRevision: 3, clientEventID: "e3")
+
+        let bodies = captured.values
+        let sent = try XCTUnwrap(bodies[0]["editor_state"] as? [String: Any])
+        XCTAssertEqual(sent["version"] as? Int, 1)
+        XCTAssertEqual(sent["base_generation"] as? String, "g1")
+        XCTAssertEqual(sent["client_state_id"] as? String, "state-1")
+        let lanes = try XCTUnwrap(sent["lanes"] as? [String: Any])
+        XCTAssertEqual(lanes["title"] as? String, "New title")
+        XCTAssertNil(bodies[1]["editor_state"])
+        XCTAssertNil(bodies[2]["editor_state"])
     }
 
     func testCreationThreadPreservesURLFreeListVariants() throws {
@@ -386,6 +482,7 @@ final class KriaTests: XCTestCase {
 
     func testProjectUploadReservationAndAttachmentUseThreadContract() async throws {
         URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "2")
             if request.url?.path.hasSuffix("/upload-urls") == true {
                 let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.bodyData(request)) as? [String: Any])
                 let files = try XCTUnwrap(body["files"] as? [[String: Any]])
@@ -411,6 +508,7 @@ final class KriaTests: XCTestCase {
         let lock = NSLock()
         var projectCalls = 0
         URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "2")
             if request.url?.path == "/auth/mobile/refresh" {
                 return (200, Data(#"{"access_token":"fresh","refresh_token":"refresh-2","token_type":"Bearer","expires_in":900,"user":{"id":"1","email":"creator@example.com","onboarding_status":"complete","linked_providers":[]}}"#.utf8))
             }

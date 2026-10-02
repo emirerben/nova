@@ -9,41 +9,32 @@ struct NativeEditorProjectHeader: View {
     let onSaveToPhotos: () -> Void
     let onShare: () -> Void
 
+    /// Same floating header as the chat (`WorkspaceTopRow` + `WorkspaceModeSwitch`),
+    /// in the same place, so switching Chat <-> Editor feels like a tab switch.
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 4) {
-                Button(action: onBack) {
-                    Image(systemName: "chevron.left").frame(width: 44, height: 44)
+            WorkspaceTopRow(title: title) {
+                HStack(spacing: 8) {
+                    Button(action: onBack) {
+                        Image(systemName: "chevron.left")
+                            .frame(width: 44, height: 44)
+                            .kriaFloatingSurface(Circle())
+                    }
+                    .accessibilityLabel("Back to chat")
+                    .accessibilityIdentifier("native-editor-back")
+                    // Balances the two trailing actions so the title stays centered.
+                    Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
                 }
-                .accessibilityLabel("Back to chat")
-                .accessibilityIdentifier("native-editor-back")
-                // Balances the two trailing actions so the title stays centered.
-                Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
-                Text(title)
-                    .font(KriaFont.body(13).weight(.semibold))
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity)
-                exportMenu
-                saveButton
+            } trailing: {
+                HStack(spacing: 8) {
+                    exportMenu
+                    saveButton
+                }
             }
-            .padding(.horizontal, 4)
-            HStack(spacing: 4) {
-                Button("Chat", action: onChat)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .accessibilityIdentifier("native-editor-chat-tab")
-                Text("Editor")
-                    .fontWeight(.semibold)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 10))
-                    .accessibilityAddTraits(.isSelected)
-            }
-            .font(KriaFont.body(13))
-            .padding(.horizontal, 16)
-            .padding(.bottom, 6)
+            WorkspaceModeSwitch(selected: .editor, onChat: onChat, chatIdentifier: "native-editor-chat-tab")
         }
         .buttonStyle(.plain)
         .foregroundStyle(KriaColor.ink)
-        .background(KriaColor.paper)
     }
 
     /// Stays tappable while blocked so the menu can explain why export waits,
@@ -67,8 +58,9 @@ struct NativeEditorProjectHeader: View {
                 }
             }
             .frame(width: 44, height: 44)
+            .kriaFloatingSurface(Circle())
         }
-        .disabled(exporter.phase == .preparing)
+        .disabled(exporter.phase == .preparing || session.document.editorState == "empty")
         .accessibilityLabel(exporter.phase == .preparing ? "Preparing video" : "Export video")
         .accessibilityIdentifier("native-editor-export")
     }
@@ -90,6 +82,7 @@ struct NativeEditorProjectHeader: View {
                 }
             }
             .frame(minWidth: 44, minHeight: 44)
+            .kriaFloatingSurface(Capsule())
         }
         .disabled(!control.isEnabled)
         .accessibilityLabel(control.accessibilityLabel)

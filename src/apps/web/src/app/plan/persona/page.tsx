@@ -7,7 +7,7 @@ import { useSession } from "next-auth/react";
 import { analyzeTikTokStyle, getPersona, updatePersona } from "@/lib/plan-api";
 import type { PersonaContent, PersonaResponse } from "@/lib/plan-api";
 import PersonaEditor from "../_components/PersonaEditor";
-import { LightShell } from "../_components/ui/LightShell";
+import { LightShell } from "@/components/ui/LightShell";
 import { Button } from "@/components/ui/button";
 
 export default function PersonaPage() {

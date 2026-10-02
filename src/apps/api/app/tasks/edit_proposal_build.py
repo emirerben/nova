@@ -763,23 +763,6 @@ def _pool_refs(db, item: PlanItem, owner_id: uuid.UUID) -> list[MediaRef]:  # no
     ]
 
 
-def _analyze_clip_assignment(
-    raw: dict,
-    pool_by_path: dict[str, MediaRef],
-    *,
-    run_context=None,  # noqa: ANN001 - supplied by the parent preparation worker
-    require_semantic: bool = False,
-) -> tuple[dict, MediaRef]:
-    """Compatibility wrapper; task callers/tests may still patch this name."""
-
-    return analyze_clip_assignment(
-        raw,
-        pool_by_path,
-        run_context=run_context,
-        require_semantic=require_semantic,
-    )
-
-
 def _analyze_clip_assignments(
     assignments: list[dict],
     pool_by_path: dict[str, MediaRef],
@@ -819,9 +802,7 @@ def _analyze_clip_assignments(
                 return False
             if not _attempt_is_active(item_id, attempt_id, ownership_epoch, allow_drafting):
                 return False
-            future = executor.submit(
-                _analyze_clip_assignment, assignments[next_index], pool_by_path
-            )
+            future = executor.submit(analyze_clip_assignment, assignments[next_index], pool_by_path)
             futures[future] = next_index
             next_index += 1
             return True
@@ -1658,7 +1639,7 @@ def _run_draft_attempt(
                 narration = _transcribe_pinned_narration(narration)
             brief = brief.model_copy(update={"narration": narration})
 
-        # Pool/clip media analysis (_analyze_clip_assignment -> analyze_pool_video /
+        # Pool/clip media analysis (analyze_clip_assignment -> analyze_pool_video /
         # analyze_pool_image) runs a raw Gemini call outside the Agent framework, so
         # it never produces an agent_run row — any failure here is otherwise
         # invisible to admin/debug. autoplace already distinguishes a permanently
