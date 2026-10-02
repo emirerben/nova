@@ -14,8 +14,8 @@ final class EditorUITests: XCTestCase {
             clip.tap()
             let delete = app.buttons["native-editor-delete"]
             XCTAssertTrue(delete.waitForExistence(timeout: 5))
-            let context = app.scrollViews.containing(.button, identifier: "native-editor-delete").firstMatch
-            if !delete.isHittable { context.swipeLeft() }
+            XCTAssertTrue(delete.isHittable, "Delete must be reachable without scrolling the clip toolbar")
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(delete.frame), "The full Delete button must fit on screen")
             XCTAssertTrue(delete.isEnabled)
             delete.tap()
         }

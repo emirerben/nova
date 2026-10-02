@@ -303,52 +303,58 @@ struct NativeEditorContextStrip: View {
     let onTransition: () -> Void
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                Button(action: onBack) {
-                    Label("Back", systemImage: "chevron.left")
-                        .frame(minHeight: 44)
-                        .padding(.horizontal, 16)
-                }
-                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
-                .accessibilityIdentifier("native-editor-clip-back")
-
-                Button(action: onAdjust) {
-                    Label("Adjust", systemImage: "slider.horizontal.3")
-                        .frame(minHeight: 44)
-                        .padding(.horizontal, 16)
-                }
-                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
-                .accessibilityIdentifier("native-editor-adjust")
-
-                Button(action: onAdjust) {
-                    Label("Audio", systemImage: "speaker.slash")
-                        .frame(minHeight: 44)
-                        .padding(.horizontal, 16)
-                }
-                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
-                .accessibilityIdentifier("native-editor-clip-audio")
-
-                if session.canEditOperation(["clips.transitions"], section: .timeline) {
-                    Button(action: onTransition) {
-                        Label("Transition", systemImage: "rectangle.on.rectangle.angled")
+        HStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    Button(action: onBack) {
+                        Label("Back", systemImage: "chevron.left")
                             .frame(minHeight: 44)
                             .padding(.horizontal, 16)
                     }
                     .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
-                    .accessibilityIdentifier("native-editor-clip-transition")
-                }
+                    .accessibilityIdentifier("native-editor-clip-back")
 
-                Button(action: session.deleteSelectedClip) {
-                    Label("Delete", systemImage: "trash")
-                        .frame(minHeight: 44)
-                        .padding(.horizontal, 16)
+                    Button(action: onAdjust) {
+                        Label("Adjust", systemImage: "slider.horizontal.3")
+                            .frame(minHeight: 44)
+                            .padding(.horizontal, 16)
+                    }
+                    .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                    .accessibilityIdentifier("native-editor-adjust")
+
+                    Button(action: onAdjust) {
+                        Label("Audio", systemImage: "speaker.slash")
+                            .frame(minHeight: 44)
+                            .padding(.horizontal, 16)
+                    }
+                    .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                    .accessibilityIdentifier("native-editor-clip-audio")
+
+                    if session.canEditOperation(["clips.transitions"], section: .timeline) {
+                        Button(action: onTransition) {
+                            Label("Transition", systemImage: "rectangle.on.rectangle.angled")
+                                .frame(minHeight: 44)
+                                .padding(.horizontal, 16)
+                        }
+                        .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                        .accessibilityIdentifier("native-editor-clip-transition")
+                    }
                 }
-                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
-                .disabled(session.selectedClipID == nil)
-                .accessibilityIdentifier("native-editor-delete")
+                .padding(4)
             }
-            .padding(4)
+
+            Button(action: session.deleteSelectedClip) {
+                Label("Delete", systemImage: "trash")
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 16)
+            }
+            .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+            .disabled(session.selectedClipID == nil)
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
+            .padding(.vertical, 4)
+            .padding(.trailing, 4)
+            .accessibilityIdentifier("native-editor-delete")
         }
         .frame(height: NativeEditorIslandMetrics.contextHeight)
         .nativeEditorIslandSurface()
