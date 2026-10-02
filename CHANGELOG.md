@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.18.0] - 2026-10-02
+
+### Changed
+- fix(ios): stop superseded preview rebuilds early (re-land #1325) (#1327) <!-- release-pr: 1327 -->
+
 ## [0.78.17.0] - 2026-10-02
 
 ### Changed
