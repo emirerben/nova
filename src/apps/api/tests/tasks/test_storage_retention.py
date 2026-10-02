@@ -122,6 +122,28 @@ def test_historical_authenticated_raw_source_is_discovered_and_listed(monkeypatc
     assert [row.path for row in metadata] == [path]
 
 
+def test_private_device_narration_binding_stays_in_retention_references() -> None:
+    creator_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    path = f"users/{creator_id}/plan/{item_id}/speech-cleanup/{uuid.uuid4()}/{'a' * 32}.wav"
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=creator_id,
+        raw_storage_path=None,
+        all_candidates={},
+        assembly_plan={
+            "_device_render_v1": {
+                "narrated": {"narration_binding": {"narration": {"gcs_path": path}}}
+            }
+        },
+    )
+    db = MagicMock()
+    db.scalars.return_value = []
+
+    _sources, current = storage_retention._job_references(db, job)
+    assert path in current
+
+
 def test_reference_writer_trigger_shares_the_owner_retention_lock(approved_manifest) -> None:
     creator_id = uuid.uuid4()
     job_id = uuid.uuid4()

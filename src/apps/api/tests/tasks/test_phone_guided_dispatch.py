@@ -715,6 +715,9 @@ def test_cleaned_narration_pins_the_derivative_bed(monkeypatch):
     assert clip.source_duration == pytest.approx(derivative.duration_s)
     # Recipes carry identities only; storage paths stay in private job state.
     assert derivative.gcs_path not in request.model_dump_json()
+    binding = job.assembly_plan["_device_render_v1"]["guided_story"]["narration_binding"]
+    assert binding["narration"] == derivative.model_dump(mode="json")
+    assert binding["asset_id"] == voice.id
     cloud.assert_not_called()
 
 
