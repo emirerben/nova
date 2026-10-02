@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.21.0] - 2026-10-02
+
+### Changed
+- feat(ios): one-tap caption line editing with an edit bar (KRI-240) (#1332) <!-- release-pr: 1332 -->
+
 ## [0.78.20.0] - 2026-10-02
 
 ### Changed
