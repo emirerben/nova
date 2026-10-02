@@ -502,6 +502,28 @@ or changed evidence keeps the existing conflict response. Deploy the API and
 worker change together, then use the existing device-render retry flow for a
 failed job; no new mobile protocol or client build is required.
 
+**Editable captions (KRI-280).** A phone Narrated variant gets the same
+caption editing as phone Talking: the capability map opens `caption_cues`,
+`caption_meta` and `caption_editor_style`, and a Save of either section goes
+through `prepare_phone_editor_commit`'s narrated branch. That branch calls
+`phone_narrated_plan.replace_narrated_captions` on the pinned recipe, which
+swaps only the caption layers, their bundled fonts and the text capabilities.
+Clips, the narration bed and the audio mix stay exactly as pinned, and the
+voiceover is never downloaded or re-aligned. The cleaned-narration binding
+carries over because the voiceover asset is unchanged. The look comes from the
+variant's caption fields via `caption_look_from_variant`, the same fields phone
+Talking uses. Any other section (text, timeline, mix, SFX, overlays) is still
+refused with `unsupported_phone_edit`. The editor preview places phone caption
+cues in the Talking frame (`deviceCaptions`), because the phone compiles them
+there whatever the format.
+**Gate:** `phone_rollout.phone_narrated_caption_edits_supported()`, which needs
+`PHONE_NARRATED_CAPTION_EDITS_ENABLED` (default `true`) and a verified
+`positionedText`. Word captions also need `animatedText`, which
+`validate_phone_pilot_recipe` checks at Save. **Rollback:** `fly secrets set
+PHONE_NARRATED_CAPTION_EDITS_ENABLED=false --app nova-video` + `fly machine
+restart <id>` (api). This closes both sections and returns the pre-KRI-280
+422.
+
 **Self-narration (no recorded voiceover).** A `narrated*` item with NO
 voiceover is spined by the footage's OWN speech —
 `_resolve_archetype` (generative_build.py) decides `subtitled` (exactly one

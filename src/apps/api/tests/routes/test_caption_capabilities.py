@@ -116,10 +116,31 @@ def test_device_subtitled_rollout_off_is_not_editable_with_phone_reason(monkeypa
     assert caps["caption_editor_style"] is False
 
 
-def test_device_narrated_is_not_editable(monkeypatch):
+def _narrated_device_job(monkeypatch, *, enabled: bool, verified: list[str]):
     _arm_every_editor_lane(monkeypatch)
+    monkeypatch.setattr(gj.settings, "phone_narrated_caption_edits_enabled", enabled)
+    monkeypatch.setattr(gj.settings, "phone_render_verified_features", verified)
     job = _job(resolved_archetype="narrated")
     variant = {**job.assembly_plan["variants"][0], "render_destination": "device"}
+    return job, variant
+
+
+def test_device_narrated_is_editable_like_phone_talking(monkeypatch):
+    """KRI-280: a phone Narrated variant opens both caption keys and the
+    caption style control, the same map a phone Talking variant gets."""
+    job, variant = _narrated_device_job(monkeypatch, enabled=True, verified=["positionedText"])
+
+    device = gj._editor_capabilities(job, variant)
+
+    assert device["caption_cues"] == {"editable": True, "reason": None}
+    assert device["caption_meta"] == {"editable": True, "reason": None}
+    assert device["caption_editor_style"] is True
+    # Only the caption lane opens: the narrated compiler still has no text lane.
+    assert device["text_elements"] is False
+
+
+def test_device_narrated_rollout_off_is_not_editable(monkeypatch):
+    job, variant = _narrated_device_job(monkeypatch, enabled=False, verified=["positionedText"])
 
     cloud = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
     device = gj._editor_capabilities(job, variant)
@@ -128,6 +149,16 @@ def test_device_narrated_is_not_editable(monkeypatch):
     # proves nothing.
     assert cloud["caption_cues"]["editable"] is True
     assert cloud["caption_meta"]["editable"] is True
+
+    assert device["caption_cues"] == _PHONE_CLOSED_CAPTION
+    assert device["caption_meta"] == _PHONE_CLOSED_CAPTION
+    assert device["caption_editor_style"] is False
+
+
+def test_device_narrated_without_verified_text_is_not_editable(monkeypatch):
+    job, variant = _narrated_device_job(monkeypatch, enabled=True, verified=[])
+
+    device = gj._editor_capabilities(job, variant)
 
     assert device["caption_cues"] == _PHONE_CLOSED_CAPTION
     assert device["caption_meta"] == _PHONE_CLOSED_CAPTION

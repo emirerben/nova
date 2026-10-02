@@ -412,6 +412,30 @@ def phone_subtitled_editor_lanes_supported() -> bool:
     )
 
 
+def phone_narrated_caption_edits_supported() -> bool:
+    """Single source of truth for "can a phone-rendered `narrated` (recorded
+    voiceover) variant's `caption_cues`/`caption_meta` editor sections be
+    Saved right now" (KRI-280).
+
+    Consulted by `app.services.phone_editor.prepare_phone_editor_commit`
+    (whether the narrated branch swaps the pinned recipe's caption layers or
+    422s `unsupported_phone_edit`) and by `app.routes.generative_jobs`
+    (`_prepare_editor_commit`'s caption guards and
+    `_clamp_phone_editor_capabilities`), so the manifest never advertises a
+    caption control that Save would refuse.
+
+    True iff `phone_narrated_caption_edits_enabled` AND "positionedText" (the
+    device feature every caption layer needs) is verified. A Save that needs
+    more (word captions add `animatedText`) is still checked against the
+    verified features by `validate_phone_pilot_recipe`.
+    """
+
+    return bool(
+        settings.phone_narrated_caption_edits_enabled
+        and "positionedText" in settings.phone_render_verified_features
+    )
+
+
 # Device feature the video-PiP lane needs on top of the overlay lane: the
 # compiler emits a video overlay card as a muted, trimmed `TimelineClip` on
 # the `subtitled-overlays` track, which the device composites through the

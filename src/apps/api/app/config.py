@@ -235,6 +235,20 @@ class Settings(BaseSettings):
     # Rollback: `fly secrets set PHONE_NARRATED_RENDERING_ENABLED=false
     # --app nova-video` + `fly machine restart <id>` (api + worker).
     phone_narrated_rendering_enabled: bool = True
+    # KRI-280 (editable phone Narrated captions): the native editor's
+    # `caption_cues` (line text/timing) and `caption_meta` (Style + Settings)
+    # sections apply to a phone-rendered `narrated` (recorded voiceover)
+    # variant -- `prepare_phone_editor_commit` swaps the pinned recipe's
+    # caption layers (`phone_narrated_plan.replace_narrated_captions`) and the
+    # capability map opens both, the same caption editing phone Talking has.
+    # Also requires "positionedText" in `phone_render_verified_features` --
+    # see `app.services.phone_rollout.phone_narrated_caption_edits_supported`,
+    # the single source of truth. False: byte-identical to before this flag
+    # existed -- both sections stay closed and a Save 422s. Rollback: `fly
+    # secrets set PHONE_NARRATED_CAPTION_EDITS_ENABLED=false --app nova-video`
+    # + `fly machine restart <id>` (api). No NEXT_PUBLIC twin (the iOS editor
+    # follows the server's capability map).
+    phone_narrated_caption_edits_enabled: bool = True
     # A device recipe with no delivery (no poll, no upload) for this long is
     # presumed abandoned (app crashed, app deleted, notification never seen).
     # The reaper (app/tasks/device_render_reaper.py) flips it to
