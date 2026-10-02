@@ -45,7 +45,10 @@ final class AttachmentFlowUITests: XCTestCase {
         // iOS versions; tapping outside is the native keep-recording action.
         if app.buttons["Keep recording"].exists { app.buttons["Keep recording"].tap() }
         else if app.buttons["Cancel"].exists { app.buttons["Cancel"].tap() }
-        else { app.staticTexts["Review voiceover"].tap() }
+        else {
+            app.otherElements["PopoverDismissRegion"]
+                .coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.2)).tap()
+        }
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["Discard recording"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 3), .completed)
         XCTAssertTrue(app.buttons["voiceover-use"].waitForExistence(timeout: 3))
