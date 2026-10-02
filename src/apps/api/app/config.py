@@ -12,6 +12,14 @@ GUIDED_STORY_RENDERER_READY = True
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Admission-only rollout fence.  Rendering remains controlled by its own
+    # phone capability gates so this can safely retire web creation first.
+    ios_device_only_mode: bool = False
+    kria_minimum_client_protocol: int = 2
+    # Executor behavior is intentionally owned by the render pipeline; this
+    # setting only declares the rollout control plane default.
+    cloud_render_execution_enabled: bool = True
+
     # Phone rendering remains off until a capability group has device evidence.
     phone_rendering_enabled: bool = False
     # New editor imports require device qualification; saved receipts remain readable.
@@ -241,16 +249,30 @@ class Settings(BaseSettings):
         return user_id is not None and str(user_id) in {str(u) for u in self.clip_facts_user_ids}
 
     def phone_rendering_for(self, user_id: object) -> bool:
-        """Apply the kill switch and optional account-scoped pilot cohort."""
-        return self.phone_rendering_enabled and (
-            not self.phone_render_user_ids or str(user_id) in map(str, self.phone_render_user_ids)
+        """Apply the rollout cohort, or enroll every account in device-only mode.
+
+        Device-only admission must not depend on a second flag being flipped in
+        exactly the same deploy. Once web/cloud creation is retired, every
+        authenticated native account is a phone-rendering account by definition.
+        """
+        return user_id is not None and (
+            self.ios_device_only_mode
+            or self.phone_rendering_enabled
+            and (
+                not self.phone_render_user_ids
+                or str(user_id) in map(str, self.phone_render_user_ids)
+            )
         )
 
     def kria_runtime_v2_phone_for(self, user_id: object) -> bool:
-        """Runtime v2 for a phone-rendering account (KRI-187 flag + allowlist)."""
-        return self.kria_runtime_v2_phone_enabled and (
-            not self.kria_runtime_v2_phone_user_ids
-            or str(user_id) in map(str, self.kria_runtime_v2_phone_user_ids)
+        """Runtime v2 cohort, or every authenticated account in device-only mode."""
+        return user_id is not None and (
+            self.ios_device_only_mode
+            or self.kria_runtime_v2_phone_enabled
+            and (
+                not self.kria_runtime_v2_phone_user_ids
+                or str(user_id) in map(str, self.kria_runtime_v2_phone_user_ids)
+            )
         )
 
     # Storage

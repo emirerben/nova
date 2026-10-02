@@ -195,17 +195,30 @@ def require_cloud_source_paths(paths: list[str]) -> None:
         raise ValueError("analysis proxies cannot be used as cloud render sources")
 
 
-def require_cloud_render_job(job: object) -> None:
-    """Keep phone source receipts and analysis-only bytes outside every cloud renderer."""
+def is_device_render_job(job: object) -> bool:
+    """Whether a Job is explicitly bound to the native device renderer.
+
+    Phone jobs still enter the generative orchestrator so the server can
+    compile their immutable recipe.  This predicate deliberately keys off the
+    durable device receipts instead of mode/job_type: those broader fields are
+    shared with legacy cloud renders and would turn a cost kill switch into an
+    accidental cloud fallback.
+    """
+
     assembly = getattr(job, "assembly_plan", None) or {}
-    if (
+    return bool(
         "_phone_sources_v1" in assembly
         or "_device_render_v1" in assembly
         or any(
-            variant.get("render_destination") in {"device", "phone"}
+            isinstance(variant, dict) and variant.get("render_destination") in {"device", "phone"}
             for variant in assembly.get("variants", [])
         )
-    ):
+    )
+
+
+def require_cloud_render_job(job: object) -> None:
+    """Keep phone source receipts and analysis-only bytes outside every cloud renderer."""
+    if is_device_render_job(job):
         raise ValueError("phone jobs require the device editor and renderer")
     candidates = getattr(job, "all_candidates", None) or {}
     paths = list(candidates.get("clip_paths") or [])

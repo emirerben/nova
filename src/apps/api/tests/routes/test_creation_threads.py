@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from app.agents._schemas.persona import Persona as PersonaSchema
-from app.auth import get_current_user
+from app.auth import get_current_user, is_native_client, kria_client_protocol
 from app.config import settings
 from app.main import app
 from app.models import ContentPlan, CreatorAgentSession, Job, PlanItem
@@ -48,6 +48,7 @@ from app.routes.creation_threads import (
     _require_runtime_v1_mutation,
     _resolve_default_title_fill,
     _response,
+    _stamp_device_intent,
     _status_message,
     action_thread,
     archive_thread,
@@ -96,6 +97,104 @@ def test_creation_thread_capabilities_are_available_to_any_authenticated_account
 
     assert response.status_code == 200
     assert response.json()["formats"][0]["id"] == "montage"
+
+
+def test_device_only_creation_admission_requires_current_native_protocol() -> None:
+    """The admission fence runs before a creation route opens a transaction."""
+
+    user = SimpleNamespace(id=uuid.uuid4(), email="native@example.com")
+
+    async def current_user_override() -> object:
+        return user
+
+    original_mode = settings.ios_device_only_mode
+    app.dependency_overrides[get_current_user] = current_user_override
+    try:
+        settings.ios_device_only_mode = True
+        client = TestClient(app, raise_server_exceptions=False)
+
+        web = client.post("/creation-threads", json={})
+        assert web.status_code == 410
+        assert web.json()["problem"]["code"] == "web_creation_retired"
+
+        app.dependency_overrides[is_native_client] = lambda: True
+        app.dependency_overrides[kria_client_protocol] = lambda: 1
+        old_native = client.post(
+            "/creation-threads",
+            json={},
+            headers={
+                "Authorization": "Bearer native-session",
+                "X-Kria-Client-Protocol": "1",
+            },
+        )
+        assert old_native.status_code == 426
+        assert old_native.json()["problem"]["code"] == "native_update_required"
+
+        app.dependency_overrides[kria_client_protocol] = lambda: 2
+        # Admission succeeds; the request can now reach the normal route,
+        # whose database test setup is intentionally absent here.
+        current_native = client.post(
+            "/creation-threads",
+            json={},
+            headers={
+                "Authorization": "Bearer native-session",
+                "X-Kria-Client-Protocol": "2",
+            },
+        )
+        assert current_native.status_code not in {410, 426}
+    finally:
+        settings.ios_device_only_mode = original_mode
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(is_native_client, None)
+        app.dependency_overrides.pop(kria_client_protocol, None)
+
+
+def test_native_existing_thread_backfills_device_intent_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native use of an older project must persist its device destination intent."""
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(state={"edit_format": "montage"})
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+
+    _stamp_device_intent(thread, user, native_client=True)
+
+    assert thread.state == {"edit_format": "montage", "render_destination_intent": "device"}
+
+    stamped = thread.state
+    _stamp_device_intent(thread, user, native_client=True)
+    _stamp_device_intent(thread, user, native_client=False)
+    assert thread.state == stamped
+
+
+@pytest.mark.asyncio
+async def test_kria_client_protocol_treats_absent_or_malformed_headers_as_legacy() -> None:
+    assert await kria_client_protocol("2") == 2
+    assert await kria_client_protocol(None) is None
+    assert await kria_client_protocol("not-a-version") is None
+    assert await kria_client_protocol("-1") is None
+
+
+@pytest.mark.asyncio
+async def test_device_only_capabilities_hide_cloud_only_slide_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import phone_rollout
+
+    original_mode = settings.ios_device_only_mode
+    monkeypatch.setattr(
+        phone_rollout, "phone_render_supported_formats", lambda: frozenset({"montage"})
+    )
+    try:
+        settings.ios_device_only_mode = True
+        result = await capabilities(SimpleNamespace(id=uuid.uuid4()), native_client=False)
+    finally:
+        settings.ios_device_only_mode = original_mode
+
+    assert result["creation_mode"] == "device_only"
+    assert result["minimum_client_protocol"] == 2
+    assert [entry["id"] for entry in result["formats"]] == ["montage"]
 
 
 @pytest.mark.asyncio

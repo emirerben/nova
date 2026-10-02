@@ -70,6 +70,7 @@ from app.services.apple_account_revocation import (
     validate_apple_revocation_configuration,
 )
 from app.services.auth_locks import account_lifecycle_lock_key, acquire_auth_locks
+from app.services.cloud_render_policy import cloud_render_mutation_block_reason
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
     PlanPersonaOwnershipError,
@@ -2262,6 +2263,25 @@ async def retry_failed_job(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only a failed video can be retried.",
+        )
+
+    block_reason = cloud_render_mutation_block_reason(locked_job)
+    if block_reason is not None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_422_UNPROCESSABLE_ENTITY
+                if block_reason == "device_render_unsupported"
+                else status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail={
+                "code": block_reason,
+                "message": (
+                    "This project cannot render entirely on this iPhone. "
+                    "Its existing video is unchanged."
+                    if block_reason == "device_render_unsupported"
+                    else "Server video rendering is disabled. The existing video is unchanged."
+                ),
+            },
         )
 
     locked_job.status = "queued"

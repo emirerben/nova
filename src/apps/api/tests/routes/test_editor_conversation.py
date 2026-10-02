@@ -5,12 +5,24 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
 from app.models import Job
 from app.routes import creation_threads as routes
 from app.routes.plan_items import _check_confirmed_editor_target
+
+
+def _request(path: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+        }
+    )
 
 
 def editor_graph():
@@ -62,7 +74,10 @@ async def test_direct_link_reuses_the_owning_conversation_and_preserves_variant(
     monkeypatch.setattr(routes, "_append", append)
     monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
     result = await routes.open_editor_thread(
-        routes.OpenEditorBody(item_id=item.id, variant_id="original_text"), user, db
+        _request("/creation-threads/for-editor"),
+        routes.OpenEditorBody(item_id=item.id, variant_id="original_text"),
+        user,
+        db,
     )
     assert result is thread
     assert result.runtime_version == 2
@@ -88,7 +103,12 @@ async def test_direct_link_creates_an_association_for_a_legacy_item_only(monkeyp
     )
     monkeypatch.setattr(routes, "_append", AsyncMock())
     monkeypatch.setattr(routes, "_response", AsyncMock(side_effect=lambda _db, thread: thread))
-    result = await routes.open_editor_thread(routes.OpenEditorBody(item_id=item.id), user, db)
+    result = await routes.open_editor_thread(
+        _request("/creation-threads/for-editor"),
+        routes.OpenEditorBody(item_id=item.id),
+        user,
+        db,
+    )
     assert result.active_plan_item_id == item.id
     assert result.active_job_id == job.id
     assert result.creator_id == user.id
@@ -107,7 +127,12 @@ async def test_direct_link_rejects_cross_owned_job(monkeypatch):
         commit=AsyncMock(),
     )
     with pytest.raises(HTTPException) as caught:
-        await routes.open_editor_thread(routes.OpenEditorBody(item_id=item.id), user, db)
+        await routes.open_editor_thread(
+            _request("/creation-threads/for-editor"),
+            routes.OpenEditorBody(item_id=item.id),
+            user,
+            db,
+        )
     assert caught.value.status_code == 404
     db.add.assert_not_called()
     db.commit.assert_not_called()
@@ -149,8 +174,9 @@ async def test_editor_receipts_append_once_for_either_runtime(monkeypatch, runti
             },
         ],
     )
-    await routes.record_editor_events(str(thread.id), body, user, db)
-    await routes.record_editor_events(str(thread.id), body, user, db)
+    request = _request(f"/creation-threads/{thread.id}/editor-events")
+    await routes.record_editor_events(request, str(thread.id), body, user, db)
+    await routes.record_editor_events(request, str(thread.id), body, user, db)
     assert len(recorded) == 2
     assert recorded["editor:result-1"].payload["source"] == "editor_client_acknowledgement"
     assert job.assembly_plan["variants"][0]["render_status"] == "ready"
@@ -159,7 +185,7 @@ async def test_editor_receipts_append_once_for_either_runtime(monkeypatch, runti
         update={"messages": [body.messages[0].model_copy(update={"text": "Different command"})]}
     )
     with pytest.raises(HTTPException) as caught:
-        await routes.record_editor_events(str(thread.id), changed, user, db)
+        await routes.record_editor_events(request, str(thread.id), changed, user, db)
     assert caught.value.status_code == 409
     assert len(recorded) == 2
 
@@ -185,7 +211,13 @@ async def test_editor_receipts_reject_stale_or_unowned_associations(monkeypatch,
         messages=[{"id": "request", "role": "user", "text": "Edit the title"}],
     )
     with pytest.raises(HTTPException):
-        await routes.record_editor_events(str(thread.id), body, user, db)
+        await routes.record_editor_events(
+            _request(f"/creation-threads/{thread.id}/editor-events"),
+            str(thread.id),
+            body,
+            user,
+            db,
+        )
     append.assert_not_called()
     db.commit.assert_not_called()
 

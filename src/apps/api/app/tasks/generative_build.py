@@ -1033,8 +1033,12 @@ def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
 
     @wraps(fn)
     def wrapped(self, job_id: str, *args, **kwargs):  # noqa: ANN001, ANN202
+        from app.services.cloud_render_policy import block_cloud_render_task  # noqa: PLC0415
         from app.services.creator_direction_snapshot import renderer_policy_scope
 
+        if block_cloud_render_task(job_id, task_name=fn.__name__):
+            log.info("generative_cloud_render_blocked", job_id=job_id, task=fn.__name__)
+            return None
         fence = (
             _owned_job_task_fence(job_id, allow_phone_planning=True)
             if fn.__name__ == "orchestrate_generative_job"

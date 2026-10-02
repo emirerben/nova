@@ -698,6 +698,10 @@ class DispatchResult:
 # .effective_render_program`) already raises for a proposed strategy before
 # a Job ever exists. Keep the two in sync if either wording changes.
 PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
+    "device_render_unsupported": (
+        "device_render_unsupported",
+        "This project cannot render entirely on this iPhone. Its existing video is unchanged.",
+    ),
     "not_enrolled": (
         "phone_not_enrolled",
         "This project's footage lives on your iPhone and can't be rendered from "
@@ -808,6 +812,9 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
     ),
     "matching_failed": "Matching your footage to music didn't finish. Try again.",
     "auto_music_disabled": "Automatic music matching is turned off right now. Try again later.",
+    "cloud_render_disabled": (
+        "This project needs the iPhone renderer. Update Kria, then open the project and try again."
+    ),
     "dispatch_publish_failed": "The render couldn't be handed to the queue. Give it another go.",
     "drive_import_failed": "Importing from Drive didn't finish. Try again.",
     "drive_import_dispatch_failed": "Importing from Drive didn't finish. Try again.",
@@ -2047,6 +2054,13 @@ def _dispatch_item_render(
             )
             else None
         )
+        if settings.ios_device_only_mode and not phone_sources and not visuals_only_device:
+            # A legacy project can still carry cloud GCS clips when first
+            # opened by the compatible app. Device-only mode never converts
+            # that shape into a fresh cloud render: reject before constructing
+            # or persisting a Job and preserve its last-good output.
+            phone_gate = "device_render_unsupported"
+            raise ValueError("device-only mode requires device-bound media sources")
         job = build_generative_job(
             user_id=plan.user_id,
             clip_paths=clip_paths,

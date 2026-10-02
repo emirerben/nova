@@ -61,6 +61,7 @@ from app.routes import (
     uploads,
     waitlist,
 )
+from app.services.ios_device_admission import http_creation_mutation_admission
 
 log = structlog.get_logger()
 
@@ -95,6 +96,15 @@ app.add_middleware(
 # uvicorn and the Vercel proxy compresses (the proxy re-encodes toward the
 # browser). minimum_size spares tiny health/status bodies.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.middleware("http")
+async def ios_device_only_creation_admission(request: Request, call_next):  # noqa: ANN001
+    """Retire legacy web/cloud creation before any route opens a transaction."""
+
+    if rejected := http_creation_mutation_admission(request):
+        return rejected
+    return await call_next(request)
 
 
 def _safe_trace_id(value: str | None) -> str | None:
