@@ -44,6 +44,10 @@ public struct PreviewComposition: @unchecked Sendable {
     /// so it cannot be selected, trimmed, or appended twice on export.
     public let branding: KriaBranding.Options
     public init(branding: KriaBranding.Options = .none) { self.branding = branding }
+    /// Throws `CancellationError` at the next clip or phase once its task is
+    /// cancelled. The editor cancels a superseded rebuild (every volume-slider
+    /// sample is a full rebuild, KRI-241), and that build must stop instead of
+    /// finishing a composition nothing will play.
     public func makePreview(recipe: EditRecipe, assetURLs: [String: URL]) async throws -> PreviewComposition {
         try recipe.validate()
         guard recipe.rendererVersion == "kria-ios-\(recipe.schemaVersion)" else {
@@ -103,6 +107,7 @@ public struct PreviewComposition: @unchecked Sendable {
             var reusableVideoTracks: [(track: AVMutableCompositionTrack, end: Double)] = []
             var previousEnd: Double?
             for clip in recipeTrack.clips.sorted(by: { $0.timelineStart < $1.timelineStart }) {
+                try Task.checkCancellation()
                 guard let url = assetURLs[clip.sourceAssetID] else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
                 let asset = AVURLAsset(url: url)
                 if recipeTrack.kind == .audio {
@@ -293,6 +298,7 @@ public struct PreviewComposition: @unchecked Sendable {
             }
         }
         for fill in recipe.visualFills {
+            try Task.checkCancellation()
             var previous: CGImage?
             if fill.kind == .blurPrevious {
                 var base = recipe
@@ -311,8 +317,9 @@ public struct PreviewComposition: @unchecked Sendable {
                 visualPlacement: placement, visualOrder: fill.order))
         }
         let textBitmapBytes = textLayers.reduce(0) { $0 + $1.bitmapBytes }
-        let textStore = try NativeTextLayerStore(layers: recipe.textLayers, assetURLs: assetURLs, canvas: canvas,
-                                               maxBitmapBytes: 64 * 1024 * 1024 - textBitmapBytes)
+        let textStore = try await NativeTextLayerStore.make(layers: recipe.textLayers, assetURLs: assetURLs, canvas: canvas,
+                                                          maxBitmapBytes: 64 * 1024 * 1024 - textBitmapBytes)
+        try Task.checkCancellation()
         _ = try textStore.activeLayers(at: 0)
         textLayers += recipe.textLayers.map(RecipeTextLayer.deferred)
         var videoCoveredUntil = 0.0
@@ -337,6 +344,7 @@ public struct PreviewComposition: @unchecked Sendable {
                                           start: 0, end: total, fadeIn: 0), at: 0)
             StillClockLifetime.retain(clock, on: composition)
         }
+        try Task.checkCancellation()
         if let musicID = recipe.audio.musicAssetID {
             guard let url = assetURLs[musicID] else { throw MediaEngineError.missingAsset(musicID) }
             let asset = AVURLAsset(url: url)
@@ -397,6 +405,7 @@ public struct PreviewComposition: @unchecked Sendable {
             brandedTotal = end
         }
 
+        try Task.checkCancellation()
         if composition.duration.seconds < brandedTotal { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, duration: time(brandedTotal - composition.duration.seconds))) }
         let motion = try NativeMotionPainter.make(recipe.motionScenes, assets: assetURLs, canvas: canvas, duration: total, frameRate: recipe.frameRate)
         // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no

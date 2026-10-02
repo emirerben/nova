@@ -15,8 +15,12 @@ final class NativeTextLayerStore: @unchecked Sendable {
     private let lock = NSLock()
     private var cached: [String: RecipeTextLayer] = [:]
 
+    /// Laying out every layer's vector geometry is most of a full preview
+    /// build (60 caption cues: ~200 ms on a Mac). A full build uses `make`,
+    /// which does it off the main actor with `checksCancellation`.
     init(layers: [PortableTextLayer], assetURLs: [String: URL], canvas: CGSize,
-         maxBitmapBytes: Int = 64 * 1024 * 1024, reusing previous: NativeTextLayerStore? = nil) throws {
+         maxBitmapBytes: Int = 64 * 1024 * 1024, reusing previous: NativeTextLayerStore? = nil,
+         checksCancellation: Bool = false) throws {
         guard maxBitmapBytes >= 0 else { throw MediaEngineError.unsupportedCapability }
         self.layers = layers; self.assetURLs = assetURLs; self.canvas = canvas; self.maxBitmapBytes = maxBitmapBytes
         for id in Set(layers.flatMap { $0.runs.map(\.fontAssetID) }) {
@@ -26,11 +30,14 @@ final class NativeTextLayerStore: @unchecked Sendable {
         }
         var geometry: [String: ResolvedTextSelectionBounds] = [:]
         for layer in layers {
+            if checksCancellation { try Task.checkCancellation() }
             if let previous, previous.canvas == canvas, previous.layersByID[layer.id] == layer,
                layer.runs.allSatisfy({ previous.assetURLs[$0.fontAssetID] == assetURLs[$0.fontAssetID] }) {
                 geometry[layer.id] = previous.selectionGeometry[layer.id]
             } else if !layer.runs.isEmpty {
-                geometry[layer.id] = try PortableTextVectorPainter(layer: layer, assetURLs: assetURLs, canvas: canvas).selectionBounds
+                geometry[layer.id] = try RenderProfiler.measure("text.selectionGeometry") {
+                    try PortableTextVectorPainter(layer: layer, assetURLs: assetURLs, canvas: canvas).selectionBounds
+                }
             }
         }
         selectionGeometry = geometry
@@ -46,6 +53,15 @@ final class NativeTextLayerStore: @unchecked Sendable {
             }
             if cached.values.reduce(0, { $0 + $1.bitmapBytes }) > maxBitmapBytes { cached = [:] }
         }
+    }
+
+    /// A new composition's store, laid out off the main actor so a full
+    /// rebuild does not freeze the editor. When the editor cancels a
+    /// superseded rebuild, the layout stops at the next layer.
+    @concurrent static func make(layers: [PortableTextLayer], assetURLs: [String: URL], canvas: CGSize,
+                                 maxBitmapBytes: Int) async throws -> NativeTextLayerStore {
+        try NativeTextLayerStore(layers: layers, assetURLs: assetURLs, canvas: canvas,
+                                 maxBitmapBytes: maxBitmapBytes, checksCancellation: true)
     }
 
     /// UI hit testing reads immutable vector geometry; it never enters the
