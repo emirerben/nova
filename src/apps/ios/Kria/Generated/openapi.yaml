@@ -784,6 +784,15 @@
       },
       "CreationCapabilitiesOut": {
         "properties": {
+          "creation_mode": {
+            "default": "hybrid",
+            "enum": [
+              "hybrid",
+              "device_only"
+            ],
+            "title": "Creation Mode",
+            "type": "string"
+          },
           "editor_state_max_bytes": {
             "default": 262144,
             "title": "Editor State Max Bytes",
@@ -803,6 +812,11 @@
           },
           "media": {
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
+          },
+          "minimum_client_protocol": {
+            "default": 2,
+            "title": "Minimum Client Protocol",
+            "type": "integer"
           },
           "phone_rendering": {
             "$ref": "#/components/schemas/DeviceRenderCapabilities"

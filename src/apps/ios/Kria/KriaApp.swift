@@ -63,8 +63,12 @@ struct RootView: View {
     @EnvironmentObject private var auth: AuthStore
     @EnvironmentObject private var model: AppModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @StateObject private var nativeUpdateState = NativeUpdateState.shared
     var body: some View {
         Group {
+            if nativeUpdateState.isUpdateRequired {
+                NativeUpdateRequiredView()
+            } else {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-native-library-audit"), auth.isSignedIn {
                 ProgressView("Checking video formats…").task { await NativeLibraryAudit.run(api: KriaAPI()) }
@@ -86,6 +90,7 @@ struct RootView: View {
             if !auth.isSignedIn { SignInView() }
             else { signedInContent }
             #endif
+            }
         }
         .kriaPage()
         .background(KriaColor.paper.ignoresSafeArea())
@@ -103,6 +108,32 @@ struct RootView: View {
         } else {
             AIConsentView(accept: { auth.acceptAIConsent() }, decline: { auth.signOut() })
         }
+    }
+}
+
+private struct NativeUpdateRequiredView: View {
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Image(systemName: "arrow.down.app.fill")
+                .font(.system(size: 40, weight: .semibold))
+                .foregroundStyle(KriaColor.ink)
+                .frame(width: 76, height: 76)
+                .background(KriaColor.sky, in: Circle())
+            Text("Update Kria to continue")
+                .font(KriaFont.display(30))
+                .multilineTextAlignment(.center)
+            Text("This version of Kria is no longer supported. Update the app from the App Store, then reopen it.")
+                .font(KriaFont.body(16))
+                .foregroundStyle(KriaColor.zinc)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+        .padding(28)
+        .frame(maxWidth: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }
 
