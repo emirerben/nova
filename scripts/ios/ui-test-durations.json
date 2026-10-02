@@ -58,6 +58,7 @@
   "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingTextBlockToRightEdgeAutoScrollsPastVisibleWindow": 21.1,
   "KriaUITests/NativeEditorInspectorUITests/testLongPressMovesTextTimingWithoutOpeningInspector": 22.1,
   "KriaUITests/NativeEditorInspectorUITests/testMovingSelectedTextDoesNotOpenStylePanel": 13.0,
+  "KriaUITests/NativeEditorInspectorUITests/testPanelDragDownClosesLikeDone": 30.0,
   "KriaUITests/NativeEditorInspectorUITests/testPanelExpansionResetsWhenPanelCloses": 18.8,
   "KriaUITests/NativeEditorInspectorUITests/testPanelHeaderDragsResizePanel": 23.4,
   "KriaUITests/NativeEditorInspectorUITests/testPreviewDragIsOneUndoableTextEdit": 12.1,
