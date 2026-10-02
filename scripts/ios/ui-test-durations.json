@@ -79,6 +79,7 @@
   "KriaUITests/NativeEditorInspectorUITests/testTimelineCanZoomBeyondPreviousLimit": 17.9,
   "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeGrowsPreviewBeyondDefault": 11.6,
   "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeShrinksPreviewAndRestoresIt": 10.8,
+  "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeWorksFromTheBandBesideTheGrabber": 11.6,
   "KriaUITests/NativeEditorInspectorUITests/testTimelineSwipesSeekUnderFixedPlayhead": 19.9,
   "KriaUITests/NativeEditorInspectorUITests/testToolIslandFloatsOverTimelineAndLastLaneStaysReachable": 14.2,
   "KriaUITests/NativeEditorInspectorUITests/testVisiblePanelHandleExpandsAndRestoresEveryTool": 45.4,

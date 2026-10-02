@@ -34,6 +34,9 @@ struct NativeEditorPanelResizeGrabber: View {
     }
     /// Signed fraction of the span added by a VoiceOver "increment".
     var incrementFraction: CGFloat = 0.25
+    /// The whole row resizes, not just the 80 pt around the line: the preview
+    /// handle sits in an otherwise empty band people drag anywhere in.
+    var spansRow = false
     /// Lets a drag past the smallest size close the panel (KRI-253).
     var dismiss: NativeEditorPanelDismiss?
     @State private var feedback = 0
@@ -47,7 +50,8 @@ struct NativeEditorPanelResizeGrabber: View {
             .fill(KriaColor.ink.opacity(0.28))
             .frame(width: 38, height: 4)
             .padding(.top, topAligned ? 8 : 0)
-            .frame(width: 80, height: 44, alignment: topAligned ? .top : .center)
+            .frame(width: spansRow ? nil : 80, height: 44, alignment: topAligned ? .top : .center)
+            .frame(maxWidth: spansRow ? .infinity : nil)
             .contentShape(Rectangle())
             .modifier(NativeEditorPanelResizeDrag(expansion: $expansion, range: range, bounds: bounds, dismiss: dismiss))
             .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: feedback)

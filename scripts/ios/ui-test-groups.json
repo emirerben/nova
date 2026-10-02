@@ -86,6 +86,7 @@
       "KriaUITests/NativeEditorInspectorUITests/testTimelineCanZoomBeyondPreviousLimit",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeShrinksPreviewAndRestoresIt",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeGrowsPreviewBeyondDefault",
+      "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeWorksFromTheBandBesideTheGrabber",
       "KriaUITests/NativeEditorInspectorUITests/testPanelExpansionResetsWhenPanelCloses",
       "KriaUITests/NativeEditorInspectorUITests/testPanelHeaderDragsResizePanel",
       "KriaUITests/NativeEditorInspectorUITests/testPanelDragDownClosesLikeDone",
