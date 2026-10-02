@@ -111,28 +111,33 @@ final class GuidedLabelRippleSessionTests: XCTestCase {
                  "size_px": .number(58), "x_frac": .number(0.5), "y_frac": .number(0.78), "color": .string("#FFF8F0")])
     }
 
-    private static func variant() -> [String: JSONValue] {
-        [
+    private static func variant(includeLabels: Bool = true) -> [String: JSONValue] {
+        var textElements: [JSONValue] = [
+            .object(["id": .string("guided-title"), "text": .string("Weekend"), "start_s": .number(0), "end_s": .number(8), "role": .string("generative_intro")]),
+            .object(["id": .string("guided-closing-title"), "text": .string("See you"), "start_s": .number(6), "end_s": .number(8), "role": .string("generative_outro")]),
+        ]
+        if includeLabels {
+            textElements += [label(1, 0, 2), label(2, 2, 4), label(3, 4, 6), label(4, 6, 8)]
+        }
+        textElements.append(.object(["id": .string("caption-1"), "text": .string("spoken"), "start_s": .number(2.5), "end_s": .number(3.5),
+                                     "source_params": .object(["source": .string("caption_cue")])]))
+        let userTimelineSlots = (1...4).map { slot("s\($0)", Double($0 - 1)) }
+        return [
             "variant_id": .string("initial"), "render_generation_id": .string("g1"), "render_status": .string("ready"),
             "duration_s": .number(8), "output_url": .string("file:///tmp/kria-label-ripple.mp4"),
             "resolved_archetype": .string("guided_story"), "base_video_path": .string("base.mp4"),
             "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(true)]),
-            "user_timeline": .object(["slots": .array((1...4).map { slot("s\($0)", Double($0 - 1)) })]),
-            "text_elements": .array([
-                .object(["id": .string("guided-title"), "text": .string("Weekend"), "start_s": .number(0), "end_s": .number(8), "role": .string("generative_intro")]),
-                label(1, 0, 2), label(2, 2, 4), label(3, 4, 6), label(4, 6, 8),
-                .object(["id": .string("caption-1"), "text": .string("spoken"), "start_s": .number(2.5), "end_s": .number(3.5),
-                         "source_params": .object(["source": .string("caption_cue")])]),
-            ]),
+            "user_timeline": .object(["slots": .array(userTimelineSlots)]),
+            "text_elements": .array(textElements),
         ]
     }
 
-    private func loaded() async -> (NativeEditorSession, EditorCommitSpy) {
+    private func loaded(includeLabels: Bool = true) async -> (NativeEditorSession, EditorCommitSpy) {
         let bootstrap = DraftSnapshot(draftID: "d1", itemID: "item", variantKey: "initial", draftRevision: 1, snapshotHash: "h", etag: "e",
             baseJobID: Self.jobID, baseGenerationID: "g1",
             snapshot: ["kind": .string("editor"), "editor_payload": .object(["base_generation": .string("g1"), "sections": .object([:])])],
             canUndo: false, createdAt: .now)
-        let fake = EditorCommitSpy(draftSnapshot: bootstrap, authoritativeVariant: Self.variant(),
+        let fake = EditorCommitSpy(draftSnapshot: bootstrap, authoritativeVariant: Self.variant(includeLabels: includeLabels),
             commitResponse: EditorCommitResponse(ok: true, generation: "g2",
                 sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: true, mix: false),
                 revisionNumber: 4, revisionHash: "r4", expectedDuration: nil))
@@ -166,6 +171,28 @@ final class GuidedLabelRippleSessionTests: XCTestCase {
         XCTAssertTrue(session.dirtySections.isEmpty)
         session.redo()
         XCTAssertEqual(label(session, 4)?.endS ?? -1, 8.533, accuracy: 0.001)
+    }
+
+    func testTitleOnlyGuidedSessionRebasesAndOneUndoRestoresBoth() async throws {
+        let (session, _) = await loaded(includeLabels: false)
+        let originalText = session.document.textElements
+        let originalClips = session.document.clips
+        XCTAssertFalse(session.document.textElements.contains(where: GuidedLabelRebase.isClipLabel))
+        XCTAssertTrue(GuidedLabelRebase.hasLabels(session.document.textElements), "title-only guided stories still use the rebase transaction")
+
+        session.setClipTiming(clipID: "s1", durationS: 2.533)
+        let title = try XCTUnwrap(session.document.textElements.first { $0.id == "guided-title" })
+        let closing = try XCTUnwrap(session.document.textElements.first { $0.id == "guided-closing-title" })
+        XCTAssertEqual(title.startS, 0, accuracy: 0.001)
+        XCTAssertEqual(title.endS, 8.533, accuracy: 0.001)
+        XCTAssertEqual(closing.startS, 6.533, accuracy: 0.001)
+        XCTAssertEqual(closing.endS, 8.533, accuracy: 0.001)
+        XCTAssertTrue(session.dirtySections.contains(.text))
+
+        session.undo()
+        XCTAssertEqual(session.document.textElements, originalText)
+        XCTAssertEqual(session.document.clips, originalClips)
+        XCTAssertFalse(session.canUndo)
     }
 
     func testTrimGestureRipplesLabelsFromTheBaselineWithOneUndoStep() async throws {
@@ -246,7 +273,11 @@ final class GuidedLabelRippleSessionTests: XCTestCase {
         XCTAssertEqual(after.text, styled.text)
         let volatile: Set<String> = ["start_s", "end_s", "segment_id"]
         XCTAssertEqual(after.raw.filter { !volatile.contains($0.key) }, styled.raw.filter { !volatile.contains($0.key) })
-        XCTAssertEqual(session.document.textElements.first { $0.id == "guided-title" }, title)
+        let rebasedTitle = try XCTUnwrap(session.document.textElements.first { $0.id == "guided-title" })
+        XCTAssertEqual(rebasedTitle.text, title?.text)
+        XCTAssertEqual(rebasedTitle.raw.filter { !volatile.contains($0.key) }, title?.raw.filter { !volatile.contains($0.key) })
+        XCTAssertEqual(rebasedTitle.startS, 0, accuracy: 0.001)
+        XCTAssertEqual(rebasedTitle.endS, 8.533, accuracy: 0.001)
         XCTAssertEqual(session.document.textElements.first { $0.id == "caption-1" }, caption)
     }
 

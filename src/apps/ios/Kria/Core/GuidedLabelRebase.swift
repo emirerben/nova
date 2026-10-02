@@ -7,8 +7,8 @@ import Foundation
 /// A guided story times each clip's label bar on absolute output windows, so a
 /// trim / extend / reorder / delete used to strand every later label at its old
 /// time (the editor retimed only the slot). This pure function re-windows ONLY
-/// the clip-bound label bars (`clip-label-*`) onto the slot they follow. Captions,
-/// narration labels, lyric bars, titles and the creator's own text are returned
+/// clip-bound labels onto their slots and guided titles onto the new timeline.
+/// Captions, narration labels, lyric bars and other creator text are returned
 /// untouched, and no text, style or position field ever changes.
 ///
 /// Parity is pinned by `Tests/Fixtures/guided_label_rebase_vectors.json`, which the
@@ -23,6 +23,8 @@ enum GuidedLabelRebase {
     static let edgeS: Double = 0.05
     static let labelPrefix = "clip-label-"
     static let labelMediaPrefix = "clip-label-media-"
+    static let openingTitleID = "guided-title"
+    static let closingTitleID = "guided-closing-title"
 
     /// One active slot's output window on the editor's base clock (the same walk the
     /// timeline renders, including transition overlap).
@@ -32,6 +34,8 @@ enum GuidedLabelRebase {
         let mediaID: String?
         let start: Double
         let end: Double
+        let sourceStart: Double
+        let sourceEnd: Double
     }
 
     static func windows(of slots: [EditorTimelineSlot]) -> [SlotWindow] {
@@ -40,14 +44,24 @@ enum GuidedLabelRebase {
             return SlotWindow(
                 id: slot.id ?? "", parentID: slot.parentSegmentID ?? "",
                 mediaID: slot.raw["media_id"]?.stringValue,
-                start: window.start, end: window.end
+                start: window.start, end: window.end,
+                sourceStart: slot.inS,
+                sourceEnd: slot.inS + (window.end - window.start) * (slot.raw["playback_rate"]?.numberValue ?? 1)
             )
         }
     }
 
     /// True when the label lane has anything to follow.
     static func hasLabels(_ elements: [EditorTextElement]) -> Bool {
-        elements.contains(where: isClipLabel)
+        elements.contains(where: isGuidedText)
+    }
+
+    static func isGuidedText(_ element: EditorTextElement) -> Bool {
+        !isUntouched(element) && (isClipLabel(element) || isAnchoredTitle(element))
+    }
+
+    private static func isAnchoredTitle(_ element: EditorTextElement) -> Bool {
+        element.id == openingTitleID || element.id == closingTitleID
     }
 
     static func isClipLabel(_ element: EditorTextElement) -> Bool {
@@ -70,8 +84,19 @@ enum GuidedLabelRebase {
         let new = windows(of: newSlots)
         // Never wipe every label because the new timeline is momentarily empty.
         guard !new.isEmpty, !old.isEmpty else { return elements }
+        let oldTotal = old.map(\.end).max() ?? 0
+        let newTotal = new.map(\.end).max() ?? 0
         var result: [EditorTextElement] = []
         for element in elements {
+            guard !isUntouched(element) else { result.append(element); continue }
+            // IDs exempt titles from clip-label matching even when a previous
+            // server projection stamped a segment_id onto the bar.
+            if isAnchoredTitle(element) {
+                if let title = rebaseTitle(element, old: old, new: new, oldTotal: oldTotal, newTotal: newTotal) {
+                    result.append(title)
+                }
+                continue
+            }
             guard isClipLabel(element) else { result.append(element); continue }
             var media: String?
             if element.id.hasPrefix(labelMediaPrefix) {
@@ -94,6 +119,78 @@ enum GuidedLabelRebase {
             result.append(updated)
         }
         return result
+    }
+
+    /// Match `rebase_guided_text`: actual edge positions determine anchoring;
+    /// manually inset titles travel through source time, including split children.
+    private static func rebaseTitle(
+        _ element: EditorTextElement, old: [SlotWindow], new: [SlotWindow], oldTotal: Double, newTotal: Double
+    ) -> EditorTextElement? {
+        let start = element.startS, end = element.endS
+        let opening = start <= edgeS
+        let closing = oldTotal > 0 && end >= oldTotal - edgeS
+        let frameS = 1.0 / 30.0
+        var newStart: Double
+        var newEnd: Double
+        var updated = element
+        if opening || closing {
+            if opening && closing {
+                newStart = 0; newEnd = newTotal
+            } else if opening {
+                newStart = start; newEnd = min(end, newTotal)
+            } else {
+                newEnd = newTotal; newStart = max(0, newTotal - (end - start))
+            }
+            if newEnd - newStart < minBarS {
+                newEnd = min(newTotal, newStart + minBarS)
+                newStart = max(0, newEnd - minBarS)
+            }
+        } else {
+            guard let a = project(start, old: old, new: new),
+                  let b = project(max(start, end - frameS), old: old, new: new) else { return nil }
+            newStart = a.time
+            newEnd = min(newTotal, b.time + frameS)
+            if newEnd - newStart <= frameS / 2 {
+                if let segment = new.first(where: { $0.id == a.id }) { newEnd = min(newTotal, segment.end) }
+                if newEnd - newStart <= frameS / 2 {
+                    newEnd = min(newTotal, newStart + minBarS)
+                    newStart = max(0, newEnd - minBarS)
+                }
+            }
+            if end - start >= minBarS && newEnd - newStart < minBarS {
+                newEnd = min(newTotal, newStart + minBarS)
+                newStart = max(0, newEnd - minBarS)
+            }
+            updated.raw["segment_id"] = .string(a.id)
+        }
+        updated.startS = round6(newStart)
+        updated.endS = round6(newEnd)
+        return updated
+    }
+
+    /// The server's `make_time_projector`: later overlaps/split children win;
+    /// deleted anchors disappear, and trimmed source positions clamp to an edge.
+    private static func project(_ time: Double, old: [SlotWindow], new: [SlotWindow]) -> (time: Double, id: String)? {
+        let anchor: SlotWindow
+        let sourceTime: Double
+        if let window = old.reversed().first(where: { $0.start <= time && time < $0.end }) {
+            anchor = window
+            sourceTime = min(window.sourceEnd, window.sourceStart + max(0, time - window.start))
+        } else if let last = old.last, abs(time - last.end) <= 0.000001 {
+            anchor = last; sourceTime = last.sourceEnd
+        } else { return nil }
+        let candidates = new.filter {
+            anchor.id.isEmpty ? $0.mediaID == anchor.mediaID : ($0.id == anchor.id || $0.parentID == anchor.id)
+        }
+        let containing = candidates.last { $0.sourceStart - 0.000001 <= sourceTime && sourceTime <= $0.sourceEnd + 0.000001 }
+        let target = containing ?? candidates.min {
+            min(abs(sourceTime - $0.sourceStart), abs(sourceTime - $0.sourceEnd)) <
+                min(abs(sourceTime - $1.sourceStart), abs(sourceTime - $1.sourceEnd))
+        }
+        guard let target else { return nil }
+        let clamped = min(target.sourceEnd, max(target.sourceStart, sourceTime))
+        let projected = min(target.end, max(target.start, target.start + clamped - target.sourceStart))
+        return (round6((projected * 30).rounded(.toNearestOrEven) / 30), target.id)
     }
 
     private static func round6(_ value: Double) -> Double { (value * 1_000_000).rounded() / 1_000_000 }

@@ -161,6 +161,8 @@ Native system authentication, Photos, AI consent, and share sheets remain native
 
 Native footage controls persist `playback_rate` and normalized `source_crop` in the editor document. Retiming keeps each timeline window fixed: slow motion consumes less source, while footage that ends early holds its last frame. Still images retain their placement duration, and held video tails do not stretch source audio. Crop coordinates use the decoded source with a top-left origin; rendering and selection geometry must agree for rotated footage. The controls participate in document undo and save.
 
+Guided-story timeline edits also reanchor the guided opening and closing titles and any manually positioned guided title through the revised source-time projection, including titles that cross split timeline children. Clip-bound labels continue to follow their clip, while captions, narration labels, lyric bars, and other creator text keep their existing timing. The title and label adjustments share the timeline edit's single undo step.
+
 Media direct manipulation freezes the surrounding composed layers while the gesture updates the selected image. Rebuilding the source preview waits until the gesture ends; captions must remain present in the surrounding layers.
 
 Download follows the video currently shown in the editor. A ready source preview is exported locally from the current edit recipe; a matching device-local file is used directly, and a server-rendered result is downloaded only when the source preview is unavailable and the render receipt still matches the current project generation. While a source preview is preparing, the last finished render may remain visible, but canvas editing and download stay disabled until the displayed video is known to be current.
