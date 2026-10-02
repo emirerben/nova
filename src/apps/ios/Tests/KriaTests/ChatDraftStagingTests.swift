@@ -479,7 +479,11 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(state.baseGeneration, "g1")
         XCTAssertFalse(state.clientStateID.isEmpty)
         let lanes = try laneJSON(state)
-        XCTAssertEqual(Set(lanes.keys), ["remove_music", "base_generation"], "no lane = no unsaved edits")
+        XCTAssertEqual(
+            Set(lanes.keys), ["remove_music", "base_generation", "editor_state_version"],
+            "A clean editor exports request metadata without any changed lanes"
+        )
+        XCTAssertEqual(lanes["editor_state_version"] as? Int, 1)
     }
 
     func testExportCarriesOnlyChangedLanesAndNeverSaveOnlyFields() async throws {

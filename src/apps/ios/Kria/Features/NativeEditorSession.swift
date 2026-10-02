@@ -523,8 +523,8 @@ struct NativeEditorTemporaryVideo {
 
     /// The editor's current UNSAVED state for a chat turn, or nil when it cannot be
     /// sent (not loaded, no baseline generation, or over `maxBytes`) and the caller
-    /// must fall back to the legacy save-then-send flow. A clean editor exports an
-    /// EMPTY `lanes` object, which the server reads as "no unsaved edits".
+    /// must fall back to the legacy save-then-send flow. A clean editor exports
+    /// request metadata without changed lanes, meaning "no unsaved edits".
     func exportEditorState(maxBytes: Int? = nil) -> EditorStateRequest? {
         guard loadState == .loaded, !isSaving else { return nil }
         // A text field still being typed is part of the creator's current state.
