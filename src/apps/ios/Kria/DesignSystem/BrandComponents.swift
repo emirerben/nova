@@ -85,6 +85,8 @@ struct NewChatButton: View {
 
 struct ProjectActionsMenu: View {
     let project: ProjectSummary
+    /// The chat header floats over the transcript; drawer rows keep the plain label.
+    var floating = false
     @EnvironmentObject private var model: AppModel
     @State private var renaming = false
     @State private var deleting = false
@@ -105,7 +107,13 @@ struct ProjectActionsMenu: View {
             Button("Rename project") { title = current.workspaceTitle; submittedTitle = nil; renameIdentity = UUID().uuidString; renameError = nil; renaming = true }
             Button(deletionBlocked ? "Delete after rendering or uploading" : "Delete project", role: .destructive) { deleteError = nil; deleting = true }
                 .disabled(deletionBlocked)
-        } label: { KriaIcon(.more).frame(width: 44, height: 44) }
+        } label: {
+            if floating {
+                KriaIcon(.more).frame(width: 44, height: 44).kriaFloatingSurface(Circle())
+            } else {
+                KriaIcon(.more).frame(width: 44, height: 44)
+            }
+        }
         .disabled(busy).accessibilityLabel("Project actions for \(current.workspaceTitle)")
         .alert("Rename project", isPresented: $renaming) {
             TextField("Project name", text: $title)

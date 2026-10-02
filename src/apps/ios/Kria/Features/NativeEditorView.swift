@@ -88,6 +88,7 @@ struct NativeEditorView: View {
                         NativeEditorLoadSurface(
                             title: "Opening the editor…",
                             detail: "Loading the latest cut and its editing controls.",
+                            projectTitle: project.workspaceTitle,
                             isLoading: true,
                             onBack: requestBack,
                             retry: nil
@@ -97,6 +98,7 @@ struct NativeEditorView: View {
                     NativeEditorLoadSurface(
                         title: "The editor couldn’t open",
                         detail: message,
+                        projectTitle: project.workspaceTitle,
                         isLoading: false,
                         onBack: requestBack,
                         retry: { Task { await loadEditor() } }
@@ -705,13 +707,14 @@ struct NativeEditorView: View {
 private struct NativeEditorLoadSurface: View {
     let title: String
     let detail: String
+    let projectTitle: String
     let isLoading: Bool
     let onBack: () -> Void
     let retry: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
-            NativeEditorTopBar(onBack: onBack)
+            NativeEditorTopBar(title: projectTitle, onBack: onBack)
             VStack(alignment: .leading, spacing: 14) {
                 if isLoading { ProgressView().tint(KriaColor.ink) }
                 Text(title).font(KriaFont.display(29))
