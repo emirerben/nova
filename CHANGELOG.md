@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.14.0] - 2026-10-02
+
+### Changed
+- fix(ios): let the text panel grow over the keyboard-shrunk preview (KRI-275) (#1321) <!-- release-pr: 1321 -->
+
 ## [0.78.13.0] - 2026-10-02
 
 ### Changed
