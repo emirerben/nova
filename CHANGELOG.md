@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.50.0] - 2026-10-02
+
+### Changed
+- fix(kria): keep render approvals current after editor Save (#1308) <!-- release-pr: 1308 -->
+
 ## [0.77.49.0] - 2026-10-02
 
 ### Changed
