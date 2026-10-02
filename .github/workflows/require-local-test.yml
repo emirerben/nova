@@ -30,6 +30,9 @@ jobs:
   require-local-test:
     name: Require local-test marker for Layer-2 pipeline changes
     runs-on: ubuntu-latest
+    # Full-history checkout dominates; the slowest green full-clone job in CI
+    # took 3.8 min (this one: 3.2 min). 10 is ~2.5x that.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:

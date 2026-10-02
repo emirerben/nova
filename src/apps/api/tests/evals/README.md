@@ -181,7 +181,7 @@ Constraints:
 
 Live runs hit the Gemini API. The harness requires explicit purpose, run ID,
 approved maximum, and reservation acknowledgement. The hard ceiling is **$2**
-for full evals and **$0.20** for the weekly provider smoke; there is no bypass.
+for full evals and **$0.20** for a `provider_smoke` run; there is no bypass.
 
 ```bash
 NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \

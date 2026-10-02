@@ -141,7 +141,7 @@ in this order:
    `usage_purpose=release_canary` plus a release-canary ID; customer calls are
    attributed through the owning user/job/session.
 
-At 80% of an environment budget, experiments, weekly smoke, manual QA, and
+At 80% of an environment budget, experiments, provider smoke, manual QA, and
 optional background analysis stop. At 90%, internal canaries and new Director
 reviews stop. At 100%, every new paid call stops. The schema can represent a
 scoped, expiring override, but this release ships no override CLI or endpoint;
@@ -177,20 +177,17 @@ pytest tests/evals/ -v
 
 Full live evals are permitted only when a prompt, model, provider integration, or
 structured-output contract changes. The workflow requires a purpose, test-run
-ID, maximum cost, explicit reservation approval, and has a hard $2 ceiling. The
-weekly provider smoke selects one song-classifier fixture, caps the run at $0.20,
-and stores the successful response as a replay artifact.
+ID, maximum cost, explicit reservation approval, and has a hard $2 ceiling.
+There is no scheduled provider smoke: the weekly one was removed on 2026-10-02.
+The `provider_smoke` purpose and its $0.20 cap remain for a manual one-off run.
 
 Create a protected GitHub environment named `paid-ai-evals`, restrict deployment
 to reviewed refs/default branch policy, and require a reviewer before manual-run
-secrets are released. Create a second `paid-ai-smoke` environment restricted to
-the default branch with no reviewer pause; scheduled workflows always execute the
-workflow from that branch, so the weekly smoke can run unattended without granting
-arbitrary refs the key. Store `GEMINI_API_KEY_DEV` and `DATABASE_URL_DEV` in both
-environments as environment secrets rather than repository-wide secrets.
+secrets are released. Store `GEMINI_API_KEY_DEV` and `DATABASE_URL_DEV` in that
+environment as environment secrets rather than repository-wide secrets.
 `DATABASE_URL_DEV` must be the persistent development database also used by manual
 QA; never point this workflow at an ephemeral Actions Postgres instance. That one
-ledger is the atomic authority for manual QA, live evals, and the weekly smoke, so
+ledger is the atomic authority for manual QA and live evals, so
 those paths cannot each mint a separate monthly allowance. Apply migrations to the
 database through the normal deployment path before running the workflow; the job
 only verifies that the database is at Alembic head. Paid Anthropic judging is
