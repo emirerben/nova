@@ -1,0 +1,71 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.18.0",
+  "input": {
+    "idea": "Corfu coast",
+    "theme": "A day by the water",
+    "direction": "fast_montage",
+    "goal": "Make a quick coastal sequence that still has a beginning and ending",
+    "pace": "fast",
+    "target_duration_s": 7,
+    "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "video_hold": "longer",
+      "boundary_style": "cut"
+    },
+    "media": [
+      {
+        "media_id": "b1",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 5,
+        "subject": "sailboat leaving harbor"
+      },
+      {
+        "media_id": "b2",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "rocky beach"
+      },
+      {
+        "media_id": "b3",
+        "lane": "asset",
+        "kind": "video",
+        "duration_s": 5,
+        "subject": "swimming underwater"
+      },
+      {
+        "media_id": "b4",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "boats at anchor"
+      },
+      {
+        "media_id": "b5",
+        "lane": "asset",
+        "kind": "video",
+        "duration_s": 5,
+        "subject": "waves at shore"
+      },
+      {
+        "media_id": "b6",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "coastline viewpoint"
+      },
+      {
+        "media_id": "b7",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "sunset over sea"
+      }
+    ]
+  },
+  "raw_text": "{\n  \"title\": \"Corfu Coast Montage\",\n  \"duration_s\": 7.0,\n  \"story_beats\": [],\n  \"mixed_media_timing\": {\n    \"photo_hold_s\": 0.65,\n    \"video_hold_s\": 2.0,\n    \"transition\": \"hard_cut\"\n  },\n  \"montage_text_bindings\": [],\n  \"montage_audio\": null,\n  \"fast_cuts\": [\n    {\n      \"cut_id\": \"cut_1\",\n      \"media_id\": \"m006\",\n      \"source_start_s\": 0.0,\n      \"source_end_s\": 0.65,\n      \"output_duration_s\": 0.65,\n      \"role\": \"hook\",\n      \"transition\": \"none\",\n      \"beat_align\": false\n    },\n    {\n      \"cut_id\": \"cut_2\",\n      \"media_id\": \"m001\",\n      \"source_start_s\": 0.0,\n      \"source_end_s\": 2.0,\n      \"output_duration_s\": 2.0,\n      \"role\": \"build\",\n      \"transition\": \"none\",\n      \"beat_align\": false\n    },\n    {\n      \"cut_id\": \"cut_3\",\n      \"media_id\": \"m004\",\n      \"source_start_s\": 0.0,\n      \"source_end_s\": 0.65,\n      \"output_duration_s\": 0.65,\n      \"role\": \"build\",\n      \"transition\": \"none\",\n      \"beat_align\": false\n    },\n    {\n      \"cut_id\": \"cut_4\",\n      \"media_id\": \"m003\",\n      \"source_start_s\": 0.0,\n      \"source_end_s\": 2.0,\n      \"output_duration_s\": 2.0,\n      \"role\": \"build\",\n      \"transition\": \"none\",\n      \"beat_align\": false\n    },\n    {\n      \"cut_id\": \"cut_5\",\n      \"media_id\": \"m002\",\n      \"source_start_s\": 0.0,\n      \"source_end_s\": 0.65,\n      \"output_duration_s\": 0.65,\n      \"role\": \"build\",\n      \"transition\": \"none\",\n      \"beat_align\": false\n    },\n    {\n      \"cut_id\": \"cut_6\",\n      \"media_id\": \"m007\",\n      \"source_start_s\": 0.0,\n      \"source_end_s\": 1.05,\n      \"output_duration_s\": 1.05,\n      \"role\": \"payoff\",\n      \"transition\": \"none\",\n      \"beat_align\": false\n    }\n  ]\n}",
+  "meta": {
+    "source": "live_capture",
+    "captured": "2026-10-01, gemini-2.5-flash, test run edit-proposal-flag-on-2026-10-01",
+    "case": "closing still stretched to land exactly on the target (KRI-243)",
+    "contract": "every hold follows the quick-photo/long-video profile except the closing still (1.05s > 0.8s); parse clamps that one cut to 0.8s and re-fits the 7.0s total instead of rejecting the plan"
+  }
+}
