@@ -84,6 +84,12 @@ Flow (flag on):
    inclusion, and chapter captions remain separate operations. More than six
    operations or ambiguous instructions require clarification, never a subset.
    The generic inventory owns labels when enabled; no label-request regex remains.
+   Descriptive context is not an operation: mentioning sunset and night footage,
+   walking and cycling, a route, or a capture sequence does not authorize a
+   group/order intent unless the creator explicitly asks the edit to act on it.
+   Generated Creative Brief labels and Main Creator candidate intents remain
+   non-authoritative hints; the planner verifies them against creator-authored
+   wording and returns `intents=[]`, `question=null` for context-only requests.
    `app/services/clip_intent_planning.py` forwards the complete inventory for
    grounding. Transcript-sourced requests stay in the complete inventory but
    bypass the visual resolver; they require a pinned guided narration before a
@@ -98,7 +104,7 @@ Flow (flag on):
    the creator's speech, so "Add captions" there is never a chapter `caption` op.
    `compile_strategy_to_plan` strips any footage intents the Main Creator proposed
    for them, with a notice. On other formats (montage) the planner prompt
-   (2026-10-01.1) returns no intent and no question for a general "add captions" /
+   (2026-10-02.2) returns no intent and no question for a general "add captions" /
    "add subtitles" / "altyazı ekle" that names no clips and gives no caption words;
    a `caption` op is only for one chapter the creator named or described. Unlike
    the Talking skip this is a prompt rule, so the `montage_add_captions*` /
@@ -351,8 +357,9 @@ the snapshot replan/direction-replacement planners and the editor-op tool
 `tests/services/test_clip_intent_order_by.py`,
 `tests/tasks/test_edit_proposal_build_clip_facts.py`,
 `tests/agents/test_landmark_guess.py`, `tests/evals/test_landmark_guess_evals.py`.
-Prompt versions bumped: `main_creator` v38, `edit_proposal` 1.18.0,
-`clip_intent_planner` 2026-09-24.1, new `landmark_guess` 2026-09-24.1. Live
+Current relevant prompt versions: `main_creator` 2026-10-02-v40,
+`edit_proposal` 1.18.0, `clip_intent_planner` 2026-10-02.2, and
+`landmark_guess` 2026-09-24.1. Live
 evals to run before enabling (`--eval-mode=live`, no judge):
 `test_landmark_guess_evals.py`, `test_clip_intent_planner_evals.py`,
 `test_main_creator_evals.py`, `test_edit_proposal_evals.py`.

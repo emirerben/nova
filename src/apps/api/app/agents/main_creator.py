@@ -43,8 +43,10 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # when the brief is on for the creator) -- v37.
 # KRI-189: when/where clip facts with provenance (v38).
 # KRI-190: brief `facts` (distance/activity/start/end) and an `order` requirement
-# are always captured when the creator states a route or a sequence (v39).
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v39"
+# are always captured when the creator asks the edit to follow a route or sequence (v39).
+# KRI-244: descriptive footage chronology remains creative context unless the
+# creator actually asks the edit to order, group, label, include, or caption it (v40).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-02-v40"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -207,18 +209,29 @@ null", "description": "what is wanted in the creator's own framing, or null", "f
 in `description` with `literal` null. Put structured details in `facts` (for order: {"key":
 "capture_time"}; for timing: {"duration_s": 20}; for a route or distance: {"distance_km": 20,
 "start": "...", "end": "..."}). Keep the creator's language and spelling (Turkish stays
-Turkish). ALWAYS record what the creator states as structured `facts` on the requirement it
-belongs to, even when the same words also sit in a title or a sentence: a distance, an
-activity, a start point or an end point ("I ran 20K from Arnavutköy to Eminönü") go in `facts`
-as {"distance_km": 20, "activity": "run", "start": "Arnavutköy", "end": "Eminönü"} on the text
-requirement (title or per_clip) they describe; never return empty `facts` for a message that
-names one. ALWAYS add an `order` requirement when the creator names a sequence ("in the order
-I filmed", "chronologically", "from A to B", "start at X and finish at Y"): {"kind": "order",
-"scope": "global", "facts": {"key": "capture_time"}} plus "start"/"end" when named. One
-requirement per (kind, scope): a new one replaces the older one. A message that
-only asks to redo the edit ("do it again based on my prompt") adds no requirements -- propose a
-full strategy that honours EVERY requirement in the contract. Example: "Title it 20K Koşu, put
-the landmark name on each clip and order them by the time I filmed them" => brief_updates:
+Turkish).
+
+The brief stores creator INSTRUCTIONS, not incidental descriptions of the footage. A sentence
+such as "I took the sunset pictures walking to the bus and the night ones cycling home" supplies
+creative context; it does NOT ask to group or order clips. "Come up with creative ideas" does not
+turn those descriptive facts into operations. Use that context when proposing `action`, but emit
+no `brief_updates` for it. Only add a requirement when the creator asks the output to do something
+with the material or supplies exact on-screen copy.
+
+When a real requirement is present, ALWAYS record the structured facts that belong to it, even
+when the same words also sit in a title or sentence: a distance, activity, start point, or end
+point ("I ran 20K from Arnavutköy to Eminönü") go in `facts` as {"distance_km": 20,
+"activity": "run", "start": "Arnavutköy", "end": "Eminönü"} on the requested text/order
+requirement they describe. Never invent a requirement only to store background facts. ALWAYS add
+an `order` requirement when the creator ASKS the edit to follow a sequence ("put them in the order
+I filmed", "order them chronologically", "start the edit at X and finish at Y"): {"kind":
+"order", "scope": "global", "facts": {"key": "capture_time"}} plus "start"/"end" when named.
+Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
+two activities is not such an ask. One requirement per (kind, scope): a new one replaces the
+older one. A message that only asks to redo the edit ("do it again based on my prompt") adds no
+requirements -- propose a full strategy that honours EVERY requirement in the contract. Example:
+"Title it 20K Koşu, put the landmark name on each clip and order them by the time I filmed
+them" => brief_updates:
 [{"kind": "text", "scope": "title", "literal": "20K Koşu", "description": null, "facts": {}},
 {"kind": "text", "scope": "per_clip", "literal": null, "description": "the landmark shown in
 each clip", "facts": {}}, {"kind": "order", "scope": "global", "literal": null, "description":

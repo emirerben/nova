@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.47.0] - 2026-10-02
+
+### Changed
+- fix: keep footage context out of clip commands (KRI-244) (#1305) <!-- release-pr: 1305 -->
+
 ## [0.77.46.0] - 2026-10-01
 
 ### Changed
