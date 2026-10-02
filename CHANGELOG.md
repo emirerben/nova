@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.6.0] - 2026-10-02
+
+### Changed
+- fix(devex): make agent navigation and runtime checks repeatable (#1313) <!-- release-pr: 1313 -->
+
 ## [0.78.5.0] - 2026-10-02
 
 ### Changed
