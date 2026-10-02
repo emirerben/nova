@@ -24,10 +24,6 @@ public protocol PreviewComposing: Sendable {
 public struct PreviewComposition: @unchecked Sendable {
     public let description: CompositionDescription
 #if canImport(AVFoundation)
-    var audioBindings: [PreviewAudioBinding] = []
-    /// The footage bed's side-chain duck, kept so a live gain edit rebuilds the
-    /// same curve instead of re-reading the key (KRI-139).
-    var duckEnvelope: AudioDuckEnvelope?
     /// `AudioMixRecipe.targetLUFS`: the exporter normalizes the mix to it.
     /// Playback stays at the mixed level (AVAudioMix cannot boost).
     var loudnessTargetLUFS: Double?
@@ -39,12 +35,6 @@ public struct PreviewComposition: @unchecked Sendable {
 }
 
 #if canImport(AVFoundation)
-struct PreviewAudioBinding: Sendable {
-    let trackID: CMPersistentTrackID
-    let clipID: String
-    let usesOriginalGain: Bool
-}
-
 @MainActor public struct AVPlayerPreviewComposer: PreviewComposing {
     /// Brand furniture to add to the composition this composer builds.
     ///
@@ -77,7 +67,6 @@ struct PreviewAudioBinding: Sendable {
         var layers: [RecipeVideoLayer] = []
         var textLayers: [RecipeTextLayer] = []
         var audioParameters: [AVMutableAudioMixInputParameters] = []
-        var audioBindings: [PreviewAudioBinding] = []
         var stillClock: StillTimelineClock?
         func time(_ seconds: Double) -> CMTime { CMTime(value: Int64((seconds * 60_000).rounded()), timescale: 60_000) }
         // KRI-139: the footage's own audio ducks under every audio-kind track (the
@@ -101,7 +90,6 @@ struct PreviewAudioBinding: Sendable {
             let parameter = AVMutableAudioMixInputParameters(track: track)
             applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows, duck: originalGain ? duck : nil)
             audioParameters.append(parameter)
-            audioBindings.append(PreviewAudioBinding(trackID: track.trackID, clipID: clip.id, usesOriginalGain: originalGain))
         }
         let overlayOrders = Self.overlayOrders(in: recipe)
         for recipeTrack in recipe.tracks {
@@ -423,8 +411,6 @@ struct PreviewAudioBinding: Sendable {
         item.seekingWaitsForVideoCompositionRendering = true
         item.audioMix = audioMix
         var result = PreviewComposition(description: CompositionDescription(duration: brandedTotal, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
-        result.audioBindings = audioBindings
-        result.duckEnvelope = duck
         result.loudnessTargetLUFS = recipe.audio.targetLUFS
         return result
     }

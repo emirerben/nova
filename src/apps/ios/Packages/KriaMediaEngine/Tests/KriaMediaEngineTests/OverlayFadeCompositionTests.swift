@@ -192,7 +192,7 @@ final class OverlayFadeCompositionTests: XCTestCase {
     /// KRI-182: the editor applies an entrance/exit-token edit through
     /// `LivePreviewComposition.updateText`'s fast, text-only path -- the same
     /// path `testStyledOverlayKeepsLayerOrderAgainstLegacyPeer` (NativeCompositionTests)
-    /// pins for a `visualPlacement` edit. `withoutGains` must treat
+    /// pins for a `visualPlacement` edit. `withoutVisuals` must treat
     /// `overlayFadeIn`/`overlayFadeOut` like the other overlay-only fields it
     /// already ignores for the old-vs-new track comparison, and the rebuilt
     /// layer must pick up a fresh `OverlayFadeWindow` -- otherwise toggling a
