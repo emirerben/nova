@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.11.0] - 2026-10-02
+
+### Changed
+- fix(ios): delete every timeline block and save empty drafts (#1319) <!-- release-pr: 1319 -->
+
 ## [0.78.10.0] - 2026-10-02
 
 ### Changed
