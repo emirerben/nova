@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.kria.device_render import make_device_request
+from app.kria.device_render import make_device_request, recipe_digest
 from app.pipeline.phone_narrated_plan import compile_phone_narrated_plan
 from app.routes import generative_jobs as gj
 from app.services.device_render import device_record, device_status, pin_device_request
@@ -179,7 +179,9 @@ def test_unchanged_cues_save_pins_the_same_program(monkeypatch):
 
     new = device_status(job, "narrated").request
     assert new.identity.recipe_revision == 2
-    assert new.recipe.model_dump(mode="json") == old.recipe.model_dump(mode="json")
+    # The device identity digest: `required_capabilities` is a set, so its raw
+    # JSON list order depends on the hash seed; the digest sorts it.
+    assert recipe_digest(new.recipe) == recipe_digest(old.recipe)
 
 
 def test_caption_timing_edit_moves_the_layer(monkeypatch):
@@ -283,7 +285,7 @@ def test_a_variable_caption_font_does_not_stay_required_after_switching_back(mon
     save(job, caption_meta=gj.EditorCommitCaptionMeta(font=None, font_set=True))
     recipe = device_status(job, "narrated").request.recipe
     assert "authoredText" not in recipe.required_capabilities
-    assert recipe.model_dump(mode="json") == pinned.model_dump(mode="json")
+    assert recipe_digest(recipe) == recipe_digest(pinned)
 
 
 def test_a_chat_style_text_edit_shows_the_new_words_on_word_captions(monkeypatch):

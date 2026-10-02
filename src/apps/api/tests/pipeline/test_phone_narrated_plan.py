@@ -3,6 +3,7 @@ import pytest
 pytest.importorskip("app.pipeline.phone_captions")
 
 from app.config import settings
+from app.kria.device_render import recipe_digest
 from app.kria.media_sources import OriginalMediaDescriptor
 from app.kria.render_assets import RenderFingerprint
 from app.pipeline.phone_captions import PhoneCaptionLook
@@ -396,7 +397,9 @@ def test_swapping_in_the_same_captions_returns_the_same_recipe(style):
 
     swapped = replace_narrated_captions(pinned, caption_cues=_WORD_CUES, caption_style=style)
 
-    assert swapped.model_dump(mode="json") == pinned.model_dump(mode="json")
+    # Compared by the device identity digest: `required_capabilities` is a set,
+    # so its raw JSON list order depends on the hash seed; the digest sorts it.
+    assert recipe_digest(swapped) == recipe_digest(pinned)
 
 
 def test_swapping_captions_keeps_every_clip_the_bed_and_the_mix():
@@ -428,7 +431,7 @@ def test_swapping_in_no_captions_drops_layers_fonts_and_text_capabilities():
     }
     # Adding them back restores the original recipe exactly.
     restored = replace_narrated_captions(swapped, caption_cues=_WORD_CUES)
-    assert restored.model_dump(mode="json") == pinned.model_dump(mode="json")
+    assert recipe_digest(restored) == recipe_digest(pinned)
 
 
 def test_a_new_caption_font_replaces_the_old_one():
