@@ -556,6 +556,14 @@ KRIA_SIMULATOR_ID=<dedicated-iphone-uuid> KRIA_IOS_TEST_MODE=prepare-ui bash scr
 KRIA_IOS_TEST_MODE=ui KRIA_IOS_UI_GROUPS=smoke,creation bash scripts/ios/verify.sh
 ```
 
+The creation group includes `AttachmentFlowUITests` for the narrated attachment
+pager, explicit footage-audio choice, imported voiceover review/playback, longer
+voiceover warnings, failed upload recovery, and unknown footage duration. Its
+`KRIA_VOICEOVER_REVIEW_FIXTURE=1` fixture creates six seconds of local audio only
+under `-ui-testing-chat` in Debug; review still uses the production player and
+upload action. `CreationUITests` also exercises Photos dismissal and automatic
+advance after a single selection. Kept screenshots live in the `.xcresult` bundle.
+
 Use a fresh `prepare-ui` before each UI invocation. UI-only mode requires an explicit group;
 missing, empty, or malformed selections fail. The full local gate supplies
 `full` automatically, and manual CI supplies the full group after preparation.

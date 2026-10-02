@@ -26,7 +26,11 @@
       "KriaUITests/CreationUITests/testFailedUploadWithRecordDoesNotBlockSendAndOffersRetry",
       "KriaUITests/DeviceRenderUITests/testPhoneRenderReachesReadyWithPlaySaveAndShare",
       "KriaUITests/DeviceRenderUITests/testUnsupportedRecipeAsksForANewEditWithoutRetry",
-      "KriaUITests/DeviceRenderUITests/testTimedOutRenderRetriesToReady"
+      "KriaUITests/DeviceRenderUITests/testTimedOutRenderRetriesToReady",
+      "KriaUITests/AttachmentFlowUITests/testNarratedAttachmentsSwipeAndRequireExplicitAudioChoice",
+      "KriaUITests/AttachmentFlowUITests/testImportedVoiceoverReviewsTimingAndPlaybackBeforeUpload",
+      "KriaUITests/AttachmentFlowUITests/testUnknownFootageDurationDoesNotInventComparison",
+      "KriaUITests/AttachmentFlowUITests/testExistingVoiceoverKeepsItsCapacityAndContinueChoice"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -169,6 +173,10 @@
     "src/apps/ios/Tests/KriaUITests/SignInUITests.swift": "projects",
     "src/apps/ios/Tests/KriaUITests/DeviceRenderUITests.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/NativeUpdateRequiredUITests.swift": "projects",
-    "src/apps/ios/Kria/Features/NativeUpdateUITestTransport.swift": "projects"
+    "src/apps/ios/Kria/Features/NativeUpdateUITestTransport.swift": "projects",
+    "src/apps/ios/Tests/KriaUITests/AttachmentFlowUITests.swift": "creation",
+    "src/apps/ios/Kria/Features/ChatUITestTransport.swift": "creation",
+    "src/apps/ios/Kria/Features/CreationAttachmentPresentation.swift": "creation",
+    "src/apps/ios/Kria/Features/CreationVoiceRecorder.swift": "creation"
   }
 }

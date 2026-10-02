@@ -179,6 +179,8 @@ struct CreationAttachedMedia: Identifiable {
     let kind: String
     let previewURL: URL?
     var uploadPurpose: String = UploadPurpose.cloudRenderSource.rawValue
+    /// Server-probed media duration, when it is usable for creation timing.
+    var durationS: Double? = nil
     static func parse(_ state: [String: JSONValue]) -> [Self] {
         guard case .array(let media) = state["media"] else { return [] }
         return media.compactMap { entry in
@@ -186,7 +188,10 @@ struct CreationAttachedMedia: Identifiable {
             let url = fields["poster_url"]?.stringValue ?? fields["thumbnail_url"]?.stringValue
             let purpose = fields["upload_contract"]?.objectValue?["purpose"]?.stringValue
                 ?? (id.hasPrefix("analysis-proxy-") ? UploadPurpose.analysisProxy.rawValue : UploadPurpose.cloudRenderSource.rawValue)
-            return Self(id: id, filename: fields["filename"]?.stringValue ?? "Attached media", kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)), uploadPurpose: purpose)
+            let duration = fields["duration_s"]?.numberValue.flatMap { value in
+                value.isFinite && value > 0 ? value : nil
+            }
+            return Self(id: id, filename: fields["filename"]?.stringValue ?? "Attached media", kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)), uploadPurpose: purpose, durationS: duration)
         }
     }
 }

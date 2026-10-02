@@ -36,6 +36,18 @@ and accessible controls. `Kria/Features` owns the adaptive phone-first
 shells and flow surfaces. `Packages/KriaMediaEngine` is a local package seam;
 the app does not duplicate its timeline or render rules.
 
+Creation attachments follow the [KRI-278 Paper design](https://app.paper.design/file/01M166BHQ2QZ6EMMBB1D40GV9W/p-F-0)
+with swipeable Footage → Voiceover → Overlays pages. The
+voiceover page appears for narrated projects or projects with existing audio;
+overlays retain their capability gate, and slides use the overlays pool only.
+Selecting footage advances after its picker closes, while the upload continues.
+Voiceovers stay local for playback and review until the creator taps Use recording
+or Use voiceover. Use footage audio instead is an explicit alternative. Timing
+uses measured footage durations, including pending uploads; unknown timing is
+shown as checking or unavailable. A longer voiceover shows a warning but remains
+usable. Background PUT success is followed by the existing project-attachment
+request before the media is considered attached.
+
 The API adapter follows the existing contracts: `/auth/mobile/exchange` and
 `/auth/mobile/refresh` and `/auth/mobile/revoke` for native sessions, `/me/jobs` and its playback URL for
 the library, and `/creation-threads` for creation. Runtime v1 uses messages/actions;

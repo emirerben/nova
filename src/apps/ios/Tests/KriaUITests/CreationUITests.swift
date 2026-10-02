@@ -134,12 +134,12 @@ final class CreationUITests: XCTestCase {
             app.buttons["choose-videos"].tap()
             XCTAssertTrue(app.buttons["Choose from Photos"].waitForExistence(timeout: 3))
             XCTAssertTrue(app.buttons["Choose from Files or iCloud"].exists)
-            app.buttons["Done"].tap()
+            app.buttons["attachment-close"].tap()
         }
     }
 
-    /// KRI-175: with Full Access the picker selects live and has no Add/Cancel of its own. Done must
-    /// always lead back, and the one talking-to-camera clip returns straight to chat once picked.
+    /// Full-access Photos returns to the attachment flow on Done. A selected
+    /// talking-to-camera clip advances to overlays; Done there returns to chat.
     func testLibraryPickerReturnsToChatByDoneAndBySinglePick() {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
@@ -179,26 +179,24 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 10))
         let video = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Video'")).firstMatch
         XCTAssertTrue(video.waitForExistence(timeout: 10), app.debugDescription)
-        // Inline Photos reports this remote image in picker-local coordinates.
-        // Its scroll-view host has a screen frame, so translate through that
-        // host instead of tapping the image's unadjusted accessibility center.
+        // PhotosUI can expose its remote image in either screen coordinates
+        // or picker-local coordinates depending on the presenting container.
+        // Translate only the local case; adding the host origin twice taps below
+        // the thumbnail and never exercises the selection callback.
         let picker = app.scrollViews["photosView_content_scroll_view"]
         XCTAssertTrue(picker.exists)
         let videoFrame = video.frame
-        let selectionPoint = CGPoint(x: picker.frame.minX + videoFrame.midX,
-            y: picker.frame.minY + videoFrame.midY)
+        let center = CGPoint(x: videoFrame.midX, y: videoFrame.midY)
+        let selectionPoint = picker.frame.contains(center) ? center :
+            CGPoint(x: picker.frame.minX + center.x, y: picker.frame.minY + center.y)
         XCTAssertTrue(picker.frame.contains(selectionPoint), "The selected video must be inside the visible Photos picker")
-        picker.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
-            .withOffset(CGVector(dx: videoFrame.midX, dy: videoFrame.midY)).tap()
-        // `photos` disappears immediately when the picker covers its host sheet,
-        // so it cannot prove the post-selection dismissal completed. Require the
-        // picker toolbar to disappear too, then the host sheet must be gone.
-        let backInChat = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in !done.exists && !photos.exists },
-            object: app
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [backInChat], timeout: 10), .completed, "picking the one clip returns to chat")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: selectionPoint.x, dy: selectionPoint.y)).tap()
+        // Filling the picker advances the attachment flow after dismissal.
+        // Talking-to-camera has no voiceover step, so it lands on overlays.
+        XCTAssertTrue(app.staticTexts["Add overlays"].waitForExistence(timeout: 10))
         XCTAssertFalse(done.exists)
+        app.buttons["attachment-done"].tap()
         // This offline chat fixture does not implement upload reservations. The
         // imported asset must still be retained as a named, dismissible failure;
         // closing the picker alone would also pass if the selection were lost.
