@@ -142,6 +142,9 @@ jobs:
     if: needs.changes.outputs.api == 'true'
     name: api (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    # ~2x the slowest green shard (39.9 min, 2026-10-01, during a slow-mirror
+    # apt install); typical is ~8 min. Without it a hang burns GitHub's 360.
+    timeout-minutes: 80
     strategy:
       # Both shards must finish so the stable test-api gate aggregates failures.
       fail-fast: false
@@ -179,7 +182,10 @@ jobs:
         # app/pipeline/text_overlay_skia.py). On macOS these ship with the OS;
         # the Ubuntu runner needs them installed explicitly or the module
         # import fails with `libEGL.so.1: cannot open shared object file`.
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg libegl1 libgl1
+        # apt-install.sh kills and retries a stalled mirror within minutes; the
+        # step cap sits above the slowest green install (32 min, slow mirror).
+        timeout-minutes: 40
+        run: sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
