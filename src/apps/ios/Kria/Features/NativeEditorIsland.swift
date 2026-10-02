@@ -59,6 +59,9 @@ struct NativeEditorLayoutMetrics: Equatable {
     static let minTimelineStrip: CGFloat = 96
     static let maxPreviewScreenFraction: CGFloat = 0.6
     static let fullscreenScreenFraction: CGFloat = 0.9
+    /// A posting-song reference must leave the video large enough to remain
+    /// useful, even after its own collapsed bar takes vertical space.
+    static let songReferenceMinimumPreviewScreenFraction: CGFloat = 0.25
 
     var viewportSize: CGSize
     var safeAreaTop: CGFloat
@@ -67,6 +70,9 @@ struct NativeEditorLayoutMetrics: Equatable {
     var previewAspectRatio: CGFloat
     var keyboardVisible: Bool
     var isAccessibilitySize: Bool
+    /// Only the posting-song layout reserves a full-window preview floor; the
+    /// ordinary editor keeps its established preview budget unchanged.
+    var reservesSongReferencePreviewFloor = false
     /// A text panel that is being typed into gets the room the preview would otherwise
     /// keep: with the keyboard up the preview shrinks to `typingPreviewHeight` and the
     /// panel grows into the space (KRI-185). The preview never goes away, so it still sits
@@ -84,7 +90,11 @@ struct NativeEditorLayoutMetrics: Equatable {
         // their measured height comes out of the preview so the timeline and
         // tool rail stay on screen.
         let budget = max(Self.minPreviewHeight, portrait - topChromeHeight)
-        let preferred = previewAspectRatio > 1 ? min(124, budget) : budget
+        let songReferenceFloor = reservesSongReferencePreviewFloor && !keyboardVisible
+            ? referenceHeight * Self.songReferenceMinimumPreviewScreenFraction
+            : Self.minPreviewHeight
+        let protectedBudget = max(budget, songReferenceFloor)
+        let preferred = previewAspectRatio > 1 ? min(124, protectedBudget) : protectedBudget
         // With the keyboard up, reserve room for the header, divider and usable
         // text controls rather than letting their minimum heights overflow.
         guard keyboardVisible else { return preferred }

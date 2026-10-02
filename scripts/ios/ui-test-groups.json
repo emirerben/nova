@@ -42,7 +42,9 @@
       "KriaUITests/SignInUITests/testSignInEmailOpensReviewerSheetAndCancelReturns",
       "KriaUITests/SignInUITests/testSignInAtLargestDynamicTypeKeepsEveryActionReachable",
       "KriaUITests/SignInUITests/testSignInWithReduceMotionIsInteractiveImmediately",
-      "KriaUITests/SignInUITests/testSignInErrorMessageIsAnnounced"
+      "KriaUITests/SignInUITests/testSignInErrorMessageIsAnnounced",
+      "KriaUITests/NativeUpdateRequiredUITests/testTyped426ReplacesEachRootRoute",
+      "KriaUITests/NativeUpdateRequiredUITests/testBlockingScreenScrollsAtAccessibilitySizeAndActionsUseFixtureSeam"
     ],
     "editor": [
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
@@ -165,6 +167,8 @@
     "src/apps/ios/Kria/Features/AccountDeletionView.swift": "projects",
     "src/apps/ios/Kria/Features/BrandPreviewHost.swift": "projects",
     "src/apps/ios/Tests/KriaUITests/SignInUITests.swift": "projects",
-    "src/apps/ios/Tests/KriaUITests/DeviceRenderUITests.swift": "creation"
+    "src/apps/ios/Tests/KriaUITests/DeviceRenderUITests.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/NativeUpdateRequiredUITests.swift": "projects",
+    "src/apps/ios/Kria/Features/NativeUpdateUITestTransport.swift": "projects"
   }
 }

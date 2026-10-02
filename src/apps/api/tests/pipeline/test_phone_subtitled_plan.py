@@ -1292,7 +1292,14 @@ def test_cutaways_are_muted_full_frame_overlays_over_the_speaker():
         assert clip.volume == 0
         assert clip.visual_placement.width_fraction is None
         assert clip.visual_placement.contain is False
-    assert {"visualBlocks", "visualVideos", "audioMix"} <= recipe.required_capabilities
+    # Overlay tracks are conservatively negotiated by the native renderer as
+    # alpha overlays, even when this full-frame video cutaway has no alpha.
+    assert {
+        "visualBlocks",
+        "visualVideos",
+        "alphaOverlay",
+        "audioMix",
+    } <= recipe.required_capabilities
     recipe.model_validate(recipe.model_dump(mode="json"))
 
 

@@ -234,6 +234,7 @@ struct NativeEditorView: View {
             previewAspectRatio: session.previewAspectRatio,
             keyboardVisible: keyboardVisible,
             isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
+            reservesSongReferencePreviewFloor: session.editorSongReferencePresentation != nil,
             shrinksPreviewWhileTyping: panel?.tool == .text
         )
         let showsTimeline = panel == nil
