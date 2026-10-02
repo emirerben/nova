@@ -18,6 +18,8 @@ monkeypatches `gj.<name>` directly, mirroring
 
 from __future__ import annotations
 
+import pytest
+
 import app.routes.generative_jobs as gj
 from tests.routes.test_editor_commit import _arm, _arm_every_editor_lane, _job
 
@@ -128,7 +130,9 @@ def _narrated_device_job(monkeypatch, *, enabled: bool, verified: list[str]):
 def test_device_narrated_is_editable_like_phone_talking(monkeypatch):
     """KRI-280: a phone Narrated variant opens both caption keys and the
     caption style control, the same map a phone Talking variant gets."""
-    job, variant = _narrated_device_job(monkeypatch, enabled=True, verified=["positionedText"])
+    job, variant = _narrated_device_job(
+        monkeypatch, enabled=True, verified=["positionedText", "animatedText"]
+    )
 
     device = gj._editor_capabilities(job, variant)
 
@@ -140,7 +144,9 @@ def test_device_narrated_is_editable_like_phone_talking(monkeypatch):
 
 
 def test_device_narrated_rollout_off_is_not_editable(monkeypatch):
-    job, variant = _narrated_device_job(monkeypatch, enabled=False, verified=["positionedText"])
+    job, variant = _narrated_device_job(
+        monkeypatch, enabled=False, verified=["positionedText", "animatedText"]
+    )
 
     cloud = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
     device = gj._editor_capabilities(job, variant)
@@ -155,8 +161,9 @@ def test_device_narrated_rollout_off_is_not_editable(monkeypatch):
     assert device["caption_editor_style"] is False
 
 
-def test_device_narrated_without_verified_text_is_not_editable(monkeypatch):
-    job, variant = _narrated_device_job(monkeypatch, enabled=True, verified=[])
+@pytest.mark.parametrize("verified", [[], ["positionedText"], ["animatedText"]])
+def test_device_narrated_without_verified_text_is_not_editable(monkeypatch, verified):
+    job, variant = _narrated_device_job(monkeypatch, enabled=True, verified=verified)
 
     device = gj._editor_capabilities(job, variant)
 

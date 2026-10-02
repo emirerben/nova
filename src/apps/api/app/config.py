@@ -241,7 +241,8 @@ class Settings(BaseSettings):
     # variant -- `prepare_phone_editor_commit` swaps the pinned recipe's
     # caption layers (`phone_narrated_plan.replace_narrated_captions`) and the
     # capability map opens both, the same caption editing phone Talking has.
-    # Also requires "positionedText" in `phone_render_verified_features` --
+    # Also requires "positionedText" + "animatedText" in
+    # `phone_render_verified_features` --
     # see `app.services.phone_rollout.phone_narrated_caption_edits_supported`,
     # the single source of truth. False: byte-identical to before this flag
     # existed -- both sections stay closed and a Save 422s. Rollback: `fly

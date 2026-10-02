@@ -266,6 +266,39 @@ def test_caption_meta_save_applies_every_field_to_the_compiled_recipe(monkeypatc
     _assert_only_captions_moved(old.recipe, new.recipe)
 
 
+def test_a_variable_caption_font_does_not_stay_required_after_switching_back(monkeypatch):
+    """`authoredText` comes from variable-font runs; once the creator switches
+    back to the default font it must stop being required, or every later
+    Save depends on a device feature the captions no longer use."""
+    job = phone_job(monkeypatch)
+    monkeypatch.setattr(
+        gj.settings, "phone_render_verified_features", [*_VERIFIED_FEATURES, "authoredText"]
+    )
+    pinned = device_status(job, "narrated").request.recipe
+
+    save(job, caption_meta=gj.EditorCommitCaptionMeta(font="Fraunces", font_set=True))
+    assert "authoredText" in device_status(job, "narrated").request.recipe.required_capabilities
+
+    job.assembly_plan["variants"][0]["render_generation_id"] = "first"
+    save(job, caption_meta=gj.EditorCommitCaptionMeta(font=None, font_set=True))
+    recipe = device_status(job, "narrated").request.recipe
+    assert "authoredText" not in recipe.required_capabilities
+    assert recipe.model_dump(mode="json") == pinned.model_dump(mode="json")
+
+
+def test_a_chat_style_text_edit_shows_the_new_words_on_word_captions(monkeypatch):
+    """The chat edit path changes `text` but keeps the old `words`; the phone
+    must burn the edited words, not the pre-edit ones."""
+    job = phone_job(monkeypatch, cues=_WORD_CUES, style="word")
+    stale = [dict(_WORD_CUES[0], text="Packed and ready")]
+
+    save(job, caption_cues=stale)
+
+    layer = device_status(job, "narrated").request.recipe.text_layers[0]
+    assert layer.effect == "karaoke-line"
+    assert [run.text for run in layer.runs] == ["Packed", "and", "ready"]
+
+
 def test_caption_position_moves_the_layer(monkeypatch):
     job = phone_job(monkeypatch)
     before = device_status(job, "narrated").request.recipe.text_layers[0].anchor_y
@@ -295,17 +328,12 @@ def test_caption_meta_enabled_false_compiles_no_caption_layers(monkeypatch):
     ]
 
 
-def test_word_captions_without_verified_animated_text_are_refused(monkeypatch):
-    job = phone_job(monkeypatch, cues=_WORD_CUES)
-    monkeypatch.setattr(
-        gj.settings,
-        "phone_render_verified_features",
-        [feature for feature in _VERIFIED_FEATURES if feature != "animatedText"],
-    )
+def test_a_variable_font_without_verified_authored_text_is_refused(monkeypatch):
+    job = phone_job(monkeypatch)
     before = device_status(job, "narrated").request
 
     with pytest.raises(HTTPException) as error:
-        save(job, caption_meta=gj.EditorCommitCaptionMeta(style="word"))
+        save(job, caption_meta=gj.EditorCommitCaptionMeta(font="Fraunces", font_set=True))
 
     assert error.value.status_code == 422
     assert error.value.detail["code"] == "unsupported_phone_edit"

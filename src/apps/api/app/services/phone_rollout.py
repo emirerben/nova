@@ -412,6 +412,10 @@ def phone_subtitled_editor_lanes_supported() -> bool:
     )
 
 
+# Device features every phone caption layer needs (KRI-280).
+PHONE_NARRATED_CAPTION_FEATURES: tuple[str, ...] = ("positionedText", "animatedText")
+
+
 def phone_narrated_caption_edits_supported() -> bool:
     """Single source of truth for "can a phone-rendered `narrated` (recorded
     voiceover) variant's `caption_cues`/`caption_meta` editor sections be
@@ -424,15 +428,18 @@ def phone_narrated_caption_edits_supported() -> bool:
     `_clamp_phone_editor_capabilities`), so the manifest never advertises a
     caption control that Save would refuse.
 
-    True iff `phone_narrated_caption_edits_enabled` AND "positionedText" (the
-    device feature every caption layer needs) is verified. A Save that needs
-    more (word captions add `animatedText`) is still checked against the
-    verified features by `validate_phone_pilot_recipe`.
+    True iff `phone_narrated_caption_edits_enabled` AND every feature in
+    `PHONE_NARRATED_CAPTION_FEATURES` is verified: every caption layer is
+    positioned text that animates (`pop-in` sentences, `karaoke-line` words).
+    A Save is still checked against the verified features by
+    `validate_phone_pilot_recipe` (a variable caption font adds
+    `authoredText`).
     """
 
+    verified = set(settings.phone_render_verified_features)
     return bool(
         settings.phone_narrated_caption_edits_enabled
-        and "positionedText" in settings.phone_render_verified_features
+        and all(feature in verified for feature in PHONE_NARRATED_CAPTION_FEATURES)
     )
 
 

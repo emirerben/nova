@@ -515,11 +515,16 @@ variant's caption fields via `caption_look_from_variant`, the same fields phone
 Talking uses. Any other section (text, timeline, mix, SFX, overlays) is still
 refused with `unsupported_phone_edit`. The editor preview places phone caption
 cues in the Talking frame (`deviceCaptions`), because the phone compiles them
-there whatever the format.
+there whatever the format. A karaoke line reads its runs from the cue's
+`words`, so when an edit changed `text` but kept the old `words` (the chat edit
+path does this), `phone_captions` spreads the new text's own words evenly
+across the cue, the same fallback the iOS preview uses. The words are compared
+with all whitespace removed. This guard covers phone Talking too.
 **Gate:** `phone_rollout.phone_narrated_caption_edits_supported()`, which needs
-`PHONE_NARRATED_CAPTION_EDITS_ENABLED` (default `true`) and a verified
-`positionedText`. Word captions also need `animatedText`, which
-`validate_phone_pilot_recipe` checks at Save. **Rollback:** `fly secrets set
+`PHONE_NARRATED_CAPTION_EDITS_ENABLED` (default `true`) plus verified
+`positionedText` and `animatedText` (every caption layer animates). A variable
+caption font also needs `authoredText`, which `validate_phone_pilot_recipe`
+checks at Save. **Rollback:** `fly secrets set
 PHONE_NARRATED_CAPTION_EDITS_ENABLED=false --app nova-video` + `fly machine
 restart <id>` (api). This closes both sections and returns the pre-KRI-280
 422.

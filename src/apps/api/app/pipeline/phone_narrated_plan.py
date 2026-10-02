@@ -147,8 +147,10 @@ from app.services.phone_sources import PhoneSourceBinding
 if TYPE_CHECKING:
     from app.pipeline.phone_captions import PhoneCaptionLook
 
-# Only caption layers ask for these in a narrated recipe.
-_CAPTION_CAPABILITIES = frozenset({"positionedText", "animatedText"})
+# Only caption layers ask for these in a narrated recipe. `authoredText` is
+# added by the `EditRecipeV2` validator for variable-font runs, so the swap
+# clears it with the rest and the validator puts it back when it applies.
+_CAPTION_CAPABILITIES = frozenset({"positionedText", "animatedText", "authoredText"})
 
 # Mirrors `app.pipeline.narrated_assembler._MIN_USABLE_S` / `_EOF_GUARD_S` --
 # see the module docstring for why they're reimplemented here rather than
