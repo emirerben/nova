@@ -64,10 +64,23 @@ struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var nativeUpdateState = NativeUpdateState.shared
+    #if DEBUG
+    @State private var updateFixtureAction = ""
+    #endif
     var body: some View {
         Group {
             if nativeUpdateState.isUpdateRequired {
-                NativeUpdateRequiredView()
+                NativeUpdateRequiredView(
+                    fixtureAction: {
+                        #if DEBUG
+                        ProcessInfo.processInfo.arguments.contains("-ui-testing-native-update")
+                            ? $updateFixtureAction
+                            : nil
+                        #else
+                        nil
+                        #endif
+                    }()
+                )
             } else {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-native-library-audit"), auth.isSignedIn {
@@ -95,7 +108,11 @@ struct RootView: View {
         .kriaPage()
         .background(KriaColor.paper.ignoresSafeArea())
         #if DEBUG
-        .environment(\.dynamicTypeSize, ProcessInfo.processInfo.arguments.contains("-ui-testing-account") && ProcessInfo.processInfo.environment["UI_TEST_DYNAMIC_TYPE_SIZE"] == "accessibility5" ? .accessibility5 : dynamicTypeSize)
+        .environment(\.dynamicTypeSize, (ProcessInfo.processInfo.arguments.contains("-ui-testing-account") || ProcessInfo.processInfo.arguments.contains("-ui-testing-native-update")) && ProcessInfo.processInfo.environment["UI_TEST_DYNAMIC_TYPE_SIZE"] == "accessibility5" ? .accessibility5 : dynamicTypeSize)
+        .task {
+            guard ProcessInfo.processInfo.arguments.contains("-ui-testing-native-update") else { return }
+            await NativeUpdateUITestTransport.triggerTypedUpdateRequirement()
+        }
         #endif
         .onChange(of: auth.isSignedIn) { _, signedIn in
             if !signedIn { Task { await model.deviceRenders.stopAll() } }
@@ -113,6 +130,7 @@ struct RootView: View {
 
 private struct NativeUpdateRequiredView: View {
     private let appStoreURL = URL(string: "https://apps.apple.com/")!
+    var fixtureAction: Binding<String>?
 
     var body: some View {
         GeometryReader { geometry in
@@ -149,6 +167,17 @@ private struct NativeUpdateRequiredView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(\.openURL, OpenURLAction { url in
+            guard let fixtureAction else { return .systemAction }
+            fixtureAction.wrappedValue = url == appStoreURL ? "app-store" : "support"
+            return .handled
+        })
+        .overlay(alignment: .bottom) {
+            if let fixtureAction, !fixtureAction.wrappedValue.isEmpty {
+                Text("Opened \(fixtureAction.wrappedValue)")
+                    .accessibilityIdentifier("kria-update-fixture-action")
+            }
+        }
     }
 }
 
