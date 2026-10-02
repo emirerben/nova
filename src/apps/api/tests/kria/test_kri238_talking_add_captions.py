@@ -19,6 +19,7 @@ import pytest
 
 from app.agents._runtime import ModelInvocation
 from app.agents.main_creator import MAIN_CREATOR_CONVERSATION_MAX
+from app.config import settings
 from app.kria import planner
 from tests.kria.talking_thread import MEDIA_ID, plan_add_captions_turn, seed_talking_thread
 
@@ -93,9 +94,9 @@ async def test_flag_on_answer_without_media_scope_still_captions_the_clip(
         del answer["action"]["strategy"][key]
     client = _SameAnswerClient(answer)
     monkeypatch.setattr(planner, "default_client", lambda: client)
-    user_id, thread_id, item_id = _seed()
+    user_id, thread_id, item_id = seed_talking_thread()
 
-    result = await _plan(user_id, thread_id, item_id)
+    result = await plan_add_captions_turn(user_id, thread_id, item_id)
 
     assert result.plan.mode == "act", result.plan.response
     assert len(client.prompts) == 1
