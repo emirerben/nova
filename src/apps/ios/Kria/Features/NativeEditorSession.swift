@@ -643,6 +643,7 @@ struct NativeEditorTemporaryVideo {
     }
 
     var canDownloadCurrentVideo: Bool {
+        guard document.editorState != "empty" else { return false }
         let displayedVideoIsCurrent: Bool
         switch sourcePreviewState {
         case .ready:
@@ -661,6 +662,7 @@ struct NativeEditorTemporaryVideo {
     /// when export is available.
     var exportBlockReason: String? {
         guard !canDownloadCurrentVideo else { return nil }
+        if document.editorState == "empty" { return "Add a clip before exporting." }
         if isSaving { return "Saving your changes…" }
         if hasUnsavedChanges { return "Save your changes to export the current video." }
         if pendingPreviewGeneration != nil { return "Kria is updating the preview. Try again in a moment." }
@@ -2175,6 +2177,7 @@ struct NativeEditorTemporaryVideo {
     }
 
     func togglePlayback() {
+        guard document.editorState != "empty" else { return }
         guard canDisplayCurrentPlayer, let player else {
             // While the editable preview is still building there is nothing to play yet. Remember the tap
             // instead of dropping it, so play starts the moment the preview (or its fallback) is ready.
@@ -2644,10 +2647,7 @@ struct NativeEditorTemporaryVideo {
         setClipTiming(clipID: clipID, inS: startS, durationS: durationS)
     }
     func removeClip(clipID: String) {
-        guard canEditSection(.timeline), document.clips.count > 1, let index = clipSlotIndex(clipID) else { return }
-        transactDocument(section: .timeline) { doc in
-            var removed = doc.clips.remove(at: index); removed.removed = true; doc.tombstones.append(removed)
-        }
+        _ = deleteSelection(EditorSelection(kind: .clip, id: clipID))
     }
     func restoreClip(clipID: String) {
         guard canEditSection(.timeline), let index = document.tombstones.firstIndex(where: { $0.id == clipID }) else { return }
@@ -2668,9 +2668,8 @@ struct NativeEditorTemporaryVideo {
     }
 
     func deleteSelectedClip() {
-        guard canEditTimeline, draft.clips.count > 1, let id = selectedClipID, let index = draft.clips.firstIndex(where: { $0.id == id }) else { return }
-        transact(section: .timeline) { draft in draft.clips.remove(at: index); reflow(&draft.clips, from: max(0, index)) }
-        selectedClipID = draft.clips.indices.contains(index) ? draft.clips[index].id : draft.clips.last?.id
+        guard let selection, selection.kind == .clip else { return }
+        _ = deleteSelection(selection)
     }
 
     /// Upload a freshly picked clip or photo and append it to the end of the
@@ -2702,7 +2701,7 @@ struct NativeEditorTemporaryVideo {
             }
             return
         }
-        guard canEditTimeline, let api, let jobID else {
+        guard (canEditTimeline || document.editorState == "empty"), let api, let jobID else {
             addClipError = "The timeline can’t be edited right now. Try adding it again in a moment."
             return
         }
@@ -2731,7 +2730,7 @@ struct NativeEditorTemporaryVideo {
             let reservation = try await api.reserveUpload(filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), purpose: nil)
             try await api.uploadFile(to: reservation, fileURL: fileURL)
             let result = try await api.addClip(jobID: jobID, gcsPath: reservation.gcsPath)
-            guard canEditTimeline else {
+            guard canEditTimeline || document.editorState == "empty" else {
                 // The clip uploaded and was minted into the job's pool, but the timeline is no longer
                 // editable (a save or render began). Say so rather than silently discarding it.
                 addClipError = "The clip uploaded, but the timeline changed while it was uploading. Add it again."
@@ -3045,14 +3044,14 @@ struct NativeEditorTemporaryVideo {
     }
 
     var canAddTimelineMedia: Bool {
-        canEditTimeline && draft.clips.count < Self.maxTimelineClips && (!rendersOnDevice || canRegisterPhoneSources)
+        (canEditTimeline || document.editorState == "empty") && draft.clips.count < Self.maxTimelineClips && (!rendersOnDevice || canRegisterPhoneSources)
     }
     /// KRI-166: why `canAddTimelineMedia` is false, for the quick-add menu's
     /// Video row (which otherwise just greys out). Mirrors the three
     /// conditions above; nil when adding is allowed.
     var addClipUnavailableReason: String? {
         if rendersOnDevice && !canRegisterPhoneSources { return "Adding media isn’t available for this edit on this iPhone." }
-        if !canEditTimeline { return "This edit’s timeline can’t be changed." }
+        if !canEditTimeline && document.editorState != "empty" { return "This edit’s timeline can’t be changed." }
         if draft.clips.count >= Self.maxTimelineClips { return "An edit can have up to \(Self.maxTimelineClips) clips." }
         return nil
     }
@@ -3550,41 +3549,166 @@ struct NativeEditorTemporaryVideo {
     }
 
     func textDeletion(id: String) -> TextDeletion {
-        guard let element = document.textElements.first(where: { $0.id == id }) else { return .blocked("This text no longer exists.") }
-        guard canEditSection(.text) else { return .blocked("Text is locked for this render.") }
-        if element.isCaption { return .blocked("Captions are managed in the Captions panel.") }
-        if element.role == "lyric_line" { return .blocked("Lyric lines follow the song’s lyrics.") }
-        if let link = element.raw["visual_block_id"], link != .null { return .blocked("This text belongs to a card. Delete the card instead.") }
+        guard document.textElements.contains(where: { $0.id == id }) else { return .blocked("This text no longer exists.") }
         return .allowed
     }
 
     /// One undo step; the live preview recompiles through the document change.
     @discardableResult
     func deleteText(id: String) -> Bool {
-        guard textDeletion(id: id).isAllowed else { return false }
-        transactDocument(section: .text) { $0.textElements.removeAll { $0.id == id } }
-        if selection?.id == id { select(nil) }
-        return true
+        deleteSelection(EditorSelection(kind: .text, id: id))
     }
 
     func removeVisualSelection(_ selected: EditorSelection) {
+        _ = deleteSelection(selected)
+    }
+
+    /// The only destructive editor operation.  It owns the mapping from a
+    /// visual selection to the server's stable deletion identity so all
+    /// context strips, inspectors and lane panels agree on one undo step.
+    @discardableResult
+    func deleteSelection(_ selected: EditorSelection) -> Bool {
+        func append(_ deletion: EditorDeletion, to document: inout EditorDocument) {
+            guard !document.deletions.contains(deletion) else { return }
+            document.deletions.append(deletion)
+        }
+        func appendIfPersisted(_ deletion: EditorDeletion, selection: EditorSelection, to document: inout EditorDocument) {
+            // A locally-added record has no server-side predecessor to suppress.
+            // Keep the removal in this in-memory transaction, but don't tell the
+            // server to delete an object that it never knew about.
+            guard isBaselineSelection(selection) else { return }
+            append(deletion, to: &document)
+        }
         switch selected.kind {
-        case .mediaOverlay: removeMediaOverlay(id: selected.id)
+        case .clip:
+            guard let index = clipSlotIndex(selected.id) else { return false }
+            let slotID = document.clips[index].id ?? selected.id
+            transactDocument(section: .timeline) { document in
+                appendIfPersisted(EditorDeletion(kind: "clip", id: slotID), selection: EditorSelection(kind: .clip, id: slotID), to: &document)
+                if document.clips.count == 1 {
+                    // An empty timeline is intentional and must survive
+                    // re-open/hydration without recreating a composite clip.
+                    document.clips.removeAll()
+                    document.tombstones.removeAll()
+                    document.editorState = "empty"
+                } else {
+                    var removed = document.clips.remove(at: index)
+                    removed.removed = true
+                    document.tombstones.append(removed)
+                }
+            }
+        case .text:
+            guard let element = document.textElements.first(where: { $0.id == selected.id }) else { return false }
+            let lyricID = lyricDeletionID(for: element)
+            let deletion = EditorDeletion(kind: element.isCaption ? "caption_cue" : (lyricID == nil ? "text" : "lyric_line"), id: lyricID ?? element.id)
+            let sections: Set<EditorSection> = element.isCaption ? [.text, .captions] : [.text]
+            transactDocument(sections: sections) { document in
+                document.textElements.removeAll { $0.id == selected.id }
+                if element.isCaption { document.captionCues.removeAll { $0.id == selected.id } }
+                if let blockID = element.raw["visual_block_id"]?.stringValue {
+                    detachTextReference(selected.id, fromVisualBlock: blockID, in: &document)
+                }
+                appendIfPersisted(deletion, selection: selected, to: &document)
+            }
+        case .captionCue:
+            transactDocument(sections: [.captions, .text]) { document in
+                let existed = document.captionCues.contains { $0.id == selected.id }
+                    || document.textElements.contains { $0.id == selected.id && $0.isCaption }
+                guard existed else { return }
+                document.captionCues.removeAll { $0.id == selected.id }
+                document.textElements.removeAll { $0.id == selected.id && $0.isCaption }
+                appendIfPersisted(EditorDeletion(kind: "caption_cue", id: selected.id), selection: selected, to: &document)
+            }
+        case .music:
+            guard document.music != nil else { return false }
+            transactDocument(section: .music) { document in
+                appendIfPersisted(EditorDeletion(kind: "music", id: document.music?.trackID ?? selected.id), selection: selected, to: &document)
+                document.music = nil
+            }
+        case .soundEffect:
+            guard document.soundEffects.contains(where: { $0.id == selected.id }) else { return false }
+            transactDocument(section: .soundEffects) { document in
+                document.soundEffects.removeAll { $0.id == selected.id }
+                appendIfPersisted(EditorDeletion(kind: "sound_effect", id: selected.id), selection: selected, to: &document)
+            }
+        case .mediaOverlay:
+            guard document.mediaOverlays.contains(where: { $0.id == selected.id }) else { return false }
+            transactDocument(section: .mediaOverlays) { document in
+                document.mediaOverlays.removeAll { $0.id == selected.id }
+                appendIfPersisted(EditorDeletion(kind: "media_overlay", id: selected.id), selection: selected, to: &document)
+            }
         case .visualBlock:
-            guard canEditSection(.visualBlocks) else { return }
-            transactDocument(sections: [.visualBlocks, .text]) {
-                $0.visualBlocks.removeAll { $0.id == selected.id }
-                $0.textElements.removeAll { $0.raw["visual_block_id"] == .string(selected.id) }
+            guard document.visualBlocks.contains(where: { $0.id == selected.id }) else { return false }
+            transactDocument(sections: [.visualBlocks, .text]) { document in
+                document.visualBlocks.removeAll { $0.id == selected.id }
+                let linked = document.textElements.filter { $0.raw["visual_block_id"] == .string(selected.id) }
+                document.textElements.removeAll { $0.raw["visual_block_id"] == .string(selected.id) }
+                appendIfPersisted(EditorDeletion(kind: "visual_block", id: selected.id), selection: selected, to: &document)
+                for text in linked {
+                    let textSelection = EditorSelection(kind: .text, id: text.id)
+                    appendIfPersisted(EditorDeletion(kind: "text", id: text.id), selection: textSelection, to: &document)
+                }
             }
         case .motionScene:
-            guard canEditSection(.motionScenes) else { return }
-            transactDocument(section: .motionScenes) { $0.motionScenes.removeAll { $0.id == selected.id } }
+            guard document.motionScenes.contains(where: { $0.id == selected.id }) else { return false }
+            transactDocument(section: .motionScenes) { document in
+                document.motionScenes.removeAll { $0.id == selected.id }
+                appendIfPersisted(EditorDeletion(kind: "motion_scene", id: selected.id), selection: selected, to: &document)
+            }
         case .cameraEffect:
-            guard canEditSection(.cameraEffects) else { return }
-            transactDocument(section: .cameraEffects) { $0.cameraEffects.removeAll { $0.id == selected.id } }
-        default: return
+            guard document.cameraEffects.contains(where: { $0.id == selected.id }) else { return false }
+            transactDocument(section: .cameraEffects) { document in
+                document.cameraEffects.removeAll { $0.id == selected.id }
+                appendIfPersisted(EditorDeletion(kind: "camera_effect", id: selected.id), selection: selected, to: &document)
+            }
+        case .carousel:
+            guard document.carouselMoment != nil else { return false }
+            transactDocument(section: .carouselMoment) { document in
+                document.carouselMoment = nil
+                appendIfPersisted(EditorDeletion(kind: "carousel", id: selected.id), selection: selected, to: &document)
+            }
         }
         select(nil)
+        return true
+    }
+
+    private func isBaselineSelection(_ selection: EditorSelection) -> Bool {
+        switch selection.kind {
+        case .clip: return cleanDocument.clips.contains { $0.id == selection.id }
+        case .text: return cleanDocument.textElements.contains { $0.id == selection.id }
+        case .captionCue:
+            return cleanDocument.captionCues.contains { $0.id == selection.id }
+                || cleanDocument.textElements.contains { $0.id == selection.id && $0.isCaption }
+        case .music: return cleanDocument.music?.trackID == selection.id
+        case .soundEffect: return cleanDocument.soundEffects.contains { $0.id == selection.id }
+        case .mediaOverlay: return cleanDocument.mediaOverlays.contains { $0.id == selection.id }
+        case .visualBlock: return cleanDocument.visualBlocks.contains { $0.id == selection.id }
+        case .motionScene: return cleanDocument.motionScenes.contains { $0.id == selection.id }
+        case .cameraEffect: return cleanDocument.cameraEffects.contains { $0.id == selection.id }
+        case .carousel: return cleanDocument.carouselMoment?["id"] == .string(selection.id)
+        }
+    }
+
+    private func lyricDeletionID(for element: EditorTextElement) -> String? {
+        guard element.role == "lyric_line" else { return nil }
+        if element.id.hasPrefix("L") { return element.id }
+        let metadata = element.raw["source_params"]?.objectValue ?? element.raw
+        for key in ["absolute_index", "absolute_line_index", "line_index"] {
+            if let value = metadata[key]?.numberValue, value.isFinite, value.rounded() == value {
+                return "L\(Int(value))"
+            }
+        }
+        return nil
+    }
+
+    private func detachTextReference(_ textID: String, fromVisualBlock blockID: String, in document: inout EditorDocument) {
+        guard let index = document.visualBlocks.firstIndex(where: { $0.id == blockID }) else { return }
+        for key in ["text_element_id", "linked_text_id"] where document.visualBlocks[index].raw[key] == .string(textID) {
+            document.visualBlocks[index].raw.removeValue(forKey: key)
+        }
+        if case let .array(ids)? = document.visualBlocks[index].raw["text_element_ids"] {
+            document.visualBlocks[index].raw["text_element_ids"] = .array(ids.filter { $0 != .string(textID) })
+        }
     }
 
     func toggleCaptions() {
@@ -3950,9 +4074,30 @@ struct NativeEditorTemporaryVideo {
             let acknowledged = acknowledgedSections(response.sections, submittedSections: submittedSections)
             let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
             let hasPostSubmitEdits = document != submittedDocument
+            // An empty authored-phone document has its first editable revision
+            // immediately, even before the next variant-status refresh exposes
+            // `editor_revision_number`. Keep source registration available for
+            // the first clip added after Save.
             guidedRevisionNumber = response.revisionNumber ?? guidedRevisionNumber
+                ?? (response.editorState == "empty" && rendersOnDevice ? 1 : nil)
             document.revision.number = response.revisionNumber ?? document.revision.number
             document.revision.hash = response.revisionHash ?? document.revision.hash
+            if response.editorState == "empty" {
+                if !hasPostSubmitEdits {
+                    if let draft = response.draft {
+                        document = EditorDocument(snapshot: draft.snapshot)
+                    }
+                    document.editorState = "empty"
+                    document.revision.baseGeneration = response.generation
+                    cleanDocument = document
+                    changedSections.removeAll(); explicitlyDirtySections.removeAll()
+                }
+                pendingRenderRetrySections.removeAll()
+                undoStack.removeAll(); redoStack.removeAll()
+                refreshDirtyState()
+                saveState = .saved
+                return
+            }
             if response.ok, let expectedDuration = response.expectedDuration {
                 durationSourcesInvalidated = false
                 setAuthoritativeDuration(expectedDuration)
@@ -3970,6 +4115,11 @@ struct NativeEditorTemporaryVideo {
                 redoStack.removeAll()
             } else {
                 undoStack.removeAll(); redoStack.removeAll()
+                // `deletions` are a one-commit intent. The server returns any
+                // durable generated-content suppression in its snapshot, so
+                // replaying these IDs on later saves would be stale.
+                document.deletions.removeAll()
+                cleanDocument.deletions.removeAll()
             }
             if response.ok {
                 // The commit is durable even while its render is pending. Keep
@@ -4060,7 +4210,9 @@ struct NativeEditorTemporaryVideo {
     }
 
     private func transactDocument(sections: Set<EditorSection>, _ body: (inout EditorDocument) -> Void) {
-        var next = document; body(&next); guard next != document else { return }
+        var next = document; body(&next)
+        if !next.clips.isEmpty { next.editorState = "renderable" }
+        guard next != document else { return }
         rebaseGuidedLabels(&next, from: document)
         invalidateDurationSources(for: sections)
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
@@ -4378,8 +4530,9 @@ struct NativeEditorTemporaryVideo {
         let sourceSections = object(sourcePayload?["sections"]) ?? [:]
         var payload = object(root["editor_payload"]) ?? [:]
         var sections = object(payload["sections"]) ?? [:]
+        let isIntentionalEmpty = sourcePayload?["editor_state"]?.stringValue == "empty"
         if draft.text.isEmpty, sourceSections["text_elements"] != nil { sections["text_elements"] = sourceSections["text_elements"] }
-        if draft.clips.isEmpty, sourceSections["timeline_slots"] != nil { sections["timeline_slots"] = sourceSections["timeline_slots"] }
+        if draft.clips.isEmpty, !isIntentionalEmpty, sourceSections["timeline_slots"] != nil { sections["timeline_slots"] = sourceSections["timeline_slots"] }
         if draft.music == nil {
             if let value = sourceSections["music_track_id"] { sections["music_track_id"] = value }
             if let value = sourceSections["music_window"] { sections["music_window"] = value }
@@ -4497,6 +4650,8 @@ struct NativeEditorTemporaryVideo {
             carouselMoment: changedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
             title: changedSections.contains(.title) ? value["title"]?.stringValue : nil,
             guidedRevisionNumber: guidedRevisionNumber,
+            editorStateVersion: document.deletions.isEmpty ? nil : 1,
+            deletions: document.deletions.isEmpty ? nil : document.deletions,
             baseGeneration: baseGeneration
         )
     }

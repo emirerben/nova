@@ -411,6 +411,18 @@ final class EditorDocumentTests: XCTestCase {
         XCTAssertEqual(Self.object(rows[3])?["opaque"], .bool(true))
     }
 
+    func testExplicitEmptyPayloadRoundTripsWithoutTimelineSynthesis() {
+        let snapshot: [String: JSONValue] = ["editor_payload": .object([
+            "editor_state": .string("empty"),
+            "deletions": .array([.object(["kind": .string("clip"), "id": .string("native-composite-base")])]),
+            "sections": .object(["timeline_slots": .array([])]),
+        ])]
+        let document = EditorDocument.decode(snapshot: snapshot)
+        XCTAssertEqual(document.editorState, "empty")
+        XCTAssertEqual(document.deletions, [EditorDeletion(kind: "clip", id: "native-composite-base")])
+        XCTAssertEqual(document.encodeSnapshot(), snapshot)
+    }
+
     private static func object(_ value: JSONValue?) -> [String: JSONValue]? {
         if case let .object(value) = value { return value }
         return nil

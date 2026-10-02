@@ -1575,6 +1575,74 @@ final class NativeEditorSessionTests: XCTestCase {
         session.deleteSelectedClip(); XCTAssertEqual(session.draft.clips.count, 1); XCTAssertEqual(session.draft.clips[0].start, 0)
     }
 
+    func testDeletingLastClipIsExplicitEmptyAndUndoRestoresIt() {
+        let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 2, trimIn: 0, trimOut: 2, sourceDuration: 2, slotID: "server-slot")
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+
+        session.selectClip(clip.id)
+        session.deleteSelectedClip()
+
+        XCTAssertEqual(session.document.editorState, "empty")
+        XCTAssertTrue(session.document.clips.isEmpty)
+        XCTAssertEqual(session.document.deletions, [EditorDeletion(kind: "clip", id: "server-slot")])
+        XCTAssertFalse(session.canDownloadCurrentVideo)
+        session.undo()
+        XCTAssertEqual(session.document.editorState, "renderable")
+        XCTAssertEqual(session.document.clips.count, 1)
+        XCTAssertTrue(session.document.deletions.isEmpty)
+    }
+
+    func testVisibleGeneratedLanesDeleteWithoutEditCapabilitiesAndUndoRedoTheirIntents() {
+        var draft = NativeEditorUITestFixtures.captionVisuals
+        var document = EditorDocument(snapshot: draft.serverSnapshot)
+        document.music = EditorMusic(trackID: "song-1")
+        document.soundEffects = [EditorTimedEffect(id: "sfx-1", startS: 0, endS: 1)]
+        document.mediaOverlays = [EditorTimedEffect(id: "overlay-1", startS: 0, endS: 1)]
+        document.motionScenes = [EditorMotionScene(id: "motion-1", startS: 0, endS: 1)]
+        document.cameraEffects = [EditorCameraEffect(id: "camera-1", startS: 0, endS: 1)]
+        document.carouselMoment = ["id": .string("carousel-1"), "position": .string("middle")]
+        draft.serverSnapshot = document.encodeSnapshot()
+        draft.serverSnapshot["editor_capabilities"] = .object([
+            "music": .bool(false), "sound_effects": .bool(false), "media_overlays": .bool(false),
+            "visual_blocks": .bool(false), "motion_scenes": .bool(false), "camera_effects": .bool(false),
+            "carousel_moment": .bool(false),
+        ])
+        let session = NativeEditorSession(draft: draft)
+        let cases: [(EditorSelection, EditorDeletion)] = [
+            (.init(kind: .music, id: "song-1"), .init(kind: "music", id: "song-1")),
+            (.init(kind: .soundEffect, id: "sfx-1"), .init(kind: "sound_effect", id: "sfx-1")),
+            (.init(kind: .mediaOverlay, id: "overlay-1"), .init(kind: "media_overlay", id: "overlay-1")),
+            (.init(kind: .visualBlock, id: "paper-media"), .init(kind: "visual_block", id: "paper-media")),
+            (.init(kind: .motionScene, id: "motion-1"), .init(kind: "motion_scene", id: "motion-1")),
+            (.init(kind: .cameraEffect, id: "camera-1"), .init(kind: "camera_effect", id: "camera-1")),
+            (.init(kind: .carousel, id: "carousel-1"), .init(kind: "carousel", id: "carousel-1")),
+        ]
+
+        for (selection, intent) in cases {
+            XCTAssertTrue(session.deleteSelection(selection), "delete \(selection.kind)")
+            XCTAssertTrue(session.document.deletions.contains(intent))
+            session.undo()
+            XCTAssertFalse(session.document.deletions.contains(intent), "undo restores \(selection.kind)")
+            session.redo()
+            XCTAssertTrue(session.document.deletions.contains(intent), "redo repeats \(selection.kind)")
+        }
+    }
+
+    func testDeletingUnsavedAdditionDoesNotSendServerDeletionIntent() {
+        var draft = NativeEditorUITestFixtures.captionVisuals
+        draft.serverSnapshot["editor_capabilities"] = .object(["music": .bool(true)])
+        let session = NativeEditorSession(draft: draft)
+
+        session.setMusic(trackID: "new-local-song")
+        XCTAssertTrue(session.deleteSelection(.init(kind: .music, id: "new-local-song")))
+        XCTAssertTrue(session.document.deletions.isEmpty)
+        session.undo()
+        XCTAssertEqual(session.document.music?.trackID, "new-local-song")
+        session.redo()
+        XCTAssertNil(session.document.music)
+        XCTAssertTrue(session.document.deletions.isEmpty)
+    }
+
     func testSerializationKeepsUnknownServerKeysAndUsesProductionSections() {
         let projectID = UUID(); let clipID = UUID(); let assetID = UUID()
         let snapshot: [String: JSONValue] = ["schema_version": .number(2), "kind": .string("editor"), "future": .object(["keep": .bool(true)]), "editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["timeline_slots": .array([.object(["slot_id": .string("slot-a"), "clip_index": .number(0), "in_s": .number(1), "duration_s": .number(2), "removed": .bool(false)])]), "future_section": .string("untouched")])])]
@@ -2520,12 +2588,14 @@ final class NativeEditorSessionTests: XCTestCase {
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
         await session.load(api: fake, threadID: threadID)
         let loadedTextID = try! XCTUnwrap(session.document.textElements.first?.id)
-        session.updateTextContent(id: loadedTextID, content: "Unsaved")
+        XCTAssertTrue(session.deleteText(id: loadedTextID))
 
         await session.save()
 
         XCTAssertEqual(session.saveState, .failed("Kria couldn’t complete that request. Check your connection and try again."))
-        XCTAssertEqual(session.document.textElements.first?.text, "Unsaved")
+        XCTAssertTrue(session.document.textElements.isEmpty)
+        XCTAssertEqual(fake.lastRequest?.deletions, [EditorDeletion(kind: "text", id: textID)])
+        XCTAssertEqual(session.document.deletions, [EditorDeletion(kind: "text", id: textID)], "a failed request must retain the deletion intent for the next save")
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertTrue(session.canUndo)
     }

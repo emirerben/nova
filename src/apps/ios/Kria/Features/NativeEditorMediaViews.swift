@@ -79,6 +79,7 @@ struct NativeVideoPreview: View {
     /// session has no device-render identity to relink against, in which case
     /// the missing-originals state explains itself without offering the action.
     private let onFindOriginals: (() -> Void)?
+    private let onAddClip: (() -> Void)?
     /// Last time a drag or pinch changed on the canvas. A drag that also
     /// resolves as a tap (its tap location is where the finger went down) must
     /// never count as an empty tap. Reference type: writing it must not re-render.
@@ -112,10 +113,11 @@ struct NativeVideoPreview: View {
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
 
-    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil) {
+    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil, onAddClip: (() -> Void)? = nil) {
         self.session = session
         self.onEmptyTap = onEmptyTap
         self.onFindOriginals = onFindOriginals
+        self.onAddClip = onAddClip
         _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
@@ -615,7 +617,17 @@ struct NativeVideoPreview: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.black
-            if session.canDisplayCurrentPlayer, let player = session.player {
+            if session.document.editorState == "empty" {
+                VStack(spacing: 12) {
+                    Image(systemName: "film.stack").font(.system(size: 30))
+                    Text("Add a clip to start your edit").font(KriaFont.body(15).weight(.semibold))
+                    Button("Add clip", action: { onAddClip?() })
+                        .buttonStyle(KriaPrimaryButtonStyle())
+                        .disabled(onAddClip == nil || !session.canAddTimelineMedia)
+                        .accessibilityIdentifier("native-editor-empty-add-clip")
+                }
+                .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if session.canDisplayCurrentPlayer, let player = session.player {
                 ZStack {
                     NativeEditorPlayerSurface(player: player)
                         .aspectRatio(session.previewAspectRatio, contentMode: .fit)
@@ -1403,6 +1415,7 @@ struct NativeMiniStrip: View {
             .buttonStyle(.plain)
             .foregroundStyle(KriaColor.ink)
             .background(KriaColor.sky, in: Circle())
+            .disabled(session.document.editorState == "empty")
             .accessibilityLabel(session.isPlaying ? "Pause preview" : "Play preview")
             .accessibilityIdentifier("native-editor-play-pause")
 

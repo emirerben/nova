@@ -63,7 +63,7 @@ struct NativeVisualPanel: View {
     private var addAction: (() -> Void)? { selected == nil ? nil : { openLibrary() } }
 
     private var removeAction: (() -> Void)? {
-        guard let selected, canEditSelection else { return nil }
+        guard let selected else { return nil }
         return { session.removeVisualSelection(selected); openLibrary() }
     }
 

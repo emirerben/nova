@@ -18,7 +18,7 @@ final class TextDeletionTests: XCTestCase {
             "variant_id": .string("initial"), "render_generation_id": .string("g1"), "render_status": .string("ready"),
             "duration_s": .number(4), "output_url": .string("file:///tmp/kria-delete.mp4"),
             "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
-            "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true)]),
+            "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "caption_cues": .bool(true)]),
             "user_timeline": .object(["slots": .array([.object(["slot_id": .string("s1"), "clip_index": .number(0), "in_s": .number(0),
                 "duration_s": .number(4), "source_duration_s": .number(6), "removed": .bool(false)])])]),
             "text_elements": .array([
@@ -26,7 +26,11 @@ final class TextDeletionTests: XCTestCase {
                 text("clip-label-unified-cut-1", "11"),
                 text("caption-1", "spoken words", extra: ["source_params": .object(["source": .string("caption_cue")])]),
                 text("card-text", "card", extra: ["visual_block_id": .string("block-1")]),
-                text("lyric-1", "la la", role: "lyric_line"),
+                text("lyric-1", "la la", role: "lyric_line", extra: ["absolute_index": .number(7)]),
+            ]),
+            "visual_blocks": .array([
+                .object(["id": .string("block-1"), "kind": .string("text_card"), "start_s": .number(0), "end_s": .number(2),
+                         "text_element_id": .string("card-text")]),
             ]),
         ]
     }
@@ -78,16 +82,30 @@ final class TextDeletionTests: XCTestCase {
         XCTAssertNil(request.timelineSlots)
         XCTAssertNil(request.captionCues)
         XCTAssertNil(request.mix)
+        XCTAssertEqual(request.editorStateVersion, 1)
+        XCTAssertEqual(request.deletions, [EditorDeletion(kind: "text", id: "clip-label-unified-cut-1")])
+        XCTAssertTrue(session.document.deletions.isEmpty, "successful Save consumes pending deletion intents")
     }
 
     func testDeletionRules() async throws {
         let (session, _) = await loaded()
         XCTAssertEqual(session.textDeletion(id: "guided-title"), .allowed)
         XCTAssertEqual(session.textDeletion(id: "clip-label-unified-cut-1"), .allowed)
-        for blocked in ["caption-1", "card-text", "lyric-1", "missing"] {
-            XCTAssertFalse(session.textDeletion(id: blocked).isAllowed, blocked)
-            XCTAssertFalse(session.deleteText(id: blocked))
-        }
+        XCTAssertTrue(session.deleteText(id: "caption-1"), "caption deletion is allowed when the caption lane is editable")
+        session.undo()
+        XCTAssertTrue(session.deleteText(id: "lyric-1"), "generated lyric lines use stable suppression IDs")
+        XCTAssertEqual(session.document.deletions, [EditorDeletion(kind: "lyric_line", id: "L7")])
+        session.undo()
+        XCTAssertTrue(session.deleteText(id: "card-text"), "linked text can be removed without deleting its card")
+        XCTAssertFalse(ids(session).contains("card-text"))
+        XCTAssertTrue(session.document.visualBlocks.contains { $0.id == "block-1" }, "the card remains")
+        XCTAssertNil(session.document.visualBlocks.first { $0.id == "block-1" }?.raw["text_element_id"], "the card no longer points at deleted text")
+        XCTAssertTrue(session.document.deletions.contains(EditorDeletion(kind: "text", id: "card-text")))
+        session.undo()
+        XCTAssertTrue(ids(session).contains("card-text"))
+        XCTAssertEqual(session.document.visualBlocks.first { $0.id == "block-1" }?.raw["text_element_id"], .string("card-text"))
+        XCTAssertFalse(session.textDeletion(id: "missing").isAllowed)
+        XCTAssertFalse(session.deleteText(id: "missing"))
         XCTAssertFalse(session.hasUnsavedChanges)
         XCTAssertEqual(ids(session).count, 5)
     }
