@@ -863,6 +863,7 @@ def _names(values: Iterable[str]) -> str:
 _CANT_CHECK_BEATS = "I can't check the pop-ins on this draft yet."
 _CANT_CHECK_TAKE = "I can't confirm this draft keeps your whole take."
 _CANT_CHECK_TITLE = "I can't confirm where this draft's title came from."
+_NO_TITLE = "I didn't add a title because no creator text or grounded brief facts were available."
 _CANT_CONFIRM_LENGTH = "I can't confirm this draft's length yet."
 _TALKING_KEEPS_WHOLE_TAKE = "A Talking edit keeps your whole take, so its length follows your clip"
 _VOICEOVER_SETS_LENGTH = "A voiceover edit runs as long as your voiceover"
@@ -1018,7 +1019,9 @@ _TITLE_SOURCES_THE_CREATOR_OWNS = frozenset({"creator", "brief"})
 def _check_title(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A title requirement with no exact text: met when the title is the creator's own
     words or was written from what their brief said (never a default or a model hook)."""
-    if not facts.title or facts.title_source is None:
+    if not facts.title:
+        return _receipt(req, "partial", _NO_TITLE)
+    if facts.title_source is None:
         return _receipt(req, "partial", _CANT_CHECK_TITLE)
     if facts.title_source in _TITLE_SOURCES_THE_CREATOR_OWNS:
         return _receipt(req, "met", None)

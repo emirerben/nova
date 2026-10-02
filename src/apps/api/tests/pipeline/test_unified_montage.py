@@ -271,14 +271,28 @@ def test_title_priority_and_nfc():
     assert normalised.title == "Arnavutköy"
 
 
-def test_a_title_is_never_missing_and_never_comes_from_a_model_hook():
+def test_missing_title_is_internal_only_and_never_comes_from_a_model_hook():
     bare = plan_unified_montage([clip(0), clip(1)])
-    assert bare.title == "Montage" and bare.title_source == "default"
+    assert bare.title is None and bare.title_source == "none"
+    assert bare.snapshot.title == "Montage"  # required internal snapshot label
+    assert bare.snapshot.opening_title is None
+    compiled = compile_execution_plan(bare.guided_edit(), track=None)
+    assert all(element["id"] != "guided-title" for element in compiled["text_elements"])
     # Place facts label clips; they are never printed as an unrequested title.
     placed = plan_unified_montage(
         [clip(0, place="Sarıyer, İstanbul, Türkiye"), clip(1, place="Bebek, İstanbul, Türkiye")]
     )
-    assert placed.title == "Montage" and placed.title_source == "default"
+    assert placed.title is None and placed.title_source == "none"
+    assert placed.snapshot.opening_title is None
+
+
+def test_creator_title_remains_visible_in_the_compiled_plan():
+    plan = plan_unified_montage([clip(0), clip(1)], strategy={"opening_title": "Onaylı Başlık"})
+    compiled = compile_execution_plan(plan.guided_edit(), track=None)
+    title = next(
+        element for element in compiled["text_elements"] if element["id"] == "guided-title"
+    )
+    assert title["text"] == "Onaylı Başlık"
 
 
 def test_long_clips_and_a_stated_length_are_honoured_for_single_hero_and_day_vlog():
@@ -395,6 +409,23 @@ def test_glyphs_no_bundled_font_has_are_dropped_but_turkish_letters_stay():
     label = (plan.snapshot.clip_labels or [])[0]
     assert label.text == "Şişli Çarşı"
     assert label.min_display_s == min_display_s(len(label.text))
+
+
+def test_an_unrenderable_title_becomes_internal_only():
+    def covers(_family: str, text: str) -> bool:
+        return "☃" not in text
+
+    plan = plan_unified_montage(
+        [clip(0), clip(1)],
+        strategy={"opening_title": "☃"},
+        font_covers=covers,
+    )
+
+    assert plan.title is None and plan.title_source == "none"
+    assert plan.snapshot.title == "Montage"
+    assert plan.snapshot.opening_title is None
+    compiled = compile_execution_plan(plan.guided_edit(), track=None)
+    assert all(element["id"] != "guided-title" for element in compiled["text_elements"])
 
 
 def test_the_bundled_fonts_really_lack_the_arrow_and_have_turkish():

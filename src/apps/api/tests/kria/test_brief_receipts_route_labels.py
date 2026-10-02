@@ -229,10 +229,10 @@ def test_a_brief_sourced_title_is_met_and_a_default_one_is_not():
     receipt = build_receipts(brief_.live(), plan_facts_from_unified_montage(plan.record()))[0]
     assert receipt.status == "met"
 
-    default = plan_unified_montage(clips, brief_view(None))
-    assert default.title_source == "default"
-    weak = build_receipts(brief_.live(), plan_facts_from_unified_montage(default.record()))[0]
-    assert weak.status == "partial" and "default title" in (weak.reason or "")
+    missing = plan_unified_montage(clips, brief_view(None))
+    assert missing.title is None and missing.title_source == "none"
+    weak = build_receipts(brief_.live(), plan_facts_from_unified_montage(missing.record()))[0]
+    assert weak.status == "partial" and "didn't add a title" in (weak.reason or "")
 
 
 def test_a_title_of_unknown_origin_stays_neutral_not_a_failure_notice():

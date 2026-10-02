@@ -169,7 +169,11 @@ def _guided_fixture(
             BriefRequirement(id="r1", kind="text", scope="per_clip", description="the place")
         ],
     )
-    guided = plan_unified_montage(clips, brief_view(brief)).guided_edit()
+    guided = plan_unified_montage(
+        clips,
+        brief_view(brief),
+        strategy={"opening_title": "East Run"},
+    ).guided_edit()
     execution_plan = compile_execution_plan(guided, track=_GUIDED_TRACK)
     variant = {
         **song_reference_variant_fields(execution_plan),
