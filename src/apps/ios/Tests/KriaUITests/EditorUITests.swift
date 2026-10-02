@@ -10,12 +10,36 @@ final class EditorUITests: XCTestCase {
 
         let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
         XCTAssertTrue(clip.waitForExistence(timeout: 20))
-        for _ in 0..<2 {
+        for index in 0..<2 {
             clip.tap()
+            let moreActions = app.buttons["native-editor-clip-more-actions"]
+            XCTAssertTrue(moreActions.waitForExistence(timeout: 5))
+            XCTAssertTrue(moreActions.isHittable, "Hidden actions need a visible way to reveal them")
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(moreActions.frame))
+            if index == 0 {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "Clip toolbar shows more actions"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+            }
+            moreActions.tap()
             let delete = app.buttons["native-editor-delete"]
             XCTAssertTrue(delete.waitForExistence(timeout: 5))
-            XCTAssertTrue(delete.isHittable, "Delete must be reachable without scrolling the clip toolbar")
+            XCTAssertTrue(delete.isHittable, "The more-actions button must reveal Delete")
             XCTAssertTrue(app.windows.firstMatch.frame.contains(delete.frame), "The full Delete button must fit on screen")
+            XCTAssertFalse(moreActions.exists, "The forward cue must disappear at the end of the row")
+            XCTAssertTrue(app.buttons["native-editor-clip-earlier-actions"].isHittable)
+            if index == 0 {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "Clip toolbar reveals Delete"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+                app.buttons["native-editor-clip-earlier-actions"].tap()
+                XCTAssertTrue(moreActions.waitForExistence(timeout: 5))
+                let context = app.scrollViews.containing(.button, identifier: "native-editor-delete").firstMatch
+                context.swipeLeft()
+                XCTAssertTrue(delete.isHittable, "Swiping must still reveal the remaining actions")
+            }
             XCTAssertTrue(delete.isEnabled)
             delete.tap()
         }
