@@ -862,9 +862,12 @@ final class NativeEditorSessionTests: XCTestCase {
         session.seek(to: outroTime)
         XCTAssertEqual(session.currentTime, outroTime, accuracy: 0.001)
         XCTAssertEqual(session.timelineTime(for: 100, width: 100), previewDuration, accuracy: 0.01)
-        for _ in 0..<100 where (session.scrubPreviewTime ?? 0) <= session.duration {
-            try await Task.sleep(for: .milliseconds(25))
+        // The compositor may still be finishing the initial frame on a busy
+        // simulator. Wait for the requested outro frame, not a 2.5s render budget.
+        let outroFrameReady = await waitUntil(timeout: .seconds(10)) {
+            (session.scrubPreviewTime ?? 0) > session.duration
         }
+        XCTAssertTrue(outroFrameReady, "The compositor must produce a frame inside the outro")
         XCTAssertGreaterThan(try XCTUnwrap(session.scrubPreviewTime), session.duration)
         session.togglePlayback()
         XCTAssertGreaterThan(session.currentTime, session.duration)
