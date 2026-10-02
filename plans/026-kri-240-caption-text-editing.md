@@ -1406,7 +1406,7 @@ Design-review unresolved decisions: none (every finding in §7.2 has an individu
 
 **Built on branch `ybyesilyurt/kri-240-iphone-editor-editing-a-caption-line-takes-two-taps-and-the` (PR3 scope, Variant A):**
 - One-tap editing via `NativeExplicitLineTextEditor` + `LineEditorConfiguration.captionLine` (wrap, Return = Next / Done on last, autocorrect off, `caption_language` keyboard via `textInputMode`, spell-check off without a matching keyboard, pasted newlines flattened, Tab / Shift-Tab / Esc / Shift-Return, per-line undo reset). Default configuration is unchanged for the Text tool.
-- Edit bar: "N of M · time", Previous / Next, Done (butter), wrapping field, loop-play (lilac); preview tap toggles the loop.
+- Edit bar (board frame A): "#N · start–end" on the left; ‹, › and ✓ as equal 44pt squares (✓ in Butter) aligned to the field's trailing edge; full-width wrapping field below. No loop-play button (board A has none); tapping the preview still loops the line.
 - Session: `beginCaptionLineEdit` / `endCaptionLineEdit`, `CaptionWordRewrite` (positional keep, character-weight spread, exact restore), `captionParkTime` (start + 0.15s), `captionTimelineRange`, `isCaptionUnitEdited`, `captionLanguage` (from the loaded variant).
 - List: no chevron, playing-line highlight + follow (suspended by a drag, off under VoiceOver / while editing), unsaved dot, combined VoiceOver row with Edit / Delete actions, long-press Delete, read-only rows still seek with a reason line, empty state copy, helper sentence removed.
 - Emptied line removed on commit inside the line's transaction (one Undo restores it); "Line N removed · Undo" notice; stale-preview notice when the live preview is unavailable.

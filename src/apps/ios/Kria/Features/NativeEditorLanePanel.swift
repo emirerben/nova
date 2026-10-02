@@ -239,7 +239,8 @@ struct NativeCaptionPanel: View {
         return CaptionEditBar(
             lineNumber: index + 1,
             lineCount: units.count,
-            timeLabel: time(units[index].startS),
+            timeRange: "\(time(units[index].startS))–\(time(units[index].endS))",
+            spokenTimeRange: "\(spokenTime(units[index].startS)) to \(spokenTime(units[index].endS))",
             lineHeight: lineHeight,
             lines: dynamicTypeSize.isAccessibilitySize || contentWidth < 300 ? 2 : 3,
             text: Binding(
@@ -258,14 +259,12 @@ struct NativeCaptionPanel: View {
             lineID: id,
             canGoPrevious: index > 0,
             canGoNext: !isLast,
-            isLooping: loopingCueID == id,
             removal: removal,
             onUndoRemoval: undoRemoval,
             onRemovalExpired: { expired in if removal == expired { removal = nil } },
             onPrevious: { if index > 0 { leaveLine(to: units[index - 1].id) } },
             onNext: { leaveLine(to: isLast ? nil : units[index + 1].id) },
-            onDone: { leaveLine(to: nil) },
-            onLoop: toggleLoop
+            onDone: { leaveLine(to: nil) }
         )
     }
 
@@ -517,21 +516,29 @@ enum CaptionLineAnnouncer {
     }
 }
 
-/// KRI-240 Variant A edit bar: replaces the caption list while a line is open.
-/// Row 1: position, time, Previous / Next and Done. Row 2: the line field (wraps,
-/// Return = Next) and loop-play.
+/// KRI-240 Variant A edit bar (plan 026, board frame A): replaces the caption list
+/// while a line is open. Row 1: "#N · start–end" and three equal 44pt buttons
+/// (previous, next, approve) aligned to the field's trailing edge. Row 2: the
+/// full-width line field (wraps, Return = Next).
 struct CaptionEditBar: View {
-    static let verticalPadding: CGFloat = 8
+    /// Room above the buttons so they clear the panel's 32pt rounded corner.
+    static let topPadding: CGFloat = 12
+    static let bottomPadding: CGFloat = 10
     static let navigationHeight: CGFloat = 44
+    /// Gap between the button row and the field, so the buttons don't sit on the field's edge.
+    static let rowSpacing: CGFloat = 6
+    static let buttonSize: CGFloat = 44
+    static let cornerRadius: CGFloat = 12
 
     static func fieldHeight(lineHeight: CGFloat, lines: Int) -> CGFloat { CGFloat(lines) * lineHeight + 16 }
     static func height(lineHeight: CGFloat, lines: Int) -> CGFloat {
-        verticalPadding * 2 + navigationHeight + fieldHeight(lineHeight: lineHeight, lines: lines)
+        topPadding + navigationHeight + rowSpacing + fieldHeight(lineHeight: lineHeight, lines: lines) + bottomPadding
     }
 
     let lineNumber: Int
     let lineCount: Int
-    let timeLabel: String
+    let timeRange: String
+    let spokenTimeRange: String
     let lineHeight: CGFloat
     let lines: Int
     @Binding var text: String
@@ -540,65 +547,52 @@ struct CaptionEditBar: View {
     let lineID: String
     let canGoPrevious: Bool
     let canGoNext: Bool
-    let isLooping: Bool
     let removal: CaptionRemovalNotice?
     let onUndoRemoval: () -> Void
     let onRemovalExpired: (CaptionRemovalNotice) -> Void
     let onPrevious: () -> Void
     let onNext: () -> Void
     let onDone: () -> Void
-    let onLoop: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: Self.rowSpacing) {
             HStack(spacing: 8) {
                 if let removal {
                     CaptionRemovalNoticeView(notice: removal, canUndo: true, onUndo: onUndoRemoval,
                                              onExpire: { onRemovalExpired(removal) })
                 } else {
-                    Text("\(lineNumber) of \(lineCount) · \(timeLabel)")
+                    Text("#\(lineNumber) · \(timeRange)")
                         .font(KriaFont.body(13)).monospacedDigit().foregroundStyle(KriaColor.mutedInk)
                         .lineLimit(1).minimumScaleFactor(0.7)
                         .accessibilityLabel("Line \(lineNumber) of \(lineCount)")
+                        .accessibilityValue(spokenTimeRange)
                         .accessibilityIdentifier("native-editor-caption-position")
                 }
-                Spacer(minLength: 4)
-                navigationButton("chevron.left", label: "Previous line", id: "native-editor-caption-previous",
-                                 enabled: canGoPrevious, action: onPrevious)
-                navigationButton("chevron.right", label: "Next line", id: "native-editor-caption-next",
-                                 enabled: canGoNext, action: onNext)
-                Button(action: onDone) {
-                    Text("Done").font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                        .padding(.horizontal, 16).frame(minHeight: 44)
-                        .background(KriaColor.butter, in: Capsule())
+                Spacer(minLength: 8)
+                HStack(spacing: 8) {
+                    squareButton(symbol: "chevron.left", label: "Previous line", id: "native-editor-caption-previous",
+                                 style: .outline, enabled: canGoPrevious, action: onPrevious)
+                    squareButton(symbol: "chevron.right", label: "Next line", id: "native-editor-caption-next",
+                                 style: .outline, enabled: canGoNext, action: onNext)
+                    squareButton(symbol: "checkmark", label: "Done", id: "native-editor-caption-edit-done",
+                                 style: .approve, enabled: true, action: onDone)
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("native-editor-caption-edit-done")
             }
             .frame(height: Self.navigationHeight)
-            HStack(alignment: .top, spacing: 8) {
-                NativeExplicitLineTextEditor(
-                    text: $text, focused: $focused, identifier: "native-editor-caption-field",
-                    configuration: configuration,
-                    actions: LineEditorActions(onReturn: canGoNext ? onNext : onDone, onNextLine: onNext,
-                                               onPreviousLine: onPrevious, onEscape: onDone),
-                    lineID: lineID
-                )
-                .frame(height: Self.fieldHeight(lineHeight: lineHeight, lines: lines))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(KriaColor.line, lineWidth: 1))
-                Button(action: onLoop) {
-                    Image(systemName: isLooping ? "pause.fill" : "play.fill")
-                        .font(.system(size: 17)).foregroundStyle(KriaColor.plum)
-                        .frame(width: 44, height: 44)
-                        .background(KriaColor.lilac, in: RoundedRectangle(cornerRadius: 12))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(isLooping ? "Stop playing line" : "Play line")
-                .accessibilityIdentifier("native-editor-caption-loop")
-            }
+            NativeExplicitLineTextEditor(
+                text: $text, focused: $focused, identifier: "native-editor-caption-field",
+                configuration: configuration,
+                actions: LineEditorActions(onReturn: canGoNext ? onNext : onDone, onNextLine: onNext,
+                                           onPreviousLine: onPrevious, onEscape: onDone),
+                lineID: lineID
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.fieldHeight(lineHeight: lineHeight, lines: lines))
+            .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+            .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius).stroke(KriaColor.line, lineWidth: 1))
         }
-        .padding(.vertical, Self.verticalPadding)
+        .padding(.top, Self.topPadding)
+        .padding(.bottom, Self.bottomPadding)
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .font(KriaFont.body(14))
@@ -607,13 +601,26 @@ struct CaptionEditBar: View {
         .accessibilityIdentifier("native-editor-caption-edit-bar")
     }
 
-    private func navigationButton(_ symbol: String, label: String, id: String, enabled: Bool,
-                                  action: @escaping () -> Void) -> some View {
+    private enum SquareStyle { case outline, approve }
+
+    /// 44 × 44, 12pt corners — the same box for all three so they read as one group.
+    /// The approve button is the bar's primary action (Butter, DESIGN.md §9).
+    private func squareButton(symbol: String, label: String, id: String, style: SquareStyle, enabled: Bool,
+                              action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(enabled ? KriaColor.ink : KriaColor.zinc)
-                .frame(width: 44, height: 44)
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(KriaColor.line, lineWidth: 1))
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(enabled ? KriaColor.ink : KriaColor.zinc.opacity(0.6))
+                .frame(width: Self.buttonSize, height: Self.buttonSize)
+                .background(style == .approve ? KriaColor.butter : KriaColor.paper,
+                            in: RoundedRectangle(cornerRadius: Self.cornerRadius))
+                .overlay {
+                    if style == .outline {
+                        RoundedRectangle(cornerRadius: Self.cornerRadius)
+                            .stroke(KriaColor.line.opacity(enabled ? 1 : 0.5), lineWidth: 1)
+                    }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
         }
         .buttonStyle(.plain)
         .disabled(!enabled)

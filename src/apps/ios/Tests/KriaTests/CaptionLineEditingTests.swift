@@ -121,14 +121,14 @@ final class CaptionLineEditingTests: XCTestCase {
 
     func testEditingACaptionLineGivesThePreviewEverythingAboveTheBar() {
         let bar = CaptionEditBar.height(lineHeight: 22, lines: 3)
-        XCTAssertEqual(bar, 142, accuracy: 0.001, "8 + 44 + (3 × 22 + 16) + 8")
+        XCTAssertEqual(bar, 154, accuracy: 0.001, "12 + 44 + 6 + (3 × 22 + 16) + 10")
         let editing = metrics(bar: bar, chrome: 24)
-        // 457 viewport − 102 header − 24 chrome − 10 preview padding − 6 island pad − 142 bar.
-        XCTAssertEqual(editing.defaultPreviewHeight, 173, accuracy: 0.001)
-        XCTAssertEqual(editing.previewHeight(resize: 0), 173, accuracy: 0.001, "no grow or shrink while editing a line")
-        let area: CGFloat = 457 - 102 - 24 - 173 - 10
+        // 457 viewport − 102 header − 24 chrome − 10 preview padding − 6 island pad − 154 bar.
+        XCTAssertEqual(editing.defaultPreviewHeight, 161, accuracy: 0.001)
+        XCTAssertEqual(editing.previewHeight(resize: 0), 161, accuracy: 0.001, "no grow or shrink while editing a line")
+        let area: CGFloat = 457 - 102 - 24 - 161 - 10
         XCTAssertEqual(editing.panelDefaultHeight(areaHeight: area), bar, accuracy: 0.001, "the panel is exactly the bar")
-        XCTAssertEqual(editing.panelRange(areaHeight: area, previewHeight: 173), 0, "no panel expansion while editing a line")
+        XCTAssertEqual(editing.panelRange(areaHeight: area, previewHeight: 161), 0, "no panel expansion while editing a line")
         XCTAssertGreaterThan(editing.defaultPreviewHeight, metrics(bar: nil, chrome: 24).defaultPreviewHeight,
                              "Variant A still shows a larger preview than today's keyboard-up split")
     }
