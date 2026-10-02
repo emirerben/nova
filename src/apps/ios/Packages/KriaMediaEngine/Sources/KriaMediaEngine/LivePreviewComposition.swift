@@ -167,7 +167,10 @@ public struct LivePreviewExportSnapshot: Sendable {
         // cleared here. Audio stays as built. On iPhone, re-assigning the live
         // item's audioMix, even an identical one, silenced the voice until the
         // next full rebuild (KRI-241), so a change to `audio` or to any other
-        // clip field (volume, timing, fades) throws and takes the full rebuild.
+        // clip field (volume, timing, audio fades) throws and takes the full
+        // rebuild. `visualPlacement` and `overlayPreserveAlpha` also decide at
+        // build time whether a clip gets an audio track; the editor compiles
+        // those clips at volume 0, so flipping them here never changes a sound.
         func withoutVisuals(_ tracks: [TimelineTrack]) -> [TimelineTrack] {
             tracks.map { track in
                 var copy = track

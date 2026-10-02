@@ -33,7 +33,9 @@ final class LiveAudioMixTests: XCTestCase {
         recipe.tracks[1].clips[0].volume = 0.25
         // KRI-241: a gain edit never re-assigns the live item's mix; the session
         // rebuilds the composition, whose mix must match the export.
-        XCTAssertThrowsError(try live.updateText(recipe: recipe))
+        XCTAssertThrowsError(try live.updateText(recipe: recipe)) { error in
+            XCTAssertEqual((error as? NativePreviewFeatureError)?.feature, "LivePreviewComposition-79")
+        }
         XCTAssertTrue(live.preview.playerItem.audioMix === mix)
         let preview = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
         let item = preview.preview.playerItem, source = preview.preview.playerItem.asset
