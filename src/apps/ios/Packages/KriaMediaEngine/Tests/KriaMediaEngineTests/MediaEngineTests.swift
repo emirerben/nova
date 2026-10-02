@@ -90,12 +90,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(lowStorage.route, .cloud); XCTAssertEqual(lowStorage.reason, "Insufficient temporary storage")
     }
 
-    func testExportCheckpointIsRecoverableAndAtomic() throws {
+    func testExportCheckpointRoundTripsAtomically() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = FileExportStateStore(directory: dir); let checkpoint = ExportCheckpoint(exportID: "job", status: .exporting, progress: 0.42)
         try store.save(checkpoint); XCTAssertEqual(try store.load(exportID: "job"), checkpoint)
-        XCTAssertTrue(ExportRecovery.canResume(checkpoint)); XCTAssertFalse(ExportRecovery.isTerminal(checkpoint)); XCTAssertEqual(ExportRecovery.nextAction(for: checkpoint), .exporting)
-        let failed = ExportCheckpoint(exportID: "job", status: .failed); XCTAssertFalse(ExportRecovery.canResume(failed)); XCTAssertEqual(ExportRecovery.nextAction(for: failed), .needsCloudFallback)
     }
 
     func testUndoRedoHistoryIsBoundedAndClearsRedoOnCommit() {

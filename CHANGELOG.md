@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.8.0] - 2026-10-02
+
+### Changed
+- fix(speech-cut): put cloud cut captions, b-roll and re-cut lanes on the frame grid (#1303) <!-- release-pr: 1303 -->
+
+## [0.78.7.0] - 2026-10-02
+
+### Changed
+- test(kria): share the prod-shaped Talking thread seed between planner tests (#1297) <!-- release-pr: 1297 -->
+
+## [0.78.6.0] - 2026-10-02
+
+### Changed
+- fix(devex): make agent navigation and runtime checks repeatable (#1313) <!-- release-pr: 1313 -->
+
+## [0.78.5.0] - 2026-10-02
+
+### Changed
+- refactor: remove shallow compatibility modules (#1314) <!-- release-pr: 1314 -->
+
 ## [0.78.4.0] - 2026-10-02
 
 ### Changed

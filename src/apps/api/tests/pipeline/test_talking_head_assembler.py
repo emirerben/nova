@@ -551,6 +551,9 @@ def test_assemble_spine_cut_happy_path():
         "time_saved_s": 2.44,
         "version": 1,
         "original_duration_s": 6.5,
+        # The frames the cut rendered: (0, 0.88), (1.42, 2.5), (4.4, 6.5) at
+        # 30 fps, the last reaching the clip end (speech_cut_state.RenderedCut).
+        "frame_grid": {"fps": 30, "frames": [[0, 26], [43, 75], [132, 195]]},
     }
     assert out_ctx["spine_clip_id"] == "a"
     plan_events = [e for e in events if e[1] == "silence_cut_plan"]
@@ -563,8 +566,98 @@ def test_assemble_spine_cut_happy_path():
         "retake_spans": 0,
         "applied": True,
         "cut_reused": False,
-        "broll_anchors": 2,  # 0.88 and 1.96 (cut timeline)
+        "broll_anchors": 2,  # frames 26 and 58 of the cut spine
     }
+
+
+def test_assemble_spine_cut_anchors_sit_on_the_rendered_picture_cuts():
+    # The spine renders whole 30 fps frames [0, 26), [43, 75), [132, 195)
+    # (reframe snaps each boundary to the nearest frame), so its jump cuts
+    # play at frames 26 and 58, not at the raw plan's 0.88 s and 1.96 s; the
+    # raw positions drift further from the picture with every cut.
+    seen: dict = {}
+    real_schedule = tha.schedule_broll
+
+    def _spy(usable_s, broll, anchors=None):
+        seen["anchors"] = anchors
+        return real_schedule(usable_s, broll, anchors=anchors)
+
+    with patch.object(tha, "schedule_broll", side_effect=_spy):
+        _run_assemble_with_cut(
+            silence_cut_fn=lambda p, d, **kw: _entry(_cut_plan_6_5()),
+            probe_map=_probe_map("a", "b", dur=6.5),
+            target_duration_s=6.5,
+        )
+
+    assert seen["anchors"] == [round(26 / 30, 3), round(58 / 30, 3)]
+
+
+def test_assemble_spine_cut_trims_are_not_broll_anchors():
+    # Leading and trailing trims shorten the spine without a jump cut. Only
+    # the interior removal gets an anchor; the trailing trim's point would be
+    # the video's last frame, and covering it ends the video on b-roll.
+    plan = CutPlan(
+        keep_segments=[(0.3, 0.88), (1.42, 6.2)],
+        removed=[
+            Removal(start_s=0.0, end_s=0.3, reason="silence"),
+            Removal(start_s=0.88, end_s=1.42, reason="filler_lexical"),
+            Removal(start_s=6.2, end_s=6.5, reason="silence"),
+        ],
+        time_saved_s=1.14,
+    )
+    seen: dict = {}
+    real_schedule = tha.schedule_broll
+
+    def _spy(usable_s, broll, anchors=None):
+        seen["anchors"] = anchors
+        return real_schedule(usable_s, broll, anchors=anchors)
+
+    with patch.object(tha, "schedule_broll", side_effect=_spy):
+        _calls, _cmds, events, _out_ctx = _run_assemble_with_cut(
+            silence_cut_fn=lambda p, d, **kw: _entry(plan),
+            probe_map=_probe_map("a", "b", dur=6.5),
+            target_duration_s=6.5,
+            cut_probe_dur=5.0,
+        )
+
+    # Frames [9, 26) then [43, 186): the one jump cut plays at frame 17.
+    assert seen["anchors"] == [round(17 / 30, 3)]
+    (plan_event,) = [e for e in events if e[1] == "silence_cut_plan"]
+    assert plan_event[2]["broll_anchors"] == 1
+
+
+def test_assemble_spine_cut_probe_failure_falls_back_to_the_rendered_length():
+    # An unreadable cut spine falls back to arithmetic on the same frame
+    # grid: 26 + 32 + 63 = 121 frames, not the raw plan's 4.06 s.
+    def _probe(path):
+        raise OSError("ffprobe failed")
+
+    _reframe_calls, cmds, _events, _out_ctx = _run_assemble_with_cut(
+        silence_cut_fn=lambda p, d, **kw: _entry(_cut_plan_6_5()),
+        probe_map=_probe_map("a", "b", dur=6.5),
+        target_duration_s=6.5,
+        probe=_probe,
+    )
+
+    (composite,) = cmds
+    assert "trim=0:4.033" in " ".join(composite)
+
+
+def test_assemble_spine_cut_zero_probe_duration_falls_back_to_the_rendered_length():
+    # A probe that reads the cut spine as 0 s takes the same grid fallback as
+    # a failed probe: 121 rendered frames, not the raw plan's 4.06 s.
+    _reframe_calls, cmds, events, _out_ctx = _run_assemble_with_cut(
+        silence_cut_fn=lambda p, d, **kw: _entry(_cut_plan_6_5()),
+        probe_map=_probe_map("a", "b", dur=6.5),
+        target_duration_s=6.5,
+        cut_probe_dur=0.0,
+    )
+
+    (composite,) = cmds
+    assert "trim=0:4.033" in " ".join(composite)
+    # Every b-roll window stays inside the rendered spine.
+    windows = next(e[2]["windows"] for e in events if e[1] == "broll_scheduled")
+    assert windows and all(w["end_s"] <= 121 / 30 + 1e-6 for w in windows)
 
 
 def test_assemble_spine_persists_review_candidates_with_stable_source_identity():
@@ -734,6 +827,37 @@ def test_assemble_spine_precap_bounds_detection_and_cut(tmp_path):
     assert "trim=0:60.000" in " ".join(cmds[1])
     assert out_ctx["summary"]["time_saved_s"] == 10.0
     assert out_ctx["summary"]["original_duration_s"] == 120.0  # the ANALYSIS window
+
+
+def test_assemble_capped_spine_anchors_use_the_capped_cut_window(tmp_path):
+    # Target 60.51 s caps the spine at 121.02 s, off the 30 fps grid. The
+    # anchors' grid must be that capped window -- the one the cut reframe
+    # rendered -- not the 400 s spine.
+    plan = CutPlan(
+        keep_segments=[(0.0, 50.0), (60.0, 121.02)],
+        removed=[Removal(start_s=50.0, end_s=60.0, reason="silence")],
+        time_saved_s=10.0,
+    )
+    real_grid = tha.cut_frame_grid
+    grid_windows: list[tuple[float, float]] = []
+
+    def _spy_grid(start_s, end_s):
+        grid_windows.append((start_s, end_s))
+        return real_grid(start_s, end_s)
+
+    with patch.object(tha, "cut_frame_grid", side_effect=_spy_grid):
+        reframe_calls, _cmds, _events, _out_ctx = _run_assemble_with_cut(
+            silence_cut_fn=lambda p, d, **kw: _entry(plan),
+            probe_map=_probe_map("a", "b", dur=400.0),
+            target_duration_s=60.51,
+            cut_probe_dur=110.0,
+            tmpdir=str(tmp_path),
+        )
+
+    spine = reframe_calls[0]
+    assert "keep_segments" in spine
+    assert grid_windows == [(spine["start"], spine["end"])]
+    assert spine["end"] == pytest.approx(121.02)
 
 
 def test_assemble_spine_cut_capped_cache_key_shared_across_variants(tmp_path):

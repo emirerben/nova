@@ -293,6 +293,17 @@ runs through it (declicking dipped rain/traffic takes 15-20 dB at every
 cut). Audio is also cut on the video frame grid, because concat padded
 off-grid segments with up to a frame of digital silence. The declick now
 applies only to a leading or trailing trim. See `_build_keep_segments_cmd`.
+Caption words and talking-head b-roll anchors follow the same grid
+(`remap_words(..., grid=reframe.cut_frame_grid(...))`,
+`removal_cut_points`; the grid lives in `app/pipeline/cut_grid.py`). The
+phone recipe and the narration-audio cut play the plan's exact float
+boundaries, so they keep the raw remap. Only a jump cut (kept speech on
+both sides) anchors b-roll: a leading or trailing trim just shortens the
+spine, and on the grid a trailing trim's point is the video's last frame,
+so anchoring it closed the video on b-roll over the speaker's last line.
+Editor re-cuts reproject creator lanes through the frames each cloud
+render played, persisted as `frame_grid` in the variant's `silence_cut`
+summary (`plan_summary(grid=...)`, read by `speech_cut_state.RenderedCut`).
 
 ### Admin cut-plan viewer (in this PR, T2=C)
 

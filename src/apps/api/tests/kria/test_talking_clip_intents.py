@@ -18,36 +18,23 @@ from __future__ import annotations
 
 import inspect
 import json
-import uuid
 from typing import Any
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 
 from app.agents._runtime import ModelInvocation
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
 from app.config import settings
-from app.database import sync_session
 from app.kria import planner
 from app.kria.strategy_policy import CheckedStrategy, RefusedStrategy, check_strategy_for_runtime_v2
-from app.models import (
-    ContentPlan,
-    CreationThread,
-    CreationThreadEvent,
-    CreatorAgentSession,
-    Persona,
-    PlanItem,
-    User,
-)
 from app.schemas.clip_intents import ClipIntent
 from app.services import clip_intent_planning
 from app.services import creator_capabilities as capabilities
 from app.services.creator_capabilities import TALKING_CLIP_INTENTS_DROPPED_NOTICE
 from app.tasks import generative_build
+from tests.kria.talking_thread import MEDIA_ID, plan_add_captions_turn, seed_talking_thread
 
-MEDIA_ID = "analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4"
 CLIPS = ["analysis-proxy-ios-1.mp4", "analysis-proxy-ios-2.mp4"]
 # What a model hears in "Add captions" when it reads it as a clip operation.
 CHAPTER_CAPTION = ClipIntent(
@@ -215,103 +202,6 @@ def test_flag_off_talking_compile_is_unchanged(monkeypatch: pytest.MonkeyPatch, 
 
 # --- runtime-v2 planner over a real, prod-shaped phone Talking thread --------
 
-# The receipt iOS uploaded with the KRI-238 clip (prod `media_added` payload).
-UPLOAD_CONTRACT = {
-    "proxy": {
-        "width": 320,
-        "height": 568,
-        "original": {
-            "kind": "video",
-            "width": 1920,
-            "height": 1080,
-            "sha256": "727797c7fd0cf096191ff17f3dc9a500048083efaa7acd019c2fe35f9e354dbc",
-            "has_audio": True,
-            "byte_count": 39352254,
-            "duration_s": 14.793333333333333,
-            "orientation_degrees": 90,
-        },
-        "duration_s": 14.8,
-        "frame_rate": 30.0,
-        "timing_version": 1,
-        "orientation_degrees": 0,
-    },
-    "purpose": "analysis_proxy",
-}
-
-
-def _seed_talking_thread() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
-    user_id, persona_id, plan_id, item_id, session_id, thread_id = (uuid.uuid4() for _ in range(6))
-    path = f"users/{user_id}/creation-threads/{thread_id}/analysis-proxies/{MEDIA_ID}"
-    with sync_session() as db:
-        db.add(User(id=user_id, email=f"{user_id}@test.local"))
-        db.flush()
-        db.add(Persona(id=persona_id, user_id=user_id, persona_status="ready", persona={}))
-        db.flush()
-        db.add(ContentPlan(id=plan_id, user_id=user_id, persona_id=persona_id))
-        db.flush()
-        db.add(
-            PlanItem(
-                id=item_id,
-                content_plan_id=plan_id,
-                position=1,
-                idea="",
-                item_status="awaiting_clips",
-                edit_format="subtitled",
-                content_mode="existing_footage",
-                clip_gcs_paths=[path],
-                clip_assignments=[
-                    {
-                        "media_id": MEDIA_ID,
-                        "manifest_identity": MEDIA_ID,
-                        "gcs_path": path,
-                        "kind": "video",
-                        "duration_s": 14.8,
-                        "has_audio": True,
-                        "storage_generation": "1790858000000000",
-                        "upload_contract": UPLOAD_CONTRACT,
-                    }
-                ],
-            )
-        )
-        db.flush()
-        db.add(CreatorAgentSession(id=session_id, creator_id=user_id, plan_item_id=item_id))
-        db.flush()
-        db.add(
-            CreationThread(
-                id=thread_id,
-                creator_id=user_id,
-                runtime_version=2,
-                content_plan_id=plan_id,
-                active_plan_item_id=item_id,
-                active_creator_agent_session_id=session_id,
-                title="Add Captions",
-                revision=5,
-                state={"edit_format": "talking_to_camera", "media_count": 1},
-            )
-        )
-        db.flush()
-        events = [
-            ("system", "thread_created", None),
-            ("assistant", "format_prompt", "What are we making? Pick a format."),
-            ("user", "action_select_format", None),
-            ("user", "media_added", None),
-            ("user", "user_message", "Add captions"),
-        ]
-        for sequence, (role, kind, content) in enumerate(events):
-            db.add(
-                CreationThreadEvent(
-                    thread_id=thread_id,
-                    sequence=sequence,
-                    revision=sequence + 1,
-                    role=role,
-                    event_type=kind,
-                    content=content,
-                    payload=None,
-                )
-            )
-        db.commit()
-    return user_id, thread_id, item_id
-
 
 def _creator_answer(clip_intents: list[dict] | None) -> dict:
     return {
@@ -376,19 +266,7 @@ async def _plan(monkeypatch: pytest.MonkeyPatch, models: _Models):  # noqa: ANN2
     monkeypatch.setattr(settings, "clip_intents_enabled", True)
     monkeypatch.setattr(planner, "default_client", lambda: models)
     monkeypatch.setattr(clip_intent_planning, "default_client", lambda: models)
-    user_id, thread_id, item_id = _seed_talking_thread()
-    engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
-    try:
-        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
-            return await planner.plan_live_turn(
-                db,
-                thread_id=thread_id,
-                item_id=item_id,
-                creator_id=user_id,
-                user_message="Add captions",
-            )
-    finally:
-        await engine.dispose()
+    return await plan_add_captions_turn(*seed_talking_thread())
 
 
 @pytest.mark.asyncio

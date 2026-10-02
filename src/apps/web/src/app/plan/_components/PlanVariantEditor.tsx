@@ -14,7 +14,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import SongPicker from "./SongPicker";
-import StyleChip from "./StyleChip";
+import StyleChip from "@/components/ui/StyleChip";
 
 /**
  * Edit controls for the focused plan-item variant: caption (inline edit /

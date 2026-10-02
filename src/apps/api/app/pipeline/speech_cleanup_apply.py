@@ -186,6 +186,8 @@ class HydratedSpeechCleanupSnapshot:
 
         words = self.source_words()
         if apply_cut:
+            # Raw float mapping, no frame grid: apply_speech_cleanup_to_audio
+            # keeps every keep segment at its exact float length.
             words = [
                 Word(
                     text=item["text"],
