@@ -4094,6 +4094,12 @@ struct NativeEditorTemporaryVideo {
             let acknowledged = acknowledgedSections(response.sections, submittedSections: submittedSections)
             let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
             let hasPostSubmitEdits = document != submittedDocument
+            // A durable commit fences the previous render even when this
+            // response saves an empty draft and does not start a new poll.
+            previewRefreshTask?.cancel()
+            pendingPreviewGeneration = nil
+            pendingDeviceRenderIdentity = nil
+            chatStagedDocument = nil; chatStagedSections = []
             // An empty authored-phone document has its first editable revision
             // immediately, even before the next variant-status refresh exposes
             // `editor_revision_number`. Keep source registration available for
@@ -4103,17 +4109,36 @@ struct NativeEditorTemporaryVideo {
             document.revision.number = response.revisionNumber ?? document.revision.number
             document.revision.hash = response.revisionHash ?? document.revision.hash
             if response.editorState == "empty" {
+                var acknowledgedEmpty = response.draft.map { EditorDocument(snapshot: $0.snapshot) } ?? submittedDocument
+                acknowledgedEmpty.editorState = "empty"
+                acknowledgedEmpty.revision.number = response.revisionNumber ?? acknowledgedEmpty.revision.number
+                acknowledgedEmpty.revision.hash = response.revisionHash ?? acknowledgedEmpty.revision.hash
+                acknowledgedEmpty.revision.baseGeneration = response.generation
+                acknowledgedEmpty.deletions.removeAll()
                 if !hasPostSubmitEdits {
-                    if let draft = response.draft {
-                        document = EditorDocument(snapshot: draft.snapshot)
-                    }
-                    document.editorState = "empty"
-                    document.revision.baseGeneration = response.generation
-                    cleanDocument = document
+                    document = acknowledgedEmpty
+                    cleanDocument = acknowledgedEmpty
                     changedSections.removeAll(); explicitlyDirtySections.removeAll()
+                    undoStack.removeAll(); redoStack.removeAll()
+                } else {
+                    // The empty commit is durable, but a later local edit was
+                    // staged while it was in flight. Move both bases to the
+                    // new generation and retain that edit and its undo entry.
+                    document.revision.baseGeneration = response.generation
+                    cleanDocument = acknowledgedEmpty
+                    let acknowledgedRevision = document.revision
+                    undoStack = postSubmitUndo.map { value in
+                        var rebased = value
+                        rebased.revision = acknowledgedRevision
+                        return rebased
+                    }
+                    redoStack.removeAll()
+                    if !document.clips.isEmpty { document.editorState = "renderable" }
+                    consumeSubmittedDeletions(from: submittedDocument)
+                    explicitlyDirtySections.subtract(acknowledged)
                 }
                 pendingRenderRetrySections.removeAll()
-                undoStack.removeAll(); redoStack.removeAll()
+                rebaseActiveGestureHistoryAfterDurableSave()
                 refreshDirtyState()
                 saveState = .saved
                 return
@@ -4124,7 +4149,6 @@ struct NativeEditorTemporaryVideo {
                 refreshDuration()
             }
             acknowledge(acknowledged, generation: response.generation, submittedDocument: submittedDocument)
-            chatStagedDocument = nil; chatStagedSections = []
             if hasPostSubmitEdits {
                 let acknowledgedRevision = document.revision
                 undoStack = postSubmitUndo.map { value in
@@ -4135,23 +4159,16 @@ struct NativeEditorTemporaryVideo {
                 redoStack.removeAll()
             } else {
                 undoStack.removeAll(); redoStack.removeAll()
-                // `deletions` are a one-commit intent. The server returns any
-                // durable generated-content suppression in its snapshot, so
-                // replaying these IDs on later saves would be stale.
-                document.deletions.removeAll()
-                cleanDocument.deletions.removeAll()
             }
+            // A successful response has durably applied the exact deletion
+            // intent sent with this commit. Remove only those IDs: a later
+            // edit may have appended a different intent while awaiting it.
+            consumeSubmittedDeletions(from: submittedDocument)
             // A durable save invalidates the pre-save gesture history too.
             // Rebase active gestures independently of read-after-write text
             // reconciliation, so a later zero-delta sample cannot pop an
             // undo entry that the save just cleared.
             rebaseActiveGestureHistoryAfterDurableSave()
-            // A prior generation's poll must lose ownership as soon as this
-            // commit is durable. The replacement generation is installed
-            // only after its read-after-write reconciliation completes.
-            previewRefreshTask?.cancel()
-            pendingPreviewGeneration = nil
-            pendingDeviceRenderIdentity = nil
             // The commit response acknowledges the submitted lanes, but the
             // renderer may project text differently (for example after a
             // timeline-only save). Reconcile the committed variant as soon as
@@ -4732,7 +4749,7 @@ struct NativeEditorTemporaryVideo {
             carouselMoment: changedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
             title: changedSections.contains(.title) ? value["title"]?.stringValue : nil,
             guidedRevisionNumber: guidedRevisionNumber,
-            editorStateVersion: document.deletions.isEmpty ? nil : 1,
+            editorStateVersion: 1,
             deletions: document.deletions.isEmpty ? nil : document.deletions,
             baseGeneration: baseGeneration
         )
@@ -4767,11 +4784,23 @@ struct NativeEditorTemporaryVideo {
         refreshDirtyState()
     }
 
+    private func consumeSubmittedDeletions(from submittedDocument: EditorDocument) {
+        guard !submittedDocument.deletions.isEmpty else { return }
+        document.deletions.removeAll { submittedDocument.deletions.contains($0) }
+        cleanDocument.deletions.removeAll { submittedDocument.deletions.contains($0) }
+        undoStack = undoStack.map { snapshot in
+            var rebased = snapshot
+            rebased.deletions.removeAll { submittedDocument.deletions.contains($0) }
+            return rebased
+        }
+    }
+
     private func copy(_ section: EditorSection, from submitted: EditorDocument, into baseline: inout EditorDocument) {
         switch section {
         case .timeline:
             baseline.clips = submitted.clips
             baseline.tombstones = submitted.tombstones
+            baseline.editorState = submitted.editorState
         case .text: baseline.textElements = submitted.textElements
         case .captions: baseline.captionCues = submitted.captionCues
         case .captionMeta: baseline.captionMeta = submitted.captionMeta

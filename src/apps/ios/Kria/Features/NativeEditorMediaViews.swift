@@ -628,6 +628,7 @@ struct NativeVideoPreview: View {
                         .accessibilityIdentifier("native-editor-empty-add-clip")
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityElement(children: .contain)
             } else if session.canDisplayCurrentPlayer, let player = session.player {
                 ZStack {
                     NativeEditorPlayerSurface(player: player)
@@ -723,7 +724,7 @@ struct NativeVideoPreview: View {
             }
             GeometryReader { proxy in
                 let visible = NativeEditorInteraction.previewOrder(
-                    NativeEditorInteraction.visible(session.hasSourcePreview || session.sourcePreviewState == .idle ? objects.map(\.item) : [], at: clock.currentTime)
+                    NativeEditorInteraction.visible(session.document.editorState != "empty" && (session.hasSourcePreview || session.sourcePreviewState == .idle) ? objects.map(\.item) : [], at: clock.currentTime)
                 )
                 ZStack(alignment: .topLeading) {
                     ForEach(visible.compactMap { item in objects.first(where: { $0.item == item }) }) { object in
@@ -758,7 +759,7 @@ struct NativeVideoPreview: View {
             // message sits underneath and the canvas has nothing to interact with. When the finished
             // render still plays, the fallback card below is drawn above the canvas instead, so its
             // buttons work and tap-to-fullscreen on the empty canvas keeps working.
-            .allowsHitTesting(!(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
+            .allowsHitTesting(session.document.editorState != "empty" && !(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
 
             if session.showsEditApplied {
                 Label("Edit applied", systemImage: "checkmark.circle.fill")
