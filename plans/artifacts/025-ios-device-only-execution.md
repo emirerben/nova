@@ -279,7 +279,7 @@ automated qualification PR, without signed-device or production acceptance.
 | Fresh server-compiled montage/speech native cases | **5 required cases passed; 3 explicitly retired cases skipped** | `/private/tmp/plan025-ship-montage.xcresult` |
 | Fresh guided voiceover / Visuals native cases | **7 passed** | `/private/tmp/plan025-ship-photo.xcresult` |
 | iOS selection/build scripts | **93 passed** | `/tmp/plan025-ship-scripts.log` |
-| Generated contracts, scoped lint and preship | Passed | `/tmp/plan025-ship-contracts.log`, `/tmp/plan025-ship-preship.log` |
+| Generated contracts, scoped lint and preship | Passed | `/tmp/plan025-ship-contracts.log`, `/tmp/plan025-ship-preship-final.log` |
 
 The first ship backend attempt had 17 connection failures and extra database
 skips because the restarted disposable PostgreSQL cluster used its default
