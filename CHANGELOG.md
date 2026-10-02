@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.7.0] - 2026-10-02
+
+### Changed
+- test(kria): share the prod-shaped Talking thread seed between planner tests (#1297) <!-- release-pr: 1297 -->
+
 ## [0.78.6.0] - 2026-10-02
 
 ### Changed
