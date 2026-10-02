@@ -21,6 +21,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.web == 'true' || needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
+    # Slowest green run 5.8 min, but the same cached `pip install -e ".[dev]"`
+    # took 12.7 min in a green api shard; 25 leaves room for that.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -104,10 +107,13 @@ jobs:
         run: echo "Web group ${{ matrix.group }} job outcome (including setup) $JOB_STATUS" >> "$GITHUB_STEP_SUMMARY"
 
   # These gates remain present on every PR, including docs-only changes.
+  # Their timeouts cover only their own steps (slowest green run ~1 min);
+  # waiting on `needs:` happens before the job starts and doesn't count.
   lint:
     if: always()
     needs: [changes, lint-suites]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Require selected lint jobs to pass
@@ -119,6 +125,7 @@ jobs:
     if: always()
     needs: [changes, test-web-suites]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Require selected web suites to pass
@@ -130,6 +137,7 @@ jobs:
     if: always()
     needs: [changes, test-api-suite]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Require selected API tests to pass

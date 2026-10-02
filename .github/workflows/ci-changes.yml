@@ -19,6 +19,8 @@ on:
 jobs:
   select:
     runs-on: ubuntu-latest
+    # Full-history checkout dominates; slowest green run 3.8 min (typical ~0.3).
+    timeout-minutes: 10
     outputs:
       web: ${{ steps.select.outputs.web }}
       api: ${{ steps.select.outputs.api }}

@@ -56,6 +56,8 @@ jobs:
     name: Structural evals (PR guardrail)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # Slowest green run 10.9 min (uncached pip install took 10.5); typical ~2.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,6 +81,10 @@ jobs:
     name: Paid provider eval
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    # Few completed live runs (1.4 min green, 11 min failed), and each live
+    # test may take up to 300 s (tests/evals/conftest.py), so leave room for a
+    # slow multi-fixture agent. The cost cap bounds spend, not wall time.
+    timeout-minutes: 60
     environment:
       name: ${{ github.event_name == 'schedule' && 'paid-ai-smoke' || 'paid-ai-evals' }}
     steps:
