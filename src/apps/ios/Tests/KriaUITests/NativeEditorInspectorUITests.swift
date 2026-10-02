@@ -107,9 +107,12 @@ final class NativeEditorInspectorUITests: XCTestCase {
             capture.name = "expanded-visible-handle-" + tool
             capture.lifetime = .keepAlways
             add(capture)
+            // Collapse with a small overshoot: a long pull past the bottom
+            // closes the panel (KRI-253).
             let raised = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
                 .withOffset(CGVector(dx: 0, dy: 10))
-            raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: 320)))
+            raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: 200)),
+                         withVelocity: .slow, thenHoldForDuration: 0.2)
             XCTAssertEqual(panel.frame.height, initialPanel.height, accuracy: 2, tool)
             XCTAssertEqual(preview.frame.height, initialPreview.height, accuracy: 2, tool)
         }
@@ -615,6 +618,66 @@ final class NativeEditorInspectorUITests: XCTestCase {
         tabStart.press(forDuration: 0.1, thenDragTo: tabStart.withOffset(CGVector(dx: 0, dy: -160)))
         XCTAssertGreaterThan(panel.frame.height, before + 80, "dragging up from the tab strip must raise the panel")
         XCTAssertTrue(styleTab.isSelected, "a drag from a tab must not select it")
+    }
+
+    /// KRI-253: pulling the panel down past its smallest size does what Done does.
+    func testPanelDragDownClosesLikeDone() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let captions = app.buttons["native-editor-tool-captions"]
+        XCTAssertTrue(captions.waitForExistence(timeout: 20))
+        captions.tap()
+        let panel = app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch
+        let done = app.buttons["native-editor-captions-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        let initial = panel.frame
+        let header = { done.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: -40, dy: 0)) }
+
+        // A short, slow pull springs back.
+        var start = header()
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 40)),
+                    withVelocity: .slow, thenHoldForDuration: 0.3)
+        XCTAssertTrue(panel.exists, "a short pull must not close the panel")
+        XCTAssertEqual(panel.frame.minY, initial.minY, accuracy: 2, "the panel springs back")
+        XCTAssertEqual(panel.frame.height, initial.height, accuracy: 2)
+
+        // Collapsing a raised panel stops at its smallest size.
+        start = header()
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -160)))
+        XCTAssertGreaterThan(panel.frame.height, initial.height + 80)
+        start = header()
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 200)),
+                    withVelocity: .slow, thenHoldForDuration: 0.3)
+        XCTAssertTrue(panel.exists, "collapsing a raised panel must not close it")
+        XCTAssertEqual(panel.frame.height, initial.height, accuracy: 2)
+
+        // A long pull from the header closes it.
+        start = header()
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 140)))
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 3), "pulling the header down must close the panel")
+        XCTAssertTrue(captions.isHittable, "the tool rail stays")
+
+        // On Add text, a pull from the grabber keeps the words, like Done.
+        app.buttons["native-editor-tool-text"].tap()
+        let input = app.textViews["native-editor-new-text-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        input.typeText("Pulled closed")
+        let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 5))
+        let grab = { handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 10)) }
+        start = grab()
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 140)))
+        let styleTab = app.buttons["Style"]
+        XCTAssertTrue(styleTab.waitForExistence(timeout: 5), "the new text opens for styling, as Done does")
+        XCTAssertTrue(app.buttons["native-editor-text-inspector-done"].exists)
+        start = grab()
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 140)))
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 3), "pulling the text panel down closes it")
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Pulled closed")).firstMatch.exists,
+                      "the pulled-closed text is kept")
     }
 
     func testPreviewResizeIsAvailableAcrossEditorPanels() {

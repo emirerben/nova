@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.16.0] - 2026-10-02
+
+### Changed
+- feat(ios): drag the editor panel down to close it, like Done (KRI-253) (#1324) <!-- release-pr: 1324 -->
+
 ## [0.78.15.0] - 2026-10-02
 
 ### Changed

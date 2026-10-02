@@ -37,6 +37,8 @@ struct NativeEditorPanelResizeGrabber: View {
     /// The whole row resizes, not just the 80 pt around the line: the preview
     /// handle sits in an otherwise empty band people drag anywhere in.
     var spansRow = false
+    /// Lets a drag past the smallest size close the panel (KRI-253).
+    var dismiss: NativeEditorPanelDismiss?
     @State private var feedback = 0
 
     private func clamp(_ value: CGFloat) -> CGFloat {
@@ -51,7 +53,7 @@ struct NativeEditorPanelResizeGrabber: View {
             .frame(width: spansRow ? nil : 80, height: 44, alignment: topAligned ? .top : .center)
             .frame(maxWidth: spansRow ? .infinity : nil)
             .contentShape(Rectangle())
-            .modifier(NativeEditorPanelResizeDrag(expansion: $expansion, range: range, bounds: bounds))
+            .modifier(NativeEditorPanelResizeDrag(expansion: $expansion, range: range, bounds: bounds, dismiss: dismiss))
             .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: feedback)
             .accessibilityElement()
             .accessibilityLabel(accessibilityTitle)
@@ -77,44 +79,117 @@ struct NativeEditorPanelResizeDrag: ViewModifier {
     let range: CGFloat
     var bounds: ClosedRange<CGFloat> = 0...1
     var minimumDistance: CGFloat = 3
+    /// Lets a drag past the smallest size close the panel (KRI-253).
+    var dismiss: NativeEditorPanelDismiss?
     @State private var dragOrigin: CGFloat?
     @State private var feedback = 0
+    @GestureState private var isDragging = false
 
     private func clamp(_ value: CGFloat) -> CGFloat {
         min(bounds.upperBound, max(bounds.lowerBound, value))
+    }
+
+    private func pull(_ translation: CGFloat, origin: CGFloat) -> CGFloat {
+        NativeEditorPanelDismissRule.pull(translation: translation, aboveMinimum: (origin - bounds.lowerBound) * range)
     }
 
     func body(content: Content) -> some View {
         content
             .gesture(
                 DragGesture(minimumDistance: minimumDistance, coordinateSpace: .global)
+                    .updating($isDragging) { _, dragging, _ in dragging = true }
                     .onChanged { value in
-                        guard range > 0 else { return }
+                        guard range > 0 || dismiss != nil else { return }
                         if dragOrigin == nil {
                             dragOrigin = clamp(expansion)
                             feedback += 1
                         }
-                        let next = clamp((dragOrigin ?? 0) - value.translation.height / range)
-                        if next != expansion && (next == bounds.lowerBound || next == bounds.upperBound) { feedback += 1 }
-                        expansion = next
+                        let origin = dragOrigin ?? 0
+                        if range > 0 {
+                            let next = clamp(origin - value.translation.height / range)
+                            if next != expansion && (next == bounds.lowerBound || next == bounds.upperBound) { feedback += 1 }
+                            expansion = next
+                        }
+                        if let dismiss {
+                            let next = pull(value.translation.height, origin: origin)
+                            if NativeEditorPanelDismissRule.isArmed(next) != NativeEditorPanelDismissRule.isArmed(dismiss.pull.wrappedValue) {
+                                feedback += 1
+                            }
+                            dismiss.pull.wrappedValue = next
+                        }
                     }
-                    .onEnded { _ in
+                    .onEnded { value in
+                        if let dismiss, let origin = dragOrigin {
+                            dismiss.pull.wrappedValue = 0
+                            if NativeEditorPanelDismissRule.shouldDismiss(
+                                pull: pull(value.translation.height, origin: origin),
+                                projectedPull: pull(value.predictedEndTranslation.height, origin: origin),
+                                startedAtMinimum: origin <= bounds.lowerBound
+                            ) {
+                                dismiss.complete()
+                            }
+                        }
                         dragOrigin = nil
                         feedback += 1
                     }
             )
+            // A cancelled drag never reaches onEnded; don't leave the panel pulled down.
+            .onChange(of: isDragging) { _, dragging in
+                if !dragging, let dismiss, dismiss.pull.wrappedValue != 0 { dismiss.pull.wrappedValue = 0 }
+            }
             .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: feedback)
     }
 }
 
-/// What the connected panel's header needs to resize the panel (KRI-235).
+/// Dragging the connected panel down past its smallest size closes it the way
+/// its Done button does (KRI-253).
+struct NativeEditorPanelDismiss {
+    /// Points the finger has travelled below the panel's smallest size.
+    let pull: Binding<CGFloat>
+    /// The open panel's Done.
+    let complete: () -> Void
+}
+
+enum NativeEditorPanelDismissRule {
+    /// A release this far below the smallest size closes the panel.
+    static let distance: CGFloat = 64
+    /// A quick flick closes it sooner, but only when the drag began at the
+    /// smallest size: collapsing a raised panel never closes it by momentum.
+    static let flickMinimum: CGFloat = 12
+    static let flickProjection: CGFloat = 160
+    /// How far the panel can follow the finger down.
+    static let maxOffset: CGFloat = 96
+
+    /// Points below the smallest size, given the drag's translation and how far
+    /// above the smallest size the drag started.
+    static func pull(translation: CGFloat, aboveMinimum: CGFloat) -> CGFloat {
+        max(0, translation - max(0, aboveMinimum))
+    }
+
+    static func isArmed(_ pull: CGFloat) -> Bool { pull >= distance }
+
+    static func shouldDismiss(pull: CGFloat, projectedPull: CGFloat, startedAtMinimum: Bool) -> Bool {
+        isArmed(pull) || (startedAtMinimum && pull >= flickMinimum && projectedPull >= flickProjection)
+    }
+
+    /// The panel follows the finger 1:1 at first, then resists.
+    static func offset(forPull pull: CGFloat) -> CGFloat {
+        guard pull > 0 else { return 0 }
+        return maxOffset * pull / (pull + maxOffset)
+    }
+}
+
+/// What the connected panel's header needs to resize the panel (KRI-235)
+/// and to close it with a drag down (KRI-253).
 struct NativeEditorPanelResize {
     let expansion: Binding<CGFloat>
     let range: CGFloat
+    var dismiss: NativeEditorPanelDismiss?
 }
 
 /// The whole fixed header of a connected panel (top band, title row, tabs)
-/// resizes the panel, not just the grabber line (KRI-235). The scrolling body
+/// resizes the panel, not just the grabber line (KRI-235), and drags it closed
+/// past its smallest size (KRI-253). The scrolling body
 /// is deliberately excluded so lists, sliders and text fields keep their own
 /// gestures. The larger slop keeps header buttons tappable.
 private struct NativeEditorPanelResizeSurface: ViewModifier {
@@ -124,7 +199,9 @@ private struct NativeEditorPanelResizeSurface: ViewModifier {
         if let resize {
             content
                 .contentShape(Rectangle())
-                .modifier(NativeEditorPanelResizeDrag(expansion: resize.expansion, range: resize.range, minimumDistance: 8))
+                .modifier(NativeEditorPanelResizeDrag(
+                    expansion: resize.expansion, range: resize.range, minimumDistance: 8, dismiss: resize.dismiss
+                ))
         } else {
             content
         }
@@ -174,7 +251,8 @@ private struct NativeEditorPanelLifecycleKey: EnvironmentKey {
 }
 
 private struct NativeEditorPanelResizeKey: EnvironmentKey {
-    static let defaultValue: NativeEditorPanelResize? = nil
+    // Computed: the value carries a closure, so it can't be a stored static.
+    static var defaultValue: NativeEditorPanelResize? { nil }
 }
 
 extension EnvironmentValues {

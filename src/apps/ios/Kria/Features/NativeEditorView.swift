@@ -33,6 +33,8 @@ struct NativeEditorView: View {
     /// grows it); `panelExpansion` is 0…1 and may lift the panel over the preview.
     @State private var previewResize: CGFloat = 0
     @State private var panelExpansion: CGFloat = 0
+    /// KRI-253: points a drag has pulled the panel below its smallest size.
+    @State private var panelDismissPull: CGFloat = 0
     @State private var topChromeHeight: CGFloat = 0
     /// `previewFullscreen` mounts the overlay; `fullscreenExpanded` drives its
     /// grow/shrink so the overlay can animate out before it is removed.
@@ -127,6 +129,8 @@ struct NativeEditorView: View {
             .onChange(of: panel == nil) { _, closed in
                 if closed { panelExpansion = 0 }
             }
+            // A drag on an outgoing panel can't end on it.
+            .onChange(of: panel) { _, _ in panelDismissPull = 0 }
             .onChange(of: session.pendingText == nil) { _, finished in
                 if finished {
                     resignKeyboard()
@@ -433,14 +437,19 @@ struct NativeEditorView: View {
                         VStack(spacing: 0) {
                             if panelIsOpen {
                                 let panelRange = metrics.panelRange(areaHeight: area.size.height, previewHeight: previewHeight)
+                                let panelDismiss = NativeEditorPanelDismiss(pull: $panelDismissPull, complete: completePanel)
                                 panelContent
                                     .environment(\.nativeEditorPanelContentWidth, max(0, area.size.width - 72))
-                                    .environment(\.nativeEditorPanelResize, NativeEditorPanelResize(expansion: $panelExpansion, range: panelRange))
+                                    .environment(\.nativeEditorPanelResize, NativeEditorPanelResize(
+                                        expansion: $panelExpansion, range: panelRange, dismiss: panelDismiss
+                                    ))
                                     .padding(.top, 18)
                                     .overlay(alignment: .top) {
                                         // The band beside the grabber resizes too (KRI-235).
                                         Color.clear.frame(height: 18).contentShape(Rectangle())
-                                            .modifier(NativeEditorPanelResizeDrag(expansion: $panelExpansion, range: panelRange, minimumDistance: 8))
+                                            .modifier(NativeEditorPanelResizeDrag(
+                                                expansion: $panelExpansion, range: panelRange, minimumDistance: 8, dismiss: panelDismiss
+                                            ))
                                     }
                                     .overlay(alignment: .top) {
                                         NativeEditorPanelResizeGrabber(
@@ -450,7 +459,8 @@ struct NativeEditorView: View {
                                             accessibilityIdentifier: "native-editor-panel-resize",
                                             topAligned: true,
                                             accessibilityTitle: "Editor panel size",
-                                            accessibilityHint: "Swipe up or down to resize the editor panel"
+                                            accessibilityHint: "Swipe up or down to resize the editor panel",
+                                            dismiss: panelDismiss
                                         )
                                     }
                                     .transition(panelTransition)
@@ -473,6 +483,12 @@ struct NativeEditorView: View {
                                     .accessibilityIdentifier("native-editor-connected-panel")
                             }
                         }
+                        // KRI-253: the panel follows a drag past its smallest
+                        // size and springs back when the drag ends.
+                        .offset(y: NativeEditorPanelDismissRule.offset(forPull: panelDismissPull))
+                        .animation(panelDismissPull == 0 && !shouldReduceMotion
+                                   ? .spring(response: 0.34, dampingFraction: 0.88) : nil,
+                                   value: panelDismissPull == 0)
                     }
                 }
                 .padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
@@ -486,16 +502,12 @@ struct NativeEditorView: View {
     @ViewBuilder private var panelContent: some View {
         switch panel {
         case .textCreation:
-            NativeTextCreationPanel(session: session, onDone: { selection in
-                selectedTextForActions = selection.id
-                changePanel(to: .text(selection.id))
-            }, onSelectBlock: { openTextBlock($0) })
+            NativeTextCreationPanel(session: session, onDone: textCreated, onSelectBlock: { openTextBlock($0) })
         case .text(let id):
             NativeEditorTextPanel(
-                id: id, session: session, initialTab: textEditOrigin == .list ? .edit : .style
-            ) {
-                if textEditOrigin == .list { showTextTab() } else { changePanel(to: nil) }
-            }.id(id)
+                id: id, session: session, initialTab: textEditOrigin == .list ? .edit : .style,
+                onDone: textEditingDone
+            ).id(id)
         case .captions:
             NativeCaptionPanel(session: session) { changePanel(to: nil) }
         case .visuals:
@@ -504,6 +516,29 @@ struct NativeEditorView: View {
             NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case nil:
             EmptyView()
+        }
+    }
+
+    private func textCreated(_ selection: EditorSelection) {
+        selectedTextForActions = selection.id
+        changePanel(to: .text(selection.id))
+    }
+
+    private func textEditingDone() {
+        if textEditOrigin == .list { showTextTab() } else { changePanel(to: nil) }
+    }
+
+    /// The open panel's Done, for a drag that pulls the panel closed (KRI-253).
+    /// The panels' draft cleanup still runs: `changePanel` and `showTextTab`
+    /// flush it through `panelLifecycle`.
+    private func completePanel() {
+        switch panel {
+        case .textCreation:
+            // An empty draft returns nil and the pending-text observer closes the panel.
+            if let selection = session.finishTextCreation() { textCreated(selection) }
+        case .text: textEditingDone()
+        case .captions, .visuals, .sounds: changePanel(to: nil)
+        case nil: break
         }
     }
 
