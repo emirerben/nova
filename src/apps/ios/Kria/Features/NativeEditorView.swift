@@ -631,7 +631,8 @@ struct NativeEditorView: View {
                 let span = max(0.0001, bounds.upperBound - bounds.lowerBound)
                 return "\(Int(((bounds.upperBound - value) / span) * 100)) percent of maximum size"
             },
-            incrementFraction: -0.25
+            incrementFraction: -0.25,
+            spansRow: true
         )
     }
 
