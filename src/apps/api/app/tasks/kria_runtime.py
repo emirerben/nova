@@ -3122,6 +3122,24 @@ def prune_kria_drafts() -> dict[str, int]:
                 )
             ).scalars()
         )
+        # Empty editor drafts are pinned by a Job variant rather than an
+        # approval. A subsequent ordinary draft can make that row non-head;
+        # pruning its snapshot would leave the empty editor with no canonical
+        # restore source. Inspect only candidate ids and keep those references.
+        candidate_ids = {str(row.id) for row in candidates}
+        candidate_job_ids = {row.base_job_id for row in candidates if row.base_job_id is not None}
+        assemblies = db.execute(
+            select(Job.assembly_plan).where(Job.id.in_(candidate_job_ids))
+        ).scalars()
+        for assembly in assemblies:
+            for variant in (assembly or {}).get("variants") or []:
+                reference = variant.get("editor_draft") if isinstance(variant, dict) else None
+                draft_id = reference.get("draft_id") if isinstance(reference, dict) else None
+                if str(draft_id) in candidate_ids:
+                    try:
+                        protected.add(uuid.UUID(str(draft_id)))
+                    except (TypeError, ValueError):
+                        continue
         pruned = 0
         for draft in candidates:
             if draft.id in protected:

@@ -307,7 +307,9 @@ def inject_lyric_overlays(
 
     # Filter to lines that actually overlap the selected section AND clamp
     # their internal timings to section-relative coordinates.
-    section_lines = _select_section_lines(lines, best_start_s, best_end_s)
+    section_lines = _select_section_lines(
+        lines, best_start_s, best_end_s, suppressed=lyrics_cached.get("_suppressed_line_keys")
+    )
     if not section_lines:
         log.info(
             "lyric_inject_no_lines_in_section",
@@ -463,6 +465,7 @@ def apply_lyric_line_overrides(lyrics_cached: dict, overrides: dict | None) -> d
     if not isinstance(lines, list):
         return out
 
+    suppressed = set(overrides.get("_suppressed_line_keys") or [])
     for line_key, override in overrides.items():
         try:
             idx = _parse_line_key(line_key)
@@ -495,6 +498,8 @@ def apply_lyric_line_overrides(lyrics_cached: dict, overrides: dict | None) -> d
         except Exception:  # noqa: BLE001
             log.warning("lyric_override_entry_skipped", line_key=line_key, exc_info=True)
             continue
+    if suppressed:
+        out["_suppressed_line_keys"] = sorted(suppressed)
     return out
 
 
@@ -525,6 +530,12 @@ def rematerialize_lyric_line_overrides(
         current = _normalize_override_fingerprint_text(lines[idx].get("text"))
         if original and original == current:
             retained[line_key] = copy.deepcopy(override)
+    # Suppressions deliberately survive a song-window change even when the
+    # line is outside this render's active window; otherwise it resurrects on
+    # the next window/regen. Keys are validated at the editor boundary.
+    suppressed = [key for key in overrides.get("_suppressed_line_keys", []) if isinstance(key, str)]
+    if suppressed:
+        retained["_suppressed_line_keys"] = suppressed
     return retained or None
 
 
@@ -676,7 +687,9 @@ def build_lyric_seed_elements(
     if not lines:
         return []
 
-    section_lines = _select_section_lines(lines, best_start_s, best_end_s)
+    section_lines = _select_section_lines(
+        lines, best_start_s, best_end_s, suppressed=lyrics_cached.get("_suppressed_line_keys")
+    )
     if not section_lines:
         return []
 
@@ -791,6 +804,8 @@ def _select_section_lines(
     lines: list[dict],
     best_start_s: float,
     best_end_s: float,
+    *,
+    suppressed: object = None,
 ) -> list[dict]:
     """Return lines that overlap [best_start_s, best_end_s], clamped to the section.
 
@@ -808,7 +823,10 @@ def _select_section_lines(
     that straddle a clamp edge are clamped to the line bounds.
     """
     out: list[dict] = []
+    suppressed = set(suppressed or [])
     for abs_index, line in enumerate(lines):
+        if f"L{abs_index}" in suppressed:
+            continue
         try:
             ls = float(line.get("start_s", 0.0))
             le = float(line.get("end_s", 0.0))

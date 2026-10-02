@@ -3001,6 +3001,9 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
     # the thread's own row and its full chat transcript stay reachable. See
     # KRI-26 / agents/DECISIONS.md.
     item, session, job, integrity = await _load_authorized_projection_rows(db, thread, degrade=True)
+    from app.services.editor_empty_drafts import attach_saved_editor_drafts  # noqa: PLC0415
+
+    await attach_saved_editor_drafts(db, job)
     if isinstance(db, AsyncSession):
         await _fill_default_title_if_needed(db, thread, item=item, session=session)
     if integrity.codes:

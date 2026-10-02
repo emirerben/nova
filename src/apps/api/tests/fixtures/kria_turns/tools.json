@@ -1211,6 +1211,40 @@
           "title": "EditorCommitMusicWindow",
           "type": "object"
         },
+        "EditorDeletionRequest": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "clip",
+                "text",
+                "caption_cue",
+                "music",
+                "sound_effect",
+                "media_overlay",
+                "visual_block",
+                "motion_scene",
+                "camera_effect",
+                "carousel",
+                "lyric_line"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "title": "EditorDeletionRequest",
+          "type": "object"
+        },
         "EditorStateIn": {
           "additionalProperties": false,
           "description": "The editor's CURRENT UNSAVED state, sent with a chat turn.\n\nA lane present is the client's full current value; absent equals the saved variant.\nA present-but-empty ``lanes`` is still authoritative: \"no unsaved edits\".\nThe server never recomputes a hash; ``client_state_id`` is echoed verbatim.",
@@ -1342,6 +1376,27 @@
               "maxItems": 8,
               "title": "Copilot Receipt Ids",
               "type": "array"
+            },
+            "deletions": {
+              "items": {
+                "$ref": "#/$defs/EditorDeletionRequest"
+              },
+              "maxItems": 100,
+              "title": "Deletions",
+              "type": "array"
+            },
+            "editor_state_version": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Editor State Version"
             },
             "guided_revision": {
               "anyOf": [

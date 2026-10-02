@@ -30,10 +30,12 @@ from app.schemas.guided_edit_revision import GuidedEditorSource
 from app.services.phone_editor_sources import (
     EDITOR_SOURCES_FIELD,
     MAX_IMPORTS,
+    authored_phone_sources_available,
     begin_attempt,
     editor_source_bindings,
     editor_visual_bindings,
     lease_expired,
+    phone_editor_source_revision,
 )
 from app.services.phone_sources import (
     PHONE_SOURCES_FIELD,
@@ -101,8 +103,17 @@ def _response(
     )
 
 
+def _source_revision(job: Job, variant: dict) -> dict | None:
+    if (
+        variant.get("render_destination") == "device"
+        and variant.get("resolved_archetype") != "guided_story"
+    ):
+        return phone_editor_source_revision(job, variant)
+    return _guided_v2_revision(job, variant)
+
+
 def _fence(job: Job, variant: dict[str, Any], body: EditorSourceRequest) -> None:
-    revision = _guided_v2_revision(job, variant) or {}
+    revision = _source_revision(job, variant) or {}
     if body.base_generation != variant_render_baseline(variant):
         raise HTTPException(status_code=409, detail="baseline_conflict")
     if body.guided_revision_number != revision.get("revision_number"):
@@ -175,7 +186,10 @@ async def _publish(db: AsyncSession, job: Job, variant_id: str, key: str, token:
 def _require_available(job: Job, variant: dict, user_id: uuid.UUID, item_id: uuid.UUID) -> None:
     if job.user_id != user_id or job.content_plan_item_id != item_id:
         raise HTTPException(404, detail="Variant not found")
-    if not _phone_editor_media_available(job, variant):
+    if not (
+        _phone_editor_media_available(job, variant)
+        or authored_phone_sources_available(job, variant)
+    ):
         raise HTTPException(404, detail="Phone editor media is unavailable")
 
 
@@ -187,7 +201,7 @@ def _existing_ready_source(
     Normal project attachment consumes reservations. A source already bound to
     this edit must not need a new upload simply to gain another placement.
     """
-    sources = (_guided_v2_revision(job, variant) or {}).get("sources", [])
+    sources = (_source_revision(job, variant) or {}).get("sources", [])
     match = next(
         ((index, row) for index, row in enumerate(sources) if row["media_id"] == body.source_id),
         None,
@@ -388,7 +402,24 @@ async def validate_editor_sources(
 ) -> None:
     """Cheap Save-time revalidation of already admitted immutable receipts."""
     registry = _registry(variant)
-    for row in registry.get("sources") or []:
+    rows = list(registry.get("sources") or [])
+    if variant.get("render_destination") == "device" and (
+        variant.get("editor_state") == "empty" or variant.get("editor_timeline_mode") == "authored"
+    ):
+        # Initial worker-pinned sources need the same liveness check as later
+        # imports when a speech edit gains an authored visual timeline.
+        seen = {row.get("media_id") for row in rows if isinstance(row, dict)}
+        for field, receipt_key in (
+            (PHONE_SOURCES_FIELD, "source_binding"),
+            (PHONE_VISUALS_FIELD, "visual_binding"),
+        ):
+            for binding in (job.assembly_plan or {}).get(field) or []:
+                if binding.get("media_id") not in seen:
+                    rows.append(
+                        {"status": "ready", "media_id": binding["media_id"], receipt_key: binding}
+                    )
+                    seen.add(binding["media_id"])
+    for row in rows:
         if not isinstance(row, dict) or row.get("status") != "ready":
             continue
         if used_media_ids is not None and row.get("media_id") not in used_media_ids:

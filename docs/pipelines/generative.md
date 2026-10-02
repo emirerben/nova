@@ -421,6 +421,30 @@ AI's assembly decisions, not pixels.
   enforces the API's 50-element / 500-character limits before mutating the timeline,
   so rejected drafts never create empty or unsavable bars.
 
+### Explicit deletion and empty editor drafts (KRI-264)
+
+Native editor saves send `editor_state_version: 1` and stable `{kind, id}`
+deletion intents. The API validates every identity against the current variant
+before changing any lane. Existing blocks can be removed when creation of that
+lane is disabled; additions or changes still require the lane's normal capability.
+Caption identities and lyric suppressions survive later projection and rendering.
+
+Removing every active clip saves a full `CreatorEditDraft` snapshot with
+`editor_payload.editor_state: "empty"` and `sections.timeline_slots: []`. The Job
+keeps only the draft reference and a new render generation. No render is queued;
+old device completions and unsupported clients cannot restore the previous cut.
+Reads return the saved layers without playback URLs. Draft pruning preserves the
+referenced snapshot even when it is no longer the thread's head draft.
+
+Adding footage again enters persistent `editor_timeline_mode: "authored"`.
+Cloud and phone compilers use only the saved explicit placements and retain the
+independent presentation lanes. They never regenerate the old speaker or AI cut.
+Phone sources require current owner-bound original/admitted receipts; analysis
+proxies cannot become cloud render inputs. Deploy the API contract before the
+native client. Coverage: `test_editor_deletions.py`, `test_editor_empty_drafts.py`,
+`test_empty_editor_projection.py`, `test_authored_timeline.py`, and the native
+`NativeEditorSessionTests`/`TextDeletionTests`.
+
 ### Edit-copilot beat marks (creative direction)
 
 The chat edit copilot sees and honors the music's beat grid (v0.11.4.0):
