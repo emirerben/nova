@@ -1370,9 +1370,11 @@ device performance and full preview/export visual parity remain release gates.
 
 ## Remaining implementation gates
 
-1. Extend local bindings to narration assets and the rest of the visual pool
-   (photos with motion or looks; pool videos as cards, cropped or retimed),
-   with separately consented cloud recovery and source relinking. Pool photos
+1. Extend device-local original bindings and source relinking to narration
+   assets and the rest of the visual pool (photos with motion or looks; pool
+   videos as cards, cropped or retimed), with separately consented cloud
+   recovery. KRI-277's server-side narration receipts and grants do not yet
+   provide local capture storage or relinking. Pool photos
    (fullscreen or supporting card) render on the phone behind `stillImages` and
    pool videos behind `visualVideos` (KRI-121); compare their framing, card
    blur, audio and still/video crossfades against cloud on a device.
