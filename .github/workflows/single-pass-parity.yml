@@ -56,9 +56,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install ffmpeg
+        # Same stalled-mirror guard as the CI API shards (see ci.yml).
+        timeout-minutes: 40
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo bash scripts/ci/apt-install.sh ffmpeg
           ffmpeg -version | head -1
           ffprobe -version | head -1
 
