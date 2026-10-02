@@ -418,7 +418,10 @@ struct NativeCaptionPanel: View {
 
     private func spokenTime(_ base: Double) -> String {
         let seconds = Int(session.timelineProjection.projectBaseTime(base).rounded())
-        return Duration.seconds(seconds).formatted(.units(allowed: [.minutes, .seconds], width: .wide))
+        // English like the rest of the label ("Line 2, …, 1 second to 4 seconds"), not the device locale.
+        return Duration.seconds(seconds).formatted(
+            .units(allowed: [.minutes, .seconds], width: .wide).locale(Locale(identifier: "en_US"))
+        )
     }
 
     private var style: some View {

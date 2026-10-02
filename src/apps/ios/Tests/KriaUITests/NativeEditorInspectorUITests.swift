@@ -1307,6 +1307,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let restored = app.descendants(matching: .any)["native-editor-caption-row-native-caption-0"].firstMatch
         XCTAssertTrue(restored.waitForExistence(timeout: 3))
         XCTAssertTrue(restored.label.contains("Bu alan var mı?"), "one Undo restores the original line: \(restored.label)")
+        XCTAssertTrue(restored.label.hasSuffix("1 second to 4 seconds"), "spoken times read in English: \(restored.label)")
     }
 
     private func openTalkingCaptionLine(_ app: XCUIApplication, row id: String) -> XCUIElement {
@@ -1373,7 +1374,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         row.press(forDuration: 1.0)
         let delete = app.buttons["Delete"]
         XCTAssertTrue(delete.waitForExistence(timeout: 3), "the row's long-press menu offers Delete")
+        // On the simulator the first tap after the long-press is swallowed (seen with
+        // XCUITest and by hand); the menu stays open and a second tap activates Delete.
         delete.tap()
+        if delete.waitForExistence(timeout: 1) { delete.tap() }
         XCTAssertTrue(app.buttons["native-editor-caption-undo-removal"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-caption-row-native-caption-0"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-caption-row-native-caption-1"].exists)
