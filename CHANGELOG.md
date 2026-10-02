@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.8.0] - 2026-10-02
+
+### Changed
+- fix(speech-cut): put cloud cut captions, b-roll and re-cut lanes on the frame grid (#1303) <!-- release-pr: 1303 -->
+
 ## [0.78.7.0] - 2026-10-02
 
 ### Changed
