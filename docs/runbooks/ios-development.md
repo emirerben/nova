@@ -311,7 +311,8 @@ block and opens it on Edit text; Done returns to the list. The list stays inert
 while the new-text draft has words in it, and the panel opens partly expanded
 when there is more than one block. While the keyboard is up a text panel grows into
 the room the preview would keep: the preview shrinks to a compact 120pt
-above it and returns when the keyboard closes (other panels keep today's split). Its unfinished draft survives tab switches,
+above it and returns when the keyboard closes (other panels keep today's split,
+except Captions while a line is open: see "Caption line editing (KRI-240)" below). Its unfinished draft survives tab switches,
 and tapping the active tool collapses the shell. The panel's visible grabber and the divider beneath the
 preview both resize the same panel/preview split, with a 44pt drag target and
 an accessibility adjustment action. The
@@ -405,6 +406,62 @@ over a previous generation receipt. Poll responses use request ordering as
 well as revisions because reconciliation can change a projection without
 appending an event. `testSlowDirectionAndPreJobFailureNeverReturnToUploading`
 exercises the delayed response, pre-job failure, retry and ready transition.
+
+### Caption line editing (KRI-240)
+
+Captions → Edit captions lists lines with their start time; there is no chevron,
+the line under the playhead is highlighted with a sky bar and followed while
+playing (a drag on the list stops following until the next play), and unsaved
+lines carry a sky dot. One tap on a line opens the edit bar with the keyboard up
+and the caret at the end; the bar replaces the list while the app header, the
+Chat/Editor switch and the top banners stay (Variant A, `plans/026-kri-240-caption-text-editing.md`).
+The bar shows `#N · start–end` with ‹, › and ✓ (equal 44pt squares, ✓ in Butter) above a
+full-width line field; tapping the preview toggles a loop of the line (the first
+keystroke or leaving the line ends it).
+While a line is open the timeline handle, transport, tool rail and Kria sparkles
+button are hidden and the preview takes the space above the bar
+(`NativeEditorLayoutMetrics.captionEditBarHeight`). The open line
+(`NativeEditorView.captionEditingCueID`) is the source of truth; keyboard focus
+only follows it, so a dismissed or refused keyboard leaves a usable bar.
+The field shows 3 lines, or 2 on short or narrow screens and at accessibility
+sizes. `NativeEditorView` picks the count once (`CaptionEditBar.fieldLineCount`)
+and hands it, with the scaled line height, to the panel: the height the layout
+reserves must be the height the bar draws, or the field's last line slides
+under the keyboard. If a save or reload drops the open line, the bar closes and
+the chrome returns. The panel follows the playhead through
+`session.playbackClock` (`onReceive`), not `session.currentTime`, which never
+publishes on the session.
+
+The line field is `NativeExplicitLineTextEditor` with
+`LineEditorConfiguration.captionLine`: it wraps, Return moves to the next line
+(Done on the last), autocorrection and smart quotes/dashes are off, pasted
+newlines become spaces, a line stops at 600 characters (Unicode scalars, the
+server's `CaptionCue.text` limit; a longer line fails the whole Save, and deleting
+from one stays allowed), and it asks for a keyboard in the
+variant's `caption_language` when one is installed (spell-check underlines are
+off when it is not). Hardware keys: Tab / Shift-Tab move between lines, Esc is
+Done, Shift-Return inserts a newline. Unlike the web editor, where Enter exits
+edit mode, Return commits the line and opens the next one. Editing a cue
+rewrites its `raw["words"]` so the stored word list keeps spelling the text (`CaptionWordRewrite`); returning to the original
+text restores the original timings and leaves no undo step. An emptied line is
+removed on commit inside the line's own transaction, so one Undo restores it.
+The "Line N removed" notice offers Undo only while that removal is still the
+newest undo step (`session.undoHistoryVersion` moves on every history change,
+even when the 100-step history is full; a count would not). Rows also offer a
+long-press Delete. The header Save commits an open line first (`beforeSave`: an
+emptied line is removed, the bar and keyboard close), then saves. The preview
+parks 0.15s into the line because caption pop-in is invisible at its first
+frame. Deleting the last cue must not bring back the API's mirror text elements
+as captions: `EditorDocument.isCaptionCueMirror` keys on `isCueNative` (cues now,
+or when loaded), not on `captionCues` being non-empty. The Text tool keeps its
+compact 120pt typing preview.
+
+`CaptionLineEditingTests` covers the word rewrite, line-editor configuration,
+layout metrics, undo and removal behaviour and the park frame. In the `editor` UI
+group, `NativeEditorInspectorUITests` covers one-tap open with the keyboard,
+emptying a line and Undo, Next/Previous and Save with a line open. Long-press
+Delete has no UI test: XCUITest taps on the context-menu item did not fire it
+reliably, so check it by hand on the simulator.
 
 ### Change-based CI
 

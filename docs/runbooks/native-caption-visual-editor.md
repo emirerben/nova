@@ -3,7 +3,9 @@
 The native editor uses Paper screens 11–19 for caption and visual inspectors.
 Captions have Edit captions, Style, and Settings tabs. Language, regeneration,
 Sounds, and the separate Overlays/Styles tools are outside this change. AI actions
-are tracked separately in PR #1019.
+are tracked separately in PR #1019. Since KRI-240, tapping a line in Edit captions
+opens it in an edit bar with the keyboard up; see "Caption line editing (KRI-240)"
+in [ios-development.md](ios-development.md).
 
 ## State and controls
 

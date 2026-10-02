@@ -457,7 +457,11 @@ struct NativeEditorTemporaryVideo {
 
     private let minimumClipDuration: TimeInterval = 0.1
     private let historyLimit = 100
-    private var undoStack: [EditorDocument] = []
+    private var undoStack: [EditorDocument] = [] { didSet { undoHistoryVersion &+= 1 } }
+    /// KRI-240: changes on every undo-history change (new step, undo, trim at the
+    /// limit, clear), so the caption editor's Undo notice can tell its removal is
+    /// still the newest step. A count can't: it saturates at `historyLimit`.
+    private(set) var undoHistoryVersion = 0
     private var redoStack: [EditorDocument] = []
     private var cleanDocument: EditorDocument
     private var api: (any KriaAPIClient)?
@@ -884,6 +888,7 @@ struct NativeEditorTemporaryVideo {
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
+    var undoHistoryCount: Int { undoStack.count }
     var isTimingGestureActive: Bool { activeTimedEdit != nil || activeTrim != nil }
     var canRedo: Bool { !redoStack.isEmpty }
     var selectedClipID: UUID? {
@@ -3843,13 +3848,89 @@ struct NativeEditorTemporaryVideo {
             return
         }
         guard let index = document.captionCues.firstIndex(where: { $0.id == id }) else { return }
+        // KRI-240: keep `raw["words"]` spelling the text (see CaptionWordRewrite).
+        // While the line is open in the caption editor the rewrite starts from the
+        // words captured on entry; one-shot callers start from the current words.
+        let current = document.captionCues[index]
+        let entry = captionLineEntry?.id == id ? captionLineEntry : (id, current.text, current.raw["words"]?.arrayValue)
         transactDocument(section: .captions) { doc in
             var cue = doc.captionCues[index]
             if let text { cue.text = text }; if let startS { cue.startS = startS }; if let endS { cue.endS = max(cue.startS, endS) }
+            if text != nil, let entry,
+               let words = CaptionWordRewrite.words(entryText: entry.text, entryWords: entry.words, text: cue.text,
+                                                    startS: cue.startS, endS: cue.endS) {
+                cue.raw["words"] = .array(words)
+            }
             doc.captionCues[index] = cue
         }
     }
     func updateCaptionCue(id: UUID, text: String? = nil, startS: Double? = nil, endS: Double? = nil) { updateCaptionCue(id: id.uuidString, text: text, startS: startS, endS: endS) }
+
+    // MARK: - KRI-240 caption line editing
+
+    /// The caption line open in the caption editor: its text and word list on entry.
+    private var captionLineEntry: (id: String, text: String, words: [JSONValue]?)?
+
+    /// Opens one undo transaction for a caption line and remembers its entry state,
+    /// so returning the text to what it was restores the original word timings and
+    /// leaves no undo step or unsaved dot behind.
+    func beginCaptionLineEdit(id: String) {
+        beginTransaction()
+        if let cue = document.captionCues.first(where: { $0.id == id }) {
+            captionLineEntry = (cue.id, cue.text, cue.raw["words"]?.arrayValue)
+        } else {
+            captionLineEntry = nil
+        }
+    }
+
+    func endCaptionLineEdit() {
+        captionLineEntry = nil
+        endTransaction()
+    }
+
+    /// Where the preview parks for a caption line: 0.15s after it starts (word
+    /// styles: after its last word starts), clamped inside the line. Captions
+    /// pop in over 0.12s, so the exact start is a blank frame (plan 026 R5).
+    func captionParkTime(id: String) -> TimeInterval? {
+        guard let unit = document.captionUnits.first(where: { $0.id == id }) else { return nil }
+        var anchor = unit.startS
+        if document.captionMeta["style"]?.stringValue == "word",
+           let last = unit.raw["words"]?.arrayValue?.last?.objectValue,
+           case .number(let start)? = last["start_s"] {
+            anchor = max(unit.startS, start)
+        }
+        let latest = max(unit.startS, unit.endS - 1.0 / 30)
+        return timelineProjection.projectBaseTime(min(max(unit.startS, anchor + 0.15), latest))
+    }
+
+    /// The line's window on the timeline, for loop-play.
+    func captionTimelineRange(id: String) -> ClosedRange<TimeInterval>? {
+        guard let unit = document.captionUnits.first(where: { $0.id == id }) else { return nil }
+        let start = timelineProjection.projectBaseTime(unit.startS)
+        let end = timelineProjection.projectBaseTime(unit.endS)
+        return end > start ? start...end : nil
+    }
+
+    /// Every caption line's timeline range from one read of the document, for callers
+    /// that scan all lines (the caption panel's playing-line lookup runs per clock tick).
+    func captionTimelineRanges() -> [(id: String, range: ClosedRange<TimeInterval>)] {
+        document.captionUnits.compactMap { unit in
+            let start = timelineProjection.projectBaseTime(unit.startS)
+            let end = timelineProjection.projectBaseTime(unit.endS)
+            return end > start ? (unit.id, start...end) : nil
+        }
+    }
+
+    /// True when the line's text differs from the last saved version (unsaved dot).
+    func isCaptionUnitEdited(id: String) -> Bool {
+        document.captionUnits.first { $0.id == id }?.text != cleanDocument.captionUnits.first { $0.id == id }?.text
+    }
+
+    /// The language the captions were transcribed in (`caption_language` on the
+    /// loaded variant), e.g. "tr". `nil` for variants without it.
+    var captionLanguage: String? {
+        previewVariant["caption_language"]?.stringValue?.nilIfEmpty
+    }
 
     // MARK: - Timed visual and sound lanes
 

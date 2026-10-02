@@ -1264,25 +1264,100 @@ final class NativeEditorInspectorUITests: XCTestCase {
 
         let row = app.descendants(matching: .any)["native-editor-caption-row-cue-all"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 3))
+        // KRI-240: ONE tap opens the edit bar with the keyboard up and the caret
+        // at the end of the line. No second tap on the field.
         row.tap()
 
-        let field = app.textFields.matching(identifier: "native-editor-caption-row-cue-all").firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 3), "TextField never appeared after tapping the row")
-        field.tap()
+        let field = app.textViews["native-editor-caption-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3), "the caption edit bar never appeared after one row tap")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "one row tap must bring up the keyboard")
+        XCTAssertEqual(app.staticTexts["native-editor-caption-position"].label, "Line 1 of 1")
         field.typeText(" edited")
-        app.buttons["native-editor-captions-done"].tap()
+        app.buttons["native-editor-caption-edit-done"].tap()
 
-        // Reopen and confirm the edit persisted in the document, not just
-        // transiently in the now-dismissed TextField.
+        // Done returns to the list; close and reopen to prove the edit reached the
+        // document and survived a full close/reopen cycle.
+        let panelDone = app.buttons["native-editor-captions-done"]
+        XCTAssertTrue(panelDone.waitForExistence(timeout: 3))
+        panelDone.tap()
         captions.tap()
         let reopenedRow = app.descendants(matching: .any)["native-editor-caption-row-cue-all"].firstMatch
         XCTAssertTrue(reopenedRow.waitForExistence(timeout: 3))
-        // Cursor placement on a freshly-focused multi-line TextField isn't
-        // guaranteed to be at the end, so the typed text may land before or
-        // after the original "caption" — either order proves the edit
-        // reached the document and survived a full close/reopen cycle.
-        let editedRow = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'edited' AND label CONTAINS 'caption'")).firstMatch
-        XCTAssertTrue(editedRow.waitForExistence(timeout: 3), "Typed edit did not persist across close/reopen")
+        XCTAssertTrue(reopenedRow.label.contains("caption edited"), "typed edit did not persist: \(reopenedRow.label)")
+    }
+
+    // Value: protects=the first opened line keeps its own transaction, so emptying it removes it with one Undo; fails_when=swapping the list for the bar ends the line's transaction (the Group lifecycle bug) or the field sits under the keyboard; why_new=the edit test never empties a line or checks the field frame; seam=none
+    func testEmptyingATalkingCaptionLineRemovesItAndUndoRestoresIt() {
+        let app = XCUIApplication()
+        let field = openTalkingCaptionLine(app, row: "native-caption-0")
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(field.frame.maxY, keyboard.frame.minY + 1, "the line field must sit above the keyboard")
+        XCTAssertEqual(app.staticTexts["native-editor-caption-position"].label, "Line 1 of 2")
+
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 24))
+        app.buttons["native-editor-caption-edit-done"].tap()
+
+        let undo = app.buttons["native-editor-caption-undo-removal"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 3), "an emptied line is removed with an Undo")
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-caption-row-native-caption-0"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-caption-row-native-caption-1"].exists)
+        undo.tap()
+
+        let restored = app.descendants(matching: .any)["native-editor-caption-row-native-caption-0"].firstMatch
+        XCTAssertTrue(restored.waitForExistence(timeout: 3))
+        XCTAssertTrue(restored.label.contains("Bu alan var mı?"), "one Undo restores the original line: \(restored.label)")
+        XCTAssertTrue(restored.label.hasSuffix("1 second to 4 seconds"), "spoken times read in English: \(restored.label)")
+    }
+
+    private func openTalkingCaptionLine(_ app: XCUIApplication, row id: String) -> XCUIElement {
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-talking-captions"]
+        app.launch()
+        let tool = app.buttons["native-editor-tool-captions"]
+        XCTAssertTrue(tool.waitForExistence(timeout: 8))
+        tool.tap()
+        let row = app.descendants(matching: .any)["native-editor-caption-row-\(id)"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        row.tap()
+        let field = app.textViews["native-editor-caption-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        return field
+    }
+
+    private func waitForLabel(_ element: XCUIElement, _ label: String) {
+        let changed = expectation(for: NSPredicate(format: "label == %@", label), evaluatedWith: element)
+        wait(for: [changed], timeout: 3)
+    }
+
+    // Value: protects=Previous/Next move between lines with the right text and ends disabled; fails_when=neighbour lookup or the bar's enablement regresses; why_new=no test left line 1; seam=none
+    func testNextAndPreviousMoveBetweenCaptionLines() {
+        let app = XCUIApplication()
+        let field = openTalkingCaptionLine(app, row: "native-caption-0")
+        let previous = app.buttons["native-editor-caption-previous"]
+        let next = app.buttons["native-editor-caption-next"]
+        let position = app.staticTexts["native-editor-caption-position"]
+        XCTAssertFalse(previous.isEnabled)
+        XCTAssertTrue(next.isEnabled)
+        next.tap()
+        waitForLabel(position, "Line 2 of 2")
+        XCTAssertEqual(field.value as? String, "Evet, boş.")
+        XCTAssertFalse(next.isEnabled, "the last line has no Next")
+        previous.tap()
+        waitForLabel(position, "Line 1 of 2")
+        XCTAssertEqual(field.value as? String, "Bu alan var mı?")
+    }
+
+    // Value: protects=Save tapped mid-edit commits the open line and closes the bar; fails_when=beforeSave is dropped and the bar and keyboard stay up over a saved draft; why_new=no test saves with a line open; seam=none
+    func testSavingWithACaptionLineOpenCommitsItAndClosesTheBar() {
+        let app = XCUIApplication()
+        let field = openTalkingCaptionLine(app, row: "native-caption-0")
+        field.typeText(" tamam")
+        app.buttons["native-editor-save"].tap()
+        let closed = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: field)
+        wait(for: [closed], timeout: 3)
+        let row = app.descendants(matching: .any)["native-editor-caption-row-native-caption-0"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        XCTAssertTrue(row.label.contains("Bu alan var mı? tamam"), "the open line's edit was committed: \(row.label)")
     }
 
     func testAllPersistedLanesExposeStableTimelineIdentityAndInspector() {

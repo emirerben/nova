@@ -31,6 +31,7 @@ Feature/incident plans written after the June audit (005–017 live alongside; o
 | 020 | Unified creator personalization and durable creator memory | DONE (implemented behind default-off backend/frontend flags; staged rollout pending) |
 | 024 | Native editor component parity across every timed lane | DONE |
 | 025 | iOS device-only Release 1 rollout qualification | IN PROGRESS (automated qualification; signed-device and production gates remain) |
+| 026 | KRI-240 iPhone caption line editing (one-tap edit bar, Variant A) | IN PROGRESS (iOS edit bar built on branch; server word rewrite, save-banner retry and device check open) |
 
 ## Dependency notes
 
